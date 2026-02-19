@@ -23,10 +23,10 @@
       <template v-slot:item="{ props, item }">
         <v-list-item v-bind="props">
           <template v-slot:prepend>
-            <v-avatar v-if="item.raw.photo_url" size="40" class="mr-2">
+            <v-avatar v-if="item.raw.photo_url" size="60" class="mr-2">
               <v-img :src="item.raw.photo_url" cover />
             </v-avatar>
-            <v-avatar v-else color="grey-lighten-2" size="40" class="mr-2">
+            <v-avatar v-else color="grey-lighten-2" size="60" class="mr-2">
               <v-icon icon="mdi-package-variant" color="grey-darken-1" />
             </v-avatar>
           </template>
@@ -72,11 +72,11 @@
       <div class="d-flex justify-space-between align-start">
         <div class="d-flex gap-4">
           <!-- Фото товара -->
-          <v-avatar v-if="selectedProduct.photo_url" size="100" rounded="lg">
+          <v-avatar v-if="selectedProduct.photo_url" size="150" rounded="lg">
             <v-img :src="selectedProduct.photo_url" cover />
           </v-avatar>
-          <v-avatar v-else color="grey-lighten-2" size="100" rounded="lg">
-            <v-icon icon="mdi-package-variant" size="40" color="grey-darken-1" />
+          <v-avatar v-else color="grey-lighten-2" size="150" rounded="lg">
+            <v-icon icon="mdi-package-variant" size="60" color="grey-darken-1" />
           </v-avatar>
           
           <!-- Основная информация -->

@@ -150,22 +150,23 @@
                 <v-table class="mb-4">
                   <thead>
                     <tr>
-                      <th style="width: 60px;">Фото</th>
-                      <th>Наименование</th>
-                      <th style="width: 100px;">Категория</th>
-                      <th style="width: 120px;">Количество</th>
-                      <th style="width: 140px;">Цена (₽)</th>
-                      <th style="width: 140px;">Сумма (₽)</th>
+                      <th style="width: 80px;">Фото</th>
+                      <th style="min-width: 200px;">Наименование</th>
+                      <th style="width: 200px;">Описание</th>
+                      <th style="width: 80px;">Категория</th>
+                      <th style="width: 100px;">Количество</th>
+                      <th style="width: 120px;">Цена (₽)</th>
+                      <th style="width: 120px;">Сумма (₽)</th>
                       <th style="width: 80px;">Действия</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="(item, index) in orderProducts" :key="index">
                       <td>
-                        <v-avatar v-if="item.product.photo_url" size="40">
+                        <v-avatar v-if="item.product.photo_url" size="60">
                           <v-img :src="item.product.photo_url" cover />
                         </v-avatar>
-                        <v-avatar v-else color="grey-lighten-2" size="40">
+                        <v-avatar v-else color="grey-lighten-2" size="60">
                           <v-icon icon="mdi-package-variant" color="grey-darken-1" />
                         </v-avatar>
                       </td>
@@ -174,9 +175,12 @@
                         <div class="text-caption text-medium-emphasis">
                           {{ item.unitOfMeasure }} · {{ item.unitsPerPackage }} шт./уп.
                         </div>
-                        <div v-if="item.product.description" class="text-caption text-truncate" style="max-width: 300px;">
-                          {{ truncateText(item.product.description, 60) }}
+                      </td>
+                      <td>
+                        <div v-if="item.product.description" class="text-caption text-truncate" style="max-width: 200px;" :title="item.product.description">
+                          {{ truncateText(item.product.description, 100) }}
                         </div>
+                        <span v-else class="text-caption text-medium-emphasis">—</span>
                       </td>
                       <td>
                         <v-chip v-if="item.product.category" size="small" color="info" variant="flat">

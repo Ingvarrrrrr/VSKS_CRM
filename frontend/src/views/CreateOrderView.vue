@@ -209,7 +209,6 @@
                           min="1"
                           hide-details
                           style="max-width: 90px;"
-                          @input="updateProductQuantity(index, $event)"
                         />
                       </td>
                       <td>
@@ -222,7 +221,6 @@
                           step="0.01"
                           hide-details
                           style="max-width: 120px;"
-                          @input="updateProductPrice(index, $event)"
                         />
                       </td>
                       <td class="font-weight-medium">
@@ -400,7 +398,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import AdvancedProductSelector from '../components/AdvancedProductSelector.vue'
 
@@ -600,14 +598,14 @@ const addProductFromSelector = () => {
       // Увеличиваем количество существующего товара
       orderProducts.value[existingIndex].quantity += selectedProductFromSelector.value.quantity
     } else {
-      // Добавляем новый товар
-      orderProducts.value.push({
+      // Добавляем новый товар как реактивный объект
+      orderProducts.value.push(reactive({
         product: selectedProductFromSelector.value.product,
         quantity: selectedProductFromSelector.value.quantity,
         price: selectedProductFromSelector.value.price,
         unitsPerPackage: selectedProductFromSelector.value.unitsPerPackage,
         unitOfMeasure: selectedProductFromSelector.value.unitOfMeasure
-      })
+      }))
     }
     
     // Сбрасываем выбор и закрываем модальное окно
@@ -620,16 +618,6 @@ const addProductFromSelector = () => {
   } finally {
     addingProduct.value = false
   }
-}
-
-const updateProductQuantity = (index: number, value: any) => {
-  const quantity = parseInt(value) || 1
-  orderProducts.value[index].quantity = Math.max(1, quantity)
-}
-
-const updateProductPrice = (index: number, value: any) => {
-  const price = parseFloat(value) || 0
-  orderProducts.value[index].price = Math.max(0, price)
 }
 
 const removeProduct = (index: number) => {

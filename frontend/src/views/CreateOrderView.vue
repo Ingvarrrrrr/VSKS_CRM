@@ -207,6 +207,7 @@
                           variant="outlined"
                           density="compact"
                           min="1"
+                          step="1"
                           hide-details
                           style="max-width: 90px;"
                         />

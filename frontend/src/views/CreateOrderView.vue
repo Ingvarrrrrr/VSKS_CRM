@@ -150,7 +150,7 @@
                 <v-table class="mb-4">
                   <thead>
                     <tr>
-                      <th style="width: 80px;">Фото</th>
+                      <th style="width: 100px;">Фото</th>
                       <th style="min-width: 200px;">Наименование</th>
                       <th style="width: 200px;">Описание</th>
                       <th style="width: 80px;">Категория</th>
@@ -163,10 +163,10 @@
                   <tbody>
                     <tr v-for="(item, index) in orderProducts" :key="index">
                       <td>
-                        <v-avatar v-if="item.product.photo_url" size="60">
+                        <v-avatar v-if="item.product.photo_url" size="90">
                           <v-img :src="item.product.photo_url" cover />
                         </v-avatar>
-                        <v-avatar v-else color="grey-lighten-2" size="60">
+                        <v-avatar v-else color="grey-lighten-2" size="90">
                           <v-icon icon="mdi-package-variant" color="grey-darken-1" />
                         </v-avatar>
                       </td>
@@ -177,8 +177,20 @@
                         </div>
                       </td>
                       <td>
-                        <div v-if="item.product.description" class="text-caption text-truncate" style="max-width: 200px;" :title="item.product.description">
-                          {{ truncateText(item.product.description, 100) }}
+                        <div v-if="item.product.description" class="description-cell">
+                          <div class="description-preview text-caption" :title="item.product.description">
+                            {{ truncateText(item.product.description, 250) }}
+                          </div>
+                          <v-btn 
+                            v-if="item.product.description.length > 250"
+                            size="x-small" 
+                            variant="text" 
+                            color="primary"
+                            class="mt-1"
+                            @click="showFullDescription(item.product.description)"
+                          >
+                            Подробнее
+                          </v-btn>
                         </div>
                         <span v-else class="text-caption text-medium-emphasis">—</span>
                       </td>
@@ -284,6 +296,33 @@
                     :loading="addingProduct"
                   >
                     Добавить в заказ
+                  </v-btn>
+                </v-card-actions>
+              </v-card>
+            </v-dialog>
+            
+            <!-- Модальное окно полного описания -->
+            <v-dialog v-model="showDescriptionDialog" max-width="800">
+              <v-card>
+                <v-card-title class="text-h6">
+                  <v-icon icon="mdi-text" class="mr-2" />
+                  Полное описание товара
+                  <v-spacer />
+                  <v-btn
+                    icon="mdi-close"
+                    variant="text"
+                    @click="showDescriptionDialog = false"
+                  />
+                </v-card-title>
+                <v-card-text>
+                  <div class="pre-formatted text-body-1 pa-4" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">
+                    {{ fullDescription }}
+                  </div>
+                </v-card-text>
+                <v-card-actions>
+                  <v-spacer />
+                  <v-btn color="primary" @click="showDescriptionDialog = false">
+                    Закрыть
                   </v-btn>
                 </v-card-actions>
               </v-card>
@@ -410,6 +449,10 @@ const showProductSelector = ref(false)
 const selectedProductFromSelector = ref<any>(null)
 const productSelectorRef = ref()
 
+// Модальное окно для полного описания
+const showDescriptionDialog = ref(false)
+const fullDescription = ref('')
+
 // Вспомогательные функции
 const formatCurrency = (amount: number) => {
   return amount.toLocaleString() + ' ₽'
@@ -423,6 +466,12 @@ const pluralize = (value: number, words: string[]) => {
 const truncateText = (text: string, maxLength: number) => {
   if (text.length <= maxLength) return text
   return text.substring(0, maxLength) + '...'
+}
+
+// Показать полное описание
+const showFullDescription = (description: string) => {
+  fullDescription.value = description
+  showDescriptionDialog.value = true
 }
 
 // Расчеты
@@ -653,5 +702,21 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.description-cell {
+  max-width: 300px;
+}
+.description-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+  max-height: 7em;
+}
+.pre-formatted {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -15,5 +15,6 @@ class Product(Base):
     photo_link = Column(String(1000), nullable=True)  # Ссылка на фото
     clarification_link = Column(String(1000), nullable=True)  # Уточнющая ссылка
     is_active = Column(Boolean, default=True)
+    price = Column(Numeric(10, 2), nullable=True)  # Цена за единицу из Google Sheets
     
     feo_category = relationship("FeoCategory", backref="products")

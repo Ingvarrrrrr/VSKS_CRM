@@ -141,6 +141,7 @@ class ProductCreate(BaseModel):
     photo_link: Optional[str] = None
     clarification_link: Optional[str] = None
     is_active: bool = True
+    price: Optional[Decimal] = None
 
 class ProductOut(ProductCreate):
     id: int

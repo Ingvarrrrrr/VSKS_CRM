@@ -23,10 +23,10 @@
       <template v-slot:item="{ props, item }">
         <v-list-item v-bind="props">
           <template v-slot:prepend>
-            <v-avatar v-if="item.raw.photo_url" size="60" class="mr-2">
+            <v-avatar v-if="item.raw.photo_url" size="90" class="mr-2">
               <v-img :src="item.raw.photo_url" cover />
             </v-avatar>
-            <v-avatar v-else color="grey-lighten-2" size="60" class="mr-2">
+            <v-avatar v-else color="grey-lighten-2" size="90" class="mr-2">
               <v-icon icon="mdi-package-variant" color="grey-darken-1" />
             </v-avatar>
           </template>
@@ -51,8 +51,8 @@
                 {{ item.raw.is_reusable ? 'Многоразовое' : 'Одноразовое' }}
               </v-chip>
             </div>
-            <div v-if="item.raw.description" class="mt-1 text-caption text-truncate" style="max-width: 400px;">
-              {{ truncateText(item.raw.description, 80) }}
+            <div v-if="item.raw.description" class="mt-1 text-caption description-preview" style="max-width: 600px;">
+              {{ truncateText(item.raw.description, 150) }}
             </div>
           </v-list-item-subtitle>
         </v-list-item>
@@ -72,11 +72,11 @@
       <div class="d-flex justify-space-between align-start">
         <div class="d-flex gap-4">
           <!-- Фото товара -->
-          <v-avatar v-if="selectedProduct.photo_url" size="150" rounded="lg">
+          <v-avatar v-if="selectedProduct.photo_url" size="225" rounded="lg">
             <v-img :src="selectedProduct.photo_url" cover />
           </v-avatar>
-          <v-avatar v-else color="grey-lighten-2" size="150" rounded="lg">
-            <v-icon icon="mdi-package-variant" size="60" color="grey-darken-1" />
+          <v-avatar v-else color="grey-lighten-2" size="225" rounded="lg">
+            <v-icon icon="mdi-package-variant" size="90" color="grey-darken-1" />
           </v-avatar>
           
           <!-- Основная информация -->
@@ -257,6 +257,7 @@ interface Product {
   photo_link?: string
   clarification_link?: string
   feo_category_id?: number
+  price?: string | number  // Цена из Google Sheets
 }
 
 const props = defineProps<{
@@ -410,8 +411,15 @@ const emitProductSelected = () => {
 
 // Вспомогательные функции для установки значений по умолчанию
 const getDefaultPrice = (product: Product): number => {
-  // Здесь можно реализовать логику определения цены
-  // Например, на основе категории или типа товара
+  // Используем цену из базы данных, если она есть
+  if (product.price) {
+    const priceNum = typeof product.price === 'string' ? parseFloat(product.price) : product.price
+    if (!isNaN(priceNum) && priceNum > 0) {
+      return priceNum
+    }
+  }
+  
+  // Иначе используем логику на основе категории
   if (product.category?.includes('электро')) return 15000
   if (product.category?.includes('строитель')) return 8000
   if (product.category?.includes('канцеляр')) return 500
@@ -473,5 +481,14 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.description-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+  max-height: 7em; /* примерно 5 строк */
 }
 </style>

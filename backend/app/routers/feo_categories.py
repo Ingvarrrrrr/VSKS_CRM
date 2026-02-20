@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
-from app.schemas.schemas import FeoCategoryOut
+from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
 from app.auth.jwt import get_current_user
 from typing import List, Optional
 
@@ -54,3 +54,47 @@ async def category_tree(
         else:
             roots.append(node)
     return roots
+
+@router.post("/", response_model=FeoCategoryOut)
+async def create_category(
+    category_data: FeoCategoryCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    # Проверяем, существует ли родительская категория
+    if category_data.parent_id:
+        parent_result = await db.execute(
+            select(FeoCategory).where(FeoCategory.id == category_data.parent_id)
+        )
+        parent = parent_result.scalar_one_or_none()
+        if not parent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Родительская категория не найдена"
+            )
+        # Устанавливаем уровень на 1 больше, чем у родителя
+        level = parent.level + 1
+        if level > 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Максимальный уровень вложенности - 3"
+            )
+    else:
+        # Если нет родителя, это корневая категория (уровень 1)
+        level = 1
+    
+    # Создаем новую категорию
+    new_category = FeoCategory(
+        parent_id=category_data.parent_id,
+        subsidy_id=category_data.subsidy_id,
+        level=level,
+        name=category_data.name,
+        code=category_data.code,
+        appendix=category_data.appendix,
+        is_active=category_data.is_active
+    )
+    
+    db.add(new_category)
+    await db.commit()
+    await db.refresh(new_category)
+    
+    return new_category

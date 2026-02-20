@@ -46,6 +46,14 @@ class SubsidyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 # FeoCategory
+class FeoCategoryCreate(BaseModel):
+    parent_id: Optional[int] = None
+    subsidy_id: int
+    name: str
+    code: Optional[str] = None
+    appendix: Optional[str] = None
+    is_active: bool = True
+
 class FeoCategoryOut(BaseModel):
     id: int
     parent_id: Optional[int] = None

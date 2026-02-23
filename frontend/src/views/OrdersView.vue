@@ -18,15 +18,27 @@
             </div>
           </div>
           
-          <v-tabs v-model="tab" class="mb-8">
+          <v-tabs v-model="tab" class="mb-4">
             <v-tab value="all">Все</v-tab>
             <v-tab value="planned">Планируются</v-tab>
             <v-tab value="confirmed">Подтверждены</v-tab>
             <v-tab value="in-progress">В работе</v-tab>
+            <v-tab value="delivered">Поставлено (не оплачено)</v-tab>
+            <v-tab value="signed">Подписан</v-tab>
             <v-tab value="completed">Завершены</v-tab>
+            <v-tab value="payments">Ежемесячные платежи</v-tab>
           </v-tabs>
           
-          <v-table>
+          <!-- Вкладки по субсидиям -->
+          <v-tabs v-model="subsidyTab" class="mb-8">
+            <v-tab value="all">Все субсидии</v-tab>
+            <v-tab v-for="subsidy in subsidies" :key="subsidy.id" :value="subsidy.id.toString()">
+              {{ subsidy.shortName }}
+            </v-tab>
+          </v-tabs>
+          
+          <template v-if="tab !== 'payments'">
+            <v-table>
             <thead>
               <tr>
                 <th>№ заказа</th>
@@ -92,6 +104,31 @@
               Создать первый заказ
             </v-btn>
           </div>
+          </template>
+          <template v-else>
+            <v-table>
+              <thead>
+                <tr>
+                  <th>№ заказа</th>
+                  <th>Контрагент</th>
+                  <th>Сумма</th>
+                  <th>Срок оплаты</th>
+                  <th>Статус</th>
+                  <th>Субсидия</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="payment in payments" :key="payment.id">
+                  <td>{{ payment.orderNumber }}</td>
+                  <td>{{ payment.contractor }}</td>
+                  <td>{{ payment.amount.toLocaleString() }} ₽</td>
+                  <td>{{ payment.dueDate }}</td>
+                  <td><v-chip :color="payment.statusColor" size="small">{{ payment.status }}</v-chip></td>
+                  <td>{{ payment.subsidy }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </template>
         </v-card>
       </v-col>
     </v-row>
@@ -102,6 +139,60 @@
 import { ref, computed } from 'vue'
 
 const tab = ref('all')
+const subsidyTab = ref('all')
+
+// Демо-данные субсидий (взять из API)
+const subsidies = ref([
+  { id: 1, name: 'Патриотика 2025', shortName: 'Патриотика' },
+  { id: 2, name: 'ДНР Восстановление 2025', shortName: 'ДНР' },
+  { id: 3, name: 'ЗО Молодёжь 2025', shortName: 'ЗО' },
+  { id: 4, name: 'ФАДМ Волонтёры 2025', shortName: 'ФАДМ' },
+  { id: 5, name: 'МинПрос Образование 2025', shortName: 'МинПрос' },
+])
+
+// Демо-данные ежемесячных платежей
+const payments = ref([
+  {
+    id: 1,
+    orderNumber: 'ORD-2025-001',
+    contractor: 'ООО "ТехноПрофи"',
+    amount: 150000,
+    dueDate: '05.03.2025',
+    status: 'Ожидает оплаты',
+    statusColor: 'warning',
+    subsidy: 'Патриотика 2025'
+  },
+  {
+    id: 2,
+    orderNumber: 'ORD-2025-002',
+    contractor: 'ИП Иванов И.И.',
+    amount: 62500,
+    dueDate: '10.03.2025',
+    status: 'Оплачен',
+    statusColor: 'success',
+    subsidy: 'ДНР Восстановление 2025'
+  },
+  {
+    id: 3,
+    orderNumber: 'ORD-2025-003',
+    contractor: 'АО "СтройКомплект"',
+    amount: 390000,
+    dueDate: '15.03.2025',
+    status: 'Просрочен',
+    statusColor: 'error',
+    subsidy: 'ЗО Молодёжь 2025'
+  },
+  {
+    id: 4,
+    orderNumber: 'ORD-2025-005',
+    contractor: 'ООО "Социальные технологии"',
+    amount: 325000,
+    dueDate: '25.03.2025',
+    status: 'Ожидает оплаты',
+    statusColor: 'warning',
+    subsidy: 'ФАДМ Волонтёры 2025'
+  },
+])
 
 // Демо-данные заказов
 const orders = ref([
@@ -115,7 +206,8 @@ const orders = ref([
     amount: 450000,
     date: '15.02.2025',
     status: 'Подтвержден',
-    statusColor: 'success'
+    statusColor: 'success',
+    subsidyId: 1 // Патриотика
   },
   {
     id: 2,
@@ -127,7 +219,8 @@ const orders = ref([
     amount: 125000,
     date: '10.02.2025',
     status: 'В работе',
-    statusColor: 'info'
+    statusColor: 'info',
+    subsidyId: 2 // ДНР
   },
   {
     id: 3,
@@ -139,7 +232,8 @@ const orders = ref([
     amount: 780000,
     date: '05.02.2025',
     status: 'Завершен',
-    statusColor: 'primary'
+    statusColor: 'primary',
+    subsidyId: 3 // ЗО
   },
   {
     id: 4,
@@ -151,21 +245,63 @@ const orders = ref([
     amount: 320000,
     date: '01.02.2025',
     status: 'Планируется',
-    statusColor: 'warning'
+    statusColor: 'warning',
+    subsidyId: 1 // Патриотика
+  },
+  {
+    id: 5,
+    number: 'ORD-2025-005',
+    name: 'Волонтёрское оборудование',
+    contractor: 'ООО "Социальные технологии"',
+    feoDirection: 'Материальные запасы',
+    productCount: 20,
+    amount: 650000,
+    date: '20.02.2025',
+    status: 'Поставлено (не оплачено)',
+    statusColor: 'deep-purple',
+    subsidyId: 4 // ФАДМ
+  },
+  {
+    id: 6,
+    number: 'ORD-2025-006',
+    name: 'Учебные материалы',
+    contractor: 'Издательство "Просвещение"',
+    feoDirection: 'Образовательные расходы',
+    productCount: 150,
+    amount: 1200000,
+    date: '18.02.2025',
+    status: 'Подписан',
+    statusColor: 'info',
+    subsidyId: 5 // МинПрос
   }
 ])
 
 // Отфильтрованные заказы
 const filteredOrders = computed(() => {
-  if (tab.value === 'all') return orders.value
+  let result = orders.value
   
-  const statusMap: Record<string, string> = {
-    'planned': 'Планируется',
-    'confirmed': 'Подтвержден',
-    'in-progress': 'В работе',
-    'completed': 'Завершен'
+  // Фильтр по статусу
+  if (tab.value !== 'all') {
+    const statusMap: Record<string, string> = {
+      'planned': 'Планируется',
+      'confirmed': 'Подтвержден',
+      'in-progress': 'В работе',
+      'completed': 'Завершен',
+      'delivered': 'Поставлено (не оплачено)',
+      'signed': 'Подписан'
+    }
+    const targetStatus = statusMap[tab.value]
+    if (targetStatus) {
+      result = result.filter(order => order.status === targetStatus)
+    }
   }
   
-  return orders.value.filter(order => order.status === statusMap[tab.value])
+  // Фильтр по субсидии
+  if (subsidyTab.value !== 'all') {
+    const subsidyId = parseInt(subsidyTab.value)
+    result = result.filter(order => order.subsidyId === subsidyId)
+  }
+  
+  return result
 })
 </script>

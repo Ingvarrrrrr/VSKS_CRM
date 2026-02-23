@@ -62,79 +62,53 @@
           </v-card>
           
           <!-- Основная информация о выбранной субсидии -->
-          <v-card variant="outlined" class="mb-6 pa-4" v-if="selectedSubsidy">
-            <div class="d-flex justify-space-between align-center mb-4">
-              <v-card-title class="text-h6 pa-0">
-                <v-icon icon="mdi-cash" class="mr-2" />
-                {{ selectedSubsidy.name }}
-                <v-chip color="primary" variant="flat" class="ml-2">{{ selectedSubsidy.year }}</v-chip>
-              </v-card-title>
-              <div>
-                <v-btn 
-                  icon="mdi-pencil" 
-                  variant="text" 
-                  @click="editSubsidy(selectedSubsidy)"
-                  title="Редактировать субсидию"
-                  class="mr-2"
-                />
-                <v-btn 
-                  icon="mdi-delete" 
-                  variant="text" 
-                  color="error"
-                  @click="deleteSubsidy(selectedSubsidy)"
-                  title="Удалить субсидию"
-                />
-              </div>
-            </div>
+          <v-row v-if="selectedSubsidy">
+            <v-col cols="12" md="3">
+              <v-card color="primary" variant="flat" class="pa-4 h-100">
+                <div class="text-h6 text-white">Общий бюджет</div>
+                <div class="text-h3 text-white font-weight-bold mt-2">
+                  {{ formatCurrency(selectedSubsidy.budget) }}
+                </div>
+                <div class="text-caption text-white mt-2">{{ selectedSubsidy.name }}</div>
+              </v-card>
+            </v-col>
             
-            <v-row>
-              <v-col cols="12" md="3">
-                <v-card color="primary" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Общий бюджет</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.budget) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">{{ selectedSubsidy.name }}</div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="info" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Законтрактовано</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.contracted || 0) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.contracted || 0, selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="success" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Оплачено</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.paid || 0) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.paid || 0, selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="warning" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Остаток</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.budget - (selectedSubsidy.contracted || 0)) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.budget - (selectedSubsidy.contracted || 0), selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-            </v-row>
-          </v-card>
+            <v-col cols="12" md="3">
+              <v-card color="info" variant="flat" class="pa-4 h-100">
+                <div class="text-h6 text-white">Законтрактовано</div>
+                <div class="text-h3 text-white font-weight-bold mt-2">
+                  {{ formatCurrency(selectedSubsidy.contracted || 0) }}
+                </div>
+                <div class="text-caption text-white mt-2">
+                  {{ calculatePercent(selectedSubsidy.contracted || 0, selectedSubsidy.budget) }}% от бюджета
+                </div>
+              </v-card>
+            </v-col>
+            
+            <v-col cols="12" md="3">
+              <v-card color="success" variant="flat" class="pa-4 h-100">
+                <div class="text-h6 text-white">Оплачено</div>
+                <div class="text-h3 text-white font-weight-bold mt-2">
+                  {{ formatCurrency(selectedSubsidy.paid || 0) }}
+                </div>
+                <div class="text-caption text-white mt-2">
+                  {{ calculatePercent(selectedSubsidy.paid || 0, selectedSubsidy.budget) }}% от бюджета
+                </div>
+              </v-card>
+            </v-col>
+            
+            <v-col cols="12" md="3">
+              <v-card color="warning" variant="flat" class="pa-4 h-100">
+                <div class="text-h6 text-white">Остаток</div>
+                <div class="text-h3 text-white font-weight-bold mt-2">
+                  {{ formatCurrency(selectedSubsidy.budget - (selectedSubsidy.contracted || 0)) }}
+                </div>
+                <div class="text-caption text-white mt-2">
+                  {{ calculatePercent(selectedSubsidy.budget - (selectedSubsidy.contracted || 0), selectedSubsidy.budget) }}% от бюджета
+                </div>
+              </v-card>
+            </v-col>
+          </v-row>
           
           <v-divider class="my-8" />
           
@@ -411,77 +385,6 @@
       </v-card>
     </v-dialog>
     
-    <!-- Диалог редактирования субсидии -->
-    <v-dialog v-model="showEditSubsidyDialog" max-width="600">
-      <v-card>
-        <v-card-title class="text-h6">
-          <v-icon icon="mdi-pencil" class="mr-2" />
-          Редактировать субсидию
-          <v-spacer />
-          <v-btn
-            icon="mdi-close"
-            variant="text"
-            @click="showEditSubsidyDialog = false"
-          />
-        </v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="updateSubsidy">
-            <v-text-field
-              v-model="editingSubsidy.name"
-              label="Название субсидии"
-              variant="outlined"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите название']"
-            />
-            
-            <v-text-field
-              v-model="editingSubsidy.year"
-              label="Год"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите год', v => v >= 2020 || 'Год должен быть не менее 2020']"
-            />
-            
-            <v-text-field
-              v-model="editingSubsidy.budget"
-              label="Бюджет, ₽"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите бюджет', v => v > 0 || 'Бюджет должен быть больше 0']"
-              :step="1000"
-            />
-            
-            <v-textarea
-              v-model="editingSubsidy.description"
-              label="Описание"
-              variant="outlined"
-              rows="3"
-              class="mb-6"
-            />
-          </v-form>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="showEditSubsidyDialog = false">
-            Отмена
-          </v-btn>
-          <v-btn 
-            color="primary" 
-            @click="updateSubsidy"
-            :loading="updatingSubsidy"
-            :disabled="!isEditingSubsidyValid"
-          >
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-    
     <!-- Диалог добавления категории ФЭО -->
     <v-dialog v-model="showAddFeoCategoryDialog" max-width="600">
       <v-card>
@@ -612,17 +515,6 @@ const showAddSubsidyDialog = ref(false)
 const showAddFeoCategoryDialog = ref(false)
 const addingSubsidy = ref(false)
 const addingFeoCategory = ref(false)
-
-// Редактирование субсидии
-const showEditSubsidyDialog = ref(false)
-const updatingSubsidy = ref(false)
-const editingSubsidy = ref({
-  id: 0,
-  name: '',
-  year: new Date().getFullYear(),
-  budget: 0,
-  description: ''
-})
 
 // Новая субсидия
 const newSubsidy = ref({
@@ -833,12 +725,6 @@ const isNewSubsidyValid = computed(() => {
          newSubsidy.value.budget > 0
 })
 
-const isEditingSubsidyValid = computed(() => {
-  return editingSubsidy.value.name.trim() !== '' && 
-         editingSubsidy.value.year >= 2020 && 
-         editingSubsidy.value.budget > 0
-})
-
 const isNewFeoCategoryValid = computed(() => {
   return newFeoCategory.value.name.trim() !== ''
 })
@@ -889,74 +775,6 @@ const addSubsidy = async () => {
     alert('Не удалось добавить субсидию: ' + (error as Error).message)
   } finally {
     addingSubsidy.value = false
-  }
-}
-
-const editSubsidy = (subsidy: Subsidy) => {
-  editingSubsidy.value = { ...subsidy }
-  showEditSubsidyDialog.value = true
-}
-
-const updateSubsidy = async () => {
-  updatingSubsidy.value = true
-  try {
-    const response = await fetch(`/api/subsidies/${editingSubsidy.value.id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: editingSubsidy.value.name,
-        year: editingSubsidy.value.year,
-        budget: editingSubsidy.value.budget,
-        description: editingSubsidy.value.description || null
-      })
-    })
-    
-    if (response.ok) {
-      const updatedSubsidy = await response.json()
-      // Обновляем субсидию в списке
-      const index = subsidies.value.findIndex(s => s.id === updatedSubsidy.id)
-      if (index !== -1) {
-        subsidies.value[index] = {
-          ...updatedSubsidy,
-          contracted: subsidies.value[index].contracted,
-          paid: subsidies.value[index].paid
-        }
-      }
-      showEditSubsidyDialog.value = false
-      alert('Субсидия успешно обновлена!')
-    } else {
-      throw new Error('Ошибка сервера при обновлении субсидии')
-    }
-  } catch (error) {
-    console.error('Ошибка обновления субсидии:', error)
-    alert('Не удалось обновить субсидию: ' + (error as Error).message)
-  } finally {
-    updatingSubsidy.value = false
-  }
-}
-
-const deleteSubsidy = async (subsidy: Subsidy) => {
-  if (!confirm(`Удалить субсидию "${subsidy.name}"? Это действие нельзя отменить.`)) {
-    return
-  }
-  
-  try {
-    const response = await fetch(`/api/subsidies/${subsidy.id}`, {
-      method: 'DELETE'
-    })
-    
-    if (response.ok) {
-      // Удаляем субсидию из списка
-      subsidies.value = subsidies.value.filter(s => s.id !== subsidy.id)
-      alert('Субсидия успешно удалена!')
-    } else {
-      throw new Error('Ошибка сервера при удалении субсидии')
-    }
-  } catch (error) {
-    console.error('Ошибка удаления субсидии:', error)
-    alert('Не удалось удалить субсидию: ' + (error as Error).message)
   }
 }
 

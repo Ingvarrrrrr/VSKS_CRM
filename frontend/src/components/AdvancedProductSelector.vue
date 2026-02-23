@@ -67,6 +67,18 @@
       </template>
     </v-autocomplete>
 
+    <!-- Кнопка добавления нового товара -->
+    <div class="d-flex justify-end mb-4">
+      <v-btn 
+        variant="text" 
+        size="small"
+        prepend-icon="mdi-plus"
+        @click="showAddProductDialog = true"
+      >
+        Добавить новый товар (требует утверждения)
+      </v-btn>
+    </div>
+
     <!-- Детали выбранного товара -->
     <v-card v-if="selectedProduct" variant="outlined" class="mt-4 pa-4">
       <div class="d-flex justify-space-between align-start">
@@ -241,10 +253,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Диалог добавления нового товара -->
+  <AddProductDialog 
+    v-model:visible="showAddProductDialog"
+    @product-added="onProductAdded"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import AddProductDialog from './AddProductDialog.vue'
 
 interface Product {
   id: number
@@ -280,6 +299,7 @@ const unitsPerPackage = ref(1)
 const unitOfMeasure = ref('шт.')
 const activeCategory = ref<string | null>(null)
 const showQuickFilters = ref(true)
+const showAddProductDialog = ref(false)
 
 // Загрузить все товары
 const loadProducts = async () => {
@@ -456,6 +476,30 @@ watch(unitsPerPackage, () => {
 watch(unitOfMeasure, () => {
   emitProductSelected()
 })
+
+// Обработка добавления нового товара
+function onProductAdded(newProduct: any) {
+  // Добавляем товар во временный список
+  allProducts.value.push({
+    id: newProduct.id,
+    name: newProduct.name,
+    description: newProduct.description,
+    category: newProduct.category,
+    product_type: newProduct.productType,
+    photo_url: newProduct.photoUrl,
+    unit_of_measure: newProduct.unitOfMeasure,
+    units_per_package: newProduct.unitsPerPackage,
+    estimated_price: newProduct.estimatedPrice,
+    is_reusable: newProduct.isReusable,
+    is_approved_by_admin: false, // Требует утверждения
+    notes: newProduct.notes
+  })
+  
+  // Автоматически выбираем новый товар
+  selectedProductId.value = newProduct.id
+  
+  alert('Товар добавлен во временный каталог и ожидает утверждения администратором.')
+}
 
 // Загрузка данных при монтировании
 onMounted(() => {

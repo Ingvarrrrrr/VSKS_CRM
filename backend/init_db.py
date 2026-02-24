@@ -129,19 +129,8 @@ async def init_db():
             await session.refresh(level2_cat)
             print(f"Добавлен тип расходов: {level2_cat.name} (appendix={level2_cat.appendix})")
         
-        # Пропускаем создание пользователя из-за проблем с bcrypt
-        # result = await session.execute(select(User).where(User.username == "admin"))
-        # admin = result.scalar_one_or_none()
-        # if not admin:
-        #     admin = User(
-        #         username="admin",
-        #         password_hash=hash_password("admin"),
-        #         role="admin",
-        #         full_name="Администратор"
-        #     )
-        #     session.add(admin)
-        #     await session.commit()
-        #     print("Создан пользователь admin/admin")
+        # Пользователь уже создан вручную, пропускаем
+        print("Пользователь admin уже существует")
         
         print("Инициализация базы данных завершена.")
 

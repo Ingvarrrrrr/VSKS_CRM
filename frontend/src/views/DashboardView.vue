@@ -250,12 +250,14 @@
         </v-card>
       </v-col>
     </v-row>
-  </v-container>
+  <BudgetDrillDownDialog v-model="showBreakdownDialog" :subsidies="filteredSubsidies" />
+</v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -278,33 +280,28 @@ interface Subsidy {
   budget: number; contracted: number; paid: number; planned: number
 }
 
-const allSubsidies = ref<Subsidy[]>([
-  {
-    id: 1, name: 'Патриотика 2025', shortName: 'Патриотика', year: 2025,
-    description: 'Патриотическое воспитание молодёжи',
-    budget: 26_128_070, contracted: 18_450_000, paid: 12_840_200, planned: 3_200_000
-  },
-  {
-    id: 2, name: 'ДНР Восстановление 2025', shortName: 'ДНР', year: 2025,
-    description: 'Программа восстановления инфраструктуры',
-    budget: 15_000_000, contracted: 11_200_000, paid: 8_600_000, planned: 2_100_000
-  },
-  {
-    id: 3, name: 'ЗО Молодёжь 2025', shortName: 'ЗО', year: 2025,
-    description: 'Запорожская область — молодёжные проекты',
-    budget: 8_500_000, contracted: 5_100_000, paid: 3_200_000, planned: 1_800_000
-  },
-  {
-    id: 4, name: 'ФАДМ Волонтёры 2025', shortName: 'ФАДМ', year: 2025,
-    description: 'Волонтёрские программы и мероприятия',
-    budget: 12_000_000, contracted: 9_600_000, paid: 7_100_000, planned: 1_400_000
-  },
-  {
-    id: 5, name: 'МинПрос Образование 2025', shortName: 'МинПрос', year: 2025,
-    description: 'Образовательные программы и гранты',
-    budget: 19_500_000, contracted: 14_800_000, paid: 10_200_000, planned: 2_600_000
-  },
-])
+const allSubsidies = ref<Subsidy[]>([])
+
+// Загрузка субсидий с API
+const loadSubsidiesFromAPI = async () => {
+  try {
+    const response = await fetch("/api/subsidies/")
+    if (response.ok) {
+      const data = await response.json()
+      allSubsidies.value = data.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        shortName: s.name,
+        year: s.year,
+        description: s.description || "",
+        budget: s.budget || 0,
+        contracted: s.contracted || 0,
+        paid: s.paid || 0,
+        planned: s.planned || 0
+      }))
+    }
+  } catch (e) { console.error("Error loading subsidies:", e) }
+}
 
 const availableYears = computed(() => [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a))
 const filteredSubsidies = computed(() => {
@@ -365,7 +362,7 @@ function openBreakdown(key: string) {
   const cfg = fieldMap[key]
   if (!cfg) return
   
-  alert(`Разбивка: ${cfg.title}. Функция в разработке.`)
+  showBreakdownDialog.value = true
 }
 
 function openSubsidyDetail(subsidy: Subsidy) {
@@ -397,5 +394,6 @@ function formatCurrency(amount: number) {
 
 onMounted(() => {
   loadData()
+  loadSubsidiesFromAPI()
 })
 </script>

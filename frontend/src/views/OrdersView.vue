@@ -12,8 +12,11 @@
               Управление заказами и контроль бюджета
             </v-card-subtitle>
             <div>
-              <v-btn variant="outlined" prepend-icon="mdi-file-import">
+              <v-btn variant="outlined" prepend-icon="mdi-file-import" class="mr-2">
                 Импорт
+              </v-btn>
+              <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="exportToExcel">
+                Экспорт в Excel
               </v-btn>
             </div>
           </div>
@@ -304,4 +307,30 @@ const filteredOrders = computed(() => {
   
   return result
 })
+
+// Экспорт в Excel
+const exportToExcel = async () => {
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch('http://localhost:8000/api/purchases/export/excel', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    
+    if (!response.ok) throw new Error('Ошибка экспорта')
+    
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `заказы_${new Date().toISOString().slice(0,10)}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  } catch (e) {
+    alert('Ошибка экспорта: ' + e)
+  }
+}
 </script>

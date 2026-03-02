@@ -153,3 +153,19 @@ async def export_purchases_to_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+# PATCH /purchases/{id}/status - смена статуса
+@router.patch("/{purchase_id}/status")
+async def change_purchase_status(
+    purchase_id: int,
+    status: str = Body(..., embed=True),
+    db: Session = Depends(get_db)
+):
+    purchase = db.query(Purchase).filter(Purchase.id == purchase_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    
+    purchase.status = status
+    db.commit()
+    
+    return {"ok": True, "status": status}

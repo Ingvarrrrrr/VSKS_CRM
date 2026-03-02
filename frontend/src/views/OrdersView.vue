@@ -12,10 +12,36 @@
               Управление заказами и контроль бюджета
             </v-card-subtitle>
             <div>
-              <v-btn variant="outlined" prepend-icon="mdi-file-import" class="mr-2">
+              <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn variant="outlined" prepend-icon="mdi-file-import" class="mr-2">
                 Импорт
               </v-btn>
-              <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="exportToExcel">
+              <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="exportToExcel">
                 Экспорт в Excel
               </v-btn>
             </div>
@@ -70,21 +96,60 @@
                   </v-chip>
                 </td>
                 <td>
-                  <v-btn
+                  <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn
                     icon="mdi-eye"
                     variant="text"
                     size="small"
                     class="mr-2"
                     :to="`/orders/${order.id}`"
                   />
-                  <v-btn
+                  <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn
                     icon="mdi-pencil"
                     variant="text"
                     size="small"
                     class="mr-2"
                     :to="`/orders/${order.id}/edit`"
                   />
-                  <v-btn
+                  <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn
                     icon="mdi-file-document"
                     variant="text"
                     size="small"
@@ -103,7 +168,20 @@
             <p class="text-body-1 text-medium-emphasis mb-6">
               Создайте первый заказ, чтобы начать работу
             </p>
-            <v-btn color="primary" to="/create-order" prepend-icon="mdi-plus">
+            <!-- STATUS_MENU_START -->
+<v-menu>
+                    <template v-slot:activator="{ props }">
+                      <v-btn icon="mdi-swap-horizontal" variant="text" size="small" v-bind="props" class="mr-2" />
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item @click="changeStatus(order.id, 'plan')"><v-list-item-title>📋 Планируется</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'contract')"><v-list-item-title>📝 Контракт</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'delivery')"><v-list-item-title>🚚 Поставка</v-list-item-title></v-list-item>
+                      <v-list-item @click="changeStatus(order.id, 'paid')"><v-list-item-title>✅ Оплачено</v-list-item-title></v-list-item>
+                    </v-list>
+                  </v-menu>
+<!-- STATUS_MENU_END -->
+<v-btn color="primary" to="/create-order" prepend-icon="mdi-plus">
               Создать первый заказ
             </v-btn>
           </div>
@@ -281,6 +359,21 @@ const orders = ref([
 
 // Отфильтрованные заказы
 const filteredOrders = computed(() => {
+
+// Смена статуса закупки
+const changeStatus = async (id, newStatus) => {
+  try {
+    await fetch(`/api/purchases/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    })
+    loadOrders()
+  } catch (e) {
+    console.error(e)
+  }
+}
+
   let result = orders.value
   
   // Фильтр по статусу

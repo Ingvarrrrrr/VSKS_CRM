@@ -391,6 +391,94 @@
                 Отмена
               </v-btn>
             </div>
+
+          <!-- Дополнительные поля -->
+          <v-expansion-panels class="mt-4">
+            <v-expansion-panel title="Договор и закупка">
+              <v-expansion-panel-text>
+                <v-row>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="№ контракта" v-model="contractNumber" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Дата контракта" v-model="contractDate" variant="outlined" type="date" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Реестровый номер" v-model="registryNumber" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-select label="Способ закупки" v-model="purchaseMethod" variant="outlined" :items="['Единственный исполнитель','Конкурс','Аукцион','Запрос котировок']" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="ИНН контрагента" v-model="inn" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="НМЦК" v-model="nmck" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Цена договора" v-model="contractPrice" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Экономия" v-model="economy" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="Увеличение цены" v-model="priceIncrease" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-text-field label="Срок исполнения" v-model="executionTerm" variant="outlined" type="date" />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-text-field label="Срок (с изменениями)" v-model="executionTermChanged" variant="outlined" type="date" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="Страна происхождения" v-model="countryOrigin" variant="outlined" />
+                  </v-col>
+                </v-row>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+            <v-expansion-panel title="Документы приёмки">
+              <v-expansion-panel-text>
+                <v-row>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="Наименование документа" v-model="acceptanceDocName" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-text-field label="Дата документа" v-model="acceptanceDocDate" variant="outlined" type="date" />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-text-field label="№ документа" v-model="acceptanceDocNumber" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="Сумма закрывающего документа" v-model="acceptanceDocAmount" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                </v-row>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+            <v-expansion-panel title="Платёжные данные">
+              <v-expansion-panel-text>
+                <v-row>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="№ платёжного поручения" v-model="paymentDocNumber" variant="outlined" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Дата платежа" v-model="paymentDocDate" variant="outlined" type="date" />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field label="Сумма платежа" v-model="paymentAmount" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field label="В т.ч. федеральный бюджет" v-model="paymentFederal" variant="outlined" type="number" prefix="₽" />
+                  </v-col>
+                </v-row>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+            <v-expansion-panel title="Файлы">
+              <v-expansion-panel-text>
+                <v-file-input label="Загрузить файлы" variant="outlined" multiple chips accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" />
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+
           </v-form>
         </v-card>
       </v-col>

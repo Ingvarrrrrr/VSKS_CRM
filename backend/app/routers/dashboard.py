@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
+from app.models.subsidy import Subsidy
 from app.auth.jwt import get_current_user
 from app.config import settings
 from decimal import Decimal
@@ -11,7 +12,7 @@ from decimal import Decimal
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/")
-async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def dashboard(db: AsyncSession = Depends(get_db)):
     # Get all categories
     cat_result = await db.execute(select(FeoCategory).order_by(FeoCategory.level, FeoCategory.id))
     cats = cat_result.scalars().all()
@@ -80,4 +81,51 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(get_current_us
         "total_payments": total_payments,
         "remaining": settings.SUBSIDY_LIMIT - total_obligations,
         "categories": roots
+    }
+
+
+@router.get("/charts")
+async def dashboard_charts(db: AsyncSession = Depends(get_db)):
+    # Status counts for pie chart
+    status_result = await db.execute(
+        select(Purchase.status, func.count(Purchase.id).label("cnt"))
+        .group_by(Purchase.status)
+    )
+    status_counts = {row.status: row.cnt for row in status_result}
+
+    # Per-subsidy aggregated purchase data for bar chart
+    # Join directly via Purchase.subsidy_id (purchases are linked directly to subsidies in this schema)
+    subsidy_result = await db.execute(
+        select(
+            Subsidy.id,
+            Subsidy.name,
+            Subsidy.year,
+            Subsidy.budget,
+            func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total_planned"),
+            func.coalesce(func.sum(
+                case((Purchase.confirmed == True, Purchase.final_total_amount), else_=0)
+            ), 0).label("total_confirmed"),
+            func.coalesce(func.sum(Purchase.delivery_payment_amount), 0).label("total_paid"),
+        )
+        .select_from(Subsidy)
+        .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)
+        .group_by(Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget)
+        .order_by(Subsidy.year.desc(), Subsidy.name)
+    )
+
+    subsidy_stats = []
+    for row in subsidy_result:
+        subsidy_stats.append({
+            "id": row.id,
+            "name": row.name,
+            "year": row.year,
+            "budget": float(row.budget),
+            "total_planned": float(row.total_planned),
+            "total_confirmed": float(row.total_confirmed),
+            "total_paid": float(row.total_paid),
+        })
+
+    return {
+        "status_counts": status_counts,
+        "subsidy_stats": subsidy_stats,
     }

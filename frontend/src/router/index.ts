@@ -41,6 +41,18 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Новый заказ' }
     },
     {
+      path: '/orders/:id/edit',
+      name: 'edit-order',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Редактировать закупку' }
+    },
+    {
+      path: '/orders/:id',
+      name: 'view-order',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Закупка' }
+    },
+    {
       path: '/contractors',
       name: 'contractors',
       component: ContractorsView,

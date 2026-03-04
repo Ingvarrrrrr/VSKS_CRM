@@ -1,1094 +1,696 @@
 <template>
-  <v-container>
-    <v-row>
-      <v-col cols="12">
-        <v-card class="pa-6">
-          <div class="d-flex justify-space-between align-center mb-6">
-            <div>
-              <v-card-title class="text-h4 mb-2">
-                <v-icon icon="mdi-cash-multiple" class="mr-4" />Субсидии
-              </v-card-title>
-              <v-card-subtitle class="text-h6">
-                Управление субсидиями и распределение бюджета
-              </v-card-subtitle>
+  <div class="subsidies-page">
+
+    <!-- ── Header ── -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <v-icon icon="mdi-cash-multiple" size="32" color="#3B82F6" class="mr-3" />
+        <div>
+          <div class="page-title">Субсидии</div>
+          <div class="page-subtitle">Управление субсидиями и распределение бюджета · {{ selectedYear }}</div>
+        </div>
+      </div>
+      <div class="page-header-right">
+        <v-chip-group v-if="availableYears.length" v-model="selectedYear" mandatory class="year-chips mr-3">
+          <v-chip
+            v-for="year in availableYears" :key="year" :value="year"
+            filter variant="elevated" color="primary" size="small"
+          >{{ year }}</v-chip>
+        </v-chip-group>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
+          Добавить
+        </v-btn>
+      </div>
+    </div>
+
+    <!-- ── Loading ── -->
+    <div v-if="loading" class="d-flex justify-center py-16">
+      <v-progress-circular indeterminate color="primary" size="52" />
+    </div>
+
+    <template v-else>
+      <!-- ── Empty ── -->
+      <div v-if="filteredSubsidies.length === 0" class="empty-state">
+        <v-icon icon="mdi-cash-off" size="64" color="grey-lighten-2" />
+        <div class="text-h6 text-medium-emphasis mt-3">Нет субсидий за {{ selectedYear }} год</div>
+        <v-btn class="mt-4" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
+          Добавить субсидию
+        </v-btn>
+      </div>
+
+      <template v-else>
+        <!-- ── Cards grid ── -->
+        <div class="subsidies-grid">
+          <div
+            v-for="s in filteredSubsidies" :key="s.id"
+            class="subsidy-card"
+            :class="{ 'subsidy-card--active': selectedId === s.id }"
+            @click="toggleSelect(s.id)"
+          >
+            <div class="sc-header">
+              <div class="sc-name">{{ s.name }}</div>
+              <div class="sc-actions">
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(s)" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(s)" />
+              </div>
             </div>
-            <v-btn 
-              color="primary" 
-              prepend-icon="mdi-plus"
-              @click="showAddSubsidyDialog = true"
-            >
-              Добавить субсидию
-            </v-btn>
+
+            <div class="sc-budget">{{ formatCurrencyShort(s.budget) }}</div>
+            <div class="sc-budget-label">Бюджет</div>
+
+            <div class="sc-mini-row">
+              <div class="sc-mini">
+                <div class="sc-mini-label">Запланировано</div>
+                <div class="sc-mini-val" style="color: #F59E0B;">{{ formatCurrencyShort(s.planned) }}</div>
+              </div>
+              <div class="sc-mini">
+                <div class="sc-mini-label">Оплачено</div>
+                <div class="sc-mini-val" style="color: #22C55E;">{{ formatCurrencyShort(s.paid) }}</div>
+              </div>
+            </div>
+
+            <v-progress-linear
+              :model-value="pct(s.planned, s.budget)"
+              :color="progressColor(pct(s.planned, s.budget))"
+              height="6" rounded class="mt-3"
+            />
+            <div class="sc-pct">{{ pct(s.planned, s.budget) }}% запланировано</div>
           </div>
-          
-          <!-- Селектор выбора субсидии -->
-          <v-card variant="outlined" class="mb-6 pa-4">
-            <div class="d-flex align-center gap-4">
-              <div class="flex-grow-1">
-                <v-select
-                  v-model="selectedSubsidyId"
-                  :items="subsidies"
-                  item-title="name"
-                  item-value="id"
-                  label="Выберите субсидию"
-                  variant="outlined"
-                  :loading="loadingSubsidies"
-                  @update:model-value="loadFeoCategories"
-                >
-                  <template v-slot:item="{ props, item }">
-                    <v-list-item v-bind="props">
-                      <v-list-item-title>{{ item.raw.name }}</v-list-item-title>
-                      <v-list-item-subtitle>
-                        Бюджет: {{ formatCurrency(item.raw.budget) }} 
-                        • Год: {{ item.raw.year }}
-                      </v-list-item-subtitle>
-                    </v-list-item>
-                  </template>
-                </v-select>
-              </div>
-              
-              <!-- Индикатор свободных средств -->
-              <div v-if="selectedSubsidy" class="text-right">
-                <div class="text-caption text-medium-emphasis">Свободные средства</div>
-                <div 
-                  class="text-h5 font-weight-bold" 
-                  :class="availableFunds >= 0 ? 'text-success' : 'text-error'"
-                >
-                  {{ availableFunds >= 0 ? 'Свободны' : 'Не хватает' }}
-                  {{ formatCurrency(Math.abs(availableFunds)) }}
-                </div>
-              </div>
+        </div>
+
+        <!-- ── Summary bar ── -->
+        <div class="summary-bar">
+          <div class="summary-item">
+            <span class="summary-label">Субсидий</span>
+            <span class="summary-value">{{ filteredSubsidies.length }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Итого бюджет</span>
+            <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Запланировано</span>
+            <span class="summary-value" style="color: #F59E0B;">{{ formatCurrency(totals.planned) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Оплачено</span>
+            <span class="summary-value" style="color: #22C55E;">{{ formatCurrency(totals.paid) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Свободно</span>
+            <span class="summary-value" :style="{ color: totals.budget - totals.planned < 0 ? '#EF4444' : '#3B82F6' }">
+              {{ formatCurrency(totals.budget - totals.planned) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- ── Detail panel ── -->
+        <div v-if="selectedSubsidy" class="detail-panel">
+          <div class="detail-header">
+            <v-icon icon="mdi-folder-open-outline" size="20" color="#3B82F6" class="mr-2" />
+            <span class="detail-title">{{ selectedSubsidy.name }} — направления ФЭО</span>
+            <v-btn icon="mdi-close" size="x-small" variant="text" class="ml-auto" @click="selectedId = null" />
+          </div>
+
+          <!-- KPI mini-cards for selected subsidy -->
+          <div class="detail-kpis">
+            <div class="dkpi dkpi-budget">
+              <div class="dkpi-label">Бюджет</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.budget) }}</div>
             </div>
-          </v-card>
-          
-          <!-- Основная информация о выбранной субсидии -->
-          <v-card variant="outlined" class="mb-6 pa-4" v-if="selectedSubsidy">
-            <div class="d-flex justify-space-between align-center mb-4">
-              <v-card-title class="text-h6 pa-0">
-                <v-icon icon="mdi-cash" class="mr-2" />
-                {{ selectedSubsidy.name }}
-                <v-chip color="primary" variant="flat" class="ml-2">{{ selectedSubsidy.year }}</v-chip>
-              </v-card-title>
-              <div>
-                <v-btn 
-                  icon="mdi-pencil" 
-                  variant="text" 
-                  @click="editSubsidy(selectedSubsidy)"
-                  title="Редактировать субсидию"
-                  class="mr-2"
-                />
-                <v-btn 
-                  icon="mdi-delete" 
-                  variant="text" 
-                  color="error"
-                  @click="deleteSubsidy(selectedSubsidy)"
-                  title="Удалить субсидию"
-                />
-              </div>
+            <div class="dkpi dkpi-planned">
+              <div class="dkpi-label">Запланировано</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.planned) }}</div>
             </div>
-            
-            <v-row>
-              <v-col cols="12" md="3">
-                <v-card color="primary" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Общий бюджет</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.budget) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">{{ selectedSubsidy.name }}</div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="info" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Законтрактовано</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.contracted || 0) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.contracted || 0, selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="success" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Оплачено</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.paid || 0) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.paid || 0, selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-              
-              <v-col cols="12" md="3">
-                <v-card color="warning" variant="flat" class="pa-4 h-100">
-                  <div class="text-h6 text-white">Остаток</div>
-                  <div class="text-h3 text-white font-weight-bold mt-2">
-                    {{ formatCurrency(selectedSubsidy.budget - (selectedSubsidy.contracted || 0)) }}
-                  </div>
-                  <div class="text-caption text-white mt-2">
-                    {{ calculatePercent(selectedSubsidy.budget - (selectedSubsidy.contracted || 0), selectedSubsidy.budget) }}% от бюджета
-                  </div>
-                </v-card>
-              </v-col>
-            </v-row>
-          </v-card>
-          
-          <v-divider class="my-8" />
-          
+            <div class="dkpi dkpi-paid">
+              <div class="dkpi-label">Оплачено</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
+            </div>
+            <div class="dkpi dkpi-free" :class="selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
+              <div class="dkpi-label">{{ selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedSubsidy.budget - selectedSubsidy.planned)) }}</div>
+            </div>
+          </div>
+
+          <!-- FEO categories -->
+          <div v-if="loadingFeo" class="d-flex justify-center py-8">
+            <v-progress-circular indeterminate color="primary" />
+          </div>
+
+          <div v-else>
+            <div class="detail-feo-header">
+              <span class="chart-card-title">Категории ФЭО</span>
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="ml-auto" @click="showAddFeoDialog = true">
+                Добавить направление
+              </v-btn>
+            </div>
+
+            <div v-if="feoCategories.length === 0" class="feo-empty">
+              <v-icon icon="mdi-folder-off" size="40" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>
+            </div>
+
+            <v-table v-else density="compact" class="feo-table">
+              <thead>
+                <tr>
+                  <th>Направление</th>
+                  <th class="text-center" style="width: 90px;">Уровень</th>
+                  <th style="width: 120px;">Код</th>
+                  <th style="width: 120px;">Приложение</th>
+                  <th class="text-center" style="width: 80px;">Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="cat in feoCategories" :key="cat.id" class="feo-row">
+                  <td>
+                    <div class="d-flex align-center" :style="{ paddingLeft: `${(cat.level - 1) * 20}px` }">
+                      <v-icon
+                        :icon="cat.level === 1 ? 'mdi-folder' : cat.level === 2 ? 'mdi-folder-open' : 'mdi-file-document-outline'"
+                        :color="cat.level === 1 ? '#3B82F6' : cat.level === 2 ? '#F59E0B' : '#22C55E'"
+                        size="16" class="mr-2 flex-shrink-0"
+                      />
+                      <span class="feo-name">{{ cat.name }}</span>
+                    </div>
+                  </td>
+                  <td class="text-center">
+                    <v-chip size="x-small" :color="['', 'primary', 'warning', 'success'][cat.level]" variant="flat">
+                      Ур. {{ cat.level }}
+                    </v-chip>
+                  </td>
+                  <td class="text-caption text-medium-emphasis">{{ cat.code || '—' }}</td>
+                  <td class="text-caption text-medium-emphasis">{{ cat.appendix || '—' }}</td>
+                  <td class="text-center">
+                    <v-icon
+                      :icon="cat.is_active ? 'mdi-check-circle-outline' : 'mdi-circle-off-outline'"
+                      :color="cat.is_active ? 'success' : 'grey'"
+                      size="18"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+        </div>
+
+      </template>
+    </template>
+
+    <!-- ── Add Subsidy Dialog ── -->
+    <v-dialog v-model="showAddDialog" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-plus-circle-outline" color="primary" class="mr-2" />
+          Добавить субсидию
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-text-field v-model="form.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
           <v-row>
-            <!-- Категории ФЭО для выбранной субсидии -->
-            <v-col cols="12" md="6">
-              <v-card variant="outlined" class="pa-4 h-100">
-                <div class="d-flex justify-space-between align-center mb-4">
-                  <v-card-title class="text-h6">
-                    Категории ФЭО (направления расходов)
-                  </v-card-title>
-                  <v-btn 
-                    color="primary" 
-                    variant="text"
-                    size="small"
-                    prepend-icon="mdi-plus"
-                    @click="showAddFeoCategoryDialog = true"
-                  >
-                    Добавить направление
-                  </v-btn>
-                </div>
-                
-                <div v-if="loadingFeoCategories" class="text-center py-8">
-                  <v-progress-circular indeterminate color="primary" />
-                </div>
-                
-                <div v-else-if="feoCategories.length === 0" class="text-center py-8 text-medium-emphasis">
-                  <v-icon icon="mdi-folder-off" size="48" class="mb-2" />
-                  <div>Нет категорий ФЭО</div>
-                  <v-btn 
-                    color="primary" 
-                    variant="text"
-                    size="small"
-                    class="mt-2"
-                    @click="showAddFeoCategoryDialog = true"
-                  >
-                    Добавить первую категорию
-                  </v-btn>
-                </div>
-                
-                <div v-else>
-                  <v-table density="compact">
-                    <thead>
-                      <tr>
-                        <th>Название</th>
-                        <th>Уровень</th>
-                        <th>Бюджет</th>
-                        <th>Использовано</th>
-                        <th>Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="category in feoCategories" :key="category.id">
-                        <td>
-                          <div :style="{ marginLeft: `${(category.level - 1) * 20}px` }">
-                            <v-icon v-if="category.level === 1" icon="mdi-folder" color="primary" class="mr-2" />
-                            <v-icon v-else-if="category.level === 2" icon="mdi-folder-open" color="info" class="mr-2" />
-                            <v-icon v-else icon="mdi-file-document" color="success" class="mr-2" />
-                            {{ category.name }}
-                          </div>
-                        </td>
-                        <td>{{ category.level }}</td>
-                        <td>{{ formatCurrency(category.budget || 0) }}</td>
-                        <td>{{ formatCurrency(category.used || 0) }}</td>
-                        <td>
-                          <v-btn
-                            icon="mdi-pencil"
-                            variant="text"
-                            size="x-small"
-                            @click="editFeoCategory(category)"
-                            class="mr-2"
-                          />
-                          <v-btn
-                            icon="mdi-cash-sync"
-                            variant="text"
-                            size="x-small"
-                            @click="startReallocation(category)"
-                          />
-                        </td>
-                      </tr>
-                    </tbody>
-                  </v-table>
-                </div>
-              </v-card>
+            <v-col cols="6">
+              <v-text-field v-model.number="form.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
-            
-            <!-- Перераспределение бюджета -->
-            <v-col cols="12" md="6">
-              <v-card variant="outlined" class="pa-4 h-100">
-                <div class="d-flex justify-space-between align-center mb-4">
-                  <v-card-title class="text-h6">
-                    Перераспределение бюджета
-                  </v-card-title>
-                  <v-chip 
-                    :color="budgetChangeStatus.color" 
-                    size="small"
-                    :prepend-icon="budgetChangeStatus.icon"
-                  >
-                    {{ budgetChangeStatus.text }}
-                  </v-chip>
-                </div>
-                
-                <div v-if="!selectedSubsidy" class="text-center py-8 text-medium-emphasis">
-                  <v-icon icon="mdi-cash-remove" size="48" class="mb-2" />
-                  <div>Выберите субсидию для работы с бюджетом</div>
-                </div>
-                
-                <v-form v-else @submit.prevent="reallocateBudget">
-                  <v-select
-                    v-model="reallocation.categoryId"
-                    :items="feoCategories.filter(c => c.level === 1)"
-                    item-title="name"
-                    item-value="id"
-                    label="Направление расходов"
-                    variant="outlined"
-                    class="mb-4"
-                    :loading="loadingFeoCategories"
-                    required
-                    :rules="[v => !!v || 'Выберите направление расходов']"
-                    @update:model-value="onCategorySelected"
-                  >
-                    <template v-slot:item="{ props, item }">
-                      <v-list-item v-bind="props">
-                        <v-list-item-title>{{ item.raw.name }}</v-list-item-title>
-                        <v-list-item-subtitle>
-                          Текущий бюджет: {{ formatCurrency(item.raw.budget || 0) }}
-                          • Использовано: {{ formatCurrency(item.raw.used || 0) }}
-                        </v-list-item-subtitle>
-                      </v-list-item>
-                    </template>
-                  </v-select>
-                  
-                  <!-- Текущая сумма направления -->
-                  <v-card variant="tonal" class="mb-4 pa-3">
-                    <div class="d-flex justify-space-between align-center">
-                      <div class="text-caption">Текущий бюджет направления:</div>
-                      <div class="text-h6 font-weight-bold">
-                        {{ formatCurrency(selectedCategoryBudget) }}
-                      </div>
-                    </div>
-                    <div v-if="selectedCategoryUsed" class="d-flex justify-space-between align-center mt-1">
-                      <div class="text-caption">Из них использовано:</div>
-                      <div class="text-body-1">{{ formatCurrency(selectedCategoryUsed) }}</div>
-                    </div>
-                  </v-card>
-                  
-                  <v-text-field
-                    v-model.number="reallocation.newAmount"
-                    label="Новая сумма, ₽"
-                    variant="outlined"
-                    type="number"
-                    class="mb-4"
-                    required
-                    :rules="[v => v !== null || 'Введите сумму', v => v >= 0 || 'Сумма не может быть отрицательной']"
-                    :step="1000"
-                    :min="0"
-                  />
-                  
-                  <!-- Результат перераспределения -->
-                  <v-card 
-                    v-if="reallocation.newAmount !== null" 
-                    :color="reallocationResult.color" 
-                    variant="flat"
-                    class="mb-4 pa-4"
-                  >
-                    <div class="text-center">
-                      <div class="text-h6 font-weight-bold text-white">
-                        {{ reallocationResult.title }}
-                      </div>
-                      <div class="text-h4 font-weight-bold text-white mt-2">
-                        {{ formatCurrency(Math.abs(reallocationResult.amount)) }}
-                      </div>
-                      <div class="text-caption text-white mt-1">
-                        {{ reallocationResult.description }}
-                      </div>
-                    </div>
-                  </v-card>
-                  
-                  <v-textarea
-                    v-model="reallocation.justification"
-                    label="Обоснование изменения бюджета"
-                    variant="outlined"
-                    rows="3"
-                    class="mb-6"
-                    required
-                    :rules="[v => !!v || 'Укажите обоснование']"
-                  />
-                  
-                  <v-btn 
-                    color="primary" 
-                    type="submit"
-                    block
-                    :loading="reallocatingBudget"
-                    :disabled="!isReallocationValid"
-                  >
-                    Сохранить изменения
-                  </v-btn>
-                </v-form>
-              </v-card>
+            <v-col cols="6">
+              <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
-        </v-card>
-      </v-col>
-    </v-row>
-    
-    <!-- Диалог добавления субсидии -->
-    <v-dialog v-model="showAddSubsidyDialog" max-width="600">
-      <v-card>
-        <v-card-title class="text-h6">
-          <v-icon icon="mdi-plus" class="mr-2" />
-          Добавить субсидию
-          <v-spacer />
-          <v-btn
-            icon="mdi-close"
-            variant="text"
-            @click="showAddSubsidyDialog = false"
-          />
-        </v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="addSubsidy">
-            <v-text-field
-              v-model="newSubsidy.name"
-              label="Название субсидии"
-              variant="outlined"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите название']"
-            />
-            
-            <v-text-field
-              v-model="newSubsidy.year"
-              label="Год"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите год', v => v >= 2020 || 'Год должен быть не менее 2020']"
-            />
-            
-            <v-text-field
-              v-model="newSubsidy.budget"
-              label="Бюджет, ₽"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите бюджет', v => v > 0 || 'Бюджет должен быть больше 0']"
-              :step="1000"
-            />
-            
-            <v-textarea
-              v-model="newSubsidy.description"
-              label="Описание"
-              variant="outlined"
-              rows="3"
-              class="mb-6"
-            />
-          </v-form>
+          <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
-        <v-card-actions>
+        <v-card-actions class="px-4 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="showAddSubsidyDialog = false">
-            Отмена
-          </v-btn>
-          <v-btn 
-            color="primary" 
-            @click="addSubsidy"
-            :loading="addingSubsidy"
-            :disabled="!isNewSubsidyValid"
-          >
+          <v-btn variant="text" @click="showAddDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.budget" @click="addSubsidy">
             Добавить
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-    
-    <!-- Диалог редактирования субсидии -->
-    <v-dialog v-model="showEditSubsidyDialog" max-width="600">
-      <v-card>
-        <v-card-title class="text-h6">
-          <v-icon icon="mdi-pencil" class="mr-2" />
+
+    <!-- ── Edit Subsidy Dialog ── -->
+    <v-dialog v-model="showEditDialog" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
           Редактировать субсидию
-          <v-spacer />
-          <v-btn
-            icon="mdi-close"
-            variant="text"
-            @click="showEditSubsidyDialog = false"
-          />
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditDialog = false" />
         </v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="updateSubsidy">
-            <v-text-field
-              v-model="editingSubsidy.name"
-              label="Название субсидии"
-              variant="outlined"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите название']"
-            />
-            
-            <v-text-field
-              v-model="editingSubsidy.year"
-              label="Год"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите год', v => v >= 2020 || 'Год должен быть не менее 2020']"
-            />
-            
-            <v-text-field
-              v-model="editingSubsidy.budget"
-              label="Бюджет, ₽"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите бюджет', v => v > 0 || 'Бюджет должен быть больше 0']"
-              :step="1000"
-            />
-            
-            <v-textarea
-              v-model="editingSubsidy.description"
-              label="Описание"
-              variant="outlined"
-              rows="3"
-              class="mb-6"
-            />
-          </v-form>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-text-field v-model="editForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model.number="editForm.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
+            </v-col>
+          </v-row>
+          <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
-        <v-card-actions>
+        <v-card-actions class="px-4 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="showEditSubsidyDialog = false">
-            Отмена
-          </v-btn>
-          <v-btn 
-            color="primary" 
-            @click="updateSubsidy"
-            :loading="updatingSubsidy"
-            :disabled="!isEditingSubsidyValid"
-          >
+          <v-btn variant="text" @click="showEditDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.budget" @click="updateSubsidy">
             Сохранить
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-    
-    <!-- Диалог добавления категории ФЭО -->
-    <v-dialog v-model="showAddFeoCategoryDialog" max-width="600">
-      <v-card>
-        <v-card-title class="text-h6">
-          <v-icon icon="mdi-folder-plus" class="mr-2" />
-          Добавить направление расходов
-          <v-spacer />
-          <v-btn
-            icon="mdi-close"
-            variant="text"
-            @click="showAddFeoCategoryDialog = false"
-          />
+
+    <!-- ── Delete confirm ── -->
+    <v-dialog v-model="showDeleteDialog" max-width="420">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
+          Удалить субсидию
         </v-card-title>
-        <v-card-text>
-          <v-form @submit.prevent="addFeoCategory">
-            <v-select
-              v-model="newFeoCategory.parentId"
-              :items="feoCategories.filter(c => c.level < 3)"
-              item-title="name"
-              item-value="id"
-              label="Родительская категория (необязательно)"
-              variant="outlined"
-              class="mb-4"
-              clearable
-            >
-              <template v-slot:item="{ props, item }">
-                <v-list-item v-bind="props">
-                  <v-list-item-title>
-                    <span :style="{ marginLeft: `${(item.raw.level - 1) * 20}px` }">
-                      {{ item.raw.name }}
-                    </span>
-                  </v-list-item-title>
-                </v-list-item>
-              </template>
-            </v-select>
-            
-            <v-text-field
-              v-model="newFeoCategory.name"
-              label="Название направления"
-              variant="outlined"
-              class="mb-4"
-              required
-              :rules="[v => !!v || 'Введите название']"
-            />
-            
-            <v-text-field
-              v-model="newFeoCategory.code"
-              label="Код (необязательно)"
-              variant="outlined"
-              class="mb-4"
-            />
-            
-            <v-text-field
-              v-model="newFeoCategory.budget"
-              label="Бюджет, ₽"
-              variant="outlined"
-              type="number"
-              class="mb-4"
-              :step="1000"
-              :min="0"
-            />
-            
-            <v-text-field
-              v-model="newFeoCategory.appendix"
-              label="Приложение (необязательно)"
-              variant="outlined"
-              class="mb-6"
-            />
-          </v-form>
+        <v-divider />
+        <v-card-text class="pt-4">
+          Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.
         </v-card-text>
-        <v-card-actions>
+        <v-card-actions class="px-4 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="showAddFeoCategoryDialog = false">
-            Отмена
-          </v-btn>
-          <v-btn 
-            color="primary" 
-            @click="addFeoCategory"
-            :loading="addingFeoCategory"
-            :disabled="!isNewFeoCategoryValid"
-          >
+          <v-btn variant="text" @click="showDeleteDialog = false">Отмена</v-btn>
+          <v-btn color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Add FEO category dialog ── -->
+    <v-dialog v-model="showAddFeoDialog" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-folder-plus-outline" color="primary" class="mr-2" />
+          Добавить направление ФЭО
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddFeoDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-select
+            v-model="feoForm.parentId"
+            :items="feoCategories.filter(c => c.level < 3)"
+            item-title="name" item-value="id"
+            label="Родительская категория (необязательно)"
+            variant="outlined" density="compact" clearable class="mb-3" hide-details
+          />
+          <v-text-field v-model="feoForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model="feoForm.code" label="Код" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="feoForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showAddFeoDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="savingFeo" :disabled="!feoForm.name" @click="addFeoCategory">
             Добавить
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-container>
+
+    <!-- ── Snackbar ── -->
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
+      {{ snack.text }}
+    </v-snackbar>
+
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { apiFetch } from '@/api'
 
-interface Subsidy {
-  id: number
-  name: string
-  year: number
-  budget: number
-  description?: string
-  contracted?: number  // Законтрактовано (сумма всех заказов)
-  paid?: number       // Оплачено (сумма всех платежей)
+interface SubsidyRow {
+  id: number; name: string; year: number; budget: number
+  description?: string; planned: number; paid: number; contracted: number
 }
 
 interface FeoCategory {
-  id: number
-  parent_id: number | null
-  subsidy_id: number
-  level: number
-  name: string
-  code: string | null
-  appendix: string | null
-  is_active: boolean
-  budget?: number     // Выделенный бюджет на это направление
-  used?: number       // Использовано средств
+  id: number; parent_id: number | null; subsidy_id: number
+  level: number; name: string; code: string | null; appendix: string | null; is_active: boolean
 }
 
-// Состояние
-const loadingSubsidies = ref(false)
-const loadingFeoCategories = ref(false)
-const subsidies = ref<Subsidy[]>([])
-const selectedSubsidyId = ref<number | null>(null)
-const selectedSubsidy = computed(() => {
-  return subsidies.value.find(s => s.id === selectedSubsidyId.value) || null
-})
+// ── State ─────────────────────────────────────────
+const loading    = ref(false)
+const saving     = ref(false)
+const savingFeo  = ref(false)
+const loadingFeo = ref(false)
+
+const allSubsidies  = ref<SubsidyRow[]>([])
 const feoCategories = ref<FeoCategory[]>([])
+const selectedId    = ref<number | null>(null)
+const selectedYear  = ref<number>(new Date().getFullYear())
 
-// Диалоги
-const showAddSubsidyDialog = ref(false)
-const showAddFeoCategoryDialog = ref(false)
-const addingSubsidy = ref(false)
-const addingFeoCategory = ref(false)
+const showAddDialog    = ref(false)
+const showEditDialog   = ref(false)
+const showDeleteDialog = ref(false)
+const showAddFeoDialog = ref(false)
+const deleteTarget     = ref<SubsidyRow | null>(null)
 
-// Редактирование субсидии
-const showEditSubsidyDialog = ref(false)
-const updatingSubsidy = ref(false)
-const editingSubsidy = ref({
-  id: 0,
-  name: '',
-  year: new Date().getFullYear(),
-  budget: 0,
-  description: ''
-})
+const snack = ref({ show: false, text: '', color: 'success' })
 
-// Новая субсидия
-const newSubsidy = ref({
-  name: '',
-  year: new Date().getFullYear(),
-  budget: 0,
-  description: ''
-})
+const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '' })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '' })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '' })
 
-// Новая категория ФЭО
-const newFeoCategory = ref({
-  parentId: null as number | null,
-  name: '',
-  code: '',
-  budget: 0,
-  appendix: ''
-})
+// ── Computed ──────────────────────────────────────
+const availableYears = computed(() =>
+  [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
+)
 
-// Перераспределение бюджета
-const reallocatingBudget = ref(false)
-const reallocation = ref({
-  categoryId: null as number | null,
-  newAmount: null as number | null,
-  justification: ''
-})
+const filteredSubsidies = computed(() =>
+  allSubsidies.value.filter(s => s.year === selectedYear.value)
+)
 
-// Вспомогательные функции
-const formatCurrency = (amount: number) => {
-  return amount.toLocaleString() + ' ₽'
-}
+const selectedSubsidy = computed(() =>
+  allSubsidies.value.find(s => s.id === selectedId.value) ?? null
+)
 
-const calculatePercent = (part: number, total: number) => {
-  if (!total) return 0
-  return Math.round((part / total) * 100)
-}
+const totals = computed(() => ({
+  budget:  filteredSubsidies.value.reduce((s, x) => s + x.budget,  0),
+  planned: filteredSubsidies.value.reduce((s, x) => s + x.planned, 0),
+  paid:    filteredSubsidies.value.reduce((s, x) => s + x.paid,    0),
+}))
 
-// Расчет свободных средств
-const availableFunds = computed(() => {
-  if (!selectedSubsidy.value) return 0
-  const totalBudget = selectedSubsidy.value.budget
-  const totalAllocated = feoCategories.value.reduce((sum, cat) => sum + (cat.budget || 0), 0)
-  
-  return totalBudget - totalAllocated
-})
-
-// Загрузка субсидий
-const loadSubsidies = async () => {
-  loadingSubsidies.value = true
+// ── Data load ─────────────────────────────────────
+async function loadAll() {
+  loading.value = true
   try {
-    const response = await fetch('/api/subsidies/')
-    if (response.ok) {
-      const data = await response.json()
-      subsidies.value = data.map((subsidy: Subsidy) => ({
-        ...subsidy,
-        contracted: 0,  // TODO: Загрузить реальные данные
-        paid: 0         // TODO: Загрузить реальные данные
-      }))
-      
-      // Устанавливаем первую субсидию по умолчанию
-      if (subsidies.value.length > 0 && !selectedSubsidyId.value) {
-        selectedSubsidyId.value = subsidies.value[0].id
-        await loadFeoCategories()
-      }
-    }
-  } catch (error) {
-    console.error('Ошибка загрузки субсидий:', error)
-    alert('Не удалось загрузить субсидии')
+    const charts = await apiFetch<any>('/dashboard/charts')
+    allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
+      id: s.id, name: s.name, year: s.year, budget: s.budget,
+      planned: s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+    }))
+    const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
+    if (years.length) selectedYear.value = years[0]  // always reset to most recent year
+  } catch (e) {
+    showSnack('Ошибка загрузки данных', 'error')
   } finally {
-    loadingSubsidies.value = false
+    loading.value = false
   }
 }
 
-// Загрузка категорий ФЭО
-const loadFeoCategories = async () => {
-  if (!selectedSubsidy.value) return
-  
-  loadingFeoCategories.value = true
+async function loadFeo(subsidyId: number) {
+  loadingFeo.value = true
+  feoCategories.value = []
   try {
-    const response = await fetch(`/api/feo-categories/?subsidy_id=${selectedSubsidy.value.id}`)
-    if (response.ok) {
-      const data = await response.json()
-      feoCategories.value = data.map((category: FeoCategory) => ({
-        ...category,
-        budget: getRandomBudget(category.level),  // TODO: Загрузить реальные данные
-        used: getRandomUsed(category.level)       // TODO: Загрузить реальные данные
-      }))
-    }
-  } catch (error) {
-    console.error('Ошибка загрузки категорий ФЭО:', error)
-    alert('Не удалось загрузить категории ФЭО')
+    feoCategories.value = await apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`)
+  } catch {
+    showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {
-    loadingFeoCategories.value = false
+    loadingFeo.value = false
   }
 }
 
-// Вспомогательные функции для демо-данных
-const getRandomBudget = (level: number) => {
-  if (level === 1) return Math.floor(Math.random() * 5000000) + 1000000
-  if (level === 2) return Math.floor(Math.random() * 2000000) + 500000
-  return Math.floor(Math.random() * 1000000) + 100000
+// ── Actions ───────────────────────────────────────
+function toggleSelect(id: number) {
+  if (selectedId.value === id) { selectedId.value = null; return }
+  selectedId.value = id
+  loadFeo(id)
 }
 
-const getRandomUsed = (level: number) => {
-  const budget = getRandomBudget(level)
-  return Math.round(budget * (Math.random() * 0.8 + 0.1)) // 10-90% от бюджета
+function startEdit(s: SubsidyRow) {
+  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '' }
+  showEditDialog.value = true
 }
 
-// Выбранная категория для перераспределения
-const selectedCategory = computed(() => {
-  if (!reallocation.value.categoryId) return null
-  return feoCategories.value.find(c => c.id === reallocation.value.categoryId)
-})
+function confirmDelete(s: SubsidyRow) {
+  deleteTarget.value = s
+  showDeleteDialog.value = true
+}
 
-const selectedCategoryBudget = computed(() => {
-  return selectedCategory.value?.budget || 0
-})
-
-const selectedCategoryUsed = computed(() => {
-  return selectedCategory.value?.used || 0
-})
-
-// Результат перераспределения
-const reallocationResult = computed(() => {
-  if (reallocation.value.newAmount === null || !selectedCategory.value) {
-    return {
-      title: '',
-      amount: 0,
-      description: '',
-      color: 'primary'
-    }
-  }
-  
-  const currentBudget = selectedCategory.value.budget || 0
-  const change = reallocation.value.newAmount - currentBudget
-  
-  if (change === 0) {
-    return {
-      title: 'Без изменений',
-      amount: 0,
-      description: 'Бюджет останется прежним',
-      color: 'info'
-    }
-  } else if (change > 0) {
-    // Увеличение бюджета - проверяем, есть ли свободные средства
-    if (change <= availableFunds.value) {
-      return {
-        title: 'Требуется дополнительно',
-        amount: change,
-        description: `Бюджет увеличится на ${formatCurrency(change)}`,
-        color: 'warning'
-      }
-    } else {
-      return {
-        title: 'Не хватает',
-        amount: change - availableFunds.value,
-        description: `Недостаточно свободных средств для увеличения бюджета`,
-        color: 'error'
-      }
-    }
-  } else {
-    // Уменьшение бюджета - проверяем, не меньше ли использовано
-    const newBudget = currentBudget + change  // change отрицательный
-    if (newBudget >= (selectedCategory.value.used || 0)) {
-      return {
-        title: 'Высвободится',
-        amount: Math.abs(change),
-        description: `Бюджет уменьшится на ${formatCurrency(Math.abs(change))}`,
-        color: 'success'
-      }
-    } else {
-      return {
-        title: 'Невозможно уменьшить',
-        amount: Math.abs(change),
-        description: `Невозможно уменьшить бюджет меньше использованной суммы`,
-        color: 'error'
-      }
-    }
-  }
-})
-
-// Статус изменения бюджета
-const budgetChangeStatus = computed(() => {
-  if (availableFunds.value < 0) {
-    return {
-      text: 'Превышение бюджета',
-      color: 'error',
-      icon: 'mdi-alert'
-    }
-  } else if (availableFunds.value < 100000) {
-    return {
-      text: 'Мало свободных средств',
-      color: 'warning',
-      icon: 'mdi-alert-circle'
-    }
-  } else {
-    return {
-      text: 'Достаточно свободных средств',
-      color: 'success',
-      icon: 'mdi-check-circle'
-    }
-  }
-})
-
-// Валидация форм
-const isNewSubsidyValid = computed(() => {
-  return newSubsidy.value.name.trim() !== '' && 
-         newSubsidy.value.year >= 2020 && 
-         newSubsidy.value.budget > 0
-})
-
-const isEditingSubsidyValid = computed(() => {
-  return editingSubsidy.value.name.trim() !== '' && 
-         editingSubsidy.value.year >= 2020 && 
-         editingSubsidy.value.budget > 0
-})
-
-const isNewFeoCategoryValid = computed(() => {
-  return newFeoCategory.value.name.trim() !== ''
-})
-
-const isReallocationValid = computed(() => {
-  return reallocation.value.categoryId !== null &&
-         reallocation.value.newAmount !== null &&
-         reallocation.value.newAmount >= 0 &&
-         reallocation.value.justification.trim() !== ''
-})
-
-// Методы
-const addSubsidy = async () => {
-  addingSubsidy.value = true
+async function addSubsidy() {
+  saving.value = true
   try {
-    const response = await fetch('/api/subsidies/', {
+    const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: newSubsidy.value.name,
-        year: parseInt(newSubsidy.value.year.toString()),
-        budget: parseFloat(newSubsidy.value.budget.toString()),
-        description: newSubsidy.value.description || null
-      })
+      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null })
     })
-    
-    if (response.ok) {
-      const newSubsidyData = await response.json()
-      subsidies.value.push({
-        ...newSubsidyData,
-        contracted: 0,
-        paid: 0
-      })
-      showAddSubsidyDialog.value = false
-      resetNewSubsidyForm()
-      
-      // Выбираем новую субсидию
-      selectedSubsidyId.value = newSubsidyData.id
-      await loadFeoCategories()
-      alert('Субсидия успешно добавлена!')
-    } else {
-      throw new Error('Ошибка сервера при добавлении субсидии')
-    }
-  } catch (error) {
-    console.error('Ошибка добавления субсидии:', error)
-    alert('Не удалось добавить субсидию: ' + (error as Error).message)
+    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0 })
+    showAddDialog.value = false
+    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '' }
+    showSnack('Субсидия добавлена')
+  } catch {
+    showSnack('Ошибка добавления', 'error')
   } finally {
-    addingSubsidy.value = false
+    saving.value = false
   }
 }
 
-const editSubsidy = (subsidy: Subsidy) => {
-  editingSubsidy.value = { ...subsidy }
-  showEditSubsidyDialog.value = true
-}
-
-const updateSubsidy = async () => {
-  updatingSubsidy.value = true
+async function updateSubsidy() {
+  saving.value = true
   try {
-    const response = await fetch(`/api/subsidies/${editingSubsidy.value.id}`, {
+    const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: editingSubsidy.value.name,
-        year: editingSubsidy.value.year,
-        budget: editingSubsidy.value.budget,
-        description: editingSubsidy.value.description || null
-      })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null })
     })
-    
-    if (response.ok) {
-      const updatedSubsidy = await response.json()
-      // Обновляем субсидию в списке
-      const index = subsidies.value.findIndex(s => s.id === updatedSubsidy.id)
-      if (index !== -1) {
-        subsidies.value[index] = {
-          ...updatedSubsidy,
-          contracted: subsidies.value[index].contracted,
-          paid: subsidies.value[index].paid
-        }
-      }
-      showEditSubsidyDialog.value = false
-      alert('Субсидия успешно обновлена!')
-    } else {
-      throw new Error('Ошибка сервера при обновлении субсидии')
-    }
-  } catch (error) {
-    console.error('Ошибка обновления субсидии:', error)
-    alert('Не удалось обновить субсидию: ' + (error as Error).message)
+    const i = allSubsidies.value.findIndex(s => s.id === res.id)
+    if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }
+    showEditDialog.value = false
+    showSnack('Субсидия обновлена')
+  } catch {
+    showSnack('Ошибка сохранения', 'error')
   } finally {
-    updatingSubsidy.value = false
+    saving.value = false
   }
 }
 
-const deleteSubsidy = async (subsidy: Subsidy) => {
-  if (!confirm(`Удалить субсидию "${subsidy.name}"? Это действие нельзя отменить.`)) {
-    return
-  }
-  
+async function deleteSubsidy() {
+  if (!deleteTarget.value) return
+  saving.value = true
   try {
-    const response = await fetch(`/api/subsidies/${subsidy.id}`, {
-      method: 'DELETE'
-    })
-    
-    if (response.ok) {
-      // Удаляем субсидию из списка
-      subsidies.value = subsidies.value.filter(s => s.id !== subsidy.id)
-      alert('Субсидия успешно удалена!')
-    } else {
-      throw new Error('Ошибка сервера при удалении субсидии')
-    }
-  } catch (error) {
-    console.error('Ошибка удаления субсидии:', error)
-    alert('Не удалось удалить субсидию: ' + (error as Error).message)
+    await apiFetch(`/subsidies/${deleteTarget.value.id}`, { method: 'DELETE' })
+    allSubsidies.value = allSubsidies.value.filter(s => s.id !== deleteTarget.value!.id)
+    if (selectedId.value === deleteTarget.value.id) selectedId.value = null
+    showDeleteDialog.value = false
+    showSnack('Субсидия удалена', 'warning')
+  } catch {
+    showSnack('Ошибка удаления', 'error')
+  } finally {
+    saving.value = false
   }
 }
 
-const addFeoCategory = async () => {
-  if (!selectedSubsidy.value) {
-    alert('Выберите субсидию')
-    return
-  }
-  
-  addingFeoCategory.value = true
+async function addFeoCategory() {
+  if (!selectedSubsidy.value) return
+  savingFeo.value = true
   try {
-    const response = await fetch('/api/feo-categories/', {
+    const res = await apiFetch<FeoCategory>('/feo-categories/', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
       body: JSON.stringify({
         subsidy_id: selectedSubsidy.value.id,
-        parent_id: newFeoCategory.value.parentId || null,
-        name: newFeoCategory.value.name,
-        code: newFeoCategory.value.code || null,
-        appendix: newFeoCategory.value.appendix || null,
+        parent_id: feoForm.value.parentId || null,
+        name: feoForm.value.name,
+        code: feoForm.value.code || null,
+        appendix: feoForm.value.appendix || null,
         is_active: true
       })
     })
-    
-    if (response.ok) {
-      const newCategory = await response.json()
-      feoCategories.value.push({
-        ...newCategory,
-        budget: newFeoCategory.value.budget || 0,
-        used: 0
-      })
-      showAddFeoCategoryDialog.value = false
-      resetNewFeoCategoryForm()
-      alert('Направление расходов успешно добавлено!')
-    } else {
-      throw new Error('Ошибка сервера при добавлении категории')
-    }
-  } catch (error) {
-    console.error('Ошибка добавления категории ФЭО:', error)
-    alert('Не удалось добавить направление расходов: ' + (error as Error).message)
+    feoCategories.value.push(res)
+    showAddFeoDialog.value = false
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '' }
+    showSnack('Направление добавлено')
+  } catch {
+    showSnack('Ошибка добавления направления', 'error')
   } finally {
-    addingFeoCategory.value = false
+    savingFeo.value = false
   }
 }
 
-const reallocateBudget = async () => {
-  if (!selectedSubsidy.value || !selectedCategory.value) return
-  
-  reallocatingBudget.value = true
-  try {
-    // TODO: Заменить на реальный API вызов
-    console.log('Перераспределение бюджета:', {
-      categoryId: reallocation.value.categoryId,
-      newAmount: reallocation.value.newAmount,
-      justification: reallocation.value.justification
-    })
-    
-    // Обновляем бюджет категории локально
-    const categoryIndex = feoCategories.value.findIndex(c => c.id === reallocation.value.categoryId)
-    if (categoryIndex !== -1) {
-      feoCategories.value[categoryIndex].budget = reallocation.value.newAmount || 0
-    }
-    
-    alert('Бюджет успешно перераспределен!')
-    resetReallocationForm()
-  } catch (error) {
-    console.error('Ошибка перераспределения бюджета:', error)
-    alert('Не удалось перераспределить бюджет: ' + (error as Error).message)
-  } finally {
-    reallocatingBudget.value = false
-  }
+// ── Helpers ───────────────────────────────────────
+function pct(part: number, total: number) {
+  return total ? Math.round((part / total) * 100) : 0
 }
 
-const startReallocation = (category: FeoCategory) => {
-  reallocation.value.categoryId = category.id
-  reallocation.value.newAmount = category.budget || 0
+function progressColor(p: number) {
+  if (p > 100) return '#EF4444'
+  if (p >= 80) return '#F59E0B'
+  return '#22C55E'
 }
 
-const editFeoCategory = (category: FeoCategory) => {
-  // TODO: Реализовать редактирование категории
-  console.log('Редактирование категории:', category)
-  alert('Редактирование категории еще не реализовано')
+function formatCurrency(v: number) {
+  return (v || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
 }
 
-const onCategorySelected = () => {
-  if (selectedCategory.value) {
-    reallocation.value.newAmount = selectedCategory.value.budget || 0
-  }
+function formatCurrencyShort(v: number) {
+  if (!v) return '0 ₽'
+  if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + ' млрд ₽'
+  if (Math.abs(v) >= 1_000_000)     return (v / 1_000_000).toFixed(1)     + ' млн ₽'
+  if (Math.abs(v) >= 1_000)         return (v / 1_000).toFixed(0)         + ' тыс ₽'
+  return v.toLocaleString('ru-RU') + ' ₽'
 }
 
-// Сброс форм
-const resetNewSubsidyForm = () => {
-  newSubsidy.value = {
-    name: '',
-    year: new Date().getFullYear(),
-    budget: 0,
-    description: ''
-  }
+function showSnack(text: string, color = 'success') {
+  snack.value = { show: true, text, color }
 }
 
-const resetNewFeoCategoryForm = () => {
-  newFeoCategory.value = {
-    parentId: null,
-    name: '',
-    code: '',
-    budget: 0,
-    appendix: ''
-  }
-}
-
-const resetReallocationForm = () => {
-  reallocation.value = {
-    categoryId: null,
-    newAmount: null,
-    justification: ''
-  }
-}
-
-// Загрузка при монтировании
-onMounted(() => {
-  loadSubsidies()
-})
+onMounted(loadAll)
 </script>
 
 <style scoped>
-.h-100 {
-  height: 100%;
+/* ── Layout ── */
+.subsidies-page {
+  padding: 20px 24px;
+  max-width: 1600px;
 }
 
-.gap-4 {
+/* ── Header ── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-header-left  { display: flex; align-items: center; }
+.page-header-right { display: flex; align-items: center; }
+.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+
+/* ── Empty state ── */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 64px 0; color: #9CA3AF;
+}
+
+/* ── Subsidies grid ── */
+.subsidies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
+  margin-bottom: 20px;
+}
+
+.subsidy-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.subsidy-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+.subsidy-card--active {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px rgba(0,0,0,0.1);
+}
+
+.sc-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sc-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: 4px; }
+.sc-name {
+  font-size: 14px; font-weight: 700; color: #111827;
+  line-height: 1.3; word-break: break-word;
+}
+.sc-budget      { font-size: 22px; font-weight: 700; color: #111827; }
+.sc-budget-label{ font-size: 11px; color: #9CA3AF; margin-bottom: 12px; }
+
+.sc-mini-row { display: flex; gap: 20px; }
+.sc-mini-label { font-size: 11px; color: #9CA3AF; margin-bottom: 2px; }
+.sc-mini-val   { font-size: 13px; font-weight: 600; }
+
+.sc-pct { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+
+/* ── Summary bar ── */
+.summary-bar {
+  display: flex; align-items: center; gap: 0;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.07);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  padding: 14px 24px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.summary-item  { display: flex; flex-direction: column; gap: 2px; }
+.summary-sep   { width: 1px; height: 32px; background: #E5E7EB; flex-shrink: 0; }
+.summary-label { font-size: 11px; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.04em; }
+.summary-value { font-size: 15px; font-weight: 700; color: #111827; }
+
+/* ── Detail panel ── */
+.detail-panel {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.07);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+.detail-header {
+  display: flex; align-items: center;
+  margin-bottom: 16px;
+}
+.detail-title {
+  font-size: 15px; font-weight: 600; color: #374151;
+}
+
+/* Detail KPI mini-cards */
+.detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.dkpi {
+  border-radius: 10px; padding: 14px 16px;
+  border: 1px solid rgba(0,0,0,0.07);
+  border-top: 3px solid #CBD5E1;
+}
+.dkpi-budget    { border-top-color: #3B82F6; }
+.dkpi-planned   { border-top-color: #F59E0B; }
+.dkpi-paid      { border-top-color: #22C55E; }
+.dkpi-free      { border-top-color: #8B5CF6; }
+.dkpi-over      { border-top-color: #EF4444; }
+
+.dkpi-label { font-size: 11px; color: #9CA3AF; margin-bottom: 4px; }
+.dkpi-val   { font-size: 16px; font-weight: 700; color: #111827; }
+
+/* FEO table */
+.detail-feo-header {
+  display: flex; align-items: center;
+  margin-bottom: 12px;
+}
+.chart-card-title {
+  font-size: 14px; font-weight: 600; color: #374151;
+}
+.feo-empty {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 0; color: #9CA3AF;
+}
+.feo-table thead th {
+  font-size: 11px !important; font-weight: 600 !important;
+  color: #6B7280 !important; text-transform: uppercase;
+  letter-spacing: 0.05em; background: #F9FAFB;
+  padding: 8px 12px !important;
+}
+.feo-table tbody td { padding: 9px 12px !important; }
+.feo-row:hover td  { background: #F9FAFB; }
+.feo-name {
+  font-size: 13px; font-weight: 500; color: #111827;
+}
+
+/* ── Dialogs ── */
+.dialog-card {}
+.dialog-title {
+  display: flex; align-items: center;
+  font-size: 16px !important; font-weight: 600 !important;
+  padding: 16px 20px !important;
 }
 </style>

@@ -10,7 +10,7 @@ from typing import List
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
 
 @router.get("/", response_model=List[ContractorOut])
-async def list_contractors(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def list_contractors(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Contractor).order_by(Contractor.name))
     return result.scalars().all()
 

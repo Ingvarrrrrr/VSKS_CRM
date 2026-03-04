@@ -43,9 +43,9 @@
                 class="chart-bar-wrapper"
                 @click="drillToSubsidy(sub)"
               >
-                <div 
-                  class="chart-bar" 
-                  :style="{ height: getBarHeight(sub.budget) + '%', backgroundColor: getBarColor(sub.id) }"
+                <div
+                  class="chart-bar"
+                  :style="{ height: getBarHeight(sub.budget) + 'px', backgroundColor: getBarColor(sub.id) }"
                 >
                   <span class="bar-value">{{ formatNumber(sub.budget) }}</span>
                 </div>
@@ -287,7 +287,7 @@ const maxBudget = computed(() => {
 
 const barColors = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50']
 function getBarColor(id) { return barColors[(id - 1) % barColors.length] }
-function getBarHeight(value) { return Math.max((value / maxBudget.value) * 80, 5) }
+function getBarHeight(value) { return Math.max((value / maxBudget.value) * 240, 10) }
 function getProgress(item) { return item.budget ? Math.min(((item.planned_total || 0) / item.budget) * 100, 100) : 0 }
 function formatNumber(num) {
   if (!num) return '0'

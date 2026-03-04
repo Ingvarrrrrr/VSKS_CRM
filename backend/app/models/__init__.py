@@ -2,6 +2,8 @@ from app.models.user import User
 from app.models.contractor import Contractor
 from app.models.contract import Contract
 from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
+from app.models.purchase_file import PurchaseFile
 from app.models.payment import Payment
 from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy

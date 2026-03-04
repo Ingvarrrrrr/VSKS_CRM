@@ -100,6 +100,34 @@ class ContractOut(ContractCreate):
     remaining: Optional[Decimal] = None
     model_config = {"from_attributes": True}
 
+# PurchaseItem
+class PurchaseItemCreate(BaseModel):
+    product_id: Optional[int] = None
+    item_name: str
+    item_type: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+    final_unit_price: Optional[Decimal] = None
+    final_total: Optional[Decimal] = None
+
+class PurchaseItemOut(PurchaseItemCreate):
+    id: int
+    product_name: Optional[str] = None
+    product_photo_url: Optional[str] = None
+    product_description: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+class PurchaseFileOut(BaseModel):
+    id: int
+    purchase_id: int
+    filename: str
+    mime_type: Optional[str] = None
+    size: Optional[int] = None
+    created_at: Optional[str] = None
+    model_config = {"from_attributes": True}
+
 # Purchase
 class PurchaseCreate(BaseModel):
     row_number: Optional[int] = None
@@ -113,16 +141,46 @@ class PurchaseCreate(BaseModel):
     unit: Optional[str] = None
     planned_unit_price: Optional[Decimal] = None
     planned_total_price: Optional[Decimal] = None
-    confirmed: bool = False
+    confirmed: Optional[bool] = False
     final_unit_price: Optional[Decimal] = None
     final_total_amount: Optional[Decimal] = None
     delivery_payment_amount: Optional[Decimal] = None
     contract_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
     status: str = "planned"
+    # Phase 1: extended fields
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+    registry_number: Optional[str] = None
+    purchase_method: Optional[str] = None  # 'single' | 'competitive'
+    nmck: Optional[Decimal] = None
+    contract_price: Optional[Decimal] = None
+    economy: Optional[Decimal] = None
+    price_increase: Optional[Decimal] = None
+    execution_term: Optional[date] = None
+    execution_term_changed: Optional[date] = None
+    country_origin: Optional[str] = None
+    acceptance_doc_name: Optional[str] = None
+    acceptance_doc_date: Optional[date] = None
+    acceptance_doc_number: Optional[str] = None
+    acceptance_doc_amount: Optional[Decimal] = None
+    payment_doc_number: Optional[str] = None
+    payment_doc_date: Optional[date] = None
+    payment_amount: Optional[Decimal] = None
+    payment_federal: Optional[Decimal] = None
+    total_nmck: Optional[Decimal] = None
+    items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):
     id: int
+    items: List[PurchaseItemOut] = []
+    files: List[PurchaseFileOut] = []
     model_config = {"from_attributes": True}
+
+class PurchaseOutFull(PurchaseOut):
+    contractor_name: Optional[str] = None
+    feo_category_name: Optional[str] = None
+    subsidy_name: Optional[str] = None
 
 # Payment
 class PaymentCreate(BaseModel):

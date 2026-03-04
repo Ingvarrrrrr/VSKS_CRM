@@ -1,799 +1,780 @@
 <template>
-  <v-container>
-    <v-row>
-      <v-col cols="12">
-        <v-card class="pa-6">
-          <div class="d-flex justify-space-between align-center mb-6">
-            <div>
-              <v-card-title class="text-h4 mb-2">
-                <v-icon icon="mdi-plus-circle" class="mr-4" />Новый заказ
-              </v-card-title>
-              <v-card-subtitle class="text-h6">
-                Создание нового заказа с выбором товаров
-              </v-card-subtitle>
-            </div>
-            <div>
-              <v-btn variant="outlined" to="/orders" prepend-icon="mdi-arrow-left" class="mr-2">
-                К списку заказов
-              </v-btn>
-              <v-btn variant="outlined" to="/" prepend-icon="mdi-home">
-                На дашборд
-              </v-btn>
-            </div>
+  <v-container fluid class="pa-6" style="max-width:1200px">
+    <div class="d-flex align-center justify-space-between mb-6">
+      <div>
+        <h1 class="text-h5 font-weight-bold">
+          {{ isEdit ? `Закупка #${form.purchase_number || route.params.id}` : 'Новая закупка' }}
+        </h1>
+        <div class="d-flex align-center gap-2 mt-1">
+          <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
+            {{ STATUS_LABEL[form.status] }}
+          </v-chip>
+          <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
+            Реестр: {{ form.registry_number }}
+          </span>
+        </div>
+      </div>
+      <v-btn variant="outlined" prepend-icon="mdi-arrow-left" to="/orders">К списку</v-btn>
+    </div>
+
+    <v-alert v-if="budgetInfo" :type="budgetInfo.exceeded ? 'error' : 'info'" variant="tonal" class="mb-4" density="compact">
+      <template v-if="budgetInfo.exceeded">
+        Превышение бюджета субсидии на <strong>{{ formatMoney(budgetInfo.over) }}</strong>
+      </template>
+      <template v-else>
+        Остаток бюджета субсидии: <strong>{{ formatMoney(budgetInfo.remaining) }}</strong>
+      </template>
+    </v-alert>
+
+    <v-form ref="formRef" @submit.prevent="save">
+
+      <!-- 1. Основная информация -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-select v-model="form.purchase_method"
+                :items="[{value:'single',title:'Единственный исполнитель'},{value:'competitive',title:'Конкурсная процедура'}]"
+                item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
+                label="Субсидия *" variant="outlined" density="compact"
+                :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-autocomplete
+                v-model="form.contractor_id"
+                :items="contractors"
+                item-title="name"
+                item-value="id"
+                label="Контрагент"
+                variant="outlined"
+                density="compact"
+                clearable
+                auto-select-first
+                :custom-filter="contractorFilter"
+                @update:model-value="onContractorSelect"
+              >
+                <template #item="{ item, props }">
+                  <v-list-item v-bind="props">
+                    <template #subtitle>
+                      <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+            <v-col cols="12" md="2">
+              <v-text-field
+                v-model="contractorInn"
+                label="ИНН"
+                variant="outlined"
+                density="compact"
+                maxlength="12"
+                @update:model-value="onInnInput"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-combobox
+                v-model="form.country_origin"
+                :items="COUNTRIES"
+                label="Страна происхождения"
+                variant="outlined"
+                density="compact"
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="form.feo_category_id" :items="flatFeoForSubsidy" item-title="name" item-value="id"
+                label="Категория ФЭО" variant="outlined" density="compact" clearable />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.registry_number" label="Реестровый номер"
+                variant="outlined" density="compact" :readonly="!isEdit"
+                :bg-color="!isEdit ? 'grey-lighten-4' : undefined"
+                hint="Генерируется автоматически" persistent-hint />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 2. Позиции закупки -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
+          <span>Позиции закупки</span>
+          <v-chip color="primary" variant="tonal" size="small">
+            НМЦК: {{ formatMoney(totalNmck) }}
+          </v-chip>
+        </v-card-title>
+        <v-card-text>
+          <div class="overflow-x-auto">
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th style="min-width:280px">Наименование</th>
+                  <th style="min-width:130px">Тип</th>
+                  <th style="min-width:80px">Кол-во</th>
+                  <th style="min-width:70px">Ед.</th>
+                  <th style="min-width:110px">Цена ед., ₽</th>
+                  <th style="min-width:110px">Сумма, ₽</th>
+                  <th style="width:48px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(item, idx) in items" :key="idx">
+                  <td>
+                    <v-combobox
+                      v-model="item.item_name"
+                      :items="products"
+                      item-title="name"
+                      item-value="name"
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                      clearable
+                      class="my-1"
+                      @update:model-value="(v) => onItemProductSelect(idx, v)"
+                    >
+                      <template #item="{ item: drop, props }">
+                        <v-list-item v-bind="props" :title="drop.raw?.name || drop.title">
+                          <template #prepend>
+                            <v-avatar v-if="drop.raw?.photo_url" size="36" rounded="sm" class="mr-2">
+                              <v-img :src="drop.raw.photo_url" cover />
+                            </v-avatar>
+                            <v-icon v-else size="28" class="mr-2">mdi-package-variant</v-icon>
+                          </template>
+                          <template #subtitle>
+                            <div v-if="drop.raw?.description" class="text-caption" style="max-width:340px;white-space:normal">
+                              {{ drop.raw.description.slice(0, 100) }}
+                            </div>
+                            <div v-if="drop.raw?.price" class="text-caption text-primary">
+                              {{ Number(drop.raw.price).toLocaleString('ru-RU') }} ₽
+                            </div>
+                          </template>
+                        </v-list-item>
+                      </template>
+                    </v-combobox>
+                  </td>
+                  <td>
+                    <v-select v-model="item.item_type"
+                      :items="[{value:'товар',title:'Товар'},{value:'услуга',title:'Услуга'},{value:'работа',title:'Работа'}]"
+                      item-title="title" item-value="value" density="compact" variant="outlined"
+                      hide-details class="my-1" />
+                  </td>
+                  <td>
+                    <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                      variant="outlined" hide-details class="my-1"
+                      @update:model-value="calcItemTotal(idx)" />
+                  </td>
+                  <td>
+                    <v-text-field v-model="item.unit" density="compact" variant="outlined"
+                      hide-details class="my-1" />
+                  </td>
+                  <td>
+                    <v-text-field v-model.number="item.unit_price" type="number" density="compact"
+                      variant="outlined" hide-details class="my-1"
+                      @update:model-value="calcItemTotal(idx)" />
+                  </td>
+                  <td>
+                    <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                      variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
+                  </td>
+                  <td>
+                    <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                      @click="removeItem(idx)" />
+                  </td>
+                </tr>
+                <tr v-if="!items.length">
+                  <td colspan="7" class="text-center text-medium-emphasis py-4">
+                    Нет позиций. Нажмите «Добавить позицию».
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
           </div>
-          
-          <v-alert
-            v-if="errorMessage"
-            type="error"
-            class="mb-6"
-            @click="errorMessage = ''"
-            closable
-          >
-            {{ errorMessage }}
-          </v-alert>
-          
-          <v-alert
-            v-if="successMessage"
-            type="success"
-            class="mb-6"
-            @click="successMessage = ''"
-            closable
-          >
-            {{ successMessage }}
-          </v-alert>
-          
-          <v-form @submit.prevent="saveOrder">
-            <!-- Основная информация о заказе -->
-            <v-row class="mb-8">
-              <v-col cols="12" md="6">
-                <v-text-field
-                  label="Номер заказа"
-                  v-model="orderNumber"
-                  variant="outlined"
-                  class="mb-4"
-                  required
-                  :rules="[v => !!v || 'Введите номер заказа']"
-                  placeholder="Например: ORD-2025-001"
-                />
-                
-                <v-select
-                  label="Контрагент"
-                  :items="contractors"
-                  v-model="selectedContractor"
-                  variant="outlined"
-                  class="mb-4"
-                  required
-                  :rules="[v => !!v || 'Выберите контрагента']"
-                  :loading="loadingContractors"
-                />
-                
-                <v-select
-                  label="Субсидия"
-                  :items="subsidies"
-                  item-title="name"
-                  item-value="id"
-                  v-model="selectedSubsidy"
-                  variant="outlined"
-                  class="mb-4"
-                  required
-                  :rules="[v => !!v || 'Выберите субсидию']"
-                  :loading="loadingSubsidies"
-                >
-                  <template v-slot:item="{ props, item }">
-                    <v-list-item v-bind="props">
-                      <v-list-item-title>{{ item.raw.name }}</v-list-item-title>
-                      <v-list-item-subtitle v-if="item.raw.description">
-                        {{ item.raw.description }}
-                      </v-list-item-subtitle>
-                    </v-list-item>
-                  </template>
-                </v-select>
-              </v-col>
-              
-              <v-col cols="12" md="6">
-                <v-select
-                  label="Направление расходов ФЭО"
-                  :items="feoCategories"
-                  item-title="name"
-                  item-value="id"
-                  v-model="selectedFeoCategory"
-                  variant="outlined"
-                  class="mb-4"
-                  required
-                  :rules="[v => !!v || 'Выберите направление ФЭО']"
-                  :loading="loadingFeoCategories"
-                />
-                
-                <v-select
-                  label="Тип расходов ФЭО"
-                  :items="feoTypes"
-                  v-model="selectedFeoType"
-                  variant="outlined"
-                  class="mb-4"
-                  required
-                  :rules="[v => !!v || 'Выберите тип расходов']"
-                />
-                
-                <v-textarea
-                  label="Комментарий к заказу"
-                  v-model="orderComment"
-                  variant="outlined"
-                  rows="3"
-                  class="mb-4"
-                  placeholder="Дополнительная информация о заказе..."
-                  auto-grow
-                />
-              </v-col>
-            </v-row>
-            
-            <!-- Секция товаров -->
-            <v-card variant="outlined" class="mb-8 pa-4">
-              <div class="d-flex justify-space-between align-center mb-4">
-                <div>
-                  <h3 class="text-h6">Товары в заказе</h3>
-                  <div class="text-caption text-medium-emphasis">
-                    {{ orderProducts.length }} {{ pluralize(orderProducts.length, ['товар', 'товара', 'товаров']) }}
-                  </div>
-                </div>
-                <v-btn 
-                  color="primary" 
-                  prepend-icon="mdi-plus"
-                  @click="showProductSelector = true"
-                  :loading="loadingProducts"
-                >
-                  Добавить товар
-                </v-btn>
-              </div>
-              
-              <!-- Таблица добавленных товаров -->
-              <div v-if="orderProducts.length > 0">
-                <v-table class="mb-4">
-                  <thead>
-                    <tr>
-                      <th style="width: 100px;">Фото</th>
-                      <th style="min-width: 200px;">Наименование</th>
-                      <th style="width: 200px;">Описание</th>
-                      <th style="width: 80px;">Категория</th>
-                      <th style="width: 100px;">Количество</th>
-                      <th style="width: 120px;">Цена (₽)</th>
-                      <th style="width: 120px;">Сумма (₽)</th>
-                      <th style="width: 80px;">Действия</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(item, index) in orderProducts" :key="index">
-                      <td>
-                        <v-avatar v-if="item.product.photo_url" size="90">
-                          <v-img :src="item.product.photo_url" cover />
-                        </v-avatar>
-                        <v-avatar v-else color="grey-lighten-2" size="90">
-                          <v-icon icon="mdi-package-variant" color="grey-darken-1" />
-                        </v-avatar>
-                      </td>
-                      <td>
-                        <div class="font-weight-medium">{{ item.product.name }}</div>
-                        <div class="text-caption text-medium-emphasis">
-                          {{ item.unitOfMeasure }} · {{ item.unitsPerPackage }} шт./уп.
-                        </div>
-                      </td>
-                      <td>
-                        <div v-if="item.product.description" class="description-cell">
-                          <div class="description-preview text-caption" :title="item.product.description">
-                            {{ truncateText(item.product.description, 250) }}
-                          </div>
-                          <v-btn 
-                            v-if="item.product.description.length > 250"
-                            size="x-small" 
-                            variant="text" 
-                            color="primary"
-                            class="mt-1"
-                            @click="showFullDescription(item.product.description)"
-                          >
-                            Подробнее
-                          </v-btn>
-                        </div>
-                        <span v-else class="text-caption text-medium-emphasis">—</span>
-                      </td>
-                      <td>
-                        <v-chip v-if="item.product.category" size="small" color="info" variant="flat">
-                          {{ item.product.category }}
-                        </v-chip>
-                        <span v-else class="text-caption text-medium-emphasis">—</span>
-                      </td>
-                      <td>
-                        <v-text-field
-                          v-model="item.quantity"
-                          type="number"
-                          variant="outlined"
-                          density="compact"
-                          min="1"
-                          step="1"
-                          hide-details
-                          style="max-width: 90px;"
-                        />
-                      </td>
-                      <td>
-                        <v-text-field
-                          v-model="item.price"
-                          type="number"
-                          variant="outlined"
-                          density="compact"
-                          min="0"
-                          step="0.01"
-                          hide-details
-                          style="max-width: 120px;"
-                        />
-                      </td>
-                      <td class="font-weight-medium">
-                        {{ formatCurrency(item.quantity * item.price) }}
-                      </td>
-                      <td>
-                        <v-btn
-                          icon="mdi-delete"
-                          variant="text"
-                          size="small"
-                          color="error"
-                          @click="removeProduct(index)"
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                </v-table>
-                
-                <!-- Итоговая сумма -->
-                <div class="d-flex justify-end">
-                  <v-card variant="outlined" class="pa-4">
-                    <div class="text-right">
-                      <div class="text-caption text-medium-emphasis">Общая сумма заказа</div>
-                      <div class="text-h5 font-weight-bold">
-                        {{ formatCurrency(orderTotal) }}
-                      </div>
-                      <div class="text-caption">
-                        {{ orderProducts.length }} {{ pluralize(orderProducts.length, ['товар', 'товара', 'товаров']) }}
-                      </div>
-                    </div>
-                  </v-card>
-                </div>
-              </div>
-              
-              <!-- Сообщение при отсутствии товаров -->
-              <div v-else class="text-center py-8 text-medium-emphasis">
-                <v-icon icon="mdi-package-variant-closed" size="48" class="mb-2" />
-                <div>Нет добавленных товаров</div>
-                <div class="text-caption mt-1">Нажмите "Добавить товар" для начала работы</div>
-              </div>
-            </v-card>
-            
-            <!-- Модальное окно выбора товара -->
-            <v-dialog v-model="showProductSelector" max-width="900" persistent>
-              <v-card>
-                <v-card-title class="text-h6">
-                  <v-icon icon="mdi-package-variant" class="mr-2" />
-                  Выбор товара
-                  <v-spacer />
-                  <v-btn
-                    icon="mdi-close"
-                    variant="text"
-                    @click="showProductSelector = false"
-                  />
-                </v-card-title>
-                <v-card-text class="pt-4">
-                  <advanced-product-selector
-                    ref="productSelectorRef"
-                    @product-selected="onProductSelectedFromSelector"
-                  />
-                </v-card-text>
-                <v-card-actions>
-                  <v-spacer />
-                  <v-btn variant="text" @click="showProductSelector = false">
-                    Отмена
-                  </v-btn>
-                  <v-btn 
-                    color="primary" 
-                    @click="addProductFromSelector"
-                    :disabled="!selectedProductFromSelector"
-                    :loading="addingProduct"
-                  >
-                    Добавить в заказ
-                  </v-btn>
-                </v-card-actions>
-              </v-card>
-            </v-dialog>
-            
-            <!-- Модальное окно полного описания -->
-            <v-dialog v-model="showDescriptionDialog" max-width="800">
-              <v-card>
-                <v-card-title class="text-h6">
-                  <v-icon icon="mdi-text" class="mr-2" />
-                  Полное описание товара
-                  <v-spacer />
-                  <v-btn
-                    icon="mdi-close"
-                    variant="text"
-                    @click="showDescriptionDialog = false"
-                  />
-                </v-card-title>
-                <v-card-text>
-                  <div class="pre-formatted text-body-1 pa-4" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">
-                    {{ fullDescription }}
-                  </div>
-                </v-card-text>
-                <v-card-actions>
-                  <v-spacer />
-                  <v-btn color="primary" @click="showDescriptionDialog = false">
-                    Закрыть
-                  </v-btn>
-                </v-card-actions>
-              </v-card>
-            </v-dialog>
-            
-            <!-- Бюджетная информация -->
-            <v-card variant="outlined" class="mb-8 pa-4">
-              <div class="d-flex justify-space-between align-center mb-2">
-                <span class="text-subtitle-2">Бюджетная информация</span>
-                <v-chip 
-                  :color="budgetStatus.color" 
-                  size="small"
-                  :prepend-icon="budgetStatus.icon"
-                >
-                  {{ budgetStatus.text }}
-                </v-chip>
-              </div>
-              
-              <div class="text-body-2">
-                <div class="d-flex justify-space-between mb-1">
-                  <span>Общая сумма заказа:</span>
-                  <span class="font-weight-medium">{{ formatCurrency(orderTotal) }}</span>
-                </div>
-                <div class="d-flex justify-space-between mb-1">
-                  <span>Лимит по направлению:</span>
-                  <span class="font-weight-medium">{{ formatCurrency(2800000) }}</span>
-                </div>
-                <div class="d-flex justify-space-between">
-                  <span>Остаток после заказа:</span>
-                  <span :class="budgetRemaining >= 0 ? 'text-success' : 'text-error'">
-                    {{ formatCurrency(budgetRemaining) }}
-                  </span>
-                </div>
-              </div>
-              
-              <v-alert 
-                v-if="budgetRemaining < 0"
-                type="warning" 
-                variant="tonal" 
-                class="mt-4"
-                icon="mdi-alert"
-              >
-                Внимание! Сумма заказа превышает лимит по направлению на {{ formatCurrency(Math.abs(budgetRemaining)) }}
-              </v-alert>
-            </v-card>
-            
-            <!-- Кнопки действий -->
-            <div class="d-flex">
-              <v-btn 
-                color="primary" 
-                type="submit"
-                :disabled="orderProducts.length === 0 || !isFormValid || savingOrder"
-                :loading="savingOrder"
-                class="mr-4"
-                prepend-icon="mdi-content-save"
-                size="large"
-              >
-                Сохранить заказ
-              </v-btn>
-              <v-btn 
-                variant="outlined" 
-                to="/orders" 
-                prepend-icon="mdi-close"
-                :disabled="savingOrder"
-                size="large"
-              >
-                Отмена
-              </v-btn>
-            </div>
+          <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" class="mt-3"
+            @click="addItem">
+            Добавить позицию
+          </v-btn>
+        </v-card-text>
+      </v-card>
 
-          <!-- Дополнительные поля -->
-          <v-expansion-panels class="mt-4">
-            <v-expansion-panel title="Договор и закупка">
-              <v-expansion-panel-text>
-                <v-row>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="№ контракта" v-model="contractNumber" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Дата контракта" v-model="contractDate" variant="outlined" type="date" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Реестровый номер" v-model="registryNumber" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-select label="Способ закупки" v-model="purchaseMethod" variant="outlined" :items="['Единственный исполнитель','Конкурс','Аукцион','Запрос котировок']" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="ИНН контрагента" v-model="inn" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="НМЦК" v-model="nmck" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Цена договора" v-model="contractPrice" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Экономия" v-model="economy" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="Увеличение цены" v-model="priceIncrease" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                  <v-col cols="12" md="3">
-                    <v-text-field label="Срок исполнения" v-model="executionTerm" variant="outlined" type="date" />
-                  </v-col>
-                  <v-col cols="12" md="3">
-                    <v-text-field label="Срок (с изменениями)" v-model="executionTermChanged" variant="outlined" type="date" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="Страна происхождения" v-model="countryOrigin" variant="outlined" />
-                  </v-col>
-                </v-row>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-            <v-expansion-panel title="Документы приёмки">
-              <v-expansion-panel-text>
-                <v-row>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="Наименование документа" v-model="acceptanceDocName" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="3">
-                    <v-text-field label="Дата документа" v-model="acceptanceDocDate" variant="outlined" type="date" />
-                  </v-col>
-                  <v-col cols="12" md="3">
-                    <v-text-field label="№ документа" v-model="acceptanceDocNumber" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="Сумма закрывающего документа" v-model="acceptanceDocAmount" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                </v-row>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-            <v-expansion-panel title="Платёжные данные">
-              <v-expansion-panel-text>
-                <v-row>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="№ платёжного поручения" v-model="paymentDocNumber" variant="outlined" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Дата платежа" v-model="paymentDocDate" variant="outlined" type="date" />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field label="Сумма платежа" v-model="paymentAmount" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field label="В т.ч. федеральный бюджет" v-model="paymentFederal" variant="outlined" type="number" prefix="₽" />
-                  </v-col>
-                </v-row>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-            <v-expansion-panel title="Файлы">
-              <v-expansion-panel-text>
-                <v-file-input label="Загрузить файлы" variant="outlined" multiple chips accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" />
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
+      <!-- 3. Финансы -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Финансовые показатели</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-text-field :model-value="formatMoney(totalNmck)" label="НМЦК (итого)" variant="outlined"
+                density="compact" readonly bg-color="grey-lighten-4" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model.number="form.contract_price" label="Цена договора" variant="outlined"
+                density="compact" type="number" suffix="₽" @update:model-value="calcEconomy" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
+                density="compact" suffix="₽" readonly bg-color="grey-lighten-4" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model.number="form.price_increase" label="Увеличение цены (доп. соглашения)"
+                variant="outlined" density="compact" type="number" suffix="₽" />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
 
-          </v-form>
-        </v-card>
-      </v-col>
-    </v-row>
+      <!-- 4. Договор -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Договор</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_number" label="Номер договора" variant="outlined" density="compact"
+                :hint="needsContract ? 'Обязательно для перехода в статус Договор' : ''" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_date" label="Дата договора" variant="outlined"
+                density="compact" type="date"
+                :rules="contractDateRules" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+                density="compact" type="date"
+                :rules="executionTermRules" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.execution_term_changed" label="Срок (с учётом изменений)"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 5. Акт приёмки -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Акт приёмки</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="form.acceptance_doc_name" label="Наименование документа" variant="outlined" density="compact"
+                :hint="needsAcceptance ? 'Обязательно для перехода в статус Поставлено' : ''" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.acceptance_doc_number" label="Номер акта" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.acceptance_doc_date" label="Дата акта" variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model.number="form.acceptance_doc_amount" label="Сумма акта" variant="outlined"
+                density="compact" type="number" suffix="₽" />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 6. Платёж -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Платёж</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.payment_doc_number" label="Номер платёжного поручения" variant="outlined" density="compact"
+                :hint="needsPayment ? 'Обязательно для перехода в статус Оплачено' : ''" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.payment_doc_date" label="Дата ПП" variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model.number="form.payment_amount" label="Сумма платежа" variant="outlined"
+                density="compact" type="number" suffix="₽" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model.number="form.payment_federal" label="в т.ч. федеральный бюджет" variant="outlined"
+                density="compact" type="number" suffix="₽" />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 7. Файлы (только в режиме редактирования) -->
+      <v-card v-if="isEdit" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
+        <v-card-text>
+          <div class="d-flex align-center gap-3 mb-3">
+            <v-btn prepend-icon="mdi-upload" variant="tonal" size="small"
+              :loading="uploading" @click="fileInputEl?.click()">
+              Загрузить файл
+            </v-btn>
+            <span class="text-caption text-medium-emphasis">PDF, Word, JPEG, PNG</span>
+          </div>
+          <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            style="display:none" @change="uploadFile" />
+
+          <v-list v-if="uploadedFiles.length" density="compact" lines="one">
+            <v-list-item v-for="f in uploadedFiles" :key="f.id"
+              :prepend-icon="fileIcon(f.mime_type)"
+              :title="f.filename"
+              :subtitle="formatSize(f.size)"
+            >
+              <template #append>
+                <v-btn icon="mdi-download" variant="text" size="small" @click="downloadFile(f.id, f.filename)" />
+                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                  @click="deleteFile(f.id)" />
+              </template>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-caption text-medium-emphasis">Нет загруженных файлов</div>
+        </v-card-text>
+      </v-card>
+
+      <!-- Кнопки -->
+      <div class="d-flex gap-3 mt-4 flex-wrap">
+        <v-btn type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
+          {{ isEdit ? 'Сохранить' : 'Создать закупку' }}
+        </v-btn>
+        <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
+          variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
+          → {{ STATUS_LABEL[nextStatusTarget] }}
+        </v-btn>
+        <v-btn variant="outlined" to="/orders" size="large">Отмена</v-btn>
+      </div>
+    </v-form>
+
+    <!-- Диалог подтверждения превышения бюджета -->
+    <v-dialog v-model="budgetOverrideDialog" max-width="480">
+      <v-card>
+        <v-card-title class="text-h6 d-flex align-center ga-2">
+          <v-icon color="warning">mdi-alert</v-icon>
+          Превышение бюджета субсидии
+        </v-card-title>
+        <v-card-text>
+          <v-alert type="warning" variant="tonal" class="mb-3">
+            Сумма закупки превышает остаток бюджета субсидии на
+            <strong>{{ budgetInfo ? formatMoney(budgetInfo.over) : '' }}</strong>.
+          </v-alert>
+          Как администратор вы можете сохранить закупку с превышением бюджета.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="outlined" @click="budgetOverrideDialog = false">Отмена</v-btn>
+          <v-btn color="warning" variant="flat" :loading="saving" @click="doSave(true)">
+            Сохранить с превышением
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3500" location="bottom right">
+      {{ snack.text }}
+    </v-snackbar>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import AdvancedProductSelector from '../components/AdvancedProductSelector.vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { apiFetch } from '@/api'
 
+const route = useRoute()
 const router = useRouter()
-const errorMessage = ref('')
-const successMessage = ref('')
-const savingOrder = ref(false)
-const addingProduct = ref(false)
 
-// Данные заказа
-const orderNumber = ref('')
-const selectedContractor = ref('')
-const selectedSubsidy = ref<number | null>(null)
-const selectedFeoCategory = ref<number | null>(null)
-const selectedFeoType = ref('')
-const orderComment = ref('')
-const orderProducts = ref<Array<{
-  product: any
-  quantity: number
-  price: number
-  unitsPerPackage: number
-  unitOfMeasure: string
-}>>([])
+const isEdit = computed(() => !!route.params.id)
+const purchaseId = computed(() => Number(route.params.id) || null)
 
-// Состояние загрузки
-const loadingContractors = ref(false)
-const loadingSubsidies = ref(false)
-const loadingFeoCategories = ref(false)
-const loadingProducts = ref(false)
-
-// Справочники
-const contractors = ref<string[]>([])
-const subsidies = ref<any[]>([])
-const feoCategories = ref<any[]>([])
-const feoTypes = ref([
-  'Приобретение',
-  'Аренда',
-  'Обслуживание',
-  'Ремонт',
-  'Разработка',
-  'Консалтинг'
-])
-
-// Выбор товара
-const showProductSelector = ref(false)
-const selectedProductFromSelector = ref<any>(null)
-const productSelectorRef = ref()
-
-// Модальное окно для полного описания
-const showDescriptionDialog = ref(false)
-const fullDescription = ref('')
-
-// Вспомогательные функции
-const formatCurrency = (amount: number) => {
-  return amount.toLocaleString() + ' ₽'
+const STATUS_ORDER = ['planned', 'confirmed', 'contracted', 'delivered', 'paid']
+const STATUS_LABEL: Record<string, string> = {
+  planned: 'Планируется', confirmed: 'Подтверждено',
+  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
-
-const pluralize = (value: number, words: string[]) => {
-  const cases = [2, 0, 1, 1, 1, 2]
-  return words[(value % 100 > 4 && value % 100 < 20) ? 2 : cases[Math.min(value % 10, 5)]]
+const STATUS_COLOR: Record<string, string> = {
+  planned: 'orange', confirmed: 'blue',
+  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
 }
+const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
 
-const truncateText = (text: string, maxLength: number) => {
-  if (text.length <= maxLength) return text
-  return text.substring(0, maxLength) + '...'
+interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
+interface Contractor { id: number; name: string; inn?: string }
+interface Subsidy { id: number; name: string; year: number; budget: number }
+interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; photo_url?: string }
+interface OrderItem {
+  product_id: number | null
+  item_name: string
+  item_type: string
+  quantity: number | null
+  unit: string
+  unit_price: number | null
+  total_price: number | null
+  final_unit_price: number | null
+  final_total: number | null
 }
+interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number }
 
-// Показать полное описание
-const showFullDescription = (description: string) => {
-  fullDescription.value = description
-  showDescriptionDialog.value = true
-}
-
-// Расчеты
-const orderTotal = computed(() => {
-  return orderProducts.value.reduce((total, item) => {
-    return total + (item.quantity * item.price)
-  }, 0)
+const form = reactive({
+  purchase_method: '',
+  subsidy_id: null as number | null,
+  contractor_id: null as number | null,
+  registry_number: '',
+  feo_category_id: null as number | null,
+  country_origin: 'Российская Федерация',
+  contract_price: null as number | null,
+  economy: null as number | null,
+  price_increase: null as number | null,
+  contract_number: '',
+  contract_date: '',
+  execution_term: '',
+  execution_term_changed: '',
+  acceptance_doc_name: '',
+  acceptance_doc_number: '',
+  acceptance_doc_date: '',
+  acceptance_doc_amount: null as number | null,
+  payment_doc_number: '',
+  payment_doc_date: '',
+  payment_amount: null as number | null,
+  payment_federal: null as number | null,
+  status: 'planned',
+  purchase_number: null as number | null,
 })
 
-const budgetRemaining = computed(() => {
-  const budgetLimit = 2800000
-  return budgetLimit - orderTotal.value
-})
+const items = ref<OrderItem[]>([])
+const subsidies = ref<Subsidy[]>([])
+const contractors = ref<Contractor[]>([])
+const products = ref<Product[]>([])
+const allFeoCategories = ref<FeoCategory[]>([])
+const formRef = ref()
+const saving = ref(false)
+const transitioning = ref(false)
+const uploading = ref(false)
+const snack = reactive({ show: false, text: '', color: 'success' })
+const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
+const budgetOverrideDialog = ref(false)
+const isAdmin = computed(() => localStorage.getItem('user_role') === 'admin')
+const contractorInn = ref('')
+const fileInputEl = ref<HTMLInputElement | null>(null)
+const uploadedFiles = ref<UploadedFile[]>([])
 
-const budgetStatus = computed(() => {
-  if (budgetRemaining.value < 0) {
-    return {
-      text: 'Превышение',
-      color: 'error',
-      icon: 'mdi-alert'
-    }
-  } else if (budgetRemaining.value < 500000) {
-    return {
-      text: 'Мало осталось',
-      color: 'warning',
-      icon: 'mdi-alert-circle'
+const totalNmck = computed(() =>
+  items.value.reduce((s, i) => s + (i.total_price || 0), 0)
+)
+
+const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
+
+const fileIcon = (mime?: string) => {
+  if (!mime) return 'mdi-file'
+  if (mime === 'application/pdf') return 'mdi-file-pdf-box'
+  if (mime.startsWith('image/')) return 'mdi-file-image'
+  if (mime.includes('word')) return 'mdi-file-word'
+  return 'mdi-file'
+}
+
+// FEO - flat list filtered by subsidy
+const flatFeoForSubsidy = computed(() =>
+  form.subsidy_id
+    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id)
+    : allFeoCategories.value
+)
+
+const onSubsidyChange = () => { form.feo_category_id = null; calcBudget() }
+
+const calcEconomy = () => {
+  form.economy = (totalNmck.value > 0 && form.contract_price != null)
+    ? Math.round((totalNmck.value - form.contract_price) * 100) / 100
+    : null
+}
+
+const calcBudget = async () => {
+  if (!form.subsidy_id) { budgetInfo.value = null; return }
+  try {
+    const all = await apiFetch<any[]>(`/purchases/?subsidy_id=${form.subsidy_id}`)
+    const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
+    if (!subsidy) return
+    const total = all
+      .filter(p => !purchaseId.value || p.id !== purchaseId.value)
+      .reduce((s, p) => s + (Number(p.planned_total_price) || 0), 0)
+    const mine = totalNmck.value
+    const remaining = subsidy.budget - total - mine
+    budgetInfo.value = { remaining, exceeded: remaining < 0, over: remaining < 0 ? -remaining : 0 }
+  } catch {}
+}
+
+watch(totalNmck, () => { calcEconomy(); calcBudget() })
+
+// Items
+const addItem = () => {
+  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null })
+}
+
+const removeItem = (idx: number) => {
+  items.value.splice(idx, 1)
+}
+
+const calcItemTotal = (idx: number) => {
+  const item = items.value[idx]
+  if (item.quantity != null && item.unit_price != null) {
+    item.total_price = Math.round(item.quantity * item.unit_price * 100) / 100
+  } else {
+    item.total_price = null
+  }
+}
+
+const onItemProductSelect = (idx: number, val: any) => {
+  const item = items.value[idx]
+  const name = typeof val === 'object' && val !== null ? val.name || val : val
+  item.item_name = name || ''
+  const prod = products.value.find(p => p.name === name)
+  if (prod) {
+    item.product_id = prod.id
+    if (prod.product_type && !item.item_type) item.item_type = prod.product_type
+    if (prod.price && !item.unit_price) {
+      item.unit_price = Number(prod.price)
+      calcItemTotal(idx)
     }
   } else {
-    return {
-      text: 'В пределах',
-      color: 'success',
-      icon: 'mdi-check-circle'
-    }
+    item.product_id = null
   }
+}
+
+// Date validation rules
+const contractDateRules = computed(() => [
+  (v: string) => !v || !form.execution_term || v <= form.execution_term
+    || 'Дата договора не может быть позже срока исполнения',
+])
+const executionTermRules = computed(() => [
+  (v: string) => !v || !form.execution_term_changed || v <= form.execution_term_changed
+    || 'Срок исполнения не может быть позже изменённого срока',
+])
+
+const nextStatusTarget = computed(() => {
+  if (!isEdit.value || !form.status) return null
+  const idx = STATUS_ORDER.indexOf(form.status)
+  return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
 })
 
-const isFormValid = computed(() => {
-  return (
-    selectedContractor.value &&
-    selectedSubsidy.value &&
-    selectedFeoCategory.value &&
-    selectedFeoType.value &&
-    orderNumber.value
-  )
+const needsContract = computed(() => form.status === 'confirmed')
+const needsAcceptance = computed(() => form.status === 'contracted')
+const needsPayment = computed(() => form.status === 'delivered')
+
+const loadRefs = async () => {
+  const [subs, cons, feos, prods] = await Promise.all([
+    apiFetch<Subsidy[]>('/subsidies/'),
+    apiFetch<Contractor[]>('/contractors/'),
+    apiFetch<FeoCategory[]>('/feo-categories/'),
+    apiFetch<Product[]>('/products/'),
+  ])
+  subsidies.value = subs
+  contractors.value = cons
+  allFeoCategories.value = feos
+  products.value = prods
+}
+
+const contractorFilter = (value: string, query: string, item?: any): boolean => {
+  const q = query.toLowerCase()
+  const name = (item?.raw?.name || '').toLowerCase()
+  const inn = (item?.raw?.inn || '').toLowerCase()
+  return name.includes(q) || inn.includes(q)
+}
+
+const onContractorSelect = (id: number | null) => {
+  const c = contractors.value.find(c => c.id === id)
+  contractorInn.value = c?.inn || ''
+}
+
+const onInnInput = (val: string) => {
+  const c = contractors.value.find(c => c.inn === val.trim())
+  if (c) form.contractor_id = c.id
+}
+
+const loadPurchase = async () => {
+  const data = await apiFetch<any>(`/purchases/${purchaseId.value}`)
+  Object.assign(form, {
+    purchase_method: data.purchase_method || '',
+    subsidy_id: data.subsidy_id ?? null,
+    contractor_id: data.contractor_id ?? null,
+    registry_number: data.registry_number || '',
+    feo_category_id: data.feo_category_id ?? null,
+    country_origin: data.country_origin || 'Российская Федерация',
+    contract_price: data.contract_price ? Number(data.contract_price) : null,
+    economy: data.economy ? Number(data.economy) : null,
+    price_increase: data.price_increase ? Number(data.price_increase) : null,
+    contract_number: data.contract_number || '',
+    contract_date: data.contract_date || '',
+    execution_term: data.execution_term || '',
+    execution_term_changed: data.execution_term_changed || '',
+    acceptance_doc_name: data.acceptance_doc_name || '',
+    acceptance_doc_number: data.acceptance_doc_number || '',
+    acceptance_doc_date: data.acceptance_doc_date || '',
+    acceptance_doc_amount: data.acceptance_doc_amount ? Number(data.acceptance_doc_amount) : null,
+    payment_doc_number: data.payment_doc_number || '',
+    payment_doc_date: data.payment_doc_date || '',
+    payment_amount: data.payment_amount ? Number(data.payment_amount) : null,
+    payment_federal: data.payment_federal ? Number(data.payment_federal) : null,
+    status: data.status || 'planned',
+    purchase_number: data.purchase_number ?? null,
+  })
+
+  // Load items
+  if (data.items && data.items.length) {
+    items.value = data.items.map((i: any) => ({
+      product_id: i.product_id ?? null,
+      item_name: i.item_name || '',
+      item_type: i.item_type || 'товар',
+      quantity: i.quantity ? Number(i.quantity) : null,
+      unit: i.unit || '',
+      unit_price: i.unit_price ? Number(i.unit_price) : null,
+      total_price: i.total_price ? Number(i.total_price) : null,
+      final_unit_price: i.final_unit_price ? Number(i.final_unit_price) : null,
+      final_total: i.final_total ? Number(i.final_total) : null,
+    }))
+  } else if (data.item_name) {
+    // Migrate old single-item purchase
+    items.value = [{
+      product_id: null,
+      item_name: data.item_name,
+      item_type: data.item_type || 'товар',
+      quantity: data.planned_quantity ? Number(data.planned_quantity) : null,
+      unit: data.unit || '',
+      unit_price: data.planned_unit_price ? Number(data.planned_unit_price) : null,
+      total_price: data.planned_total_price ? Number(data.planned_total_price) : null,
+      final_unit_price: data.final_unit_price ? Number(data.final_unit_price) : null,
+      final_total: data.final_total_amount ? Number(data.final_total_amount) : null,
+    }]
+  }
+
+  // Load uploaded files
+  uploadedFiles.value = data.files || []
+
+  // Auto-fill INN
+  if (data.contractor_id) {
+    const c = contractors.value.find(c => c.id === data.contractor_id)
+    contractorInn.value = c?.inn || ''
+  }
+
+  calcBudget()
+}
+
+onMounted(async () => {
+  await loadRefs()
+  if (isEdit.value && purchaseId.value) await loadPurchase()
 })
 
-// Загрузка данных
-const loadContractors = async () => {
-  loadingContractors.value = true
-  try {
-    const response = await fetch('/api/contractors/')
-    if (response.ok) {
-      const data = await response.json()
-      contractors.value = data.map((c: any) => c.name || c.full_name)
-      if (contractors.value.length === 0) {
-        contractors.value = [
-          'ООО "ТехноПрофи"',
-          'ИП Иванов И.И.',
-          'АО "СтройКомплект"',
-          'ЗАО "Электросила"',
-          'Не определён'
-        ]
-      }
+const save = async () => {
+  const { valid } = await formRef.value.validate()
+  if (!valid) return
+  if (budgetInfo.value?.exceeded) {
+    if (!isAdmin.value) {
+      showSnack('Превышение бюджета субсидии. Сохранение недоступно.', 'error')
+      return
     }
-  } catch (error) {
-    console.error('Ошибка загрузки контрагентов:', error)
-    contractors.value = [
-      'ООО "ТехноПрофи"',
-      'ИП Иванов И.И.',
-      'АО "СтройКомплект"',
-      'ЗАО "Электросила"',
-      'Не определён'
-    ]
-  } finally {
-    loadingContractors.value = false
-  }
-}
-
-const loadSubsidies = async () => {
-  loadingSubsidies.value = true
-  try {
-    const response = await fetch('/api/subsidies/')
-    if (response.ok) {
-      subsidies.value = await response.json()
-    }
-  } catch (error) {
-    console.error('Ошибка загрузки субсидий:', error)
-  } finally {
-    loadingSubsidies.value = false
-  }
-}
-
-const loadFeoCategories = async () => {
-  loadingFeoCategories.value = true
-  try {
-    const response = await fetch('/api/feo-categories/')
-    if (response.ok) {
-      feoCategories.value = await response.json()
-    }
-  } catch (error) {
-    console.error('Ошибка загрузки категорий ФЭО:', error)
-  } finally {
-    loadingFeoCategories.value = false
-  }
-}
-
-// Обработчики товаров
-const onProductSelectedFromSelector = (data: any) => {
-  selectedProductFromSelector.value = data
-}
-
-const addProductFromSelector = () => {
-  if (!selectedProductFromSelector.value) {
-    errorMessage.value = 'Товар не выбран'
+    budgetOverrideDialog.value = true
     return
   }
-  
-  addingProduct.value = true
+  await doSave(false)
+}
+
+const doSave = async (adminOverride: boolean) => {
+  budgetOverrideDialog.value = false
+  saving.value = true
   try {
-    // Проверяем, не добавлен ли уже этот товар
-    const existingIndex = orderProducts.value.findIndex(
-      item => item.product.id === selectedProductFromSelector.value.product.id
-    )
-    
-    if (existingIndex >= 0) {
-      // Увеличиваем количество существующего товара
-      orderProducts.value[existingIndex].quantity += selectedProductFromSelector.value.quantity
+    const validItems = items.value.filter(i => i.item_name?.trim())
+    const payload = {
+      ...form,
+      planned_total_price: totalNmck.value || null,
+      total_nmck: totalNmck.value || null,
+      contract_date: form.contract_date || null,
+      execution_term: form.execution_term || null,
+      execution_term_changed: form.execution_term_changed || null,
+      acceptance_doc_date: form.acceptance_doc_date || null,
+      payment_doc_date: form.payment_doc_date || null,
+      items: validItems,
+    }
+    const qs = adminOverride ? '?admin_override=true' : ''
+    if (isEdit.value) {
+      await apiFetch(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
+      showSnack('Сохранено')
     } else {
-      // Добавляем новый товар как реактивный объект
-      orderProducts.value.push(reactive({
-        product: selectedProductFromSelector.value.product,
-        quantity: selectedProductFromSelector.value.quantity,
-        price: selectedProductFromSelector.value.price,
-        unitsPerPackage: selectedProductFromSelector.value.unitsPerPackage,
-        unitOfMeasure: selectedProductFromSelector.value.unitOfMeasure
-      }))
+      const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
+      showSnack('Закупка создана')
+      router.push(`/orders/${created.id}/edit`)
     }
-    
-    // Сбрасываем выбор и закрываем модальное окно
-    selectedProductFromSelector.value = null
-    showProductSelector.value = false
-    
-  } catch (error: any) {
-    console.error('Ошибка добавления товара:', error)
-    errorMessage.value = `Ошибка добавления товара: ${error.message}`
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка сохранения', 'error')
   } finally {
-    addingProduct.value = false
+    saving.value = false
   }
 }
 
-const removeProduct = (index: number) => {
-  orderProducts.value.splice(index, 1)
-}
-
-// Сохранение заказа
-const saveOrder = async () => {
-  if (!isFormValid.value || orderProducts.length === 0) {
-    errorMessage.value = 'Заполните все обязательные поля и добавьте хотя бы один товар'
-    return
-  }
-  
-  savingOrder.value = true
-  errorMessage.value = ''
-  
+const doTransition = async () => {
+  if (!nextStatusTarget.value || !purchaseId.value) return
+  transitioning.value = true
   try {
-    // Подготовка данных для сохранения
-    const orderData = {
-      number: orderNumber.value,
-      contractor: selectedContractor.value,
-      subsidy_id: selectedSubsidy.value,
-      feo_category_id: selectedFeoCategory.value,
-      feo_type: selectedFeoType.value,
-      comment: orderComment.value,
-      products: orderProducts.value.map(item => ({
-        product_id: item.product.id,
-        quantity: item.quantity,
-        price: item.price,
-        units_per_package: item.unitsPerPackage,
-        unit_of_measure: item.unitOfMeasure
-      })),
-      total: orderTotal.value
-    }
-    
-    console.log('Сохранение заказа:', orderData)
-    
-    // Имитация сохранения
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    successMessage.value = `Заказ ${orderNumber.value} успешно создан!`
-    
-    // Через 2 секунды перенаправляем на список заказов
-    setTimeout(() => {
-      router.push('/orders')
-    }, 2000)
-    
-  } catch (error: any) {
-    console.error('Ошибка сохранения заказа:', error)
-    errorMessage.value = `Ошибка сохранения заказа: ${error.message}`
+    const updated = await apiFetch<any>(
+      `/purchases/${purchaseId.value}/transition?status=${nextStatusTarget.value}`,
+      { method: 'POST' }
+    )
+    form.status = updated.status
+    showSnack(`Статус → ${STATUS_LABEL[updated.status]}`)
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {
-    savingOrder.value = false
+    transitioning.value = false
   }
 }
 
-// Загрузка данных при монтировании
-onMounted(() => {
-  loadContractors()
-  loadSubsidies()
-  loadFeoCategories()
-})
-</script>
+// File upload
+const uploadFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length || !purchaseId.value) return
+  uploading.value = true
+  try {
+    const file = input.files[0]
+    const fd = new FormData()
+    fd.append('file', file)
+    const token = localStorage.getItem('access_token')
+    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      showSnack(err.detail || 'Ошибка загрузки', 'error')
+      return
+    }
+    const uploaded = await res.json()
+    uploadedFiles.value.push(uploaded)
+    showSnack('Файл загружен')
+  } catch {
+    showSnack('Ошибка загрузки файла', 'error')
+  } finally {
+    uploading.value = false
+    if (fileInputEl.value) fileInputEl.value.value = ''
+  }
+}
 
-<style scoped>
-.v-table {
-  border-radius: 8px;
-  overflow: hidden;
+const downloadFile = async (fid: number, filename: string) => {
+  const token = localStorage.getItem('access_token')
+  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fid}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
-.text-truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+const deleteFile = async (fid: number) => {
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/files/${fid}`, { method: 'DELETE' })
+    uploadedFiles.value = uploadedFiles.value.filter(f => f.id !== fid)
+    showSnack('Файл удалён')
+  } catch {
+    showSnack('Ошибка удаления', 'error')
+  }
 }
-.description-cell {
-  max-width: 300px;
-}
-.description-preview {
-  display: -webkit-box;
-  -webkit-line-clamp: 5;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.4;
-  max-height: 7em;
-}
-.pre-formatted {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-</style>
+</script>

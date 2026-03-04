@@ -154,45 +154,42 @@
               <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>
             </div>
 
-            <v-table v-else density="compact" class="feo-table">
-              <thead>
-                <tr>
-                  <th>Направление</th>
-                  <th class="text-center" style="width: 90px;">Уровень</th>
-                  <th style="width: 120px;">Код</th>
-                  <th style="width: 120px;">Приложение</th>
-                  <th class="text-center" style="width: 80px;">Статус</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="cat in feoCategories" :key="cat.id" class="feo-row">
-                  <td>
-                    <div class="d-flex align-center" :style="{ paddingLeft: `${(cat.level - 1) * 20}px` }">
-                      <v-icon
-                        :icon="cat.level === 1 ? 'mdi-folder' : cat.level === 2 ? 'mdi-folder-open' : 'mdi-file-document-outline'"
-                        :color="cat.level === 1 ? '#3B82F6' : cat.level === 2 ? '#F59E0B' : '#22C55E'"
-                        size="16" class="mr-2 flex-shrink-0"
-                      />
-                      <span class="feo-name">{{ cat.name }}</span>
-                    </div>
-                  </td>
-                  <td class="text-center">
-                    <v-chip size="x-small" :color="['', 'primary', 'warning', 'success'][cat.level]" variant="flat">
-                      Ур. {{ cat.level }}
-                    </v-chip>
-                  </td>
-                  <td class="text-caption text-medium-emphasis">{{ cat.code || '—' }}</td>
-                  <td class="text-caption text-medium-emphasis">{{ cat.appendix || '—' }}</td>
-                  <td class="text-center">
-                    <v-icon
-                      :icon="cat.is_active ? 'mdi-check-circle-outline' : 'mdi-circle-off-outline'"
-                      :color="cat.is_active ? 'success' : 'grey'"
-                      size="18"
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
+            <!-- Collapsible FEO tree -->
+            <div v-else class="feo-tree">
+              <div
+                v-for="node in visibleFeoNodes"
+                :key="node.id"
+                class="feo-tree-row"
+                :class="{ 'feo-tree-row--clickable': node.hasChildren }"
+                :style="{ paddingLeft: `${node.depth * 24 + 8}px` }"
+                @click="node.hasChildren ? toggleExpand(node.id) : undefined"
+              >
+                <span class="feo-tree-chevron">
+                  <v-icon
+                    v-if="node.hasChildren"
+                    size="16"
+                    :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                    color="grey"
+                  />
+                </span>
+                <v-icon
+                  size="18"
+                  class="mr-2 flex-shrink-0"
+                  :icon="node.hasChildren
+                    ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
+                    : 'mdi-file-document-outline'"
+                  :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
+                />
+                <span class="feo-name flex-grow-1">{{ node.name }}</span>
+                <span v-if="node.code" class="feo-code ml-3">{{ node.code }}</span>
+                <v-chip
+                  size="x-small"
+                  :color="['', 'primary', 'warning', 'success'][node.level] || 'grey'"
+                  variant="flat"
+                  class="ml-2 flex-shrink-0"
+                >Ур.{{ node.level }}</v-chip>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -326,7 +323,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 
 interface SubsidyRow {
@@ -339,6 +336,12 @@ interface FeoCategory {
   level: number; name: string; code: string | null; appendix: string | null; is_active: boolean
 }
 
+interface FeoNode extends FeoCategory {
+  depth: number
+  hasChildren: boolean
+  children: FeoNode[]
+}
+
 // ── State ─────────────────────────────────────────
 const loading    = ref(false)
 const saving     = ref(false)
@@ -347,6 +350,7 @@ const loadingFeo = ref(false)
 
 const allSubsidies  = ref<SubsidyRow[]>([])
 const feoCategories = ref<FeoCategory[]>([])
+const expandedIds   = ref<number[]>([])
 const selectedId    = ref<number | null>(null)
 const selectedYear  = ref<number>(new Date().getFullYear())
 
@@ -380,6 +384,47 @@ const totals = computed(() => ({
   planned: filteredSubsidies.value.reduce((s, x) => s + x.planned, 0),
   paid:    filteredSubsidies.value.reduce((s, x) => s + x.paid,    0),
 }))
+
+// ── FEO tree ──────────────────────────────────────
+const feoTree = computed<FeoNode[]>(() => {
+  const cats = feoCategories.value
+  const byId: Record<number, FeoNode> = {}
+  cats.forEach(c => { byId[c.id] = { ...c, depth: 0, hasChildren: false, children: [] } })
+  const roots: FeoNode[] = []
+  cats.forEach(c => {
+    const node = byId[c.id]
+    if (c.parent_id && byId[c.parent_id]) {
+      byId[c.parent_id].children.push(node)
+      byId[c.parent_id].hasChildren = true
+      node.depth = byId[c.parent_id].depth + 1
+    } else {
+      roots.push(node)
+    }
+  })
+  return roots
+})
+
+function flattenVisible(nodes: FeoNode[]): FeoNode[] {
+  const result: FeoNode[] = []
+  for (const node of nodes) {
+    result.push(node)
+    if (node.hasChildren && expandedIds.value.includes(node.id)) {
+      result.push(...flattenVisible(node.children))
+    }
+  }
+  return result
+}
+
+const visibleFeoNodes = computed(() => flattenVisible(feoTree.value))
+
+function toggleExpand(id: number) {
+  const idx = expandedIds.value.indexOf(id)
+  if (idx >= 0) {
+    expandedIds.value.splice(idx, 1)
+  } else {
+    expandedIds.value.push(id)
+  }
+}
 
 // ── Data load ─────────────────────────────────────
 async function loadAll() {
@@ -684,6 +729,55 @@ onMounted(loadAll)
 .feo-row:hover td  { background: #F9FAFB; }
 .feo-name {
   font-size: 13px; font-weight: 500; color: #111827;
+}
+
+/* ── FEO collapsible tree ── */
+.feo-tree {
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.feo-tree-row {
+  display: flex;
+  align-items: center;
+  padding: 9px 8px;
+  border-bottom: 1px solid #F3F4F6;
+  transition: background 0.12s;
+  min-height: 40px;
+}
+.feo-tree-row:last-child {
+  border-bottom: none;
+}
+.feo-tree-row:hover {
+  background: #F9FAFB;
+}
+.feo-tree-row--clickable {
+  cursor: pointer;
+}
+.feo-tree-row--clickable:hover {
+  background: #EFF6FF;
+}
+.feo-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.feo-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+}
+.feo-code {
+  font-size: 11px;
+  color: #6B7280;
+  background: #F3F4F6;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: monospace;
+  white-space: nowrap;
 }
 
 /* ── Dialogs ── */

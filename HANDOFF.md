@@ -438,6 +438,31 @@ docker compose restart backend
 - Excel-экспорт закупок (`GET /api/purchases/export/excel`)
 - Dashboard bar chart: высоты в px вместо % (фикс отображения)
 
+### Phase 5 — FEO-дерево + Контрагенты (импорт Excel) ✓
+
+- **SubsidiesView.vue** — FEO категории теперь отображаются как коллапсируемое дерево:
+  - `FeoNode` extends `FeoCategory` (depth, hasChildren, children)
+  - `expandedIds = ref<number[]>([])` (массив, не Set — для Vue 3 реактивности)
+  - `feoTree` computed — строит вложенную структуру через `parent_id`
+  - `flattenVisible()` — рекурсивно раскрывает только expanded ветви
+  - `visibleFeoNodes` computed — то что рендерится
+  - `toggleExpand(id)` — splice/push для мутации массива
+  - Иконки: chevron-right/down, folder/folder-open/file-document-outline, цвет по уровню
+  - Отступ = `node.depth * 24 + 8` px
+  - CSS: `.feo-tree`, `.feo-tree-row`, `.feo-tree-row--clickable`, `.feo-tree-chevron`, `.feo-code`
+
+- **ContractorsView.vue** — полный рефакторинг с Excel-импортом:
+  - Кнопка "Импорт из Excel" → триггерит hidden `<input type="file" accept=".xlsx,.xls">`
+  - `handleImport()` → FormData + raw fetch → `POST /api/contractors/import/excel`
+  - Снэкбар результата: "Добавлено N, пропущено M"
+  - Добавлено поле `bank_details` в форму
+  - Стилизованный layout в стиле SubsidiesView (page-header, table-card)
+
+- **contractors.py** — добавлен `POST /api/contractors/import/excel`:
+  - openpyxl парсит .xlsx, определяет заголовки по ключевым словам (RU/EN)
+  - Дедупликация по ИНН (пропускает уже существующие)
+  - Возвращает `{ created: N, skipped: M }`
+
 ### Phase 4 — Генерация документов ✓ (инфраструктура готова, шаблоны — ожидают)
 - `docxtpl==0.17.0` + `openpyxl==3.1.2` добавлены в `backend/requirements.txt`
 - `backend/app/routers/documents.py` — endpoint `GET /api/purchases/{pid}/documents/{doc_type}`
@@ -462,9 +487,6 @@ docker compose restart backend
 ### Остаток по рамочному договору
 Для `purchase_method='competitive'` с `contract_id` — показывать остаток:
 `остаток = contract.max_amount - SUM(purchases.planned_total_price WHERE contract_id = X)`
-
-### Импорт контрагентов из файла
-Загрузка CSV/Excel с контрагентами (name, inn, kpp, ...) → bulk insert в contractors
 
 ---
 

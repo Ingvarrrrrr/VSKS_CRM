@@ -1,91 +1,140 @@
 <template>
-  <v-container>
-    <v-row>
-      <v-col cols="12">
-        <v-card class="pa-6">
-          <v-card-title class="text-h4 mb-6">
-            <v-icon icon="mdi-account-group" class="mr-4" />Контрагенты
-          </v-card-title>
-          <div class="d-flex justify-space-between align-center mb-6">
-            <v-text-field
-              v-model="search"
-              prepend-inner-icon="mdi-magnify"
-              label="Поиск по названию или ИНН"
-              variant="outlined"
-              density="compact"
-              hide-details
-              style="max-width: 350px"
-            />
-            <v-btn color="primary" prepend-icon="mdi-plus" @click="openAdd">
-              Добавить контрагента
-            </v-btn>
-          </div>
-          <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
-          <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-          <v-table>
-            <thead>
-              <tr>
-                <th>Наименование</th>
-                <th>ИНН</th>
-                <th>КПП</th>
-                <th>Адрес</th>
-                <th>Телефон / Email</th>
-                <th>Контактное лицо</th>
-                <th>Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!loading && filtered.length === 0">
-                <td colspan="7" class="text-center py-8 text-medium-emphasis">Контрагенты не найдены</td>
-              </tr>
-              <tr v-for="c in filtered" :key="c.id">
-                <td>{{ c.name }}</td>
-                <td>{{ c.inn || '—' }}</td>
-                <td>{{ c.kpp || '—' }}</td>
-                <td>{{ c.address || '—' }}</td>
-                <td>
-                  <div>{{ c.phone || '—' }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ c.email || '' }}</div>
-                </td>
-                <td>{{ c.contact_person || '—' }}</td>
-                <td>
-                  <v-btn icon="mdi-pencil" variant="text" size="small" class="mr-1" @click="openEdit(c)" />
-                  <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDelete(c)" />
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card>
-      </v-col>
-    </v-row>
+  <div class="contractors-page">
 
+    <!-- ── Header ── -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <v-icon icon="mdi-account-group" size="32" color="#3B82F6" class="mr-3" />
+        <div>
+          <div class="page-title">Контрагенты</div>
+          <div class="page-subtitle">Список поставщиков и исполнителей</div>
+        </div>
+      </div>
+      <div class="page-header-right">
+        <v-btn
+          variant="tonal"
+          color="success"
+          prepend-icon="mdi-microsoft-excel"
+          class="mr-2"
+          :loading="importing"
+          @click="triggerImport"
+        >
+          Импорт из Excel
+        </v-btn>
+        <input
+          ref="excelInput"
+          type="file"
+          accept=".xlsx,.xls"
+          style="display:none"
+          @change="handleImport"
+        />
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openAdd">
+          Добавить контрагента
+        </v-btn>
+      </div>
+    </div>
+
+    <!-- ── Search ── -->
+    <div class="search-bar">
+      <v-text-field
+        v-model="search"
+        prepend-inner-icon="mdi-magnify"
+        label="Поиск по названию или ИНН"
+        variant="outlined"
+        density="compact"
+        hide-details
+        style="max-width: 380px"
+        clearable
+      />
+      <span class="search-count">{{ filtered.length }} из {{ contractors.length }}</span>
+    </div>
+
+    <!-- ── Loading ── -->
+    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
+
+    <!-- ── Table ── -->
+    <div class="table-card">
+      <v-table class="contractors-table">
+        <thead>
+          <tr>
+            <th>Наименование</th>
+            <th>ИНН</th>
+            <th>КПП</th>
+            <th>Адрес</th>
+            <th>Телефон / Email</th>
+            <th>Контактное лицо</th>
+            <th class="text-right">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="!loading && filtered.length === 0">
+            <td colspan="7" class="text-center py-10 text-medium-emphasis">
+              <v-icon icon="mdi-account-off-outline" size="40" color="grey-lighten-2" class="d-block mx-auto mb-2" />
+              Контрагенты не найдены
+            </td>
+          </tr>
+          <tr v-for="c in filtered" :key="c.id" class="contractor-row">
+            <td class="font-weight-medium">{{ c.name }}</td>
+            <td class="text-mono">{{ c.inn || '—' }}</td>
+            <td class="text-mono">{{ c.kpp || '—' }}</td>
+            <td class="text-sm">{{ c.address || '—' }}</td>
+            <td>
+              <div class="text-sm">{{ c.phone || '—' }}</div>
+              <div class="text-caption text-medium-emphasis">{{ c.email || '' }}</div>
+            </td>
+            <td class="text-sm">{{ c.contact_person || '—' }}</td>
+            <td class="text-right">
+              <v-btn icon="mdi-pencil" variant="text" size="small" class="mr-1" @click="openEdit(c)" />
+              <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDelete(c)" />
+            </td>
+          </tr>
+        </tbody>
+      </v-table>
+    </div>
+
+    <!-- ── Add / Edit Dialog ── -->
     <v-dialog v-model="dialog" max-width="600" persistent>
-      <v-card>
-        <v-card-title class="pa-4">{{ editId ? 'Редактировать контрагента' : 'Добавить контрагента' }}</v-card-title>
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon :icon="editId ? 'mdi-pencil-outline' : 'mdi-plus-circle-outline'" color="primary" class="mr-2" />
+          {{ editId ? 'Редактировать контрагента' : 'Добавить контрагента' }}
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="dialog = false" />
+        </v-card-title>
         <v-divider />
-        <v-card-text class="pa-4">
+        <v-card-text class="pt-4">
           <v-form ref="formRef">
             <v-text-field
               v-model="form.name"
               label="Наименование организации *"
               variant="outlined"
+              density="compact"
               :rules="[v => !!v || 'Обязательное поле']"
               class="mb-3"
+              hide-details="auto"
             />
             <v-row>
-              <v-col cols="6"><v-text-field v-model="form.inn" label="ИНН" variant="outlined" /></v-col>
-              <v-col cols="6"><v-text-field v-model="form.kpp" label="КПП" variant="outlined" /></v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
+              </v-col>
             </v-row>
-            <v-textarea v-model="form.address" label="Адрес" variant="outlined" rows="2" class="mb-3" />
-            <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" class="mb-3" />
+            <v-textarea v-model="form.address" label="Адрес" variant="outlined" density="compact" rows="2" class="my-3" hide-details />
+            <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
             <v-row>
-              <v-col cols="6"><v-text-field v-model="form.phone" label="Телефон" variant="outlined" /></v-col>
-              <v-col cols="6"><v-text-field v-model="form.email" label="Email" variant="outlined" /></v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.phone" label="Телефон" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.email" label="Email" variant="outlined" density="compact" hide-details />
+              </v-col>
             </v-row>
+            <v-textarea v-model="form.bank_details" label="Банковские реквизиты" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
           </v-form>
         </v-card-text>
         <v-divider />
-        <v-card-actions class="pa-4">
+        <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
           <v-btn color="primary" :loading="saving" @click="save">Сохранить</v-btn>
@@ -93,11 +142,18 @@
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="deleteDialog" max-width="400">
-      <v-card>
-        <v-card-title class="pa-4">Удалить контрагента?</v-card-title>
-        <v-card-text>{{ deleteTarget?.name }}</v-card-text>
-        <v-card-actions class="pa-4">
+    <!-- ── Delete confirm ── -->
+    <v-dialog v-model="deleteDialog" max-width="420">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
+          Удалить контрагента?
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog = false">Отмена</v-btn>
           <v-btn color="error" :loading="saving" @click="doDelete">Удалить</v-btn>
@@ -105,8 +161,12 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack" :color="snackColor" timeout="3000">{{ snackMsg }}</v-snackbar>
-  </v-container>
+    <!-- ── Snackbar ── -->
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="4000" location="bottom right">
+      {{ snack.text }}
+    </v-snackbar>
+
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -122,112 +182,231 @@ interface Contractor {
   contact_person?: string
   phone?: string
   email?: string
+  bank_details?: string
 }
 
 const contractors = ref<Contractor[]>([])
-const loading = ref(false)
-const error = ref('')
-const search = ref('')
-const dialog = ref(false)
-const deleteDialog = ref(false)
-const saving = ref(false)
-const editId = ref<number | null>(null)
-const deleteTarget = ref<Contractor | null>(null)
-const formRef = ref()
-const snack = ref(false)
-const snackMsg = ref('')
-const snackColor = ref('success')
+const loading    = ref(false)
+const saving     = ref(false)
+const importing  = ref(false)
+const search     = ref('')
+const dialog     = ref(false)
+const deleteDialog  = ref(false)
+const editId     = ref<number | null>(null)
+const deleteTarget  = ref<Contractor | null>(null)
+const formRef    = ref()
+const excelInput = ref<HTMLInputElement>()
 
-const emptyForm = () => ({ name: '', inn: '', kpp: '', address: '', contact_person: '', phone: '', email: '' })
+const snack = ref({ show: false, text: '', color: 'success' })
+
+const emptyForm = () => ({
+  name: '', inn: '', kpp: '', address: '',
+  contact_person: '', phone: '', email: '', bank_details: ''
+})
 const form = ref(emptyForm())
 
 const filtered = computed(() => {
-  const q = search.value.toLowerCase()
+  const q = search.value?.toLowerCase() ?? ''
   if (!q) return contractors.value
   return contractors.value.filter(c =>
     c.name.toLowerCase().includes(q) || (c.inn || '').includes(q)
   )
 })
 
-const loadContractors = async () => {
+// ── Load ──────────────────────────────────────────
+async function loadContractors() {
   loading.value = true
-  error.value = ''
   try {
     contractors.value = await apiFetch<Contractor[]>('/contractors/')
   } catch (e: any) {
-    error.value = e.message
+    showSnack(e.message || 'Ошибка загрузки', 'error')
   } finally {
     loading.value = false
   }
 }
 
-const openAdd = () => {
+// ── Add / Edit ────────────────────────────────────
+function openAdd() {
   editId.value = null
   form.value = emptyForm()
   dialog.value = true
 }
 
-const openEdit = (c: Contractor) => {
+function openEdit(c: Contractor) {
   editId.value = c.id
   form.value = {
-    name: c.name,
-    inn: c.inn || '',
-    kpp: c.kpp || '',
-    address: c.address || '',
+    name:           c.name,
+    inn:            c.inn            || '',
+    kpp:            c.kpp            || '',
+    address:        c.address        || '',
     contact_person: c.contact_person || '',
-    phone: c.phone || '',
-    email: c.email || ''
+    phone:          c.phone          || '',
+    email:          c.email          || '',
+    bank_details:   c.bank_details   || '',
   }
   dialog.value = true
 }
 
-const save = async () => {
+async function save() {
   const { valid } = await formRef.value.validate()
   if (!valid) return
   saving.value = true
   try {
     if (editId.value) {
-      const updated = await apiFetch<Contractor>('/contractors/' + editId.value, { method: 'PUT', body: form.value })
+      const updated = await apiFetch<Contractor>(`/contractors/${editId.value}`, {
+        method: 'PUT',
+        body: form.value as any,
+      })
       const idx = contractors.value.findIndex(c => c.id === editId.value)
       if (idx >= 0) contractors.value[idx] = updated
+      showSnack('Контрагент обновлён')
     } else {
-      const created = await apiFetch<Contractor>('/contractors/', { method: 'POST', body: form.value })
+      const created = await apiFetch<Contractor>('/contractors/', {
+        method: 'POST',
+        body: form.value as any,
+      })
       contractors.value.push(created)
+      showSnack('Контрагент добавлен')
     }
     dialog.value = false
-    showSnack(editId.value ? 'Контрагент обновлён' : 'Контрагент добавлен', 'success')
   } catch (e: any) {
-    showSnack(e.message, 'error')
+    showSnack(e.message || 'Ошибка сохранения', 'error')
   } finally {
     saving.value = false
   }
 }
 
-const confirmDelete = (c: Contractor) => {
+// ── Delete ────────────────────────────────────────
+function confirmDelete(c: Contractor) {
   deleteTarget.value = c
   deleteDialog.value = true
 }
 
-const doDelete = async () => {
+async function doDelete() {
   if (!deleteTarget.value) return
   saving.value = true
   try {
-    await apiFetch('/contractors/' + deleteTarget.value.id, { method: 'DELETE' })
+    await apiFetch(`/contractors/${deleteTarget.value.id}`, { method: 'DELETE' })
     contractors.value = contractors.value.filter(c => c.id !== deleteTarget.value!.id)
     deleteDialog.value = false
-    showSnack('Контрагент удалён', 'success')
+    showSnack('Контрагент удалён', 'warning')
   } catch (e: any) {
-    showSnack(e.message, 'error')
+    showSnack(e.message || 'Ошибка удаления', 'error')
   } finally {
     saving.value = false
   }
 }
 
-const showSnack = (msg: string, color: string) => {
-  snackMsg.value = msg
-  snackColor.value = color
-  snack.value = true
+// ── Excel import ──────────────────────────────────
+function triggerImport() {
+  excelInput.value?.click()
+}
+
+async function handleImport(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  ;(event.target as HTMLInputElement).value = ''   // reset so same file can be re-selected
+
+  importing.value = true
+  try {
+    const token = localStorage.getItem('auth_token') || ''
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch('/api/contractors/import/excel', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      let detail = text
+      try { detail = JSON.parse(text).detail } catch {}
+      throw new Error(detail)
+    }
+    const data = await res.json()
+    showSnack(`Импорт завершён: добавлено ${data.created}, пропущено ${data.skipped}`, 'success')
+    await loadContractors()
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка импорта', 'error')
+  } finally {
+    importing.value = false
+  }
+}
+
+// ── Helpers ───────────────────────────────────────
+function showSnack(text: string, color = 'success') {
+  snack.value = { show: true, text, color }
 }
 
 onMounted(loadContractors)
 </script>
+
+<style scoped>
+.contractors-page {
+  padding: 20px 24px;
+  max-width: 1600px;
+}
+
+/* ── Header ── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-header-left  { display: flex; align-items: center; }
+.page-header-right { display: flex; align-items: center; }
+.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+
+/* ── Search ── */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.search-count {
+  font-size: 13px;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+/* ── Table ── */
+.table-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.07);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+.contractors-table thead th {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #6B7280 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #F9FAFB;
+  padding: 10px 14px !important;
+  white-space: nowrap;
+}
+.contractors-table tbody td {
+  padding: 10px 14px !important;
+  vertical-align: top;
+}
+.contractor-row:hover td { background: #F9FAFB; }
+.text-mono { font-family: monospace; font-size: 13px; }
+.text-sm   { font-size: 13px; }
+
+/* ── Dialogs ── */
+.dialog-card {}
+.dialog-title {
+  display: flex;
+  align-items: center;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  padding: 16px 20px !important;
+}
+</style>

@@ -18,9 +18,9 @@ router = APIRouter(prefix="/api/purchases", tags=["documents"])
 TEMPLATES_DIR = "/app/templates"
 
 DOC_TYPES = {
-    "service_note": ("service_note.docx", "Служебная_записка"),
-    "contract_tz":  ("contract_tz.docx",  "Договор_ТЗ"),
-    "approval_sheet": ("approval_sheet.docx", "Лист_согласования"),
+    "service_note":   ("service_note.docx",   "Service_Note"),
+    "contract_tz":    ("contract_tz.docx",    "Contract_TZ"),
+    "approval_sheet": ("approval_sheet.docx", "Approval_Sheet"),
 }
 
 
@@ -83,6 +83,7 @@ async def generate_document(
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
+            "description": (item.product.description if item.product and item.product.description else ""),
             "type": item.item_type or "",
             "quantity": float(item.quantity) if item.quantity else "",
             "unit": item.unit or "",
@@ -90,6 +91,7 @@ async def generate_document(
             "total_price": _fmt_money(item.total_price),
         })
 
+    c = p.contractor
     context = {
         # Закупка
         "purchase_number": p.purchase_number or "",
@@ -101,11 +103,23 @@ async def generate_document(
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
-        # Контрагент
-        "contractor_name": p.contractor.name if p.contractor else "",
-        "contractor_inn": p.contractor.inn if p.contractor else "",
-        "contractor_kpp": p.contractor.kpp if p.contractor else "",
-        "contractor_address": p.contractor.address if p.contractor else "",
+        # Контрагент — основные
+        "contractor_name": c.name if c else "",
+        "contractor_inn": c.inn if c else "",
+        "contractor_kpp": c.kpp if c else "",
+        "contractor_address": c.address if c else "",
+        "contractor_postal_address": c.postal_address if c else "",
+        "contractor_ogrn": c.ogrn if c else "",
+        "contractor_phone": c.phone if c else "",
+        "contractor_email": c.email if c else "",
+        # Контрагент — подписант
+        "contractor_signatory": c.signatory if c else "",
+        "contractor_signatory_basis": c.signatory_basis if c else "",
+        # Контрагент — банк
+        "contractor_settlement_account": c.settlement_account if c else "",
+        "contractor_bank_name": c.bank_name if c else "",
+        "contractor_bik": c.bik if c else "",
+        "contractor_correspondent_account": c.correspondent_account if c else "",
         # FEO
         "feo_category_name": p.feo_category.name if p.feo_category else "",
         # Финансы

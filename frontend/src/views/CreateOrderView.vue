@@ -261,7 +261,7 @@
                 <td class="py-2">
                   <div class="font-weight-medium" style="font-size:13px">{{ item.item_name }}</div>
                   <div v-if="item._description" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
-                    {{ item._description.length > 300 ? item._description.slice(0, 300) + '…' : item._description }}
+                    {{ item._description }}
                   </div>
                 </td>
                 <td class="text-center">{{ item.quantity ?? '—' }}</td>

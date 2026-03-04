@@ -78,6 +78,15 @@ class ContractorCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     bank_details: Optional[str] = None
+    # Contract document fields
+    signatory: Optional[str] = None
+    signatory_basis: Optional[str] = None
+    postal_address: Optional[str] = None
+    ogrn: Optional[str] = None
+    settlement_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bik: Optional[str] = None
+    correspondent_account: Optional[str] = None
 
 class ContractorOut(ContractorCreate):
     id: int

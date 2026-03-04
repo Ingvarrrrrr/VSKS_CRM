@@ -93,7 +93,7 @@
     </div>
 
     <!-- ── Add / Edit Dialog ── -->
-    <v-dialog v-model="dialog" max-width="600" persistent>
+    <v-dialog v-model="dialog" max-width="780" persistent scrollable>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon :icon="editId ? 'mdi-pencil-outline' : 'mdi-plus-circle-outline'" color="primary" class="mr-2" />
@@ -101,8 +101,10 @@
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="dialog = false" />
         </v-card-title>
         <v-divider />
-        <v-card-text class="pt-4">
+        <v-card-text class="pt-4" style="max-height:75vh">
           <v-form ref="formRef">
+            <!-- Основные данные -->
+            <div class="section-label">Основные данные</div>
             <v-text-field
               v-model="form.name"
               label="Наименование организации *"
@@ -112,17 +114,30 @@
               class="mb-3"
               hide-details="auto"
             />
-            <v-row>
-              <v-col cols="6">
+            <v-row dense>
+              <v-col cols="4">
                 <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details />
               </v-col>
-              <v-col cols="6">
+              <v-col cols="4">
                 <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
               </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
+              </v-col>
             </v-row>
-            <v-textarea v-model="form.address" label="Адрес" variant="outlined" density="compact" rows="2" class="my-3" hide-details />
+            <v-textarea v-model="form.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+            <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+
+            <!-- Подписант -->
+            <div class="section-label mt-4">Подписант</div>
+            <v-text-field v-model="form.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-text-field v-model="form.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
+              placeholder="Устава, доверенности №..." />
+
+            <!-- Контакты -->
+            <div class="section-label mt-4">Контакты</div>
             <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
-            <v-row>
+            <v-row dense>
               <v-col cols="6">
                 <v-text-field v-model="form.phone" label="Телефон" variant="outlined" density="compact" hide-details />
               </v-col>
@@ -130,7 +145,21 @@
                 <v-text-field v-model="form.email" label="Email" variant="outlined" density="compact" hide-details />
               </v-col>
             </v-row>
-            <v-textarea v-model="form.bank_details" label="Банковские реквизиты" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+
+            <!-- Банковские реквизиты -->
+            <div class="section-label mt-4">Банковские реквизиты</div>
+            <v-text-field v-model="form.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
+            <v-text-field v-model="form.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details
+              placeholder="в ПАО «Сбербанк»..." />
+            <v-row dense>
+              <v-col cols="6">
+                <v-text-field v-model="form.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" />
+              </v-col>
+            </v-row>
+            <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
           </v-form>
         </v-card-text>
         <v-divider />
@@ -183,6 +212,14 @@ interface Contractor {
   phone?: string
   email?: string
   bank_details?: string
+  signatory?: string
+  signatory_basis?: string
+  postal_address?: string
+  ogrn?: string
+  settlement_account?: string
+  bank_name?: string
+  bik?: string
+  correspondent_account?: string
 }
 
 const contractors = ref<Contractor[]>([])
@@ -201,7 +238,9 @@ const snack = ref({ show: false, text: '', color: 'success' })
 
 const emptyForm = () => ({
   name: '', inn: '', kpp: '', address: '',
-  contact_person: '', phone: '', email: '', bank_details: ''
+  contact_person: '', phone: '', email: '', bank_details: '',
+  signatory: '', signatory_basis: '', postal_address: '',
+  ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
 })
 const form = ref(emptyForm())
 
@@ -235,14 +274,22 @@ function openAdd() {
 function openEdit(c: Contractor) {
   editId.value = c.id
   form.value = {
-    name:           c.name,
-    inn:            c.inn            || '',
-    kpp:            c.kpp            || '',
-    address:        c.address        || '',
-    contact_person: c.contact_person || '',
-    phone:          c.phone          || '',
-    email:          c.email          || '',
-    bank_details:   c.bank_details   || '',
+    name:                 c.name,
+    inn:                  c.inn                  || '',
+    kpp:                  c.kpp                  || '',
+    address:              c.address              || '',
+    contact_person:       c.contact_person       || '',
+    phone:                c.phone                || '',
+    email:                c.email                || '',
+    bank_details:         c.bank_details         || '',
+    signatory:            c.signatory            || '',
+    signatory_basis:      c.signatory_basis      || '',
+    postal_address:       c.postal_address       || '',
+    ogrn:                 c.ogrn                 || '',
+    settlement_account:   c.settlement_account   || '',
+    bank_name:            c.bank_name            || '',
+    bik:                  c.bik                  || '',
+    correspondent_account: c.correspondent_account || '',
   }
   dialog.value = true
 }
@@ -408,5 +455,15 @@ onMounted(loadContractors)
   font-size: 16px !important;
   font-weight: 600 !important;
   padding: 16px 20px !important;
+}
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #F3F4F6;
 }
 </style>

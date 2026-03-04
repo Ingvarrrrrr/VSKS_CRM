@@ -123,38 +123,52 @@
               </thead>
               <tbody>
                 <tr v-for="(item, idx) in items" :key="idx">
-                  <td>
-                    <v-combobox
-                      v-model="item.item_name"
-                      :items="products"
-                      item-title="name"
-                      item-value="name"
-                      density="compact"
-                      variant="outlined"
-                      hide-details
-                      clearable
-                      class="my-1"
-                      @update:model-value="(v) => onItemProductSelect(idx, v)"
-                    >
-                      <template #item="{ item: drop, props }">
-                        <v-list-item v-bind="props" :title="drop.raw?.name || drop.title">
-                          <template #prepend>
-                            <v-avatar v-if="drop.raw?.photo_url" size="36" rounded="sm" class="mr-2">
-                              <v-img :src="drop.raw.photo_url" cover />
-                            </v-avatar>
-                            <v-icon v-else size="28" class="mr-2">mdi-package-variant</v-icon>
-                          </template>
-                          <template #subtitle>
-                            <div v-if="drop.raw?.description" class="text-caption" style="max-width:340px;white-space:normal">
-                              {{ drop.raw.description.slice(0, 100) }}
-                            </div>
-                            <div v-if="drop.raw?.price" class="text-caption text-primary">
-                              {{ Number(drop.raw.price).toLocaleString('ru-RU') }} ₽
-                            </div>
-                          </template>
-                        </v-list-item>
-                      </template>
-                    </v-combobox>
+                  <td style="min-width:300px">
+                    <div class="d-flex align-center gap-1">
+                      <!-- Mini thumbnail in row -->
+                      <v-tooltip v-if="item._photo_url" location="right">
+                        <template #activator="{ props: tip }">
+                          <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer">
+                            <v-img :src="item._photo_url" cover />
+                          </v-avatar>
+                        </template>
+                        <v-img :src="item._photo_url" width="200" height="200" cover style="border-radius:8px" />
+                      </v-tooltip>
+                      <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+
+                      <v-combobox
+                        v-model="item._selectedProduct"
+                        :items="products"
+                        item-title="name"
+                        return-object
+                        density="compact"
+                        variant="outlined"
+                        hide-details
+                        clearable
+                        :custom-filter="productFilter"
+                        class="my-1"
+                        @update:model-value="(v) => onItemProductSelect(idx, v)"
+                      >
+                        <template #item="{ item: drop, props }">
+                          <v-list-item v-bind="props" :title="drop.raw?.name || drop.title">
+                            <template #prepend>
+                              <v-avatar v-if="drop.raw?.photo_url || drop.raw?.photo_link" size="40" rounded="sm" class="mr-2">
+                                <v-img :src="drop.raw.photo_url || drop.raw.photo_link" cover />
+                              </v-avatar>
+                              <v-icon v-else size="28" class="mr-2 text-medium-emphasis">mdi-package-variant</v-icon>
+                            </template>
+                            <template #subtitle>
+                              <div v-if="drop.raw?.description" class="text-caption" style="max-width:360px;white-space:normal;line-height:1.3">
+                                {{ drop.raw.description.slice(0, 120) }}
+                              </div>
+                              <div v-if="drop.raw?.price" class="text-caption font-weight-medium" style="color:#3B82F6">
+                                {{ Number(drop.raw.price).toLocaleString('ru-RU') }} ₽
+                              </div>
+                            </template>
+                          </v-list-item>
+                        </template>
+                      </v-combobox>
+                    </div>
                   </td>
                   <td>
                     <v-select v-model="item.item_type"
@@ -197,6 +211,72 @@
             @click="addItem">
             Добавить позицию
           </v-btn>
+        </v-card-text>
+      </v-card>
+
+      <!-- 2.5 Техническое задание (показывается когда есть позиции) -->
+      <v-card v-if="hasProducts" variant="outlined" class="mb-4" style="border-color:#3B82F6">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
+          <span class="d-flex align-center gap-2">
+            <v-icon icon="mdi-clipboard-text-outline" color="primary" size="20" />
+            Техническое задание
+          </span>
+          <div class="d-flex gap-2">
+            <v-btn
+              v-if="isEdit"
+              size="small"
+              variant="tonal"
+              color="primary"
+              prepend-icon="mdi-file-word-outline"
+              :loading="docLoading === 'contract_tz'"
+              @click="downloadDoc('contract_tz')"
+            >
+              Скачать ТЗ (.docx)
+            </v-btn>
+            <v-chip v-else size="small" color="grey" variant="tonal">Сохраните закупку для скачивания</v-chip>
+          </div>
+        </v-card-title>
+        <v-card-text class="pa-0">
+          <v-table density="comfortable" class="tz-table">
+            <thead>
+              <tr style="background:#F0F7FF">
+                <th style="width:36px;text-align:center">№</th>
+                <th style="width:72px;text-align:center">Фото</th>
+                <th>Наименование и описание</th>
+                <th style="width:70px;text-align:center">Кол-во</th>
+                <th style="width:56px;text-align:center">Ед.</th>
+                <th style="width:120px;text-align:right">Цена ед., ₽</th>
+                <th style="width:130px;text-align:right">Сумма, ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, i) in items.filter(x => x.item_name?.trim())" :key="i" style="vertical-align:middle">
+                <td class="text-center text-medium-emphasis">{{ i + 1 }}</td>
+                <td class="text-center py-2">
+                  <v-avatar v-if="item._photo_url" size="56" rounded="sm">
+                    <v-img :src="item._photo_url" cover />
+                  </v-avatar>
+                  <v-icon v-else size="40" color="grey-lighten-2">mdi-image-off-outline</v-icon>
+                </td>
+                <td class="py-2">
+                  <div class="font-weight-medium" style="font-size:13px">{{ item.item_name }}</div>
+                  <div v-if="item._description" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
+                    {{ item._description.length > 300 ? item._description.slice(0, 300) + '…' : item._description }}
+                  </div>
+                </td>
+                <td class="text-center">{{ item.quantity ?? '—' }}</td>
+                <td class="text-center">{{ item.unit || '—' }}</td>
+                <td class="text-right">{{ item.unit_price != null ? item.unit_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—' }}</td>
+                <td class="text-right font-weight-medium">{{ item.total_price != null ? item.total_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—' }}</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr style="background:#F9FAFB">
+                <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦК:</td>
+                <td class="text-right font-weight-bold pa-3" style="font-size:13px;color:#3B82F6">{{ formatMoney(totalNmck) }}</td>
+              </tr>
+            </tfoot>
+          </v-table>
         </v-card-text>
       </v-card>
 
@@ -451,6 +531,10 @@ interface OrderItem {
   total_price: number | null
   final_unit_price: number | null
   final_total: number | null
+  // UI-only: not sent to backend
+  _selectedProduct?: Product | null
+  _photo_url?: string
+  _description?: string
 }
 interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number }
 
@@ -548,7 +632,7 @@ watch(totalNmck, () => { calcEconomy(); calcBudget() })
 
 // Items
 const addItem = () => {
-  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null })
+  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, _selectedProduct: null, _photo_url: undefined, _description: undefined })
 }
 
 const removeItem = (idx: number) => {
@@ -566,20 +650,44 @@ const calcItemTotal = (idx: number) => {
 
 const onItemProductSelect = (idx: number, val: any) => {
   const item = items.value[idx]
-  const name = typeof val === 'object' && val !== null ? val.name || val : val
-  item.item_name = name || ''
-  const prod = products.value.find(p => p.name === name)
-  if (prod) {
-    item.product_id = prod.id
-    if (prod.product_type && !item.item_type) item.item_type = prod.product_type
-    if (prod.price && !item.unit_price) {
-      item.unit_price = Number(prod.price)
+  if (!val) {
+    // Cleared
+    item.item_name = ''
+    item.product_id = null
+    item._selectedProduct = null
+    item._photo_url = undefined
+    item._description = undefined
+  } else if (typeof val === 'string') {
+    // Free-text entered (not from list)
+    item.item_name = val
+    item.product_id = null
+    item._selectedProduct = null
+    item._photo_url = undefined
+    item._description = undefined
+  } else {
+    // Full product object selected via return-object
+    item.item_name = val.name || ''
+    item.product_id = val.id
+    item._selectedProduct = val
+    item._photo_url = val.photo_url || val.photo_link || undefined
+    item._description = val.description || undefined
+    if (val.product_type && !item.item_type) item.item_type = val.product_type
+    if (val.price && !item.unit_price) {
+      item.unit_price = Number(val.price)
       calcItemTotal(idx)
     }
-  } else {
-    item.product_id = null
   }
 }
+
+const productFilter = (value: string, query: string, item?: any): boolean => {
+  if (!query) return true
+  const q = query.toLowerCase()
+  const name = (item?.raw?.name || '').toLowerCase()
+  const desc = (item?.raw?.description || '').toLowerCase()
+  return name.includes(q) || desc.includes(q)
+}
+
+const hasProducts = computed(() => items.value.some(i => i.item_name?.trim()))
 
 // Date validation rules
 const contractDateRules = computed(() => [
@@ -661,17 +769,23 @@ const loadPurchase = async () => {
 
   // Load items
   if (data.items && data.items.length) {
-    items.value = data.items.map((i: any) => ({
-      product_id: i.product_id ?? null,
-      item_name: i.item_name || '',
-      item_type: i.item_type || 'товар',
-      quantity: i.quantity ? Number(i.quantity) : null,
-      unit: i.unit || '',
-      unit_price: i.unit_price ? Number(i.unit_price) : null,
-      total_price: i.total_price ? Number(i.total_price) : null,
-      final_unit_price: i.final_unit_price ? Number(i.final_unit_price) : null,
-      final_total: i.final_total ? Number(i.final_total) : null,
-    }))
+    items.value = data.items.map((i: any) => {
+      const prod = i.product_id ? products.value.find(p => p.id === i.product_id) : null
+      return {
+        product_id: i.product_id ?? null,
+        item_name: i.item_name || '',
+        item_type: i.item_type || 'товар',
+        quantity: i.quantity ? Number(i.quantity) : null,
+        unit: i.unit || '',
+        unit_price: i.unit_price ? Number(i.unit_price) : null,
+        total_price: i.total_price ? Number(i.total_price) : null,
+        final_unit_price: i.final_unit_price ? Number(i.final_unit_price) : null,
+        final_total: i.final_total ? Number(i.final_total) : null,
+        _selectedProduct: prod ?? null,
+        _photo_url: prod?.photo_url || undefined,
+        _description: prod?.description || undefined,
+      }
+    })
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -722,7 +836,9 @@ const doSave = async (adminOverride: boolean) => {
   budgetOverrideDialog.value = false
   saving.value = true
   try {
-    const validItems = items.value.filter(i => i.item_name?.trim())
+    const validItems = items.value
+      .filter(i => i.item_name?.trim())
+      .map(({ _selectedProduct, _photo_url, _description, ...rest }) => rest)
     const payload = {
       ...form,
       planned_total_price: totalNmck.value || null,
@@ -776,7 +892,7 @@ const uploadFile = async (event: Event) => {
     const file = input.files[0]
     const fd = new FormData()
     fd.append('file', file)
-    const token = localStorage.getItem('access_token')
+    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
@@ -799,7 +915,7 @@ const uploadFile = async (event: Event) => {
 }
 
 const downloadFile = async (fid: number, filename: string) => {
-  const token = localStorage.getItem('access_token')
+  const token = localStorage.getItem('auth_token')
   const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fid}/download`, {
     headers: { Authorization: `Bearer ${token}` },
   })

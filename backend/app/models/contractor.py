@@ -12,3 +12,12 @@ class Contractor(Base):
     phone = Column(String(50))
     email = Column(String(255))
     bank_details = Column(Text)
+    # Contract document fields
+    signatory = Column(String(255))
+    signatory_basis = Column(String(500))
+    postal_address = Column(Text)
+    ogrn = Column(String(15))
+    settlement_account = Column(String(25))
+    bank_name = Column(String(255))
+    bik = Column(String(9))
+    correspondent_account = Column(String(25))

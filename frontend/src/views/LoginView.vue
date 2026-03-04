@@ -50,7 +50,7 @@
         
         <div class="text-caption text-medium-emphasis">
           <p>Тестовые учетные данные:</p>
-          <p><strong>admin</strong> / <strong>admin</strong> – Администратор</p>
+          <p><strong>admin</strong> / <strong>admin123</strong> – Администратор</p>
           <p class="mt-2">Система подключена к реальному API бэкенда</p>
         </div>
       </v-card>
@@ -111,8 +111,8 @@ const login = async () => {
     localStorage.setItem('user_role', data.role)
     localStorage.setItem('user_name', data.full_name || username.value)
     
-    // Перенаправляем на главную страницу
-    router.push('/')
+    // Полная перезагрузка чтобы App.vue пересчитал isAuthenticated
+    window.location.href = '/'
     
   } catch (err: any) {
     console.error('Login error:', err)

@@ -19,6 +19,13 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     },
   })
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('user_role')
+      localStorage.removeItem('user_name')
+      window.location.href = '/login'
+      throw new Error('Сессия истекла, войдите снова')
+    }
     const text = await res.text()
     let detail = text
     try {

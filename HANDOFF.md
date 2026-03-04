@@ -438,23 +438,26 @@ docker compose restart backend
 - Excel-экспорт закупок (`GET /api/purchases/export/excel`)
 - Dashboard bar chart: высоты в px вместо % (фикс отображения)
 
+### Phase 4 — Генерация документов ✓ (инфраструктура готова, шаблоны — ожидают)
+- `docxtpl==0.17.0` + `openpyxl==3.1.2` добавлены в `backend/requirements.txt`
+- `backend/app/routers/documents.py` — endpoint `GET /api/purchases/{pid}/documents/{doc_type}`
+  - Типы: `service_note`, `contract_tz`, `approval_sheet`
+  - Возвращает `.docx` через StreamingResponse (Content-Disposition: attachment)
+  - При отсутствии шаблона: HTTP 404 с инструкцией куда положить файл
+- `backend/templates/` — volume-mounted из `./backend/templates` (горячая замена без rebuild!)
+  - `README.md` — все переменные шаблона с примерами
+- `docker-compose.yml` — добавлен volume `./backend/templates:/app/templates`
+- `CreateOrderView.vue` — секция "Документы" (только isEdit): 3 кнопки → скачать .docx
+- Контекст шаблона: все поля закупки, список позиций `items[]`, дата `today`
+
+**Что осталось для полноценной работы:** положить `.docx` файлы в `backend/templates/`:
+- `service_note.docx` — Служебная записка
+- `contract_tz.docx` — Договор + ТЗ
+- `approval_sheet.docx` — Лист согласования
+
 ---
 
-## 13. Что планируется (Phase 4+)
-
-### Phase 4 — Генерация документов
-Сгенерировать Word-документы по шаблонам для каждой закупки:
-- **Служебная записка** (`service_note`)
-- **Договор + ТЗ** (`contract_tz`)
-- **Лист согласования** (`approval_sheet`)
-
-Технический план:
-- Установить `python-docx` в `backend/requirements.txt`
-- Создать папку `/app/templates/` с .docx шаблонами (заполняются через `python-docx`)
-- Endpoint: `GET /api/purchases/{pid}/documents/{doc_type}` → StreamingResponse (.docx)
-- Frontend: 3 кнопки в CreateOrderView (только для существующей закупки)
-
-**Шаблоны нужно предоставить отдельно** — без них эндпоинт нереализуем.
+## 13. Что планируется (следующие задачи)
 
 ### Остаток по рамочному договору
 Для `purchase_method='competitive'` с `contract_id` — показывать остаток:

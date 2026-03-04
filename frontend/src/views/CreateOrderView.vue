@@ -330,6 +330,48 @@
         </v-card-text>
       </v-card>
 
+      <!-- 8. Формирование документов (только в режиме редактирования) -->
+      <v-card v-if="isEdit" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы</v-card-title>
+        <v-card-text>
+          <div class="d-flex gap-3 flex-wrap">
+            <v-btn
+              prepend-icon="mdi-file-word-outline"
+              variant="tonal"
+              color="blue-darken-2"
+              size="small"
+              :loading="docLoading === 'service_note'"
+              @click="downloadDoc('service_note')"
+            >
+              Служебная записка
+            </v-btn>
+            <v-btn
+              prepend-icon="mdi-file-word-outline"
+              variant="tonal"
+              color="blue-darken-2"
+              size="small"
+              :loading="docLoading === 'contract_tz'"
+              @click="downloadDoc('contract_tz')"
+            >
+              Договор + ТЗ
+            </v-btn>
+            <v-btn
+              prepend-icon="mdi-file-word-outline"
+              variant="tonal"
+              color="blue-darken-2"
+              size="small"
+              :loading="docLoading === 'approval_sheet'"
+              @click="downloadDoc('approval_sheet')"
+            >
+              Лист согласования
+            </v-btn>
+          </div>
+          <div class="text-caption text-medium-emphasis mt-2">
+            Документы формируются по шаблонам из backend/templates/
+          </div>
+        </v-card-text>
+      </v-card>
+
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap">
         <v-btn type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
@@ -447,6 +489,7 @@ const formRef = ref()
 const saving = ref(false)
 const transitioning = ref(false)
 const uploading = ref(false)
+const docLoading = ref<string | null>(null)
 const snack = reactive({ show: false, text: '', color: 'success' })
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
 const budgetOverrideDialog = ref(false)
@@ -775,6 +818,34 @@ const deleteFile = async (fid: number) => {
     showSnack('Файл удалён')
   } catch {
     showSnack('Ошибка удаления', 'error')
+  }
+}
+
+const downloadDoc = async (docType: string) => {
+  if (!purchaseId.value) return
+  docLoading.value = docType
+  try {
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token')
+    const res = await fetch(`/api/purchases/${purchaseId.value}/documents/${docType}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Ошибка генерации документа' }))
+      showSnack(err.detail || 'Ошибка генерации документа', 'error')
+      return
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : `${docType}.docx`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    showSnack('Ошибка скачивания документа', 'error')
+  } finally {
+    docLoading.value = null
   }
 }
 </script>

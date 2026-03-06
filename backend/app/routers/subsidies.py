@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.subsidy import Subsidy
+from app.models.feo_category import FeoCategory
 from app.schemas.schemas import SubsidyCreate, SubsidyOut
 from app.auth.jwt import get_current_user
 from typing import List
@@ -63,6 +64,25 @@ async def delete_subsidy(
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    # Check for linked purchases
+    from app.models.purchase import Purchase
+    p_count = await db.scalar(
+        select(Purchase).where(Purchase.subsidy_id == subsidy_id).limit(1)
+    )
+    if p_count:
+        raise HTTPException(
+            status_code=409,
+            detail="Нельзя удалить субсидию: есть связанные закупки. Сначала удалите или перенесите их."
+        )
+
+    # Cascade delete FEO categories (all levels, bottom-up by level desc)
+    cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.level.desc())
+    )).scalars().all()
+    for cat in cats:
+        await db.delete(cat)
+
     await db.delete(db_subsidy)
     await db.commit()
-    return {"message": "Subsidy deleted"}
+    return {"message": "Субсидия удалена"}

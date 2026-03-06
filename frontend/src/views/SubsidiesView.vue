@@ -528,8 +528,8 @@ async function deleteSubsidy() {
     if (selectedId.value === deleteTarget.value.id) selectedId.value = null
     showDeleteDialog.value = false
     showSnack('Субсидия удалена', 'warning')
-  } catch {
-    showSnack('Ошибка удаления', 'error')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка удаления', 'error')
   } finally {
     saving.value = false
   }

@@ -49,7 +49,7 @@
                 >
                   <span class="bar-value">{{ formatNumber(sub.budget) }}</span>
                 </div>
-                <div class="bar-label">{{ sub.name.replace('_2026', '') }}</div>
+                <div class="bar-label">{{ sub.name }}</div>
               </div>
             </div>
           </div>

@@ -35,7 +35,7 @@
           <v-row>
             <v-col cols="12" md="3">
               <v-select v-model="form.purchase_method"
-                :items="[{value:'single',title:'Единственный исполнитель'},{value:'competitive',title:'Конкурсная процедура'}]"
+                :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="4">
@@ -77,12 +77,12 @@
               />
             </v-col>
             <v-col cols="12" md="4">
-              <v-combobox
-                v-model="form.country_origin"
-                :items="COUNTRIES"
-                label="Страна происхождения"
+              <v-text-field
+                v-model="form.subject"
+                label="Предмет договора"
                 variant="outlined"
                 density="compact"
+                placeholder="Поставка оборудования..."
               />
             </v-col>
             <v-col cols="12" md="4">
@@ -388,9 +388,9 @@
               :loading="uploading" @click="fileInputEl?.click()">
               Загрузить файл
             </v-btn>
-            <span class="text-caption text-medium-emphasis">PDF, Word, JPEG, PNG</span>
+            <span class="text-caption text-medium-emphasis">PDF, Word, Excel, JPEG, PNG</span>
           </div>
-          <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+          <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
 
           <v-list v-if="uploadedFiles.length" density="compact" lines="one">
@@ -544,7 +544,7 @@ const form = reactive({
   contractor_id: null as number | null,
   registry_number: '',
   feo_category_id: null as number | null,
-  country_origin: 'Российская Федерация',
+  subject: '',
   contract_price: null as number | null,
   economy: null as number | null,
   price_increase: null as number | null,
@@ -747,7 +747,7 @@ const loadPurchase = async () => {
     contractor_id: data.contractor_id ?? null,
     registry_number: data.registry_number || '',
     feo_category_id: data.feo_category_id ?? null,
-    country_origin: data.country_origin || 'Российская Федерация',
+    subject: data.subject || '',
     contract_price: data.contract_price ? Number(data.contract_price) : null,
     economy: data.economy ? Number(data.economy) : null,
     price_increase: data.price_increase ? Number(data.price_increase) : null,

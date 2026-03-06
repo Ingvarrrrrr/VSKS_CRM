@@ -1,6 +1,7 @@
 import os
 from io import BytesIO
 from datetime import date
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -96,8 +97,8 @@ async def generate_document(
         # Закупка
         "purchase_number": p.purchase_number or "",
         "registry_number": p.registry_number or "",
-        "purchase_method": "Единственный исполнитель" if p.purchase_method == "single"
-                           else ("Конкурсная процедура" if p.purchase_method == "competitive" else ""),
+        "purchase_method": {"single": "Единственный поставщик", "competitive": "Конкурсная процедура", "advance": "Авансовый отчёт"}.get(p.purchase_method or "", p.purchase_method or ""),
+        "subject": p.subject or "",
         "status": p.status or "",
         # Субсидия
         "subsidy_name": subsidy.name if subsidy else "",
@@ -164,8 +165,9 @@ async def generate_document(
         raise HTTPException(500, f"Ошибка генерации документа: {e}")
 
     safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
+    encoded_name = quote(safe_name, safe="-_.~")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
     )

@@ -169,6 +169,7 @@ class PurchaseCreate(BaseModel):
     execution_term: Optional[date] = None
     execution_term_changed: Optional[date] = None
     country_origin: Optional[str] = None
+    subject: Optional[str] = None
     acceptance_doc_name: Optional[str] = None
     acceptance_doc_date: Optional[date] = None
     acceptance_doc_number: Optional[str] = None

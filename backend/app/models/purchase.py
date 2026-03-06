@@ -36,6 +36,7 @@ class Purchase(Base):
     execution_term = Column(Date)
     execution_term_changed = Column(Date)
     country_origin = Column(String(100))
+    subject = Column(String(500))
     acceptance_doc_name = Column(String(200))
     acceptance_doc_date = Column(Date)
     acceptance_doc_number = Column(String(100))

@@ -103,9 +103,11 @@ async def dashboard_charts(db: AsyncSession = Depends(get_db)):
             Subsidy.budget,
             func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total_planned"),
             func.coalesce(func.sum(
-                case((Purchase.confirmed == True, Purchase.final_total_amount), else_=0)
+                case((Purchase.status.in_(["contracted", "delivered", "paid"]), Purchase.contract_price), else_=None)
             ), 0).label("total_confirmed"),
-            func.coalesce(func.sum(Purchase.delivery_payment_amount), 0).label("total_paid"),
+            func.coalesce(func.sum(
+                case((Purchase.status == "paid", Purchase.payment_amount), else_=None)
+            ), 0).label("total_paid"),
         )
         .select_from(Subsidy)
         .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)

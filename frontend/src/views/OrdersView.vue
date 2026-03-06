@@ -94,6 +94,13 @@
           />
         </template>
 
+        <!-- Предмет договора -->
+        <template #item.subject="{ item }">
+          <span class="text-body-2 text-truncate" style="max-width:180px;display:inline-block">
+            {{ item.subject || '—' }}
+          </span>
+        </template>
+
         <!-- Display name (first item or legacy item_name) -->
         <template #item.display_name="{ item }">
           <span class="text-body-2">{{ itemDisplayName(item) }}</span>
@@ -274,6 +281,7 @@ const TRANSITION_REQUIRED: Record<string, { field: keyof Purchase; label: string
 const headers = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false },
   { title: '№', key: 'purchase_number', width: 60 },
+  { title: 'Предмет договора', key: 'subject', minWidth: 180 },
   { title: 'Наименование', key: 'display_name', minWidth: 200 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 150 },

@@ -64,6 +64,10 @@
                 <div class="sc-mini-val" style="color: #F59E0B;">{{ formatCurrencyShort(s.planned) }}</div>
               </div>
               <div class="sc-mini">
+                <div class="sc-mini-label">Законтрактовано</div>
+                <div class="sc-mini-val" style="color: #3B82F6;">{{ formatCurrencyShort(s.contracted || 0) }}</div>
+              </div>
+              <div class="sc-mini">
                 <div class="sc-mini-label">Оплачено</div>
                 <div class="sc-mini-val" style="color: #22C55E;">{{ formatCurrencyShort(s.paid) }}</div>
               </div>
@@ -93,6 +97,11 @@
           <div class="summary-item">
             <span class="summary-label">Запланировано</span>
             <span class="summary-value" style="color: #F59E0B;">{{ formatCurrency(totals.planned) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Законтрактовано</span>
+            <span class="summary-value" style="color: #3B82F6;">{{ formatCurrency(totals.contracted) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item">
@@ -380,9 +389,10 @@ const selectedSubsidy = computed(() =>
 )
 
 const totals = computed(() => ({
-  budget:  filteredSubsidies.value.reduce((s, x) => s + x.budget,  0),
-  planned: filteredSubsidies.value.reduce((s, x) => s + x.planned, 0),
-  paid:    filteredSubsidies.value.reduce((s, x) => s + x.paid,    0),
+  budget:      filteredSubsidies.value.reduce((s, x) => s + x.budget,      0),
+  planned:     filteredSubsidies.value.reduce((s, x) => s + x.planned,     0),
+  contracted:  filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
+  paid:        filteredSubsidies.value.reduce((s, x) => s + x.paid,        0),
 }))
 
 // ── FEO tree ──────────────────────────────────────

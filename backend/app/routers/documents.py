@@ -147,6 +147,7 @@ async def generate_document(
         # Позиции
         "items": items_list,
         "items_count": len(items_list),
+        "item_names": ", ".join(i["name"] for i in items_list if i["name"]),
         # Служебные
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),

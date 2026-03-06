@@ -85,9 +85,23 @@
                 placeholder="Поставка оборудования..."
               />
             </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="form.feo_category_id" :items="flatFeoForSubsidy" item-title="name" item-value="id"
-                label="Категория ФЭО" variant="outlined" density="compact" clearable />
+            <!-- FEO level 1 — появляется после выбора субсидии -->
+            <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
+              <v-select v-model="selectedFeo1" :items="feoLevel1Options" item-title="name" item-value="id"
+                label="Категория ФЭО (ур.1)" variant="outlined" density="compact" clearable
+                @update:model-value="onFeo1Change" />
+            </v-col>
+            <!-- FEO level 2 — появляется после выбора ур.1 -->
+            <v-col v-if="selectedFeo1 && feoLevel2Options.length" cols="12" md="4">
+              <v-select v-model="selectedFeo2" :items="feoLevel2Options" item-title="name" item-value="id"
+                label="Категория ФЭО (ур.2)" variant="outlined" density="compact" clearable
+                @update:model-value="onFeo2Change" />
+            </v-col>
+            <!-- FEO level 3 — появляется после выбора ур.2 -->
+            <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
+              <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
+                label="Категория ФЭО (ур.3)" variant="outlined" density="compact" clearable
+                @update:model-value="onFeo3Change" />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.registry_number" label="Реестровый номер"
@@ -598,14 +612,55 @@ const fileIcon = (mime?: string) => {
   return 'mdi-file'
 }
 
-// FEO - flat list filtered by subsidy
-const flatFeoForSubsidy = computed(() =>
+// FEO — cascading selects
+const selectedFeo1 = ref<number | null>(null)
+const selectedFeo2 = ref<number | null>(null)
+const selectedFeo3 = ref<number | null>(null)
+
+const feoLevel1Options = computed(() =>
   form.subsidy_id
-    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id)
-    : allFeoCategories.value
+    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id && !c.parent_id)
+    : []
+)
+const feoLevel2Options = computed(() =>
+  selectedFeo1.value
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value)
+    : []
+)
+const feoLevel3Options = computed(() =>
+  selectedFeo2.value
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value)
+    : []
 )
 
-const onSubsidyChange = () => { form.feo_category_id = null; calcBudget() }
+const updateFeoId = () => {
+  form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
+}
+
+const onFeo1Change = () => { selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId() }
+const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
+const onFeo3Change = () => { updateFeoId() }
+
+// Resolve feo_category_id → path of ancestors for cascade
+const resolveFeeLevels = (id: number) => {
+  const path: number[] = []
+  let cur = allFeoCategories.value.find(c => c.id === id)
+  while (cur) {
+    path.unshift(cur.id)
+    cur = cur.parent_id ? allFeoCategories.value.find(c => c.id === cur!.parent_id) : undefined
+  }
+  selectedFeo1.value = path[0] ?? null
+  selectedFeo2.value = path[1] ?? null
+  selectedFeo3.value = path[2] ?? null
+}
+
+const onSubsidyChange = () => {
+  form.feo_category_id = null
+  selectedFeo1.value = null
+  selectedFeo2.value = null
+  selectedFeo3.value = null
+  calcBudget()
+}
 
 const calcEconomy = () => {
   form.economy = (totalNmck.value > 0 && form.contract_price != null)
@@ -800,6 +855,9 @@ const loadPurchase = async () => {
       final_total: data.final_total_amount ? Number(data.final_total_amount) : null,
     }]
   }
+
+  // Resolve FEO cascade
+  if (data.feo_category_id) resolveFeeLevels(data.feo_category_id)
 
   // Load uploaded files
   uploadedFiles.value = data.files || []

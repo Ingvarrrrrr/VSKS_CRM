@@ -7,11 +7,13 @@ class Contract(Base):
     id = Column(Integer, primary_key=True, index=True)
     number = Column(String(100), nullable=False)
     date = Column(Date)
-    contract_type = Column(String(20), nullable=False)  # framework / one-time
+    contract_type = Column(String(50), nullable=False)  # single / framework_cumulative / framework_with_amount
     contractor_id = Column(Integer, ForeignKey("contractors.id"))
+    subsidy_id = Column(Integer, ForeignKey("subsidies.id"), nullable=True)
     subject = Column(Text)
     max_amount = Column(Numeric(15, 2))
     status = Column(String(50), default="active")
     notes = Column(Text)
     contractor = relationship("Contractor")
+    subsidy = relationship("Subsidy")
     purchases = relationship("Purchase", back_populates="contract")

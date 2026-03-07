@@ -69,6 +69,17 @@
       </v-chip>
     </v-chip-group>
 
+    <!-- Bulk actions bar -->
+    <div v-if="selectedOrders.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
+      <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
+      <span class="text-body-2 font-weight-medium">Выбрано: {{ selectedOrders.length }}</span>
+      <v-spacer />
+      <v-btn v-if="isAdmin" color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDelete">
+        Удалить выбранные
+      </v-btn>
+      <v-btn variant="text" size="small" @click="selectedOrders = []">Снять выделение</v-btn>
+    </div>
+
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
@@ -79,9 +90,12 @@
         density="compact"
         hover
         show-expand
+        show-select
+        v-model="selectedOrders"
         v-model:expanded="expanded"
         items-per-page="25"
         :items-per-page-options="[25, 50, 100]"
+        return-object
       >
         <!-- Expand toggle column -->
         <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
@@ -112,8 +126,8 @@
           </v-chip>
         </template>
 
-        <template #item.total_nmck="{ item }">
-          {{ formatMoney(item.total_nmck || item.planned_total_price) }}
+        <template #item.effective_price="{ item }">
+          {{ formatMoney(effectivePrice(item)) }}
         </template>
 
         <template #item.contract_date="{ item }">
@@ -139,6 +153,7 @@
               → {{ STATUS_LABEL[nextStatus(item.status)!] }}
             </v-btn>
             <v-btn icon="mdi-pencil" variant="text" size="small" :to="`/orders/${item.id}/edit`" />
+            <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDeleteOne(item)" />
           </div>
         </template>
 
@@ -186,6 +201,29 @@
       </v-data-table>
     </v-card>
 
+    <!-- Delete dialog -->
+    <v-dialog v-model="deleteDialog.show" max-width="420">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
+          <v-icon icon="mdi-alert-circle-outline" color="error" />
+          Удалить закупки
+        </v-card-title>
+        <v-card-text class="px-6">
+          <template v-if="deleteDialog.bulk">
+            Удалить <strong>{{ selectedOrders.length }}</strong> выбранных закупок? Действие нельзя отменить.
+          </template>
+          <template v-else>
+            Удалить закупку <strong>{{ deleteDialog.single?.subject || deleteDialog.single?.item_name || `#${deleteDialog.single?.id}` }}</strong>? Действие нельзя отменить.
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteDialog.show = false">Отмена</v-btn>
+          <v-btn color="error" :loading="deleteDialog.deleting" @click="doDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Snackbar -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -222,7 +260,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
+import { useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+
+const route = useRoute()
+const userRole = localStorage.getItem('user_role') || ''
+const isAdmin = userRole === 'admin'
 
 interface PurchaseItem { id: number; item_name: string; item_type?: string; quantity?: number; unit?: string; unit_price?: number; total_price?: number }
 interface Subsidy { id: number; name: string; year: number }
@@ -234,8 +277,12 @@ interface Purchase {
   feo_category_name?: string
   subsidy_name?: string
   subsidy_id?: number
+  subject?: string
   planned_total_price?: number
   total_nmck?: number
+  purchase_method?: string
+  contract_price?: number
+  delivery_payment_amount?: number
   status: string
   contract_number?: string
   contract_date?: string
@@ -249,13 +296,15 @@ interface Purchase {
   items?: PurchaseItem[]
 }
 
-const STATUS_ORDER = ['planned', 'confirmed', 'contracted', 'delivered', 'paid']
+const STATUS_ORDER = ['planned', 'confirmed', 'in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
   planned: 'Планируется', confirmed: 'Подтверждено',
+  in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_COLOR: Record<string, string> = {
   planned: 'orange', confirmed: 'blue',
+  in_progress: 'teal',
   contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
 }
 const statusItems = STATUS_ORDER.map(v => ({ value: v, label: STATUS_LABEL[v], color: STATUS_COLOR[v] }))
@@ -285,7 +334,7 @@ const headers = [
   { title: 'Наименование', key: 'display_name', minWidth: 200 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 150 },
-  { title: 'НМЦК', key: 'total_nmck', align: 'end' as const, minWidth: 120 },
+  { title: 'Цена', key: 'effective_price', align: 'end' as const, minWidth: 120, sortable: false },
   { title: '№ договора', key: 'contract_number', minWidth: 120 },
   { title: 'Дата договора', key: 'contract_date', minWidth: 120 },
   { title: 'Статус', key: 'status', width: 130 },
@@ -300,16 +349,37 @@ const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
 const search = ref('')
 const expanded = ref<string[]>([])
+const selectedOrders = ref<Purchase[]>([])
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 const guardDialog = reactive({
   show: false, purchaseId: 0, targetStatus: '', missing: [] as string[],
+})
+const deleteDialog = reactive({
+  show: false, single: null as Purchase | null, bulk: false, deleting: false,
 })
 
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
 const formatMoney = (v?: number | null) =>
   v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
+
+const effectivePrice = (item: Purchase): number | null => {
+  switch (item.status) {
+    case 'planned': case 'confirmed': case 'in_progress':
+      return item.total_nmck ?? item.planned_total_price ?? null
+    case 'contracted':
+      return item.purchase_method === 'single'
+        ? item.contract_price ?? null
+        : item.delivery_payment_amount ?? null
+    case 'delivered':
+      return item.acceptance_doc_amount ?? null
+    case 'paid':
+      return item.payment_amount ?? null
+    default:
+      return item.total_nmck ?? item.planned_total_price ?? null
+  }
+}
 
 const formatDate = (d: string) => {
   const [y, m, day] = d.split('-')
@@ -352,7 +422,12 @@ const loadSubsidies = async () => {
   try { subsidies.value = await apiFetch<Subsidy[]>('/subsidies/') } catch {}
 }
 
-onMounted(() => { loadOrders(); loadSubsidies() })
+onMounted(() => {
+  loadOrders()
+  loadSubsidies()
+  const qSub = route.query.subsidy_id
+  if (qSub) filterSubsidyId.value = Number(qSub)
+})
 
 const doTransition = async (item: Purchase) => {
   const target = nextStatus(item.status)
@@ -377,6 +452,36 @@ const doTransition = async (item: Purchase) => {
     showSnack(e?.detail || e?.message || 'Ошибка перехода', 'error')
   } finally {
     transitioning.value = null
+  }
+}
+
+const confirmDeleteOne = (item: Purchase) => {
+  deleteDialog.single = item
+  deleteDialog.bulk = false
+  deleteDialog.show = true
+}
+
+const confirmBulkDelete = () => {
+  deleteDialog.single = null
+  deleteDialog.bulk = true
+  deleteDialog.show = true
+}
+
+const doDelete = async () => {
+  deleteDialog.deleting = true
+  try {
+    const targets = deleteDialog.bulk
+      ? selectedOrders.value.map(o => o.id)
+      : [deleteDialog.single!.id]
+    await Promise.all(targets.map(id => apiFetch(`/purchases/${id}`, { method: 'DELETE' })))
+    showSnack(`Удалено ${targets.length} закупок`, 'warning')
+    selectedOrders.value = []
+    deleteDialog.show = false
+    await loadOrders()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка удаления', 'error')
+  } finally {
+    deleteDialog.deleting = false
   }
 }
 

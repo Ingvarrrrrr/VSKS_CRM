@@ -24,7 +24,7 @@ except ImportError:
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 # Status workflow
-STATUS_ORDER = ["planned", "confirmed", "contracted", "delivered", "paid"]
+STATUS_ORDER = ["planned", "confirmed", "in_progress", "contracted", "delivered", "paid"]
 
 
 async def _check_budget(
@@ -270,7 +270,7 @@ async def transition_status(
 ):
     """
     Forward-only status transition.
-    planned → confirmed → contracted → delivered → paid
+    planned → confirmed → in_progress → contracted → delivered → paid
     """
     if target_status not in STATUS_ORDER:
         raise HTTPException(422, f"Недопустимый статус: {target_status}")

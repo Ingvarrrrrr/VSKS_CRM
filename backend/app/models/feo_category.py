@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -12,5 +12,6 @@ class FeoCategory(Base):
     code = Column(String(50))
     appendix = Column(String(100), nullable=True)  # Номер приложения (например, "Прил. 2")
     is_active = Column(Boolean, default=True)
+    budget = Column(Numeric(15, 2), nullable=True)  # Финансирование по ФЭО (ручное или NULL = авто из детей)
     parent = relationship("FeoCategory", remote_side=[id], backref="children")
     subsidy = relationship("Subsidy", back_populates="feo_categories")

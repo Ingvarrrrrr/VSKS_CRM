@@ -1,0 +1,135 @@
+{
+  "name": "Fabrikant — Публикация закупки",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fabrikant-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Запрос от CRM",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "fabrikant-publish"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем данные закупки от CRM\nconst data = $input.first().json.body || $input.first().json;\n\nconst publicationId = data.publication_id;\nconst purchase = data;\n\n// Формируем данные для Фабрикант API\n// TODO: заполнить после получения WSDL-схем от Фабрикант\nconst fabrikantPayload = {\n  // Основные поля лота\n  lotName: purchase.subject || 'Закупка #' + purchase.purchase_id,\n  lotDescription: purchase.items?.map(i => `${i.item_name} — ${i.quantity} ${i.unit}`).join('\\n') || '',\n  startPrice: purchase.nmck,\n  currency: 'RUB',\n  \n  // Сроки\n  deliveryTerm: purchase.execution_term,\n  \n  // Организация (заполнить реквизиты)\n  organizationInn: purchase.contractor?.inn || 'УКАЖИТЕ_ИНН',\n  organizationOgrn: purchase.contractor?.ogrn || 'УКАЖИТЕ_ОГРН',\n  \n  // Позиции\n  items: (purchase.items || []).map(item => ({\n    name: item.item_name,\n    quantity: item.quantity,\n    unit: item.unit,\n    unitPrice: item.unit_price,\n  })),\n  \n  // Служебные\n  _publicationId: publicationId,\n  _purchaseId: purchase.purchase_id,\n};\n\nreturn [{ json: { publicationId, fabrikantPayload, rawData: purchase } }];"
+      },
+      "id": "prepare-data",
+      "name": "Подготовить данные для Фабрикант",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ══════════════════════════════════════════════════════════════\n// ЗАГЛУШКА: здесь будет реальный вызов Фабрикант SOAP API\n// После получения credentials от Фабрикант:\n//   1. Получить WSDL схемы на fabrikant.ru/integration-api\n//   2. Заменить этот узел на HTTP Request с SOAP envelope\n//   3. URL: https://api.fabrikant.ru/... (уточнить у Фабрикант)\n//\n// Пример SOAP envelope:\n// <soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">\n//   <soapenv:Header>\n//     <auth:Authentication>\n//       <auth:Login>{{LOGIN}}</auth:Login>\n//       <auth:Password>{{PASSWORD}}</auth:Password>\n//     </auth:Authentication>\n//   </soapenv:Header>\n//   <soapenv:Body>\n//     <lot:CreateLot>...(данные из предыдущего узла)...</lot:CreateLot>\n//   </soapenv:Body>\n// </soapenv:Envelope>\n// ══════════════════════════════════════════════════════════════\n\nconst { publicationId, fabrikantPayload } = $input.first().json;\n\n// ВРЕМЕННО: возвращаем success=false с пояснением\nreturn [{\n  json: {\n    publicationId,\n    success: false,\n    error: 'API Фабрикант не настроен. Получите credentials на fabrikant.ru/integration-api и настройте узел «Вызов Фабрикант API».',\n    fabrikantPayload,\n  }\n}];"
+      },
+      "id": "fabrikant-api-call",
+      "name": "Вызов Фабрикант API (настроить!)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "notes": "⚠️ Требует настройки! Получите WSDL от fabrikant.ru/integration-api и замените на HTTP Request node с SOAP."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Успешно?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "status", "value": "published" },
+            { "name": "external_id", "value": "={{ $json.externalId || '' }}" },
+            { "name": "external_url", "value": "={{ $json.externalUrl || '' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "callback-success",
+      "name": "CRM: статус → опубликовано",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "status", "value": "error" },
+            { "name": "error_text", "value": "={{ $json.error || 'Неизвестная ошибка' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "callback-error",
+      "name": "CRM: статус → ошибка",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }"
+      },
+      "id": "respond",
+      "name": "Ответ CRM",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1440, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Запрос от CRM": {
+      "main": [[{ "node": "Подготовить данные для Фабрикант", "type": "main", "index": 0 }]]
+    },
+    "Подготовить данные для Фабрикант": {
+      "main": [[{ "node": "Вызов Фабрикант API (настроить!)", "type": "main", "index": 0 }]]
+    },
+    "Вызов Фабрикант API (настроить!)": {
+      "main": [[{ "node": "Успешно?", "type": "main", "index": 0 }]]
+    },
+    "Успешно?": {
+      "main": [
+        [{ "node": "CRM: статус → опубликовано", "type": "main", "index": 0 }],
+        [{ "node": "CRM: статус → ошибка",      "type": "main", "index": 0 }]
+      ]
+    },
+    "CRM: статус → опубликовано": {
+      "main": [[{ "node": "Ответ CRM", "type": "main", "index": 0 }]]
+    },
+    "CRM: статус → ошибка": {
+      "main": [[{ "node": "Ответ CRM", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "crm-integration" }]
+}

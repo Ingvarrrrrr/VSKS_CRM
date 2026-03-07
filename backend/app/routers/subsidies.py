@@ -76,6 +76,10 @@ async def delete_subsidy(
             detail="Нельзя удалить субсидию: есть связанные закупки. Сначала удалите или перенесите их."
         )
 
+    # Delete linked wishes
+    from sqlalchemy import text
+    await db.execute(text("DELETE FROM wishes WHERE subsidy_id = :sid"), {"sid": subsidy_id})
+
     # Cascade delete FEO categories (all levels, bottom-up by level desc)
     cats = (await db.execute(
         select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.level.desc())

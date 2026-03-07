@@ -152,7 +152,7 @@
 
           <div v-else>
             <div class="detail-feo-header">
-              <span class="chart-card-title">Категории ФЭО</span>
+              <span class="chart-card-title">Направления ФЭО</span>
               <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="ml-auto" @click="showAddFeoDialog = true">
                 Добавить направление
               </v-btn>
@@ -163,41 +163,111 @@
               <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>
             </div>
 
-            <!-- Collapsible FEO tree -->
-            <div v-else class="feo-tree">
-              <div
-                v-for="node in visibleFeoNodes"
-                :key="node.id"
-                class="feo-tree-row"
-                :class="{ 'feo-tree-row--clickable': node.hasChildren }"
-                :style="{ paddingLeft: `${node.depth * 24 + 8}px` }"
-                @click="node.hasChildren ? toggleExpand(node.id) : undefined"
-              >
-                <span class="feo-tree-chevron">
-                  <v-icon
-                    v-if="node.hasChildren"
-                    size="16"
-                    :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                    color="grey"
-                  />
-                </span>
-                <v-icon
-                  size="18"
-                  class="mr-2 flex-shrink-0"
-                  :icon="node.hasChildren
-                    ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
-                    : 'mdi-file-document-outline'"
-                  :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-                />
-                <span class="feo-name flex-grow-1">{{ node.name }}</span>
-                <span v-if="node.code" class="feo-code ml-3">{{ node.code }}</span>
-                <v-chip
-                  size="x-small"
-                  :color="['', 'primary', 'warning', 'success'][node.level] || 'grey'"
-                  variant="flat"
-                  class="ml-2 flex-shrink-0"
-                >Ур.{{ node.level }}</v-chip>
-              </div>
+            <!-- FEO table with 3 columns -->
+            <div v-else class="feo-table-wrap">
+              <table class="feo-table">
+                <thead>
+                  <tr>
+                    <th class="feo-th feo-th-name">Наименование</th>
+                    <th class="feo-th feo-th-num">Финансирование по ФЭО</th>
+                    <th class="feo-th feo-th-num">Фактически запланировано</th>
+                    <th class="feo-th feo-th-actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="node in visibleFeoNodes"
+                    :key="node.id"
+                    class="feo-tr"
+                    :class="[
+                      `feo-tr--l${node.level}`,
+                      feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'feo-tr--over' : ''
+                    ]"
+                  >
+                    <!-- Наименование -->
+                    <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
+                      <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                        <v-icon
+                          v-if="node.hasChildren"
+                          size="15"
+                          :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                          color="grey"
+                          class="mr-1 cursor-pointer"
+                        />
+                        <span v-else style="width:16px;display:inline-block" />
+                      </span>
+                      <v-icon
+                        size="16"
+                        class="mr-1 flex-shrink-0"
+                        :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
+                        :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
+                      />
+                      <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
+                      <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
+                      <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
+                    </td>
+
+                    <!-- Финансирование по ФЭО -->
+                    <td class="feo-td feo-td-num">
+                      <!-- Авто-режим: дети имеют суммы -->
+                      <template v-if="isAutoNode(node)">
+                        <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                        <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                          title="Сумма автоматически считается из дочерних направлений"
+                        >авто</v-chip>
+                      </template>
+                      <!-- Ручной режим: задана сумма -->
+                      <template v-else-if="feoBudgetFor(node) > 0">
+                        <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                      </template>
+                      <!-- Ручной режим: пусто — подсказка задать -->
+                      <template v-else>
+                        <span class="feo-set-hint" title="Нажмите ✏️ чтобы задать сумму"
+                          @click="startFeoEdit(node)"
+                        >Задать</span>
+                      </template>
+                    </td>
+
+                    <!-- Фактически запланировано -->
+                    <td class="feo-td feo-td-num">
+                      <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount' : 'feo-amount-empty'">
+                        {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
+                      </span>
+                    </td>
+
+                    <!-- Действия -->
+                    <td class="feo-td feo-td-actions">
+                      <v-btn
+                        icon="mdi-pencil"
+                        variant="text"
+                        size="x-small"
+                        color="primary"
+                        class="mr-1"
+                        title="Редактировать"
+                        @click="startFeoEdit(node)"
+                      />
+                      <v-btn
+                        v-if="!node.hasChildren"
+                        icon="mdi-delete"
+                        variant="text"
+                        size="x-small"
+                        color="error"
+                        title="Удалить"
+                        @click="confirmFeoDelete(node)"
+                      />
+                      <v-btn
+                        v-if="node.level < 3"
+                        icon="mdi-plus"
+                        variant="text"
+                        size="x-small"
+                        color="success"
+                        title="Добавить дочернее направление"
+                        @click="feoForm.parentId = node.id; showAddFeoDialog = true"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -276,12 +346,23 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
-          Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.
+          <template v-if="deleteErrorLinked">
+            <v-alert type="error" variant="tonal" class="mb-3">
+              Нельзя удалить <strong>{{ deleteTarget?.name }}</strong>: есть связанные закупки.
+              Сначала удалите или перенесите их.
+            </v-alert>
+            <v-btn block color="primary" variant="tonal" prepend-icon="mdi-cart-outline" @click="goToLinkedPurchases">
+              Перейти к закупкам субсидии
+            </v-btn>
+          </template>
+          <template v-else>
+            Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.
+          </template>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showDeleteDialog = false">Отмена</v-btn>
-          <v-btn color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
+          <v-btn v-if="!deleteErrorLinked" color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -312,6 +393,24 @@
               <v-text-field v-model="feoForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
             </v-col>
           </v-row>
+          <v-divider class="my-3" />
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
+            <v-switch
+              v-model="feoForm.budgetAuto"
+              label="Авто из детей"
+              density="compact"
+              hide-details
+              class="ml-4"
+              color="primary"
+            />
+          </div>
+          <v-text-field
+            v-if="!feoForm.budgetAuto"
+            v-model.number="feoForm.budget"
+            label="Сумма финансирования, ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -319,6 +418,87 @@
           <v-btn color="primary" :loading="savingFeo" :disabled="!feoForm.name" @click="addFeoCategory">
             Добавить
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Edit FEO category dialog ── -->
+    <v-dialog v-model="showEditFeoDialog" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
+          Редактировать направление ФЭО
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditFeoDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-text-field v-model="feoEditForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model="feoEditForm.code" label="Код" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="feoEditForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-divider class="my-3" />
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
+            <!-- "Авто" только у родительских категорий (есть дети) -->
+            <v-switch
+              v-if="feoEditForm.hasChildren"
+              v-model="feoEditForm.budgetAuto"
+              label="Авто из детей"
+              density="compact"
+              hide-details
+              class="ml-4"
+              color="primary"
+            />
+          </div>
+          <!-- Для листовых категорий поле всегда видно; для родительских — только в ручном режиме -->
+          <v-text-field
+            v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
+            v-model.number="feoEditForm.budget"
+            label="Сумма финансирования, ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
+          <v-alert
+            v-if="feoEditForm.hasChildren && feoEditForm.budgetAuto"
+            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
+          >
+            Сумма рассчитывается автоматически из дочерних направлений
+          </v-alert>
+          <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showEditFeoDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name" @click="updateFeoCategory">
+            Сохранить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Delete FEO category dialog ── -->
+    <v-dialog v-model="showDeleteFeoDialog" max-width="420">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
+          Удалить направление?
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showDeleteFeoDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-alert v-if="feoDeleteError" type="error" variant="tonal" class="mb-3">{{ feoDeleteError }}</v-alert>
+          <template v-else>
+            Удалить направление <strong>{{ feoDeleteTarget?.name }}</strong>? Действие нельзя отменить.
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showDeleteFeoDialog = false">Отмена</v-btn>
+          <v-btn v-if="!feoDeleteError" color="error" :loading="savingFeo" @click="deleteFeoCategory">Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -333,7 +513,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+
+const router = useRouter()
+const route  = useRoute()
 
 interface SubsidyRow {
   id: number; name: string; year: number; budget: number
@@ -342,7 +526,8 @@ interface SubsidyRow {
 
 interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
-  level: number; name: string; code: string | null; appendix: string | null; is_active: boolean
+  level: number; name: string; code: string | null; appendix: string | null
+  is_active: boolean; budget: number | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -357,23 +542,31 @@ const saving     = ref(false)
 const savingFeo  = ref(false)
 const loadingFeo = ref(false)
 
-const allSubsidies  = ref<SubsidyRow[]>([])
-const feoCategories = ref<FeoCategory[]>([])
-const expandedIds   = ref<number[]>([])
-const selectedId    = ref<number | null>(null)
-const selectedYear  = ref<number>(new Date().getFullYear())
+const allSubsidies    = ref<SubsidyRow[]>([])
+const feoCategories   = ref<FeoCategory[]>([])
+const purchaseTotals  = ref<Record<number, number>>({})
+const expandedIds     = ref<number[]>([])
+const selectedId      = ref<number | null>(null)
+const selectedYear    = ref<number>(new Date().getFullYear())
 
-const showAddDialog    = ref(false)
-const showEditDialog   = ref(false)
-const showDeleteDialog = ref(false)
-const showAddFeoDialog = ref(false)
-const deleteTarget     = ref<SubsidyRow | null>(null)
+const showAddDialog      = ref(false)
+const showEditDialog     = ref(false)
+const showDeleteDialog   = ref(false)
+const showAddFeoDialog   = ref(false)
+const showEditFeoDialog  = ref(false)
+const showDeleteFeoDialog = ref(false)
+const deleteTarget       = ref<SubsidyRow | null>(null)
+const deleteErrorLinked  = ref(false)
+const feoEditTarget      = ref<FeoCategory | null>(null)
+const feoDeleteTarget    = ref<FeoCategory | null>(null)
+const feoDeleteError     = ref('')
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '' })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '' })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '' })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -427,6 +620,32 @@ function flattenVisible(nodes: FeoNode[]): FeoNode[] {
 
 const visibleFeoNodes = computed(() => flattenVisible(feoTree.value))
 
+// Бюджет по ФЭО:
+// - Листовой узел: всегда ручное значение
+// - Родительский: если хоть у одного ребёнка есть сумма → авто-сумма (node.budget игнорируется)
+//                 если ни у кого нет → используем node.budget (ручное)
+function feoBudgetFor(node: FeoNode): number {
+  if (!node.hasChildren) return node.budget != null ? Number(node.budget) : 0
+  const childSum = node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
+  if (childSum > 0) return childSum   // авто-режим: дети имеют суммы
+  return node.budget != null ? Number(node.budget) : 0  // ручной режим
+}
+
+function isAutoNode(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  return node.children.some(c => feoBudgetFor(c) > 0)
+}
+
+// Фактически запланированные расходы:
+// - листовая категория (нет детей) → берём закупки, привязанные напрямую к ней
+// - родительская категория → ТОЛЬКО сумма детей (закупки напрямую на уровне 1/2 не считаются)
+function feoPurchasedFor(node: FeoNode): number {
+  if (!node.hasChildren) {
+    return purchaseTotals.value[node.id] || 0
+  }
+  return node.children.reduce((acc, child) => acc + feoPurchasedFor(child), 0)
+}
+
 function toggleExpand(id: number) {
   const idx = expandedIds.value.indexOf(id)
   if (idx >= 0) {
@@ -447,6 +666,18 @@ async function loadAll() {
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year
+
+    // Handle ?sid=X navigation from Quick Access
+    const sidParam = route.query.sid
+    if (sidParam) {
+      const targetId = Number(sidParam)
+      const target = allSubsidies.value.find(s => s.id === targetId)
+      if (target) {
+        selectedYear.value = target.year
+        selectedId.value = targetId
+        loadFeo(targetId)
+      }
+    }
   } catch (e) {
     showSnack('Ошибка загрузки данных', 'error')
   } finally {
@@ -457,8 +688,14 @@ async function loadAll() {
 async function loadFeo(subsidyId: number) {
   loadingFeo.value = true
   feoCategories.value = []
+  purchaseTotals.value = {}
   try {
-    feoCategories.value = await apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`)
+    const [cats, totals] = await Promise.all([
+      apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
+    ])
+    feoCategories.value = cats
+    purchaseTotals.value = totals
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {
@@ -480,6 +717,7 @@ function startEdit(s: SubsidyRow) {
 
 function confirmDelete(s: SubsidyRow) {
   deleteTarget.value = s
+  deleteErrorLinked.value = false
   showDeleteDialog.value = true
 }
 
@@ -529,10 +767,19 @@ async function deleteSubsidy() {
     showDeleteDialog.value = false
     showSnack('Субсидия удалена', 'warning')
   } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка удаления', 'error')
+    if (e?.status === 409 || e?.detail?.includes('закупк')) {
+      deleteErrorLinked.value = true
+    } else {
+      showSnack(e?.detail || 'Ошибка удаления', 'error')
+    }
   } finally {
     saving.value = false
   }
+}
+
+function goToLinkedPurchases() {
+  showDeleteDialog.value = false
+  router.push(`/orders?subsidy_id=${deleteTarget.value?.id}`)
 }
 
 async function addFeoCategory() {
@@ -547,15 +794,82 @@ async function addFeoCategory() {
         name: feoForm.value.name,
         code: feoForm.value.code || null,
         appendix: feoForm.value.appendix || null,
-        is_active: true
+        is_active: true,
+        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget || null),
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '' }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false }
     showSnack('Направление добавлено')
+    if (selectedId.value) await loadFeo(selectedId.value)
   } catch {
     showSnack('Ошибка добавления направления', 'error')
+  } finally {
+    savingFeo.value = false
+  }
+}
+
+function startFeoEdit(node: FeoNode) {
+  feoEditTarget.value = node
+  // "Авто из детей" — только если у категории есть дети И бюджет не задан вручную
+  const autoMode = node.hasChildren && node.budget === null
+  feoEditForm.value = {
+    name: node.name,
+    code: node.code || '',
+    appendix: node.appendix || '',
+    budget: node.budget ?? null,
+    budgetAuto: autoMode,
+    is_active: node.is_active,
+    hasChildren: node.hasChildren,
+  }
+  showEditFeoDialog.value = true
+}
+
+async function updateFeoCategory() {
+  if (!feoEditTarget.value) return
+  savingFeo.value = true
+  try {
+    const res = await apiFetch<FeoCategory>(`/feo-categories/${feoEditTarget.value.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        subsidy_id: feoEditTarget.value.subsidy_id,
+        parent_id: feoEditTarget.value.parent_id,
+        name: feoEditForm.value.name,
+        code: feoEditForm.value.code || null,
+        appendix: feoEditForm.value.appendix || null,
+        is_active: feoEditForm.value.is_active,
+        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget || null),
+      })
+    })
+    const idx = feoCategories.value.findIndex(c => c.id === res.id)
+    if (idx >= 0) feoCategories.value[idx] = res
+    showEditFeoDialog.value = false
+    showSnack('Направление обновлено')
+  } catch {
+    showSnack('Ошибка обновления', 'error')
+  } finally {
+    savingFeo.value = false
+  }
+}
+
+function confirmFeoDelete(node: FeoCategory) {
+  feoDeleteTarget.value = node
+  feoDeleteError.value = ''
+  showDeleteFeoDialog.value = true
+}
+
+async function deleteFeoCategory() {
+  if (!feoDeleteTarget.value) return
+  savingFeo.value = true
+  feoDeleteError.value = ''
+  try {
+    await apiFetch(`/feo-categories/${feoDeleteTarget.value.id}`, { method: 'DELETE' })
+    feoCategories.value = feoCategories.value.filter(c => c.id !== feoDeleteTarget.value!.id)
+    showDeleteFeoDialog.value = false
+    showSnack('Направление удалено', 'warning')
+  } catch (e: any) {
+    feoDeleteError.value = e?.detail || 'Ошибка удаления'
   } finally {
     savingFeo.value = false
   }
@@ -717,7 +1031,7 @@ onMounted(loadAll)
 .dkpi-label { font-size: 11px; color: #9CA3AF; margin-bottom: 4px; }
 .dkpi-val   { font-size: 16px; font-weight: 700; color: #111827; }
 
-/* FEO table */
+/* FEO section */
 .detail-feo-header {
   display: flex; align-items: center;
   margin-bottom: 12px;
@@ -729,66 +1043,58 @@ onMounted(loadAll)
   display: flex; flex-direction: column; align-items: center;
   padding: 32px 0; color: #9CA3AF;
 }
-.feo-table thead th {
-  font-size: 11px !important; font-weight: 600 !important;
-  color: #6B7280 !important; text-transform: uppercase;
-  letter-spacing: 0.05em; background: #F9FAFB;
-  padding: 8px 12px !important;
-}
-.feo-table tbody td { padding: 9px 12px !important; }
-.feo-row:hover td  { background: #F9FAFB; }
-.feo-name {
-  font-size: 13px; font-weight: 500; color: #111827;
-}
 
-/* ── FEO collapsible tree ── */
-.feo-tree {
+/* FEO table */
+.feo-table-wrap {
   border: 1px solid #E5E7EB;
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: auto;
 }
-.feo-tree-row {
-  display: flex;
-  align-items: center;
-  padding: 9px 8px;
-  border-bottom: 1px solid #F3F4F6;
-  transition: background 0.12s;
-  min-height: 40px;
+.feo-table {
+  width: 100%;
+  border-collapse: collapse;
 }
-.feo-tree-row:last-child {
-  border-bottom: none;
+.feo-th {
+  font-size: 11px; font-weight: 600; color: #6B7280;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  background: #F9FAFB; padding: 9px 12px;
+  text-align: left; white-space: nowrap;
+  border-bottom: 1px solid #E5E7EB;
 }
-.feo-tree-row:hover {
-  background: #F9FAFB;
+.feo-th-num { text-align: right; min-width: 180px; }
+.feo-th-name { min-width: 260px; }
+.feo-th-actions { width: 90px; }
+.feo-td {
+  padding: 8px 12px; border-bottom: 1px solid #F3F4F6;
+  vertical-align: middle;
 }
-.feo-tree-row--clickable {
-  cursor: pointer;
-}
-.feo-tree-row--clickable:hover {
-  background: #EFF6FF;
-}
-.feo-tree-chevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  flex-shrink: 0;
-  margin-right: 4px;
-}
-.feo-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #111827;
-}
+.feo-td-name { display: flex; align-items: center; flex-wrap: nowrap; }
+.feo-td-num { text-align: right; }
+.feo-td-actions { text-align: right; white-space: nowrap; }
+.feo-tr:last-child .feo-td { border-bottom: none; }
+.feo-tr:hover .feo-td { background: #F9FAFB; }
+.feo-tr--l1 .feo-td { background: #FAFBFF; }
+.feo-tr--l1:hover .feo-td { background: #EFF6FF; }
+.feo-tr--over .feo-td { background: #FEF2F2 !important; }
+.feo-tr--over:hover .feo-td { background: #FEE2E2 !important; }
+.feo-tr--over .feo-amount { color: #DC2626; font-weight: 700; }
+.feo-name { font-size: 13px; font-weight: 500; color: #111827; white-space: nowrap; }
+.feo-name--l1 { font-weight: 700; font-size: 13px; }
+.feo-name--l2 { font-weight: 600; }
+.feo-name--l3 { font-weight: 400; color: #374151; }
 .feo-code {
-  font-size: 11px;
-  color: #6B7280;
-  background: #F3F4F6;
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-family: monospace;
-  white-space: nowrap;
+  font-size: 11px; color: #6B7280; background: #F3F4F6;
+  border-radius: 4px; padding: 1px 5px; font-family: monospace; white-space: nowrap;
 }
+.feo-appendix { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
+.feo-amount { font-size: 13px; font-weight: 500; color: #111827; }
+.feo-amount-empty { font-size: 13px; color: #9CA3AF; }
+.feo-set-hint {
+  font-size: 12px; color: #3B82F6; cursor: pointer; text-decoration: underline dotted;
+}
+.feo-set-hint:hover { color: #2563EB; }
+.feo-tree-chevron { display: inline-flex; align-items: center; }
+.cursor-pointer { cursor: pointer; }
 
 /* ── Dialogs ── */
 .dialog-card {}

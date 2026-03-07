@@ -33,10 +33,28 @@
       </div>
     </div>
 
+    <!-- ── Budget Overflow Alert ── -->
+    <div v-if="overrunSubsidies.length > 0" class="budget-overrun-banner">
+      <v-icon icon="mdi-alert" size="28" color="white" class="mr-3 flex-shrink-0" />
+      <div class="overrun-content">
+        <div class="overrun-title">Превышение бюджета субсидий!</div>
+        <div v-for="s in overrunSubsidies" :key="s.id" class="overrun-row">
+          <strong>{{ s.name }}</strong>:
+          бюджет {{ formatCurrency(s.budget) }},
+          НМЦК {{ formatCurrency(s.planned) }}
+          <span v-if="s.contracted > s.budget">
+            · законтрактовано {{ formatCurrency(s.contracted) }}
+          </span>
+          → <strong>перерасход {{ formatCurrency(Math.max(s.planned, s.contracted) - s.budget) }}</strong>
+        </div>
+        <div class="overrun-hint">Уменьшите НМЦК закупок или увеличьте размер субсидии</div>
+      </div>
+    </div>
+
     <!-- ── KPI Cards ── -->
     <v-row class="kpi-row">
       <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
-        <div class="kpi-card" :class="'kpi-' + card.key" @click="openBreakdown">
+        <div class="kpi-card" :class="'kpi-' + card.key" @click="openBreakdown(card.key)">
           <div class="kpi-icon-box">
             <v-icon :icon="card.icon" size="26" />
           </div>
@@ -75,7 +93,7 @@
             <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
             <span class="chart-card-title">Освоение бюджета</span>
           </div>
-          <apexchart type="radialBar" height="270" :options="radialOptions" :series="[totalUsagePct]" />
+          <apexchart type="radialBar" height="270" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
           <div class="radial-footer">
             <span class="text-caption text-medium-emphasis">
               {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
@@ -92,7 +110,12 @@
             <span class="chart-card-title">Закупки по статусам</span>
           </div>
           <div v-if="statusPieReady">
-            <apexchart type="pie" height="270" :options="statusPieOptions" :series="statusPieSeries" />
+            <apexchart
+              :key="statusPieKey"
+              type="pie" height="270"
+              :options="statusPieOptions"
+              :series="statusPieSeries"
+            />
           </div>
           <div v-else class="chart-empty">
             <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
@@ -127,7 +150,7 @@
           <div class="chart-card-header">
             <v-icon icon="mdi-clipboard-list-outline" size="18" color="#14B8A6" class="mr-2" />
             <span class="chart-card-title">Последние закупки</span>
-            <router-link to="/orders" class="chart-link ml-auto">Все →</router-link>
+            <span class="chart-link ml-auto" style="cursor:pointer" @click="goToOrders">Все →</span>
           </div>
           <div v-if="loadingPurchases" class="chart-empty">
             <v-progress-circular indeterminate size="32" color="primary" />
@@ -140,20 +163,20 @@
             <div
               v-for="p in recentPurchases" :key="p.id"
               class="purchase-row"
-              @click="$router.push('/orders')"
+              @click="$router.push(`/orders/${p.id}/edit`)"
             >
               <div class="purchase-num">
                 <v-icon icon="mdi-package-variant" size="16" :color="statusColorHex(p.status)" />
               </div>
               <div class="purchase-main">
-                <div class="purchase-name">{{ p.item_name || 'Без названия' }}</div>
+                <div class="purchase-name">{{ p.subject || p.items?.[0]?.item_name || p.item_name || 'Без названия' }}</div>
                 <div class="purchase-meta">
-                  {{ p.order_number || '—' }}
+                  {{ p.registry_number || p.order_number || '—' }}
                   <span v-if="p.contractor_name"> · {{ p.contractor_name }}</span>
                 </div>
               </div>
               <div class="purchase-right">
-                <div class="purchase-amount">{{ formatCurrencyShort(parseFloat(p.planned_total_price || 0)) }}</div>
+                <div class="purchase-amount">{{ formatCurrencyShort(purchaseEffectivePrice(p)) }}</div>
                 <v-chip size="x-small" :color="statusColor(p.status)" variant="flat" class="mt-1">
                   {{ statusLabel(p.status) }}
                 </v-chip>
@@ -173,7 +196,7 @@
           <v-btn
             variant="tonal" color="primary" size="small"
             prepend-icon="mdi-chart-pie"
-            @click="showBreakdownDialog = true"
+            @click="openBreakdown('budget')"
           >
             Аналитика
           </v-btn>
@@ -196,7 +219,7 @@
           <tr
             v-for="s in filteredSubsidies" :key="s.id"
             class="table-row-hover"
-            @click="showBreakdownDialog = true"
+            @click="openBreakdown('budget')"
             style="cursor: pointer;"
           >
             <td>
@@ -220,7 +243,7 @@
               </v-progress-linear>
             </td>
             <td>
-              <v-btn icon="mdi-magnify" size="x-small" variant="text" @click.stop="showBreakdownDialog = true" />
+              <v-btn icon="mdi-magnify" size="x-small" variant="text" @click.stop="openBreakdown('budget')" />
             </td>
           </tr>
 
@@ -249,7 +272,7 @@
       </v-table>
     </div>
 
-    <BudgetDrillDownDialog v-model="showBreakdownDialog" :subsidies="filteredSubsidies" />
+    <BudgetDrillDownDialog v-model="showBreakdownDialog" :subsidies="filteredSubsidies" :metric="breakdownMetric" />
   </div>
 </template>
 
@@ -272,9 +295,10 @@ interface SubsidyRow {
   budget: number; contracted: number; paid: number; planned: number
 }
 
-const allSubsidies = ref<SubsidyRow[]>([])
-const recentPurchases = ref<any[]>([])
-const statusCounts = ref<Record<string, number>>({})
+const allSubsidies    = ref<SubsidyRow[]>([])
+const allPurchases    = ref<any[]>([])
+const statusCounts    = ref<Record<string, number>>({})
+const breakdownMetric = ref('budget')
 
 // ── Derived ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -290,12 +314,24 @@ const filteredSubsidies = computed(() => {
 
 const filteredSubsidyStats = computed(() => filteredSubsidies.value)
 
+// Recent purchases filtered to selected subsidies
+const recentPurchases = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map(s => s.id)
+  return allPurchases.value
+    .filter(p => subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id))
+    .slice(0, 8)
+})
+
 const totalBudget     = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.budget, 0))
 const totalContracted = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.contracted, 0))
 const totalPaid       = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.paid, 0))
 const totalPlanned    = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
 const totalRemaining  = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
+
+const overrunSubsidies = computed(() =>
+  filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
+)
 
 // ── KPI Cards ─────────────────────────────────────
 const kpiCards = computed(() => [
@@ -394,27 +430,52 @@ const radialOptions = computed(() => ({
 
 // ── Chart: Status Pie ─────────────────────────────
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'Планируется', confirmed: 'Подтверждён',
-  contracted: 'Подписан', delivered: 'Поставлено', paid: 'Оплачено'
+  planned: 'Планируется', confirmed: 'Подтверждено',
+  in_progress: 'Ведётся работа',
+  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено'
+}
+
+// Status counts filtered by selected subsidies
+const filteredStatusCounts = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map(s => s.id)
+  const counts: Record<string, number> = {}
+  for (const p of allPurchases.value) {
+    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) continue
+    counts[p.status] = (counts[p.status] || 0) + 1
+  }
+  return counts
+})
+
+const STATUS_COLORS: Record<string, string> = {
+  planned: '#94A3B8', confirmed: '#3B82F6', in_progress: '#14B8A6',
+  contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E',
 }
 
 const statusPieReady = computed(() =>
-  Object.keys(statusCounts.value).length > 0 &&
-  Object.values(statusCounts.value).some(v => v > 0)
+  Object.keys(filteredStatusCounts.value).length > 0 &&
+  Object.values(filteredStatusCounts.value).some(v => v > 0)
 )
 
-const statusPieSeries = computed(() => Object.values(statusCounts.value))
-const statusPieLabels = computed(() =>
-  Object.keys(statusCounts.value).map(k => STATUS_LABELS[k] || k)
-)
+// Sorted entries so chart is stable
+const statusPieEntries = computed(() => {
+  const ORDER = ['planned', 'confirmed', 'in_progress', 'contracted', 'delivered', 'paid']
+  return Object.entries(filteredStatusCounts.value)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]))
+})
+
+const statusPieSeries = computed(() => statusPieEntries.value.map(([, v]) => v))
+const statusPieLabels = computed(() => statusPieEntries.value.map(([k]) => STATUS_LABELS[k] || k))
+const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATUS_COLORS[k] || '#94A3B8'))
+const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
 
 const statusPieOptions = computed(() => ({
-  chart: { type: 'pie', background: 'transparent', toolbar: { show: false }, animations: { speed: 500 } },
-  colors: ['#94A3B8', '#3B82F6', '#F59E0B', '#8B5CF6', '#22C55E'],
+  chart: { type: 'pie', background: 'transparent', toolbar: { show: false }, animations: { speed: 400 } },
+  colors: statusPieColors.value,
   labels: statusPieLabels.value,
   legend: { position: 'bottom', fontSize: '12px', labels: { colors: '#374151' } },
   dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
-  tooltip: { y: { formatter: (v: number) => `${v} шт.` } }
+  tooltip: { y: { formatter: (v: number) => `${v} шт.` } },
 }))
 
 // ── Chart: Bar ────────────────────────────────────
@@ -488,8 +549,8 @@ async function loadAll() {
 
     statusCounts.value = chartsData.status_counts
 
-    // Most recent 8 purchases
-    recentPurchases.value = purchasesData.slice(0, 8)
+    // Store all purchases for filtering
+    allPurchases.value = purchasesData
 
     // Set default year to most recent available
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
@@ -504,8 +565,18 @@ async function loadAll() {
   }
 }
 
-function openBreakdown() {
+function openBreakdown(metric = 'budget') {
+  breakdownMetric.value = metric
   showBreakdownDialog.value = true
+}
+
+function goToOrders() {
+  const ids = selectedSubsidyIds.value
+  if (ids.length === 1) {
+    router.push(`/orders?subsidy_id=${ids[0]}`)
+  } else {
+    router.push('/orders')
+  }
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -536,22 +607,34 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
+function purchaseEffectivePrice(p: any): number {
+  const status = p.status
+  if (status === 'paid') return parseFloat(p.payment_amount || 0)
+  if (status === 'delivered') return parseFloat(p.acceptance_doc_amount || 0)
+  if (status === 'contracted') {
+    return p.purchase_method === 'single'
+      ? parseFloat(p.contract_price || 0)
+      : parseFloat(p.delivery_payment_amount || 0)
+  }
+  return parseFloat(p.total_nmck || p.planned_total_price || 0)
+}
+
 function statusLabel(s: string): string {
   return STATUS_LABELS[s] || s
 }
 
 function statusColor(s: string): string {
   const map: Record<string, string> = {
-    planned: 'grey', confirmed: 'primary',
-    contracted: 'warning', delivered: 'purple', paid: 'success'
+    planned: 'grey', confirmed: 'primary', in_progress: 'teal',
+    contracted: 'indigo', delivered: 'deep-purple', paid: 'success'
   }
   return map[s] || 'grey'
 }
 
 function statusColorHex(s: string): string {
   const map: Record<string, string> = {
-    planned: '#94A3B8', confirmed: '#3B82F6',
-    contracted: '#F59E0B', delivered: '#8B5CF6', paid: '#22C55E'
+    planned: '#94A3B8', confirmed: '#3B82F6', in_progress: '#14B8A6',
+    contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E'
   }
   return map[s] || '#94A3B8'
 }
@@ -560,6 +643,27 @@ onMounted(loadAll)
 </script>
 
 <style scoped>
+/* ── Budget Overrun Banner ── */
+.budget-overrun-banner {
+  display: flex;
+  align-items: flex-start;
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: white;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(239,68,68,0.4);
+  animation: pulse-border 2s infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 4px 20px rgba(239,68,68,0.4); }
+  50%       { box-shadow: 0 4px 32px rgba(239,68,68,0.7); }
+}
+.overrun-content { flex: 1; }
+.overrun-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.overrun-row { font-size: 14px; margin-bottom: 4px; line-height: 1.5; opacity: 0.95; }
+.overrun-hint { font-size: 12px; opacity: 0.8; margin-top: 8px; font-style: italic; }
+
 /* ── Layout ── */
 .crm-dashboard {
   padding: 20px 24px;

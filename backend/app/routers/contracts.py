@@ -1,19 +1,30 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.contract import Contract
 from app.models.purchase import Purchase
 from app.schemas.schemas import ContractCreate, ContractOut
 from app.auth.jwt import get_current_user, require_role
-from typing import List
+from typing import List, Optional
 from decimal import Decimal
 
 router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 
 @router.get("/", response_model=List[ContractOut])
-async def list_contracts(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
-    result = await db.execute(select(Contract).order_by(Contract.id.desc()))
+async def list_contracts(
+    subsidy_id: Optional[int] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    q = select(Contract).options(selectinload(Contract.contractor)).order_by(Contract.id.desc())
+    if subsidy_id is not None:
+        q = q.where(Contract.subsidy_id == subsidy_id)
+    if contract_type is not None:
+        q = q.where(Contract.contract_type == contract_type)
+    result = await db.execute(q)
     contracts = result.scalars().all()
     out = []
     for c in contracts:
@@ -25,6 +36,9 @@ async def list_contracts(db: AsyncSession = Depends(get_db), _=Depends(get_curre
         d = ContractOut.model_validate(c)
         d.total_payment = total_payment
         d.remaining = (c.max_amount or Decimal("0")) - total_payment
+        if c.contractor:
+            d.contractor_name = c.contractor.name
+            d.contractor_inn = c.contractor.inn
         out.append(d)
     return out
 

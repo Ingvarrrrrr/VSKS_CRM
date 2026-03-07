@@ -49,6 +49,8 @@ services:
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:5678/
       - GENERIC_TIMEZONE=Europe/Moscow
+      - N8N_DEFAULT_USER_EMAIL=admin@vsks.local
+      - N8N_DEFAULT_USER_PASSWORD=admin123
     ports:
       - "5678:5678"
     volumes:

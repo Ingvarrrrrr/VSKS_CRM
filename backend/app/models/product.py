@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -15,6 +16,7 @@ class Product(Base):
     photo_link = Column(String(1000), nullable=True)  # Ссылка на фото
     clarification_link = Column(String(1000), nullable=True)  # Уточнющая ссылка
     is_active = Column(Boolean, default=True)
-    price = Column(Numeric(10, 2), nullable=True)  # Цена за единицу из Google Sheets
+    price = Column(Numeric(10, 2), nullable=True)
+    price_links = Column(JSONB, default=list, nullable=True)  # [{url, price}] — ссылки для сравнения цен
     
     feo_category = relationship("FeoCategory", backref="products")

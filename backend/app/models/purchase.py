@@ -45,6 +45,7 @@ class Purchase(Base):
     payment_doc_date = Column(Date)
     payment_amount = Column(Numeric(15, 2))
     payment_federal = Column(Numeric(15, 2))
+    purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
 
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")

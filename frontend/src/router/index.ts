@@ -6,6 +6,7 @@ import OrdersView from '../views/OrdersView.vue'
 import CreateOrderView from '../views/CreateOrderView.vue'
 import ContractorsView from '../views/ContractorsView.vue'
 import FeoCategoriesView from '../views/FeoCategoriesView.vue'
+import ProductsView from '../views/ProductsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -63,6 +64,12 @@ const router = createRouter({
       name: 'feo-categories',
       component: FeoCategoriesView,
       meta: { requiresAuth: false, title: 'Категории ФЭО' }
+    },
+    {
+      path: '/products',
+      name: 'products',
+      component: ProductsView,
+      meta: { requiresAuth: false, title: 'Каталог товаров' }
     },
   ]
 })

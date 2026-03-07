@@ -41,6 +41,7 @@ async def dashboard(db: AsyncSession = Depends(get_db)):
     for c in cats:
         by_id[c.id] = {
             "id": c.id, "name": c.name, "level": c.level, "code": c.code,
+            "subsidy_id": c.subsidy_id,
             "total_planned": 0, "total_confirmed": 0, "total_payment": 0,
             "children": []
         }

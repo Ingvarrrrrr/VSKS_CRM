@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy import select
+from sqlalchemy import select, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.contractor import Contractor
@@ -9,6 +9,74 @@ from typing import List
 from io import BytesIO
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
+
+
+@router.get("/with-stats")
+async def list_contractors_with_stats(db: AsyncSession = Depends(get_db)):
+    """Contractors with purchase counts, subsidy_ids, feo_category_ids."""
+    from app.models.purchase import Purchase
+
+    contractors = (await db.execute(select(Contractor).order_by(Contractor.name))).scalars().all()
+
+    stats_stmt = (
+        select(
+            Purchase.contractor_id,
+            func.count(Purchase.id).label("purchase_count"),
+            func.array_agg(distinct(Purchase.subsidy_id)).label("subsidy_ids"),
+            func.array_agg(distinct(Purchase.feo_category_id)).label("feo_category_ids"),
+        )
+        .where(Purchase.contractor_id.isnot(None))
+        .group_by(Purchase.contractor_id)
+    )
+    stats_rows = (await db.execute(stats_stmt)).all()
+    stats_map = {row.contractor_id: row for row in stats_rows}
+
+    result = []
+    for c in contractors:
+        s = stats_map.get(c.id)
+        c_dict = ContractorOut.model_validate(c).model_dump()
+        c_dict["purchase_count"] = s.purchase_count if s else 0
+        c_dict["subsidy_ids"] = [x for x in (s.subsidy_ids or []) if x is not None] if s else []
+        c_dict["feo_category_ids"] = [x for x in (s.feo_category_ids or []) if x is not None] if s else []
+        result.append(c_dict)
+    return result
+
+
+@router.get("/{cid}/purchases")
+async def get_contractor_purchases(cid: int, db: AsyncSession = Depends(get_db)):
+    """List purchases for a specific contractor."""
+    from app.models.purchase import Purchase
+    from app.models.feo_category import FeoCategory
+    from app.models.subsidy import Subsidy
+
+    stmt = (
+        select(
+            Purchase.id,
+            Purchase.subject,
+            Purchase.item_name,
+            Purchase.status,
+            Purchase.planned_total_price,
+            Purchase.subsidy_id,
+            FeoCategory.name.label("feo_category_name"),
+            Subsidy.name.label("subsidy_name"),
+        )
+        .outerjoin(FeoCategory, Purchase.feo_category_id == FeoCategory.id)
+        .outerjoin(Subsidy, Purchase.subsidy_id == Subsidy.id)
+        .where(Purchase.contractor_id == cid)
+        .order_by(Purchase.id.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "id": r.id,
+            "subject": r.subject or r.item_name or "—",
+            "status": r.status,
+            "planned_total_price": float(r.planned_total_price) if r.planned_total_price else None,
+            "subsidy_name": r.subsidy_name or "—",
+            "feo_category_name": r.feo_category_name or "—",
+        }
+        for r in rows
+    ]
 
 
 @router.get("/", response_model=List[ContractorOut])

@@ -1,0 +1,599 @@
+<template>
+  <v-container fluid class="pa-6">
+    <!-- Header -->
+    <div class="d-flex align-center justify-space-between mb-6">
+      <div>
+        <h1 class="text-h5 font-weight-bold">Каталог товаров</h1>
+        <span class="text-body-2 text-medium-emphasis">{{ products.length }} позиций</span>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
+    </div>
+
+    <!-- Search + filter -->
+    <v-card class="mb-4" variant="outlined">
+      <v-card-text class="py-3">
+        <div class="d-flex gap-3 flex-wrap align-center">
+          <v-text-field
+            v-model="search"
+            prepend-inner-icon="mdi-magnify"
+            label="Поиск по наименованию / описанию"
+            variant="outlined" density="compact" clearable hide-details
+            style="min-width:240px"
+          />
+          <v-combobox
+            v-model="filterType"
+            :items="typeOptions"
+            label="Тип" variant="outlined" density="compact"
+            clearable hide-details style="min-width:160px"
+          />
+          <v-combobox
+            v-model="filterCategory"
+            :items="categoryOptions"
+            label="Категория" variant="outlined" density="compact"
+            clearable hide-details style="min-width:160px"
+          />
+          <v-select
+            v-model="filterActive"
+            :items="[{title:'Активные',value:true},{title:'Неактивные',value:false}]"
+            label="Статус" variant="outlined" density="compact"
+            clearable hide-details style="min-width:140px"
+          />
+          <v-text-field
+            v-model.number="filterPriceMin"
+            label="Цена от, ₽" type="number"
+            variant="outlined" density="compact" clearable hide-details
+            style="min-width:120px;max-width:140px"
+          />
+          <v-text-field
+            v-model.number="filterPriceMax"
+            label="Цена до, ₽" type="number"
+            variant="outlined" density="compact" clearable hide-details
+            style="min-width:120px;max-width:140px"
+          />
+          <v-btn
+            v-if="filterType || filterCategory || filterActive !== null || filterPriceMin || filterPriceMax"
+            variant="text" size="small" prepend-icon="mdi-filter-off" color="grey-darken-1"
+            @click="filterType = null; filterCategory = null; filterActive = null; filterPriceMin = null; filterPriceMax = null"
+          >Сбросить</v-btn>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- Table -->
+    <v-card variant="outlined">
+      <!-- Bulk action bar -->
+      <v-toolbar v-if="selectedIds.length" color="primary" density="compact" class="px-2 rounded-t">
+        <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
+        <v-btn variant="text" size="small" prepend-icon="mdi-close-circle" color="white" class="ml-2"
+          @click="selectedIds = []">Снять</v-btn>
+        <v-spacer />
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
+          @click="bulkToggleActive(true)">Активировать</v-btn>
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
+          @click="bulkToggleActive(false)">Деактивировать</v-btn>
+        <v-btn variant="flat" size="small" prepend-icon="mdi-delete" color="error"
+          @click="bulkDeleteDialog = true">Удалить выбранные</v-btn>
+      </v-toolbar>
+
+      <v-data-table
+        v-model="selectedIds"
+        show-select
+        item-value="id"
+        :headers="headers"
+        :items="filteredProducts"
+        :loading="loading"
+        :search="search"
+        density="compact"
+        hover
+        items-per-page="25"
+        :items-per-page-options="[25, 50, 100]"
+      >
+        <!-- Photo -->
+        <template #item.photo="{ item }">
+          <v-avatar size="40" rounded="sm" class="my-1">
+            <v-img v-if="item.photo_url || item.photo_link" :src="item.photo_url || item.photo_link" cover />
+            <v-icon v-else icon="mdi-package-variant" color="grey" />
+          </v-avatar>
+        </template>
+
+        <!-- Name + description -->
+        <template #item.name="{ item }">
+          <div class="font-weight-medium">{{ item.name }}</div>
+          <div v-if="item.description" class="text-caption text-medium-emphasis" style="max-width:280px;white-space:normal;line-height:1.3">
+            {{ item.description.slice(0, 100) }}{{ item.description.length > 100 ? '…' : '' }}
+          </div>
+        </template>
+
+        <!-- Type chip -->
+        <template #item.product_type="{ item }">
+          <v-chip v-if="item.product_type" size="x-small" variant="tonal" :color="typeColor(item.product_type)">
+            {{ item.product_type }}
+          </v-chip>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <!-- Price -->
+        <template #item.price="{ item }">
+          <div v-if="item.price" class="font-weight-medium text-blue-darken-2">
+            {{ Number(item.price).toLocaleString('ru-RU') }} ₽
+          </div>
+          <div v-if="item.price_links?.length" class="text-caption text-medium-emphasis">
+            {{ item.price_links.length }} ист.
+          </div>
+          <span v-if="!item.price" class="text-medium-emphasis">—</span>
+        </template>
+
+        <!-- Active -->
+        <template #item.is_active="{ item }">
+          <v-chip size="x-small" :color="item.is_active ? 'success' : 'grey'" variant="tonal">
+            {{ item.is_active ? 'Активен' : 'Неактивен' }}
+          </v-chip>
+        </template>
+
+        <!-- Actions -->
+        <template #item.actions="{ item }">
+          <div class="d-flex gap-1">
+            <v-btn icon="mdi-pencil" variant="text" size="small" @click="openEdit(item)" />
+            <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+              @click="confirmDelete(item)" />
+          </div>
+        </template>
+
+        <template #no-data>
+          <div class="text-center py-10">
+            <v-icon icon="mdi-package-variant-closed" size="48" color="grey-lighten-1" class="mb-3" />
+            <div class="text-medium-emphasis">Товары не найдены</div>
+          </div>
+        </template>
+      </v-data-table>
+    </v-card>
+
+    <!-- Add / Edit dialog -->
+    <v-dialog v-model="dialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">
+          {{ editingId ? 'Редактировать товар' : 'Добавить товар' }}
+        </v-card-title>
+        <v-card-text class="px-6">
+          <v-row dense>
+            <!-- Наименование -->
+            <v-col cols="12">
+              <v-combobox
+                v-model="form.name"
+                v-model:search="nameSearch"
+                :items="nameSuggestions"
+                no-filter
+                label="Наименование *"
+                variant="outlined" density="compact"
+                :rules="[v => !!v || 'Обязательное поле']"
+                :hint="isDuplicateName ? '⚠ Товар с таким названием уже есть в каталоге' : ''"
+                :persistent-hint="isDuplicateName"
+              >
+                <template #item="{ item, props }">
+                  <v-list-item v-bind="props" :title="item.raw">
+                    <template #append>
+                      <v-chip size="x-small" color="warning" variant="tonal">уже есть</v-chip>
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-combobox>
+            </v-col>
+
+            <!-- Тип — свободный текст с подсказками -->
+            <v-col cols="12" md="6">
+              <v-combobox v-model="form.product_type"
+                :items="typeOptions"
+                label="Тип товара"
+                variant="outlined" density="compact" clearable
+                hint="Напр.: Ноутбук, Тренажёр, Ткань" persistent-hint />
+            </v-col>
+
+            <!-- Категория — свободный текст с подсказками -->
+            <v-col cols="12" md="6">
+              <v-combobox v-model="form.category"
+                :items="categoryOptions"
+                label="Категория" variant="outlined" density="compact" clearable
+                hint="Выберите или введите новую" persistent-hint />
+            </v-col>
+
+            <!-- Цена (авто из ссылок или ручная) -->
+            <v-col cols="12" md="6">
+              <v-text-field v-model.number="form.price" label="Цена за ед., ₽" type="number"
+                variant="outlined" density="compact"
+                :readonly="avgPrice !== null"
+                :hint="avgPrice !== null ? 'Среднее из ссылок — ' + avgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки ниже'"
+                persistent-hint />
+            </v-col>
+
+            <v-col cols="12" md="6">
+              <v-switch v-model="form.is_active" label="Активен" color="success" density="compact" hide-details class="mt-1" />
+            </v-col>
+
+            <v-col cols="12">
+              <v-textarea v-model="form.description" label="Описание" variant="outlined"
+                density="compact" rows="3" auto-grow />
+            </v-col>
+
+            <!-- Фото -->
+            <v-col cols="12">
+              <div class="text-subtitle-2 mb-2">Фото товара</div>
+              <div v-if="photoPreview || form.photo_url || form.photo_link" class="mb-3">
+                <v-img
+                  :src="photoPreview || form.photo_url || form.photo_link"
+                  max-height="180" contain class="rounded border bg-grey-lighten-4"
+                />
+                <v-btn
+                  v-if="form.photo_url?.startsWith('/api/products/photos/')"
+                  size="x-small" variant="text" color="error" class="mt-1"
+                  @click="form.photo_url = ''"
+                >Удалить загруженное фото</v-btn>
+              </div>
+              <v-file-input
+                v-model="photoFileList"
+                label="Загрузить фото с компьютера"
+                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                variant="outlined" density="compact"
+                prepend-icon="mdi-camera" show-size clearable
+                @update:model-value="onPhotoFileChange"
+              />
+              <v-text-field v-model="form.photo_url"
+                label="Или внешняя ссылка на фото"
+                variant="outlined" density="compact"
+                prepend-inner-icon="mdi-image-outline" class="mt-2"
+                :disabled="!!photoFile"
+              />
+              <v-text-field v-model="form.photo_link" label="Запасная ссылка" variant="outlined"
+                density="compact" prepend-inner-icon="mdi-link" class="mt-2" />
+            </v-col>
+
+            <!-- Ссылки для сравнения цен -->
+            <v-col cols="12">
+              <div class="text-subtitle-2 mb-2">
+                Ссылки для сравнения цен
+                <span v-if="avgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
+                  ср. {{ avgPrice.toLocaleString('ru-RU') }} ₽
+                </span>
+              </div>
+              <div v-for="(link, i) in form.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
+                <v-text-field
+                  v-model="link.url"
+                  :label="'Ссылка ' + (i + 1)"
+                  variant="outlined" density="compact" hide-details
+                  prepend-inner-icon="mdi-link"
+                  class="flex-grow-1"
+                />
+                <v-text-field
+                  v-model.number="link.price"
+                  label="Цена, ₽"
+                  type="number" variant="outlined" density="compact" hide-details
+                  style="max-width: 140px"
+                />
+                <div class="d-flex flex-column gap-1">
+                  <v-btn
+                    v-if="link.url"
+                    icon="mdi-open-in-new" variant="text" size="x-small"
+                    color="primary"
+                    :href="link.url" target="_blank"
+                  />
+                  <v-btn
+                    icon="mdi-minus-circle" variant="text" size="x-small"
+                    color="error"
+                    @click="removePriceLink(i)"
+                  />
+                </div>
+              </div>
+              <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary" @click="addPriceLink">
+                Добавить ссылку
+              </v-btn>
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="saving" @click="save">
+            {{ editingId ? 'Сохранить' : 'Добавить' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete confirm -->
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Удалить товар?</v-card-title>
+        <v-card-text class="px-6">
+          <strong>{{ deleteTarget?.name }}</strong> будет удалён из каталога.
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteDialog = false">Отмена</v-btn>
+          <v-btn color="error" :loading="deleting" @click="doDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Bulk delete confirm -->
+    <v-dialog v-model="bulkDeleteDialog" max-width="420">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Удалить товары?</v-card-title>
+        <v-card-text class="px-6">
+          Будет удалено <strong>{{ selectedIds.length }}</strong> товаров из каталога.
+          Позиции в закупках, где эти товары были выбраны, сохранятся, но ссылка на карточку товара будет очищена.
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="bulkDeleteDialog = false">Отмена</v-btn>
+          <v-btn color="error" :loading="bulkDeleting" @click="doBulkDelete">Удалить {{ selectedIds.length }} товаров</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
+      {{ snack.text }}
+    </v-snackbar>
+  </v-container>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { apiFetch } from '@/api'
+
+interface PriceLink { url: string; price: number | null }
+interface Product {
+  id: number; name: string; category?: string; product_type?: string
+  price?: number; description?: string; photo_url?: string
+  photo_link?: string; clarification_link?: string
+  is_active: boolean; is_reusable?: boolean; feo_category_id?: number
+  price_links?: PriceLink[]
+}
+
+const products = ref<Product[]>([])
+const loading  = ref(false)
+const saving   = ref(false)
+const deleting = ref(false)
+const bulkDeleting = ref(false)
+const dialog      = ref(false)
+const deleteDialog = ref(false)
+const bulkDeleteDialog = ref(false)
+const deleteTarget = ref<Product | null>(null)
+const editingId    = ref<number | null>(null)
+const selectedIds  = ref<number[]>([])
+const search         = ref('')
+const filterType     = ref<string | null>(null)
+const filterCategory = ref<string | null>(null)
+const filterActive   = ref<boolean | null>(null)
+const filterPriceMin = ref<number | null>(null)
+const filterPriceMax = ref<number | null>(null)
+
+// Photo upload state
+const photoFile     = ref<File | null>(null)
+const photoFileList = ref<File[]>([])
+const photoPreview  = ref<string | null>(null)
+
+const snack = reactive({ show: false, text: '', color: 'success' })
+const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+
+const emptyForm = () => ({
+  name: '', category: '', product_type: '', price: null as number | null,
+  description: '', photo_url: '', photo_link: '', clarification_link: '',
+  is_active: true, is_reusable: true, feo_category_id: null as number | null,
+  priceLinks: [] as PriceLink[],
+})
+const form = reactive(emptyForm())
+
+// Name autocomplete + duplicate detection
+const nameSearch = ref('')
+const nameSuggestions = computed(() => {
+  const q = (nameSearch.value || '').toLowerCase().trim()
+  if (q.length < 2) return []
+  return products.value
+    .filter(p => p.name.toLowerCase().includes(q) && p.id !== editingId.value)
+    .map(p => p.name)
+    .slice(0, 15)
+})
+const isDuplicateName = computed(() => {
+  if (!form.name) return false
+  const q = (typeof form.name === 'string' ? form.name : '').toLowerCase().trim()
+  if (!q) return false
+  return products.value.some(p => p.name.toLowerCase().trim() === q && p.id !== editingId.value)
+})
+
+// Computed options from existing data
+const typeOptions = computed(() => {
+  const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
+  return [...new Set(types)].sort()
+})
+
+const categoryOptions = computed(() => {
+  const cats = products.value.map(p => p.category).filter(Boolean) as string[]
+  return [...new Set(cats)].sort()
+})
+
+// Auto-calculate average price from links
+const avgPrice = computed<number | null>(() => {
+  const prices = form.priceLinks
+    .map(l => l.price)
+    .filter((p): p is number => p !== null && p !== undefined && !isNaN(Number(p)) && Number(p) > 0)
+  if (prices.length === 0) return null
+  return Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
+})
+
+watch(avgPrice, (v) => { if (v !== null) form.price = v })
+
+const headers = [
+  { title: '',          key: 'photo',        width: 56,  sortable: false },
+  { title: 'Наименование', key: 'name',      minWidth: 240 },
+  { title: 'Тип',       key: 'product_type', width: 140 },
+  { title: 'Категория', key: 'category',     minWidth: 140 },
+  { title: 'Цена',      key: 'price',        width: 130, align: 'end' as const },
+  { title: 'Статус',    key: 'is_active',    width: 110 },
+  { title: 'Действия',  key: 'actions',      width: 100, sortable: false },
+]
+
+const filteredProducts = computed(() => {
+  let r = products.value
+  if (filterType.value)     r = r.filter(p => p.product_type === filterType.value)
+  if (filterCategory.value) r = r.filter(p => p.category === filterCategory.value)
+  if (filterActive.value !== null) r = r.filter(p => p.is_active === filterActive.value)
+  if (filterPriceMin.value !== null) r = r.filter(p => p.price != null && Number(p.price) >= filterPriceMin.value!)
+  if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
+  return r
+})
+
+// Hash-based color for any free-text type
+const PALETTE = ['blue', 'teal', 'orange', 'purple', 'pink', 'green', 'indigo', 'cyan', 'deep-orange']
+function typeColor(t: string): string {
+  const h = Math.abs([...t].reduce((acc, c) => acc * 31 + c.charCodeAt(0), 0))
+  return PALETTE[h % PALETTE.length]
+}
+
+function onPhotoFileChange(val: File | File[] | null) {
+  const f = Array.isArray(val) ? (val[0] ?? null) : val
+  photoFile.value = f
+  photoPreview.value = f ? URL.createObjectURL(f) : null
+  if (f) form.photo_url = ''
+}
+
+function addPriceLink() {
+  form.priceLinks.push({ url: '', price: null })
+}
+function removePriceLink(i: number) {
+  form.priceLinks.splice(i, 1)
+}
+
+async function load() {
+  loading.value = true
+  try { products.value = await apiFetch<Product[]>('/products/') }
+  catch { showSnack('Ошибка загрузки', 'error') }
+  finally { loading.value = false }
+}
+
+function resetPhotoState() {
+  photoFile.value = null
+  photoFileList.value = []
+  photoPreview.value = null
+}
+
+function openCreate() {
+  Object.assign(form, emptyForm())
+  resetPhotoState()
+  editingId.value = null
+  dialog.value = true
+}
+
+function openEdit(p: Product) {
+  Object.assign(form, {
+    name: p.name, category: p.category || '', product_type: p.product_type || '',
+    price: p.price ?? null, description: p.description || '',
+    photo_url: p.photo_url || '', photo_link: p.photo_link || '',
+    clarification_link: p.clarification_link || '',
+    is_active: p.is_active, is_reusable: p.is_reusable ?? true,
+    feo_category_id: p.feo_category_id ?? null,
+    priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
+  })
+  resetPhotoState()
+  editingId.value = p.id
+  dialog.value = true
+}
+
+async function save() {
+  if (!form.name.trim()) { showSnack('Укажите наименование', 'error'); return }
+  saving.value = true
+  try {
+    const payload = {
+      ...form,
+      price: form.price || null,
+      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: l.price ?? null })),
+    }
+    let savedId: number
+    if (editingId.value) {
+      await apiFetch(`/products/${editingId.value}`, { method: 'PUT', body: payload })
+      savedId = editingId.value
+      showSnack('Товар обновлён')
+    } else {
+      const created = await apiFetch<Product>('/products/', { method: 'POST', body: payload })
+      savedId = created.id
+      showSnack('Товар добавлен')
+    }
+
+    if (photoFile.value) {
+      const fd = new FormData()
+      fd.append('file', photoFile.value)
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/products/${savedId}/photo`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      })
+      if (!res.ok) showSnack('Товар сохранён, но фото не загрузилось', 'warning')
+    }
+
+    dialog.value = false
+    resetPhotoState()
+    await load()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка сохранения', 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
+function confirmDelete(p: Product) {
+  deleteTarget.value = p
+  deleteDialog.value = true
+}
+
+async function doDelete() {
+  if (!deleteTarget.value) return
+  deleting.value = true
+  try {
+    await apiFetch(`/products/${deleteTarget.value.id}`, { method: 'DELETE' })
+    showSnack('Товар удалён')
+    deleteDialog.value = false
+    selectedIds.value = selectedIds.value.filter(id => id !== deleteTarget.value!.id)
+    await load()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка удаления', 'error')
+  } finally {
+    deleting.value = false
+  }
+}
+
+async function doBulkDelete() {
+  bulkDeleting.value = true
+  const ids = [...selectedIds.value]
+  try {
+    await Promise.all(ids.map(id => apiFetch(`/products/${id}`, { method: 'DELETE' })))
+    showSnack(`Удалено ${ids.length} товаров`)
+    bulkDeleteDialog.value = false
+    selectedIds.value = []
+    await load()
+  } catch {
+    showSnack('Ошибка при удалении', 'error')
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+async function bulkToggleActive(active: boolean) {
+  const ids = [...selectedIds.value]
+  try {
+    await Promise.all(ids.map(id => {
+      const p = products.value.find(p => p.id === id)
+      if (!p) return Promise.resolve()
+      return apiFetch(`/products/${id}`, {
+        method: 'PUT',
+        body: { name: p.name, is_active: active, price_links: p.price_links || [] },
+      })
+    }))
+    showSnack(`${active ? 'Активировано' : 'Деактивировано'} ${ids.length} товаров`)
+    selectedIds.value = []
+    await load()
+  } catch {
+    showSnack('Ошибка обновления', 'error')
+  }
+}
+
+onMounted(load)
+</script>

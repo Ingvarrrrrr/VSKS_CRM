@@ -1,453 +1,341 @@
 <template>
-  <v-dialog v-model="dialog" max-width="1400" persistent>
-    <v-card class="budget-drill-dialog">
-      <v-card-title class="d-flex justify-space-between align-center pa-4 bg-primary">
-        <div>
-          <span class="text-h5 text-white">{{ title }}</span>
-          <div class="text-caption text-white mt-1">
-            {{ breadcrumbText }}
-          </div>
+  <v-dialog v-model="dialog" max-width="1300" scrollable>
+    <v-card style="min-height: 560px;">
+
+      <!-- Header -->
+      <v-card-title class="d-flex align-center pa-4" style="background: #1e3a5f; color: white; flex-shrink:0">
+        <v-btn
+          v-if="drillStack.length > 0"
+          icon="mdi-arrow-left" variant="text" color="white"
+          size="small" class="mr-2" @click="goBack"
+        />
+        <div style="flex:1; min-width:0">
+          <div class="text-h6 font-weight-bold" style="line-height:1.2">{{ dialogTitle }}</div>
+          <div class="text-caption mt-1" style="opacity:0.7">{{ breadcrumb }}</div>
         </div>
-        <v-btn icon="mdi-close" variant="text" color="white" @click="close"></v-btn>
+        <v-btn icon="mdi-close" variant="text" color="white" @click="dialog = false" />
       </v-card-title>
-      
-      <v-card-text class="pa-4">
-        <!-- Summary Cards -->
-        <div v-if="currentLevel === 0" class="summary-cards mb-4">
-          <v-card variant="outlined" class="pa-3 text-center">
-            <div class="text-caption">Базовый бюджет</div>
-            <div class="text-h5 text-primary">{{ formatNumber(totalBudget) }}</div>
-          </v-card>
-          <v-card variant="outlined" class="pa-3 text-center">
-            <div class="text-caption">Σ Категорий</div>
-            <div class="text-h5 text-info">{{ formatNumber(totalCategories) }}</div>
-          </v-card>
-          <v-card variant="outlined" class="pa-3 text-center">
-            <div class="text-caption">Остаток</div>
-            <div class="text-h5" :class="remaining >= 0 ? 'text-success' : 'text-error'">
-              {{ formatNumber(remaining) }}
-            </div>
-          </v-card>
+
+      <!-- Summary strip -->
+      <div class="summary-strip">
+        <div v-for="c in summaryCards" :key="c.key" class="sum-card">
+          <div class="sum-label">{{ c.label }}</div>
+          <div class="sum-value" :style="{ color: c.color }">{{ fmtMoney(c.value) }}</div>
+        </div>
+      </div>
+
+      <v-card-text class="pa-4" style="overflow-y:auto">
+        <div v-if="loading" class="text-center py-12">
+          <v-progress-circular indeterminate color="primary" size="48" />
         </div>
 
-        <!-- Transition Container -->
-        <transition name="slide-fade" mode="out-in">
-          
-          <!-- Level 0: Субсидии (столбцы) -->
-          <div v-if="currentLevel === 0" key="level0">
-            <div class="text-h6 mb-4">💰 Выберите субсидию для детализации</div>
-            <div class="chart-container">
-              <div 
-                v-for="sub in subsidies" 
-                :key="sub.id"
-                class="chart-bar-wrapper"
-                @click="drillToSubsidy(sub)"
-              >
-                <div
-                  class="chart-bar"
-                  :style="{ height: getBarHeight(sub.budget) + 'px', backgroundColor: getBarColor(sub.id) }"
-                >
-                  <span class="bar-value">{{ formatNumber(sub.budget) }}</span>
-                </div>
-                <div class="bar-label">{{ sub.name }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Level 1: Направления ФЭО -->
-          <div v-else-if="currentLevel === 1" key="level1">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack" class="mb-2">
-              Назад к субсидиям
-            </v-btn>
-            <div class="text-h6 mb-2">📁 Направления ФЭО: {{ currentSubsidy?.name }}</div>
-            
-            <v-card variant="outlined" class="pa-3 mb-3">
-              <v-row>
-                <v-col cols="4"><div class="text-caption">Базовый</div><div class="text-h6">{{ formatNumber(currentSubsidy?.budget || 0) }}</div></v-col>
-                <v-col cols="4"><div class="text-caption">Σ Направлений</div><div class="text-h6 text-info">{{ formatNumber(subsidyTotal) }}</div></v-col>
-                <v-col cols="4"><div class="text-caption">Остаток</div><div class="text-h6" :class="(currentSubsidy?.budget || 0) - subsidyTotal >= 0 ? 'text-success' : 'text-error'">{{ formatNumber((currentSubsidy?.budget || 0) - subsidyTotal) }}</div></v-col>
-              </v-row>
-            </v-card>
-
-            <div class="direction-grid">
-              <v-card 
-                v-for="dir in currentDirections" 
-                :key="dir.id" 
-                variant="outlined" 
-                class="direction-card clickable"
-                @click="drillToType(dir)"
-              >
-                <div class="d-flex justify-space-between align-center">
-                  <div class="text-subtitle-1 font-weight-bold">{{ dir.name }}</div>
-                  <v-chip size="small" color="primary">Уровень 1</v-chip>
-                </div>
-                <v-divider class="my-2"></v-divider>
-                <div class="d-flex justify-space-between">
-                  <span>Бюджет:</span>
-                  <strong>{{ formatNumber(dir.budget || 0) }}</strong>
-                </div>
-                <v-progress-linear :model-value="getProgress(dir)" color="primary" height="6" class="mt-2"></v-progress-linear>
-              </v-card>
-            </div>
-          </div>
-
-          <!-- Level 2: Типы расходов -->
-          <div v-else-if="currentLevel === 2" key="level2">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack" class="mb-2">
-              Назад к направлениям
-            </v-btn>
-            <div class="text-h6 mb-2">📋 Типы расходов: {{ currentParent?.name }}</div>
-            
-            <div class="direction-grid">
-              <v-card 
-                v-for="type in currentTypes" 
-                :key="type.id" 
-                variant="outlined" 
-                class="direction-card clickable"
-                @click="drillToExpense(type)"
-              >
-                <div class="text-subtitle-1 font-weight-bold">{{ type.name }}</div>
-                <v-divider class="my-2"></v-divider>
-                <div class="d-flex justify-space-between"><span>Бюджет:</span><strong>{{ formatNumber(type.budget || 0) }}</strong></div>
-                <v-progress-linear :model-value="getProgress(type)" color="info" height="6" class="mt-2"></v-progress-linear>
-              </v-card>
-            </div>
-          </div>
-
-          <!-- Level 3: Статьи расходов -->
-          <div v-else-if="currentLevel === 3" key="level3">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack" class="mb-2">
-              Назад к типам
-            </v-btn>
-            <div class="text-h6 mb-2">📝 Статьи расходов: {{ currentParent?.name }}</div>
-            
-            <v-table>
-              <thead>
-                <tr>
-                  <th>Наименование</th>
-                  <th class="text-right">Базовый</th>
-                  <th class="text-right">План.кол</th>
-                  <th class="text-right">План.цена</th>
-                  <th class="text-right">План.сумма</th>
-                  <th class="text-right">Факт.кол</th>
-                  <th class="text-right">Факт.цена</th>
-                  <th class="text-right">Факт.сумма</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="exp in currentExpenses" :key="exp.id" class="clickable" @click="drillToProducts(exp)">
-                  <td>{{ exp.name }}</td>
-                  <td class="text-right">{{ formatNumber(exp.budget || 0) }}</td>
-                  <td class="text-right">{{ exp.planned_amount || 0 }}</td>
-                  <td class="text-right">{{ formatNumber(exp.planned_price || 0) }}</td>
-                  <td class="text-right text-info">{{ formatNumber(exp.planned_total || 0) }}</td>
-                  <td class="text-right">{{ exp.actual_amount || 0 }}</td>
-                  <td class="text-right">{{ formatNumber(exp.actual_price || 0) }}</td>
-                  <td class="text-right text-success">{{ formatNumber(exp.actual_total || 0) }}</td>
-                </tr>
-              </tbody>
-            </v-table>
-          </div>
-
-          <!-- Level 4: Товары -->
-          <div v-else-if="currentLevel === 4" key="level4">
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack" class="mb-2">
-              Назад к статьям
-            </v-btn>
-            <div class="text-h6 mb-2">🎁 Товары и услуги: {{ currentParent?.name }}</div>
-            
-            <v-tabs v-model="productTab" class="mb-3">
-              <v-tab value="planned">📋 Плановые</v-tab>
-              <v-tab value="actual">✅ Фактические</v-tab>
-            </v-tabs>
-
-            <v-window v-model="productTab">
-              <v-window-item value="planned">
-                <v-card variant="outlined" class="pa-3 mb-3">
-                  <div class="text-subtitle-1 mb-2">Добавить плановое</div>
-                  <v-row dense>
-                    <v-col cols="6"><v-text-field v-model="newPlanned.name" label="Наименование" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="2"><v-text-field v-model.number="newPlanned.amount" label="Кол-во" type="number" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="2"><v-text-field v-model.number="newPlanned.price" label="Цена" type="number" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="2"><v-btn color="primary" @click="addPlanned">Добавить</v-btn></v-col>
-                  </v-row>
-                </v-card>
-                <v-table density="compact">
-                  <thead><tr><th>Наименование</th><th class="text-right">Кол-во</th><th class="text-right">Цена</th><th class="text-right">Сумма</th></tr></thead>
-                  <tbody>
-                    <tr v-for="p in plannedProducts" :key="p.id">
-                      <td>{{ p.name }}</td>
-                      <td class="text-right">{{ p.planned_amount || 0 }}</td>
-                      <td class="text-right">{{ formatNumber(p.planned_price || 0) }}</td>
-                      <td class="text-right text-info">{{ formatNumber(p.planned_total || 0) }}</td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </v-window-item>
-
-              <v-window-item value="actual">
-                <v-card variant="outlined" class="pa-3 mb-3">
-                  <div class="text-subtitle-1 mb-2">Добавить фактическое</div>
-                  <v-row dense>
-                    <v-col cols="3"><v-text-field v-model.number="newActual.amount" label="Кол-во" type="number" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="3"><v-text-field v-model.number="newActual.price" label="Цена" type="number" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="3"><v-text-field v-model="newActual.name" label="Наименование" variant="outlined" density="compact"></v-text-field></v-col>
-                    <v-col cols="3"><v-btn color="success" @click="addActual">Добавить</v-btn></v-col>
-                  </v-row>
-                </v-card>
-                <v-table density="compact">
-                  <thead><tr><th>Наименование</th><th class="text-right">Кол-во</th><th class="text-right">Цена</th><th class="text-right">Сумма</th><th>Связь</th></tr></thead>
-                  <tbody>
-                    <tr v-for="p in actualProducts" :key="p.id">
-                      <td>{{ p.actual_name || p.name }}</td>
-                      <td class="text-right">{{ p.actual_amount || 0 }}</td>
-                      <td class="text-right">{{ formatNumber(p.actual_price || 0) }}</td>
-                      <td class="text-right text-success">{{ formatNumber(p.actual_total || 0) }}</td>
-                      <td>{{ p.plan_link_id ? '✓' : '-' }}</td>
-                    </tr>
-                  </tbody>
-                </v-table>
-              </v-window-item>
-            </v-window>
-          </div>
-        </transition>
-
-        <!-- Navigation Dots -->
-        <div class="level-dots mt-4">
-          <span 
-            v-for="(label, idx) in ['Бюджет', 'Направления', 'Типы', 'Статьи', 'Товары']" 
-            :key="idx"
-            class="level-dot"
-            :class="{ active: currentLevel === idx }"
-            @click="jumpToLevel(idx)"
-          >
-            {{ idx + 1 }}
-          </span>
+        <div v-else-if="chartItems.length === 0" class="text-center py-12 text-medium-emphasis">
+          <v-icon icon="mdi-chart-bar-stacked" size="48" class="mb-3" />
+          <div>Нет данных для отображения</div>
         </div>
+
+        <template v-else>
+          <div class="text-caption text-medium-emphasis mb-3">
+            <v-icon icon="mdi-cursor-pointer" size="14" class="mr-1" />
+            {{ hint }}
+          </div>
+
+          <apexchart
+            type="bar"
+            :height="Math.max(280, chartItems.length * 68)"
+            :options="chartOptions"
+            :series="chartSeries"
+          />
+        </template>
       </v-card-text>
     </v-card>
   </v-dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { apiFetch } from '@/api'
+
+interface ChartItem {
+  id: number
+  name: string
+  budget: number
+  planned: number
+  contracted: number
+  paid: number
+  _isSubsidy?: boolean
+  _raw?: any
+}
+
+interface DrillEntry {
+  subsidyId: number | null
+  nodeId: number | null
+}
 
 const props = defineProps({
   modelValue: Boolean,
-  subsidies: { type: Array, default: () => [] }
+  metric: { type: String, default: 'budget' },
+  subsidies: { type: Array as () => any[], default: () => [] },
 })
-
 const emit = defineEmits(['update:modelValue'])
 
 const dialog = computed({
   get: () => props.modelValue,
-  set: (v) => emit('update:modelValue', v)
+  set: (v) => emit('update:modelValue', v),
 })
 
-const currentLevel = ref(0)
-const currentSubsidy = ref(null)
-const currentParent = ref(null)
-const history = ref([])
-const productTab = ref('planned')
+// ── State ──────────────────────────────────────────────────────────────────────
+const drillStack = ref<DrillEntry[]>([])   // navigation history
+const curSubsidyId = ref<number | null>(null)
+const curNodeId    = ref<number | null>(null)
+const dashTree     = ref<any[]>([])        // dashboard categories roots
+const loading      = ref(false)
 
-const currentDirections = ref([])
-const currentTypes = ref([])
-const currentExpenses = ref([])
-const currentProducts = ref([])
-
-const newPlanned = ref({ name: '', amount: 1, price: 0 })
-const newActual = ref({ name: '', amount: 1, price: 0, planLinkId: null })
-
-const levelLabels = ['Бюджет', 'Направления', 'Типы', 'Статьи', 'Товары']
-
-const totalBudget = computed(() => props.subsidies.reduce((s, x) => s + (x.budget || 0), 0))
-const totalCategories = computed(() => {
-  // Sum of all level 1 budgets
-  return currentDirections.value.reduce((s, x) => s + (x.budget || 0), 0)
-})
-const remaining = computed(() => totalBudget.value - totalCategories.value)
-const subsidyTotal = computed(() => currentDirections.value.reduce((s, x) => s + (x.budget || 0), 0))
-
-const title = computed(() => levelLabels[currentLevel.value] || 'Детализация')
-const breadcrumbText = computed(() => {
-  if (currentLevel.value === 0) return 'Общий бюджет всех субсидий'
-  if (currentSubsidy.value) return currentSubsidy.value.name
-  return ''
-})
-
-const plannedProducts = computed(() => currentProducts.value.filter(p => (p.planned_total || 0) > 0))
-const actualProducts = computed(() => currentProducts.value.filter(p => (p.actual_total || 0) > 0))
-
-const maxBudget = computed(() => {
-  if (currentLevel.value === 0) return Math.max(...props.subsidies.map(s => s.budget || 0), 1)
-  if (currentDirections.value.length) return Math.max(...currentDirections.value.map(d => d.budget || 0), 1)
-  if (currentTypes.value.length) return Math.max(...currentTypes.value.map(t => t.budget || 0), 1)
-  return 1
-})
-
-const barColors = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50']
-function getBarColor(id) { return barColors[(id - 1) % barColors.length] }
-function getBarHeight(value) { return Math.max((value / maxBudget.value) * 240, 10) }
-function getProgress(item) { return item.budget ? Math.min(((item.planned_total || 0) / item.budget) * 100, 100) : 0 }
-function formatNumber(num) {
-  if (!num) return '0'
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'М'
-  if (num >= 1000) return (num / 1000).toFixed(0) + 'К'
-  return num.toString()
-}
-
-async function loadDirections(subsidyId) {
+// ── Load dashboard tree ─────────────────────────────────────────────────────
+async function loadTree() {
+  loading.value = true
   try {
-    const res = await fetch(`/api/expense-directions/?subsidy_id=${subsidyId}`)
-    const data = await res.json()
-    currentDirections.value = data.filter(d => d.level === 1)
-  } catch (e) { console.error('Error:', e) }
-}
-
-async function loadTypes(parentId) {
-  try {
-    const res = await fetch('/api/expense-directions/')
-    const all = await res.json()
-    currentTypes.value = all.filter(d => d.parent_id === parentId && d.level === 2)
-  } catch (e) { console.error('Error:', e) }
-}
-
-async function loadExpenses(parentId) {
-  try {
-    const res = await fetch('/api/expense-directions/')
-    const all = await res.json()
-    currentExpenses.value = all.filter(d => d.parent_id === parentId && d.level === 3)
-  } catch (e) { console.error('Error:', e) }
-}
-
-async function loadProducts(parentId) {
-  try {
-    const res = await fetch('/api/expense-directions/')
-    const all = await res.json()
-    currentProducts.value = all.filter(d => d.parent_id === parentId && (d.level === 4 || d.level === 5))
-  } catch (e) { console.error('Error:', e) }
-}
-
-function drillToSubsidy(sub) {
-  history.value.push({ level: 0, subsidy: null, parent: null })
-  currentSubsidy.value = sub
-  currentLevel.value = 1
-  loadDirections(sub.id)
-}
-
-function drillToType(dir) {
-  history.value.push({ level: 1, subsidy: currentSubsidy.value, parent: null })
-  currentParent.value = dir
-  currentLevel.value = 2
-  loadTypes(dir.id)
-}
-
-function drillToExpense(type) {
-  history.value.push({ level: 2, subsidy: currentSubsidy.value, parent: type })
-  currentLevel.value = 3
-  loadExpenses(type.id)
-}
-
-function drillToProducts(exp) {
-  history.value.push({ level: 3, subsidy: currentSubsidy.value, parent: exp })
-  currentLevel.value = 4
-  loadProducts(exp.id)
-}
-
-function goBack() {
-  if (history.value.length === 0) { close(); return }
-  const prev = history.value.pop()
-  currentLevel.value = prev.level
-  currentSubsidy.value = prev.subsidy
-  currentParent.value = prev.parent
-  if (prev.level === 0) currentDirections.value = []
-  else if (prev.level === 1) loadDirections(currentSubsidy.value?.id)
-  else if (prev.level === 2) loadTypes(currentParent.value?.id)
-}
-
-function jumpToLevel(level) {
-  if (level < currentLevel.value) {
-    while (history.value.length > level) history.value.pop()
-    currentLevel.value = level
-    if (level === 0) { currentSubsidy.value = null; currentDirections.value = [] }
+    const data = await apiFetch<any>('/dashboard/')
+    dashTree.value = data.categories || []
+  } catch (e) {
+    console.error('drill-down load error', e)
+  } finally {
+    loading.value = false
   }
 }
 
-function close() {
-  dialog.value = false
-  currentLevel.value = 0
-  history.value = []
-  currentSubsidy.value = null
-  currentParent.value = null
+// ── Flatten helpers ─────────────────────────────────────────────────────────
+function flatAll(nodes: any[]): any[] {
+  const result: any[] = []
+  for (const n of nodes) {
+    result.push(n)
+    if (n.children?.length) result.push(...flatAll(n.children))
+  }
+  return result
 }
 
-async function addPlanned() {
-  if (!newPlanned.value.name) return
-  const total = (newPlanned.value.amount || 0) * (newPlanned.value.price || 0)
-  await fetch('/api/expense-directions/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      subsidy_id: currentSubsidy.value.id,
-      parent_id: currentParent.value.id,
-      name: newPlanned.value.name,
-      level: 5,
-      budget: 0,
-      planned_amount: newPlanned.value.amount,
-      planned_price: newPlanned.value.price,
-      planned_total: total
-    })
-  })
-  newPlanned.value = { name: '', amount: 1, price: 0 }
-  loadProducts(currentParent.value.id)
+function findNode(id: number): any | null {
+  return flatAll(dashTree.value).find(n => n.id === id) ?? null
 }
 
-async function addActual() {
-  const total = (newActual.value.amount || 0) * (newActual.value.price || 0)
-  await fetch('/api/expense-directions/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      subsidy_id: currentSubsidy.value.id,
-      parent_id: currentParent.value.id,
-      name: newActual.value.name || 'Фактический товар',
-      level: 5,
-      budget: 0,
-      actual_amount: newActual.value.amount,
-      actual_price: newActual.value.price,
-      actual_total: total,
-      actual_name: newActual.value.name,
-      plan_link_id: newActual.value.planLinkId
-    })
-  })
-  newActual.value = { name: '', amount: 1, price: 0, planLinkId: null }
-  loadProducts(currentParent.value.id)
+// ── Compute chart items at current drill level ──────────────────────────────
+const chartItems = computed((): ChartItem[] => {
+  if (drillStack.value.length === 0) {
+    // Level 0 — show subsidies
+    return (props.subsidies as any[]).map(s => ({
+      id: s.id,
+      name: s.name,
+      budget: s.budget ?? 0,
+      planned: s.planned ?? 0,
+      contracted: s.contracted ?? 0,
+      paid: s.paid ?? 0,
+      _isSubsidy: true,
+    }))
+  }
+
+  if (curNodeId.value === null) {
+    // Drilled into a subsidy — show its level-1 FEO roots
+    const sid = curSubsidyId.value
+    return dashTree.value
+      .filter(n => n.subsidy_id === sid)
+      .map(nodeToItem)
+  }
+
+  // Drilled into a FEO category — show its children
+  const node = findNode(curNodeId.value)
+  if (!node?.children?.length) return []
+  return node.children.map(nodeToItem)
+})
+
+function nodeToItem(n: any): ChartItem {
+  return {
+    id: n.id,
+    name: n.name || n.code || `Кат. ${n.id}`,
+    budget: 0,
+    planned:    n.total_planned    ?? 0,
+    contracted: n.total_confirmed  ?? 0,
+    paid:       n.total_payment    ?? 0,
+    _raw: n,
+  }
 }
 
+// ── Navigation ──────────────────────────────────────────────────────────────
+function handleBarClick(event: any, _ctx: any, config: any) {
+  const idx = config?.dataPointIndex ?? -1
+  if (idx < 0) return
+  const item = chartItems.value[idx]
+  if (!item) return
+
+  if (item._isSubsidy) {
+    drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
+    curSubsidyId.value = item.id
+    curNodeId.value    = null
+    if (!dashTree.value.length) loadTree()
+    return
+  }
+
+  const raw = item._raw
+  if (!raw?.children?.length) return  // leaf node, no drill
+  drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
+  curNodeId.value = raw.id
+}
+
+function goBack() {
+  const prev = drillStack.value.pop()
+  if (!prev) return
+  curSubsidyId.value = prev.subsidyId
+  curNodeId.value    = prev.nodeId
+}
+
+// ── Chart config ────────────────────────────────────────────────────────────
+const SERIES_COLORS = ['#CBD5E1', '#F59E0B', '#3B82F6', '#22C55E']
+
+const chartSeries = computed(() => {
+  const items = chartItems.value
+  const hasBudget = items.some(i => i.budget > 0)
+  const series: any[] = []
+  if (hasBudget) {
+    series.push({ name: 'Бюджет', data: items.map(i => Math.round(i.budget)) })
+  }
+  series.push({ name: 'НМЦК',            data: items.map(i => Math.round(i.planned)) })
+  series.push({ name: 'Законтрактовано', data: items.map(i => Math.round(i.contracted)) })
+  series.push({ name: 'Оплачено',        data: items.map(i => Math.round(i.paid)) })
+  return series
+})
+
+const chartOptions = computed(() => ({
+  chart: {
+    type: 'bar',
+    background: 'transparent',
+    toolbar: { show: false },
+    animations: { speed: 350 },
+    events: { click: handleBarClick },
+    selection: { enabled: false },
+  },
+  colors: SERIES_COLORS,
+  plotOptions: {
+    bar: {
+      horizontal: true,
+      barHeight: '55%',
+      borderRadius: 3,
+      borderRadiusApplication: 'end',
+      dataLabels: { position: 'top' },
+    },
+  },
+  dataLabels: {
+    enabled: true,
+    style: { fontSize: '10px', colors: ['#374151'] },
+    formatter: (v: number) => v > 0 ? fmtShort(v) : '',
+    offsetX: 6,
+  },
+  xaxis: {
+    categories: chartItems.value.map(i => truncate(i.name, 40)),
+    labels: {
+      formatter: (v: number) => fmtShort(v),
+      style: { fontSize: '11px', colors: '#6B7280' },
+    },
+  },
+  yaxis: {
+    labels: { style: { fontSize: '12px', colors: '#374151' } },
+  },
+  legend: { show: true, position: 'top', fontSize: '12px', labels: { colors: '#374151' } },
+  grid:   { borderColor: '#E2E8F0' },
+  tooltip: { y: { formatter: (v: number) => v.toLocaleString('ru-RU') + ' ₽' } },
+  states: {
+    active: { filter: { type: 'darken', value: 0.8 } },
+    hover:  { filter: { type: 'lighten', value: 0.1 } },
+  },
+}))
+
+// ── Summary cards ────────────────────────────────────────────────────────────
+const summaryCards = computed(() => {
+  const items = chartItems.value
+  const tBudget     = items.reduce((s, i) => s + i.budget,     0)
+  const tPlanned    = items.reduce((s, i) => s + i.planned,    0)
+  const tContracted = items.reduce((s, i) => s + i.contracted, 0)
+  const tPaid       = items.reduce((s, i) => s + i.paid,       0)
+  const cards: any[] = []
+  if (tBudget > 0) {
+    cards.push({ key: 'budget',     label: 'Бюджет',          value: tBudget,     color: '#64748B' })
+  }
+  cards.push(
+    { key: 'planned',    label: 'НМЦК',           value: tPlanned,    color: '#D97706' },
+    { key: 'contracted', label: 'Законтрактовано', value: tContracted, color: '#2563EB' },
+    { key: 'paid',       label: 'Оплачено',        value: tPaid,       color: '#16A34A' },
+  )
+  return cards
+})
+
+// ── Breadcrumb / title ───────────────────────────────────────────────────────
+const dialogTitle = computed(() => {
+  if (drillStack.value.length === 0) return 'Бюджет по субсидиям'
+  const sub = (props.subsidies as any[]).find(s => s.id === curSubsidyId.value)
+  if (curNodeId.value === null) return sub?.name ?? 'Субсидия'
+  return findNode(curNodeId.value)?.name ?? 'Категория'
+})
+
+const breadcrumb = computed(() => {
+  const parts: string[] = ['Все субсидии']
+  if (curSubsidyId.value !== null) {
+    const sub = (props.subsidies as any[]).find(s => s.id === curSubsidyId.value)
+    if (sub) parts.push(sub.name)
+  }
+  if (curNodeId.value !== null) {
+    const nd = findNode(curNodeId.value)
+    if (nd) parts.push(nd.name)
+  }
+  return parts.join(' → ')
+})
+
+const hint = computed(() => {
+  if (drillStack.value.length === 0) return 'Нажмите на столбец субсидии для детализации по ФЭО категориям'
+  const hasChildren = chartItems.value.some(i => i._raw?.children?.length > 0)
+  return hasChildren
+    ? 'Нажмите на столбец категории для перехода на следующий уровень'
+    : 'Последний уровень детализации'
+})
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmtMoney(v: number): string {
+  return (v || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
+}
+function fmtShort(v: number): string {
+  if (!v) return ''
+  if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + 'млрд'
+  if (Math.abs(v) >= 1_000_000)     return (v / 1_000_000).toFixed(1) + 'млн'
+  if (Math.abs(v) >= 1_000)         return (v / 1_000).toFixed(0) + 'тыс'
+  return String(v)
+}
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
 watch(() => props.modelValue, (v) => {
-  if (v) { currentLevel.value = 0; history.value = [] }
+  if (v) {
+    drillStack.value    = []
+    curSubsidyId.value  = null
+    curNodeId.value     = null
+    loadTree()
+  }
 })
 </script>
 
 <style scoped>
-.budget-drill-dialog { min-height: 600px; }
-.summary-cards { display: flex; justify-content: space-around; gap: 16px; }
-.direction-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.direction-card { padding: 16px; }
-.chart-container { display: flex; align-items: flex-end; justify-content: space-around; height: 300px; padding: 20px; background: linear-gradient(180deg, #f5f5f5 0%, #e0e0e0 100%); border-radius: 8px; }
-.chart-bar-wrapper { display: flex; flex-direction: column; align-items: center; flex: 1; max-width: 80px; margin: 0 4px; }
-.chart-bar-wrapper.clickable { cursor: pointer; transition: transform 0.2s; }
-.chart-bar-wrapper.clickable:hover { transform: scale(1.05); }
-.chart-bar { width: 100%; min-height: 20px; border-radius: 4px 4px 0 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 8px; transition: height 0.5s ease-out; }
-.bar-value { font-size: 10px; font-weight: bold; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
-.bar-label { margin-top: 8px; font-size: 11px; text-align: center; color: #666; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clickable { cursor: pointer; transition: background-color 0.2s; }
-.clickable:hover { background-color: #f5f5f5; }
-.slide-fade-enter-active, .slide-fade-leave-active { transition: all 0.3s ease-out; }
-.slide-fade-enter-from { transform: translateX(30px); opacity: 0; }
-.slide-fade-leave-to { transform: translateX(-30px); opacity: 0; }
-.level-dots { display: flex; justify-content: center; gap: 12px; }
-.level-dot { width: 32px; height: 32px; border-radius: 50%; background: #ddd; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; cursor: pointer; transition: all 0.3s; }
-.level-dot.active { background: #2196F3; color: white; transform: scale(1.2); }
-.level-dot:hover:not(.active) { background: #bbb; }
+.summary-strip {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+.sum-card {
+  flex: 1;
+  padding: 10px 16px;
+  border-right: 1px solid #e2e8f0;
+  min-width: 0;
+}
+.sum-card:last-child { border-right: none; }
+.sum-label { font-size: 11px; color: #6B7280; }
+.sum-value { font-size: 18px; font-weight: 700; line-height: 1.2; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

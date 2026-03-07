@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 # Auth
@@ -53,6 +53,7 @@ class FeoCategoryCreate(BaseModel):
     code: Optional[str] = None
     appendix: Optional[str] = None
     is_active: bool = True
+    budget: Optional[float] = None
 
 class FeoCategoryOut(BaseModel):
     id: int
@@ -63,6 +64,7 @@ class FeoCategoryOut(BaseModel):
     code: Optional[str] = None
     appendix: Optional[str] = None
     is_active: bool = True
+    budget: Optional[float] = None
     model_config = {"from_attributes": True}
 
 class FeoCategoryTree(FeoCategoryOut):
@@ -96,8 +98,9 @@ class ContractorOut(ContractorCreate):
 class ContractCreate(BaseModel):
     number: str
     date: Optional[date] = None
-    contract_type: str  # framework / one-time
+    contract_type: str  # single / framework_cumulative / framework_with_amount
     contractor_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
     subject: Optional[str] = None
     max_amount: Optional[Decimal] = None
     status: str = "active"
@@ -107,6 +110,8 @@ class ContractOut(ContractCreate):
     id: int
     total_payment: Optional[Decimal] = None
     remaining: Optional[Decimal] = None
+    contractor_name: Optional[str] = None
+    contractor_inn: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # PurchaseItem
@@ -179,6 +184,7 @@ class PurchaseCreate(BaseModel):
     payment_amount: Optional[Decimal] = None
     payment_federal: Optional[Decimal] = None
     total_nmck: Optional[Decimal] = None
+    purchase_contract_type: Optional[str] = None
     items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):
@@ -206,6 +212,10 @@ class PaymentOut(PaymentCreate):
     model_config = {"from_attributes": True}
 
 # Product
+class PriceLink(BaseModel):
+    url: str
+    price: Optional[float] = None
+
 class ProductCreate(BaseModel):
     feo_category_id: Optional[int] = None
     name: str
@@ -218,6 +228,7 @@ class ProductCreate(BaseModel):
     clarification_link: Optional[str] = None
     is_active: bool = True
     price: Optional[Decimal] = None
+    price_links: List[PriceLink] = []
 
 class ProductOut(ProductCreate):
     id: int
@@ -239,3 +250,28 @@ class DashboardSummary(BaseModel):
     total_payments: Decimal
     remaining: Decimal
     categories: List[DashboardCategory]
+
+
+# Platform publications
+class PublishRequest(BaseModel):
+    platform: str  # fabrikant / roseltorg_rb
+
+class PublicationStatusUpdate(BaseModel):
+    status: str             # published / error
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error_text: Optional[str] = None
+
+class PublicationOut(BaseModel):
+    id: int
+    purchase_id: int
+    platform: str
+    status: str
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error_text: Optional[str] = None
+    published_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

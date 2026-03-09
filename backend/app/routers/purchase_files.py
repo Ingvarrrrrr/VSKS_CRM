@@ -38,6 +38,8 @@ FILE_TYPES = {
 }
 
 
+DOC_FORMATS = {"scan", "editable"}
+
 def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
     return PurchaseFileOut(
         id=pf.id,
@@ -46,6 +48,7 @@ def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
         mime_type=pf.mime_type,
         size=pf.size,
         file_type=pf.file_type or "other",
+        doc_format=pf.doc_format or "scan",
         created_at=str(pf.created_at) if pf.created_at else None,
     )
 
@@ -55,6 +58,7 @@ async def upload_file(
     pid: int,
     file: UploadFile = File(...),
     file_type: Optional[str] = Form(default="other"),
+    doc_format: Optional[str] = Form(default="scan"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -67,6 +71,8 @@ async def upload_file(
 
     if file_type not in FILE_TYPES:
         file_type = "other"
+    if doc_format not in DOC_FORMATS:
+        doc_format = "scan"
 
     dest_dir = os.path.join(UPLOAD_DIR, str(pid))
     os.makedirs(dest_dir, exist_ok=True)
@@ -84,6 +90,7 @@ async def upload_file(
         mime_type=file.content_type,
         size=size,
         file_type=file_type,
+        doc_format=doc_format,
     )
     db.add(pf)
     await db.commit()
@@ -92,10 +99,11 @@ async def upload_file(
 
 
 @router.patch("/{pid}/files/{fid}", response_model=PurchaseFileOut)
-async def update_file_type(
+async def update_file_meta(
     pid: int,
     fid: int,
-    file_type: str = Form(...),
+    file_type: Optional[str] = Form(default=None),
+    doc_format: Optional[str] = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -105,9 +113,14 @@ async def update_file_type(
     pf = result.scalar_one_or_none()
     if not pf:
         raise HTTPException(404, "Файл не найден")
-    if file_type not in FILE_TYPES:
-        raise HTTPException(400, f"Неизвестный тип: {file_type}")
-    pf.file_type = file_type
+    if file_type is not None:
+        if file_type not in FILE_TYPES:
+            raise HTTPException(400, f"Неизвестный тип: {file_type}")
+        pf.file_type = file_type
+    if doc_format is not None:
+        if doc_format not in DOC_FORMATS:
+            raise HTTPException(400, f"Неизвестный формат: {doc_format}")
+        pf.doc_format = doc_format
     await db.commit()
     await db.refresh(pf)
     return _file_out(pf)

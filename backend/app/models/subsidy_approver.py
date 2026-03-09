@@ -13,5 +13,6 @@ class SubsidyApprover(Base):
     order_num = Column(Integer, default=0)
     is_default = Column(Boolean, default=True)
     can_initiate = Column(Boolean, default=False)
+    show_feo_path = Column(Boolean, default=False)
 
     subsidy = relationship("Subsidy", back_populates="approvers")

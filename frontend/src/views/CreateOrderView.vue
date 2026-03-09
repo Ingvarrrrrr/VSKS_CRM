@@ -38,6 +38,11 @@
                 :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact" />
             </v-col>
+            <v-col cols="12" md="2">
+              <v-select v-model="form.item_type"
+                :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'}]"
+                item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact" />
+            </v-col>
 
             <v-col cols="12" md="4">
               <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
@@ -99,6 +104,9 @@
                 density="compact"
                 clearable
                 hide-no-data
+                hint="Необязательное поле"
+                persistent-hint
+                autocomplete="off"
               />
             </v-col>
             <!-- FEO level 1 — появляется после выбора субсидии -->
@@ -145,27 +153,27 @@
             <v-table density="compact">
               <thead>
                 <tr>
-                  <th style="min-width:280px">Наименование</th>
-                  <th style="min-width:130px">Тип</th>
-                  <th style="min-width:80px">Кол-во</th>
+                  <th style="min-width:420px">Наименование</th>
+                  <th style="min-width:180px">Тип</th>
+                  <th style="min-width:70px">Кол-во</th>
                   <th style="min-width:70px">Ед.</th>
-                  <th style="min-width:110px">Цена ед., ₽</th>
-                  <th style="min-width:110px">Сумма, ₽</th>
+                  <th style="min-width:150px">Цена ед., ₽</th>
+                  <th style="min-width:150px">Сумма, ₽</th>
                   <th style="width:48px"></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="(item, idx) in items" :key="idx">
-                  <td style="min-width:300px">
+                  <td style="min-width:420px">
                     <div class="d-flex align-center gap-1">
                       <!-- Mini thumbnail in row -->
                       <v-tooltip v-if="item._photo_url" location="right">
                         <template #activator="{ props: tip }">
-                          <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer">
-                            <v-img :src="item._photo_url" cover />
+                          <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                            <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
                           </v-avatar>
                         </template>
-                        <v-img :src="item._photo_url" width="200" height="200" cover style="border-radius:8px" />
+                        <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
                       </v-tooltip>
                       <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
 
@@ -182,11 +190,11 @@
                         @click="openProductPicker(idx)"
                         @click:clear.stop="clearItem(idx)"
                       />
-                      <v-tooltip text="Добавить новый товар в каталог" location="top">
+                      <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
                         <template #activator="{ props: tip }">
-                          <v-btn v-bind="tip" icon="mdi-plus" size="x-small" variant="tonal"
-                            color="primary" class="flex-shrink-0 ml-1"
-                            @click.stop="openFullProduct(idx, item.item_name)" />
+                          <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                            color="teal" class="flex-shrink-0 ml-1"
+                            @click.stop="openQuickProductEdit(item)" />
                         </template>
                       </v-tooltip>
                     </div>
@@ -279,8 +287,8 @@
               <tr v-for="(item, i) in items.filter(x => x.item_name?.trim())" :key="i" style="vertical-align:middle">
                 <td class="text-center text-medium-emphasis">{{ i + 1 }}</td>
                 <td class="text-center py-2">
-                  <v-avatar v-if="item._photo_url" size="56" rounded="sm">
-                    <v-img :src="item._photo_url" cover />
+                  <v-avatar v-if="item._photo_url" size="56" rounded="sm" style="overflow:hidden">
+                    <img :src="item._photo_url" style="width:56px;height:56px;object-fit:cover;display:block" />
                   </v-avatar>
                   <v-icon v-else size="40" color="grey-lighten-2">mdi-image-off-outline</v-icon>
                 </td>
@@ -477,6 +485,12 @@
                   {{ FILE_TYPE_LABELS[f.file_type || 'other'] || 'Прочее' }}
                   <v-icon size="10" class="ml-1">mdi-pencil</v-icon>
                 </v-chip>
+                <v-chip size="x-small" class="ml-1"
+                  :color="f.doc_format === 'editable' ? 'blue' : 'grey'"
+                  :prepend-icon="f.doc_format === 'editable' ? 'mdi-file-edit-outline' : 'mdi-scanner'"
+                  variant="tonal" style="cursor:pointer" @click="toggleDocFormat(f)">
+                  {{ f.doc_format === 'editable' ? 'Ред.' : 'Скан' }}
+                </v-chip>
               </template>
               <template #subtitle>{{ formatSize(f.size) }}</template>
               <template #append>
@@ -499,7 +513,15 @@
           <v-card-text class="pb-0">
             <v-select v-model="uploadFileType"
               :items="FILE_TYPE_OPTIONS" item-title="title" item-value="value"
-              label="Тип документа" variant="outlined" density="compact" class="mb-2" />
+              label="Тип документа" variant="outlined" density="compact" class="mb-3" />
+            <div class="text-body-2 mb-2">Формат файла</div>
+            <v-btn-toggle v-model="uploadDocFormat" mandatory density="compact" color="primary" class="mb-1">
+              <v-btn value="scan" prepend-icon="mdi-scanner">Скан</v-btn>
+              <v-btn value="editable" prepend-icon="mdi-file-edit-outline">Редактируемый</v-btn>
+            </v-btn-toggle>
+            <div class="text-caption text-medium-emphasis mb-2">
+              Редактируемый — только Word и Excel. PDF и изображения всегда скан.
+            </div>
             <div class="text-caption text-medium-emphasis">PDF, Word, Excel, JPEG, PNG</div>
           </v-card-text>
           <v-card-actions>
@@ -519,12 +541,72 @@
           <v-card-text>
             <v-select v-model="fileTypeEditValue"
               :items="FILE_TYPE_OPTIONS" item-title="title" item-value="value"
-              label="Тип" variant="outlined" density="compact" />
+              label="Тип" variant="outlined" density="compact" class="mb-3" />
+            <div class="text-body-2 mb-2">Формат файла</div>
+            <v-btn-toggle v-model="fileDocFormatEditValue" mandatory density="compact" color="primary">
+              <v-btn value="scan" prepend-icon="mdi-scanner">Скан</v-btn>
+              <v-btn value="editable" prepend-icon="mdi-file-edit-outline"
+                :disabled="fileTypeEditTarget ? !EDITABLE_MIME.has(fileTypeEditTarget.mime_type || '') : false">
+                Редактируемый
+              </v-btn>
+            </v-btn-toggle>
+            <div v-if="fileTypeEditTarget && !EDITABLE_MIME.has(fileTypeEditTarget.mime_type || '')"
+              class="text-caption text-orange mt-1">
+              Только Word/Excel могут быть редактируемыми
+            </div>
           </v-card-text>
           <v-card-actions>
             <v-spacer />
             <v-btn variant="text" @click="fileTypeEditDialog = false">Отмена</v-btn>
             <v-btn color="primary" variant="tonal" :loading="savingFileType" @click="saveFileType">Сохранить</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+
+      <!-- Диалог быстрого редактирования товара (цена + ссылки) -->
+      <v-dialog v-model="quickProductEditDialog" max-width="520">
+        <v-card>
+          <v-card-title class="text-subtitle-1 pt-4 px-4">
+            Обновить товар
+            <div class="text-caption text-medium-emphasis font-weight-regular">{{ quickProductEditName }}</div>
+          </v-card-title>
+          <v-card-text>
+            <div class="d-flex gap-2 align-center mb-3">
+              <v-text-field v-model.number="quickProductEditPrice" label="Цена, ₽" type="number"
+                variant="outlined" density="compact" prefix="₽" hide-details class="flex-grow-1" />
+              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-calculator"
+                @click="recalcQuickProductPrice">Пересчитать</v-btn>
+            </div>
+            <template v-if="quickProductEditProductId">
+              <div class="text-body-2 mb-2 font-weight-medium">Ссылки на товар</div>
+              <div v-for="(link, i) in quickProductEditLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
+                <v-text-field v-model="link.url" label="URL" variant="outlined" density="compact"
+                  hide-details class="flex-grow-1" />
+                <v-text-field v-model.number="link.price" label="Цена" type="number" variant="outlined"
+                  density="compact" hide-details style="max-width:90px" />
+                <v-text-field v-model="link.collected_at" label="Дата" type="date" variant="outlined"
+                  density="compact" hide-details style="max-width:130px" />
+                <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
+                  @click="quickProductEditLinks.splice(i, 1)" />
+              </div>
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mt-1"
+                @click="quickProductEditLinks.push({ url: '', price: null, collected_at: new Date().toISOString().slice(0,10) })">
+                Добавить ссылку
+              </v-btn>
+              <div class="text-caption text-medium-emphasis mt-3">
+                Цена и ссылки сохранятся в каталоге. Для полного редактирования — вкладка «Товары»
+              </div>
+            </template>
+            <div v-else class="text-caption text-medium-emphasis mt-1">
+              Товар не привязан к каталогу — обновится только цена в этой закупке
+            </div>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="quickProductEditDialog = false">Отмена</v-btn>
+            <v-btn color="primary" variant="tonal" :loading="savingQuickProduct" @click="saveQuickProduct">
+              Сохранить
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -552,7 +634,17 @@
               :loading="docLoading === 'contract_tz'"
               @click="downloadDoc('contract_tz')"
             >
-              Договор + ТЗ
+              ТЗ
+            </v-btn>
+            <v-btn
+              prepend-icon="mdi-file-document-outline"
+              variant="tonal"
+              color="indigo"
+              size="small"
+              :loading="docLoading === 'contract'"
+              @click="downloadDoc('contract')"
+            >
+              Договор
             </v-btn>
             <v-btn
               prepend-icon="mdi-file-word-outline"
@@ -796,7 +888,7 @@
             <v-col cols="12">
               <div class="text-subtitle-2 mb-2">Фото товара</div>
               <div v-if="fullProductPhotoPreview" class="mb-3">
-                <v-img :src="fullProductPhotoPreview" max-height="140" contain class="rounded border bg-grey-lighten-4" />
+                <img :src="fullProductPhotoPreview" style="max-width:100%;max-height:140px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5" />
               </div>
               <v-file-input
                 v-model="fullProductPhotoFileList"
@@ -873,8 +965,8 @@
               <tr v-for="p in productPickerResults" :key="p.id"
                 style="cursor:pointer" class="hover-row" @click="selectFromPicker(p)">
                 <td>
-                  <v-avatar size="36" rounded="sm" class="my-1">
-                    <v-img v-if="p.photo_url || p.photo_link" :src="p.photo_url || p.photo_link" cover />
+                  <v-avatar size="36" rounded="sm" class="my-1" style="overflow:hidden">
+                    <img v-if="p.photo_url || p.photo_link" :src="p.photo_url || p.photo_link" style="width:36px;height:36px;object-fit:cover;display:block" />
                     <v-icon v-else icon="mdi-package-variant" color="grey" size="20" />
                   </v-avatar>
                 </td>
@@ -1141,8 +1233,33 @@
               Нет людей с пометкой «Может быть инициатором». Отредактируйте согласующих.
             </div>
           </v-radio-group>
-          <!-- approval_sheet: checkboxes -->
+          <!-- approval_sheet: responsible person + checkboxes -->
           <div v-else>
+            <!-- Ответственный исполнитель -->
+            <div class="d-flex align-center gap-2 mb-4">
+              <v-autocomplete
+                v-model="pickerResponsibleName"
+                :items="responsiblePersonsList"
+                item-title="display"
+                item-value="full_name"
+                label="Ответственный исполнитель"
+                variant="outlined"
+                density="compact"
+                clearable
+                hide-details
+                class="flex-grow-1"
+                :return-object="false"
+                autocomplete="off"
+              />
+              <v-tooltip text="Добавить в справочник" location="top">
+                <template #activator="{ props: tip }">
+                  <v-btn v-bind="tip" icon="mdi-account-plus-outline" size="small"
+                    variant="tonal" color="teal" @click="addResponsibleDialog = true" />
+                </template>
+              </v-tooltip>
+            </div>
+            <v-divider class="mb-3" />
+            <div class="text-body-2 font-weight-medium mb-2">Согласующие</div>
             <v-checkbox
               v-for="a in docApprovers"
               :key="a.id"
@@ -1167,6 +1284,27 @@
             @click="confirmDocDownload"
           >
             Скачать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Диалог добавления ответственного исполнителя -->
+    <v-dialog v-model="addResponsibleDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-subtitle-1 pt-4 px-4">Добавить в справочник</v-card-title>
+        <v-card-text class="pb-0">
+          <v-text-field v-model="newResponsibleName" label="ФИО *" variant="outlined"
+            density="compact" class="mb-2" autofocus />
+          <v-text-field v-model="newResponsiblePosition" label="Должность (необязательно)"
+            variant="outlined" density="compact" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="addResponsibleDialog = false">Отмена</v-btn>
+          <v-btn color="teal" variant="tonal" :loading="savingResponsible"
+            :disabled="!newResponsibleName.trim()" @click="saveNewResponsible">
+            Сохранить
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1203,7 +1341,7 @@ interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; photo_url?: string; photo_link?: string; category?: string }
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string }
-interface PriceLink { url: string; price: number | null }
+interface PriceLink { url: string; price: number | null; collected_at?: string }
 interface OrderItem {
   product_id: number | null
   item_name: string
@@ -1219,7 +1357,7 @@ interface OrderItem {
   _photo_url?: string
   _description?: string
 }
-interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string }
+interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string }
 
 const FILE_TYPE_LABELS: Record<string, string> = {
   kp:           'КП',
@@ -1246,6 +1384,7 @@ function fileTypeColor(t?: string): string {
 const form = reactive({
   purchase_method: '',
   purchase_basis: '' as string,
+  item_type: 'товар' as string,
   subsidy_id: null as number | null,
   contractor_id: null as number | null,
   registry_number: '',
@@ -1295,13 +1434,52 @@ const pickerApproverIds    = ref<number[]>([])
 const pickerInitiatorId    = ref<number | null>(null)
 const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
 
-// ── Responsible persons suggestions ──
+// ── Responsible persons suggestions (order form combobox) ──
 const responsiblePersonSuggestions = ref<string[]>([])
 async function loadResponsiblePersons() {
   if (!form.subsidy_id) { responsiblePersonSuggestions.value = []; return }
   try {
     responsiblePersonSuggestions.value = await apiFetch<string[]>(`/purchases/responsible-persons?subsidy_id=${form.subsidy_id}`)
   } catch { responsiblePersonSuggestions.value = [] }
+}
+
+// ── Responsible persons directory (for approval sheet dialog) ──
+interface ResponsiblePerson { id: number; full_name: string; position?: string; display?: string }
+const responsiblePersonsList = ref<ResponsiblePerson[]>([])
+const pickerResponsibleName = ref<string>('')
+const addResponsibleDialog = ref(false)
+const newResponsibleName = ref('')
+const newResponsiblePosition = ref('')
+const savingResponsible = ref(false)
+
+async function loadResponsiblePersonsList() {
+  if (!form.subsidy_id) { responsiblePersonsList.value = []; return }
+  try {
+    const list = await apiFetch<ResponsiblePerson[]>(`/subsidies/${form.subsidy_id}/responsible-persons`)
+    responsiblePersonsList.value = list.map(p => ({
+      ...p,
+      display: p.position ? `${p.full_name} (${p.position})` : p.full_name,
+    }))
+  } catch { responsiblePersonsList.value = [] }
+}
+
+async function saveNewResponsible() {
+  if (!newResponsibleName.value.trim() || !form.subsidy_id) return
+  savingResponsible.value = true
+  try {
+    const created = await apiFetch<ResponsiblePerson>(`/subsidies/${form.subsidy_id}/responsible-persons`, {
+      method: 'POST',
+      body: { full_name: newResponsibleName.value.trim(), position: newResponsiblePosition.value.trim() || null },
+    })
+    const entry = { ...created, display: created.position ? `${created.full_name} (${created.position})` : created.full_name }
+    responsiblePersonsList.value.push(entry)
+    responsiblePersonsList.value.sort((a, b) => a.full_name.localeCompare(b.full_name))
+    pickerResponsibleName.value = created.full_name
+    addResponsibleDialog.value = false
+    newResponsibleName.value = ''
+    newResponsiblePosition.value = ''
+  } catch { showSnack('Ошибка сохранения', 'error') }
+  finally { savingResponsible.value = false }
 }
 
 async function openDocPicker(type: 'service_note' | 'approval_sheet') {
@@ -1312,10 +1490,14 @@ async function openDocPicker(type: 'service_note' | 'approval_sheet') {
   docPickerType.value = type
   docPickerDialog.value = true
   loadingDocApprovers.value = true
+  // Pre-fill responsible person from the purchase form
+  pickerResponsibleName.value = form.responsible_person || ''
   try {
-    const list = await apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`)
+    const [list] = await Promise.all([
+      apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),
+      loadResponsiblePersonsList(),
+    ])
     docApprovers.value = list
-    // Pre-select defaults
     if (type === 'approval_sheet') {
       pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
     } else {
@@ -1335,8 +1517,10 @@ async function confirmDocDownload() {
     const params = pickerInitiatorId.value ? `?initiator_id=${pickerInitiatorId.value}` : ''
     await downloadDoc('service_note', params)
   } else {
-    const params = pickerApproverIds.value.length ? `?approver_ids=${pickerApproverIds.value.join(',')}` : ''
-    await downloadDoc('approval_sheet', params)
+    const parts: string[] = []
+    if (pickerApproverIds.value.length) parts.push(`approver_ids=${pickerApproverIds.value.join(',')}`)
+    if (pickerResponsibleName.value) parts.push(`responsible_name=${encodeURIComponent(pickerResponsibleName.value)}`)
+    await downloadDoc('approval_sheet', parts.length ? `?${parts.join('&')}` : '')
   }
 }
 const snack = reactive({ show: false, text: '', color: 'success' })
@@ -1348,20 +1532,42 @@ const fileInputEl = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const uploadDialog = ref(false)
 const uploadFileType = ref('other')
+const uploadDocFormat = ref('scan')
 const fileTypeEditDialog = ref(false)
 const fileTypeEditValue = ref('other')
+const fileDocFormatEditValue = ref('scan')
 const fileTypeEditTarget = ref<UploadedFile | null>(null)
 const savingFileType = ref(false)
 
 function openUploadDialog() {
   uploadFileType.value = 'other'
+  uploadDocFormat.value = 'scan'
   uploadDialog.value = true
 }
 
 function openFileTypeEdit(f: UploadedFile) {
   fileTypeEditTarget.value = f
   fileTypeEditValue.value = f.file_type || 'other'
+  fileDocFormatEditValue.value = f.doc_format || 'scan'
   fileTypeEditDialog.value = true
+}
+
+async function toggleDocFormat(f: UploadedFile) {
+  if (!purchaseId.value) return
+  const newFormat = f.doc_format === 'editable' ? 'scan' : 'editable'
+  const token = localStorage.getItem('auth_token')
+  const fd = new FormData()
+  fd.append('doc_format', newFormat)
+  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${f.id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  })
+  if (res.ok) {
+    const updated = await res.json()
+    const idx = uploadedFiles.value.findIndex(x => x.id === updated.id)
+    if (idx !== -1) uploadedFiles.value[idx] = updated
+  }
 }
 
 async function saveFileType() {
@@ -1371,6 +1577,7 @@ async function saveFileType() {
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file_type', fileTypeEditValue.value)
+    fd.append('doc_format', fileDocFormatEditValue.value)
     const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fileTypeEditTarget.value.id}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
@@ -1384,6 +1591,84 @@ async function saveFileType() {
     }
   } finally {
     savingFileType.value = false
+  }
+}
+
+// ── Quick product edit (price + links) ────────────────────────────
+const quickProductEditDialog = ref(false)
+const quickProductEditProductId = ref<number | null>(null)
+const quickProductEditItemIdx = ref<number>(-1)
+const quickProductEditName = ref('')
+const quickProductEditPrice = ref<number | null>(null)
+const quickProductEditLinks = ref<PriceLink[]>([])
+const savingQuickProduct = ref(false)
+
+async function openQuickProductEdit(item: OrderItem) {
+  quickProductEditItemIdx.value = items.value.indexOf(item)
+  quickProductEditName.value = item.item_name
+  quickProductEditPrice.value = item.unit_price ?? null
+  quickProductEditLinks.value = []
+
+  // Resolve product_id: use existing or find by name in catalog
+  let productId = item.product_id
+  if (!productId && item.item_name) {
+    const match = products.value.find(p => p.name.trim().toLowerCase() === item.item_name.trim().toLowerCase())
+    if (match) {
+      productId = match.id
+      item.product_id = match.id  // backfill for future saves
+    }
+  }
+  quickProductEditProductId.value = productId
+
+  if (productId) {
+    try {
+      const prod = await apiFetch<any>(`/products/${productId}`)
+      quickProductEditPrice.value = prod.price ?? item.unit_price ?? null
+      quickProductEditLinks.value = (prod.price_links || []).map((l: any) => ({ url: l.url, price: l.price ?? null, collected_at: l.collected_at ?? null }))
+    } catch {}
+  }
+  quickProductEditDialog.value = true
+}
+
+function recalcQuickProductPrice() {
+  const links = quickProductEditLinks.value.filter(l => l.url && l.price != null && l.collected_at)
+  if (!links.length) return
+  // Find top 3 distinct dates
+  const dates = [...new Set(links.map(l => l.collected_at!).filter(Boolean))].sort().reverse().slice(0, 3)
+  const relevant = links.filter(l => dates.includes(l.collected_at!))
+  const avg = relevant.reduce((s, l) => s + (l.price ?? 0), 0) / relevant.length
+  quickProductEditPrice.value = Math.round(avg * 100) / 100
+}
+
+async function saveQuickProduct() {
+  savingQuickProduct.value = true
+  try {
+    let finalPrice = quickProductEditPrice.value
+    if (quickProductEditProductId.value) {
+      // Save to catalog, use returned price (recalculated from links)
+      const updated = await apiFetch<any>(`/products/${quickProductEditProductId.value}`, {
+        method: 'PATCH',
+        body: {
+          price: quickProductEditPrice.value,
+          price_links: quickProductEditLinks.value.filter(l => l.url),
+        },
+      })
+      finalPrice = updated?.price ?? quickProductEditPrice.value
+    }
+    // Always update the order row price
+    if (quickProductEditItemIdx.value >= 0 && finalPrice != null) {
+      const item = items.value[quickProductEditItemIdx.value]
+      if (item) {
+        item.unit_price = finalPrice
+        calcItemTotal(quickProductEditItemIdx.value)
+      }
+    }
+    quickProductEditDialog.value = false
+    showSnack(quickProductEditProductId.value ? 'Товар обновлён в каталоге' : 'Цена обновлена')
+  } catch {
+    showSnack('Ошибка сохранения', 'error')
+  } finally {
+    savingQuickProduct.value = false
   }
 }
 
@@ -1910,6 +2195,7 @@ const loadPurchase = async () => {
   Object.assign(form, {
     purchase_method: data.purchase_method || '',
     purchase_basis: data.purchase_basis || '',
+    item_type: data.item_type || 'товар',
     subsidy_id: data.subsidy_id ?? null,
     contractor_id: data.contractor_id ?? null,
     registry_number: data.registry_number || '',
@@ -2075,6 +2361,13 @@ const doTransition = async () => {
   }
 }
 
+const EDITABLE_MIME = new Set([
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+])
+
 // File upload
 const uploadFile = async (event: Event) => {
   const input = event.target as HTMLInputElement
@@ -2083,9 +2376,12 @@ const uploadFile = async (event: Event) => {
   uploading.value = true
   try {
     const file = input.files[0]
+    // Auto-detect doc_format: only Word/Excel can be editable
+    const resolvedFormat = EDITABLE_MIME.has(file.type) ? uploadDocFormat.value : 'scan'
     const fd = new FormData()
     fd.append('file', file)
     fd.append('file_type', uploadFileType.value)
+    fd.append('doc_format', resolvedFormat)
     const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
       method: 'POST',

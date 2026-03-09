@@ -1,6 +1,6 @@
 import os
 import shutil
-from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Body
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,12 +58,28 @@ async def get_product(
         raise HTTPException(status_code=404, detail="Product not found")
     return product
 
+def _calc_price_from_links(links: list) -> float | None:
+    """Average price using only links from the 3 most recent distinct dates."""
+    if not links:
+        return None
+    # Get all distinct dates that have a price, sorted descending
+    dated = [(l.get("collected_at") or "", l["price"]) for l in links if l.get("price") is not None]
+    if not dated:
+        return None
+    top_dates = sorted({d for d, _ in dated if d}, reverse=True)[:3]
+    # Include links with no date only if no dated links exist
+    if top_dates:
+        prices = [p for d, p in dated if d in top_dates]
+    else:
+        prices = [p for _, p in dated]
+    return round(sum(prices) / len(prices), 2) if prices else None
+
+
 def _apply_price_links(data: dict, target: object) -> None:
-    """Auto-calculate price as average of price_links prices."""
-    links = data.get("price_links") or []
-    prices = [l["price"] for l in links if l.get("price") is not None]
-    if prices:
-        data["price"] = round(sum(prices) / len(prices), 2)
+    """Auto-calculate price as average of price_links (3 most recent dates)."""
+    price = _calc_price_from_links(data.get("price_links") or [])
+    if price is not None:
+        data["price"] = price
 
 @router.post("/", response_model=ProductOut)
 async def create_product(
@@ -95,6 +111,33 @@ async def update_product(
     await db.commit()
     await db.refresh(db_product)
     return db_product
+
+@router.patch("/{product_id}", response_model=ProductOut)
+async def patch_product(
+    product_id: int,
+    data: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Частичное обновление товара (цена, ссылки)."""
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    db_product = result.scalar_one_or_none()
+    if not db_product:
+        raise HTTPException(404, "Product not found")
+    if "price_links" in data:
+        db_product.price_links = data["price_links"]
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(db_product, "price_links")
+        # Auto-update price from 3 most recent dates (if not explicitly provided)
+        if "price" not in data:
+            calc = _calc_price_from_links(data["price_links"])
+            if calc is not None:
+                db_product.price = Decimal(str(calc))
+    if "price" in data:
+        db_product.price = Decimal(str(data["price"])) if data["price"] is not None else None
+    await db.commit()
+    await db.refresh(db_product)
+    return db_product
+
 
 @router.delete("/{product_id}")
 async def delete_product(
@@ -250,6 +293,99 @@ async def import_products_from_excel(
 
     await db.commit()
     return {"created": created, "skipped": skipped, "errors": errors}
+
+
+def _download_and_save_photo(product_id: int, url: str) -> str:
+    """Download image from URL, save locally, return local path like /api/products/photos/..."""
+    import urllib.request as _ur, tempfile, io as _io
+    SUPPORTED = ("image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/tiff")
+    os.makedirs(PRODUCT_UPLOAD_DIR, exist_ok=True)
+    with _ur.urlopen(url, timeout=10) as r:
+        ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        raw = r.read()
+    is_webp = "webp" in ct or url.lower().endswith(".webp")
+    if is_webp:
+        from PIL import Image as _Img
+        img = _Img.open(_io.BytesIO(raw)).convert("RGB")
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        raw = buf.getvalue()
+        ext = ".jpg"
+    elif ct in SUPPORTED:
+        ext_map = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+                   "image/gif": ".gif", "image/bmp": ".bmp", "image/tiff": ".tiff"}
+        ext = ext_map.get(ct, ".jpg")
+    else:
+        raise ValueError(f"Неподдерживаемый формат: {ct}")
+    filename = f"product_{product_id}{ext}"
+    dest = os.path.join(PRODUCT_UPLOAD_DIR, filename)
+    with open(dest, "wb") as f:
+        f.write(raw)
+    return f"/api/products/photos/{filename}"
+
+
+@router.post("/download-photos")
+async def download_all_photos(
+    db: AsyncSession = Depends(get_db),
+):
+    """Скачать и сохранить локально фото для всех товаров с URL-ссылками (без локального фото)."""
+    import asyncio
+    result = await db.execute(select(Product).where(Product.is_active == True))
+    all_products = result.scalars().all()
+
+    updated, skipped, errors = 0, 0, []
+    for p in all_products:
+        # Skip if already has local photo
+        if p.photo_url and p.photo_url.startswith("/api/products/photos/"):
+            skipped += 1
+            continue
+        # Find source URL: photo_url (if http) or photo_link
+        src = None
+        if p.photo_url and (p.photo_url.startswith("http://") or p.photo_url.startswith("https://")):
+            src = p.photo_url
+        elif p.photo_link and (p.photo_link.startswith("http://") or p.photo_link.startswith("https://")):
+            src = p.photo_link
+        if not src:
+            skipped += 1
+            continue
+        try:
+            local_url = await asyncio.to_thread(_download_and_save_photo, p.id, src)
+            p.photo_url = local_url
+            updated += 1
+        except Exception as e:
+            errors.append({"id": p.id, "name": p.name, "error": str(e)})
+
+    if updated:
+        await db.commit()
+    return {"updated": updated, "skipped": skipped, "errors": errors}
+
+
+@router.post("/{product_id}/download-photo", response_model=ProductOut)
+async def download_single_photo(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Скачать фото одного товара по его URL-ссылке."""
+    import asyncio
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    src = None
+    if product.photo_url and (product.photo_url.startswith("http://") or product.photo_url.startswith("https://")):
+        src = product.photo_url
+    elif product.photo_link and (product.photo_link.startswith("http://") or product.photo_link.startswith("https://")):
+        src = product.photo_link
+    if not src:
+        raise HTTPException(400, "Нет URL для скачивания фото")
+    try:
+        local_url = await asyncio.to_thread(_download_and_save_photo, product.id, src)
+        product.photo_url = local_url
+        await db.commit()
+        await db.refresh(product)
+        return product
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка скачивания: {e}")
 
 
 @router.post("/{product_id}/photo", response_model=ProductOut)

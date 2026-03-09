@@ -13,6 +13,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.subsidy_approver import SubsidyApprover
+from app.models.feo_category import FeoCategory
 from app.auth.jwt import get_current_user
 from typing import Optional
 
@@ -23,6 +24,7 @@ TEMPLATES_DIR = "/app/templates"
 DOC_TYPES = {
     "service_note":   ("service_note.docx",   "Service_Note"),
     "contract_tz":    ("contract_tz.docx",    "Contract_TZ"),
+    "contract":       ("contract.docx",        "Contract"),
     "approval_sheet": ("approval_sheet.docx", "Approval_Sheet"),
 }
 
@@ -43,6 +45,14 @@ def _fmt_date(d) -> str:
     return d.strftime("%d.%m.%Y")
 
 
+def _clean_id(v) -> str:
+    """Strip trailing .0 from INN/KPP imported as float strings."""
+    if not v:
+        return ""
+    s = str(v).strip()
+    return s[:-2] if s.endswith(".0") else s
+
+
 def _fmt_money(v) -> str:
     if v is None:
         return ""
@@ -55,6 +65,7 @@ async def generate_document(
     doc_type: str,
     approver_ids: Optional[str] = Query(default=None, description="ID согласующих через запятую"),
     initiator_id: Optional[int] = Query(default=None, description="ID инициатора служебной записки"),
+    responsible_name: Optional[str] = Query(default=None, description="ФИО ответственного исполнителя (переопределяет поле закупки)"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -63,6 +74,11 @@ async def generate_document(
 
     template_file, filename_base = DOC_TYPES[doc_type]
     template_path = os.path.join(TEMPLATES_DIR, template_file)
+
+    # For contract documents: check subsidy-specific template first
+    # (loaded after purchase is fetched below, but we need subsidy_id from the purchase)
+    # We'll resolve the path after loading the purchase — placeholder here
+
     if not os.path.exists(template_path):
         raise HTTPException(
             404,
@@ -83,6 +99,12 @@ async def generate_document(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+
+    # Override template path with subsidy-specific template if available
+    if doc_type == "contract" and p.subsidy_id:
+        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), "contract.docx")
+        if os.path.exists(subsidy_template):
+            template_path = subsidy_template
 
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
@@ -114,9 +136,93 @@ async def generate_document(
         )
         selected_approvers = res.scalars().all()
 
+    # Build FEO category path (root → ... → selected)
+    feo_path = ""
+    if p.feo_category_id:
+        feo_res = await db.execute(select(FeoCategory))
+        all_feo = {f.id: f for f in feo_res.scalars().all()}
+        path_parts = []
+        node_id = p.feo_category_id
+        visited = set()
+        while node_id and node_id not in visited:
+            visited.add(node_id)
+            cat = all_feo.get(node_id)
+            if not cat:
+                break
+            path_parts.append(cat.name.strip())
+            node_id = cat.parent_id
+        feo_path = " → ".join(reversed(path_parts))
+
+    # Resolved responsible person name
+    resolved_responsible = responsible_name or p.responsible_person or ""
+
+    # Build docxtpl template object early (needed for InlineImage)
+    try:
+        from docxtpl import DocxTemplate, InlineImage
+        from docx.shared import Cm as _Cm
+        tpl = DocxTemplate(template_path)
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка загрузки шаблона: {e}")
+
+    UPLOADS_DIR = "/app/uploads/products"
+
+    def _resolve_photo(photo_url):
+        """Return InlineImage or empty string."""
+        import tempfile, urllib.request as _ur
+        if not photo_url:
+            return ""
+        url = str(photo_url).strip()
+        local_path = None
+
+        if url.startswith("/api/products/photos/"):
+            fname = url.split("/")[-1]
+            local_path = f"{UPLOADS_DIR}/{fname}"
+        elif url.isdigit():
+            for ext in ("jpg", "jpeg", "png"):
+                p = f"{UPLOADS_DIR}/product_{url}.{ext}"
+                if os.path.exists(p):
+                    local_path = p
+                    break
+        elif url.startswith("http://") or url.startswith("https://"):
+            # Download external image; convert webp via Pillow if available
+            try:
+                with _ur.urlopen(url, timeout=5) as r:
+                    ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+                    raw = r.read()
+                is_webp = "webp" in ct or url.lower().endswith(".webp")
+                if is_webp:
+                    try:
+                        from PIL import Image as _Img
+                        import io as _io
+                        img = _Img.open(_io.BytesIO(raw)).convert("RGB")
+                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+                        img.save(tmp, format="JPEG", quality=85)
+                        tmp.close()
+                        local_path = tmp.name
+                    except Exception:
+                        return ""  # Pillow not available or conversion failed
+                else:
+                    ext_map = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+                               "image/gif": ".gif", "image/bmp": ".bmp", "image/tiff": ".tiff"}
+                    suffix = ext_map.get(ct, ".jpg")
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                    tmp.write(raw)
+                    tmp.close()
+                    local_path = tmp.name
+            except Exception:
+                return ""
+
+        if not local_path or not os.path.exists(local_path):
+            return ""
+        try:
+            return InlineImage(tpl, local_path, width=_Cm(2.5))
+        except Exception:
+            return ""
+
     # Build template context
     items_list = []
     for idx, item in enumerate(p.items or [], start=1):
+        photo_url = item.product.photo_url if item.product else None
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
@@ -126,17 +232,22 @@ async def generate_document(
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(item.total_price),
+            "photo": _resolve_photo(photo_url),
         })
 
-    approvers_list = [
-        {
+    approvers_list = []
+    for i, a in enumerate(selected_approvers):
+        full_name = a.full_name or ""
+        # Substitute responsible person into rows with empty or placeholder full_name
+        if not full_name.strip().strip("_").strip():
+            full_name = resolved_responsible
+        note = feo_path if getattr(a, "show_feo_path", False) else ""
+        approvers_list.append({
             "num": i + 1,
             "role_name": a.role_name,
-            "full_name": a.full_name,
-            "note": "",
-        }
-        for i, a in enumerate(selected_approvers)
-    ]
+            "full_name": full_name,
+            "note": note,
+        })
 
     c = p.contractor
     context = {
@@ -147,28 +258,35 @@ async def generate_document(
         "subject": p.subject or "",
         "status": p.status or "",
         "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),
-        "responsible_person": p.responsible_person or "",
+        "responsible_person": resolved_responsible,
         # Субсидия
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
         "subsidy_budget": _fmt_money(subsidy.budget) if subsidy else "",
         # Контрагент — основные
-        "contractor_name": c.name if c else "",
-        "contractor_inn": c.inn if c else "",
-        "contractor_kpp": c.kpp if c else "",
-        "contractor_address": c.address if c else "",
-        "contractor_postal_address": c.postal_address if c else "",
-        "contractor_ogrn": c.ogrn if c else "",
-        "contractor_phone": c.phone if c else "",
-        "contractor_email": c.email if c else "",
+        "contractor_name": (c.name or "") if c else "",
+        "contractor_inn": _clean_id(c.inn) if c else "",
+        "contractor_kpp": _clean_id(c.kpp) if c else "",
+        "contractor_address": (c.address or "") if c else "",
+        "contractor_postal_address": (c.postal_address or "") if c else "",
+        "contractor_ogrn": (c.ogrn or "") if c else "",
+        "contractor_phone": (c.phone or "") if c else "",
+        "contractor_email": (c.email or "") if c else "",
         # Контрагент — подписант
-        "contractor_signatory": c.signatory if c else "",
-        "contractor_signatory_basis": c.signatory_basis if c else "",
+        "contractor_signatory": (c.signatory or "") if c else "",
+        "contractor_signatory_basis": (c.signatory_basis or "") if c else "",
         # Контрагент — банк
-        "contractor_settlement_account": c.settlement_account if c else "",
-        "contractor_bank_name": c.bank_name if c else "",
-        "contractor_bik": c.bik if c else "",
-        "contractor_correspondent_account": c.correspondent_account if c else "",
+        "contractor_settlement_account": (c.settlement_account or "") if c else "",
+        "contractor_bank_name": (c.bank_name or "") if c else "",
+        "contractor_bik": (c.bik or "") if c else "",
+        "contractor_correspondent_account": (c.correspondent_account or "") if c else "",
+        # Комбинированные поля контрагента для шаблонов
+        "contractor_bank_details": (c.bank_name or "") if c else "",
+        "contractor_signatory_line": (
+            f"{c.signatory}, действует на основании {c.signatory_basis}"
+            if c and c.signatory and c.signatory_basis
+            else ((c.signatory or "") if c else "")
+        ),
         # FEO
         "feo_category_name": p.feo_category.name if p.feo_category else "",
         # Финансы
@@ -179,7 +297,7 @@ async def generate_document(
         "price_increase": _fmt_money(p.price_increase),
         # Договор
         "contract_number": p.contract_number or "",
-        "contract_date": _fmt_date(p.contract_date),
+        "contract_date": _fmt_date(p.contract_date) or "__.__._____ г.",
         "execution_term": _fmt_date(p.execution_term),
         "execution_term_changed": _fmt_date(p.execution_term_changed),
         "delivery_date": _fmt_date(p.delivery_date),
@@ -197,7 +315,7 @@ async def generate_document(
         # Позиции
         "items": items_list,
         "items_count": len(items_list),
-        "item_names": ", ".join(i["name"] for i in items_list if i["name"]),
+        "item_names": p.subject or ", ".join(i["name"] for i in items_list if i["name"]),
         # Согласующие
         "approvers": approvers_list,
         "initiator_name": initiator.full_name if initiator else "",
@@ -208,8 +326,6 @@ async def generate_document(
     }
 
     try:
-        from docxtpl import DocxTemplate
-        tpl = DocxTemplate(template_path)
         tpl.render(context)
         buf = BytesIO()
         tpl.save(buf)

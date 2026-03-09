@@ -45,6 +45,17 @@ class SubsidyOut(BaseModel):
     description: Optional[str] = None
     model_config = {"from_attributes": True}
 
+# ResponsiblePerson
+class ResponsiblePersonCreate(BaseModel):
+    full_name: str
+    position: Optional[str] = None
+
+class ResponsiblePersonOut(ResponsiblePersonCreate):
+    id: int
+    subsidy_id: Optional[int] = None
+    is_active: bool = True
+    model_config = {"from_attributes": True}
+
 # SubsidyApprover
 class SubsidyApproverCreate(BaseModel):
     role_name: str
@@ -52,6 +63,7 @@ class SubsidyApproverCreate(BaseModel):
     order_num: int = 0
     is_default: bool = True
     can_initiate: bool = False
+    show_feo_path: bool = False
 
 class SubsidyApproverOut(SubsidyApproverCreate):
     id: int
@@ -154,6 +166,7 @@ class PurchaseFileOut(BaseModel):
     mime_type: Optional[str] = None
     size: Optional[int] = None
     file_type: Optional[str] = "other"
+    doc_format: Optional[str] = "scan"
     created_at: Optional[str] = None
     model_config = {"from_attributes": True}
 

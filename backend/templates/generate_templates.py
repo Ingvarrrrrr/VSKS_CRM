@@ -59,10 +59,21 @@ def hline(doc):
 
 
 # ── contract_tz.docx ─────────────────────────────────────────────────────────
-# Items are rendered using {%p for %} paragraph-level loop.
-# Each item gets 3 paragraphs: header, details, description.
-# The loop start/end paragraphs are invisible (font size 1).
+# Items rendered as a TABLE with photo column.
+# Uses {%tr for item in items %} for row repetition.
+# Photo column uses InlineImage — passed from documents.py.
 def make_contract_tz():
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OE
+
+    def _set_col_width(cell, width_cm):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcW = _OE('w:tcW')
+        tcW.set(_qn('w:w'), str(int(width_cm * 567)))  # 567 twips/cm
+        tcW.set(_qn('w:type'), 'dxa')
+        tcPr.append(tcW)
+
     doc = Document()
     page_margins(doc)
 
@@ -82,68 +93,63 @@ def make_contract_tz():
     add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
     add_label_value(doc, "Способ закупки:", "{{purchase_method}}")
     add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}} / КПП {{contractor_kpp}}")
-    add_label_value(doc, "Адрес:", "{{contractor_address}}")
-    add_label_value(doc, "Страна происхождения:", "{{country_origin}}")
     add_label_value(doc, "Срок исполнения:", "{{execution_term}}")
 
     doc.add_paragraph()
     hline(doc)
 
-    # Section header
     hdr = doc.add_paragraph()
-    r = hdr.add_run("1. Перечень поставляемых товаров (работ, услуг)")
+    r = hdr.add_run("Перечень поставляемых товаров (работ, услуг):")
     r.bold = True; r.font.size = Pt(11)
 
-    doc.add_paragraph()
+    # ── Items TABLE with photo ─────────────────────────────────
+    # docxtpl requires {%tr for %} and {%tr endfor %} in SEPARATE rows (3-row pattern):
+    #   Row 0 (header): Фото | № | ... (blue header)
+    #   Row 1 (for):    {%tr for item in items %} | ... (replaced by jinja2 tag)
+    #   Row 2 (data):   {{item.photo}} | {{item.num}} | ... (repeated per item)
+    #   Row 3 (endfor): {%tr endfor %} | ... (replaced by jinja2 tag)
+    # Columns: Фото | № | Наименование / Описание | Тип | Кол-во | Ед. | Цена ед. | Сумма
+    COL_WIDTHS = [2.8, 0.8, 7.0, 1.8, 1.4, 1.0, 2.2, 2.2]  # cm
+    tbl = doc.add_table(rows=4, cols=8)
+    tbl.style = 'Table Grid'
 
-    # ── Items list using {%p for %} ───────────────────────────
-    # Paragraph 1: loop start marker (invisible, size 1)
-    p_for = doc.add_paragraph()
-    p_for.paragraph_format.space_before = Pt(0)
-    p_for.paragraph_format.space_after = Pt(0)
-    rr = p_for.add_run("{%p for item in items %}")
-    rr.font.size = Pt(1)
-    rr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    # Row 0: Header
+    hdr_texts = ["Фото", "№", "Наименование / Описание", "Тип", "Кол-во", "Ед.", "Цена ед., руб.", "Сумма, руб."]
+    for i, (txt, w) in enumerate(zip(hdr_texts, COL_WIDTHS)):
+        cell = tbl.rows[0].cells[i]
+        _set_col_width(cell, w)
+        run = cell.paragraphs[0].add_run(txt)
+        run.bold = True; run.font.size = Pt(9)
+        set_cell_bg(cell, "D6E4F7")
 
-    # Paragraph 2: item name line (repeated per item)
-    p_name = doc.add_paragraph()
-    p_name.paragraph_format.space_before = Pt(4)
-    p_name.paragraph_format.space_after = Pt(1)
-    rn = p_name.add_run("{{item.num}}. {{item.name}}")
-    rn.bold = True
-    rn.font.size = Pt(10)
+    # Row 1: {%tr for item in items %} — this entire row is replaced by jinja2 for tag
+    tbl.rows[1].cells[0].paragraphs[0].add_run("{%tr for item in items %}").font.size = Pt(8)
 
-    # Paragraph 3: item details
-    p_det = doc.add_paragraph()
-    p_det.paragraph_format.space_before = Pt(0)
-    p_det.paragraph_format.space_after = Pt(1)
-    p_det.paragraph_format.left_indent = Cm(0.5)
-    rd = p_det.add_run(
-        "Тип: {{item.type}}  |  Кол-во: {{item.quantity}} {{item.unit}}"
-        "  |  Цена ед.: {{item.unit_price}}  |  Сумма: {{item.total_price}}"
-    )
-    rd.font.size = Pt(9)
-    rd.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+    # Row 2: Data template row (gets repeated per item)
+    data_cells = tbl.rows[2].cells
+    _set_col_width(data_cells[0], COL_WIDTHS[0])
 
-    # Paragraph 4: description (shown even if empty, docxtpl will render empty string)
-    p_desc = doc.add_paragraph()
-    p_desc.paragraph_format.space_before = Pt(0)
-    p_desc.paragraph_format.space_after = Pt(4)
-    p_desc.paragraph_format.left_indent = Cm(0.5)
-    rdesc = p_desc.add_run("{{item.description}}")
-    rdesc.font.size = Pt(9)
-    rdesc.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+    p0 = data_cells[0].paragraphs[0]
+    p0.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p0.add_run("{{item.photo}}").font.size = Pt(9)
 
-    # Paragraph 5: loop end marker (invisible, size 1)
-    p_end = doc.add_paragraph()
-    p_end.paragraph_format.space_before = Pt(0)
-    p_end.paragraph_format.space_after = Pt(0)
-    re = p_end.add_run("{%p endfor %}")
-    re.font.size = Pt(1)
-    re.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    # ── End items list ─────────────────────────────────────────
+    data_cells[1].paragraphs[0].add_run("{{item.num}}").font.size = Pt(9)
 
-    hline(doc)
+    p2 = data_cells[2].paragraphs[0]
+    run_name = p2.add_run("{{item.name}}")
+    run_name.bold = True; run_name.font.size = Pt(9)
+    p2.add_run("\n{{item.description}}").font.size = Pt(8)
+
+    data_cells[3].paragraphs[0].add_run("{{item.type}}").font.size = Pt(9)
+    data_cells[4].paragraphs[0].add_run("{{item.quantity}}").font.size = Pt(9)
+    data_cells[5].paragraphs[0].add_run("{{item.unit}}").font.size = Pt(9)
+    data_cells[6].paragraphs[0].add_run("{{item.unit_price}}").font.size = Pt(9)
+    data_cells[7].paragraphs[0].add_run("{{item.total_price}}").font.size = Pt(9)
+
+    # Row 3: {%tr endfor %} — this entire row is replaced by jinja2 endfor tag
+    tbl.rows[3].cells[0].paragraphs[0].add_run("{%tr endfor %}").font.size = Pt(8)
+    # ── End items TABLE ────────────────────────────────────────
+
     doc.add_paragraph()
 
     # Total
@@ -163,7 +169,7 @@ def make_contract_tz():
 
     # Signatures
     hdr2 = doc.add_paragraph()
-    r = hdr2.add_run("2. Подписи сторон")
+    r = hdr2.add_run("Подписи сторон")
     r.bold = True; r.font.size = Pt(11)
 
     sig = doc.add_table(rows=4, cols=2)
@@ -176,18 +182,19 @@ def make_contract_tz():
 
     sig_cell(0, 0, "Заказчик", bold=True)
     sig_cell(0, 1, "Исполнитель", bold=True)
-    sig_cell(1, 0, "{{subsidy_name}}")
-    sig_cell(1, 1, "{{contractor_name}}")
-    sig_cell(2, 0, "Адрес: {{contractor_address}}")
-    sig_cell(2, 1,
-        "Адрес: {{contractor_postal_address}}\n"
-        "ОГРН: {{contractor_ogrn}}\n"
-        "р/с {{contractor_settlement_account}}\n"
-        "{{contractor_bank_name}}\n"
-        "БИК {{contractor_bik}} | к/с {{contractor_correspondent_account}}"
+    sig_cell(1, 0, "Всероссийская общественная молодежная организация «ВСКС»\nИНН: 7704190720 / КПП: 770401001\nОГРН: 1037739183516")
+    sig_cell(1, 1, "{{contractor_name}}\nИНН: {{contractor_inn}} / КПП: {{contractor_kpp}}\nОГРН: {{contractor_ogrn}}")
+    sig_cell(2, 0,
+        "Адрес: Пр-т Вернадского, д. 78, стр. 8, Москва, 119454\n"
+        "р/с 40703810138060100002\nПАО Сбербанк г. Москва\n"
+        "БИК 044525225 | к/с 30101810400000000225"
     )
-    sig_cell(3, 0, "Подпись: _______________  /  М.П.")
-    sig_cell(3, 1, "{{contractor_signatory}}, действует на основании {{contractor_signatory_basis}}\nПодпись: _______________ / М.П.")
+    sig_cell(2, 1,
+        "Адрес: {{contractor_address}}\n"
+        "{{contractor_bank_details}}"
+    )
+    sig_cell(3, 0, "Председатель Совета _______________  /  М.П.")
+    sig_cell(3, 1, "{{contractor_signatory_line}}\nПодпись: _______________ / М.П.")
 
     path = os.path.join(TEMPLATES_DIR, "contract_tz.docx")
     doc.save(path)
@@ -240,6 +247,17 @@ def make_service_note():
 
 # ── approval_sheet.docx ───────────────────────────────────────────────────────
 def make_approval_sheet():
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OE
+
+    def _set_col_width(cell, width_cm):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcW = _OE('w:tcW')
+        tcW.set(_qn('w:w'), str(int(width_cm * 567)))
+        tcW.set(_qn('w:type'), 'dxa')
+        tcPr.append(tcW)
+
     doc = Document()
     page_margins(doc)
 
@@ -263,25 +281,33 @@ def make_approval_sheet():
 
     doc.add_paragraph()
 
-    tbl = doc.add_table(rows=5, cols=4)
+    # Dynamic approvers table — 3-row pattern (for / data / endfor)
+    COL_WIDTHS = [1.0, 5.5, 5.5, 5.0]  # cm: №, Должность, ФИО, Подпись/Дата
+    tbl = doc.add_table(rows=4, cols=4)
     tbl.style = 'Table Grid'
-    headers = ["№", "Должность", "ФИО", "Подпись / Дата"]
-    for i, h in enumerate(headers):
-        p = tbl.rows[0].cells[i].paragraphs[0]
-        run = p.add_run(h)
-        run.bold = True; run.font.size = Pt(9)
-        set_cell_bg(tbl.rows[0].cells[i], "D6E4F7")
 
-    roles = [
-        ("1", "Ответственный исполнитель", ""),
-        ("2", "Начальник отдела", ""),
-        ("3", "Главный бухгалтер", ""),
-        ("4", "Руководитель организации", ""),
-    ]
-    for ridx, (num, role, fio) in enumerate(roles, start=1):
-        row = tbl.rows[ridx]
-        for cidx, val in enumerate([num, role, fio, ""]):
-            row.cells[cidx].paragraphs[0].add_run(val).font.size = Pt(9)
+    # Row 0: Header
+    headers = ["№", "Должность", "ФИО", "Подпись / Дата"]
+    for i, (h, w) in enumerate(zip(headers, COL_WIDTHS)):
+        cell = tbl.rows[0].cells[i]
+        _set_col_width(cell, w)
+        run = cell.paragraphs[0].add_run(h)
+        run.bold = True; run.font.size = Pt(9)
+        set_cell_bg(cell, "D6E4F7")
+
+    # Row 1: {%tr for a in approvers %} — replaced by jinja2 for tag
+    tbl.rows[1].cells[0].paragraphs[0].add_run("{%tr for a in approvers %}").font.size = Pt(8)
+
+    # Row 2: Data template row
+    data_row = tbl.rows[2]
+    _set_col_width(data_row.cells[0], COL_WIDTHS[0])
+    data_row.cells[0].paragraphs[0].add_run("{{a.num}}").font.size = Pt(9)
+    data_row.cells[1].paragraphs[0].add_run("{{a.role_name}}").font.size = Pt(9)
+    data_row.cells[2].paragraphs[0].add_run("{{a.full_name}}").font.size = Pt(9)
+    data_row.cells[3].paragraphs[0].add_run("").font.size = Pt(9)
+
+    # Row 3: {%tr endfor %} — replaced by jinja2 endfor tag
+    tbl.rows[3].cells[0].paragraphs[0].add_run("{%tr endfor %}").font.size = Pt(8)
 
     path = os.path.join(TEMPLATES_DIR, "approval_sheet.docx")
     doc.save(path)

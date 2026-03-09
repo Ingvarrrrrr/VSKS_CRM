@@ -9,6 +9,7 @@
       <div class="d-flex gap-2">
         <v-btn variant="outlined" prepend-icon="mdi-download-outline" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-upload-outline" color="secondary" @click="importDialog.show = true">Импорт Excel</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-image-sync" color="teal" @click="openDownloadPhotosDialog">Скачать фото</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
       </div>
     </div>
@@ -94,8 +95,8 @@
       >
         <!-- Photo -->
         <template #item.photo="{ item }">
-          <v-avatar size="40" rounded="sm" class="my-1">
-            <v-img v-if="item.photo_url || item.photo_link" :src="item.photo_url || item.photo_link" cover />
+          <v-avatar size="40" rounded="sm" class="my-1" style="overflow:hidden">
+            <img v-if="item.photo_url || item.photo_link" :src="item.photo_url || item.photo_link" style="width:40px;height:40px;object-fit:cover;display:block" />
             <v-icon v-else icon="mdi-package-variant" color="grey" />
           </v-avatar>
         </template>
@@ -222,9 +223,9 @@
             <v-col cols="12">
               <div class="text-subtitle-2 mb-2">Фото товара</div>
               <div v-if="photoPreview || form.photo_url || form.photo_link" class="mb-3">
-                <v-img
+                <img
                   :src="photoPreview || form.photo_url || form.photo_link"
-                  max-height="180" contain class="rounded border bg-grey-lighten-4"
+                  style="max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5"
                 />
                 <v-btn
                   v-if="form.photo_url?.startsWith('/api/products/photos/')"
@@ -240,12 +241,22 @@
                 prepend-icon="mdi-camera" show-size clearable
                 @update:model-value="onPhotoFileChange"
               />
-              <v-text-field v-model="form.photo_url"
-                label="Или внешняя ссылка на фото"
-                variant="outlined" density="compact"
-                prepend-inner-icon="mdi-image-outline" class="mt-2"
-                :disabled="!!photoFile"
-              />
+              <div class="d-flex gap-2 align-center mt-2">
+                <v-text-field v-model="form.photo_url"
+                  label="Или внешняя ссылка на фото"
+                  variant="outlined" density="compact"
+                  prepend-inner-icon="mdi-image-outline"
+                  hide-details
+                  :disabled="!!photoFile"
+                  class="flex-grow-1"
+                />
+                <v-btn
+                  v-if="editingId && form.photo_url && (form.photo_url.startsWith('http://') || form.photo_url.startsWith('https://'))"
+                  variant="tonal" color="teal" size="small" :loading="downloadingPhoto"
+                  prepend-icon="mdi-image-sync"
+                  @click="downloadSinglePhoto"
+                >Скачать</v-btn>
+              </div>
               <v-text-field v-model="form.photo_link" label="Запасная ссылка" variant="outlined"
                 density="compact" prepend-inner-icon="mdi-link" class="mt-2" />
             </v-col>
@@ -377,6 +388,46 @@
           <v-btn variant="text" @click="closeImportDialog">{{ importDialog.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
           <v-btn v-if="importDialog.step === 1" color="primary" :loading="importDialog.loading"
             :disabled="!importDialog.file" @click="doImport">Загрузить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Download photos dialog -->
+    <v-dialog v-model="dlPhotoDialog.show" max-width="480" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">
+          <v-icon icon="mdi-image-sync" class="mr-2" />Скачать фото по ссылкам
+        </v-card-title>
+        <v-card-text class="px-6">
+          <template v-if="!dlPhotoDialog.result">
+            <p class="text-body-2 text-medium-emphasis">
+              Для всех товаров, у которых есть ссылка на фото (но нет локальной копии),
+              будет скачана фотография и сохранена в базе данных.
+            </p>
+            <v-alert v-if="dlPhotoDialog.loading" type="info" variant="tonal" class="mt-3">
+              <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
+              Скачивание... может занять несколько минут
+            </v-alert>
+          </template>
+          <template v-else>
+            <v-alert type="success" variant="tonal" class="mb-3">
+              Обновлено: <strong>{{ dlPhotoDialog.result.updated }}</strong> &nbsp;
+              Пропущено: <strong>{{ dlPhotoDialog.result.skipped }}</strong>
+            </v-alert>
+            <div v-if="dlPhotoDialog.result.errors?.length" class="mt-2">
+              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ dlPhotoDialog.result.errors.length }}):</div>
+              <v-list density="compact" class="rounded" style="max-height:160px;overflow-y:auto">
+                <v-list-item v-for="e in dlPhotoDialog.result.errors" :key="e.id"
+                  :subtitle="`#${e.id} ${e.name}: ${e.error}`" />
+              </v-list>
+            </div>
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="dlPhotoDialog.show = false; dlPhotoDialog.result = null">Закрыть</v-btn>
+          <v-btn v-if="!dlPhotoDialog.result" color="teal" :loading="dlPhotoDialog.loading"
+            prepend-icon="mdi-download" @click="doDownloadAllPhotos">Скачать</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -644,6 +695,46 @@ async function bulkToggleActive(active: boolean) {
     await load()
   } catch {
     showSnack('Ошибка обновления', 'error')
+  }
+}
+
+// Download photos
+const downloadingPhoto = ref(false)
+const dlPhotoDialog = reactive({
+  show: false,
+  loading: false,
+  result: null as { updated: number; skipped: number; errors: { id: number; name: string; error: string }[] } | null,
+})
+
+function openDownloadPhotosDialog() {
+  dlPhotoDialog.result = null
+  dlPhotoDialog.show = true
+}
+
+async function doDownloadAllPhotos() {
+  dlPhotoDialog.loading = true
+  try {
+    dlPhotoDialog.result = await apiFetch<typeof dlPhotoDialog.result>('/products/download-photos', { method: 'POST' })
+    if (dlPhotoDialog.result?.updated) await load()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка скачивания фото', 'error')
+  } finally {
+    dlPhotoDialog.loading = false
+  }
+}
+
+async function downloadSinglePhoto() {
+  if (!editingId.value) return
+  downloadingPhoto.value = true
+  try {
+    const updated = await apiFetch<{ photo_url: string }>(`/products/${editingId.value}/download-photo`, { method: 'POST' })
+    form.photo_url = updated.photo_url
+    showSnack('Фото скачано и сохранено')
+    await load()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка скачивания фото', 'error')
+  } finally {
+    downloadingPhoto.value = false
   }
 }
 

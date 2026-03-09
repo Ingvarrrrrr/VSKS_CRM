@@ -15,6 +15,7 @@ class PurchaseFile(Base):
     mime_type = Column(String(100))
     size = Column(Integer)
     file_type = Column(String(50), default="other")
+    doc_format = Column(String(20), default="scan")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     purchase = relationship("Purchase", back_populates="files")

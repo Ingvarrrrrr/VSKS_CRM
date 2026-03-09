@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .routers import auth, users, contractors, contracts, purchases, payments, feo_categories, dashboard, subsidies, products, purchase_files, documents, publications, subsidy_approvers
+from .routers import auth, users, contractors, contracts, purchases, payments, feo_categories, dashboard, subsidies, products, purchase_files, documents, publications, subsidy_approvers, responsible_persons
 from .models import platform_publication  # ensure table is registered
 
 app = FastAPI(title="VSKS CRM API", version="1.0.0")
@@ -18,3 +18,4 @@ app.include_router(purchase_files.router)
 app.include_router(documents.router)
 app.include_router(publications.router)
 app.include_router(subsidy_approvers.router)
+app.include_router(responsible_persons.router)

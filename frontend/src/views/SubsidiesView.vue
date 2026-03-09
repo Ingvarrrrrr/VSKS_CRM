@@ -50,6 +50,13 @@
             <div class="sc-header">
               <div class="sc-name">{{ s.name }}</div>
               <div class="sc-actions">
+                <v-btn
+                  icon="mdi-file-document-outline"
+                  size="x-small" variant="text"
+                  :color="contractTemplates[s.id] ? 'indigo' : 'grey-lighten-1'"
+                  :title="contractTemplates[s.id] ? 'Шаблон договора (загружен)' : 'Шаблон договора (не загружен)'"
+                  @click.stop="openTemplateDialog(s)"
+                />
                 <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
                 <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(s)" />
                 <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(s)" />
@@ -531,6 +538,7 @@
             </template>
             <template #item.can_initiate="{ item }">
               <v-chip v-if="item.can_initiate" color="blue" size="x-small">Инициатор</v-chip>
+              <v-chip v-if="item.show_feo_path" color="orange" size="x-small" class="ml-1">ФЭО путь</v-chip>
             </template>
             <template #item.order_num="{ item, index }">
               <span class="text-caption text-medium-emphasis">{{ index + 1 }}</span>
@@ -572,6 +580,7 @@
             density="compact"
             class="mb-3"
             hide-details
+            @update:model-value="onApproverRoleChange"
           />
           <v-text-field
             v-model="approverForm.full_name"
@@ -593,6 +602,13 @@
             label="Может быть инициатором служебной записки"
             density="compact"
             hide-details
+            class="mb-1"
+          />
+          <v-checkbox
+            v-model="approverForm.show_feo_path"
+            label="Показывать путь категории ФЭО в примечании"
+            density="compact"
+            hide-details
           />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -606,6 +622,69 @@
           >
             {{ approverEditTarget ? 'Сохранить' : 'Добавить' }}
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Contract Template Dialog ── -->
+    <v-dialog v-model="showTemplateDialog" max-width="480">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-file-document-outline" color="indigo" class="mr-2" />
+          Шаблон договора
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showTemplateDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <div class="text-caption text-medium-emphasis mb-3">{{ templateSubsidy?.name }}</div>
+          <v-alert
+            v-if="templateExists"
+            type="success" variant="tonal" density="compact" class="mb-3"
+          >
+            Шаблон загружен. При генерации договора для этой субсидии будет использоваться этот файл вместо стандартного.
+          </v-alert>
+          <v-alert
+            v-else
+            type="info" variant="tonal" density="compact" class="mb-3"
+          >
+            Шаблон не загружен. Будет использоваться стандартный шаблон договора.
+          </v-alert>
+
+          <div class="d-flex align-center gap-2">
+            <v-file-input
+              v-model="templateFile"
+              label="Выбрать .docx файл"
+              accept=".docx"
+              density="compact"
+              variant="outlined"
+              hide-details
+              prepend-icon=""
+              prepend-inner-icon="mdi-paperclip"
+              class="flex-grow-1"
+            />
+            <v-btn
+              color="indigo"
+              :loading="templateUploading"
+              :disabled="!templateFile || !templateFile.length"
+              @click="uploadTemplate"
+            >
+              Загрузить
+            </v-btn>
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-btn
+            v-if="templateExists"
+            variant="outlined"
+            color="indigo"
+            prepend-icon="mdi-download"
+            @click="downloadTemplate"
+          >
+            Скачать
+          </v-btn>
+          <v-spacer />
+          <v-btn v-if="templateExists" variant="text" color="error" @click="deleteTemplate">Удалить</v-btn>
+          <v-btn variant="text" @click="showTemplateDialog = false">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -652,6 +731,7 @@ interface SubsidyApprover {
   order_num: number
   is_default: boolean
   can_initiate: boolean
+  show_feo_path: boolean
 }
 
 const ROLE_SUGGESTIONS = [
@@ -701,7 +781,15 @@ const savingApprover         = ref(false)
 const approversSubsidy       = ref<SubsidyRow | null>(null)
 const approversList          = ref<SubsidyApprover[]>([])
 const approverEditTarget     = ref<SubsidyApprover | null>(null)
-const approverForm = ref({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false })
+const approverForm = ref({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false })
+
+// Contract template state
+const showTemplateDialog  = ref(false)
+const templateSubsidy     = ref<SubsidyRow | null>(null)
+const templateExists      = ref(false)
+const templateUploading   = ref(false)
+const templateFile        = ref<File[]>([])
+const contractTemplates   = ref<Record<number, boolean>>({})
 const deleteTarget       = ref<SubsidyRow | null>(null)
 const deleteErrorLinked  = ref(false)
 const feoEditTarget      = ref<FeoCategory | null>(null)
@@ -1056,15 +1144,23 @@ async function openApproversDialog(s: SubsidyRow) {
   }
 }
 
+const RESPONSIBLE_PLACEHOLDER = '_________________'
+
+function onApproverRoleChange(role: string) {
+  if (role === 'Ответственный исполнитель' && !approverForm.value.full_name) {
+    approverForm.value.full_name = RESPONSIBLE_PLACEHOLDER
+  }
+}
+
 function startAddApprover() {
   approverEditTarget.value = null
-  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false }
+  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false, show_feo_path: false }
   showApproverFormDialog.value = true
 }
 
 function startEditApprover(a: SubsidyApprover) {
   approverEditTarget.value = a
-  approverForm.value = { role_name: a.role_name, full_name: a.full_name, order_num: a.order_num, is_default: a.is_default, can_initiate: a.can_initiate }
+  approverForm.value = { role_name: a.role_name, full_name: a.full_name, order_num: a.order_num, is_default: a.is_default, can_initiate: a.can_initiate, show_feo_path: a.show_feo_path ?? false }
   showApproverFormDialog.value = true
 }
 
@@ -1134,6 +1230,75 @@ async function _renumberApprovers() {
         approversList.value[i] = updated
       } catch {}
     }
+  }
+}
+
+// ── Contract template management ──────────────────
+async function openTemplateDialog(s: SubsidyRow) {
+  templateSubsidy.value = s
+  templateFile.value = []
+  showTemplateDialog.value = true
+  try {
+    const res = await apiFetch<{ exists: boolean }>(`/subsidies/${s.id}/contract-template/status`)
+    templateExists.value = res.exists
+    contractTemplates.value[s.id] = res.exists
+  } catch {
+    templateExists.value = false
+  }
+}
+
+async function uploadTemplate() {
+  if (!templateSubsidy.value || !templateFile.value?.length) return
+  templateUploading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', templateFile.value[0])
+    const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/contract-template`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'upload failed')
+    }
+    templateExists.value = true
+    contractTemplates.value[templateSubsidy.value.id] = true
+    templateFile.value = []
+    showSnack('Шаблон договора загружен')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка загрузки шаблона', 'error')
+  } finally {
+    templateUploading.value = false
+  }
+}
+
+async function downloadTemplate() {
+  if (!templateSubsidy.value) return
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/contract-template/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `contract_template_subsidy_${templateSubsidy.value.id}.docx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function deleteTemplate() {
+  if (!templateSubsidy.value) return
+  try {
+    await apiFetch(`/subsidies/${templateSubsidy.value.id}/contract-template`, { method: 'DELETE' })
+    templateExists.value = false
+    contractTemplates.value[templateSubsidy.value.id] = false
+    showSnack('Шаблон договора удалён', 'warning')
+  } catch {
+    showSnack('Ошибка удаления шаблона', 'error')
   }
 }
 

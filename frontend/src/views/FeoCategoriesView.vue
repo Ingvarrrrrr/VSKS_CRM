@@ -79,6 +79,9 @@
               clearable
               style="max-width:220px"
             />
+            <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportToExcel">Выгрузить</v-btn>
+            <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
+            <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
             <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAddDialog(null)">
               Добавить
             </v-btn>
@@ -291,6 +294,52 @@
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog = false">Отмена</v-btn>
           <v-btn color="error" variant="flat" :loading="dialogLoading" @click="submitDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Import FEO dialog -->
+    <v-dialog v-model="feoImport.show" max-width="540" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Импорт категорий ФЭО из Excel</v-card-title>
+        <v-card-text class="px-6">
+          <template v-if="feoImport.step === 1">
+            <p class="text-body-2 text-medium-emphasis mb-4">
+              Загрузите файл .xlsx с колонками:<br>
+              <strong>Наименование</strong> (обяз.), <strong>Субсидия</strong> (обяз.),
+              Родительская категория, Код, Приложение, Финансирование, Активна (да/нет).<br><br>
+              Иерархия строится автоматически: укажите имя родительской категории в колонке
+              «Родительская категория». Строки без родителя → уровень 1.
+            </p>
+            <v-file-input
+              v-model="feoImport.fileList"
+              label="Файл Excel (.xlsx)"
+              accept=".xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-excel"
+              show-size
+              @update:model-value="feoImport.file = $event?.[0] ?? null"
+            />
+          </template>
+          <template v-else>
+            <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
+              Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
+              Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
+            </v-alert>
+            <div v-if="feoImport.result?.errors?.length" class="mt-2">
+              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
+              <v-list density="compact" class="bg-error-lighten-5 rounded">
+                <v-list-item v-for="e in feoImport.result.errors" :key="e.row"
+                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              </v-list>
+            </div>
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
+            :disabled="!feoImport.file" @click="doFeoImport">Загрузить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -575,6 +624,73 @@ const submitDelete = async () => {
 
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
+// ─── FEO Import ───────────────────────────────────────────────────────────────
+const feoImport = reactive({
+  show: false, step: 1, file: null as File | null, fileList: [] as File[],
+  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+})
+
+function closeFeoImport() {
+  const wasCreated = (feoImport.result?.created ?? 0) > 0
+  feoImport.show = false; feoImport.step = 1
+  feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  if (wasCreated && selectedId.value) loadFeo(selectedId.value)
+}
+
+async function exportToExcel() {
+  if (!selectedId.value) return
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch(`/api/feo-categories/export?subsidy_id=${selectedId.value}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const cd = res.headers.get('Content-Disposition') || ''
+  const match = cd.match(/filename=([^;]+)/)
+  a.href = url; a.download = match ? match[1] : 'feo_export.xlsx'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadFeoTemplate() {
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch('/api/feo-categories/import/template', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'feo_categories_template.xlsx'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function doFeoImport() {
+  if (!feoImport.file) return
+  feoImport.loading = true
+  try {
+    const fd = new FormData()
+    fd.append('file', feoImport.file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/feo-categories/import', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      showSnack(err.detail || 'Ошибка импорта', 'error'); return
+    }
+    feoImport.result = await res.json()
+    feoImport.step = 2
+    showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
+  } catch {
+    showSnack('Ошибка импорта', 'error')
+  } finally {
+    feoImport.loading = false
+  }
+}
+
 // ─── Formatting ───────────────────────────────────────────────────────────────
 const formatCurrency = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽'
 const formatCurrencyShort = (v: number) => {
@@ -651,19 +767,20 @@ loadSubsidies()
 .detail-title { font-size: 14px; font-weight: 600; color: #374151; }
 
 /* ── FEO table ── */
-.feo-table-wrap { overflow-x: auto; }
-.feo-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.feo-table-wrap { overflow-x: hidden; }
+.feo-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; table-layout: fixed; }
 .feo-th {
   padding: 10px 12px; text-align: left; font-weight: 600;
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
   color: rgba(0,0,0,0.5); border-bottom: 2px solid rgba(0,0,0,0.07);
-  white-space: nowrap; background: #FAFAFA;
+  background: #FAFAFA;
 }
-.feo-th-name    { min-width: 240px; }
-.feo-th-num     { width: 200px; text-align: right; }
-.feo-th-actions { width: 120px; white-space: nowrap; }
-.feo-td { padding: 7px 12px; border-bottom: 1px solid rgba(0,0,0,0.05); vertical-align: middle; }
-.feo-td-name { display: flex; align-items: center; }
+.feo-th-name    { width: auto; }
+.feo-th-num     { width: 160px; text-align: right; }
+.feo-th-actions { width: 100px; white-space: nowrap; }
+.feo-td { padding: 7px 12px; border-bottom: 1px solid rgba(0,0,0,0.05); vertical-align: top; }
+.feo-td-name { display: flex; align-items: flex-start; min-width: 0; }
+.feo-name { white-space: normal; word-break: break-word; line-height: 1.4; min-width: 0; flex: 1; }
 .feo-td-num  { text-align: right; }
 .feo-tr:hover { background: rgba(0,0,0,0.02); }
 .feo-tr--over { background: rgba(244,67,54,0.08) !important; }
@@ -679,7 +796,7 @@ loadSubsidies()
 .feo-empty-hint:hover { color: #3B82F6; }
 .feo-amount-cell { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; }
 .feo-amount-cell:hover { background: rgba(59,130,246,0.07); }
-.feo-tree-chevron { display: inline-flex; align-items: center; }
+.feo-tree-chevron { display: inline-flex; align-items: center; flex-shrink: 0; }
 .feo-empty { display: flex; flex-direction: column; align-items: center; padding: 40px 0; }
 
 .inline-input {

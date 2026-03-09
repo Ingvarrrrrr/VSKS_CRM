@@ -6,7 +6,11 @@
         <h1 class="text-h5 font-weight-bold">Каталог товаров</h1>
         <span class="text-body-2 text-medium-emphasis">{{ products.length }} позиций</span>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="outlined" prepend-icon="mdi-download-outline" @click="downloadTemplate">Шаблон</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-upload-outline" color="secondary" @click="importDialog.show = true">Импорт Excel</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
+      </div>
     </div>
 
     <!-- Search + filter -->
@@ -329,6 +333,54 @@
       </v-card>
     </v-dialog>
 
+    <!-- Import dialog -->
+    <v-dialog v-model="importDialog.show" max-width="540" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Импорт товаров из Excel</v-card-title>
+        <v-card-text class="px-6">
+          <!-- Step 1: upload -->
+          <template v-if="importDialog.step === 1">
+            <p class="text-body-2 text-medium-emphasis mb-4">
+              Загрузите файл .xlsx с колонками:<br>
+              <strong>Наименование</strong> (обяз.), Описание, Категория, Вид, Цена,
+              Ссылка 1, Цена ссылки 1, Ссылка 2, Цена ссылки 2, Ссылка 3, Цена ссылки 3,
+              Фото (URL), Многоразовое (да/нет), Активен (да/нет), Категория ФЭО
+            </p>
+            <v-file-input
+              v-model="importDialog.fileList"
+              label="Файл Excel (.xlsx)"
+              accept=".xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-excel"
+              show-size
+              @update:model-value="importDialog.file = $event?.[0] ?? null"
+            />
+          </template>
+
+          <!-- Step 2: results -->
+          <template v-else>
+            <v-alert v-if="importDialog.result" type="success" variant="tonal" class="mb-3">
+              Создано: <strong>{{ importDialog.result.created }}</strong> &nbsp;
+              Пропущено: <strong>{{ importDialog.result.skipped }}</strong>
+            </v-alert>
+            <div v-if="importDialog.result?.errors?.length" class="mt-2">
+              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ importDialog.result.errors.length }}):</div>
+              <v-list density="compact" class="bg-error-lighten-5 rounded">
+                <v-list-item v-for="e in importDialog.result.errors" :key="e.row"
+                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              </v-list>
+            </div>
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="closeImportDialog">{{ importDialog.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn v-if="importDialog.step === 1" color="primary" :loading="importDialog.loading"
+            :disabled="!importDialog.file" @click="doImport">Загрузить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
@@ -592,6 +644,61 @@ async function bulkToggleActive(active: boolean) {
     await load()
   } catch {
     showSnack('Ошибка обновления', 'error')
+  }
+}
+
+// Import
+const importDialog = reactive({
+  show: false, step: 1, file: null as File | null, fileList: [] as File[],
+  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+})
+
+function closeImportDialog() {
+  importDialog.show = false
+  importDialog.step = 1
+  importDialog.file = null
+  importDialog.fileList = []
+  importDialog.result = null
+  if (importDialog.result?.created) load()
+}
+
+async function downloadTemplate() {
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch('/api/products/import/template', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'products_template.xlsx'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function doImport() {
+  if (!importDialog.file) return
+  importDialog.loading = true
+  try {
+    const fd = new FormData()
+    fd.append('file', importDialog.file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/products/import', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      showSnack(err.detail || 'Ошибка импорта', 'error')
+      return
+    }
+    importDialog.result = await res.json()
+    importDialog.step = 2
+    showSnack(`Импорт завершён: создано ${importDialog.result!.created}`)
+    await load()
+  } catch {
+    showSnack('Ошибка импорта', 'error')
+  } finally {
+    importDialog.loading = false
   }
 }
 

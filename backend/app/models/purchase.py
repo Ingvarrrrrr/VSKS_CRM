@@ -35,6 +35,7 @@ class Purchase(Base):
     price_increase = Column(Numeric(15, 2))
     execution_term = Column(Date)
     execution_term_changed = Column(Date)
+    delivery_date = Column(Date)
     country_origin = Column(String(100))
     subject = Column(String(500))
     acceptance_doc_name = Column(String(200))
@@ -46,6 +47,8 @@ class Purchase(Base):
     payment_amount = Column(Numeric(15, 2))
     payment_federal = Column(Numeric(15, 2))
     purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
+    purchase_basis = Column(String(50), nullable=True)  # 'plan_schedule' | 'service_note'
+    responsible_person = Column(String(500), nullable=True)
 
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")

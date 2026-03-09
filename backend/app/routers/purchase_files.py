@@ -1,6 +1,6 @@
 import os
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +8,8 @@ from app.database import get_db
 from app.models.purchase import Purchase
 from app.models.purchase_file import PurchaseFile
 from app.schemas.schemas import PurchaseFileOut
-from app.auth.jwt import get_current_user, require_role
-from typing import List
+from app.auth.jwt import get_current_user
+from typing import List, Optional
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-files"])
 
@@ -25,11 +25,36 @@ ALLOWED_MIME = {
     "image/png",
 }
 
+FILE_TYPES = {
+    "kp":           "КП",
+    "service_note": "Служебная записка",
+    "protocol":     "Протокол закупки",
+    "invoice":      "Счёт",
+    "order":        "Приказ",
+    "upd":          "УПД",
+    "contract":     "Договор",
+    "act":          "Акт",
+    "other":        "Прочее",
+}
+
+
+def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
+    return PurchaseFileOut(
+        id=pf.id,
+        purchase_id=pf.purchase_id,
+        filename=pf.filename,
+        mime_type=pf.mime_type,
+        size=pf.size,
+        file_type=pf.file_type or "other",
+        created_at=str(pf.created_at) if pf.created_at else None,
+    )
+
 
 @router.post("/{pid}/files", response_model=PurchaseFileOut)
 async def upload_file(
     pid: int,
     file: UploadFile = File(...),
+    file_type: Optional[str] = Form(default="other"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -39,6 +64,9 @@ async def upload_file(
 
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
+
+    if file_type not in FILE_TYPES:
+        file_type = "other"
 
     dest_dir = os.path.join(UPLOAD_DIR, str(pid))
     os.makedirs(dest_dir, exist_ok=True)
@@ -51,21 +79,38 @@ async def upload_file(
     pf = PurchaseFile(
         purchase_id=pid,
         filename=file.filename,
+        original_name=file.filename,
         filepath=dest_path,
         mime_type=file.content_type,
         size=size,
+        file_type=file_type,
     )
     db.add(pf)
     await db.commit()
     await db.refresh(pf)
-    return PurchaseFileOut(
-        id=pf.id,
-        purchase_id=pf.purchase_id,
-        filename=pf.filename,
-        mime_type=pf.mime_type,
-        size=pf.size,
-        created_at=str(pf.created_at) if pf.created_at else None,
+    return _file_out(pf)
+
+
+@router.patch("/{pid}/files/{fid}", response_model=PurchaseFileOut)
+async def update_file_type(
+    pid: int,
+    fid: int,
+    file_type: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = await db.execute(
+        select(PurchaseFile).where(PurchaseFile.id == fid, PurchaseFile.purchase_id == pid)
     )
+    pf = result.scalar_one_or_none()
+    if not pf:
+        raise HTTPException(404, "Файл не найден")
+    if file_type not in FILE_TYPES:
+        raise HTTPException(400, f"Неизвестный тип: {file_type}")
+    pf.file_type = file_type
+    await db.commit()
+    await db.refresh(pf)
+    return _file_out(pf)
 
 
 @router.get("/{pid}/files", response_model=List[PurchaseFileOut])
@@ -75,18 +120,7 @@ async def list_files(
     current_user=Depends(get_current_user),
 ):
     result = await db.execute(select(PurchaseFile).where(PurchaseFile.purchase_id == pid))
-    files = result.scalars().all()
-    return [
-        PurchaseFileOut(
-            id=f.id,
-            purchase_id=f.purchase_id,
-            filename=f.filename,
-            mime_type=f.mime_type,
-            size=f.size,
-            created_at=str(f.created_at) if f.created_at else None,
-        )
-        for f in files
-    ]
+    return [_file_out(f) for f in result.scalars().all()]
 
 
 @router.get("/{pid}/files/{fid}/download")
@@ -104,11 +138,27 @@ async def download_file(
         raise HTTPException(404, "Файл не найден")
     if not os.path.exists(pf.filepath):
         raise HTTPException(404, "Файл не найден на диске")
-    return FileResponse(
-        pf.filepath,
-        filename=pf.filename,
-        media_type=pf.mime_type or "application/octet-stream",
+    return FileResponse(pf.filepath, filename=pf.filename,
+                        media_type=pf.mime_type or "application/octet-stream")
+
+
+@router.get("/{pid}/files/{fid}/view")
+async def view_file(
+    pid: int,
+    fid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = await db.execute(
+        select(PurchaseFile).where(PurchaseFile.id == fid, PurchaseFile.purchase_id == pid)
     )
+    pf = result.scalar_one_or_none()
+    if not pf:
+        raise HTTPException(404, "Файл не найден")
+    if not os.path.exists(pf.filepath):
+        raise HTTPException(404, "Файл не найден на диске")
+    return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
+                        headers={"Content-Disposition": f"inline; filename=\"{pf.filename}\""})
 
 
 @router.delete("/{pid}/files/{fid}")

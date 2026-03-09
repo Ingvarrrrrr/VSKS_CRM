@@ -50,6 +50,7 @@
             <div class="sc-header">
               <div class="sc-name">{{ s.name }}</div>
               <div class="sc-actions">
+                <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
                 <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(s)" />
                 <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(s)" />
               </div>
@@ -153,7 +154,10 @@
           <div v-else>
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="ml-auto" @click="showAddFeoDialog = true">
+              <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" class="ml-auto mr-2" @click="exportFeoToExcel">
+                Выгрузить
+              </v-btn>
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddFeoDialog = true">
                 Добавить направление
               </v-btn>
             </div>
@@ -503,6 +507,109 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Approvers Dialog ── -->
+    <v-dialog v-model="showApproversDialog" max-width="700" scrollable>
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-account-multiple" color="teal" class="mr-2" />
+          Согласующие: {{ approversSubsidy?.name }}
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showApproversDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-0">
+          <v-data-table
+            :headers="approversHeaders"
+            :items="approversList"
+            :loading="loadingApprovers"
+            density="compact"
+            hide-default-footer
+            :items-per-page="-1"
+            no-data-text="Нет согласующих. Добавьте первого."
+          >
+            <template #item.is_default="{ item }">
+              <v-chip v-if="item.is_default" color="success" size="x-small">По умолчанию</v-chip>
+            </template>
+            <template #item.can_initiate="{ item }">
+              <v-chip v-if="item.can_initiate" color="blue" size="x-small">Инициатор</v-chip>
+            </template>
+            <template #item.order_num="{ item, index }">
+              <span class="text-caption text-medium-emphasis">{{ index + 1 }}</span>
+            </template>
+            <template #item.actions="{ item, index }">
+              <v-btn icon="mdi-arrow-up" size="x-small" variant="text" :disabled="index === 0" @click="moveApprover(index, -1)" />
+              <v-btn icon="mdi-arrow-down" size="x-small" variant="text" :disabled="index === approversList.length - 1" @click="moveApprover(index, 1)" />
+              <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="startEditApprover(item)" />
+              <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteApprover(item)" />
+            </template>
+          </v-data-table>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <v-btn color="teal" variant="tonal" prepend-icon="mdi-plus" @click="startAddApprover">
+            Добавить
+          </v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="showApproversDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Approver Add/Edit Dialog ── -->
+    <v-dialog v-model="showApproverFormDialog" max-width="480" :persistent="true">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon :icon="approverEditTarget ? 'mdi-pencil-outline' : 'mdi-plus'" color="teal" class="mr-2" />
+          {{ approverEditTarget ? 'Редактировать' : 'Добавить' }} согласующего
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showApproverFormDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-combobox
+            v-model="approverForm.role_name"
+            :items="ROLE_SUGGESTIONS"
+            label="Роль / Должность *"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hide-details
+          />
+          <v-text-field
+            v-model="approverForm.full_name"
+            label="ФИО *"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hide-details
+          />
+          <v-checkbox
+            v-model="approverForm.is_default"
+            label="Выбирать по умолчанию при генерации документов"
+            density="compact"
+            hide-details
+            class="mb-1"
+          />
+          <v-checkbox
+            v-model="approverForm.can_initiate"
+            label="Может быть инициатором служебной записки"
+            density="compact"
+            hide-details
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showApproverFormDialog = false">Отмена</v-btn>
+          <v-btn
+            color="teal"
+            :loading="savingApprover"
+            :disabled="!approverForm.role_name || !approverForm.full_name"
+            @click="saveApprover"
+          >
+            {{ approverEditTarget ? 'Сохранить' : 'Добавить' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Snackbar ── -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -536,6 +643,36 @@ interface FeoNode extends FeoCategory {
   children: FeoNode[]
 }
 
+// ── Approvers types ───────────────────────────────
+interface SubsidyApprover {
+  id: number
+  subsidy_id: number
+  role_name: string
+  full_name: string
+  order_num: number
+  is_default: boolean
+  can_initiate: boolean
+}
+
+const ROLE_SUGGESTIONS = [
+  'Первый заместитель руководителя',
+  'Куратор проекта',
+  'Ответственный исполнитель',
+  'Юрист',
+  'Главный бухгалтер',
+  'Начальник отдела МТО',
+  'Заместитель руководителя по ФХД',
+]
+
+const approversHeaders = [
+  { title: '#', key: 'order_num', width: '60px', sortable: false },
+  { title: 'Роль / Должность', key: 'role_name', sortable: false },
+  { title: 'ФИО', key: 'full_name', sortable: false },
+  { title: '', key: 'is_default', width: '120px', sortable: false },
+  { title: '', key: 'can_initiate', width: '100px', sortable: false },
+  { title: '', key: 'actions', width: '110px', sortable: false },
+]
+
 // ── State ─────────────────────────────────────────
 const loading    = ref(false)
 const saving     = ref(false)
@@ -555,6 +692,16 @@ const showDeleteDialog   = ref(false)
 const showAddFeoDialog   = ref(false)
 const showEditFeoDialog  = ref(false)
 const showDeleteFeoDialog = ref(false)
+
+// Approvers state
+const showApproversDialog    = ref(false)
+const showApproverFormDialog = ref(false)
+const loadingApprovers       = ref(false)
+const savingApprover         = ref(false)
+const approversSubsidy       = ref<SubsidyRow | null>(null)
+const approversList          = ref<SubsidyApprover[]>([])
+const approverEditTarget     = ref<SubsidyApprover | null>(null)
+const approverForm = ref({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false })
 const deleteTarget       = ref<SubsidyRow | null>(null)
 const deleteErrorLinked  = ref(false)
 const feoEditTarget      = ref<FeoCategory | null>(null)
@@ -683,6 +830,22 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+}
+
+async function exportFeoToExcel() {
+  if (!selectedId.value) return
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch(`/api/feo-categories/export?subsidy_id=${selectedId.value}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка экспорта', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const cd = res.headers.get('Content-Disposition') || ''
+  const match = cd.match(/filename=([^;]+)/)
+  a.href = url; a.download = match ? match[1] : 'feo_export.xlsx'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 async function loadFeo(subsidyId: number) {
@@ -875,6 +1038,105 @@ async function deleteFeoCategory() {
   }
 }
 
+// ── Approvers CRUD ────────────────────────────────
+async function openApproversDialog(s: SubsidyRow) {
+  approversSubsidy.value = s
+  showApproversDialog.value = true
+  loadingApprovers.value = true
+  try {
+    const list = await apiFetch<SubsidyApprover[]>(`/subsidies/${s.id}/approvers`)
+    approversList.value = list
+    // Fix any duplicate order_nums silently
+    const hasDuplicates = list.some((a, i) => a.order_num !== i + 1)
+    if (hasDuplicates) await _renumberApprovers()
+  } catch {
+    showSnack('Ошибка загрузки согласующих', 'error')
+  } finally {
+    loadingApprovers.value = false
+  }
+}
+
+function startAddApprover() {
+  approverEditTarget.value = null
+  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false }
+  showApproverFormDialog.value = true
+}
+
+function startEditApprover(a: SubsidyApprover) {
+  approverEditTarget.value = a
+  approverForm.value = { role_name: a.role_name, full_name: a.full_name, order_num: a.order_num, is_default: a.is_default, can_initiate: a.can_initiate }
+  showApproverFormDialog.value = true
+}
+
+async function saveApprover() {
+  if (!approversSubsidy.value) return
+  savingApprover.value = true
+  const sid = approversSubsidy.value.id
+  try {
+    if (approverEditTarget.value) {
+      const updated = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers/${approverEditTarget.value.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(approverForm.value),
+      })
+      const idx = approversList.value.findIndex(a => a.id === updated.id)
+      if (idx >= 0) approversList.value[idx] = updated
+    } else {
+      const created = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers`, {
+        method: 'POST',
+        body: JSON.stringify(approverForm.value),
+      })
+      approversList.value.push(created)
+    }
+    showApproverFormDialog.value = false
+    showSnack(approverEditTarget.value ? 'Обновлено' : 'Добавлено')
+  } catch {
+    showSnack('Ошибка сохранения', 'error')
+  } finally {
+    savingApprover.value = false
+  }
+}
+
+async function deleteApprover(a: SubsidyApprover) {
+  if (!approversSubsidy.value) return
+  try {
+    await apiFetch(`/subsidies/${approversSubsidy.value.id}/approvers/${a.id}`, { method: 'DELETE' })
+    approversList.value = approversList.value.filter(x => x.id !== a.id)
+    await _renumberApprovers()
+    showSnack('Удалено', 'warning')
+  } catch {
+    showSnack('Ошибка удаления', 'error')
+  }
+}
+
+async function moveApprover(index: number, direction: -1 | 1) {
+  const list = approversList.value
+  const swapIdx = index + direction
+  if (swapIdx < 0 || swapIdx >= list.length) return
+  // Swap in local list
+  const tmp = list[index]
+  list[index] = list[swapIdx]
+  list[swapIdx] = tmp
+  approversList.value = [...list]
+  await _renumberApprovers()
+}
+
+async function _renumberApprovers() {
+  if (!approversSubsidy.value) return
+  const sid = approversSubsidy.value.id
+  for (let i = 0; i < approversList.value.length; i++) {
+    const a = approversList.value[i]
+    if (a.order_num !== i + 1) {
+      try {
+        const updated = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers/${a.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...a, order_num: i + 1 }),
+        })
+        approversList.value[i] = updated
+      } catch {}
+    }
+  }
+}
+
 // ── Helpers ───────────────────────────────────────
 function pct(part: number, total: number) {
   return total ? Math.round((part / total) * 100) : 0
@@ -1048,27 +1310,28 @@ onMounted(loadAll)
 .feo-table-wrap {
   border: 1px solid #E5E7EB;
   border-radius: 8px;
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 .feo-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 .feo-th {
   font-size: 11px; font-weight: 600; color: #6B7280;
   text-transform: uppercase; letter-spacing: 0.05em;
   background: #F9FAFB; padding: 9px 12px;
-  text-align: left; white-space: nowrap;
+  text-align: left;
   border-bottom: 1px solid #E5E7EB;
 }
-.feo-th-num { text-align: right; min-width: 180px; }
-.feo-th-name { min-width: 260px; }
+.feo-th-num { text-align: right; width: 180px; }
+.feo-th-name { width: auto; }
 .feo-th-actions { width: 90px; }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid #F3F4F6;
   vertical-align: middle;
 }
-.feo-td-name { display: flex; align-items: center; flex-wrap: nowrap; }
+.feo-td-name { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
 .feo-td-actions { text-align: right; white-space: nowrap; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
@@ -1078,7 +1341,7 @@ onMounted(loadAll)
 .feo-tr--over .feo-td { background: #FEF2F2 !important; }
 .feo-tr--over:hover .feo-td { background: #FEE2E2 !important; }
 .feo-tr--over .feo-amount { color: #DC2626; font-weight: 700; }
-.feo-name { font-size: 13px; font-weight: 500; color: #111827; white-space: nowrap; }
+.feo-name { font-size: 13px; font-weight: 500; color: #111827; white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }
 .feo-name--l3 { font-weight: 400; color: #374151; }

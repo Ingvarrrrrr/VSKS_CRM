@@ -7,6 +7,7 @@
         <span class="text-body-2 text-medium-emphasis">{{ orders.length }} записей</span>
       </div>
       <div class="d-flex gap-2">
+        <v-btn variant="outlined" prepend-icon="mdi-file-import" color="blue" @click="importDialog.show = true">Импорт</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="exportToExcel">Excel</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" to="/create-order">Добавить</v-btn>
       </div>
@@ -255,6 +256,94 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- ── Import Dialog ── -->
+    <v-dialog v-model="importDialog.show" max-width="580" persistent>
+      <v-card>
+        <v-card-title class="pa-5 pb-2 d-flex align-center">
+          <v-icon icon="mdi-file-import" color="blue" class="mr-2" />
+          Импорт закупок из Excel
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="resetImport" />
+        </v-card-title>
+        <v-card-text class="pa-5 pt-2">
+
+          <!-- Step 1: Setup -->
+          <template v-if="importDialog.step === 1">
+            <v-alert type="info" variant="tonal" class="mb-4" density="compact">
+              Поддерживаются файлы <strong>.xlsx / .xls</strong>. Первая строка — заголовки колонок.
+            </v-alert>
+
+            <v-select
+              v-model="importDialog.subsidyId"
+              :items="[{ id: null, name: '— Из файла (колонка «Субсидия»)' }, ...subsidies]"
+              item-title="name" item-value="id"
+              label="Субсидия (переопределить для всего файла)"
+              variant="outlined" density="compact" class="mb-3"
+            />
+
+            <v-file-input
+              v-model="importDialog.file"
+              label="Выберите Excel файл"
+              accept=".xlsx,.xls"
+              prepend-icon="mdi-microsoft-excel"
+              variant="outlined" density="compact"
+              :rules="[f => !!f || 'Выберите файл']"
+              show-size
+            />
+
+            <div class="mt-3 text-caption text-medium-emphasis">
+              Допустимые заголовки колонок:
+              <span class="fz-11">Наименование, Субсидия, Категория ФЭО, Контрагент, ИНН контрагента, НМЦК, Способ закупки, Реестровый №, № договора, Дата договора, Цена договора, Срок исполнения, ПП №, ПП дата, Оплачено, Статус, Год</span>
+            </div>
+          </template>
+
+          <!-- Step 2: Result -->
+          <template v-else-if="importDialog.step === 2">
+            <div class="import-result-row">
+              <div class="import-stat import-stat--ok">
+                <div class="import-stat-val">{{ importDialog.result?.created ?? 0 }}</div>
+                <div class="import-stat-lbl">Создано</div>
+              </div>
+              <div class="import-stat import-stat--skip">
+                <div class="import-stat-val">{{ importDialog.result?.skipped ?? 0 }}</div>
+                <div class="import-stat-lbl">Пропущено</div>
+              </div>
+              <div class="import-stat import-stat--err">
+                <div class="import-stat-val">{{ importDialog.result?.errors?.length ?? 0 }}</div>
+                <div class="import-stat-lbl">Ошибок</div>
+              </div>
+            </div>
+            <div v-if="importDialog.result?.errors?.length" class="mt-4">
+              <div class="text-caption font-weight-bold mb-2">Строки с ошибками:</div>
+              <v-list density="compact" class="import-errors-list">
+                <v-list-item
+                  v-for="e in importDialog.result.errors" :key="e.row"
+                  :subtitle="`Строка ${e.row}: ${e.message}`"
+                  :title="e.name"
+                  prepend-icon="mdi-alert-circle-outline"
+                  color="error"
+                />
+              </v-list>
+            </div>
+          </template>
+
+        </v-card-text>
+        <v-card-actions class="pa-5 pt-0">
+          <v-btn variant="text" size="small" prepend-icon="mdi-download"
+            @click="downloadTemplate">Скачать шаблон</v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="resetImport">
+            {{ importDialog.step === 2 ? 'Закрыть' : 'Отмена' }}
+          </v-btn>
+          <v-btn v-if="importDialog.step === 1" color="blue" variant="flat"
+            :loading="importDialog.loading" :disabled="!importDialog.file"
+            @click="doImport">
+            Загрузить
+          </v-btn>
+          <v-btn v-else color="primary" variant="flat" @click="resetImport">Готово</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -485,6 +574,65 @@ const doDelete = async () => {
   }
 }
 
+// ─── Import ───────────────────────────────────────────────────────────────────
+const importDialog = reactive({
+  show: false,
+  step: 1,
+  subsidyId: null as number | null,
+  file: null as File | null,
+  loading: false,
+  result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+})
+
+const resetImport = () => {
+  importDialog.show = false
+  importDialog.step = 1
+  importDialog.file = null
+  importDialog.subsidyId = null
+  importDialog.result = null
+}
+
+const downloadTemplate = async () => {
+  const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token')
+  const response = await fetch('/api/purchases/import/template', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) return
+  const blob = await response.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'import_template.xlsx'
+  document.body.appendChild(a); a.click()
+  window.URL.revokeObjectURL(url); document.body.removeChild(a)
+}
+
+const doImport = async () => {
+  if (!importDialog.file) return
+  importDialog.loading = true
+  try {
+    const formData = new FormData()
+    formData.append('file', importDialog.file)
+    const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token')
+    const qs = importDialog.subsidyId ? `?subsidy_id=${importDialog.subsidyId}` : ''
+    const response = await fetch(`/api/purchases/import${qs}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Ошибка импорта' }))
+      showSnack(err.detail || 'Ошибка импорта', 'error')
+      return
+    }
+    importDialog.result = await response.json()
+    importDialog.step = 2
+    if ((importDialog.result?.created ?? 0) > 0) await loadOrders()
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка импорта', 'error')
+  } finally {
+    importDialog.loading = false
+  }
+}
+
 const exportToExcel = async () => {
   try {
     const token = localStorage.getItem('access_token')
@@ -509,3 +657,20 @@ const exportToExcel = async () => {
   }
 }
 </script>
+
+<style scoped>
+.import-result-row {
+  display: flex; gap: 16px; justify-content: center; margin: 16px 0;
+}
+.import-stat {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 16px 24px; border-radius: 10px; min-width: 100px;
+}
+.import-stat--ok   { background: rgba(34,197,94,0.1); }
+.import-stat--skip { background: rgba(245,158,11,0.1); }
+.import-stat--err  { background: rgba(239,68,68,0.1); }
+.import-stat-val { font-size: 32px; font-weight: 700; color: #111827; }
+.import-stat-lbl { font-size: 12px; color: #6B7280; margin-top: 4px; }
+.import-errors-list { max-height: 200px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; }
+.fz-11 { font-size: 11px; }
+</style>

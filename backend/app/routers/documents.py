@@ -2,7 +2,7 @@ import os
 from io import BytesIO
 from datetime import date
 from urllib.parse import quote
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -12,7 +12,9 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
+from app.models.subsidy_approver import SubsidyApprover
 from app.auth.jwt import get_current_user
+from typing import Optional
 
 router = APIRouter(prefix="/api/purchases", tags=["documents"])
 
@@ -22,6 +24,11 @@ DOC_TYPES = {
     "service_note":   ("service_note.docx",   "Service_Note"),
     "contract_tz":    ("contract_tz.docx",    "Contract_TZ"),
     "approval_sheet": ("approval_sheet.docx", "Approval_Sheet"),
+}
+
+_BASIS_LABELS = {
+    "plan_schedule": "план-график",
+    "service_note": "служебная записка",
 }
 
 
@@ -46,6 +53,8 @@ def _fmt_money(v) -> str:
 async def generate_document(
     pid: int,
     doc_type: str,
+    approver_ids: Optional[str] = Query(default=None, description="ID согласующих через запятую"),
+    initiator_id: Optional[int] = Query(default=None, description="ID инициатора служебной записки"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -78,6 +87,33 @@ async def generate_document(
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
 
+    # Load approvers if requested
+    selected_approvers = []
+    if approver_ids:
+        ids = [int(x.strip()) for x in approver_ids.split(",") if x.strip().isdigit()]
+        if ids:
+            res = await db.execute(
+                select(SubsidyApprover)
+                .where(SubsidyApprover.id.in_(ids))
+                .order_by(SubsidyApprover.order_num, SubsidyApprover.id)
+            )
+            selected_approvers = res.scalars().all()
+
+    # Load initiator if requested
+    initiator = None
+    if initiator_id:
+        res = await db.execute(select(SubsidyApprover).where(SubsidyApprover.id == initiator_id))
+        initiator = res.scalar_one_or_none()
+
+    # If no approvers specified — load defaults for this subsidy
+    if not selected_approvers and p.subsidy_id:
+        res = await db.execute(
+            select(SubsidyApprover)
+            .where(SubsidyApprover.subsidy_id == p.subsidy_id, SubsidyApprover.is_default == True)
+            .order_by(SubsidyApprover.order_num, SubsidyApprover.id)
+        )
+        selected_approvers = res.scalars().all()
+
     # Build template context
     items_list = []
     for idx, item in enumerate(p.items or [], start=1):
@@ -92,6 +128,16 @@ async def generate_document(
             "total_price": _fmt_money(item.total_price),
         })
 
+    approvers_list = [
+        {
+            "num": i + 1,
+            "role_name": a.role_name,
+            "full_name": a.full_name,
+            "note": "",
+        }
+        for i, a in enumerate(selected_approvers)
+    ]
+
     c = p.contractor
     context = {
         # Закупка
@@ -100,6 +146,8 @@ async def generate_document(
         "purchase_method": {"single": "Единственный поставщик", "competitive": "Конкурсная процедура", "advance": "Авансовый отчёт"}.get(p.purchase_method or "", p.purchase_method or ""),
         "subject": p.subject or "",
         "status": p.status or "",
+        "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),
+        "responsible_person": p.responsible_person or "",
         # Субсидия
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",
@@ -134,6 +182,7 @@ async def generate_document(
         "contract_date": _fmt_date(p.contract_date),
         "execution_term": _fmt_date(p.execution_term),
         "execution_term_changed": _fmt_date(p.execution_term_changed),
+        "delivery_date": _fmt_date(p.delivery_date),
         "country_origin": p.country_origin or "",
         # Акт приёмки
         "acceptance_doc_name": p.acceptance_doc_name or "",
@@ -149,6 +198,10 @@ async def generate_document(
         "items": items_list,
         "items_count": len(items_list),
         "item_names": ", ".join(i["name"] for i in items_list if i["name"]),
+        # Согласующие
+        "approvers": approvers_list,
+        "initiator_name": initiator.full_name if initiator else "",
+        "initiator_role": initiator.role_name if initiator else "",
         # Служебные
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),

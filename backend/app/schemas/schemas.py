@@ -45,6 +45,19 @@ class SubsidyOut(BaseModel):
     description: Optional[str] = None
     model_config = {"from_attributes": True}
 
+# SubsidyApprover
+class SubsidyApproverCreate(BaseModel):
+    role_name: str
+    full_name: str
+    order_num: int = 0
+    is_default: bool = True
+    can_initiate: bool = False
+
+class SubsidyApproverOut(SubsidyApproverCreate):
+    id: int
+    subsidy_id: int
+    model_config = {"from_attributes": True}
+
 # FeoCategory
 class FeoCategoryCreate(BaseModel):
     parent_id: Optional[int] = None
@@ -89,6 +102,7 @@ class ContractorCreate(BaseModel):
     bank_name: Optional[str] = None
     bik: Optional[str] = None
     correspondent_account: Optional[str] = None
+    org_type: Optional[str] = None
 
 class ContractorOut(ContractorCreate):
     id: int
@@ -139,6 +153,7 @@ class PurchaseFileOut(BaseModel):
     filename: str
     mime_type: Optional[str] = None
     size: Optional[int] = None
+    file_type: Optional[str] = "other"
     created_at: Optional[str] = None
     model_config = {"from_attributes": True}
 
@@ -167,12 +182,15 @@ class PurchaseCreate(BaseModel):
     contract_date: Optional[date] = None
     registry_number: Optional[str] = None
     purchase_method: Optional[str] = None  # 'single' | 'competitive'
+    purchase_basis: Optional[str] = None   # 'plan_schedule' | 'service_note'
+    responsible_person: Optional[str] = None
     nmck: Optional[Decimal] = None
     contract_price: Optional[Decimal] = None
     economy: Optional[Decimal] = None
     price_increase: Optional[Decimal] = None
     execution_term: Optional[date] = None
     execution_term_changed: Optional[date] = None
+    delivery_date: Optional[date] = None
     country_origin: Optional[str] = None
     subject: Optional[str] = None
     acceptance_doc_name: Optional[str] = None

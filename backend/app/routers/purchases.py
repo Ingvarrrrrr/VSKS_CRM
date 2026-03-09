@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
@@ -17,9 +17,11 @@ from decimal import Decimal
 from io import BytesIO
 from datetime import datetime, date
 try:
-    from openpyxl import Workbook
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
 except ImportError:
     Workbook = None
+    load_workbook = None
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
@@ -114,6 +116,20 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict) -> Purcha
     )
 
 
+@router.get("/responsible-persons")
+async def list_responsible_persons(
+    subsidy_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Уникальные ответственные исполнители из закупок (для выпадающего списка)."""
+    q = select(Purchase.responsible_person).where(Purchase.responsible_person.isnot(None))
+    if subsidy_id:
+        q = q.where(Purchase.subsidy_id == subsidy_id)
+    q = q.distinct().order_by(Purchase.responsible_person)
+    result = await db.execute(q)
+    return [row[0] for row in result.fetchall()]
+
+
 @router.get("/", response_model=List[PurchaseOutFull])
 async def list_purchases(
     contract_id: Optional[int] = Query(None),
@@ -145,6 +161,40 @@ async def list_purchases(
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
 
     return [_purchase_to_full(p, contractors, subsidies) for p in purchases]
+
+
+@router.get("/{pid}/kp-items")
+async def get_purchase_kp_items(pid: int, db: AsyncSession = Depends(get_db)):
+    """Items in a purchase with product category info for КП smart sending."""
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+
+    stmt = (
+        select(
+            PurchaseItem.id,
+            PurchaseItem.item_name,
+            PurchaseItem.quantity,
+            PurchaseItem.unit,
+            PurchaseItem.unit_price,
+            Product.name.label("product_name"),
+            Product.category.label("product_category"),
+        )
+        .outerjoin(Product, Product.id == PurchaseItem.product_id)
+        .where(PurchaseItem.purchase_id == pid)
+        .order_by(PurchaseItem.id)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "id": r.id,
+            "item_name": r.product_name or r.item_name,
+            "quantity": float(r.quantity or 0),
+            "unit": r.unit or "шт.",
+            "unit_price": float(r.unit_price or 0),
+            "category": r.product_category or None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{pid}", response_model=PurchaseOutFull)
@@ -411,3 +461,224 @@ async def export_purchases_to_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.get("/import/template")
+async def download_import_template():
+    """Скачать шаблон Excel для импорта закупок."""
+    if Workbook is None:
+        raise HTTPException(500, "openpyxl не установлен")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Закупки"
+
+    headers = [
+        "Наименование", "Субсидия", "Категория ФЭО", "Контрагент", "ИНН контрагента",
+        "НМЦК", "Способ закупки", "Реестровый №", "№ договора", "Дата договора",
+        "Цена договора", "Срок исполнения", "ПП №", "ПП дата", "Оплачено",
+        "Статус", "Год",
+    ]
+    ws.append(headers)
+
+    # Style header row
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=11)
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Sample row
+    ws.append([
+        "Закупка компьютеров", "ФАДМ_2026", "Техническое оснащение", "ООО Поставщик", "1234567890",
+        "500000", "ЕИ", "2026/001", "Д-001", "15.03.2026",
+        "490000", "30.06.2026", "", "", "",
+        "confirmed", "2026",
+    ])
+
+    # Column widths
+    col_widths = [35, 20, 30, 25, 15, 12, 15, 14, 14, 14, 14, 14, 12, 12, 12, 14, 6]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = w
+
+    ws.freeze_panes = "A2"
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=import_template.xlsx"}
+    )
+
+
+@router.post("/import")
+async def import_purchases_from_excel(
+    file: UploadFile = File(...),
+    subsidy_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Импорт закупок из Excel. Возвращает {created, skipped, errors}."""
+    if load_workbook is None:
+        raise HTTPException(500, "openpyxl не установлен")
+    if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Поддерживаются только файлы .xlsx и .xls")
+
+    content = await file.read()
+    wb = load_workbook(BytesIO(content), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "Файл пустой или содержит только заголовки")
+
+    # Parse headers (case-insensitive)
+    raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
+    COLUMN_MAP = {
+        "наименование": "item_name", "предмет закупки": "item_name",
+        "субсидия": "subsidy_name",
+        "категория фэо": "feo_category_name",
+        "контрагент": "contractor_name",
+        "инн контрагента": "contractor_inn", "инн": "contractor_inn",
+        "нмцк": "nmck", "сумма": "nmck", "цена": "nmck",
+        "способ закупки": "purchase_method", "способ": "purchase_method",
+        "реестровый №": "registry_number", "реестровый номер": "registry_number", "реестр. №": "registry_number",
+        "№ договора": "contract_number", "номер договора": "contract_number",
+        "дата договора": "contract_date",
+        "цена договора": "contract_price",
+        "срок исполнения": "execution_term",
+        "пп №": "payment_doc_number", "пп номер": "payment_doc_number",
+        "пп дата": "payment_doc_date",
+        "оплачено": "payment_amount",
+        "статус": "status",
+        "год": "year",
+        "№ п/п": "purchase_number",
+    }
+    col_idx: dict[str, int] = {}
+    for i, h in enumerate(raw_headers):
+        field = COLUMN_MAP.get(h)
+        if field and field not in col_idx:
+            col_idx[field] = i
+
+    # Load lookup tables
+    from app.models.feo_category import FeoCategory
+    subs_rows = (await db.execute(select(Subsidy))).scalars().all()
+    subs_by_name = {s.name.lower().strip(): s.id for s in subs_rows}
+
+    contractors_rows = (await db.execute(select(Contractor))).scalars().all()
+    cont_by_name = {c.name.lower().strip(): c.id for c in contractors_rows}
+    cont_by_inn  = {c.inn.strip(): c.id for c in contractors_rows if c.inn}
+
+    feo_rows = (await db.execute(select(FeoCategory))).scalars().all()
+    feo_by_name = {f.name.lower().strip(): f.id for f in feo_rows}
+
+    STATUS_MAP = {
+        "planned": "planned", "планируется": "planned", "план": "planned",
+        "confirmed": "confirmed", "подтверждено": "confirmed",
+        "contracted": "contracted", "законтрактовано": "contracted",
+        "delivered": "delivered", "исполнено": "delivered",
+        "paid": "paid", "оплачено": "paid",
+    }
+    METHOD_MAP = {
+        "еи": "single", "единственный исполнитель": "single", "single": "single",
+        "кп": "competitive", "конкурсная процедура": "competitive", "competitive": "competitive",
+    }
+
+    def cell(row, field):
+        idx = col_idx.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        return str(v).strip() if v is not None else None
+
+    def to_dec(v):
+        if v is None:
+            return None
+        try:
+            return Decimal(str(v).replace(" ", "").replace(",", "."))
+        except Exception:
+            return None
+
+    def to_date_val(v):
+        if v is None:
+            return None
+        if hasattr(v, "date"):
+            return v.date()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(str(v).strip(), fmt).date()
+            except Exception:
+                pass
+        return None
+
+    created = 0
+    skipped = 0
+    errors: list[dict] = []
+
+    for row_num, row in enumerate(rows[1:], start=2):
+        try:
+            item_name = cell(row, "item_name")
+            if not item_name:
+                skipped += 1
+                continue
+
+            # Resolve subsidy
+            sid = subsidy_id
+            if not sid:
+                sub_name = cell(row, "subsidy_name")
+                if sub_name:
+                    sid = subs_by_name.get(sub_name.lower().strip())
+            if not sid:
+                errors.append({"row": row_num, "name": item_name, "message": "Субсидия не найдена"})
+                continue
+
+            # Resolve contractor
+            cid = None
+            c_name = cell(row, "contractor_name")
+            c_inn  = cell(row, "contractor_inn")
+            if c_inn:
+                cid = cont_by_inn.get(c_inn.strip())
+            if not cid and c_name:
+                cid = cont_by_name.get(c_name.lower().strip())
+
+            # Resolve FEO
+            feo_id = None
+            feo_name = cell(row, "feo_category_name")
+            if feo_name:
+                feo_id = feo_by_name.get(feo_name.lower().strip())
+
+            # Status
+            status_raw = (cell(row, "status") or "planned").lower().strip()
+            status = STATUS_MAP.get(status_raw, "planned")
+
+            # Method
+            method_raw = (cell(row, "purchase_method") or "").lower().strip()
+            method = METHOD_MAP.get(method_raw)
+
+            nmck = to_dec(cell(row, "nmck"))
+            p = Purchase(
+                subsidy_id=sid,
+                feo_category_id=feo_id,
+                contractor_id=cid,
+                item_name=item_name,
+                status=status,
+                nmck=nmck,
+                total_nmck=nmck,
+                planned_total_price=nmck,
+                contract_price=to_dec(cell(row, "contract_price")),
+                payment_amount=to_dec(cell(row, "payment_amount")),
+                purchase_method=method,
+                registry_number=cell(row, "registry_number"),
+                contract_number=cell(row, "contract_number"),
+                contract_date=to_date_val(cell(row, "contract_date")),
+                execution_term=to_date_val(cell(row, "execution_term")),
+                payment_doc_number=cell(row, "payment_doc_number"),
+                payment_doc_date=to_date_val(cell(row, "payment_doc_date")),
+            )
+            db.add(p)
+            created += 1
+        except Exception as e:
+            errors.append({"row": row_num, "name": cell(row, "item_name") or "?", "message": str(e)})
+
+    await db.commit()
+    return {"created": created, "skipped": skipped, "errors": errors}

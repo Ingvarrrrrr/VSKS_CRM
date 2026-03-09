@@ -13,6 +13,15 @@
       <div class="page-header-right">
         <v-btn
           variant="tonal"
+          color="secondary"
+          prepend-icon="mdi-download"
+          class="mr-2"
+          @click="downloadTemplate"
+        >
+          Шаблон
+        </v-btn>
+        <v-btn
+          variant="tonal"
           color="success"
           prepend-icon="mdi-microsoft-excel"
           class="mr-2"
@@ -46,24 +55,10 @@
         style="max-width: 320px"
         clearable
       />
-      <v-select
-        v-model="filterSubsidyId"
-        :items="subsidies"
-        item-title="name"
-        item-value="id"
-        label="Субсидия"
-        variant="outlined"
-        density="compact"
-        hide-details
-        clearable
-        style="max-width: 200px"
-      />
-      <v-select
-        v-model="filterCategoryId"
-        :items="feoCategories"
-        item-title="label"
-        item-value="id"
-        label="Категория ФЭО"
+      <v-autocomplete
+        v-model="filterCategory"
+        :items="allProductCategories"
+        label="Категория товаров"
         variant="outlined"
         density="compact"
         hide-details
@@ -71,7 +66,7 @@
         style="max-width: 260px"
       />
       <v-btn
-        v-if="filterSubsidyId || filterCategoryId || search"
+        v-if="filterCategory || search"
         variant="text"
         size="small"
         color="grey"
@@ -114,7 +109,7 @@
             <th>Адрес</th>
             <th>Телефон / Email</th>
             <th>Контактное лицо</th>
-            <th style="min-width:120px">Закупки</th>
+            <th style="min-width:160px">Категории товаров</th>
             <th class="text-right">Действия</th>
           </tr>
         </thead>
@@ -144,16 +139,24 @@
             </td>
             <td class="text-sm">{{ c.contact_person || '—' }}</td>
             <td>
-              <v-chip
-                v-if="c.purchase_count > 0"
-                size="small"
-                color="primary"
-                variant="tonal"
-                class="cursor-pointer"
-                @click="openPurchasesDialog(c)"
-              >
-                {{ c.purchase_count }} закуп.
-              </v-chip>
+              <template v-if="c.product_categories.length > 0">
+                <v-chip
+                  v-for="cat in c.product_categories.slice(0, 2)"
+                  :key="cat"
+                  size="x-small"
+                  color="teal"
+                  variant="tonal"
+                  class="mr-1 mb-1"
+                >{{ cat }}</v-chip>
+                <v-chip
+                  v-if="c.product_categories.length > 2"
+                  size="x-small"
+                  color="grey"
+                  variant="tonal"
+                  class="cursor-pointer"
+                  @click="openCategoriesDialog(c)"
+                >+{{ c.product_categories.length - 2 }}</v-chip>
+              </template>
               <span v-else class="text-medium-emphasis text-caption">—</span>
             </td>
             <td class="text-right">
@@ -165,45 +168,25 @@
       </v-table>
     </div>
 
-    <!-- ── Purchases dialog ── -->
-    <v-dialog v-model="purchasesDialog" max-width="700" scrollable>
+    <!-- ── Categories dialog ── -->
+    <v-dialog v-model="categoriesDialog" max-width="480" scrollable>
       <v-card>
         <v-card-title class="dialog-title">
-          <v-icon icon="mdi-clipboard-list" color="primary" class="mr-2" />
-          Закупки: {{ purchasesDialogContractor?.name }}
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="purchasesDialog = false" />
+          <v-icon icon="mdi-tag-multiple-outline" color="teal" class="mr-2" />
+          Категории товаров: {{ categoriesDialogContractor?.name }}
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="categoriesDialog = false" />
         </v-card-title>
         <v-divider />
-        <v-card-text style="max-height:460px; padding:0">
-          <v-progress-linear v-if="purchasesLoading" indeterminate color="primary" />
-          <v-table v-if="purchasesList.length > 0" density="compact">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Предмет</th>
-                <th>Субсидия</th>
-                <th>Категория ФЭО</th>
-                <th>Сумма</th>
-                <th>Статус</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in purchasesList" :key="p.id">
-                <td class="text-caption text-medium-emphasis">{{ p.id }}</td>
-                <td class="text-sm" style="max-width:200px; white-space:normal">{{ p.subject }}</td>
-                <td class="text-caption">{{ p.subsidy_name }}</td>
-                <td class="text-caption">{{ p.feo_category_name }}</td>
-                <td class="text-sm text-no-wrap">{{ p.planned_total_price ? p.planned_total_price.toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
-                <td>
-                  <v-chip size="x-small" :color="statusColor(p.status)" variant="flat">
-                    {{ statusLabel(p.status) }}
-                  </v-chip>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-          <div v-else-if="!purchasesLoading" class="text-center pa-8 text-medium-emphasis">
-            Закупки не найдены
+        <v-card-text class="pt-4">
+          <v-chip
+            v-for="cat in categoriesDialogContractor?.product_categories ?? []"
+            :key="cat"
+            color="teal"
+            variant="tonal"
+            class="mr-2 mb-2"
+          >{{ cat }}</v-chip>
+          <div v-if="!categoriesDialogContractor?.product_categories?.length" class="text-center text-medium-emphasis pa-4">
+            Категории не указаны (нет закупок с товарами из каталога)
           </div>
         </v-card-text>
       </v-card>
@@ -221,6 +204,16 @@
         <v-card-text class="pt-4" style="max-height:75vh">
           <v-form ref="formRef">
             <div class="section-label">Основные данные</div>
+            <v-select
+              v-model="form.org_type"
+              :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
+              label="Форма организации"
+              variant="outlined"
+              density="compact"
+              clearable
+              hide-details
+              class="mb-3"
+            />
             <v-text-field
               v-model="form.name"
               label="Наименование организации *"
@@ -285,7 +278,7 @@
     </v-dialog>
 
     <!-- ── Bulk delete confirm ── -->
-    <v-dialog v-model="bulkDeleteDialog" max-width="420">
+    <v-dialog v-model="bulkDeleteDialog" max-width="440" persistent>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
@@ -293,12 +286,32 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
-          Удалить <strong>{{ selectedIds.size }}</strong> выбранных контрагентов? Действие нельзя отменить.
+          <p class="mb-3">
+            Вы собираетесь удалить <strong>{{ selectedIds.size }}</strong> контрагентов.
+            Это действие <strong>нельзя отменить</strong>.
+          </p>
+          <p v-if="selectedIds.size > 5" class="text-caption text-medium-emphasis mb-3">
+            Для подтверждения введите количество удаляемых записей:
+          </p>
+          <v-text-field
+            v-if="selectedIds.size > 5"
+            v-model="bulkDeleteConfirmCount"
+            :placeholder="`Введите ${selectedIds.size}`"
+            variant="outlined"
+            density="compact"
+            hide-details
+            autofocus
+          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="bulkDeleteDialog = false">Отмена</v-btn>
-          <v-btn color="error" :loading="saving" @click="doBulkDelete">Удалить</v-btn>
+          <v-btn variant="text" @click="bulkDeleteDialog = false; bulkDeleteConfirmCount = ''">Отмена</v-btn>
+          <v-btn
+            color="error"
+            :loading="saving"
+            :disabled="selectedIds.size > 5 && bulkDeleteConfirmCount !== String(selectedIds.size)"
+            @click="doBulkDelete"
+          >Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -318,6 +331,54 @@
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog = false">Отмена</v-btn>
           <v-btn color="error" :loading="saving" @click="doDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Import hint dialog ── -->
+    <v-dialog v-model="importHintDialog" max-width="580" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pa-4">Импорт контрагентов из Excel</v-card-title>
+        <v-card-text class="pt-0">
+          <p class="mb-3">Загрузите файл <strong>.xlsx</strong>. Первая строка — заголовки.</p>
+          <v-table density="compact" class="mb-3">
+            <thead>
+              <tr>
+                <th>Колонка</th>
+                <th style="width:110px">Обязательна</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Наименование</td><td><v-chip size="x-small" color="error">обяз.</v-chip></td></tr>
+              <tr><td>ИНН</td><td><v-chip size="x-small" color="error">обяз., уникальный</v-chip></td></tr>
+              <tr><td>КПП</td><td></td></tr>
+              <tr><td>ОГРН</td><td></td></tr>
+              <tr><td>Адрес местонахождения</td><td></td></tr>
+              <tr><td>Почтовый адрес</td><td></td></tr>
+              <tr><td>Подписант</td><td></td></tr>
+              <tr><td>Основание</td><td></td></tr>
+              <tr><td>Контактное лицо</td><td></td></tr>
+              <tr><td>Телефон</td><td></td></tr>
+              <tr><td>Email</td><td></td></tr>
+              <tr><td>Расчётный счёт</td><td></td></tr>
+              <tr><td>Банк</td><td></td></tr>
+              <tr><td>БИК</td><td></td></tr>
+              <tr><td>Корр. счёт</td><td></td></tr>
+              <tr><td>Банковские реквизиты</td><td></td></tr>
+            </tbody>
+          </v-table>
+          <p class="text-caption text-medium-emphasis">
+            Колонки распознаются по частичному совпадению названия. Строки с дублирующимся ИНН пропускаются.
+            Скачайте шаблон — там уже правильные заголовки и пример строки.
+          </p>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-btn variant="text" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="importHintDialog = false">Отмена</v-btn>
+          <v-btn color="success" variant="tonal" prepend-icon="mdi-microsoft-excel" @click="confirmImport">
+            Выбрать файл
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -352,41 +413,29 @@ interface ContractorWithStats {
   bank_name?: string
   bik?: string
   correspondent_account?: string
-  purchase_count: number
-  subsidy_ids: number[]
-  feo_category_ids: number[]
-}
-
-interface Subsidy { id: number; name: string }
-interface FeoCategory { id: number; name: string; level: number; code?: string }
-interface PurchaseSummary {
-  id: number; subject: string; status: string
-  planned_total_price?: number; subsidy_name: string; feo_category_name: string
+  product_categories: string[]
 }
 
 const contractors = ref<ContractorWithStats[]>([])
-const subsidies   = ref<Subsidy[]>([])
-const feoCategories = ref<{ id: number; label: string; feo_ids?: number[] }[]>([])
 const loading     = ref(false)
 const saving      = ref(false)
 const importing   = ref(false)
 const search      = ref('')
-const filterSubsidyId  = ref<number | null>(null)
-const filterCategoryId = ref<number | null>(null)
+const filterCategory = ref<string | null>(null)
 const dialog      = ref(false)
 const deleteDialog     = ref(false)
 const bulkDeleteDialog = ref(false)
+const bulkDeleteConfirmCount = ref('')
 const editId      = ref<number | null>(null)
 const deleteTarget  = ref<ContractorWithStats | null>(null)
 const formRef     = ref()
 const excelInput  = ref<HTMLInputElement>()
+const importHintDialog = ref(false)
 const selectedIds = ref(new Set<number>())
 
-// Purchases dialog
-const purchasesDialog = ref(false)
-const purchasesLoading = ref(false)
-const purchasesDialogContractor = ref<ContractorWithStats | null>(null)
-const purchasesList = ref<PurchaseSummary[]>([])
+// Categories dialog
+const categoriesDialog = ref(false)
+const categoriesDialogContractor = ref<ContractorWithStats | null>(null)
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
@@ -395,46 +444,37 @@ const emptyForm = () => ({
   contact_person: '', phone: '', email: '', bank_details: '',
   signatory: '', signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
+  org_type: '' as string | null,
 })
 const form = ref(emptyForm())
+
+const allProductCategories = computed(() => {
+  const cats = new Set<string>()
+  contractors.value.forEach(c => c.product_categories.forEach(p => cats.add(p)))
+  return [...cats].sort()
+})
 
 const filtered = computed(() => {
   let list = contractors.value
   const q = search.value?.toLowerCase() ?? ''
   if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.inn || '').includes(q))
-  if (filterSubsidyId.value) {
-    const sid = filterSubsidyId.value
-    list = list.filter(c => c.subsidy_ids.includes(sid))
-  }
-  if (filterCategoryId.value) {
-    const cid = filterCategoryId.value
-    list = list.filter(c => c.feo_category_ids.includes(cid))
+  if (filterCategory.value) {
+    const cat = filterCategory.value
+    list = list.filter(c => c.product_categories.includes(cat))
   }
   return list
 })
 
 function clearFilters() {
   search.value = ''
-  filterSubsidyId.value = null
-  filterCategoryId.value = null
+  filterCategory.value = null
 }
 
 // ── Load ──────────────────────────────────────────
 async function loadContractors() {
   loading.value = true
   try {
-    const [conts, subs, cats] = await Promise.all([
-      apiFetch<ContractorWithStats[]>('/contractors/with-stats'),
-      apiFetch<Subsidy[]>('/subsidies/'),
-      apiFetch<FeoCategory[]>('/feo-categories/'),
-    ])
-    contractors.value = conts
-    subsidies.value = subs
-    // Build flat list for filter — show all levels with indentation
-    feoCategories.value = cats.map(c => ({
-      id: c.id,
-      label: `${'·'.repeat(c.level - 1)} [${c.code || c.level}] ${c.name}`,
-    }))
+    contractors.value = await apiFetch<ContractorWithStats[]>('/contractors/with-stats')
   } catch (e: any) {
     showSnack(e.message || 'Ошибка загрузки', 'error')
   } finally {
@@ -442,30 +482,12 @@ async function loadContractors() {
   }
 }
 
-// ── Purchases dialog ───────────────────────────────
-async function openPurchasesDialog(c: ContractorWithStats) {
-  purchasesDialogContractor.value = c
-  purchasesList.value = []
-  purchasesDialog.value = true
-  purchasesLoading.value = true
-  try {
-    purchasesList.value = await apiFetch<PurchaseSummary[]>(`/contractors/${c.id}/purchases`)
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка загрузки закупок', 'error')
-  } finally {
-    purchasesLoading.value = false
-  }
+// ── Categories dialog ──────────────────────────────
+function openCategoriesDialog(c: ContractorWithStats) {
+  categoriesDialogContractor.value = c
+  categoriesDialog.value = true
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  planned: 'Плановая', confirmed: 'Подтверждена', contracted: 'Законтрактована',
-  delivered: 'Доставлена', paid: 'Оплачена',
-}
-const STATUS_COLORS: Record<string, string> = {
-  planned: 'grey', confirmed: 'blue', contracted: 'orange', delivered: 'teal', paid: 'green',
-}
-function statusLabel(s: string) { return STATUS_LABELS[s] || s }
-function statusColor(s: string) { return STATUS_COLORS[s] || 'grey' }
 
 // ── Add / Edit ────────────────────────────────────
 function openAdd() {
@@ -543,10 +565,17 @@ async function doBulkDelete() {
   saving.value = true
   const ids = [...selectedIds.value]
   try {
-    await Promise.all(ids.map(id => apiFetch(`/contractors/${id}`, { method: 'DELETE' })))
+    const res = await apiFetch<{ deleted: number; skipped_linked: number; skipped_not_found: number }>('/contractors/bulk', {
+      method: 'DELETE',
+      body: { ids } as any,
+    })
     selectedIds.value = new Set()
     bulkDeleteDialog.value = false
-    showSnack(`Удалено контрагентов: ${ids.length}`, 'warning')
+    bulkDeleteConfirmCount.value = ''
+    let msg = `Удалено: ${res.deleted}`
+    if (res.skipped_linked) msg += `, пропущено (есть закупки): ${res.skipped_linked}`
+    if (res.skipped_not_found) msg += `, не найдено: ${res.skipped_not_found}`
+    showSnack(msg, res.skipped_linked ? 'warning' : 'success')
     await loadContractors()
   } catch (e: any) {
     showSnack(e.message || 'Ошибка удаления', 'error')
@@ -578,7 +607,25 @@ async function doDelete() {
 
 // ── Excel import ──────────────────────────────────
 function triggerImport() {
+  importHintDialog.value = true
+}
+
+function confirmImport() {
+  importHintDialog.value = false
   excelInput.value?.click()
+}
+
+async function downloadTemplate() {
+  const token = localStorage.getItem('auth_token') || ''
+  const res = await fetch('/api/contractors/import/template', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) { showSnack('Ошибка скачивания шаблона', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'contractors_template.xlsx'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 async function handleImport(event: Event) {

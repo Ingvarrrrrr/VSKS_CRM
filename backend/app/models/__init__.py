@@ -9,3 +9,4 @@ from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.platform_publication import PlatformPublication
+from app.models.subsidy_approver import SubsidyApprover

@@ -7,6 +7,7 @@ import CreateOrderView from '../views/CreateOrderView.vue'
 import ContractorsView from '../views/ContractorsView.vue'
 import FeoCategoriesView from '../views/FeoCategoriesView.vue'
 import ProductsView from '../views/ProductsView.vue'
+import PlanView from '../views/PlanView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -70,6 +71,12 @@ const router = createRouter({
       name: 'products',
       component: ProductsView,
       meta: { requiresAuth: false, title: 'Каталог товаров' }
+    },
+    {
+      path: '/plan',
+      name: 'plan',
+      component: PlanView,
+      meta: { requiresAuth: false, title: 'План-график' }
     },
   ]
 })

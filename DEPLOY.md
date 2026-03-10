@@ -1,6 +1,6 @@
 # Деплой VSKS CRM
 
-## Nginx конфиг
+## Nginx конфиг (ПРАВИЛЬНЫЙ)
 
 ```nginx
 server {
@@ -12,21 +12,15 @@ server {
         proxy_pass http://127.0.0.1:8000;
     }
 
-    # CRM assets (Vite генерирует /assets/)
+    # CRM assets
     location /assets/ {
         alias /path/to/frontend/dist/assets/;
-        expires 30d;
     }
 
-    # CRM - SPA fallback (ВАЖНО: try_files на index.html)
-    location /crm {
+    # CRM SPA - все пути отдают index.html (ВАЖНО!)
+    location / {
         alias /path/to/frontend/dist/;
-        try_files $uri $uri/ /crm/index.html;
-    }
-
-    # Redirect root to CRM
-    location = / {
-        return 301 /crm;
+        try_files $uri /index.html;
     }
 }
 ```

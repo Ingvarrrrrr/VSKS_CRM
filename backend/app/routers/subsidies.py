@@ -21,8 +21,7 @@ class SubsidyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
-    """Подсчёт бюджета из дочерних категорий (рекурсивно)"""
-    # Простой запрос - получить все категории
+    """Подсчёт бюджета: level-1 без детей = budget, level-1 с детьми = сумма children"""
     stmt = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
     result = await db.execute(stmt)
     all_categories = result.scalars().all()
@@ -30,25 +29,22 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     if not all_categories:
         return 0.0
     
-    # Создаём словарь
     categories = {c.id: c for c in all_categories}
+    total = 0.0
     
-    def get_budget(cat_id: int) -> float:
-        cat = categories.get(cat_id)
-        if not cat:
-            return 0.0
-        # Если есть ручной бюджет - используем его
-        if cat.budget is not None:
-            return float(cat.budget)
-        # Иначе суммируем детей
-        children = [c for c in all_categories if c.parent_id == cat_id]
-        if not children:
-            return 0.0
-        return sum(get_budget(c.id) for c in children)
-    
-    # Считаем только для верхнего уровня (level=1)
-    top_level = [c for c in all_categories if c.level == 1]
-    total = sum(get_budget(cat.id) for cat in top_level)
+    for cat in all_categories:
+        if cat.level == 1:  # Только верхний уровень
+            # Найти всех детей (level 2 и 3)
+            children = [c for c in all_categories if c.parent_id == cat.id]
+            if children:
+                # Есть дети → суммируем их бюджеты
+                for child in children:
+                    if child.budget is not None:
+                        total += float(child.budget)
+            else:
+                # Нет детей → берём свой бюджет
+                if cat.budget is not None:
+                    total += float(cat.budget)
     
     return total
 

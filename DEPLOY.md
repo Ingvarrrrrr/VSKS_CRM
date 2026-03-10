@@ -7,22 +7,21 @@ server {
     listen 80 default_server;
     server_name _;
 
-    # CRM API - ВАЖНО: проксировать /api/ на бэкенд
+    # CRM API
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
     }
 
-    # CRM assets
-    location /crm/assets/ {
-        alias /path/to/frontend/dist/assets/;
-    }
+    # CRM assets (Vite генерирует /assets/)
     location /assets/ {
         alias /path/to/frontend/dist/assets/;
+        expires 30d;
     }
 
-    # CRM - статика
-    location /crm/ {
+    # CRM - SPA fallback (ВАЖНО: try_files на index.html)
+    location /crm {
         alias /path/to/frontend/dist/;
+        try_files $uri $uri/ /crm/index.html;
     }
 
     # Redirect root to CRM

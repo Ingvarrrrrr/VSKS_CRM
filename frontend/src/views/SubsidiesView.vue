@@ -63,8 +63,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.budget) }}</div>
-            <div class="sc-budget-label">Бюджет</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.budget || s.calculated_budget || 0) }}</div>
+            <div class="sc-budget-label">{{ s.budget ? 'Бюджет' : 'Рассчитанный' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini">
@@ -82,11 +82,11 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.budget)"
-              :color="progressColor(pct(s.planned, s.budget))"
+              :model-value="pct(s.planned, s.budget || s.calculated_budget)"
+              :color="progressColor(pct(s.planned, s.budget || s.calculated_budget))"
               height="6" rounded class="mt-3"
             />
-            <div class="sc-pct">{{ pct(s.planned, s.budget) }}% запланировано</div>
+            <div class="sc-pct">{{ pct(s.planned, s.budget || s.calculated_budget) }}% запланировано</div>
           </div>
         </div>
 
@@ -100,6 +100,11 @@
           <div class="summary-item">
             <span class="summary-label">Итого бюджет</span>
             <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Рассчитанный</span>
+            <span class="summary-value" style="color: #8B5CF6;">{{ formatCurrency(totals.calculated_budget || 0) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item">
@@ -119,8 +124,8 @@
           <div class="summary-sep" />
           <div class="summary-item">
             <span class="summary-label">Свободно</span>
-            <span class="summary-value" :style="{ color: totals.budget - totals.planned < 0 ? '#EF4444' : '#3B82F6' }">
-              {{ formatCurrency(totals.budget - totals.planned) }}
+            <span class="summary-value" :style="{ color: (totals.budget || totals.calculated_budget || 0) - totals.planned < 0 ? '#EF4444' : '#3B82F6' }">
+              {{ formatCurrency((totals.budget || totals.calculated_budget || 0) - totals.planned) }}
             </span>
           </div>
         </div>
@@ -136,8 +141,12 @@
           <!-- KPI mini-cards for selected subsidy -->
           <div class="detail-kpis">
             <div class="dkpi dkpi-budget">
-              <div class="dkpi-label">Бюджет</div>
+              <div class="dkpi-label">Бюджет (ручной)</div>
               <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.budget) }}</div>
+            </div>
+            <div class="dkpi dkpi-calculated">
+              <div class="dkpi-label">Рассчитанный</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.calculated_budget || 0) }}</div>
             </div>
             <div class="dkpi dkpi-planned">
               <div class="dkpi-label">Запланировано</div>
@@ -148,8 +157,8 @@
               <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
             </div>
             <div class="dkpi dkpi-free" :class="selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
-              <div class="dkpi-label">{{ selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedSubsidy.budget - selectedSubsidy.planned)) }}</div>
+              <div class="dkpi-label">{{ (selectedSubsidy.budget || selectedSubsidy.calculated_budget || 0) - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(Math.abs((selectedSubsidy.budget || selectedSubsidy.calculated_budget || 0) - selectedSubsidy.planned)) }}</div>
             </div>
           </div>
 
@@ -818,6 +827,7 @@ const selectedSubsidy = computed(() =>
 
 const totals = computed(() => ({
   budget:      filteredSubsidies.value.reduce((s, x) => s + x.budget,      0),
+  calculated_budget: filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || 0), 0),
   planned:     filteredSubsidies.value.reduce((s, x) => s + x.planned,     0),
   contracted:  filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
   paid:        filteredSubsidies.value.reduce((s, x) => s + x.paid,        0),
@@ -1450,6 +1460,7 @@ onMounted(loadAll)
   border-top: 3px solid #CBD5E1;
 }
 .dkpi-budget    { border-top-color: #3B82F6; }
+.dkpi-calculated { border-top-color: #8B5CF6; }
 .dkpi-planned   { border-top-color: #F59E0B; }
 .dkpi-paid      { border-top-color: #22C55E; }
 .dkpi-free      { border-top-color: #8B5CF6; }

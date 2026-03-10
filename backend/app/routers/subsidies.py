@@ -62,7 +62,7 @@ async def list_subsidies(
     # Добавляем calculated_budget
     output = []
     for s in subsidies:
-        calc = calculate_budget_from_categories(db, s.id)
+        calc = await calculate_budget_from_categories(db, s.id)
         output.append(SubsidyOut(
             id=s.id,
             name=s.name,
@@ -83,7 +83,7 @@ async def get_subsidy(
     if not subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
     
-    calc = calculate_budget_from_categories(db, subsidy_id)
+    calc = await calculate_budget_from_categories(db, subsidy_id)
     return SubsidyOut(
         id=subsidy.id,
         name=subsidy.name,
@@ -125,7 +125,7 @@ async def update_subsidy(
         setattr(db_subsidy, key, value)
     await db.commit()
     await db.refresh(db_subsidy)
-    calc = calculate_budget_from_categories(db, subsidy_id)
+    calc = await calculate_budget_from_categories(db, subsidy_id)
     return SubsidyOut(
         id=db_subsidy.id,
         name=db_subsidy.name,

@@ -25,7 +25,7 @@ def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float
     total = 0.0
     
     # Получаем все категории субсидии
-    result = db.execute(
+    result = await db.execute(
         select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
     ).scalars().all()
     

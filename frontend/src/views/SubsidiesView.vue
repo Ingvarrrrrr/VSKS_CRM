@@ -99,7 +99,7 @@
           <div class="summary-sep" />
           <div class="summary-item">
             <span class="summary-label">Итого бюджет</span>
-            <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
+            <span class="summary-value">{{ formatCurrency(totals.calculated_budget || totals.budget) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item">

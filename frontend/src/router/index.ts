@@ -74,12 +74,12 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Каталог товаров' }
     },
     {
-    {
       path: '/memories',
       name: 'memories',
       component: MemoriesView,
       meta: { requiresAuth: false, title: 'База знаний' }
     },
+    {
       path: '/plan',
       name: 'plan',
       component: PlanView,

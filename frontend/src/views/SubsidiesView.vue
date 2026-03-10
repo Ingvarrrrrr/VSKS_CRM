@@ -270,7 +270,6 @@
                         @click="startFeoEdit(node)"
                       />
                       <v-btn
-                        v-if="!node.hasChildren"
                         icon="mdi-delete"
                         variant="text"
                         size="x-small"

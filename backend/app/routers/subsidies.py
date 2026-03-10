@@ -20,7 +20,7 @@ class SubsidyOut(BaseModel):
     calculated_budget: Optional[float] = None
     model_config = {"from_attributes": True}
 
-def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
+async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
     """Подсчёт бюджета из дочерних категорий (рекурсивно)"""
     total = 0.0
     

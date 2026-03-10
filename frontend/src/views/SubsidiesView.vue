@@ -134,7 +134,14 @@
         <div v-if="selectedSubsidy" class="detail-panel">
           <div class="detail-header">
             <v-icon icon="mdi-folder-open-outline" size="20" color="#3B82F6" class="mr-2" />
-            <span class="detail-title">{{ selectedSubsidy.name }} — направления ФЭО</span>
+            <span class="detail-title">{{ selectedSubsidy.name }}</span>
+            <span class="detail-budget ml-2" v-if="selectedSubsidy.calculated_budget">
+              ({{ formatCurrency(selectedSubsidy.calculated_budget) }})
+            </span>
+            <span class="detail-budget ml-2" v-else-if="selectedSubsidy.budget">
+              ({{ formatCurrency(selectedSubsidy.budget) }})
+            </span>
+            <span class="detail-subtitle ml-2 text-grey">— направления ФЭО</span>
             <v-btn icon="mdi-close" size="x-small" variant="text" class="ml-auto" @click="selectedId = null" />
           </div>
 
@@ -1445,6 +1452,12 @@ onMounted(loadAll)
 }
 .detail-title {
   font-size: 15px; font-weight: 600; color: #374151;
+}
+.detail-budget {
+  font-size: 14px; font-weight: 500; color: #8B5CF6;
+}
+.detail-subtitle {
+  font-size: 13px;
 }
 
 /* Detail KPI mini-cards */

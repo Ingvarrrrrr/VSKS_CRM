@@ -11,3 +11,4 @@ from app.models.product import Product
 from app.models.platform_publication import PlatformPublication
 from app.models.subsidy_approver import SubsidyApprover
 from app.models.responsible_person import ResponsiblePerson
+from app.models.memory import Memory

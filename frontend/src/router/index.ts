@@ -8,6 +8,7 @@ import ContractorsView from '../views/ContractorsView.vue'
 import FeoCategoriesView from '../views/FeoCategoriesView.vue'
 import ProductsView from '../views/ProductsView.vue'
 import PlanView from '../views/PlanView.vue'
+import MemoriesView from '../views/MemoriesView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -73,6 +74,12 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Каталог товаров' }
     },
     {
+    {
+      path: '/memories',
+      name: 'memories',
+      component: MemoriesView,
+      meta: { requiresAuth: false, title: 'База знаний' }
+    },
       path: '/plan',
       name: 'plan',
       component: PlanView,

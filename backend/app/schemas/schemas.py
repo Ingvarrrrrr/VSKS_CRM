@@ -306,3 +306,17 @@ class PublicationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Memory/Notes
+class MemoryCreate(BaseModel):
+    title: str
+    problem: Optional[str] = None
+    solution: Optional[str] = None
+    tags: Optional[str] = None
+    is_pinned: bool = False
+
+class MemoryOut(MemoryCreate):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}

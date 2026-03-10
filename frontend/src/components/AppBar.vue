@@ -163,6 +163,7 @@ const menuItems = computed(() => [
   { title: 'Товары', icon: 'mdi-package-variant', route: '/products' },
   { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories' },
   { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan' },
+  { title: 'База знаний', icon: 'mdi-brain', route: '/memories' },
 ])
 
 const formatCurrency = (amount: number) =>

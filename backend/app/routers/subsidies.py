@@ -22,15 +22,16 @@ class SubsidyOut(BaseModel):
 
 async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
     """Подсчёт бюджета из дочерних категорий (рекурсивно)"""
-    total = 0.0
+    # Простой запрос - получить все категории
+    stmt = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    result = await db.execute(stmt)
+    all_categories = result.scalars().all()
     
-    # Получаем все категории субсидии
-    result = await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    ).scalars().all()
+    if not all_categories:
+        return 0.0
     
-    # Создаём словарь для подсчёта
-    categories = {c.id: c for c in result}
+    # Создаём словарь
+    categories = {c.id: c for c in all_categories}
     
     def get_budget(cat_id: int) -> float:
         cat = categories.get(cat_id)
@@ -40,15 +41,14 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
         if cat.budget is not None:
             return float(cat.budget)
         # Иначе суммируем детей
-        children = [c for c in result if c.parent_id == cat_id]
+        children = [c for c in all_categories if c.parent_id == cat_id]
         if not children:
             return 0.0
         return sum(get_budget(c.id) for c in children)
     
     # Считаем только для верхнего уровня (level=1)
-    top_level = [c for c in result if c.level == 1]
-    for cat in top_level:
-        total += get_budget(cat.id)
+    top_level = [c for c in all_categories if c.level == 1]
+    total = sum(get_budget(cat.id) for cat in top_level)
     
     return total
 
@@ -59,7 +59,6 @@ async def list_subsidies(
     result = await db.execute(select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name))
     subsidies = result.scalars().all()
     
-    # Добавляем calculated_budget
     output = []
     for s in subsidies:
         calc = await calculate_budget_from_categories(db, s.id)

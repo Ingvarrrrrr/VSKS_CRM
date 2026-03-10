@@ -63,8 +63,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.budget || s.calculated_budget || 0) }}</div>
-            <div class="sc-budget-label">{{ s.budget ? 'Бюджет' : 'Рассчитанный' }}</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.calculated_budget || s.budget || 0) }}</div>
+            <div class="sc-budget-label">{{ s.calculated_budget ? 'Рассчитанный' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini">

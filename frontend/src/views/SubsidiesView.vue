@@ -147,13 +147,9 @@
 
           <!-- KPI mini-cards for selected subsidy -->
           <div class="detail-kpis">
-            <div class="dkpi dkpi-budget">
-              <div class="dkpi-label">Бюджет (ручной)</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.budget) }}</div>
-            </div>
-            <div class="dkpi dkpi-calculated">
-              <div class="dkpi-label">Рассчитанный</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.calculated_budget || 0) }}</div>
+            <div class="dkpi" :class="selectedSubsidy.calculated_budget ? 'dkpi-calculated' : 'dkpi-budget'">
+              <div class="dkpi-label">{{ selectedSubsidy.calculated_budget ? 'Бюджет' : 'Бюджет (ручной)' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.calculated_budget || selectedSubsidy.budget) }}</div>
             </div>
             <div class="dkpi dkpi-planned">
               <div class="dkpi-label">Запланировано</div>
@@ -163,9 +159,9 @@
               <div class="dkpi-label">Оплачено</div>
               <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
             </div>
-            <div class="dkpi dkpi-free" :class="selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
-              <div class="dkpi-label">{{ (selectedSubsidy.budget || selectedSubsidy.calculated_budget || 0) - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div class="dkpi-val">{{ formatCurrency(Math.abs((selectedSubsidy.budget || selectedSubsidy.calculated_budget || 0) - selectedSubsidy.planned)) }}</div>
+            <div class="dkpi dkpi-free" :class="(selectedSubsidy.calculated_budget || selectedSubsidy.budget) - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
+              <div class="dkpi-label">{{ ((selectedSubsidy.calculated_budget || selectedSubsidy.budget) || 0) - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(Math.abs(((selectedSubsidy.calculated_budget || selectedSubsidy.budget) || 0) - selectedSubsidy.planned)) }}</div>
             </div>
           </div>
 

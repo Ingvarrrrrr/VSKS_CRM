@@ -101,8 +101,15 @@ async def generate_document(
         raise HTTPException(404, "Закупка не найдена")
 
     # Override template path with subsidy-specific template if available
-    if doc_type == "contract" and p.subsidy_id:
-        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), "contract.docx")
+    doc_type_to_file = {
+        "contract": "contract.docx",
+        "approval_sheet": "approval_sheet.docx",
+        "tz": "tz.docx",
+    }
+    template_filename = doc_type_to_file.get(doc_type, "contract.docx")
+    
+    if p.subsidy_id:
+        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), template_filename)
         if os.path.exists(subsidy_template):
             template_path = subsidy_template
 

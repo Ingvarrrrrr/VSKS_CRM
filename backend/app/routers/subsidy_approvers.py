@@ -113,46 +113,79 @@ async def contract_template_status(
 async def upload_contract_template(
     sid: int,
     file: UploadFile = File(...),
+    doc_type: str = Form("contract"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     await _get_subsidy_or_404(sid, db)
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(400, "Разрешены только .docx файлы")
+    
+    # Map doc_type to filename
+    doc_types = {
+        "contract": "contract.docx",
+        "approval_sheet": "approval_sheet.docx",
+        "tz": "tz.docx",
+        "protocol": "protocol.docx",
+        "specification": "specification.docx",
+        "other": "other.docx",
+    }
+    filename = doc_types.get(doc_type, "contract.docx")
+    
     folder = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid))
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, "contract.docx")
+    path = os.path.join(folder, filename)
     content = await file.read()
     with open(path, "wb") as f:
         f.write(content)
-    return {"ok": True}
+    return {"ok": True, "doc_type": doc_type, "filename": filename}
 
 
 @router.get("/{sid}/contract-template/download")
 async def download_contract_template(
     sid: int,
+    doc_type: str = Query("contract"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     await _get_subsidy_or_404(sid, db)
-    path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
+    doc_types = {
+        "contract": "contract.docx",
+        "approval_sheet": "approval_sheet.docx",
+        "tz": "tz.docx",
+        "protocol": "protocol.docx",
+        "specification": "specification.docx",
+        "other": "other.docx",
+    }
+    filename = doc_types.get(doc_type, "contract.docx")
+    path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), filename)
     if not os.path.exists(path):
         raise HTTPException(404, "Шаблон не загружен")
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"contract_template_subsidy_{sid}.docx",
+        filename=f"{doc_type}_subsidy_{sid}.docx",
     )
 
 
 @router.delete("/{sid}/contract-template")
 async def delete_contract_template(
     sid: int,
+    doc_type: str = Query("contract"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     await _get_subsidy_or_404(sid, db)
-    path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
+    doc_types = {
+        "contract": "contract.docx",
+        "approval_sheet": "approval_sheet.docx",
+        "tz": "tz.docx",
+        "protocol": "protocol.docx",
+        "specification": "specification.docx",
+        "other": "other.docx",
+    }
+    filename = doc_types.get(doc_type, "contract.docx")
+    path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), filename)
     if os.path.exists(path):
         os.remove(path)
     return {"ok": True}

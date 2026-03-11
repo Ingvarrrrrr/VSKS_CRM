@@ -673,6 +673,17 @@
             Шаблон не загружен. Будет использоваться стандартный шаблон договора.
           </v-alert>
 
+          <v-select
+            v-model="selectedDocumentType"
+            :items="documentTypes"
+            item-title="title"
+            item-value="value"
+            label="Тип документа"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hide-details
+          />
           <div class="d-flex align-center gap-2">
             <v-file-input
               v-model="templateFile"

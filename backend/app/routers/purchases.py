@@ -592,7 +592,7 @@ async def import_purchases_from_excel(
         return str(v).strip() if v is not None else None
 
     def to_dec(v):
-        if v is None:
+        if v is None or (isinstance(v, str) and v.strip() == ''):
             return None
         try:
             return Decimal(str(v).replace(" ", "").replace(",", "."))

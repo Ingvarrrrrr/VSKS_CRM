@@ -152,12 +152,8 @@ class PurchaseItemCreate(BaseModel):
     final_unit_price: Optional[Decimal] = None
     final_total: Optional[Decimal] = None
 
-    @field_validator('unit_price', 'final_unit_price', 'quantity', 'total_price', 'final_total', mode='before')
-    @classmethod
-    def parse_empty(cls, v):
-        if v is None or v == '' or v == 'None':
-            return None
-        return v
+    class Config:
+        arbitrary_types_allowed = True
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

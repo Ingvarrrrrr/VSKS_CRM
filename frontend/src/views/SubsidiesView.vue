@@ -823,7 +823,7 @@ const feoDeleteError     = ref('')
 const snack = ref({ show: false, text: '', color: 'success' })
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '' })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '' })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', customer_id: null })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false })
 
@@ -994,7 +994,7 @@ function toggleSelect(id: number) {
 }
 
 function startEdit(s: SubsidyRow) {
-  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '' }
+  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', customer_id: s.customer_id || null }
   showEditDialog.value = true
 }
 
@@ -1027,7 +1027,7 @@ async function updateSubsidy() {
   try {
     const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, customer_id: editForm.value.customer_id })
     })
     const i = allSubsidies.value.findIndex(s => s.id === res.id)
     if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }

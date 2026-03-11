@@ -18,5 +18,8 @@ class Product(Base):
     is_active = Column(Boolean, default=True)
     price = Column(Numeric(10, 2), nullable=True)
     price_links = Column(JSONB, default=list, nullable=True)  # [{url, price}] — ссылки для сравнения цен
+    last_contract_number = Column(String(100), nullable=True)  # Последний номер договора
+    last_contract_date = Column(String(20), nullable=True)    # Последняя дата договора
+    last_contractor = Column(String(500), nullable=True)     # Последний контрагент
     
     feo_category = relationship("FeoCategory", backref="products")

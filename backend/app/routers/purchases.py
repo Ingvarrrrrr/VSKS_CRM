@@ -375,6 +375,23 @@ async def transition_status(
                 f"Для перехода в статус «{target_status}» заполните: {', '.join(missing_labels)}"
             )
 
+    # Auto-calculate contract_price from items when transitioning to "contracted"
+    if target_status == "contracted":
+        total = sum((item.total_price or 0) for item in p.items)
+        if total > 0 and (not p.contract_price or p.contract_price == 0):
+            p.contract_price = total
+        
+        # Save last price to each product
+        for item in p.items:
+            if item.product_id and item.total_price:
+                prod_r = await db.execute(select(Product).where(Product.id == item.product_id))
+                product = prod_r.scalar_one_or_none()
+                if product:
+                    product.price = item.total_price
+                    product.last_contract_number = p.contract_number
+                    product.last_contract_date = p.contract_date
+                    product.last_contractor = p.contractor.name if p.contractor else None
+
     p.status = target_status
     await db.commit()
     await db.refresh(p)

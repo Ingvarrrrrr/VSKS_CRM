@@ -420,7 +420,8 @@ const loadSubsidies = async () => {
     // Используем dashboard/charts как SubsidiesView — там есть planned/paid/contracted
     const charts = await apiFetch<any>('/dashboard/charts')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
-      id: s.id, name: s.name, year: s.year, budget: s.budget,
+      id: s.id, name: s.name, year: s.year, 
+      budget: s.calculated_budget ?? s.budget,
       planned: s.total_planned ?? 0, paid: s.total_paid ?? 0, contracted: s.total_confirmed ?? 0,
     }))
     if (availableYears.value.length) selectedYear.value = availableYears.value[0]

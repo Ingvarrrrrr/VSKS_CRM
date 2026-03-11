@@ -6,9 +6,19 @@ from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
 
+from app.auth.jwt import get_current_user
+from typing import List, Optional
+from decimal import Decimal
+from io import BytesIO
+try:
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+except ImportError:
+    Workbook = None
+    load_workbook = None
+
 async def calculate_category_budget(db: AsyncSession, category_id: int) -> Optional[float]:
     """Calculate budget from children categories"""
-    # Get all children recursively
     async def get_children_ids(parent_id: int) -> list[int]:
         q = select(FeoCategory.id).where(FeoCategory.parent_id == parent_id)
         result = await db.execute(q)
@@ -22,7 +32,6 @@ async def calculate_category_budget(db: AsyncSession, category_id: int) -> Optio
     if not child_ids:
         return None
     
-    # Sum budgets of all children
     q = select(FeoCategory.budget).where(
         FeoCategory.id.in_(child_ids),
         FeoCategory.budget.isnot(None)
@@ -31,17 +40,6 @@ async def calculate_category_budget(db: AsyncSession, category_id: int) -> Optio
     budgets = result.scalars().all()
     
     return sum(b for b in budgets if b) if budgets else None
-
-from app.auth.jwt import get_current_user
-from typing import List, Optional
-from decimal import Decimal
-from io import BytesIO
-try:
-    from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-except ImportError:
-    Workbook = None
-    load_workbook = None
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 

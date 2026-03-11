@@ -92,7 +92,7 @@
         v-for="subsidy in quickSubsidies"
         :key="subsidy.id"
         :title="subsidy.name"
-        :subtitle="formatCurrency(subsidy.budget || 0)"
+        :subtitle="formatCurrency(subsidy.calculated_budget || subsidy.budget || 0)"
         prepend-icon="mdi-cash"
         @click="goToSubsidy(subsidy.id)"
       >

@@ -66,6 +66,15 @@ TRANSITION_REQUIRED: dict[str, list[str]] = {
     "paid": ["payment_doc_number", "payment_doc_date", "payment_amount"],
 }
 
+STATUS_LABELS = {
+    "planned": "Планируется",
+    "confirmed": "Подтверждено",
+    "in_progress": "Ведётся работа",
+    "contracted": "Договор",
+    "delivered": "Поставлено",
+    "paid": "Оплачено",
+}
+
 
 def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
     product_name = None
@@ -370,9 +379,10 @@ async def transition_status(
                 "payment_amount": "Сумма платежа",
             }
             missing_labels = [labels.get(f, f) for f in missing]
+            status_label = STATUS_LABELS.get(target_status, target_status)
             raise HTTPException(
                 422,
-                f"Для перехода в статус «{target_status}» заполните: {', '.join(missing_labels)}"
+                f"Для перехода в статус «{status_label}» заполните: {', '.join(missing_labels)}"
             )
 
     # Auto-calculate contract_price from items when transitioning to "contracted"

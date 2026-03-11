@@ -24,7 +24,7 @@ async def dashboard(db: AsyncSession = Depends(get_db)):
             Purchase.feo_category_id,
             func.coalesce(func.sum(Purchase.planned_total_price), 0).label("planned"),
             func.coalesce(func.sum(
-                func.case((Purchase.confirmed == True, Purchase.final_total_amount), else_=0)
+                case((Purchase.confirmed == True, Purchase.final_total_amount), else_=0)
             ), 0).label("confirmed"),
             func.coalesce(func.sum(Purchase.delivery_payment_amount), 0).label("payment"),
         ).group_by(Purchase.feo_category_id)

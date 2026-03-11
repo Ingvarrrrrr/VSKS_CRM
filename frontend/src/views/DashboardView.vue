@@ -40,12 +40,12 @@
         <div class="overrun-title">Превышение бюджета субсидий!</div>
         <div v-for="s in overrunSubsidies" :key="s.id" class="overrun-row">
           <strong>{{ s.name }}</strong>:
-          бюджет {{ formatCurrency(s.budget) }},
+          бюджет {{ formatCurrency(((s).calculated_budget ?? s.budget)) }},
           НМЦК {{ formatCurrency(s.planned) }}
-          <span v-if="s.contracted > s.budget">
+          <span v-if="s.contracted > ((s).calculated_budget ?? s.budget)">
             · законтрактовано {{ formatCurrency(s.contracted) }}
           </span>
-          → <strong>перерасход {{ formatCurrency(Math.max(s.planned, s.contracted) - s.budget) }}</strong>
+          → <strong>перерасход {{ formatCurrency(Math.max(s.planned, s.contracted) - ((s).calculated_budget ?? s.budget)) }}</strong>
         </div>
         <div class="overrun-hint">Уменьшите НМЦК закупок или увеличьте размер субсидии</div>
       </div>
@@ -226,19 +226,19 @@
               <div class="font-weight-medium">{{ s.name }}</div>
               <div v-if="s.description" class="text-caption text-medium-emphasis">{{ s.description }}</div>
             </td>
-            <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
+            <td class="text-right font-weight-medium">{{ formatCurrency(((s).calculated_budget ?? s.budget)) }}</td>
             <td class="text-right text-info">{{ formatCurrency(s.contracted) }}</td>
             <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
-            <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
-              {{ formatCurrency(s.budget - s.paid) }}
+            <td class="text-right" :class="((s).calculated_budget ?? s.budget) - s.paid >= 0 ? 'text-success' : 'text-error'">
+              {{ formatCurrency(((s).calculated_budget ?? s.budget) - s.paid) }}
             </td>
             <td>
               <v-progress-linear
-                :model-value="pct(s.paid, s.budget)" height="18"
-                :color="progressColor(pct(s.paid, s.budget))" rounded
+                :model-value="pct(s.paid, ((s).calculated_budget ?? s.budget))" height="18"
+                :color="progressColor(pct(s.paid, ((s).calculated_budget ?? s.budget)))" rounded
               >
                 <template #default>
-                  <span class="text-caption font-weight-bold">{{ pct(s.paid, s.budget) }}%</span>
+                  <span class="text-caption font-weight-bold">{{ pct(s.paid, ((s).calculated_budget ?? s.budget)) }}%</span>
                 </template>
               </v-progress-linear>
             </td>
@@ -330,7 +330,7 @@ const totalRemaining  = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
 const overrunSubsidies = computed(() =>
-  filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
+  filteredSubsidies.value.filter(s => s.planned > ((s).calculated_budget ?? s.budget) || s.contracted > ((s).calculated_budget ?? s.budget))
 )
 
 // ── KPI Cards ─────────────────────────────────────
@@ -482,7 +482,7 @@ const statusPieOptions = computed(() => ({
 const barReady = computed(() => filteredSubsidyStats.value.length > 0)
 
 const barSeries = computed(() => [
-  { name: 'Бюджет',          data: filteredSubsidyStats.value.map(s => s.budget) },
+  { name: 'Бюджет',          data: filteredSubsidyStats.value.map(s => ((s).calculated_budget ?? s.budget)) },
   { name: 'Законтрактовано', data: filteredSubsidyStats.value.map(s => s.contracted) },
   { name: 'Оплачено',        data: filteredSubsidyStats.value.map(s => s.paid) },
 ])
@@ -541,7 +541,7 @@ async function loadAll() {
       shortName: truncate(s.name, 20),
       description: '',
       year: s.year,
-      budget: s.budget,
+      budget: ((s).calculated_budget ?? s.budget),
       contracted: s.total_confirmed,
       paid: s.total_paid,
       planned: s.total_planned,

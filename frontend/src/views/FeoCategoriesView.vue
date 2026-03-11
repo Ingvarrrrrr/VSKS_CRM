@@ -42,7 +42,7 @@
           <div class="sc-header">
             <div class="sc-name">{{ s.name }}</div>
           </div>
-          <div class="sc-budget">{{ formatCurrencyShort(s.budget) }}</div>
+          <div class="sc-budget">{{ formatCurrencyShort(s.calculated_budget ?? s.budget) }}</div>
           <div class="sc-budget-label">Бюджет</div>
           <div class="sc-mini-row">
             <div class="sc-mini">

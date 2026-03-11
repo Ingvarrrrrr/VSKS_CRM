@@ -364,6 +364,7 @@ interface FeoCategory {
   code?: string | null; appendix?: string | null
   subsidy_id: number; parent_id?: number | null
   is_active: boolean; budget?: number | null
+  calculated_budget?: number | null
 }
 
 interface FeoNode extends FeoCategory {

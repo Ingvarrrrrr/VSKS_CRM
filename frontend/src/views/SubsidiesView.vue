@@ -719,6 +719,7 @@ const route  = useRoute()
 interface SubsidyRow {
   id: number; name: string; year: number; budget: number
   description?: string; planned: number; paid: number; contracted: number
+  calculated_budget?: number
 }
 
 interface FeoCategory {

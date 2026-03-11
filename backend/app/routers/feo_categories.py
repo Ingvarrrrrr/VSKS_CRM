@@ -5,6 +5,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
+
+async def calculate_category_budget(db: AsyncSession, category_id: int) -> Optional[float]:
+    """Calculate budget from children categories"""
+    # Get all children recursively
+    async def get_children_ids(parent_id: int) -> list[int]:
+        q = select(FeoCategory.id).where(FeoCategory.parent_id == parent_id)
+        result = await db.execute(q)
+        children = result.scalars().all()
+        ids = list(children)
+        for child_id in children:
+            ids.extend(await get_children_ids(child_id))
+        return ids
+    
+    child_ids = await get_children_ids(category_id)
+    if not child_ids:
+        return None
+    
+    # Sum budgets of all children
+    q = select(FeoCategory.budget).where(
+        FeoCategory.id.in_(child_ids),
+        FeoCategory.budget.isnot(None)
+    )
+    result = await db.execute(q)
+    budgets = result.scalars().all()
+    
+    return sum(b for b in budgets if b) if budgets else None
+
 from app.auth.jwt import get_current_user
 from typing import List, Optional
 from decimal import Decimal
@@ -60,7 +87,13 @@ async def list_categories(
     if is_active is not None:
         q = q.where(FeoCategory.is_active == is_active)
     result = await db.execute(q.order_by(FeoCategory.id))
-    return result.scalars().all()
+    categories = result.scalars().all()
+    
+    # Calculate calculated_budget for each category
+    for cat in categories:
+        cat.calculated_budget = await calculate_category_budget(db, cat.id)
+    
+    return categories
 
 
 @router.get("/tree")

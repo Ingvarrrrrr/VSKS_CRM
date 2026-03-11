@@ -90,6 +90,7 @@ class FeoCategoryOut(BaseModel):
     appendix: Optional[str] = None
     is_active: bool = True
     budget: Optional[float] = None
+    calculated_budget: Optional[float] = None
     model_config = {"from_attributes": True}
 
 class FeoCategoryTree(FeoCategoryOut):

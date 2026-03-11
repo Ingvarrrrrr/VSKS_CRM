@@ -360,6 +360,18 @@
             </v-col>
           </v-row>
           <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+        <v-select
+          v-model="editForm.customer_id"
+          :items="contractors"
+          item-title="name"
+          item-value="id"
+          label="Заказчик"
+          variant="outlined"
+          density="compact"
+          clearable
+          class="mt-3"
+          hide-details
+        />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />

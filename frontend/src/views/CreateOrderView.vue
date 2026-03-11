@@ -277,8 +277,8 @@
                 <th style="width:36px;text-align:center">№</th>
                 <th style="width:72px;text-align:center">Фото</th>
                 <th>Наименование и описание</th>
-                <th style="width:70px;text-align:center">Кол-во</th>
-                <th style="width:56px;text-align:center">Ед.</th>
+                <th style="width:80px;text-align:center">Кол-во</th>
+                <th style="width:80px;text-align:center">Ед.</th>
                 <th style="width:120px;text-align:right">Цена ед., ₽</th>
                 <th style="width:130px;text-align:right">Сумма, ₽</th>
               </tr>
@@ -292,7 +292,7 @@
                   </v-avatar>
                   <v-icon v-else size="40" color="grey-lighten-2">mdi-image-off-outline</v-icon>
                 </td>
-                <td class="py-2">
+                <td class="py-2" style="min-width:200px;max-width:350px;white-space:normal;word-break:break-word">
                   <div class="font-weight-medium" style="font-size:13px">{{ item.item_name }}</div>
                   <div v-if="item._description" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
                     {{ item._description }}

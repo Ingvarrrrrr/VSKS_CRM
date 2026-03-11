@@ -304,8 +304,8 @@ class PublicationOut(BaseModel):
     external_id: Optional[str] = None
     external_url: Optional[str] = None
     error_text: Optional[str] = None
-    published_at: Optional[datetime] = None
-    created_at: Optional[datetime] = None
+    published_at: Optional[str] = None
+    created_at: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -320,6 +320,6 @@ class MemoryCreate(BaseModel):
 
 class MemoryOut(MemoryCreate):
     id: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: str
+    updated_at: str
     model_config = {"from_attributes": True}

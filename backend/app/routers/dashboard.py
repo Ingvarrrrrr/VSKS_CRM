@@ -8,6 +8,7 @@ from app.models.subsidy import Subsidy
 from app.auth.jwt import get_current_user
 from app.config import settings
 from decimal import Decimal
+from app.routers.subsidies import calculate_budget_from_categories
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -118,11 +119,13 @@ async def dashboard_charts(db: AsyncSession = Depends(get_db)):
 
     subsidy_stats = []
     for row in subsidy_result:
+        calc_budget = await calculate_budget_from_categories(db, row.id)
         subsidy_stats.append({
             "id": row.id,
             "name": row.name,
             "year": row.year,
             "budget": float(row.budget),
+            "calculated_budget": calc_budget,
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),

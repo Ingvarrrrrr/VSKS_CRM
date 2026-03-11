@@ -21,7 +21,11 @@ class SubsidyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
-    """Подсчёт бюджета: level-1 без детей = budget, level-1 с детьми = сумма children"""
+    """
+    Подсчёт бюджета:
+    - Если у level-1 есть дети С бюджетами → сумма детей
+    - Если у level-1 нет детей → свой бюджет (ручной)
+    """
     stmt = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
     result = await db.execute(stmt)
     all_categories = result.scalars().all()
@@ -33,14 +37,21 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     total = 0.0
     
     for cat in all_categories:
-        if cat.level == 1:  # Только верхний уровень
-            # Найти всех детей (level 2 и 3)
+        if cat.level == 1:
             children = [c for c in all_categories if c.parent_id == cat.id]
+            
             if children:
-                # Есть дети → суммируем их бюджеты
-                for child in children:
-                    if child.budget is not None:
+                # Есть дети → проверяем есть ли у детей бюджеты
+                children_with_budget = [c for c in children if c.budget is not None and c.budget > 0]
+                
+                if children_with_budget:
+                    # Есть дети с бюджетами → суммируем
+                    for child in children_with_budget:
                         total += float(child.budget)
+                else:
+                    # Нет бюджетов у детей → берём свой бюджет
+                    if cat.budget is not None:
+                        total += float(cat.budget)
             else:
                 # Нет детей → берём свой бюджет
                 if cat.budget is not None:

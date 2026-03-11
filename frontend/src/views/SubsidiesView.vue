@@ -910,6 +910,7 @@ async function loadAll() {
     const charts = await apiFetch<any>('/dashboard/charts')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
+      calculated_budget: s.calculated_budget,
       planned: s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)

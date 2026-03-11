@@ -336,6 +336,21 @@
                 variant="outlined" density="compact" type="number" suffix="₽" />
             </v-col>
           </v-row>
+          <!-- НДС -->
+          <v-row>
+            <v-col cols="12" md="2">
+              <v-text-field v-model.number="form.nds" label="НДС, %" variant="outlined"
+                density="compact" type="number" placeholder="0" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field :model-value="contractPriceWithoutNds" label="Цена договора без НДС" variant="outlined"
+                density="compact" readonly bg-color="grey-lighten-4" suffix="₽" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field :model-value="contractPriceWithNds" label="Цена договора с НДС" variant="outlined"
+                density="compact" readonly bg-color="grey-lighten-4" suffix="₽" />
+            </v-col>
+          </v-row>
           <!-- Тип договора -->
           <v-row class="mt-0">
             <v-col cols="12" md="3">
@@ -1393,6 +1408,7 @@ const form = reactive({
   contract_price: null as number | null,
   economy: null as number | null,
   price_increase: null as number | null,
+  nds: null as number | null,
   contract_number: '',
   contract_date: '',
   delivery_date: '',
@@ -1945,6 +1961,19 @@ const totalNmck = computed(() =>
   items.value.reduce((s, i) => s + (i.total_price || 0), 0)
 )
 
+// НДС расчёты
+const contractPriceWithoutNds = computed(() => {
+  if (!form.value.contract_price || !form.value.nds) return ''
+  const base = form.value.contract_price / (1 + form.value.nds / 100)
+  return formatMoney(Number(base.toFixed(2)))
+})
+
+const contractPriceWithNds = computed(() => {
+  if (!form.value.contract_price || !form.value.nds) return ''
+  const withNds = form.value.contract_price
+  return formatMoney(withNds)
+})
+
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
@@ -2204,6 +2233,7 @@ const loadPurchase = async () => {
     contract_price: data.contract_price ? Number(data.contract_price) : null,
     economy: data.economy ? Number(data.economy) : null,
     price_increase: data.price_increase ? Number(data.price_increase) : null,
+    nds: data.nds ? Number(data.nds) : null,
     contract_number: data.contract_number || '',
     contract_date: data.contract_date || '',
     delivery_date: data.delivery_date || '',
@@ -2320,6 +2350,7 @@ const doSave = async (adminOverride: boolean) => {
       ...form,
       planned_total_price: totalNmck.value || null,
       total_nmck: totalNmck.value || null,
+      nds: form.value.nds || null,
       contract_date: form.contract_date || null,
       delivery_date: form.delivery_date || null,
       execution_term: form.execution_term || null,

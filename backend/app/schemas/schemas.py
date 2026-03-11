@@ -204,6 +204,7 @@ class PurchaseCreate(BaseModel):
     contract_price: Optional[Decimal] = None
     economy: Optional[Decimal] = None
     price_increase: Optional[Decimal] = None
+    nds: Optional[Decimal] = None  # НДС в процентах
     execution_term: Optional[date] = None
     execution_term_changed: Optional[date] = None
     delivery_date: Optional[date] = None

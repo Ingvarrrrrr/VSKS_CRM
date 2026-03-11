@@ -33,6 +33,7 @@ class Purchase(Base):
     contract_price = Column(Numeric(15, 2))
     economy = Column(Numeric(15, 2))
     price_increase = Column(Numeric(15, 2))
+    nds = Column(Numeric(5, 2))  # НДС в процентах, например 20.0
     execution_term = Column(Date)
     execution_term_changed = Column(Date)
     delivery_date = Column(Date)

@@ -317,6 +317,18 @@
             </v-col>
           </v-row>
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+        <v-select
+          v-model="form.customer_id"
+          :items="contractors"
+          item-title="name"
+          item-value="id"
+          label="Заказчик"
+          variant="outlined"
+          density="compact"
+          clearable
+          class="mt-3"
+          hide-details
+        />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -816,6 +828,8 @@ const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appe
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false })
 
 // ── Computed ──────────────────────────────────────
+const contractors = ref<{id: number, name: string}[]>([])
+    
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
@@ -907,6 +921,10 @@ function toggleExpand(id: number) {
 async function loadAll() {
   loading.value = true
   try {
+    // Load contractors for customer selection
+    const contractorsData = await apiFetch<any[]>('/contractors/')
+    contractors.value = contractorsData.map((c: any) => ({id: c.id, name: c.name}))
+    
     const charts = await apiFetch<any>('/dashboard/charts')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,

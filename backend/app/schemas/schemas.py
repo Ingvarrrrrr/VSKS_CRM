@@ -36,13 +36,17 @@ class SubsidyCreate(BaseModel):
     year: int
     budget: float
     description: Optional[str] = None
+    customer_id: Optional[int] = None
 
 class SubsidyOut(BaseModel):
     id: int
     name: str
     year: int
     budget: float
+    calculated_budget: Optional[float] = None
     description: Optional[str] = None
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # ResponsiblePerson

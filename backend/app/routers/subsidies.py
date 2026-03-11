@@ -16,8 +16,10 @@ class SubsidyOut(BaseModel):
     name: str
     year: int
     budget: float
-    description: Optional[str] = None
     calculated_budget: Optional[float] = None
+    description: Optional[str] = None
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
@@ -69,14 +71,20 @@ async def list_subsidies(
     output = []
     for s in subsidies:
         calc = await calculate_budget_from_categories(db, s.id)
+        # Save calculated_budget to DB
+        s.calculated_budget = calc
+        customer_name = s.customer.name if s.customer else None
         output.append(SubsidyOut(
             id=s.id,
             name=s.name,
             year=s.year,
             budget=s.budget,
+            calculated_budget=calc,
             description=s.description,
-            calculated_budget=calc
+            customer_id=s.customer_id,
+            customer_name=customer_name
         ))
+    await db.commit()
     return output
 
 @router.get("/{subsidy_id}", response_model=SubsidyOut)
@@ -108,13 +116,19 @@ async def create_subsidy(
     db.add(db_subsidy)
     await db.commit()
     await db.refresh(db_subsidy)
+    # Calculate and save calculated_budget
+    calc = await calculate_budget_from_categories(db, db_subsidy.id)
+    db_subsidy.calculated_budget = calc
+    await db.commit()
     return SubsidyOut(
         id=db_subsidy.id,
         name=db_subsidy.name,
         year=db_subsidy.year,
         budget=db_subsidy.budget,
+        calculated_budget=calc,
         description=db_subsidy.description,
-        calculated_budget=None
+        customer_id=db_subsidy.customer_id,
+        customer_name=None
     )
 
 @router.put("/{subsidy_id}", response_model=SubsidyOut)

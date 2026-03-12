@@ -317,7 +317,7 @@
             </v-col>
           </v-row>
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-        <v-select
+        <v-combobox
           v-model="form.customer_id"
           :items="contractors"
           item-title="name"
@@ -328,6 +328,8 @@
           clearable
           class="mt-3"
           hide-details
+          filterable
+          return-object
         />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -360,7 +362,7 @@
             </v-col>
           </v-row>
           <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-        <v-select
+        <v-combobox
           v-model="editForm.customer_id"
           :items="contractors"
           item-title="name"
@@ -371,6 +373,8 @@
           clearable
           class="mt-3"
           hide-details
+          filterable
+          return-object
         />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -845,13 +849,21 @@ const feoDeleteError     = ref('')
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
-const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '' })
+const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', customer_id: null })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', customer_id: null })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false })
 
 // ── Computed ──────────────────────────────────────
 const contractors = ref<{id: number, name: string}[]>([])
+
+// Helper to extract customer_id (handles both object and number from combobox)
+const getCustomerId = (val: any): number | null => {
+  if (val === null || val === undefined) return null
+  if (typeof val === 'number') return val
+  if (typeof val === 'object' && val.id) return val.id
+  return null
+}
     
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
@@ -1032,11 +1044,17 @@ async function addSubsidy() {
   try {
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null })
+      body: JSON.stringify({ 
+        name: form.value.name, 
+        year: form.value.year, 
+        budget: form.value.budget, 
+        description: form.value.description || null,
+        customer_id: getCustomerId(form.value.customer_id)
+      })
     })
     allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0 })
     showAddDialog.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '' }
+    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', customer_id: null }
     showSnack('Субсидия добавлена')
   } catch {
     showSnack('Ошибка добавления', 'error')
@@ -1050,7 +1068,13 @@ async function updateSubsidy() {
   try {
     const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, customer_id: editForm.value.customer_id })
+      body: JSON.stringify({ 
+        name: editForm.value.name, 
+        year: editForm.value.year, 
+        budget: editForm.value.budget, 
+        description: editForm.value.description || null, 
+        customer_id: getCustomerId(editForm.value.customer_id) 
+      })
     })
     const i = allSubsidies.value.findIndex(s => s.id === res.id)
     if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }

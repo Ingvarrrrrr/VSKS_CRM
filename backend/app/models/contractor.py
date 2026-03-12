@@ -14,6 +14,8 @@ class Contractor(Base):
     bank_details = Column(Text)
     # Contract document fields
     signatory = Column(String(255))
+    signatory_fio = Column(String(255))  # ФИО подписанта
+    signatory_position = Column(String(255))  # Должность подписанта
     signatory_basis = Column(String(500))
     postal_address = Column(Text)
     ogrn = Column(String(20))

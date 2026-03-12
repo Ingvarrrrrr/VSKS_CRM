@@ -238,7 +238,8 @@
             <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
             <div class="section-label mt-4">Подписант</div>
-            <v-text-field v-model="form.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-text-field v-model="form.signatory_fio" label="ФИО подписанта" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-text-field v-model="form.signatory_position" label="Должность подписанта" variant="outlined" density="compact" class="mb-3" hide-details />
             <v-text-field v-model="form.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
               placeholder="Устава, доверенности №..." />
 
@@ -406,6 +407,8 @@ interface ContractorWithStats {
   email?: string
   bank_details?: string
   signatory?: string
+  signatory_fio?: string
+  signatory_position?: string
   signatory_basis?: string
   postal_address?: string
   ogrn?: string
@@ -442,7 +445,7 @@ const snack = ref({ show: false, text: '', color: 'success' })
 const emptyForm = () => ({
   name: '', inn: '', kpp: '', address: '',
   contact_person: '', phone: '', email: '', bank_details: '',
-  signatory: '', signatory_basis: '', postal_address: '',
+  signatory: '', signatory_fio: '', signatory_position: '', signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
   org_type: '' as string | null,
 })
@@ -508,6 +511,8 @@ function openEdit(c: ContractorWithStats) {
     email:                c.email                || '',
     bank_details:         c.bank_details         || '',
     signatory:            c.signatory            || '',
+    signatory_fio:        c.signatory_fio        || '',
+    signatory_position:  c.signatory_position  || '',
     signatory_basis:      c.signatory_basis      || '',
     postal_address:       c.postal_address       || '',
     ogrn:                 c.ogrn                 || '',

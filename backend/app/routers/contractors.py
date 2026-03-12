@@ -241,6 +241,10 @@ async def import_contractors_excel(
             col.setdefault('signatory_basis', i)
         elif any(x in h_str for x in ('подписант', 'signatory', 'директор', 'руководит')):
             col.setdefault('signatory', i)
+        elif any(x in h_str for x in ('фИо', 'ф и о', 'фио', 'fio')):
+            col.setdefault('signatory_fio', i)
+        elif any(x in h_str for x in ('должност', 'position', 'должн')):
+            col.setdefault('signatory_position', i)
         elif any(x in h_str for x in ('контакт', 'contact', 'лицо')):
             col.setdefault('contact_person', i)
         elif any(x in h_str for x in ('телефон', 'phone', 'тел.')):
@@ -269,7 +273,7 @@ async def import_contractors_excel(
         'inn': 12, 'kpp': 9, 'ogrn': 20, 'bik': 20,
         'settlement_account': 100, 'correspondent_account': 100,
         'phone': 50, 'email': 255, 'contact_person': 255,
-        'signatory': 255, 'signatory_basis': 500, 'bank_name': 500,
+        'signatory': 255, 'signatory_fio': 255, 'signatory_position': 255, 'signatory_basis': 500, 'bank_name': 500,
     }
 
     def _cell(row, field):
@@ -312,6 +316,8 @@ async def import_contractors_excel(
             address=_cell(row, 'address'),
             postal_address=_cell(row, 'postal_address'),
             signatory=_cell(row, 'signatory'),
+            signatory_fio=_cell(row, 'signatory_fio'),
+            signatory_position=_cell(row, 'signatory_position'),
             signatory_basis=_cell(row, 'signatory_basis'),
             contact_person=_cell(row, 'contact_person'),
             phone=_cell(row, 'phone'),

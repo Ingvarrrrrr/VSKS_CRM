@@ -112,6 +112,8 @@ class ContractorCreate(BaseModel):
     bank_details: Optional[str] = None
     # Contract document fields
     signatory: Optional[str] = None
+    signatory_fio: Optional[str] = None
+    signatory_position: Optional[str] = None
     signatory_basis: Optional[str] = None
     postal_address: Optional[str] = None
     ogrn: Optional[str] = None

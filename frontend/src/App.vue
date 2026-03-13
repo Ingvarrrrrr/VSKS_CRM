@@ -3,6 +3,7 @@
     <app-bar v-if="isAuthenticated" />
     <v-main>
       <router-view />
+      <api-error-dialog />
     </v-main>
   </v-app>
 </template>
@@ -11,6 +12,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
+import ApiErrorDialog from './components/ApiErrorDialog.vue'
 
 const router = useRouter()
 const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)

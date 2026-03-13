@@ -691,7 +691,7 @@
           </v-btn>
         </v-card-title>
         <v-card-text class="px-4 pb-3 text-caption text-medium-emphasis">
-          Отправьте запрос КП поставщикам с описанием закупки. Письма формируются через почтовый клиент.
+          Сформируйте и сохраните запрос КП в реестр. Письма можно открыть в почтовом клиенте.
         </v-card-text>
       </v-card>
 
@@ -1178,8 +1178,56 @@
               </v-expansion-panel>
             </v-expansion-panels>
           </template>
+
+
+          <v-divider class="my-4" />
+          <div class="d-flex align-center justify-space-between mb-2">
+            <div class="text-subtitle-2">Реестр запросов КП по этой закупке</div>
+            <v-btn size="x-small" variant="text" :loading="kpRequestsLoading" @click="loadKpRequests">Обновить</v-btn>
+          </div>
+          <v-progress-linear v-if="kpRequestsLoading" indeterminate color="cyan-darken-2" class="mb-2" />
+          <div v-if="!kpRequestsLoading && !kpRequests.length" class="text-caption text-medium-emphasis">Запросы КП ещё не сохранялись</div>
+          <v-expansion-panels v-else variant="accordion">
+            <v-expansion-panel v-for="req in kpRequests" :key="req.id">
+              <v-expansion-panel-title>
+                <div class="d-flex align-center gap-2 w-100">
+                  <span class="font-weight-medium">#{{ req.id }}</span>
+                  <v-chip size="x-small" :color="REQUEST_STATUS_COLOR[req.status] || 'grey'" variant="tonal">
+                    {{ REQUEST_STATUS_LABEL[req.status] || req.status }}
+                  </v-chip>
+                  <span class="text-caption text-medium-emphasis">{{ req.created_at ? new Date(req.created_at).toLocaleString() : '' }}</span>
+                  <v-spacer />
+                  <v-btn size="x-small" variant="tonal" color="cyan-darken-2" @click.stop="setRequestStatus(req.id, 'sent')">Отметить отправленным</v-btn>
+                  <v-btn size="x-small" variant="tonal" color="success" class="ml-2" @click.stop="setRequestStatus(req.id, 'response_received')">Ответ получен</v-btn>
+                </div>
+              </v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <div class="text-caption mb-2">{{ req.subject || 'Без темы' }}</div>
+                <v-table density="compact">
+                  <thead>
+                    <tr><th>Получатель</th><th>Email</th><th>Статус</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="r in req.recipients" :key="r.id">
+                      <td>{{ r.contractor_name || '—' }}</td>
+                      <td>{{ r.email || '—' }}</td>
+                      <td>
+                        <v-chip size="x-small" :color="REQUEST_STATUS_COLOR[r.status] || 'grey'" variant="tonal">
+                          {{ REQUEST_STATUS_LABEL[r.status] || r.status }}
+                        </v-chip>
+                      </td>
+                      <td class="text-right">
+                        <v-btn size="x-small" variant="text" color="success" @click="setRecipientStatus(r.id, 'response_received')">Ответ</v-btn>
+                      </td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
         </v-card-text>
         <v-card-actions class="px-6 pb-4 gap-2">
+          <v-btn color="cyan-darken-2" variant="tonal" :loading="kpSaving" :disabled="!kpSelected.length" @click="saveKpRequest">Сохранить в реестр</v-btn>
           <v-btn variant="text" @click="kpDialog = false">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
@@ -2513,6 +2561,7 @@ const kpSelected    = ref<number[]>([])
 const kpIntroText   = ref('')
 const kpDeliveryDate = ref('')
 const kpItemsLoading = ref(false)
+const kpSaving = ref(false)
 
 interface ContractorKp {
   id: number; name: string; email?: string
@@ -2522,9 +2571,28 @@ interface KpItem {
   id: number; item_name: string; quantity: number; unit: string
   unit_price: number; category: string | null
 }
+interface CommercialRequestRecipientOut {
+  id: number
+  contractor_id?: number | null
+  contractor_name?: string | null
+  email?: string | null
+  status: string
+}
+interface CommercialRequestOut {
+  id: number
+  purchase_id: number
+  subject?: string | null
+  intro_text?: string | null
+  delivery_date?: string | null
+  status: string
+  created_at?: string | null
+  recipients: CommercialRequestRecipientOut[]
+}
 
 const kpContractorList = ref<ContractorKp[]>([])
 const kpItems = ref<KpItem[]>([])
+const kpRequests = ref<CommercialRequestOut[]>([])
+const kpRequestsLoading = ref(false)
 
 const kpContractorOptions = computed(() =>
   kpContractorList.value.map(c => ({
@@ -2597,6 +2665,96 @@ async function openKpDialog() {
       kpItems.value = await apiFetch<KpItem[]>(`/purchases/${purchaseId.value}/kp-items`)
     } catch { showSnack('Ошибка загрузки позиций', 'error') }
     finally { kpItemsLoading.value = false }
+  }
+
+  await loadKpRequests()
+}
+
+
+async function saveKpRequest() {
+  if (!purchaseId.value) {
+    showSnack('Сначала сохраните закупку, затем создайте запрос КП', 'error')
+    return
+  }
+  if (!kpSelected.value.length) {
+    showSnack('Выберите хотя бы одного получателя', 'error')
+    return
+  }
+
+  kpSaving.value = true
+  try {
+    const created = await apiFetch<CommercialRequestOut>('/commercial-requests/', {
+      method: 'POST',
+      body: {
+        purchase_id: purchaseId.value,
+        subject: form.subject || form.item_name || 'Запрос КП',
+        intro_text: kpIntroText.value || null,
+        delivery_date: kpDeliveryDate.value || null,
+        recipient_ids: kpSelected.value,
+      },
+    })
+    showSnack(`Запрос КП #${created.id} сохранён`)
+    await loadKpRequests()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка сохранения запроса КП', 'error')
+  } finally {
+    kpSaving.value = false
+  }
+}
+
+
+
+const REQUEST_STATUS_LABEL: Record<string, string> = {
+  prepared: 'Подготовлен',
+  sent: 'Отправлен',
+  response_received: 'Ответ получен',
+  declined: 'Отказ',
+}
+const REQUEST_STATUS_COLOR: Record<string, string> = {
+  prepared: 'grey',
+  sent: 'cyan-darken-2',
+  response_received: 'success',
+  declined: 'error',
+}
+
+async function loadKpRequests() {
+  if (!purchaseId.value) {
+    kpRequests.value = []
+    return
+  }
+  kpRequestsLoading.value = true
+  try {
+    kpRequests.value = await apiFetch<CommercialRequestOut[]>(`/commercial-requests/?purchase_id=${purchaseId.value}`)
+  } catch {
+    showSnack('Ошибка загрузки реестра КП', 'error')
+  } finally {
+    kpRequestsLoading.value = false
+  }
+}
+
+async function setRequestStatus(requestId: number, status: string) {
+  try {
+    await apiFetch<CommercialRequestOut>(`/commercial-requests/${requestId}/status`, {
+      method: 'PATCH',
+      body: { status },
+    })
+    await loadKpRequests()
+    showSnack('Статус запроса обновлён')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка обновления статуса запроса', 'error')
+  }
+}
+
+async function setRecipientStatus(recipientId: number, status: string) {
+  try {
+    await apiFetch<CommercialRequestOut>(`/commercial-requests/recipients/${recipientId}/status`, {
+      method: 'PATCH',
+      body: { status },
+    })
+    await loadKpRequests()
+    showSnack('Статус получателя обновлён')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка обновления статуса получателя', 'error')
   }
 }
 

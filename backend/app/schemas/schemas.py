@@ -331,3 +331,71 @@ class MemoryOut(MemoryCreate):
     created_at: str
     updated_at: str
     model_config = {"from_attributes": True}
+
+# Commercial requests (КП)
+class CommercialRequestCreate(BaseModel):
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    recipient_ids: List[int] = []
+
+
+class CommercialRequestRecipientOut(BaseModel):
+    id: int
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    email: Optional[str] = None
+    status: str
+
+
+
+
+class CommercialRequestStatusUpdate(BaseModel):
+    status: str
+
+
+class CommercialRequestRecipientStatusUpdate(BaseModel):
+    status: str
+
+
+class CommercialRequestOut(BaseModel):
+    id: int
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    status: str
+    created_by: Optional[int] = None
+    created_at: Optional[str] = None
+    recipients: List[CommercialRequestRecipientOut] = []
+
+# Suppliers
+class SupplierProductLinkCreate(BaseModel):
+    product_id: int
+    last_price_note: Optional[str] = None
+    source: Optional[str] = "manual"
+
+
+class SupplierProductOut(BaseModel):
+    id: int
+    supplier_id: int
+    product_id: int
+    last_price_note: Optional[str] = None
+    source: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class SupplierCreate(BaseModel):
+    name: str
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SupplierOut(SupplierCreate):
+    id: int
+    created_at: Optional[str] = None
+    products: List[SupplierProductOut] = []

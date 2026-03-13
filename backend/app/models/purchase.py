@@ -49,6 +49,12 @@ class Purchase(Base):
     purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
     purchase_basis = Column(String(50), nullable=True)  # 'plan_schedule' | 'service_note'
     responsible_person = Column(String(500), nullable=True)
+    # Contract document generation fields
+    vat_applicable = Column(Boolean, nullable=True, default=False)       # НДС применяется
+    vat_rate = Column(Integer, nullable=True)                             # Ставка НДС (20, 10)
+    vat_exemption_article = Column(String(200), nullable=True)           # Статья НК РФ
+    third_party_involved = Column(Boolean, nullable=True, default=False)  # Привлечение третьих лиц
+    service_period_type = Column(String(10), nullable=True)              # 'period' | 'date'
 
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")

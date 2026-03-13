@@ -22,10 +22,28 @@ router = APIRouter(prefix="/api/purchases", tags=["documents"])
 TEMPLATES_DIR = "/app/templates"
 
 DOC_TYPES = {
-    "service_note":   ("service_note.docx",   "Service_Note"),
-    "contract_tz":    ("contract_tz.docx",    "Contract_TZ"),
-    "contract":       ("contract.docx",        "Contract"),
-    "approval_sheet": ("approval_sheet.docx", "Approval_Sheet"),
+    "service_note":    ("service_note.docx",    "Service_Note"),
+    "contract_tz":     ("contract_tz.docx",     "Contract_TZ"),
+    "contract":        ("contract.docx",         "Contract"),
+    "contract_fadm":   ("contract_fadm.docx",   "Contract_FADM"),
+    "approval_sheet":  ("approval_sheet.docx",  "Approval_Sheet"),
+}
+
+# Fields required to generate a FADM contract; maps field_path → label
+_CONTRACT_REQUIRED_FIELDS = {
+    "contractor": "Контрагент",
+    "contractor.org_type": "Тип контрагента (Юр.лицо / ИП / Самозанятый)",
+    "contractor.inn": "ИНН контрагента",
+    "contractor.address": "Юридический адрес контрагента",
+    "contractor.settlement_account": "Расчётный счёт контрагента",
+    "contractor.bank_name": "Наименование банка",
+    "contractor.bik": "БИК банка",
+    "contract_number": "Номер договора",
+    "contract_date": "Дата договора",
+    "subject": "Предмет договора (услуги)",
+    "contract_price": "Цена договора",
+    "service_period_type": "Тип срока (период / дата)",
+    "execution_term": "Срок оказания услуг",
 }
 
 _BASIS_LABELS = {
@@ -57,6 +75,159 @@ def _fmt_money(v) -> str:
     if v is None:
         return ""
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",") + " ₽"
+
+
+def _fmt_money_plain(v) -> str:
+    """Money without currency symbol, with space thousand separator, comma decimal."""
+    if v is None:
+        return ""
+    return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
+
+
+_ONES = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять",
+         "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать",
+         "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"]
+_TENS = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят",
+         "шестьдесят", "семьдесят", "восемьдесят", "девяносто"]
+_HUNDREDS = ["", "сто", "двести", "триста", "четыреста", "пятьсот",
+             "шестьсот", "семьсот", "восемьсот", "девятьсот"]
+_ONES_F = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять",
+           "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать",
+           "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"]
+
+
+def _chunk_to_words(n: int, feminine: bool = False) -> str:
+    parts = []
+    h = n // 100
+    r = n % 100
+    t = r // 10
+    o = r % 10
+    if h:
+        parts.append(_HUNDREDS[h])
+    if r < 20:
+        w = (_ONES_F[r] if feminine else _ONES[r])
+        if w:
+            parts.append(w)
+    else:
+        if t:
+            parts.append(_TENS[t])
+        w = (_ONES_F[o] if feminine else _ONES[o])
+        if w:
+            parts.append(w)
+    return " ".join(parts)
+
+
+def _rubles_to_words(amount) -> str:
+    """Convert numeric amount to Russian words (рублей XX копеек)."""
+    if amount is None:
+        return ""
+    try:
+        val = round(float(amount), 2)
+    except (TypeError, ValueError):
+        return ""
+    rubles = int(val)
+    kopecks = round((val - rubles) * 100)
+    billions = rubles // 1_000_000_000
+    millions = (rubles % 1_000_000_000) // 1_000_000
+    thousands = (rubles % 1_000_000) // 1_000
+    rest = rubles % 1_000
+
+    parts = []
+    if billions:
+        w = _chunk_to_words(billions)
+        if w:
+            parts.append(w)
+        if billions % 10 == 1 and billions % 100 != 11:
+            parts.append("миллиард")
+        elif 2 <= billions % 10 <= 4 and not (11 <= billions % 100 <= 14):
+            parts.append("миллиарда")
+        else:
+            parts.append("миллиардов")
+    if millions:
+        w = _chunk_to_words(millions)
+        if w:
+            parts.append(w)
+        if millions % 10 == 1 and millions % 100 != 11:
+            parts.append("миллион")
+        elif 2 <= millions % 10 <= 4 and not (11 <= millions % 100 <= 14):
+            parts.append("миллиона")
+        else:
+            parts.append("миллионов")
+    if thousands:
+        w = _chunk_to_words(thousands, feminine=True)
+        if w:
+            parts.append(w)
+        if thousands % 10 == 1 and thousands % 100 != 11:
+            parts.append("тысяча")
+        elif 2 <= thousands % 10 <= 4 and not (11 <= thousands % 100 <= 14):
+            parts.append("тысячи")
+        else:
+            parts.append("тысяч")
+    if rest or not parts:
+        w = _chunk_to_words(rest, feminine=True)
+        if w:
+            parts.append(w)
+    if rubles == 0:
+        parts = ["ноль"]
+
+    # Ruble ending
+    r10 = rubles % 10
+    r100 = rubles % 100
+    if r10 == 1 and r100 != 11:
+        rub_word = "рубль"
+    elif 2 <= r10 <= 4 and not (11 <= r100 <= 14):
+        rub_word = "рубля"
+    else:
+        rub_word = "рублей"
+
+    parts.append(rub_word)
+    parts.append(f"{kopecks:02d}")
+    k10 = kopecks % 10
+    k100 = kopecks % 100
+    if k10 == 1 and k100 != 11:
+        parts.append("копейка")
+    elif 2 <= k10 <= 4 and not (11 <= k100 <= 14):
+        parts.append("копейки")
+    else:
+        parts.append("копеек")
+
+    return " ".join(parts)
+
+
+def _validate_contract_fields(p, c) -> list[str]:
+    """Return list of missing required fields for contract generation."""
+    missing = []
+    if not c:
+        return ["Контрагент не указан в закупке"]
+    checks = [
+        (c.org_type, "Тип контрагента (org_type)"),
+        (c.inn, "ИНН контрагента"),
+        (c.address, "Юридический адрес контрагента"),
+        (c.settlement_account, "Расчётный счёт контрагента"),
+        (c.bank_name, "Наименование банка"),
+        (c.bik, "БИК банка"),
+        (p.contract_number, "Номер договора"),
+        (p.contract_date, "Дата договора"),
+        (p.subject, "Предмет договора"),
+        (p.contract_price, "Цена договора"),
+        (p.service_period_type, "Тип срока (period/date)"),
+        (p.execution_term, "Срок оказания услуг / дата"),
+    ]
+    if c.org_type == "Юр.лицо":
+        checks += [
+            (c.kpp, "КПП контрагента"),
+            (c.ogrn, "ОГРН контрагента"),
+            (c.signatory, "ФИО подписанта"),
+            (c.signatory_basis, "Основание полномочий подписанта"),
+        ]
+    elif c.org_type == "ИП":
+        checks += [
+            (c.ogrn, "ОГРНИП контрагента"),
+        ]
+    for val, label in checks:
+        if not val and val != 0:
+            missing.append(label)
+    return missing
 
 
 @router.get("/{pid}/documents/{doc_type}")
@@ -250,6 +421,66 @@ async def generate_document(
         })
 
     c = p.contractor
+
+    # Validate required fields for contract_fadm
+    if doc_type == "contract_fadm":
+        missing = _validate_contract_fields(p, c)
+        if missing:
+            raise HTTPException(
+                422,
+                f"Для генерации договора необходимо заполнить: {'; '.join(missing)}"
+            )
+
+    # ── Contract-specific context helpers ────────────────────────────────────
+    def _contract_date_parts():
+        d = p.contract_date
+        if not d:
+            return "", "", ""
+        if isinstance(d, str):
+            try:
+                d = date.fromisoformat(d)
+            except ValueError:
+                return "", "", ""
+        months_ru = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                     "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        return str(d.day).zfill(2), months_ru[d.month - 1], str(d.year)
+
+    cd_day, cd_month, cd_year = _contract_date_parts()
+
+    # Short name: extract parenthetical or use first word
+    def _short_name(full_name: str) -> str:
+        import re
+        m = re.search(r'[«""]([^»""]+)[»""]', full_name)
+        if m:
+            return m.group(1)
+        parts = full_name.split()
+        return parts[-1] if parts else full_name
+
+    # Signatory position: extract from signatory field if "Директор ФИО" format
+    def _signatory_position(signatory: str) -> str:
+        if not signatory:
+            return ""
+        parts = signatory.strip().split()
+        if len(parts) > 1 and not parts[0][0].isupper():
+            return parts[0]
+        return "Директор"
+
+    # VAT calculations
+    vat_app = bool(p.vat_applicable)
+    vat_rate_val = p.vat_rate or 20
+    price_val = float(p.contract_price or 0)
+    if vat_app and price_val:
+        vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
+    else:
+        vat_amount_val = 0.0
+
+    # НДС info for approval sheet
+    if vat_app:
+        vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+    else:
+        art = (p.vat_exemption_article or "").strip()
+        vat_info_line = f"НДС не облагается" + (f" ({art})" if art else "")
+
     context = {
         # Закупка
         "purchase_number": p.purchase_number or "",
@@ -323,6 +554,34 @@ async def generate_document(
         # Служебные
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),
+        # ── Поля для contract_fadm шаблона ───────────────────────────────────
+        # Дата по частям
+        "contract_date_day":   cd_day,
+        "contract_date_month": cd_month,
+        "contract_date_year":  cd_year,
+        # Тип контрагента
+        "contractor_org_type": (c.org_type or "") if c else "",
+        "contractor_short_name": _short_name(c.name) if c and c.name else "",
+        "contractor_signatory_position": _signatory_position(c.signatory) if c else "",
+        # Предмет (сервисное имя)
+        "service_name": p.subject or "",
+        # Срок оказания услуг
+        "period_type": p.service_period_type or "period",
+        "service_start_date": _fmt_date(p.contract_date),
+        "service_end_date":   _fmt_date(p.execution_term),
+        "service_date":       _fmt_date(p.execution_term),
+        # Третьи лица
+        "third_party_involved": bool(p.third_party_involved),
+        # НДС
+        "vat_applicable":        vat_app,
+        "vat_rate":              vat_rate_val,
+        "vat_amount_num":        _fmt_money_plain(vat_amount_val),
+        "vat_amount_words":      _rubles_to_words(vat_amount_val),
+        "vat_exemption_article": p.vat_exemption_article or "",
+        "vat_info_line":         vat_info_line,
+        # Цена прописью
+        "contract_price_num":   _fmt_money_plain(p.contract_price),
+        "contract_price_words": _rubles_to_words(p.contract_price),
     }
 
     try:

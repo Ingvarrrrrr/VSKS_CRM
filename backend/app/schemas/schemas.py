@@ -216,6 +216,12 @@ class PurchaseCreate(BaseModel):
     payment_federal: Optional[Decimal] = None
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
+    # Contract document generation fields
+    vat_applicable: Optional[bool] = False
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
+    third_party_involved: Optional[bool] = False
+    service_period_type: Optional[str] = None
     items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):

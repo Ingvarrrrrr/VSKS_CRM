@@ -413,6 +413,54 @@
         </v-card-text>
       </v-card>
 
+      <!-- 4а. Параметры для генерации договора -->
+      <v-card variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры договора (для документа)</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-select
+                v-model="form.service_period_type"
+                :items="[{title: 'Период (с... по...)', value: 'period'}, {title: 'Разовая дата', value: 'date'}]"
+                item-title="title" item-value="value"
+                label="Тип срока оказания услуг" variant="outlined" density="compact" clearable
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-checkbox
+                v-model="form.third_party_involved"
+                label="Привлечение третьих лиц"
+                density="compact" hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-checkbox
+                v-model="form.vat_applicable"
+                label="НДС применяется"
+                density="compact" hide-details
+              />
+            </v-col>
+            <v-col v-if="form.vat_applicable" cols="12" md="2">
+              <v-text-field
+                v-model.number="form.vat_rate"
+                label="Ставка НДС (%)" variant="outlined" density="compact" type="number"
+                suffix="%" placeholder="20"
+              />
+            </v-col>
+            <v-col v-if="!form.vat_applicable" cols="12" md="6">
+              <v-text-field
+                v-model="form.vat_exemption_article"
+                label="Основание освобождения от НДС (статья НК РФ)"
+                variant="outlined" density="compact"
+                placeholder="напр. п.2 ст.346.11 НК РФ (УСН)"
+              />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
       <!-- 5. Акт приёмки -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Акт приёмки</v-card-title>
@@ -645,6 +693,16 @@
               @click="downloadDoc('contract')"
             >
               Договор
+            </v-btn>
+            <v-btn
+              prepend-icon="mdi-file-document-edit-outline"
+              variant="tonal"
+              color="deep-purple"
+              size="small"
+              :loading="docLoading === 'contract_fadm'"
+              @click="downloadDoc('contract_fadm')"
+            >
+              Договор ФАДМ
             </v-btn>
             <v-btn
               prepend-icon="mdi-file-word-outline"
@@ -1411,6 +1469,12 @@ const form = reactive({
   purchase_contract_type: 'single' as string,
   contract_id: null as number | null,
   responsible_person: '' as string,
+  // Поля для генерации договора
+  vat_applicable: false as boolean,
+  vat_rate: null as number | null,
+  vat_exemption_article: '' as string,
+  third_party_involved: false as boolean,
+  service_period_type: 'period' as string,
 })
 
 const items = ref<OrderItem[]>([])
@@ -2222,6 +2286,11 @@ const loadPurchase = async () => {
     purchase_contract_type: data.purchase_contract_type || 'single',
     contract_id: data.contract_id ?? null,
     responsible_person: data.responsible_person || '',
+    vat_applicable: !!data.vat_applicable,
+    vat_rate: data.vat_rate ?? null,
+    vat_exemption_article: data.vat_exemption_article || '',
+    third_party_involved: !!data.third_party_involved,
+    service_period_type: data.service_period_type || 'period',
   })
   loadResponsiblePersons()
 

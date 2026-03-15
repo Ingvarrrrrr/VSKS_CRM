@@ -40,7 +40,7 @@ async def init_db():
         # ── Пользователь admin
         admin = (await session.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()
         if not admin:
-            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin", full_name="Администратор"))
+            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin", full_name="Администратор", is_email_confirmed=True))
             await session.commit()
             print("Создан пользователь admin.")
         else:

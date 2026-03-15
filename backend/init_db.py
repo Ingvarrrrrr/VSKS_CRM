@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, '.')
 
 from app.database import engine, Base, async_session
+import app.models  # noqa: F401 — register all models for create_all
 from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.auth.jwt import hash_password
@@ -39,7 +40,7 @@ async def init_db():
         # ── Пользователь admin
         admin = (await session.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()
         if not admin:
-            session.add(User(username="admin", hashed_password=hash_password("admin123"), role="admin", full_name="Администратор"))
+            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin", full_name="Администратор"))
             await session.commit()
             print("Создан пользователь admin.")
         else:

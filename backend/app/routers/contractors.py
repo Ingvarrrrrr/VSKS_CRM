@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractorCreate, ContractorOut
-from app.auth.jwt import require_role
+from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES
+from app.models.user import User
 from typing import List
 from io import BytesIO
 
@@ -13,13 +14,20 @@ router = APIRouter(prefix="/api/contractors", tags=["contractors"])
 
 
 @router.get("/with-stats")
-async def list_contractors_with_stats(db: AsyncSession = Depends(get_db)):
+async def list_contractors_with_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Contractors with product categories derived from purchase_items → products."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
 
-    contractors = (await db.execute(select(Contractor).order_by(Contractor.name))).scalars().all()
+    q = select(Contractor).order_by(Contractor.name)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.where(Contractor.org_id.in_(org_ids))
+    contractors = (await db.execute(q)).scalars().all()
 
     # Product categories per contractor: purchase → purchase_items → product.category
     prod_stmt = (
@@ -49,8 +57,18 @@ async def list_contractors_with_stats(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/", response_model=List[ContractorOut])
-async def list_contractors(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Contractor).order_by(Contractor.name))
+async def list_contractors(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    search: str = None,
+):
+    q = select(Contractor).order_by(Contractor.name)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.where(Contractor.org_id.in_(org_ids))
+    if search:
+        q = q.where(Contractor.name.ilike(f"%{search}%") | Contractor.inn.ilike(f"%{search}%"))
+    result = await db.execute(q)
     return result.scalars().all()
 
 
@@ -58,9 +76,11 @@ async def list_contractors(db: AsyncSession = Depends(get_db)):
 async def create_contractor(
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager"))
+    current_user: User = Depends(require_role(*MANAGER_ROLES)),
 ):
-    c = Contractor(**data.model_dump())
+    d = data.model_dump()
+    d['org_id'] = get_single_org_id(current_user) or current_user.org_id
+    c = Contractor(**d)
     db.add(c)
     await db.commit()
     await db.refresh(c)
@@ -72,7 +92,7 @@ async def update_contractor(
     cid: int,
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager"))
+    _=Depends(require_role(*MANAGER_ROLES))
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
@@ -89,7 +109,7 @@ async def update_contractor(
 async def bulk_delete_contractors(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin"))
+    _=Depends(require_role(*ADMIN_ROLES))
 ):
     from app.models.purchase import Purchase
     ids = payload.get("ids", [])
@@ -121,7 +141,7 @@ async def bulk_delete_contractors(
 async def delete_contractor(
     cid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin"))
+    _=Depends(require_role(*ADMIN_ROLES))
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
@@ -133,7 +153,7 @@ async def delete_contractor(
 
 
 @router.get("/import/template")
-async def contractors_import_template(_=Depends(require_role("admin", "manager"))):
+async def contractors_import_template(_=Depends(require_role(*MANAGER_ROLES))):
     """Download xlsx template for bulk contractor import."""
     try:
         from openpyxl import Workbook
@@ -195,7 +215,7 @@ async def contractors_import_template(_=Depends(require_role("admin", "manager")
 async def import_contractors_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager"))
+    _=Depends(require_role(*MANAGER_ROLES))
 ):
     """Bulk import contractors from Excel. First row must be headers."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):

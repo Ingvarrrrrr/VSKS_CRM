@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
+import LandingView from '../views/LandingView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import SubsidiesView from '../views/SubsidiesView.vue'
 import OrdersView from '../views/OrdersView.vue'
@@ -8,21 +9,36 @@ import ContractorsView from '../views/ContractorsView.vue'
 import FeoCategoriesView from '../views/FeoCategoriesView.vue'
 import ProductsView from '../views/ProductsView.vue'
 import PlanView from '../views/PlanView.vue'
+import CommercialRequestsView from '../views/CommercialRequestsView.vue'
+import MyTasksView from '../views/MyTasksView.vue'
+import ReportsView from '../views/ReportsView.vue'
+import SuppliersView from '../views/SuppliersView.vue'
+import SystemIncidentsView from '../views/SystemIncidentsView.vue'
+import RegisterView from '../views/RegisterView.vue'
+import VerifyEmailView from '../views/VerifyEmailView.vue'
+import ResetPasswordView from '../views/ResetPasswordView.vue'
+import OrganizationsView from '../views/OrganizationsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      path: '/',
+      name: 'landing',
+      component: LandingView,
+      meta: { requiresAuth: false, public: true, title: 'VSKS CRM' }
+    },
+    {
       path: '/login',
       name: 'login',
       component: LoginView,
-      meta: { requiresAuth: false, title: 'Авторизация' }
+      meta: { requiresAuth: false, public: true, title: 'Авторизация' }
     },
     {
-      path: '/',
+      path: '/dashboard',
       name: 'dashboard',
       component: DashboardView,
-      meta: { requiresAuth: false, title: 'Дашборд' } // Временно отключена авторизация
+      meta: { requiresAuth: false, title: 'Дашборд' }
     },
     {
       path: '/subsidies',
@@ -73,33 +89,123 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Каталог товаров' }
     },
     {
+      path: '/products-summary',
+      name: 'products-summary',
+      component: () => import('../views/ProductSummaryView.vue'),
+      meta: { requiresAuth: false, title: 'Сводная по продукции' }
+    },
+    {
       path: '/plan',
       name: 'plan',
       component: PlanView,
       meta: { requiresAuth: false, title: 'План-график' }
     },
+    {
+      path: '/commercial-requests',
+      name: 'commercial-requests',
+      component: CommercialRequestsView,
+      meta: { requiresAuth: false, title: 'Запросы КП' }
+    },
+    {
+      path: '/analytics',
+      redirect: '/dashboard?tab=analytics',
+    },
+    {
+      path: '/my-tasks',
+      name: 'my-tasks',
+      component: MyTasksView,
+      meta: { requiresAuth: false, title: 'Мои задачи' }
+    },
+    {
+      path: '/reports',
+      name: 'reports',
+      component: ReportsView,
+      meta: { requiresAuth: false, title: 'Отчёты' }
+    },
+    {
+      path: '/staff',
+      name: 'staff',
+      component: () => import('../views/StaffView.vue'),
+      meta: { requiresAuth: false, title: 'Персонал' }
+    },
+    {
+      path: '/users',
+      redirect: '/staff?tab=users',
+    },
+    {
+      path: '/suppliers',
+      name: 'suppliers',
+      component: SuppliersView,
+      meta: { requiresAuth: false, title: 'Поставщики' }
+    },
+    {
+      path: '/system-incidents',
+      name: 'system-incidents',
+      component: SystemIncidentsView,
+      meta: { requiresAuth: false, title: 'Системные инциденты' }
+    },
+    {
+      path: '/departments',
+      redirect: '/staff?tab=departments',
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: RegisterView,
+      meta: { requiresAuth: false, public: true, title: 'Регистрация' }
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: VerifyEmailView,
+      meta: { requiresAuth: false, public: true, title: 'Подтверждение email' }
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: ResetPasswordView,
+      meta: { requiresAuth: false, public: true, title: 'Сброс пароля' }
+    },
+    {
+      path: '/organizations',
+      name: 'organizations',
+      component: OrganizationsView,
+      meta: { requiresAuth: false, title: 'Организации' }
+    },
   ]
 })
 
+// Разрешённые маршруты для employee
+const EMPLOYEE_ALLOWED = ['/my-tasks', '/orders/', '/login', '/register', '/', '/verify-email', '/reset-password']
+
 // Навигационные хуки для проверки авторизации
 router.beforeEach((to, _, next) => {
-  // Временно отключаем проверку авторизации для тестирования
-  next()
-  
-  /* Восстановить позже:
   const token = localStorage.getItem('auth_token')
-  
-  // Проверяем, есть ли токен и выглядит ли он как JWT
   const isAuthenticated = token !== null && token.startsWith('eyJ')
-  
-  if (to.meta.requiresAuth && !isAuthenticated) {
-    next('/login')
-  } else if (to.path === '/login' && isAuthenticated) {
-    next('/')
-  } else {
-    next()
+  const role = localStorage.getItem('user_role')
+
+  // Авторизован + лендинг → redirect по роли
+  if (to.path === '/' && isAuthenticated) {
+    return next(role === 'employee' ? '/my-tasks' : '/dashboard')
   }
-  */
+
+  // Не авторизован + закрытый маршрут → лендинг
+  if (!isAuthenticated && !to.meta.public) {
+    return next('/')
+  }
+
+  // Employee guard: разрешить только /my-tasks и /orders/:id/edit (назначенные закупки)
+  if (isAuthenticated && role === 'employee') {
+    const path = to.path
+    const allowed = path === '/my-tasks'
+      || path.startsWith('/orders/') && (path.endsWith('/edit') || !path.includes('/'))
+      || to.meta.public
+    if (!allowed) {
+      return next('/my-tasks')
+    }
+  }
+
+  next()
 })
 
 export default router

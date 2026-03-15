@@ -14,5 +14,7 @@ class SubsidyApprover(Base):
     is_default = Column(Boolean, default=True)
     can_initiate = Column(Boolean, default=False)
     show_feo_path = Column(Boolean, default=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     subsidy = relationship("Subsidy", back_populates="approvers")
+    user = relationship("User")

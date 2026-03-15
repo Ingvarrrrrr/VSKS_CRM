@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Text, ForeignKey
 from app.database import Base
 
 class Contractor(Base):
@@ -22,3 +22,4 @@ class Contractor(Base):
     bik = Column(String(20))
     correspondent_account = Column(String(100))
     org_type = Column(String(50))  # Юр.лицо / ИП / Самозанятый / Физ.лицо
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)

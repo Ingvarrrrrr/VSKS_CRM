@@ -114,8 +114,16 @@
                     class="feo-tr"
                     :class="[
                       `feo-tr--l${node.level}`,
-                      feoBudgetFor(node) !== null && feoPurchasedFor(node) > feoBudgetFor(node)! ? 'feo-tr--over' : ''
+                      feoBudgetFor(node) !== null && feoPurchasedFor(node) > feoBudgetFor(node)! ? 'feo-tr--over' : '',
+                      dragOverId === node.id ? 'feo-drop-target' : '',
+                      dragNodeId === node.id ? 'feo-dragging' : '',
                     ]"
+                    draggable="true"
+                    @dragstart="onDragStart($event, node)"
+                    @dragover.prevent="onDragOver($event, node)"
+                    @dragleave="onDragLeave"
+                    @drop="onDrop($event, node)"
+                    @dragend="onDragEnd"
                   >
                     <!-- Наименование -->
                     <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
@@ -192,6 +200,19 @@
                   </tr>
                 </template>
 
+                <!-- Drop zone: переместить на верхний уровень -->
+                <tr v-if="dragNodeId"
+                  class="feo-tr feo-drop-root"
+                  :class="{ 'feo-drop-target': dragOverId === -1 }"
+                  @dragover.prevent="dragOverId = -1"
+                  @dragleave="dragOverId = null"
+                  @drop.prevent="onDropToRoot"
+                >
+                  <td colspan="4" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
+                    Переместить на верхний уровень (корень)
+                  </td>
+                </tr>
                 <!-- Итого -->
                 <tr class="feo-tr feo-tr--total">
                   <td class="feo-td feo-td-name pl-4 font-weight-bold" style="padding-left:8px">ИТОГО</td>
@@ -268,6 +289,20 @@
                   hint="Оставьте пустым для авто-суммы из дочерних" persistent-hint />
               </v-col>
               <v-col cols="12">
+                <v-autocomplete
+                  v-model="editForm.parent_id"
+                  :items="parentOptions"
+                  item-title="name"
+                  item-value="id"
+                  label="Родительская категория"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                  hint="Очистите для корневого уровня. Или перетащите в таблице."
+                  persistent-hint
+                />
+              </v-col>
+              <v-col cols="12">
                 <v-checkbox v-model="editForm.is_active" label="Активна" density="compact" hide-details />
               </v-col>
             </v-row>
@@ -288,6 +323,10 @@
         <v-card-title class="pa-5 pb-2 text-error">Удалить категорию?</v-card-title>
         <v-card-text class="pa-5 pt-2">
           <div class="mb-2">«{{ deleteTarget?.name }}»</div>
+          <v-alert v-if="deleteChildrenCount > 0" type="warning" density="compact" variant="tonal" class="mb-3">
+            Будет удалено вместе с {{ deleteChildrenCount }}
+            {{ deleteChildrenCount === 1 ? 'дочерней категорией' : 'дочерними категориями' }}
+          </v-alert>
           <v-alert v-if="dialogError" type="error" density="compact">{{ dialogError }}</v-alert>
         </v-card-text>
         <v-card-actions class="pa-5 pt-0">
@@ -397,10 +436,14 @@ const addForm    = reactive({ name: '', code: '', appendix: '', budget: null as 
 const editDialog  = ref(false)
 const editFormRef = ref()
 const editTarget  = ref<FeoNode | null>(null)
-const editForm    = reactive({ name: '', code: '', appendix: '', budget: null as number | null, is_active: true })
+const editForm    = reactive({ name: '', code: '', appendix: '', budget: null as number | null, is_active: true, parent_id: null as number | null })
 
 const deleteDialog = ref(false)
 const deleteTarget = ref<FeoNode | null>(null)
+
+// Drag & Drop state
+const dragNodeId = ref<number | null>(null)
+const dragOverId = ref<number | null>(null)
 
 // ─── Subsidies ───────────────────────────────────────────────────────────────
 const availableYears = computed(() => [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a))
@@ -587,7 +630,8 @@ const openEditDialog = (node: FeoNode) => {
   editTarget.value = node
   editForm.name = node.name; editForm.code = node.code ?? ''
   editForm.appendix = node.appendix ?? ''; editForm.budget = node.budget ?? null
-  editForm.is_active = node.is_active; dialogError.value = ''; editDialog.value = true
+  editForm.is_active = node.is_active; editForm.parent_id = node.parent_id ?? null
+  dialogError.value = ''; editDialog.value = true
 }
 
 const submitEdit = async () => {
@@ -595,6 +639,17 @@ const submitEdit = async () => {
   if (!valid || !editTarget.value) return
   dialogLoading.value = true; dialogError.value = ''
   try {
+    // Если parent_id изменился — вызываем move endpoint
+    const oldParentId = editTarget.value.parent_id ?? null
+    const newParentId = editForm.parent_id ?? null
+    if (oldParentId !== newParentId) {
+      const res = await apiFetch<any>(`/feo-categories/${editTarget.value.id}/move`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parent_id: newParentId }),
+      })
+      if (res?.warning) showSnack(res.warning, 'warning')
+    }
+    // Обновляем остальные поля
     await apiFetch(`/feo-categories/${editTarget.value.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: editForm.name, code: editForm.code || null,
@@ -623,6 +678,107 @@ const submitDelete = async () => {
 }
 
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+
+// ─── Drag & Drop ──────────────────────────────────────────────────────────────
+function collectSubtreeIds(nodeId: number): number[] {
+  const ids = [nodeId]
+  const find = (pid: number) => {
+    for (const c of categories.value) {
+      if (c.parent_id === pid) { ids.push(c.id); find(c.id) }
+    }
+  }
+  find(nodeId)
+  return ids
+}
+
+function onDragStart(e: DragEvent, node: FeoNode) {
+  dragNodeId.value = node.id
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(node.id))
+}
+
+function onDragOver(e: DragEvent, node: FeoNode) {
+  if (!dragNodeId.value || dragNodeId.value === node.id) return
+  // Нельзя перетащить в собственное поддерево
+  const subtree = collectSubtreeIds(dragNodeId.value)
+  if (subtree.includes(node.id)) return
+  dragOverId.value = node.id
+}
+
+function onDragLeave() {
+  dragOverId.value = null
+}
+
+async function onDrop(e: DragEvent, targetNode: FeoNode) {
+  e.preventDefault()
+  if (!dragNodeId.value || dragNodeId.value === targetNode.id) return
+  const srcId = dragNodeId.value
+  const srcNode = flatTree.value.find(n => n.id === srcId)
+  dragOverId.value = null; dragNodeId.value = null
+  if (!srcNode) return
+
+  // Нельзя в собственное поддерево
+  const subtree = collectSubtreeIds(srcId)
+  if (subtree.includes(targetNode.id)) {
+    showSnack('Нельзя переместить в собственное поддерево', 'error')
+    return
+  }
+
+  // Если уже является дочерней этого узла — пропускаем
+  if (srcNode.parent_id === targetNode.id) return
+
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${srcId}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify({ parent_id: targetNode.id }),
+    })
+    showSnack('Категория перемещена')
+    if (res?.warning) showSnack(res.warning, 'warning')
+    await loadFeo(selectedId.value!)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка перемещения', 'error')
+  }
+}
+
+async function onDropToRoot(e: DragEvent) {
+  e.preventDefault()
+  if (!dragNodeId.value) return
+  const srcId = dragNodeId.value
+  const srcNode = flatTree.value.find(n => n.id === srcId)
+  dragOverId.value = null; dragNodeId.value = null
+  if (!srcNode || !srcNode.parent_id) return  // уже корневая
+
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${srcId}/move`, {
+      method: 'PATCH',
+      body: JSON.stringify({ parent_id: null }),
+    })
+    showSnack('Категория перемещена на верхний уровень')
+    if (res?.warning) showSnack(res.warning, 'warning')
+    await loadFeo(selectedId.value!)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка перемещения', 'error')
+  }
+}
+
+function onDragEnd() {
+  dragNodeId.value = null; dragOverId.value = null
+}
+
+// ─── Parent options for edit dialog ───────────────────────────────────────────
+const parentOptions = computed(() => {
+  if (!editTarget.value) return []
+  const excludeIds = new Set(collectSubtreeIds(editTarget.value.id))
+  return categories.value
+    .filter(c => !excludeIds.has(c.id))
+    .map(c => ({ id: c.id, name: '  '.repeat(c.level - 1) + c.name }))
+})
+
+// ─── Delete children count ───────────────────────────────────────────────────
+const deleteChildrenCount = computed(() => {
+  if (!deleteTarget.value) return 0
+  return collectSubtreeIds(deleteTarget.value.id).length - 1
+})
 
 // ─── FEO Import ───────────────────────────────────────────────────────────────
 const feoImport = reactive({
@@ -717,13 +873,13 @@ loadSubsidies()
 }
 .page-header-left  { display: flex; align-items: center; }
 .page-header-right { display: flex; align-items: center; }
-.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
-.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+.page-title    { font-size: 26px; font-weight: 700; color: var(--crm-text); line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: var(--crm-text-muted); margin-top: 2px; }
 
 /* ── Empty state ── */
 .empty-state {
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 64px 0; color: #9CA3AF;
+  justify-content: center; padding: 64px 0; color: var(--crm-text-faint);
 }
 
 /* ── Subsidy cards ── */
@@ -734,37 +890,37 @@ loadSubsidies()
   margin-bottom: 20px;
 }
 .subsidy-card {
-  background: #fff; border-radius: 12px; border: 2px solid transparent;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07); padding: 18px 20px;
+  background: var(--crm-surface); border-radius: 12px; border: 2px solid transparent;
+  box-shadow: 0 1px 4px var(--crm-shadow); padding: 18px 20px;
   cursor: pointer; transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
-.subsidy-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+.subsidy-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px var(--crm-shadow-hover); }
 .subsidy-card--active {
   border-color: #3B82F6;
-  box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px rgba(0,0,0,0.1);
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px var(--crm-shadow-hover);
 }
 .sc-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
-.sc-name { font-size: 14px; font-weight: 700; color: #111827; line-height: 1.3; word-break: break-word; }
-.sc-budget       { font-size: 22px; font-weight: 700; color: #111827; }
-.sc-budget-label { font-size: 11px; color: #9CA3AF; margin-bottom: 12px; }
+.sc-name { font-size: 14px; font-weight: 700; color: var(--crm-text); line-height: 1.3; word-break: break-word; }
+.sc-budget       { font-size: 22px; font-weight: 700; color: var(--crm-text); }
+.sc-budget-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 12px; }
 .sc-mini-row  { display: flex; gap: 20px; }
-.sc-mini-label{ font-size: 11px; color: #9CA3AF; margin-bottom: 2px; }
+.sc-mini-label{ font-size: 11px; color: var(--crm-text-faint); margin-bottom: 2px; }
 .sc-mini-val  { font-size: 13px; font-weight: 600; }
-.sc-pct { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+.sc-pct { font-size: 11px; color: var(--crm-text-faint); margin-top: 4px; }
 
 /* ── Detail panel ── */
 .detail-panel {
-  background: #fff; border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  background: var(--crm-surface); border-radius: 12px;
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   overflow: hidden; margin-bottom: 20px;
 }
 .detail-header {
   display: flex; align-items: center; padding: 14px 16px;
-  border-bottom: 1px solid rgba(0,0,0,0.07);
-  background: #F8FAFC; flex-wrap: wrap; gap: 8px;
+  border-bottom: 1px solid var(--crm-border);
+  background: var(--crm-surface-alt); flex-wrap: wrap; gap: 8px;
 }
-.detail-title { font-size: 14px; font-weight: 600; color: #374151; }
+.detail-title { font-size: 14px; font-weight: 600; color: var(--crm-text-secondary); }
 
 /* ── FEO table ── */
 .feo-table-wrap { overflow-x: hidden; }
@@ -772,27 +928,27 @@ loadSubsidies()
 .feo-th {
   padding: 10px 12px; text-align: left; font-weight: 600;
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
-  color: rgba(0,0,0,0.5); border-bottom: 2px solid rgba(0,0,0,0.07);
-  background: #FAFAFA;
+  color: var(--crm-text-muted); border-bottom: 2px solid var(--crm-border);
+  background: var(--crm-table-header);
 }
 .feo-th-name    { width: auto; }
 .feo-th-num     { width: 160px; text-align: right; }
 .feo-th-actions { width: 100px; white-space: nowrap; }
-.feo-td { padding: 7px 12px; border-bottom: 1px solid rgba(0,0,0,0.05); vertical-align: top; }
+.feo-td { padding: 7px 12px; border-bottom: 1px solid var(--crm-border); vertical-align: top; }
 .feo-td-name { display: flex; align-items: flex-start; min-width: 0; }
 .feo-name { white-space: normal; word-break: break-word; line-height: 1.4; min-width: 0; flex: 1; }
 .feo-td-num  { text-align: right; }
-.feo-tr:hover { background: rgba(0,0,0,0.02); }
+.feo-tr:hover { background: var(--crm-surface-alt); }
 .feo-tr--over { background: rgba(244,67,54,0.08) !important; }
 .feo-tr--over:hover { background: rgba(244,67,54,0.13) !important; }
-.feo-tr--total { background: rgba(0,0,0,0.03); border-top: 2px solid rgba(0,0,0,0.1); }
+.feo-tr--total { background: var(--crm-surface-alt); border-top: 2px solid var(--crm-border-strong); }
 .feo-tr--l1 .feo-name { font-weight: 700; font-size: 0.9rem; }
 .feo-tr--l2 .feo-name { font-weight: 600; }
-.feo-name  { color: #111827; }
-.feo-code  { font-size: 11px; color: #6B7280; background: #F3F4F6; padding: 1px 5px; border-radius: 4px; }
-.feo-appendix { font-size: 11px; color: #9CA3AF; }
-.feo-amount { color: #111827; font-weight: 500; }
-.feo-empty-hint { font-size: 12px; color: #9CA3AF; cursor: pointer; }
+.feo-name  { color: var(--crm-text); }
+.feo-code  { font-size: 11px; color: var(--crm-text-muted); background: var(--crm-input-bg); padding: 1px 5px; border-radius: 4px; }
+.feo-appendix { font-size: 11px; color: var(--crm-text-faint); }
+.feo-amount { color: var(--crm-text); font-weight: 500; }
+.feo-empty-hint { font-size: 12px; color: var(--crm-text-faint); cursor: pointer; }
 .feo-empty-hint:hover { color: #3B82F6; }
 .feo-amount-cell { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; }
 .feo-amount-cell:hover { background: rgba(59,130,246,0.07); }
@@ -802,7 +958,24 @@ loadSubsidies()
 .inline-input {
   border: 1px solid rgba(59,130,246,0.7); border-radius: 4px;
   padding: 2px 6px; width: 120px; text-align: right;
-  font-size: 0.875rem; outline: none; background: white;
+  font-size: 0.875rem; outline: none; background: var(--crm-surface);
 }
 .gap-2 { gap: 8px; }
+
+/* ── Drag & Drop ── */
+.feo-tr[draggable="true"] { cursor: grab; }
+.feo-tr[draggable="true"]:active { cursor: grabbing; }
+.feo-dragging { opacity: 0.45; background: var(--crm-surface-alt) !important; }
+.feo-drop-target {
+  background: rgba(59, 130, 246, 0.12) !important;
+  outline: 2px dashed rgba(59, 130, 246, 0.6);
+  outline-offset: -2px;
+}
+.feo-drop-root {
+  border-top: 2px dashed var(--crm-border);
+  transition: background 0.15s;
+}
+.feo-drop-root.feo-drop-target {
+  background: rgba(59, 130, 246, 0.08) !important;
+}
 </style>

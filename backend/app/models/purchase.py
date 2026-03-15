@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -22,7 +22,11 @@ class Purchase(Base):
     delivery_payment_amount = Column(Numeric(15, 2))
     contract_id = Column(Integer, ForeignKey("contracts.id"))
     subsidy_id = Column(Integer, ForeignKey("subsidies.id"))
-    status = Column(String(20), default="planned")
+    status = Column(String(30), default="wishes")
+    substatus = Column(String(30), nullable=True)          # tz_forming / kp_collecting / on_platform
+    is_monthly_payment = Column(Boolean, default=False)    # ежемесячный платёж
+    monthly_payment_count = Column(Integer, nullable=True)   # кол-во ежемесячных платежей
+    monthly_payment_amount = Column(Numeric(15, 2), nullable=True)  # сумма одного платежа
 
     # Phase 1: new fields
     contract_number = Column(String(100))
@@ -47,6 +51,7 @@ class Purchase(Base):
     payment_amount = Column(Numeric(15, 2))
     payment_federal = Column(Numeric(15, 2))
     purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
+    framework_seq = Column(Integer, nullable=True)              # порядковый номер закупки в рамках рамочного договора
     purchase_basis = Column(String(50), nullable=True)  # 'plan_schedule' | 'service_note'
     responsible_person = Column(String(500), nullable=True)
     # Contract document generation fields
@@ -55,12 +60,30 @@ class Purchase(Base):
     vat_exemption_article = Column(String(200), nullable=True)           # Статья НК РФ
     third_party_involved = Column(Boolean, nullable=True, default=False)  # Привлечение третьих лиц
     service_period_type = Column(String(10), nullable=True)              # 'period' | 'date'
+    description_mode = Column(String(10), default="exact")               # 'exact' | '44fz'
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=True)
+
+    # Approval
+    approval_status = Column(String(30), nullable=True)  # None / in_progress / approved / rejected
+
+    # Kanban / task assignment
+    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    task_comment = Column(Text, nullable=True)
+
+    # Сводная по продукции
+    delivery_address = Column(Text, nullable=True)          # адрес доставки
+    procurement_planned_date = Column(Date, nullable=True)  # планируемая дата закупки
 
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")
     contract = relationship("Contract", back_populates="purchases")
+    assigned_user = relationship("User", foreign_keys=[assigned_user_id])
+    event = relationship("Event")
     total_nmck = Column(Numeric(15, 2))
     items = relationship("PurchaseItem", back_populates="purchase",
                          cascade="all, delete-orphan", lazy="selectin")
     files = relationship("PurchaseFile", back_populates="purchase",
                          cascade="all, delete-orphan", lazy="selectin")
+    approvals = relationship("PurchaseApproval", back_populates="purchase",
+                             cascade="all, delete-orphan", lazy="selectin",
+                             order_by="PurchaseApproval.order_num")

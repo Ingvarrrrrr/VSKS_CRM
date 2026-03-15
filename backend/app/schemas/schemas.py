@@ -13,14 +13,32 @@ class Token(BaseModel):
     token_type: str = "bearer"
     role: str
     full_name: Optional[str] = None
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    user_id: Optional[int] = None
 
 # User
 class UserCreate(BaseModel):
-    username: str
+    email: str
     password: str
-    role: str = "viewer"
+    username: Optional[str] = None
+    role: str = "employee"
     full_name: Optional[str] = None
     city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    avatar: Optional[str] = None
+    org_id: Optional[int] = None
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    avatar: Optional[str] = None
 
 class UserOut(BaseModel):
     id: int
@@ -28,7 +46,35 @@ class UserOut(BaseModel):
     role: str
     full_name: Optional[str] = None
     city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    email: Optional[str] = None
+    avatar: Optional[str] = None
+    org_id: Optional[int] = None
+    is_email_confirmed: bool = True
     model_config = {"from_attributes": True}
+
+# Organization
+class OrganizationCreate(BaseModel):
+    name: str
+    inn: Optional[str] = None
+
+class OrganizationOut(BaseModel):
+    id: int
+    name: str
+    inn: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    user_count: int = 0
+    model_config = {"from_attributes": True}
+
+class RegisterRequest(BaseModel):
+    org_name: str
+    org_inn: Optional[str] = None
+    username: Optional[str] = None
+    password: str
+    full_name: Optional[str] = None
+    email: str
 
 # Subsidy
 class SubsidyCreate(BaseModel):
@@ -36,13 +82,41 @@ class SubsidyCreate(BaseModel):
     year: int
     budget: float
     description: Optional[str] = None
+    contractor_id: Optional[int] = None
 
 class SubsidyOut(BaseModel):
     id: int
     name: str
     year: int
     budget: float
+    calculated_budget: Optional[float] = None
     description: Optional[str] = None
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    contractor_inn: Optional[str] = None
+    feo_filled: bool = False
+    feo_budget_total: float = 0.0
+    model_config = {"from_attributes": True}
+
+
+class SubsidyContractorOverrideCreate(BaseModel):
+    signatory: Optional[str] = None
+    signatory_basis: Optional[str] = None
+    address: Optional[str] = None
+    postal_address: Optional[str] = None
+    bank_details: Optional[str] = None
+    settlement_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bik: Optional[str] = None
+    correspondent_account: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+class SubsidyContractorOverrideOut(SubsidyContractorOverrideCreate):
+    id: int
+    subsidy_id: int
+    contractor_id: int
     model_config = {"from_attributes": True}
 
 # ResponsiblePerson
@@ -64,6 +138,7 @@ class SubsidyApproverCreate(BaseModel):
     is_default: bool = True
     can_initiate: bool = False
     show_feo_path: bool = False
+    user_id: Optional[int] = None
 
 class SubsidyApproverOut(SubsidyApproverCreate):
     id: int
@@ -157,6 +232,7 @@ class PurchaseItemOut(PurchaseItemCreate):
     product_name: Optional[str] = None
     product_photo_url: Optional[str] = None
     product_description: Optional[str] = None
+    product_description_44fz: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class PurchaseFileOut(BaseModel):
@@ -189,7 +265,11 @@ class PurchaseCreate(BaseModel):
     delivery_payment_amount: Optional[Decimal] = None
     contract_id: Optional[int] = None
     subsidy_id: Optional[int] = None
-    status: str = "planned"
+    status: str = "wishes"
+    substatus: Optional[str] = None
+    is_monthly_payment: Optional[bool] = False
+    monthly_payment_count: Optional[int] = None
+    monthly_payment_amount: Optional[Decimal] = None
     # Phase 1: extended fields
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None
@@ -204,6 +284,8 @@ class PurchaseCreate(BaseModel):
     execution_term: Optional[date] = None
     execution_term_changed: Optional[date] = None
     delivery_date: Optional[date] = None
+    delivery_address: Optional[str] = None
+    procurement_planned_date: Optional[date] = None
     country_origin: Optional[str] = None
     subject: Optional[str] = None
     acceptance_doc_name: Optional[str] = None
@@ -216,12 +298,16 @@ class PurchaseCreate(BaseModel):
     payment_federal: Optional[Decimal] = None
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
+    framework_seq: Optional[int] = None          # порядковый номер в рамочном договоре
     # Contract document generation fields
     vat_applicable: Optional[bool] = False
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
     third_party_involved: Optional[bool] = False
     service_period_type: Optional[str] = None
+    description_mode: Optional[str] = "exact"
+    event_id: Optional[int] = None
+    approval_status: Optional[str] = None
     items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):
@@ -234,6 +320,7 @@ class PurchaseOutFull(PurchaseOut):
     contractor_name: Optional[str] = None
     feo_category_name: Optional[str] = None
     subsidy_name: Optional[str] = None
+    event_name: Optional[str] = None
 
 # Payment
 class PaymentCreate(BaseModel):
@@ -257,6 +344,7 @@ class ProductCreate(BaseModel):
     feo_category_id: Optional[int] = None
     name: str
     description: Optional[str] = None
+    description_44fz: Optional[str] = None
     category: Optional[str] = None
     product_type: Optional[str] = None
     is_reusable: Optional[bool] = True
@@ -269,7 +357,37 @@ class ProductCreate(BaseModel):
 
 class ProductOut(ProductCreate):
     id: int
+    contract_price: Optional[Decimal] = None
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+    contract_org_id: Optional[int] = None
+    price_shared: bool = False
     model_config = {"from_attributes": True}
+
+# Product Summary (сводная по продукции)
+class ProductSummaryItem(BaseModel):
+    purchase_id: int
+    subsidy_name: str
+    org_name: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+    status: Optional[str] = None
+    delivery_date: Optional[date] = None
+    delivery_address: Optional[str] = None
+    procurement_planned_date: Optional[date] = None
+    purchase_method: Optional[str] = None
+
+class ProductSummaryGroup(BaseModel):
+    product_id: int
+    product_name: str
+    category: Optional[str] = None
+    product_type: Optional[str] = None
+    total_quantity: Decimal
+    total_amount: Decimal
+    purchase_count: int
+    items: List[ProductSummaryItem]
 
 # Dashboard
 class DashboardCategory(BaseModel):
@@ -312,3 +430,159 @@ class PublicationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Commercial Requests ────────────────────────────────────────────────────────
+
+class CommercialRequestRecipientOut(BaseModel):
+    id: int
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    email: Optional[str] = None
+    status: str
+
+class CommercialRequestCreate(BaseModel):
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    recipient_ids: Optional[List[int]] = None
+
+class CommercialRequestStatusUpdate(BaseModel):
+    status: str
+
+class CommercialRequestRecipientStatusUpdate(BaseModel):
+    status: str
+
+class CommercialRequestOut(BaseModel):
+    id: int
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    status: str
+    created_by: Optional[int] = None
+    created_at: Optional[str] = None
+    recipients: List[CommercialRequestRecipientOut] = []
+
+
+# ── Suppliers ──────────────────────────────────────────────────────────────────
+
+class SupplierProductOut(BaseModel):
+    id: int
+    supplier_id: int
+    product_id: Optional[int] = None
+    price_notes: Optional[str] = None
+    source: Optional[str] = None
+
+class SupplierCreate(BaseModel):
+    name: str
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+
+class SupplierOut(BaseModel):
+    id: int
+    name: str
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+    products: List[SupplierProductOut] = []
+
+class SupplierProductCreate(BaseModel):
+    product_id: Optional[int] = None
+    price_notes: Optional[str] = None
+    source: Optional[str] = None
+
+
+# ── Events (Мероприятия) ──────────────────────────────────────────────────────
+
+class EventCreate(BaseModel):
+    subsidy_id: int
+    name: str
+    is_active: bool = True
+
+class EventOut(EventCreate):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+# ── Purchase Approvals (электронное согласование) ─────────────────────────────
+
+class PurchaseApprovalOut(BaseModel):
+    id: int
+    purchase_id: int
+    subsidy_approver_id: Optional[int] = None
+    order_num: int
+    role_name: str
+    approver_full_name: str
+    user_id: Optional[int] = None
+    status: str
+    comment: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decided_by_user_id: Optional[int] = None
+    decided_by_username: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
+class ApprovalDecisionRequest(BaseModel):
+    action: str  # "approve" | "reject"
+    comment: Optional[str] = None
+
+# Task (общие задачи, не связанные с закупками)
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    priority: str = "medium"
+    due_date: Optional[datetime] = None
+    assigned_user_id: Optional[int] = None
+    category: Optional[str] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[datetime] = None
+    assigned_user_id: Optional[int] = None
+    category: Optional[str] = None
+
+class TaskOut(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    due_date: Optional[datetime] = None
+    assigned_user_id: Optional[int] = None
+    assigned_user_name: Optional[str] = None
+    created_by_id: int
+    created_by_name: Optional[str] = None
+    org_id: Optional[int] = None
+    category: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_comment: Optional[str] = None           # preview (first 100 chars)
+    last_comment_user: Optional[str] = None
+    last_comment_at: Optional[datetime] = None
+    comment_count: int = 0
+    model_config = {"from_attributes": True}
+
+# Task Comments
+class TaskCommentCreate(BaseModel):
+    text: str
+
+class TaskCommentOut(BaseModel):
+    id: int
+    task_id: int
+    user_id: int
+    user_name: Optional[str] = None
+    text: str
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}

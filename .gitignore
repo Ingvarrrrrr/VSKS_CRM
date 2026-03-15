@@ -98,3 +98,26 @@ media/
 
 # Ignore system files
 .DS_Store
+
+# Temp Word files
+~$*
+nul
+
+# Screenshots / local docs
+screenshot*.png
+*.doc
+improvements.md
+patch_pixel_agents.py
+
+# Template source documents (keep only backend/templates/)
+approval_sheet_TEMPLATE.docx
+contract_tz_TEMPLATE.docx
+service_note_TEMPLATE.docx
+типовые документы/
+Корректировки.txt
+Переменные шаблона.xlsx
+Служебная записка образец.doc
+
+# Claude / planning
+.claude/
+.planning/

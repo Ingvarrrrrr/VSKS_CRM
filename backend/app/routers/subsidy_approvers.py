@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.subsidy import Subsidy
 from app.models.subsidy_approver import SubsidyApprover
 from app.schemas.schemas import SubsidyApproverCreate, SubsidyApproverOut
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, get_org_filter
 from typing import List
 
 SUBSIDY_TEMPLATES_DIR = "/app/templates/subsidies"
@@ -15,11 +15,15 @@ SUBSIDY_TEMPLATES_DIR = "/app/templates/subsidies"
 router = APIRouter(prefix="/api/subsidies", tags=["subsidy-approvers"])
 
 
-async def _get_subsidy_or_404(sid: int, db: AsyncSession) -> Subsidy:
+async def _get_subsidy_or_404(sid: int, db: AsyncSession, current_user=None) -> Subsidy:
     result = await db.execute(select(Subsidy).where(Subsidy.id == sid))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Субсидия не найдена")
+    if current_user:
+        org_ids = get_org_filter(current_user)
+        if org_ids is not None and s.org_id not in org_ids:
+            raise HTTPException(403, "Нет доступа к этой субсидии")
     return s
 
 
@@ -29,7 +33,7 @@ async def list_approvers(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     result = await db.execute(
         select(SubsidyApprover)
         .where(SubsidyApprover.subsidy_id == sid)
@@ -45,7 +49,7 @@ async def create_approver(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     approver = SubsidyApprover(subsidy_id=sid, **data.model_dump())
     db.add(approver)
     await db.commit()
@@ -104,7 +108,7 @@ async def contract_template_status(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
     return {"exists": os.path.exists(path)}
 
@@ -116,7 +120,7 @@ async def upload_contract_template(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(400, "Разрешены только .docx файлы")
     folder = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid))
@@ -134,7 +138,7 @@ async def download_contract_template(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
     if not os.path.exists(path):
         raise HTTPException(404, "Шаблон не загружен")
@@ -151,7 +155,7 @@ async def delete_contract_template(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db)
+    await _get_subsidy_or_404(sid, db, current_user)
     path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
     if os.path.exists(path):
         os.remove(path)

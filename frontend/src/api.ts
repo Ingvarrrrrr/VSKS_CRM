@@ -27,14 +27,19 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       throw new Error('Сессия истекла, войдите снова')
     }
     const text = await res.text()
-    let detail = text
-    try {
-      const json = JSON.parse(text)
-      if (json.detail) detail = json.detail
-    } catch {}
-    const err: any = new Error(detail)
+    let parsed: any = null
+    try { parsed = JSON.parse(text) } catch {}
+    const payload = {
+      code: parsed?.code || `HTTP_${res.status}`,
+      message: parsed?.message || parsed?.detail || text || 'Ошибка запроса',
+      details: parsed?.details || text || '',
+      correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
+    }
+    window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+    const err: any = new Error(payload.message)
     err.status = res.status
-    err.detail = detail
+    err.detail = payload.message
+    err.payload = payload
     throw err
   }
   return res.json()

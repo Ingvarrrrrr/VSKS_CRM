@@ -371,8 +371,8 @@ const exportExcel = () => {
 }
 .page-header-left  { display: flex; align-items: center; }
 .page-header-right { display: flex; align-items: center; gap: 8px; }
-.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
-.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+.page-title    { font-size: 26px; font-weight: 700; color: var(--crm-text); line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: var(--crm-text-muted); margin-top: 2px; }
 
 /* ── Filters ── */
 .filters-bar {
@@ -385,22 +385,22 @@ const exportExcel = () => {
 /* ── Stats bar ── */
 .stats-bar {
   display: flex; align-items: center; gap: 0;
-  background: #fff; border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  background: var(--crm-surface); border-radius: 12px;
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 14px 24px; margin-bottom: 20px;
   flex-wrap: wrap; gap: 16px;
 }
 .stat-item  { display: flex; flex-direction: column; align-items: center; min-width: 100px; }
-.stat-label { font-size: 11px; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
-.stat-val   { font-size: 17px; font-weight: 700; color: #111827; }
-.stat-sep   { width: 1px; height: 36px; background: rgba(0,0,0,0.08); flex-shrink: 0; }
+.stat-label { font-size: 11px; color: var(--crm-text-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+.stat-val   { font-size: 17px; font-weight: 700; color: var(--crm-text); }
+.stat-sep   { width: 1px; height: 36px; background: var(--crm-border); flex-shrink: 0; }
 
 /* ── Table card ── */
 .plan-card {
-  background: #fff; border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  background: var(--crm-surface); border-radius: 12px;
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   overflow: hidden;
 }
 
@@ -413,12 +413,12 @@ const exportExcel = () => {
   padding: 10px 10px; text-align: left;
   font-weight: 600; font-size: 0.7rem;
   text-transform: uppercase; letter-spacing: 0.05em;
-  color: rgba(0,0,0,0.5); border-bottom: 2px solid rgba(0,0,0,0.08);
-  white-space: nowrap; background: #FAFAFA; position: sticky; top: 0;
+  color: var(--crm-text-muted); border-bottom: 2px solid var(--crm-border-strong);
+  white-space: nowrap; background: var(--crm-table-header); position: sticky; top: 0;
 }
 .plan-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
 }
 .plan-tr { cursor: pointer; transition: background 0.1s; }
@@ -434,12 +434,12 @@ const exportExcel = () => {
 .th-date       { width: 90px; white-space: nowrap; }
 .th-status     { width: 110px; }
 
-.plan-name { font-weight: 500; color: #111827; line-height: 1.3; }
-.plan-reg  { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+.plan-name { font-weight: 500; color: var(--crm-text); line-height: 1.3; }
+.plan-reg  { font-size: 11px; color: var(--crm-text-faint); margin-top: 2px; }
 
 .plan-total {
-  background: #F8FAFC;
-  border-top: 2px solid rgba(0,0,0,0.1);
+  background: var(--crm-surface-alt);
+  border-top: 2px solid var(--crm-border-strong);
 }
 .plan-total td { padding: 10px 10px; font-size: 0.82rem; }
 

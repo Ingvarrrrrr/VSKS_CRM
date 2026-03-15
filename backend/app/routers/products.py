@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, 
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.auth.jwt import get_current_user, get_org_filter
 from app.database import get_db
 from app.models.product import Product
-from app.schemas.schemas import ProductCreate, ProductOut
+from app.models.user import User
+from app.schemas.schemas import ProductCreate, ProductOut, ProductSummaryGroup, ProductSummaryItem
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -27,9 +29,11 @@ async def list_products(
     feo_category_id: Optional[int] = Query(None),
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     q = select(Product)
+    # Products are global — no org_id filter
     if feo_category_id is not None:
         q = q.where(Product.feo_category_id == feo_category_id)
     if category is not None:
@@ -37,7 +41,110 @@ async def list_products(
     if is_active is not None:
         q = q.where(Product.is_active == is_active)
     result = await db.execute(q.order_by(Product.name))
-    return result.scalars().all()
+    products = result.scalars().all()
+
+    # Скрыть контрактные цены для чужих организаций (если не shared)
+    if current_user.role != "superadmin":
+        user_org_id = current_user.org_id
+        for p in products:
+            if p.contract_org_id and p.contract_org_id != user_org_id and not p.price_shared:
+                p.contract_price = None
+                p.contract_number = None
+                p.contract_date = None
+                p.contract_org_id = None
+
+    return products
+
+@router.get("/summary", response_model=List[ProductSummaryGroup])
+async def product_summary(
+    subsidy_id: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),
+    product_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Сводная по продукции — агрегация закупок по продуктам через все субсидии."""
+    from app.models.purchase_item import PurchaseItem
+    from app.models.purchase import Purchase
+    from app.models.subsidy import Subsidy
+    from app.models.organization import Organization
+    from sqlalchemy.orm import joinedload
+
+    q = (
+        select(PurchaseItem)
+        .join(Product, PurchaseItem.product_id == Product.id)
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .join(Subsidy, Purchase.subsidy_id == Subsidy.id)
+        .outerjoin(Organization, Subsidy.org_id == Organization.id)
+        .where(PurchaseItem.product_id.isnot(None))
+        .options(
+            joinedload(PurchaseItem.product),
+            joinedload(PurchaseItem.purchase).joinedload(Purchase.feo_category),
+        )
+    )
+
+    if subsidy_id is not None:
+        q = q.where(Purchase.subsidy_id == subsidy_id)
+    if category is not None:
+        q = q.where(Product.category == category)
+    if product_id is not None:
+        q = q.where(Product.id == product_id)
+    if search:
+        q = q.where(Product.name.ilike(f"%{search}%"))
+
+    # Also need subsidy name and org name — use add_columns
+    q = q.add_columns(Subsidy.name.label("subsidy_name"), Organization.name.label("org_name"))
+    q = q.order_by(Product.name, Subsidy.name)
+
+    result = await db.execute(q)
+    rows = result.unique().all()
+
+    # Group by product
+    from collections import defaultdict
+    groups: dict[int, dict] = {}
+    for row in rows:
+        pi = row[0]  # PurchaseItem
+        s_name = row[1]  # subsidy_name
+        o_name = row[2]  # org_name
+        product = pi.product
+        purchase = pi.purchase
+
+        pid = product.id
+        if pid not in groups:
+            groups[pid] = {
+                "product_id": pid,
+                "product_name": product.name,
+                "category": product.category,
+                "product_type": product.product_type,
+                "total_quantity": Decimal(0),
+                "total_amount": Decimal(0),
+                "purchase_count": 0,
+                "items": [],
+            }
+
+        qty = pi.quantity or Decimal(0)
+        amt = pi.total_price or pi.final_total or Decimal(0)
+        groups[pid]["total_quantity"] += qty
+        groups[pid]["total_amount"] += amt
+        groups[pid]["purchase_count"] += 1
+        groups[pid]["items"].append(ProductSummaryItem(
+            purchase_id=purchase.id,
+            subsidy_name=s_name or "",
+            org_name=o_name,
+            quantity=pi.quantity,
+            unit=pi.unit,
+            unit_price=pi.unit_price,
+            total_price=pi.total_price or pi.final_total,
+            status=purchase.status,
+            delivery_date=purchase.delivery_date,
+            delivery_address=purchase.delivery_address,
+            procurement_planned_date=purchase.procurement_planned_date,
+            purchase_method=purchase.purchase_method,
+        ))
+
+    return [ProductSummaryGroup(**g) for g in groups.values()]
+
 
 @router.get("/photos/{filename}")
 async def serve_product_photo(filename: str):
@@ -139,6 +246,28 @@ async def patch_product(
     return db_product
 
 
+@router.patch("/{product_id}/share-price")
+async def toggle_price_sharing(
+    product_id: int,
+    data: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Включить/отключить sharing контрактной цены для других организаций."""
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    # Только владелец организации или superadmin
+    if current_user.role != "superadmin":
+        if product.contract_org_id != current_user.org_id:
+            raise HTTPException(403, "Только организация-владелец контракта может управлять доступом к цене")
+    product.price_shared = bool(data.get("shared", False))
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
 @router.delete("/{product_id}")
 async def delete_product(
     product_id: int,
@@ -151,6 +280,20 @@ async def delete_product(
     await db.delete(db_product)
     await db.commit()
     return {"message": "Product deleted"}
+
+
+@router.delete("/bulk/all")
+async def delete_all_products(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Удалить все товары. Только для superadmin."""
+    if current_user.role != "superadmin":
+        raise HTTPException(403, "Только суперадмин может удалить все товары")
+    from sqlalchemy import delete as sa_delete
+    result = await db.execute(sa_delete(Product))
+    await db.commit()
+    return {"message": f"Удалено {result.rowcount} товаров"}
 
 
 @router.get("/import/template")
@@ -207,16 +350,34 @@ async def import_products_from_excel(
     raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
     COLUMN_MAP = {
         "наименование": "name",
+        "название": "name",
+        "наименование товара": "name",
+        "товар": "name",
+        "name": "name",
         "описание": "description",
+        "description": "description",
         "категория": "category",
+        "category": "category",
         "вид": "product_type",
+        "тип": "product_type",
+        "type": "product_type",
         "цена": "price",
+        "цена, руб": "price",
+        "цена, ₽": "price",
+        "цена (руб)": "price",
+        "стоимость": "price",
+        "price": "price",
         "фото (url)": "photo_link",
         "фото": "photo_link",
+        "photo": "photo_link",
+        "ссылка на фото": "photo_link",
         "многоразовое": "is_reusable",
         "активен": "is_active",
         "активна": "is_active",
+        "active": "is_active",
         "категория фэо": "feo_category_name",
+        "фэо": "feo_category_name",
+        "направление фэо": "feo_category_name",
     }
     # Also map Ссылка N / Цена ссылки N
     col_idx: dict[str, int] = {}
@@ -292,7 +453,10 @@ async def import_products_from_excel(
             errors.append({"row": row_num, "name": cell(row, "name") or "?", "message": str(e)})
 
     await db.commit()
-    return {"created": created, "skipped": skipped, "errors": errors}
+    # Возвращаем распознанные колонки для диагностики
+    recognized = {field: raw_headers[idx] for field, idx in col_idx.items()}
+    return {"created": created, "skipped": skipped, "errors": errors,
+            "headers_found": recognized, "headers_raw": raw_headers[:20]}
 
 
 def _download_and_save_photo(product_id: int, url: str) -> str:

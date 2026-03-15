@@ -7,8 +7,9 @@
         <span class="text-body-2 text-medium-emphasis">{{ orders.length }} записей</span>
       </div>
       <div class="d-flex gap-2">
+        <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-import" color="blue" @click="importDialog.show = true">Импорт</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="exportToExcel">Excel</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="openExportDialog">Excel</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" to="/create-order">Добавить</v-btn>
       </div>
     </div>
@@ -51,6 +52,24 @@
             hide-details
             style="min-width:200px"
           />
+          <v-btn
+            size="small" variant="tonal" color="primary"
+            prepend-icon="mdi-bookmark-plus-outline"
+            @click="saveFilterPreset">
+            Сохранить фильтр
+          </v-btn>
+        </div>
+        <!-- Saved filter preset chips -->
+        <div v-if="savedFilterPresets.length" class="d-flex align-center gap-2 flex-wrap mt-2">
+          <span class="text-caption text-medium-emphasis">Пресеты:</span>
+          <v-chip
+            v-for="p in savedFilterPresets" :key="p.name"
+            size="small" variant="tonal" color="primary"
+            class="cursor-pointer"
+            @click="applyFilterPreset(p)">
+            {{ p.name }}
+            <v-icon icon="mdi-close" size="12" class="ml-1" @click.stop="removeFilterPreset(p.name)" />
+          </v-chip>
         </div>
       </v-card-text>
     </v-card>
@@ -74,6 +93,21 @@
     <div v-if="selectedOrders.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
       <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
       <span class="text-body-2 font-weight-medium">Выбрано: {{ selectedOrders.length }}</span>
+      <v-menu>
+        <template v-slot:activator="{ props }">
+          <v-btn v-bind="props" size="small" variant="tonal" color="blue" prepend-icon="mdi-swap-horizontal">
+            Сменить статус
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-item
+            v-for="s in statusItems" :key="s.value"
+            :title="s.label"
+            :prepend-icon="'mdi-circle-small'"
+            @click="bulkChangeStatus(s.value)"
+          />
+        </v-list>
+      </v-menu>
       <v-spacer />
       <v-btn v-if="isAdmin" color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDelete">
         Удалить выбранные
@@ -122,9 +156,15 @@
         </template>
 
         <template #item.status="{ item }">
-          <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="small" variant="tonal">
-            {{ STATUS_LABEL[item.status] || item.status }}
-          </v-chip>
+          <div class="d-flex align-center ga-1 flex-wrap">
+            <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="small" variant="tonal">
+              {{ STATUS_LABEL[item.status] || item.status }}
+            </v-chip>
+            <v-chip v-if="item.substatus" size="x-small" variant="outlined" color="teal">
+              {{ SUBSTATUS_LABEL[item.substatus] || item.substatus }}
+            </v-chip>
+            <v-icon v-if="item.is_monthly_payment" size="x-small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
+          </div>
         </template>
 
         <template #item.effective_price="{ item }">
@@ -139,6 +179,13 @@
           <span class="text-body-2 text-truncate" style="max-width:150px;display:inline-block">
             {{ item.subsidy_name || '—' }}
           </span>
+        </template>
+
+        <template #item.approval_status="{ item }">
+          <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal">
+            {{ APPROVAL_STATUS_LABEL[item.approval_status] }}
+          </v-chip>
+          <span v-else class="text-caption text-medium-emphasis">—</span>
         </template>
 
         <template #item.actions="{ item }">
@@ -344,13 +391,115 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Save Filter Preset Dialog -->
+    <v-dialog v-model="filterPresetDialog.show" max-width="380">
+      <v-card>
+        <v-card-title class="pa-4">Сохранить фильтр</v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-text-field
+            v-model="filterPresetDialog.name"
+            label="Название пресета"
+            variant="outlined" density="compact" autofocus
+            placeholder="Например: ФАДМ 2026 неоплачено"
+            @keyup.enter="confirmSaveFilterPreset"
+          />
+          <div class="text-caption text-medium-emphasis mt-1">
+            <span v-if="filterSubsidyId">Субсидия: {{ subsidies.find(s=>s.id===filterSubsidyId)?.name }}</span>
+            <span v-if="filterStatus" class="ml-2">Статус: {{ STATUS_LABEL[filterStatus] }}</span>
+            <span v-if="search" class="ml-2">Поиск: "{{ search }}"</span>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="filterPresetDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="!filterPresetDialog.name.trim()" @click="confirmSaveFilterPreset">
+            Сохранить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Excel Export Dialog -->
+    <v-dialog v-model="exportDialog.show" max-width="680" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon icon="mdi-microsoft-excel" color="success" class="mr-2" />
+          Экспорт в Excel
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="exportDialog.show = false" />
+        </v-card-title>
+
+        <v-card-text class="pa-0">
+          <!-- Presets row -->
+          <div class="d-flex align-center gap-2 px-4 py-2 bg-grey-lighten-5 border-b">
+            <span class="text-caption text-medium-emphasis mr-1">Пресет:</span>
+            <v-btn size="x-small" variant="tonal" @click="applyPreset('default')">Стандартный</v-btn>
+            <v-btn size="x-small" variant="tonal" @click="applyPreset('all')">Полный</v-btn>
+            <v-btn size="x-small" variant="tonal" color="blue" @click="applyPreset('saved')" :disabled="!hasSavedPreset">
+              Мой ({{ savedPresetCount }})
+            </v-btn>
+            <v-spacer />
+            <v-btn size="x-small" variant="outlined" prepend-icon="mdi-content-save" @click="savePreset">
+              Сохранить
+            </v-btn>
+          </div>
+
+          <!-- Columns by group -->
+          <div v-if="exportDialog.loading" class="d-flex justify-center py-8">
+            <v-progress-circular indeterminate color="primary" />
+          </div>
+          <div v-else class="px-4 py-2">
+            <div v-for="group in exportColumnGroups" :key="group.name" class="mb-3">
+              <div class="d-flex align-center mb-1">
+                <span class="text-caption font-weight-bold text-medium-emphasis text-uppercase">{{ group.name }}</span>
+                <v-btn
+                  size="x-small" variant="text" class="ml-1"
+                  @click="toggleGroup(group.name, true)">все</v-btn>
+                <v-btn
+                  size="x-small" variant="text"
+                  @click="toggleGroup(group.name, false)">ни одного</v-btn>
+              </div>
+              <div class="d-flex flex-wrap gap-1">
+                <v-checkbox
+                  v-for="col in group.cols" :key="col.key"
+                  v-model="exportDialog.selected"
+                  :value="col.key"
+                  :label="col.label"
+                  density="compact"
+                  hide-details
+                  class="export-col-check"
+                />
+              </div>
+            </div>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 pt-2">
+          <span class="text-caption text-medium-emphasis">Выбрано: {{ exportDialog.selected.length }}</span>
+          <v-spacer />
+          <v-btn variant="text" @click="exportDialog.show = false">Отмена</v-btn>
+          <v-btn
+            color="success" variant="flat"
+            prepend-icon="mdi-download"
+            :loading="exportDialog.exporting"
+            :disabled="exportDialog.selected.length === 0"
+            @click="doExport">
+            Скачать Excel
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+
+const { globalSubsidyId } = useGlobalSubsidy()
 
 const route = useRoute()
 const userRole = localStorage.getItem('user_role') || ''
@@ -373,6 +522,9 @@ interface Purchase {
   contract_price?: number
   delivery_payment_amount?: number
   status: string
+  substatus?: string
+  is_monthly_payment?: boolean
+  delivery_date?: string
   contract_number?: string
   contract_date?: string
   acceptance_doc_name?: string
@@ -383,18 +535,30 @@ interface Purchase {
   payment_doc_date?: string
   payment_amount?: number
   items?: PurchaseItem[]
+  approval_status?: string
 }
 
-const STATUS_ORDER = ['planned', 'confirmed', 'in_progress', 'contracted', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
-  planned: 'Планируется', confirmed: 'Подтверждено',
-  in_progress: 'Ведётся работа',
+  wishes: 'Желания', plan_schedule: 'План-график',
+  confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_COLOR: Record<string, string> = {
-  planned: 'orange', confirmed: 'blue',
-  in_progress: 'teal',
+  wishes: 'amber', plan_schedule: 'orange',
+  confirmed: 'blue', work_in_progress: 'teal',
   contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+}
+const SUBSTATUS_LABEL: Record<string, string> = {
+  tz_forming: 'Формируется ТЗ',
+  kp_collecting: 'Сбор КП',
+  on_platform: 'На площадке',
+}
+const APPROVAL_STATUS_COLOR: Record<string, string> = {
+  in_progress: 'orange', approved: 'green', rejected: 'error',
+}
+const APPROVAL_STATUS_LABEL: Record<string, string> = {
+  in_progress: 'На согласовании', approved: 'Согласовано', rejected: 'Отклонено',
 }
 const statusItems = STATUS_ORDER.map(v => ({ value: v, label: STATUS_LABEL[v], color: STATUS_COLOR[v] }))
 
@@ -427,6 +591,7 @@ const headers = [
   { title: '№ договора', key: 'contract_number', minWidth: 120 },
   { title: 'Дата договора', key: 'contract_date', minWidth: 120 },
   { title: 'Статус', key: 'status', width: 130 },
+  { title: 'Согласование', key: 'approval_status', width: 130, sortable: true },
   { title: 'Действия', key: 'actions', sortable: false, width: 200 },
 ]
 
@@ -441,6 +606,48 @@ const expanded = ref<string[]>([])
 const selectedOrders = ref<Purchase[]>([])
 
 const snack = reactive({ show: false, text: '', color: 'success' })
+
+// ---------------------------------------------------------------------------
+// Saved filter presets
+// ---------------------------------------------------------------------------
+const FILTER_PRESETS_KEY = 'orders_filter_presets'
+interface FilterPreset { name: string; subsidyId: number | null; status: string; search: string }
+
+const savedFilterPresets = ref<FilterPreset[]>([])
+const filterPresetDialog = reactive({ show: false, name: '' })
+
+function loadFilterPresets() {
+  try { savedFilterPresets.value = JSON.parse(localStorage.getItem(FILTER_PRESETS_KEY) || '[]') } catch {}
+}
+function saveFilterPreset() {
+  filterPresetDialog.name = ''
+  filterPresetDialog.show = true
+}
+function confirmSaveFilterPreset() {
+  const name = filterPresetDialog.name.trim()
+  if (!name) return
+  const preset: FilterPreset = {
+    name,
+    subsidyId: filterSubsidyId.value,
+    status: filterStatus.value,
+    search: search.value,
+  }
+  const existing = savedFilterPresets.value.filter(p => p.name !== name)
+  savedFilterPresets.value = [...existing, preset]
+  localStorage.setItem(FILTER_PRESETS_KEY, JSON.stringify(savedFilterPresets.value))
+  filterPresetDialog.show = false
+  showSnack('Пресет сохранён')
+}
+function applyFilterPreset(p: FilterPreset) {
+  filterSubsidyId.value = p.subsidyId
+  filterStatus.value = p.status
+  search.value = p.search
+}
+function removeFilterPreset(name: string) {
+  savedFilterPresets.value = savedFilterPresets.value.filter(p => p.name !== name)
+  localStorage.setItem(FILTER_PRESETS_KEY, JSON.stringify(savedFilterPresets.value))
+}
+
 const guardDialog = reactive({
   show: false, purchaseId: 0, targetStatus: '', missing: [] as string[],
 })
@@ -514,9 +721,21 @@ const loadSubsidies = async () => {
 onMounted(() => {
   loadOrders()
   loadSubsidies()
+  loadFilterPresets()
   const qSub = route.query.subsidy_id
-  if (qSub) filterSubsidyId.value = Number(qSub)
+  if (qSub) {
+    filterSubsidyId.value = Number(qSub)
+    globalSubsidyId.value = Number(qSub)
+  } else if (globalSubsidyId.value) {
+    filterSubsidyId.value = globalSubsidyId.value
+  }
+  const qStatus = route.query.status
+  if (qStatus && typeof qStatus === 'string') filterStatus.value = qStatus
 })
+
+// Bidirectional sync with global subsidy
+watch(filterSubsidyId, (id: number | null) => { globalSubsidyId.value = id })
+watch(globalSubsidyId, (id: number | null) => { filterSubsidyId.value = id })
 
 const doTransition = async (item: Purchase) => {
   const target = nextStatus(item.status)
@@ -556,6 +775,21 @@ const confirmBulkDelete = () => {
   deleteDialog.show = true
 }
 
+const bulkChangeStatus = async (status: string) => {
+  const ids = selectedOrders.value.map(o => o.id)
+  let ok = 0, fail = 0
+  for (const id of ids) {
+    try {
+      await apiFetch<any>(`/purchases/${id}/transition?status=${status}`, { method: 'POST' })
+      const idx = orders.value.findIndex(o => o.id === id)
+      if (idx >= 0) orders.value[idx].status = status
+      ok++
+    } catch { fail++ }
+  }
+  selectedOrders.value = []
+  showSnack(`Обновлено: ${ok}${fail ? `, ошибок: ${fail}` : ''}`, fail ? 'warning' : 'success')
+}
+
 const doDelete = async () => {
   deleteDialog.deleting = true
   try {
@@ -593,7 +827,7 @@ const resetImport = () => {
 }
 
 const downloadTemplate = async () => {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token')
+  const token = localStorage.getItem('auth_token')
   const response = await fetch('/api/purchases/import/template', {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -611,7 +845,7 @@ const doImport = async () => {
   try {
     const formData = new FormData()
     formData.append('file', importDialog.file)
-    const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token')
+    const token = localStorage.getItem('auth_token')
     const qs = importDialog.subsidyId ? `?subsidy_id=${importDialog.subsidyId}` : ''
     const response = await fetch(`/api/purchases/import${qs}`, {
       method: 'POST',
@@ -633,16 +867,99 @@ const doImport = async () => {
   }
 }
 
-const exportToExcel = async () => {
+// ---------------------------------------------------------------------------
+// Excel export with configurable columns
+// ---------------------------------------------------------------------------
+
+interface ExportColumn { key: string; label: string; group: string }
+
+const DEFAULT_EXPORT_KEYS = [
+  'purchase_number', 'registry_number', 'item_name', 'item_type', 'unit', 'quantity',
+  'nmck', 'contract_price', 'economy', 'purchase_method',
+  'contract_number', 'contract_date', 'contractor',
+  'execution_term', 'country_origin',
+  'acceptance_doc_name', 'acceptance_doc_number', 'acceptance_doc_date', 'acceptance_doc_amount',
+  'payment_doc_number', 'payment_doc_date', 'payment_amount', 'payment_federal',
+  'status',
+]
+const SAVED_PRESET_KEY = 'export_columns_preset'
+
+const exportDialog = reactive({
+  show: false,
+  loading: false,
+  exporting: false,
+  allColumns: [] as ExportColumn[],
+  selected: [...DEFAULT_EXPORT_KEYS],
+})
+
+const exportColumnGroups = computed(() => {
+  const map: Record<string, ExportColumn[]> = {}
+  for (const col of exportDialog.allColumns) {
+    if (!map[col.group]) map[col.group] = []
+    map[col.group].push(col)
+  }
+  return Object.entries(map).map(([name, cols]) => ({ name, cols }))
+})
+
+const hasSavedPreset = computed(() => !!localStorage.getItem(SAVED_PRESET_KEY))
+const savedPresetCount = computed(() => {
+  try { return JSON.parse(localStorage.getItem(SAVED_PRESET_KEY) || '[]').length } catch { return 0 }
+})
+
+async function openExportDialog() {
+  exportDialog.show = true
+  if (exportDialog.allColumns.length === 0) {
+    exportDialog.loading = true
+    try {
+      exportDialog.allColumns = await apiFetch<ExportColumn[]>('/purchases/export/columns')
+    } finally {
+      exportDialog.loading = false
+    }
+  }
+}
+
+function applyPreset(type: 'default' | 'all' | 'saved') {
+  if (type === 'default') {
+    exportDialog.selected = [...DEFAULT_EXPORT_KEYS]
+  } else if (type === 'all') {
+    exportDialog.selected = exportDialog.allColumns.map(c => c.key)
+  } else {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SAVED_PRESET_KEY) || '[]')
+      if (saved.length) exportDialog.selected = saved
+    } catch {}
+  }
+}
+
+function savePreset() {
+  localStorage.setItem(SAVED_PRESET_KEY, JSON.stringify(exportDialog.selected))
+  showSnack('Пресет сохранён', 'success')
+}
+
+function toggleGroup(groupName: string, select: boolean) {
+  const group = exportColumnGroups.value.find(g => g.name === groupName)
+  if (!group) return
+  const keys = group.cols.map(c => c.key)
+  if (select) {
+    exportDialog.selected = [...new Set([...exportDialog.selected, ...keys])]
+  } else {
+    exportDialog.selected = exportDialog.selected.filter(k => !keys.includes(k))
+  }
+}
+
+async function doExport() {
+  exportDialog.exporting = true
   try {
-    const token = localStorage.getItem('access_token')
+    const token = localStorage.getItem('auth_token')
     const params = new URLSearchParams()
     if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
     if (filterStatus.value) params.set('status', filterStatus.value)
+    params.set('columns', exportDialog.selected.join(','))
     const response = await fetch(`/api/purchases/export/excel?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!response.ok) throw new Error('Ошибка экспорта')
+    const missing = response.headers.get('X-Missing-Columns')
     const blob = await response.blob()
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -652,8 +969,14 @@ const exportToExcel = async () => {
     a.click()
     window.URL.revokeObjectURL(url)
     document.body.removeChild(a)
+    exportDialog.show = false
+    if (missing) {
+      showSnack(`Предупреждение: мало данных в колонках: ${missing}`, 'warning')
+    }
   } catch {
     showSnack('Ошибка экспорта', 'error')
+  } finally {
+    exportDialog.exporting = false
   }
 }
 </script>
@@ -669,8 +992,10 @@ const exportToExcel = async () => {
 .import-stat--ok   { background: rgba(34,197,94,0.1); }
 .import-stat--skip { background: rgba(245,158,11,0.1); }
 .import-stat--err  { background: rgba(239,68,68,0.1); }
-.import-stat-val { font-size: 32px; font-weight: 700; color: #111827; }
-.import-stat-lbl { font-size: 12px; color: #6B7280; margin-top: 4px; }
-.import-errors-list { max-height: 200px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; }
+.import-stat-val { font-size: 32px; font-weight: 700; color: var(--crm-text); }
+.import-stat-lbl { font-size: 12px; color: var(--crm-text-muted); margin-top: 4px; }
+.import-errors-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--crm-border); border-radius: 8px; }
 .fz-11 { font-size: 11px; }
+.export-col-check { min-width: 180px; max-width: 220px; }
+.border-b { border-bottom: 1px solid var(--crm-border-strong); }
 </style>

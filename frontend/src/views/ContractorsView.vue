@@ -684,8 +684,8 @@ onMounted(loadContractors)
 }
 .page-header-left  { display: flex; align-items: center; }
 .page-header-right { display: flex; align-items: center; }
-.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
-.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+.page-title    { font-size: 26px; font-weight: 700; color: var(--crm-text); line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: var(--crm-text-muted); margin-top: 2px; }
 
 /* ── Filters ── */
 .filters-bar {
@@ -696,26 +696,26 @@ onMounted(loadContractors)
 }
 .search-count {
   font-size: 13px;
-  color: #6B7280;
+  color: var(--crm-text-muted);
   white-space: nowrap;
   margin-left: auto;
 }
 
 /* ── Table ── */
 .table-card {
-  background: #fff;
+  background: var(--crm-surface);
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   overflow: hidden;
 }
 .contractors-table thead th {
   font-size: 11px !important;
   font-weight: 600 !important;
-  color: #6B7280 !important;
+  color: var(--crm-text-muted) !important;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: #F9FAFB;
+  background: var(--crm-table-header);
   padding: 10px 14px !important;
   white-space: nowrap;
 }
@@ -723,8 +723,8 @@ onMounted(loadContractors)
   padding: 10px 14px !important;
   vertical-align: top;
 }
-.contractor-row:hover td { background: #F9FAFB; }
-.contractor-row--selected td { background: #EFF6FF; }
+.contractor-row:hover td { background: var(--crm-surface-alt); }
+.contractor-row--selected td { background: var(--crm-surface-hover); }
 .text-mono { font-family: monospace; font-size: 13px; }
 .text-sm   { font-size: 13px; }
 .cursor-pointer { cursor: pointer; }
@@ -740,11 +740,11 @@ onMounted(loadContractors)
 .section-label {
   font-size: 11px;
   font-weight: 600;
-  color: #6B7280;
+  color: var(--crm-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 8px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #F3F4F6;
+  border-bottom: 1px solid var(--crm-border);
 }
 </style>

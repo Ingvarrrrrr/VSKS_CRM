@@ -325,17 +325,17 @@ watch(() => props.modelValue, (v) => {
 .summary-strip {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border-bottom: 1px solid var(--crm-border-strong);
+  background: var(--crm-surface-alt);
   flex-shrink: 0;
 }
 .sum-card {
   flex: 1;
   padding: 10px 16px;
-  border-right: 1px solid #e2e8f0;
+  border-right: 1px solid var(--crm-border-strong);
   min-width: 0;
 }
 .sum-card:last-child { border-right: none; }
-.sum-label { font-size: 11px; color: #6B7280; }
+.sum-label { font-size: 11px; color: var(--crm-text-muted); }
 .sum-value { font-size: 18px; font-weight: 700; line-height: 1.2; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

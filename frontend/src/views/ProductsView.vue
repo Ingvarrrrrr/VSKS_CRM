@@ -71,6 +71,8 @@
         <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
         <v-btn variant="text" size="small" prepend-icon="mdi-close-circle" color="white" class="ml-2"
           @click="selectedIds = []">Снять</v-btn>
+        <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
+          @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
         <v-spacer />
         <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
           @click="bulkToggleActive(true)">Активировать</v-btn>
@@ -78,6 +80,8 @@
           @click="bulkToggleActive(false)">Деактивировать</v-btn>
         <v-btn variant="flat" size="small" prepend-icon="mdi-delete" color="error"
           @click="bulkDeleteDialog = true">Удалить выбранные</v-btn>
+        <v-btn v-if="isSuperadmin" variant="flat" size="small" prepend-icon="mdi-delete-sweep" color="error" class="ml-2"
+          @click="deleteAllDialog = true">Удалить ВСЕ</v-btn>
       </v-toolbar>
 
       <v-data-table
@@ -91,7 +95,7 @@
         density="compact"
         hover
         items-per-page="25"
-        :items-per-page-options="[25, 50, 100]"
+        :items-per-page-options="[25, 50, 100, -1]"
       >
         <!-- Photo -->
         <template #item.photo="{ item }">
@@ -107,6 +111,7 @@
           <div v-if="item.description" class="text-caption text-medium-emphasis" style="max-width:280px;white-space:normal;line-height:1.3">
             {{ item.description.slice(0, 100) }}{{ item.description.length > 100 ? '…' : '' }}
           </div>
+          <v-chip v-if="item.description_44fz" size="x-small" variant="tonal" color="blue" class="mt-1">44-ФЗ</v-chip>
         </template>
 
         <!-- Type chip -->
@@ -126,6 +131,27 @@
             {{ item.price_links.length }} ист.
           </div>
           <span v-if="!item.price" class="text-medium-emphasis">—</span>
+        </template>
+
+        <!-- Contract Price -->
+        <template #item.contract_price="{ item }">
+          <template v-if="item.contract_price">
+            <div class="font-weight-medium text-green-darken-2">
+              {{ Number(item.contract_price).toLocaleString('ru-RU') }} ₽
+            </div>
+            <div v-if="item.contract_number" class="text-caption text-medium-emphasis">
+              № {{ item.contract_number }}
+              <span v-if="item.contract_date"> от {{ item.contract_date }}</span>
+            </div>
+            <v-tooltip :text="item.price_shared ? 'Цена видна другим организациям' : 'Цена скрыта от других организаций'" location="top">
+              <template #activator="{ props: tip }">
+                <v-btn v-bind="tip" :icon="item.price_shared ? 'mdi-eye' : 'mdi-eye-off'" variant="text"
+                  size="x-small" :color="item.price_shared ? 'success' : 'grey'"
+                  @click="toggleSharing(item)" />
+              </template>
+            </v-tooltip>
+          </template>
+          <span v-else class="text-medium-emphasis">—</span>
         </template>
 
         <!-- Active -->
@@ -215,8 +241,14 @@
             </v-col>
 
             <v-col cols="12">
-              <v-textarea v-model="form.description" label="Описание" variant="outlined"
-                density="compact" rows="3" auto-grow />
+              <v-textarea v-model="form.description" label="Точное описание"
+                hint="Конкретные характеристики товара"
+                variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
+            </v-col>
+            <v-col cols="12">
+              <v-textarea v-model="form.description_44fz" label="Описание для 44-ФЗ"
+                hint="Допустимые интервалы характеристик для публикации закупки"
+                variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
             </v-col>
 
             <!-- Фото -->
@@ -344,6 +376,23 @@
       </v-card>
     </v-dialog>
 
+    <!-- Delete ALL confirm (superadmin only) -->
+    <v-dialog v-model="deleteAllDialog" max-width="480">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6 text-error">Удалить ВСЕ товары?</v-card-title>
+        <v-card-text class="px-6">
+          Будут удалены <strong>все {{ products.length }}</strong> товаров из каталога.
+          Это действие необратимо. Для подтверждения введите слово <strong>УДАЛИТЬ</strong>.
+        </v-card-text>
+        <v-text-field v-model="deleteAllConfirm" label="Введите УДАЛИТЬ" variant="outlined" density="compact" class="mx-6" hide-details />
+        <v-card-actions class="px-6 pb-4 pt-3">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteAllDialog = false; deleteAllConfirm = ''">Отмена</v-btn>
+          <v-btn color="error" :loading="deletingAll" :disabled="deleteAllConfirm !== 'УДАЛИТЬ'" @click="doDeleteAll">Удалить все</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Import dialog -->
     <v-dialog v-model="importDialog.show" max-width="540" persistent>
       <v-card>
@@ -352,10 +401,11 @@
           <!-- Step 1: upload -->
           <template v-if="importDialog.step === 1">
             <p class="text-body-2 text-medium-emphasis mb-4">
-              Загрузите файл .xlsx с колонками:<br>
-              <strong>Наименование</strong> (обяз.), Описание, Категория, Вид, Цена,
-              Ссылка 1, Цена ссылки 1, Ссылка 2, Цена ссылки 2, Ссылка 3, Цена ссылки 3,
-              Фото (URL), Многоразовое (да/нет), Активен (да/нет), Категория ФЭО
+              Загрузите файл .xlsx. Обязательная колонка:<br>
+              <strong>Наименование</strong> (или «Название», «Товар»).<br>
+              Необязательные: Описание, Категория, Вид, Цена (или «Стоимость»),
+              Ссылка 1…3, Цена ссылки 1…3,
+              Фото (URL), Многоразовое, Активен, Категория ФЭО.
             </p>
             <v-file-input
               v-model="importDialog.fileList"
@@ -364,16 +414,30 @@
               variant="outlined" density="compact"
               prepend-icon="mdi-file-excel"
               show-size
-              @update:model-value="importDialog.file = $event?.[0] ?? null"
+              @update:model-value="importDialog.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
             />
           </template>
 
           <!-- Step 2: results -->
           <template v-else>
-            <v-alert v-if="importDialog.result" type="success" variant="tonal" class="mb-3">
+            <v-alert v-if="importDialog.result && !importDialog.result.headers_found?.name" type="error" variant="tonal" class="mb-3">
+              Колонка <strong>«Наименование»</strong> не найдена в файле!<br>
+              Все строки пропущены. Проверьте заголовки в первой строке Excel.
+              <div v-if="importDialog.result.headers_raw?.length" class="mt-2 text-caption">
+                Найденные заголовки: <strong>{{ importDialog.result.headers_raw.filter((h: any) => h).join(', ') }}</strong>
+              </div>
+            </v-alert>
+            <v-alert v-else-if="importDialog.result" :type="importDialog.result.created > 0 ? 'success' : 'warning'" variant="tonal" class="mb-3">
               Создано: <strong>{{ importDialog.result.created }}</strong> &nbsp;
               Пропущено: <strong>{{ importDialog.result.skipped }}</strong>
             </v-alert>
+            <div v-if="importDialog.result?.headers_found && Object.keys(importDialog.result.headers_found).length" class="mb-3">
+              <div class="text-caption text-medium-emphasis">Распознанные колонки:
+                <span v-for="(header, field) in importDialog.result.headers_found" :key="field" class="mr-2">
+                  <v-chip size="x-small" color="primary" variant="tonal">{{ header }}</v-chip>
+                </span>
+              </div>
+            </div>
             <div v-if="importDialog.result?.errors?.length" class="mt-2">
               <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ importDialog.result.errors.length }}):</div>
               <v-list density="compact" class="bg-error-lighten-5 rounded">
@@ -445,20 +509,26 @@ import { apiFetch } from '@/api'
 interface PriceLink { url: string; price: number | null }
 interface Product {
   id: number; name: string; category?: string; product_type?: string
-  price?: number; description?: string; photo_url?: string
+  price?: number; description?: string; description_44fz?: string; photo_url?: string
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
   price_links?: PriceLink[]
 }
+
+const userRole = localStorage.getItem('user_role') || ''
+const isSuperadmin = userRole === 'superadmin'
 
 const products = ref<Product[]>([])
 const loading  = ref(false)
 const saving   = ref(false)
 const deleting = ref(false)
 const bulkDeleting = ref(false)
+const deletingAll = ref(false)
 const dialog      = ref(false)
 const deleteDialog = ref(false)
 const bulkDeleteDialog = ref(false)
+const deleteAllDialog = ref(false)
+const deleteAllConfirm = ref('')
 const deleteTarget = ref<Product | null>(null)
 const editingId    = ref<number | null>(null)
 const selectedIds  = ref<number[]>([])
@@ -479,7 +549,7 @@ const showSnack = (text: string, color = 'success') => { snack.text = text; snac
 
 const emptyForm = () => ({
   name: '', category: '', product_type: '', price: null as number | null,
-  description: '', photo_url: '', photo_link: '', clarification_link: '',
+  description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
 })
@@ -530,6 +600,7 @@ const headers = [
   { title: 'Тип',       key: 'product_type', width: 140 },
   { title: 'Категория', key: 'category',     minWidth: 140 },
   { title: 'Цена',      key: 'price',        width: 130, align: 'end' as const },
+  { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
   { title: 'Статус',    key: 'is_active',    width: 110 },
   { title: 'Действия',  key: 'actions',      width: 100, sortable: false },
 ]
@@ -588,7 +659,7 @@ function openCreate() {
 function openEdit(p: Product) {
   Object.assign(form, {
     name: p.name, category: p.category || '', product_type: p.product_type || '',
-    price: p.price ?? null, description: p.description || '',
+    price: p.price ?? null, description: p.description || '', description_44fz: p.description_44fz || '',
     photo_url: p.photo_url || '', photo_link: p.photo_link || '',
     clarification_link: p.clarification_link || '',
     is_active: p.is_active, is_reusable: p.is_reusable ?? true,
@@ -642,6 +713,19 @@ async function save() {
   }
 }
 
+async function toggleSharing(p: any) {
+  try {
+    const res = await apiFetch<any>(`/products/${p.id}/share-price`, {
+      method: 'PATCH',
+      body: JSON.stringify({ shared: !p.price_shared }),
+    })
+    p.price_shared = res.price_shared
+    showSnack(p.price_shared ? 'Цена доступна другим организациям' : 'Цена скрыта')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка', 'error')
+  }
+}
+
 function confirmDelete(p: Product) {
   deleteTarget.value = p
   deleteDialog.value = true
@@ -676,6 +760,22 @@ async function doBulkDelete() {
     showSnack('Ошибка при удалении', 'error')
   } finally {
     bulkDeleting.value = false
+  }
+}
+
+async function doDeleteAll() {
+  deletingAll.value = true
+  try {
+    const res = await apiFetch<{message: string}>('/products/bulk/all', { method: 'DELETE' })
+    showSnack(res.message || 'Все товары удалены')
+    deleteAllDialog.value = false
+    deleteAllConfirm.value = ''
+    selectedIds.value = []
+    await load()
+  } catch {
+    showSnack('Ошибка при удалении', 'error')
+  } finally {
+    deletingAll.value = false
   }
 }
 

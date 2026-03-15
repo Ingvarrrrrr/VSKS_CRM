@@ -6,7 +6,8 @@ from app.database import get_db
 from app.models.contract import Contract
 from app.models.purchase import Purchase
 from app.schemas.schemas import ContractCreate, ContractOut
-from app.auth.jwt import get_current_user, require_role
+from app.auth.jwt import get_current_user, require_role, get_org_filter
+from app.models.subsidy import Subsidy
 from typing import List, Optional
 from decimal import Decimal
 
@@ -17,13 +18,16 @@ async def list_contracts(
     subsidy_id: Optional[int] = Query(None),
     contract_type: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     q = select(Contract).options(selectinload(Contract.contractor)).order_by(Contract.id.desc())
     if subsidy_id is not None:
         q = q.where(Contract.subsidy_id == subsidy_id)
     if contract_type is not None:
         q = q.where(Contract.contract_type == contract_type)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.join(Subsidy, Contract.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     result = await db.execute(q)
     contracts = result.scalars().all()
     out = []

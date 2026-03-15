@@ -19,7 +19,7 @@
         </v-chip-group>
         <v-select
           v-model="selectedSubsidyIds"
-          :items="allSubsidies.filter(s => s.year === selectedYear)"
+          :items="allSubsidies.filter((s: SubsidyRow) => s.year === selectedYear)"
           item-title="name" item-value="id"
           label="Субсидии"
           variant="outlined" multiple chips clearable density="compact"
@@ -32,6 +32,39 @@
         />
       </div>
     </div>
+
+    <!-- ── Quick subsidy chips ── -->
+    <div v-if="yearSubsidies.length > 0" class="subsidy-chips-bar">
+      <v-chip
+        v-for="s in yearSubsidies" :key="s.id"
+        :color="selectedSubsidyIds.includes(s.id) ? 'primary' : undefined"
+        :variant="selectedSubsidyIds.includes(s.id) ? 'flat' : 'outlined'"
+        size="small"
+        class="subsidy-chip"
+        @click="toggleSubsidyChip(s.id)"
+      >
+        {{ s.shortName || s.name }}
+      </v-chip>
+      <v-chip
+        v-if="selectedSubsidyIds.length > 0"
+        variant="text" size="small" class="subsidy-chip"
+        prepend-icon="mdi-close-circle-outline"
+        @click="selectedSubsidyIds = []"
+      >Все</v-chip>
+    </div>
+
+    <!-- ── Tabs ── -->
+    <v-tabs v-model="activeTab" color="primary" class="mb-4">
+      <v-tab value="summary">
+        <v-icon icon="mdi-view-dashboard" class="mr-2" size="18" />Сводка
+      </v-tab>
+      <v-tab value="analytics">
+        <v-icon icon="mdi-chart-line" class="mr-2" size="18" />Аналитика
+      </v-tab>
+    </v-tabs>
+
+    <v-window v-model="activeTab">
+    <v-window-item value="summary">
 
     <!-- ── Budget Overflow Alert ── -->
     <div v-if="overrunSubsidies.length > 0" class="budget-overrun-banner">
@@ -272,22 +305,219 @@
       </v-table>
     </div>
 
+    </v-window-item>
+
+    <v-window-item value="analytics">
+      <div v-if="analyticsLoading" class="d-flex justify-center py-12">
+        <v-progress-circular indeterminate color="primary" size="48" />
+      </div>
+      <template v-else-if="analyticsData">
+        <!-- KPI row -->
+        <v-row class="mb-4">
+          <v-col cols="6" md="3">
+            <v-card variant="outlined" class="pa-4 text-center">
+              <div class="text-h4 font-weight-bold text-error">{{ analyticsData.overdue_count }}</div>
+              <div class="text-body-2 text-medium-emphasis mt-1">Просрочено</div>
+              <v-icon icon="mdi-alert-circle" color="error" class="mt-1" />
+            </v-card>
+          </v-col>
+          <v-col cols="6" md="3">
+            <v-card variant="outlined" class="pa-4 text-center">
+              <div class="text-h4 font-weight-bold text-warning">{{ analyticsData.upcoming_deadlines.length }}</div>
+              <div class="text-body-2 text-medium-emphasis mt-1">Срок до 30 дней</div>
+              <v-icon icon="mdi-clock-alert" color="warning" class="mt-1" />
+            </v-card>
+          </v-col>
+          <v-col cols="6" md="3">
+            <v-card variant="outlined" class="pa-4 text-center">
+              <div class="text-h4 font-weight-bold text-success">{{ analyticsTotalPaid }}</div>
+              <div class="text-body-2 text-medium-emphasis mt-1">Оплачено за год</div>
+              <v-icon icon="mdi-cash-check" color="success" class="mt-1" />
+            </v-card>
+          </v-col>
+          <v-col cols="6" md="3">
+            <v-card variant="outlined" class="pa-4 text-center">
+              <div class="text-h4 font-weight-bold text-primary">{{ analyticsTotalPurchases }}</div>
+              <div class="text-body-2 text-medium-emphasis mt-1">Всего закупок</div>
+              <v-icon icon="mdi-clipboard-list" color="primary" class="mt-1" />
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <v-row>
+          <!-- Purchase funnel -->
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-subtitle-1 font-weight-bold mb-3">Воронка закупок</div>
+              <div v-for="item in analyticsData.funnel" :key="item.status" class="mb-2">
+                <div class="d-flex justify-space-between mb-1">
+                  <span class="text-body-2">{{ A_STATUS_LABELS[item.status] || item.status }}</span>
+                  <span class="text-body-2 font-weight-medium">{{ item.count }}</span>
+                </div>
+                <v-progress-linear
+                  :model-value="analyticsFunnelPct(item.count)"
+                  :color="A_STATUS_COLORS[item.status] || 'grey'"
+                  rounded height="20" bg-color="grey-lighten-3"
+                >
+                  <template v-slot:default>
+                    <span v-if="item.total" class="text-caption text-white font-weight-bold">
+                      {{ formatCurrencyShort(item.total) }}
+                    </span>
+                  </template>
+                </v-progress-linear>
+              </div>
+            </v-card>
+          </v-col>
+
+          <!-- Purchase method distribution -->
+          <v-col cols="12" md="3">
+            <v-card variant="outlined" class="pa-4" style="height:100%">
+              <div class="text-subtitle-1 font-weight-bold mb-3">Способы закупки</div>
+              <div v-for="(cnt, method) in analyticsData.method_distribution" :key="method" class="mb-3">
+                <div class="d-flex justify-space-between mb-1">
+                  <span class="text-body-2">{{ A_METHOD_LABELS[method] || method }}</span>
+                  <span class="text-body-2 font-weight-medium">{{ cnt }}</span>
+                </div>
+                <v-progress-linear
+                  :model-value="analyticsTotalPurchases > 0 ? (cnt / analyticsTotalPurchases) * 100 : 0"
+                  :color="A_METHOD_COLORS[method] || 'blue-grey'"
+                  rounded height="14" bg-color="grey-lighten-3"
+                />
+              </div>
+            </v-card>
+          </v-col>
+
+          <!-- Upcoming deadlines -->
+          <v-col cols="12" md="3">
+            <v-card variant="outlined" class="pa-4" style="height:100%">
+              <div class="text-subtitle-1 font-weight-bold mb-3">
+                Ближайшие сроки
+                <v-chip size="x-small" color="warning" variant="tonal" class="ml-1">{{ analyticsData.upcoming_deadlines.length }}</v-chip>
+              </div>
+              <div v-if="analyticsData.upcoming_deadlines.length === 0" class="text-caption text-medium-emphasis">
+                Нет сроков в ближайшие 30 дней
+              </div>
+              <div v-for="d in analyticsData.upcoming_deadlines" :key="d.id" class="analytics-deadline-item">
+                <div class="d-flex align-center justify-space-between">
+                  <router-link :to="`/orders/${d.id}`" class="text-body-2 analytics-deadline-link">
+                    {{ d.name || `Закупка #${d.purchase_number || d.id}` }}
+                  </router-link>
+                  <v-chip :color="analyticsDeadlineColor(d.execution_term)" size="x-small" variant="tonal">
+                    {{ analyticsFormatDate(d.execution_term) }}
+                  </v-chip>
+                </div>
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Plan vs Fact -->
+        <v-row class="mt-4">
+          <v-col cols="12">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-subtitle-1 font-weight-bold mb-3">План / Факт по субсидиям</div>
+              <v-table density="compact">
+                <thead>
+                  <tr>
+                    <th>Субсидия</th>
+                    <th class="text-right">НМЦК (план)</th>
+                    <th class="text-right">Законтрактовано</th>
+                    <th class="text-right">Оплачено</th>
+                    <th>Исполнение</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="pf in analyticsData.plan_fact" :key="pf.subsidy">
+                    <td class="text-body-2">{{ pf.subsidy }}</td>
+                    <td class="text-right text-body-2">{{ formatCurrencyShort(pf.plan) }}</td>
+                    <td class="text-right text-body-2">{{ formatCurrencyShort(pf.contracted) }}</td>
+                    <td class="text-right text-body-2 text-success">{{ formatCurrencyShort(pf.paid) }}</td>
+                    <td style="min-width:150px">
+                      <v-progress-linear
+                        v-if="pf.plan > 0"
+                        :model-value="Math.min((pf.contracted / pf.plan) * 100, 100)"
+                        color="blue" height="12" rounded bg-color="grey-lighten-3"
+                        :title="`Законтрактовано: ${Math.round((pf.contracted / pf.plan)*100)}%`"
+                      />
+                    </td>
+                  </tr>
+                  <tr v-if="analyticsData.plan_fact.length === 0">
+                    <td colspan="5" class="text-center text-medium-emphasis text-caption pa-4">Нет данных</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Monthly paid + Top contractors -->
+        <v-row class="mt-4">
+          <v-col cols="12" md="7">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-subtitle-1 font-weight-bold mb-3">Ежемесячные оплаты</div>
+              <div v-if="analyticsData.monthly_payments.length === 0" class="text-caption text-medium-emphasis text-center py-4">
+                Нет данных об оплатах
+              </div>
+              <div v-else class="analytics-monthly-chart">
+                <div v-for="m in analyticsData.monthly_payments" :key="`${m.year}-${m.month}`" class="analytics-bar-col">
+                  <div class="analytics-bar-label">{{ formatCurrencyShort(m.total) }}</div>
+                  <div class="analytics-bar-wrap">
+                    <div class="analytics-bar-fill" :style="{ height: analyticsBarHeight(m.total) + '%' }" />
+                  </div>
+                  <div class="analytics-bar-x">{{ A_MONTH_NAMES[m.month - 1].slice(0,3) }}<br/>{{ m.year }}</div>
+                </div>
+              </div>
+            </v-card>
+          </v-col>
+
+          <v-col cols="12" md="5">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-subtitle-1 font-weight-bold mb-3">Топ контрагентов по сумме</div>
+              <div v-for="(c, i) in analyticsData.top_contractors" :key="c.name" class="mb-2">
+                <div class="d-flex justify-space-between mb-1">
+                  <span class="text-body-2 text-truncate" style="max-width:200px" :title="c.name">
+                    {{ i + 1 }}. {{ c.name }}
+                  </span>
+                  <span class="text-body-2 font-weight-medium ml-2 flex-shrink-0">{{ formatCurrencyShort(c.total) }}</span>
+                </div>
+                <v-progress-linear
+                  :model-value="analyticsTopPct(c.total)"
+                  color="indigo" rounded height="10" bg-color="grey-lighten-3"
+                />
+              </div>
+              <div v-if="analyticsData.top_contractors.length === 0" class="text-caption text-medium-emphasis text-center py-4">
+                Нет данных
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+      </template>
+    </v-window-item>
+    </v-window>
+
     <BudgetDrillDownDialog v-model="showBreakdownDialog" :subsidies="filteredSubsidies" :metric="breakdownMetric" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useTheme } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 import { apiFetch } from '@/api'
+import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 
+const { globalSubsidyId } = useGlobalSubsidy()
+
+const theme = useTheme()
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const loadingPurchases = ref(false)
 const selectedYear = ref(new Date().getFullYear())
 const selectedSubsidyIds = ref<number[]>([])
 const showBreakdownDialog = ref(false)
+const activeTab = ref((route.query.tab as string) || 'summary')
 
 // ── Data ──────────────────────────────────────────
 interface SubsidyRow {
@@ -300,10 +530,42 @@ const allPurchases    = ref<any[]>([])
 const statusCounts    = ref<Record<string, number>>({})
 const breakdownMetric = ref('budget')
 
+// Dark mode aware colors for ApexCharts
+const isDark = computed(() => theme.global.name.value === 'dark')
+const chartText = computed(() => isDark.value ? '#CBD5E1' : '#374151')
+const chartMuted = computed(() => isDark.value ? '#94A3B8' : '#6B7280')
+const chartGrid = computed(() => isDark.value ? 'rgba(255,255,255,0.08)' : '#E2E8F0')
+const chartTrack = computed(() => isDark.value ? '#334155' : '#E2E8F0')
+
 // ── Derived ──────────────────────────────────────
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
+
+const yearSubsidies = computed((): SubsidyRow[] =>
+  allSubsidies.value.filter((s: SubsidyRow) => s.year === selectedYear.value)
+)
+
+// Sync: global → local
+watch(globalSubsidyId, (id: number | null) => {
+  if (id !== null) selectedSubsidyIds.value = [id]
+  else selectedSubsidyIds.value = []
+}, { immediate: true })
+
+// Sync: local → global (only single selection)
+watch(selectedSubsidyIds, (ids: number[]) => {
+  if (ids.length === 1) globalSubsidyId.value = ids[0]
+  else if (ids.length === 0) globalSubsidyId.value = null
+})
+
+function toggleSubsidyChip(id: number) {
+  const idx = selectedSubsidyIds.value.indexOf(id)
+  if (idx >= 0) {
+    selectedSubsidyIds.value = selectedSubsidyIds.value.filter((x: number) => x !== id)
+  } else {
+    selectedSubsidyIds.value = [...selectedSubsidyIds.value, id]
+  }
+}
 
 const filteredSubsidies = computed(() => {
   let res = allSubsidies.value.filter(s => s.year === selectedYear.value)
@@ -372,7 +634,7 @@ const donutOptions = computed(() => ({
   chart: { type: 'donut', background: 'transparent', toolbar: { show: false }, animations: { speed: 500 } },
   colors: ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8'],
   labels: ['Оплачено', 'Законтрактовано', 'Запланировано', 'Свободно'],
-  legend: { position: 'bottom', fontSize: '12px', labels: { colors: '#374151' } },
+  legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
   dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
   plotOptions: {
     pie: {
@@ -383,7 +645,7 @@ const donutOptions = computed(() => ({
           total: {
             show: true,
             label: 'Бюджет',
-            color: '#6B7280',
+            color: chartMuted.value,
             fontSize: '13px',
             formatter: () => formatCurrencyShort(totalBudget.value)
           }
@@ -403,14 +665,14 @@ const radialOptions = computed(() => ({
       startAngle: -135,
       endAngle: 135,
       hollow: { size: '60%', background: 'transparent' },
-      track: { background: '#E2E8F0', strokeWidth: '100%' },
+      track: { background: chartTrack.value, strokeWidth: '100%' },
       dataLabels: {
         name: {
-          show: true, offsetY: -10, color: '#6B7280',
+          show: true, offsetY: -10, color: chartMuted.value,
           fontSize: '13px', fontWeight: '400'
         },
         value: {
-          show: true, color: '#111827',
+          show: true, color: chartText.value,
           fontSize: '30px', fontWeight: '700',
           formatter: (val: number) => `${val}%`
         }
@@ -473,7 +735,7 @@ const statusPieOptions = computed(() => ({
   chart: { type: 'pie', background: 'transparent', toolbar: { show: false }, animations: { speed: 400 } },
   colors: statusPieColors.value,
   labels: statusPieLabels.value,
-  legend: { position: 'bottom', fontSize: '12px', labels: { colors: '#374151' } },
+  legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
   dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
   tooltip: { y: { formatter: (v: number) => `${v} шт.` } },
 }))
@@ -504,23 +766,23 @@ const barOptions = computed(() => ({
   },
   dataLabels: {
     enabled: true,
-    style: { fontSize: '10px', colors: ['#374151'] },
+    style: { fontSize: '10px', colors: [chartText.value] },
     formatter: (val: number) => formatCurrencyShort(val),
     offsetX: 5
   },
   xaxis: {
     categories: filteredSubsidyStats.value.map(s => truncate(s.name, 28)),
     labels: {
-      style: { colors: '#6B7280', fontSize: '11px' },
+      style: { colors: chartMuted.value, fontSize: '11px' },
       formatter: (val: number) => formatCurrencyShort(val)
     }
   },
-  yaxis: { labels: { style: { colors: '#374151', fontSize: '11px' } } },
+  yaxis: { labels: { style: { colors: chartText.value, fontSize: '11px' } } },
   legend: {
     show: true, position: 'top',
-    fontSize: '12px', labels: { colors: '#374151' }
+    fontSize: '12px', labels: { colors: chartText.value }
   },
-  grid: { borderColor: '#E2E8F0' },
+  grid: { borderColor: chartGrid.value },
   tooltip: { y: { formatter: (v: number) => formatCurrency(v) } }
 }))
 
@@ -541,7 +803,7 @@ async function loadAll() {
       shortName: truncate(s.name, 20),
       description: '',
       year: s.year,
-      budget: s.budget,
+      budget: s.calculated_budget || s.feo_budget_total || s.budget,
       contracted: s.total_confirmed,
       paid: s.total_paid,
       planned: s.total_planned,
@@ -639,7 +901,94 @@ function statusColorHex(s: string): string {
   return map[s] || '#94A3B8'
 }
 
-onMounted(loadAll)
+// ── Analytics Tab ─────────────────────────────────
+interface AnalyticsData {
+  funnel: { status: string; count: number; total: number }[]
+  monthly_payments: { year: number; month: number; total: number }[]
+  top_contractors: { name: string; count: number; total: number }[]
+  upcoming_deliveries: { count: number; total: number }
+  economy: number
+  overdue_count: number
+  upcoming_deadlines: { id: number; name: string; purchase_number?: number; execution_term: string; status: string }[]
+  method_distribution: Record<string, number>
+  plan_fact: { subsidy: string; plan: number; contracted: number; paid: number }[]
+}
+
+const analyticsData = ref<AnalyticsData | null>(null)
+const analyticsLoading = ref(false)
+
+const A_STATUS_LABELS: Record<string, string> = {
+  planned: 'Планирование', confirmed: 'Подтверждена', in_progress: 'В работе',
+  contracted: 'Законтрактована', delivered: 'Поставлена', paid: 'Оплачена',
+}
+const A_STATUS_COLORS: Record<string, string> = {
+  planned: 'orange', confirmed: 'blue', in_progress: 'teal',
+  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+}
+const A_METHOD_LABELS: Record<string, string> = {
+  single: 'Единственный исполнитель', competitive: 'Конкурсная процедура',
+  quote_request: 'Запрос котировок', unknown: 'Не указано',
+}
+const A_METHOD_COLORS: Record<string, string> = {
+  single: 'blue', competitive: 'teal', quote_request: 'purple', unknown: 'grey',
+}
+const A_MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+
+const analyticsTotalPurchases = computed(() =>
+  analyticsData.value ? analyticsData.value.funnel.reduce((s, i) => s + i.count, 0) : 0
+)
+const analyticsTotalPaid = computed(() => {
+  if (!analyticsData.value) return '—'
+  const total = analyticsData.value.monthly_payments.reduce((s, i) => s + i.total, 0)
+  return formatCurrencyShort(total)
+})
+const analyticsMaxFunnel = computed(() =>
+  analyticsData.value ? Math.max(...analyticsData.value.funnel.map(i => i.count), 1) : 1
+)
+const analyticsFunnelPct = (count: number) => (count / analyticsMaxFunnel.value) * 100
+const analyticsMaxContractor = computed(() =>
+  analyticsData.value?.top_contractors?.length ? analyticsData.value.top_contractors[0].total : 1
+)
+const analyticsTopPct = (total: number) => (total / analyticsMaxContractor.value) * 100
+const analyticsMaxMonthly = computed(() =>
+  analyticsData.value?.monthly_payments?.length ? Math.max(...analyticsData.value.monthly_payments.map(m => m.total)) : 1
+)
+const analyticsBarHeight = (total: number) => Math.max((total / analyticsMaxMonthly.value) * 100, 4)
+
+function analyticsFormatDate(d: string): string {
+  if (!d) return ''
+  const [y, m, day] = d.split('-')
+  return `${day}.${m}.${y}`
+}
+function analyticsDeadlineColor(d: string): string {
+  const diff = (new Date(d).getTime() - Date.now()) / 86400000
+  if (diff <= 7) return 'error'
+  if (diff <= 14) return 'warning'
+  return 'success'
+}
+
+async function loadAnalytics() {
+  analyticsLoading.value = true
+  try {
+    analyticsData.value = await apiFetch<AnalyticsData>('/dashboard/analytics')
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+// Load analytics on tab switch (lazy)
+watch(activeTab, (tab) => {
+  if (tab === 'analytics' && !analyticsData.value) {
+    loadAnalytics()
+  }
+})
+
+onMounted(() => {
+  loadAll()
+  if (activeTab.value === 'analytics') {
+    loadAnalytics()
+  }
+})
 </script>
 
 <style scoped>
@@ -686,17 +1035,30 @@ onMounted(loadAll)
 .dash-title {
   font-size: 26px;
   font-weight: 700;
-  color: #111827;
+  color: var(--crm-text);
   line-height: 1.2;
 }
 .dash-subtitle {
   font-size: 13px;
-  color: #6B7280;
+  color: var(--crm-text-muted);
   margin-top: 2px;
 }
 .dash-header-right {
   display: flex;
   align-items: center;
+}
+
+/* ── Subsidy quick chips ── */
+.subsidy-chips-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+}
+.subsidy-chip {
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 /* ── KPI Cards ── */
@@ -712,13 +1074,13 @@ onMounted(loadAll)
   transition: transform 0.15s, box-shadow 0.15s;
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.07);
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  border: 1px solid var(--crm-border);
+  background: var(--crm-surface);
+  box-shadow: 0 1px 4px var(--crm-shadow);
 }
 .kpi-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  box-shadow: 0 6px 20px var(--crm-shadow-hover);
 }
 
 .kpi-icon-box {
@@ -731,10 +1093,10 @@ onMounted(loadAll)
   flex-shrink: 0;
 }
 
-.kpi-budget .kpi-icon-box  { background: #EFF6FF; color: #3B82F6; }
-.kpi-contracted .kpi-icon-box { background: #E0F2FE; color: #0284C7; }
-.kpi-paid .kpi-icon-box    { background: #F0FDF4; color: #22C55E; }
-.kpi-remaining .kpi-icon-box { background: #FFF7ED; color: #F59E0B; }
+.kpi-budget .kpi-icon-box  { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
+.kpi-contracted .kpi-icon-box { background: var(--crm-kpi-bg-sky); color: #0284C7; }
+.kpi-paid .kpi-icon-box    { background: var(--crm-kpi-bg-green); color: #22C55E; }
+.kpi-remaining .kpi-icon-box { background: var(--crm-kpi-bg-amber); color: #F59E0B; }
 
 .kpi-budget { border-top: 3px solid #3B82F6; }
 .kpi-contracted { border-top: 3px solid #0284C7; }
@@ -745,21 +1107,21 @@ onMounted(loadAll)
 .kpi-value {
   font-size: 20px;
   font-weight: 700;
-  color: #111827;
+  color: var(--crm-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .kpi-label {
   font-size: 12px;
-  color: #6B7280;
+  color: var(--crm-text-muted);
   margin-top: 2px;
 }
 .kpi-badge {
   font-size: 11px;
   font-weight: 600;
-  color: #6B7280;
-  background: #F3F4F6;
+  color: var(--crm-text-muted);
+  background: var(--crm-surface-hover);
   padding: 2px 8px;
   border-radius: 20px;
   white-space: nowrap;
@@ -769,10 +1131,10 @@ onMounted(loadAll)
 .chart-row { margin-bottom: 4px; }
 
 .chart-card {
-  background: #fff;
+  background: var(--crm-surface);
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 18px 20px;
   height: 100%;
 }
@@ -785,7 +1147,7 @@ onMounted(loadAll)
 .chart-card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: var(--crm-text-secondary);
 }
 .chart-link {
   font-size: 13px;
@@ -801,7 +1163,7 @@ onMounted(loadAll)
   align-items: center;
   justify-content: center;
   height: 220px;
-  color: #9CA3AF;
+  color: var(--crm-text-faint);
 }
 
 .radial-footer {
@@ -817,26 +1179,26 @@ onMounted(loadAll)
   align-items: flex-start;
   gap: 10px;
   padding: 10px 4px;
-  border-bottom: 1px solid #F3F4F6;
+  border-bottom: 1px solid var(--crm-border);
   cursor: pointer;
   transition: background 0.12s;
   border-radius: 6px;
 }
 .purchase-row:last-child { border-bottom: none; }
-.purchase-row:hover { background: #F9FAFB; }
+.purchase-row:hover { background: var(--crm-surface-alt); }
 .purchase-num { padding-top: 2px; }
 .purchase-main { flex: 1; min-width: 0; }
 .purchase-name {
   font-size: 13px;
   font-weight: 500;
-  color: #111827;
+  color: var(--crm-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .purchase-meta {
   font-size: 11px;
-  color: #9CA3AF;
+  color: var(--crm-text-faint);
   margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -851,7 +1213,7 @@ onMounted(loadAll)
 .purchase-amount {
   font-size: 12px;
   font-weight: 600;
-  color: #374151;
+  color: var(--crm-text-secondary);
   white-space: nowrap;
 }
 
@@ -861,20 +1223,48 @@ onMounted(loadAll)
 .dash-table thead th {
   font-size: 12px !important;
   font-weight: 600 !important;
-  color: #6B7280 !important;
+  color: var(--crm-text-muted) !important;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: #F9FAFB;
+  background: var(--crm-table-header);
   white-space: nowrap;
   padding: 10px 12px !important;
 }
 .dash-table tbody td { padding: 10px 12px !important; }
 
-.table-row-hover:hover td { background: #F9FAFB; }
+.table-row-hover:hover td { background: var(--crm-surface-alt); }
 
 .total-row td {
-  background: #F3F4F6 !important;
+  background: var(--crm-table-stripe) !important;
   font-weight: 600;
   font-size: 13px;
 }
+
+/* ── Analytics Tab ── */
+.analytics-deadline-item { padding: 6px 0; border-bottom: 1px solid var(--crm-border); }
+.analytics-deadline-item:last-child { border-bottom: none; }
+.analytics-deadline-link { text-decoration: none; color: inherit; }
+.analytics-deadline-link:hover { text-decoration: underline; }
+.analytics-monthly-chart {
+  display: flex; align-items: flex-end; gap: 6px;
+  height: 160px; padding: 0 4px;
+}
+.analytics-bar-col {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+}
+.analytics-bar-label {
+  font-size: 9px; color: var(--crm-text-muted); text-align: center; min-height: 24px;
+  display: flex; align-items: flex-end; justify-content: center; margin-bottom: 2px;
+  transform: rotate(-30deg); transform-origin: bottom right;
+}
+.analytics-bar-wrap {
+  flex: 1; width: 100%; display: flex; align-items: flex-end;
+  min-height: 100px;
+}
+.analytics-bar-fill {
+  width: 100%; background: linear-gradient(180deg, #6366f1 0%, #4338ca 100%);
+  border-radius: 4px 4px 0 0; min-height: 4px;
+  transition: height 0.5s ease;
+}
+.analytics-bar-x { font-size: 9px; text-align: center; color: var(--crm-text-faint); margin-top: 4px; line-height: 1.2; }
 </style>

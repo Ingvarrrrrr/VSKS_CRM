@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, get_org_filter
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -46,9 +46,14 @@ async def list_categories(
     subsidy_id: Optional[int] = Query(None),
     appendix: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    from app.models.subsidy import Subsidy
     q = select(FeoCategory)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.join(Subsidy, FeoCategory.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     if parent_id is not None:
         q = q.where(FeoCategory.parent_id == parent_id)
     if level is not None:
@@ -66,11 +71,16 @@ async def list_categories(
 @router.get("/tree")
 async def category_tree(
     subsidy_id: Optional[int] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    from app.models.subsidy import Subsidy
     q = select(FeoCategory)
     if subsidy_id is not None:
         q = q.where(FeoCategory.subsidy_id == subsidy_id)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.join(Subsidy, FeoCategory.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     result = await db.execute(q.order_by(FeoCategory.level, FeoCategory.id))
     all_cats = result.scalars().all()
     by_id = {c.id: {"id": c.id, "parent_id": c.parent_id, "subsidy_id": c.subsidy_id,
@@ -101,8 +111,6 @@ async def create_category(
         if not parent:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Родительская категория не найдена")
         level = parent.level + 1
-        if level > 3:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Максимальный уровень вложенности - 3")
     else:
         level = 1
 
@@ -424,37 +432,118 @@ async def update_category(
     return cat
 
 
+async def _collect_subtree_ids(cat_id: int, db: AsyncSession) -> list[int]:
+    """Recursively collect all descendant IDs including the given cat_id."""
+    ids = [cat_id]
+    children = (await db.execute(
+        select(FeoCategory.id).where(FeoCategory.parent_id == cat_id)
+    )).scalars().all()
+    for cid in children:
+        ids.extend(await _collect_subtree_ids(cid, db))
+    return ids
+
+
+async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession):
+    """Recursively update levels of all children by delta."""
+    children = (await db.execute(
+        select(FeoCategory).where(FeoCategory.parent_id == cat_id)
+    )).scalars().all()
+    for child in children:
+        child.level = child.level + level_delta
+        await _update_subtree_levels(child.id, level_delta, db)
+
+
 @router.delete("/{cat_id}")
 async def delete_category(
     cat_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))
-    cat = result.scalar_one_or_none()
+    cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
 
-    # Check children
-    children = (await db.execute(
-        select(FeoCategory).where(FeoCategory.parent_id == cat_id).limit(1)
-    )).scalar_one_or_none()
-    if children:
-        raise HTTPException(
-            status_code=409,
-            detail="Нельзя удалить категорию: есть дочерние направления. Сначала удалите их."
-        )
+    # Collect entire subtree
+    all_ids = await _collect_subtree_ids(cat_id, db)
 
-    # Check linked purchases
+    # Check linked purchases across entire subtree
     from app.models.purchase import Purchase
-    linked = (await db.execute(
-        select(Purchase).where(Purchase.feo_category_id == cat_id).limit(1)
-    )).scalar_one_or_none()
-    if linked:
+    linked_count = (await db.execute(
+        select(func.count()).select_from(Purchase).where(Purchase.feo_category_id.in_(all_ids))
+    )).scalar() or 0
+    if linked_count:
         raise HTTPException(
             status_code=409,
-            detail="Нельзя удалить категорию: есть связанные закупки."
+            detail=f"Нельзя удалить: {linked_count} закупок привязано к этой категории или дочерним."
         )
 
-    await db.delete(cat)
+    # Cascade delete (children first)
+    for cid in reversed(all_ids):
+        obj = await db.get(FeoCategory, cid)
+        if obj:
+            await db.delete(obj)
     await db.commit()
-    return {"ok": True}
+    deleted_count = len(all_ids)
+    return {"ok": True, "deleted_count": deleted_count}
+
+
+@router.patch("/{cat_id}/move")
+async def move_category(
+    cat_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Move category to a new parent. Set parent_id=null to make root."""
+    cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Категория не найдена")
+
+    new_parent_id = data.get("parent_id")
+    warning = None
+
+    # Determine new level
+    if new_parent_id:
+        parent = (await db.execute(select(FeoCategory).where(FeoCategory.id == new_parent_id))).scalar_one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Родительская категория не найдена")
+        if parent.subsidy_id != cat.subsidy_id:
+            raise HTTPException(status_code=400, detail="Нельзя переместить в другую субсидию")
+        new_level = parent.level + 1
+    else:
+        new_level = 1
+
+    level_delta = new_level - cat.level
+
+    # Check for circular reference
+    if new_parent_id:
+        subtree_ids = await _collect_subtree_ids(cat_id, db)
+        if new_parent_id in subtree_ids:
+            raise HTTPException(status_code=400, detail="Нельзя переместить в собственное поддерево")
+
+    # Check if new max depth creates a previously unseen level
+    max_child_depth = 0
+    all_ids = await _collect_subtree_ids(cat_id, db)
+    if len(all_ids) > 1:
+        max_existing = (await db.execute(
+            select(func.max(FeoCategory.level)).where(FeoCategory.id.in_(all_ids))
+        )).scalar() or cat.level
+        max_child_depth = max_existing - cat.level
+    new_max_level = new_level + max_child_depth
+    existing_max = (await db.execute(
+        select(func.max(FeoCategory.level)).where(FeoCategory.subsidy_id == cat.subsidy_id)
+    )).scalar() or 1
+    if new_max_level > existing_max:
+        warning = f"Создан новый уровень вложенности: {new_max_level}"
+
+    # Update category
+    cat.parent_id = new_parent_id
+    cat.level = new_level
+
+    # Recursively update children levels
+    if level_delta != 0:
+        await _update_subtree_levels(cat_id, level_delta, db)
+
+    await db.commit()
+    result = {"ok": True, "new_level": new_level}
+    if warning:
+        result["warning"] = warning
+    return result

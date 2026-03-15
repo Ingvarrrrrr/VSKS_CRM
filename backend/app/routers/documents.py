@@ -397,7 +397,10 @@ async def generate_document(
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
-            "description": (item.product.description if item.product and item.product.description else ""),
+            "description": (
+                (item.product.description_44fz if p.description_mode == "44fz" else item.product.description)
+                if item.product else ""
+            ) or "",
             "type": item.item_type or "",
             "quantity": float(item.quantity) if item.quantity else "",
             "unit": item.unit or "",

@@ -18,4 +18,7 @@ class PlatformPublication(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    request_type = Column(String(50), nullable=True)       # auction / competition / price_request / monitoring
+    auction_date = Column(DateTime(timezone=True), nullable=True)  # дата розыгрыша
+
     purchase = relationship("Purchase", backref="publications")

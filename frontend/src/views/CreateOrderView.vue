@@ -9,9 +9,22 @@
           <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
             {{ STATUS_LABEL[form.status] }}
           </v-chip>
+          <v-chip v-if="form.substatus" size="x-small" variant="outlined" color="teal">
+            {{ SUBSTATUS_OPTIONS.find(o => o.value === form.substatus)?.title || form.substatus }}
+          </v-chip>
+          <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
           <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
             Реестр: {{ form.registry_number }}
           </span>
+          <v-fade-transition>
+            <span v-if="draftSaved" class="text-caption text-success">
+              <v-icon size="12" icon="mdi-cloud-check" /> Черновик сохранён
+            </span>
+          </v-fade-transition>
+          <v-btn v-if="!isEdit && hasDraft" size="x-small" variant="outlined" color="warning"
+            prepend-icon="mdi-delete-sweep" @click="clearDraft(); showSnack('Черновик удалён')">
+            Очистить черновик
+          </v-btn>
         </div>
       </div>
       <v-btn variant="outlined" prepend-icon="mdi-arrow-left" to="/orders">К списку</v-btn>
@@ -33,7 +46,7 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
         <v-card-text>
           <v-row>
-            <v-col cols="12" md="2">
+            <v-col v-if="!isEmployee" cols="12" md="2">
               <v-select v-model="form.purchase_method"
                 :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact" />
@@ -43,13 +56,18 @@
                 :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'}]"
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact" />
             </v-col>
+            <v-col v-if="!isEmployee" cols="12" md="2">
+              <v-select v-model="form.purchase_basis" clearable
+                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
+                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact" />
+            </v-col>
 
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
                 label="Субсидия *" variant="outlined" density="compact"
                 :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
             </v-col>
-            <v-col cols="12" md="3">
+            <v-col v-if="!isEmployee" cols="12" md="3">
               <v-autocomplete
                 v-model="form.contractor_id"
                 :items="contractors"
@@ -76,7 +94,7 @@
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col cols="12" md="2">
+            <v-col v-if="!isEmployee" cols="12" md="2">
               <v-text-field
                 v-model="contractorInn"
                 label="ИНН"
@@ -95,7 +113,7 @@
                 placeholder="Поставка оборудования..."
               />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col v-if="!isEmployee" cols="12" md="4">
               <v-combobox
                 v-model="form.responsible_person"
                 :items="responsiblePersonSuggestions"
@@ -130,11 +148,22 @@
                 :error-messages="feoSaveAttempted && !selectedFeo3 ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col v-if="!isEmployee" cols="12" md="4">
               <v-text-field v-model="form.registry_number" label="Реестровый номер"
                 variant="outlined" density="compact" :readonly="!isEdit"
                 :bg-color="!isEdit ? 'grey-lighten-4' : undefined"
                 hint="Генерируется автоматически" persistent-hint />
+            </v-col>
+            <!-- Мероприятие (после выбора субсидии) -->
+            <v-col v-if="form.subsidy_id && filteredEvents.length" cols="12" md="4">
+              <v-select
+                v-model="form.event_id"
+                :items="filteredEvents"
+                item-title="name" item-value="id"
+                label="Мероприятие"
+                variant="outlined" density="compact"
+                clearable
+              />
             </v-col>
           </v-row>
         </v-card-text>
@@ -177,6 +206,13 @@
                       </v-tooltip>
                       <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
 
+                      <v-tooltip v-if="item.item_name && !item.product_id && form.purchase_method !== 'advance'"
+                        text="Позиция не привязана к каталогу" location="top">
+                        <template #activator="{ props: tip }">
+                          <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
+                        </template>
+                      </v-tooltip>
+
                       <v-text-field
                         v-model="item.item_name"
                         density="compact"
@@ -216,7 +252,9 @@
                   </td>
                   <td>
                     <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                      variant="outlined" hide-details class="my-1"
+                      variant="outlined" class="my-1"
+                      :hint="item._selectedProduct?.contract_price ? `По договору №${item._selectedProduct.contract_number || '?'}: ${Number(item._selectedProduct.contract_price).toLocaleString('ru-RU')} ₽` : ''"
+                      :persistent-hint="!!item._selectedProduct?.contract_price"
                       @update:model-value="calcItemTotal(idx)" />
                   </td>
                   <td>
@@ -244,6 +282,10 @@
               @click="openFullProduct(-1)">
               Добавить товар в каталог
             </v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" size="small" color="success"
+              @click="itemsImportDialog = true">
+              Импорт из Excel
+            </v-btn>
           </div>
         </v-card-text>
       </v-card>
@@ -255,7 +297,11 @@
             <v-icon icon="mdi-clipboard-text-outline" color="primary" size="20" />
             Техническое задание
           </span>
-          <div class="d-flex gap-2">
+          <div class="d-flex align-center gap-2">
+            <v-btn-toggle v-model="form.description_mode" mandatory density="compact" color="primary" class="mr-2">
+              <v-btn value="exact" size="small" style="text-transform:none;letter-spacing:0">Точное</v-btn>
+              <v-btn value="44fz" size="small" style="text-transform:none;letter-spacing:0">44-ФЗ</v-btn>
+            </v-btn-toggle>
             <v-btn
               v-if="isEdit"
               size="small"
@@ -294,9 +340,10 @@
                 </td>
                 <td class="py-2">
                   <div class="font-weight-medium" style="font-size:13px">{{ item.item_name }}</div>
-                  <div v-if="item._description" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
-                    {{ item._description }}
+                  <div v-if="activeDescription(item)" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
+                    {{ activeDescription(item) }}
                   </div>
+                  <v-chip v-if="form.description_mode === '44fz' && !item._description_44fz && item._description" size="x-small" variant="tonal" color="warning" class="mt-1">нет описания 44-ФЗ</v-chip>
                 </td>
                 <td class="text-center">{{ item.quantity ?? '—' }}</td>
                 <td class="text-center">{{ item.unit || '—' }}</td>
@@ -314,8 +361,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 3. Финансы -->
-      <v-card variant="outlined" class="mb-4">
+      <!-- 3. Финансы (скрыто для employee и manager) -->
+      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Финансовые показатели</v-card-title>
         <v-card-text>
           <v-row>
@@ -325,7 +372,18 @@
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model.number="form.contract_price" label="Цена договора" variant="outlined"
-                density="compact" type="number" suffix="₽" @update:model-value="calcEconomy" />
+                density="compact" type="number" suffix="₽"
+                :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined"
+                @update:model-value="calcEconomy">
+                <template v-slot:append-inner>
+                  <v-icon v-if="nmckWarningLevel === 'error'" icon="mdi-alert" color="error" size="18" :title="`Превышение НМЦК на ${nmckExcessPct}%`" />
+                  <v-icon v-else-if="nmckWarningLevel === 'warning'" icon="mdi-alert-outline" color="warning" size="18" :title="`Близко к НМЦК (+${nmckExcessPct}%)`" />
+                </template>
+              </v-text-field>
+              <div v-if="nmckWarningLevel" class="text-caption mt-n2 mb-1"
+                :class="nmckWarningLevel === 'error' ? 'text-error' : 'text-warning'">
+                {{ nmckWarningLevel === 'error' ? `Превышение НМЦК на ${nmckExcessPct}%` : `Близко к НМЦК (+${nmckExcessPct}%)` }}
+              </div>
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
@@ -378,12 +436,66 @@
                   color="error" @click="clearFrameworkContract" />
               </div>
             </v-col>
+            <!-- Порядковый номер в РД -->
+            <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
+              <v-text-field
+                v-model.number="form.framework_seq"
+                label="№ в рамках РД"
+                variant="outlined" density="compact" type="number" min="1"
+                hint="Авто, можно изменить" persistent-hint
+              />
+            </v-col>
+            <!-- Таблица других закупок в том же РД -->
+            <v-col v-if="isFramework && frameworkSiblings.length" cols="12">
+              <div class="framework-siblings-label">
+                <v-icon icon="mdi-link-variant" size="14" class="mr-1" />
+                Закупки в рамках этого договора ({{ frameworkSiblings.length }})
+              </div>
+              <v-table density="compact" class="framework-siblings-table mt-1">
+                <thead>
+                  <tr>
+                    <th style="width:50px">№</th>
+                    <th>Наименование</th>
+                    <th>Статус</th>
+                    <th class="text-right">НМЦК</th>
+                    <th class="text-right">Цена договора</th>
+                    <th class="text-right">Оплачено</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="s in frameworkSiblings" :key="s.id"
+                    :class="s.id === purchaseId ? 'framework-sibling-current' : ''"
+                    style="cursor:pointer"
+                    @click="s.id !== purchaseId && $router.push(`/orders/${s.id}`)"
+                  >
+                    <td>
+                      <v-chip :color="s.id === purchaseId ? 'primary' : 'default'" size="x-small" variant="tonal">
+                        {{ s.framework_seq ?? '—' }}
+                      </v-chip>
+                    </td>
+                    <td class="text-caption">{{ s.item_name || s.subject || '—' }}</td>
+                    <td><v-chip :color="statusColor(s.status)" size="x-small" variant="tonal">{{ statusLabel(s.status) }}</v-chip></td>
+                    <td class="text-right text-caption">{{ s.total_nmck ? formatMoney(Number(s.total_nmck)) : '—' }}</td>
+                    <td class="text-right text-caption">{{ s.contract_price ? formatMoney(Number(s.contract_price)) : '—' }}</td>
+                    <td class="text-right text-caption">{{ s.payment_amount ? formatMoney(Number(s.payment_amount)) : '—' }}</td>
+                  </tr>
+                  <!-- Итоговая строка -->
+                  <tr class="framework-total-row">
+                    <td colspan="3" class="text-caption font-weight-bold">Итого по договору</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.nmck) }}</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.price) }}</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.paid) }}</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-col>
           </v-row>
         </v-card-text>
       </v-card>
 
-      <!-- 4. Договор -->
-      <v-card variant="outlined" class="mb-4">
+      <!-- 4. Договор (скрыто для employee) -->
+      <v-card v-if="isManagerLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Договор</v-card-title>
         <v-card-text>
           <v-row>
@@ -401,6 +513,37 @@
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
+              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="form.delivery_address" label="Адрес доставки"
+                variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="2" class="d-flex align-center">
+              <v-checkbox v-model="form.is_monthly_payment" label="Ежемесячный платёж"
+                density="compact" hide-details color="blue" />
+            </v-col>
+            <template v-if="form.is_monthly_payment">
+              <v-col cols="12" md="2">
+                <v-text-field v-model.number="form.monthly_payment_count" label="Кол-во платежей"
+                  variant="outlined" density="compact" type="number" min="1"
+                  @update:model-value="calcMonthlyTotal" />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field v-model.number="form.monthly_payment_amount" label="Сумма платежа, ₽"
+                  variant="outlined" density="compact" type="number" suffix="₽"
+                  @update:model-value="calcMonthlyTotal" />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field
+                  :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
+                  label="Итого обязательств" variant="outlined" density="compact" readonly
+                  bg-color="grey-lighten-4"
+                  hint="Не обязана совпадать с суммой договора" persistent-hint />
+              </v-col>
+            </template>
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
                 density="compact" type="date"
                 :rules="executionTermRules" />
@@ -413,8 +556,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 4а. Параметры для генерации договора -->
-      <v-card variant="outlined" class="mb-4">
+      <!-- 4а. Параметры для генерации договора (admin+) -->
+      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры договора (для документа)</v-card-title>
         <v-card-text>
           <v-row>
@@ -461,8 +604,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 5. Акт приёмки -->
-      <v-card variant="outlined" class="mb-4">
+      <!-- 5. Акт приёмки (admin+) -->
+      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Акт приёмки</v-card-title>
         <v-card-text>
           <v-row>
@@ -484,8 +627,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 6. Платёж -->
-      <v-card variant="outlined" class="mb-4">
+      <!-- 6. Платёж (admin+) -->
+      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Платёж</v-card-title>
         <v-card-text>
           <v-row>
@@ -508,8 +651,19 @@
         </v-card-text>
       </v-card>
 
-      <!-- 7. Файлы (только в режиме редактирования) -->
-      <v-card v-if="isEdit" variant="outlined" class="mb-4">
+      <!-- 7b. Участники и лента событий (только в режиме редактирования) -->
+      <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          <v-icon icon="mdi-timeline-outline" class="mr-2" color="teal" />
+          Участники и события
+        </v-card-title>
+        <v-card-text>
+          <purchase-event-feed :purchase-id="purchaseId" />
+        </v-card-text>
+      </v-card>
+
+      <!-- 7. Файлы (скрыто для employee) -->
+      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
         <v-card-text>
           <div class="d-flex align-center gap-3 mb-3">
@@ -659,8 +813,8 @@
         </v-card>
       </v-dialog>
 
-      <!-- 8. Формирование документов (только в режиме редактирования) -->
-      <v-card v-if="isEdit" variant="outlined" class="mb-4">
+      <!-- 8. Формирование документов (manager+) -->
+      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы</v-card-title>
         <v-card-text>
           <div class="d-flex gap-3 flex-wrap">
@@ -721,8 +875,20 @@
         </v-card-text>
       </v-card>
 
-      <!-- 9. Запрос КП (только в режиме редактирования) -->
-      <v-card v-if="isEdit" variant="outlined" class="mb-4" style="border-color:#0891B2">
+      <!-- 8.5 Согласование (approval chain) -->
+      <ApprovalPanel
+        ref="approvalPanelRef"
+        :purchase-id="purchaseId!"
+        :approval-status="form.approval_status"
+        :is-manager="isManagerLevel"
+        :is-admin="isAdminLevel"
+        :visible="isEdit && showApprovalSection"
+        @update:approval-status="form.approval_status = $event"
+        @snack="showSnack($event, arguments[1])"
+      />
+
+      <!-- 9. Запрос КП (manager+) -->
+      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4" style="border-color:#0891B2">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-email-send-outline" color="cyan-darken-2" size="20" />
@@ -738,8 +904,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 10. Публикация на площадках (только в режиме редактирования) -->
-      <v-card v-if="isEdit" variant="outlined" class="mb-4" style="border-color:#7C3AED">
+      <!-- 10. Публикация на площадках (admin+) -->
+      <v-card v-if="isEdit && isAdminLevel" variant="outlined" class="mb-4" style="border-color:#7C3AED">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
@@ -793,6 +959,10 @@
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
           → {{ STATUS_LABEL[nextStatusTarget] }}
         </v-btn>
+        <v-select v-if="isEdit && form.status === 'work_in_progress'" v-model="form.substatus"
+          :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
+          label="Подстатус" variant="outlined" density="compact" clearable
+          style="max-width:220px" hide-details class="ml-2" @update:model-value="saveSubstatus" />
         <v-btn variant="outlined" to="/orders" size="large">Отмена</v-btn>
       </div>
     </v-form>
@@ -1049,6 +1219,45 @@
           <span class="text-caption text-medium-emphasis">{{ productPickerResults.length }} позиций</span>
           <v-spacer />
           <v-btn variant="text" @click="productPickerDialog = false">Отмена</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Items import dialog -->
+    <v-dialog v-model="itemsImportDialog" max-width="520">
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon icon="mdi-file-excel-outline" color="success" class="mr-2" />
+          Импорт позиций из Excel
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-btn variant="text" color="primary" size="small" prepend-icon="mdi-download" class="mb-4"
+            @click="downloadItemsTemplate">
+            Скачать шаблон
+          </v-btn>
+          <v-file-input
+            v-model="itemsImportFile"
+            label="Выберите Excel файл"
+            accept=".xlsx,.xls"
+            variant="outlined" density="compact"
+            prepend-icon="mdi-file-upload-outline"
+            :disabled="itemsImportLoading"
+          />
+          <v-alert v-if="itemsImportResult" :type="itemsImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
+            Добавлено: {{ itemsImportResult.added }},
+            привязано к каталогу: {{ itemsImportResult.matched_catalog }},
+            не найдено в каталоге: {{ itemsImportResult.unmatched }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="itemsImportDialog = false">Закрыть</v-btn>
+          <v-btn color="success" variant="flat"
+            :loading="itemsImportLoading"
+            :disabled="!itemsImportFile"
+            @click="doItemsImport">
+            Импортировать
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1374,6 +1583,8 @@
 import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
+import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1381,23 +1592,35 @@ const router = useRouter()
 const isEdit = computed(() => !!route.params.id)
 const purchaseId = computed(() => Number(route.params.id) || null)
 
-const STATUS_ORDER = ['planned', 'confirmed', 'in_progress', 'contracted', 'delivered', 'paid']
+// Role-based visibility
+const userRole = localStorage.getItem('user_role') || 'employee'
+const isEmployee = computed(() => userRole === 'employee')
+const isManager = computed(() => userRole === 'manager')
+const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
+const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
+
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
-  planned: 'Планируется', confirmed: 'Подтверждено',
-  in_progress: 'Ведётся работа',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
+  wishes: 'Желания сотрудников', plan_schedule: 'План-график',
+  confirmed: 'Подтверждено руководством', work_in_progress: 'Ведётся работа',
+  contracted: 'Заключён договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_COLOR: Record<string, string> = {
-  planned: 'orange', confirmed: 'blue',
-  in_progress: 'teal',
+  wishes: 'amber', plan_schedule: 'orange',
+  confirmed: 'blue', work_in_progress: 'teal',
   contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
 }
+const SUBSTATUS_OPTIONS = [
+  { value: 'tz_forming', title: 'Формируется ТЗ' },
+  { value: 'kp_collecting', title: 'Идёт сбор КП' },
+  { value: 'on_platform', title: 'Выставлено на площадку' },
+]
 const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
 
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number }
-interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; photo_url?: string; photo_link?: string; category?: string }
+interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
 interface OrderItem {
@@ -1414,6 +1637,7 @@ interface OrderItem {
   _selectedProduct?: Product | null
   _photo_url?: string
   _description?: string
+  _description_44fz?: string
 }
 interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string }
 
@@ -1454,6 +1678,8 @@ const form = reactive({
   contract_number: '',
   contract_date: '',
   delivery_date: '',
+  delivery_address: '',
+  procurement_planned_date: '',
   execution_term: '',
   execution_term_changed: '',
   acceptance_doc_name: '',
@@ -1464,10 +1690,15 @@ const form = reactive({
   payment_doc_date: '',
   payment_amount: null as number | null,
   payment_federal: null as number | null,
-  status: 'planned',
+  status: 'wishes',
+  substatus: null as string | null,
+  is_monthly_payment: false as boolean,
+  monthly_payment_count: null as number | null,
+  monthly_payment_amount: null as number | null,
   purchase_number: null as number | null,
   purchase_contract_type: 'single' as string,
   contract_id: null as number | null,
+  framework_seq: null as number | null,
   responsible_person: '' as string,
   // Поля для генерации договора
   vat_applicable: false as boolean,
@@ -1475,11 +1706,25 @@ const form = reactive({
   vat_exemption_article: '' as string,
   third_party_involved: false as boolean,
   service_period_type: 'period' as string,
+  description_mode: 'exact' as string,
+  event_id: null as number | null,
+  approval_status: null as string | null,
 })
+
+function activeDescription(item: OrderItem): string | undefined {
+  if (form.description_mode === '44fz') return item._description_44fz || item._description
+  return item._description
+}
+
+interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
 
 const items = ref<OrderItem[]>([])
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
+const allEvents = ref<EventItem[]>([])
+const filteredEvents = computed(() =>
+  allEvents.value.filter(e => e.subsidy_id === form.subsidy_id && e.is_active)
+)
 const products = ref<Product[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
 const formRef = ref()
@@ -1590,7 +1835,17 @@ async function confirmDocDownload() {
 const snack = reactive({ show: false, text: '', color: 'success' })
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
 const budgetOverrideDialog = ref(false)
-const isAdmin = computed(() => localStorage.getItem('user_role') === 'admin')
+const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
+
+// ── Approval (Согласование) — extracted to ApprovalPanel.vue ─────────────────
+const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
+
+const showApprovalSection = computed(() => {
+  if (!isEdit.value) return false
+  const idx = STATUS_ORDER.indexOf(form.status)
+  return idx >= STATUS_ORDER.indexOf('confirmed')
+})
+
 const contractorInn = ref('')
 const fileInputEl = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
@@ -1832,6 +2087,32 @@ const newFrameworkForm = reactive({
 
 const isFramework = computed(() => form.purchase_contract_type === 'framework_cumulative' || form.purchase_contract_type === 'framework_with_amount')
 
+// ── Framework sibling purchases ───────────────────────────────────────────────
+interface FrameworkSibling {
+  id: number; item_name?: string; subject?: string; status: string
+  framework_seq?: number; total_nmck?: number; contract_price?: number; payment_amount?: number
+}
+const frameworkSiblings = ref<FrameworkSibling[]>([])
+
+const frameworkTotals = computed(() => ({
+  nmck:  frameworkSiblings.value.reduce((s, x) => s + (Number(x.total_nmck) || 0), 0),
+  price: frameworkSiblings.value.reduce((s, x) => s + (Number(x.contract_price) || 0), 0),
+  paid:  frameworkSiblings.value.reduce((s, x) => s + (Number(x.payment_amount) || 0), 0),
+}))
+
+async function loadFrameworkSiblings(contractId: number) {
+  try {
+    frameworkSiblings.value = await apiFetch<FrameworkSibling[]>(`/purchases/by-contract/${contractId}`)
+  } catch {
+    frameworkSiblings.value = []
+  }
+}
+
+watch(() => form.contract_id, (cid) => {
+  if (cid && isFramework.value) loadFrameworkSiblings(cid)
+  else frameworkSiblings.value = []
+})
+
 const filteredFrameworkContracts = computed(() => {
   const q = frameworkSearch.value.toLowerCase().trim()
   if (!q) return frameworkContracts.value
@@ -2009,6 +2290,15 @@ const totalNmck = computed(() =>
   items.value.reduce((s, i) => s + (i.total_price || 0), 0)
 )
 
+const monthlyTotal = computed(() => {
+  if (form.monthly_payment_count && form.monthly_payment_amount) {
+    return form.monthly_payment_count * form.monthly_payment_amount
+  }
+  return null
+})
+
+const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
+
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
@@ -2075,6 +2365,7 @@ const resolveFeeLevels = (id: number) => {
 
 const onSubsidyChange = () => {
   form.feo_category_id = null
+  form.event_id = null
   selectedFeo1.value = null
   selectedFeo2.value = null
   selectedFeo3.value = null
@@ -2088,6 +2379,18 @@ const calcEconomy = () => {
     ? Math.round((totalNmck.value - form.contract_price) * 100) / 100
     : null
 }
+
+const nmckExcessPct = computed(() => {
+  if (!totalNmck.value || !form.contract_price) return 0
+  return Math.round(((form.contract_price - totalNmck.value) / totalNmck.value) * 100)
+})
+
+const nmckWarningLevel = computed((): 'error' | 'warning' | null => {
+  const pct = nmckExcessPct.value
+  if (pct > 10) return 'error'
+  if (pct > 0) return 'warning'
+  return null
+})
 
 const calcBudget = async () => {
   if (!form.subsidy_id) { budgetInfo.value = null; return }
@@ -2115,6 +2418,55 @@ const removeItem = (idx: number) => {
   items.value.splice(idx, 1)
 }
 
+// Items import from Excel
+const itemsImportDialog = ref(false)
+const itemsImportFile = ref<File | null>(null)
+const itemsImportLoading = ref(false)
+const itemsImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
+
+async function downloadItemsTemplate() {
+  const token = localStorage.getItem('auth_token')
+  const resp = await fetch('/api/purchases/items/import/template', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'items_template.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function doItemsImport() {
+  if (!itemsImportFile.value || !purchaseId.value) return
+  itemsImportLoading.value = true
+  itemsImportResult.value = null
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', itemsImportFile.value)
+    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.message || err.detail || `Ошибка ${resp.status}`)
+    }
+    itemsImportResult.value = await resp.json()
+    if (itemsImportResult.value!.added > 0) {
+      showSnack(`Импортировано ${itemsImportResult.value!.added} позиций`)
+      await loadPurchase()
+    }
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка импорта', 'error')
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
 const calcItemTotal = (idx: number) => {
   const item = items.value[idx]
   if (item.quantity != null && item.unit_price != null) {
@@ -2133,12 +2485,14 @@ const onItemProductSelect = (idx: number, val: any) => {
     item._selectedProduct = null
     item._photo_url = undefined
     item._description = undefined
+    item._description_44fz = undefined
   } else if (typeof val === 'string') {
     item.item_name = val
     item.product_id = null
     item._selectedProduct = val
     item._photo_url = undefined
     item._description = undefined
+    item._description_44fz = undefined
   } else {
     // Full product object selected via return-object
     item.item_name = val.name || ''
@@ -2146,10 +2500,15 @@ const onItemProductSelect = (idx: number, val: any) => {
     item._selectedProduct = val
     item._photo_url = val.photo_url || val.photo_link || undefined
     item._description = val.description || undefined
+    item._description_44fz = val.description_44fz || undefined
     if (val.product_type && !item.item_type) item.item_type = val.product_type
-    if (val.price && !item.unit_price) {
-      item.unit_price = Number(val.price)
-      calcItemTotal(idx)
+    if (!item.unit_price) {
+      // Приоритет: контрактная цена (из договора) → каталожная цена
+      const bestPrice = val.contract_price ?? val.price
+      if (bestPrice) {
+        item.unit_price = Number(bestPrice)
+        calcItemTotal(idx)
+      }
     }
   }
 }
@@ -2220,21 +2579,23 @@ const nextStatusTarget = computed(() => {
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
 })
 
-const needsContract = computed(() => form.status === 'confirmed')
+const needsContract = computed(() => form.status === 'work_in_progress')
 const needsAcceptance = computed(() => form.status === 'contracted')
 const needsPayment = computed(() => form.status === 'delivered')
 
 const loadRefs = async () => {
-  const [subs, cons, feos, prods] = await Promise.all([
+  const [subs, cons, feos, prods, evts] = await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/'),
     apiFetch<Contractor[]>('/contractors/'),
     apiFetch<FeoCategory[]>('/feo-categories/'),
     apiFetch<Product[]>('/products/'),
+    apiFetch<EventItem[]>('/events/'),
   ])
   subsidies.value = subs
   contractors.value = cons
   allFeoCategories.value = feos
   products.value = prods
+  allEvents.value = evts
 }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
@@ -2271,6 +2632,8 @@ const loadPurchase = async () => {
     contract_number: data.contract_number || '',
     contract_date: data.contract_date || '',
     delivery_date: data.delivery_date || '',
+    delivery_address: data.delivery_address || '',
+    procurement_planned_date: data.procurement_planned_date || '',
     execution_term: data.execution_term || '',
     execution_term_changed: data.execution_term_changed || '',
     acceptance_doc_name: data.acceptance_doc_name || '',
@@ -2281,16 +2644,24 @@ const loadPurchase = async () => {
     payment_doc_date: data.payment_doc_date || '',
     payment_amount: data.payment_amount ? Number(data.payment_amount) : null,
     payment_federal: data.payment_federal ? Number(data.payment_federal) : null,
-    status: data.status || 'planned',
+    status: data.status || 'wishes',
+    substatus: data.substatus || null,
+    is_monthly_payment: !!data.is_monthly_payment,
+    monthly_payment_count: data.monthly_payment_count ?? null,
+    monthly_payment_amount: data.monthly_payment_amount ? Number(data.monthly_payment_amount) : null,
     purchase_number: data.purchase_number ?? null,
     purchase_contract_type: data.purchase_contract_type || 'single',
     contract_id: data.contract_id ?? null,
+    framework_seq: data.framework_seq ?? null,
     responsible_person: data.responsible_person || '',
     vat_applicable: !!data.vat_applicable,
     vat_rate: data.vat_rate ?? null,
     vat_exemption_article: data.vat_exemption_article || '',
     third_party_involved: !!data.third_party_involved,
     service_period_type: data.service_period_type || 'period',
+    description_mode: data.description_mode || 'exact',
+    event_id: data.event_id ?? null,
+    approval_status: data.approval_status ?? null,
   })
   loadResponsiblePersons()
 
@@ -2300,6 +2671,7 @@ const loadPurchase = async () => {
       const contracts = await apiFetch<FrameworkContract[]>(`/contracts/?subsidy_id=${data.subsidy_id || ''}`)
       selectedFrameworkContract.value = contracts.find(c => c.id === data.contract_id) ?? null
     } catch {}
+    await loadFrameworkSiblings(data.contract_id)
   }
 
   // Load items
@@ -2318,7 +2690,8 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: prod?.photo_url || undefined,
-        _description: prod?.description || undefined,
+        _description: i.product_description || prod?.description || undefined,
+        _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }
     })
   } else if (data.item_name) {
@@ -2351,11 +2724,50 @@ const loadPurchase = async () => {
   calcBudget()
 }
 
+// ---------------------------------------------------------------------------
+// Autosave draft for new purchases
+// ---------------------------------------------------------------------------
+const DRAFT_KEY = 'purchase_form_draft'
+const draftSaved = ref(false)
+const hasDraft = computed(() => !!localStorage.getItem(DRAFT_KEY))
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function saveDraft() {
+  if (isEdit.value) return
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(form))
+  draftSaved.value = true
+  setTimeout(() => { draftSaved.value = false }, 2000)
+}
+
+function loadDraft() {
+  if (isEdit.value) return
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY)
+    if (!raw) return
+    const draft = JSON.parse(raw)
+    Object.assign(form, draft)
+    showSnack('Черновик восстановлен', 'info')
+  } catch {}
+}
+
+function clearDraft() {
+  localStorage.removeItem(DRAFT_KEY)
+}
+
+watch(form, () => {
+  if (isEdit.value) return
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(saveDraft, 3000)
+}, { deep: true })
+
 onMounted(async () => {
   await loadRefs()
   if (isEdit.value && purchaseId.value) {
     await loadPurchase()
     await loadPublications()
+    approvalPanelRef.value?.loadApprovals()
+  } else {
+    loadDraft()
   }
 })
 
@@ -2384,13 +2796,15 @@ const doSave = async (adminOverride: boolean) => {
   try {
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, ...rest }) => rest)
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => rest)
     const payload = {
       ...form,
       planned_total_price: totalNmck.value || null,
       total_nmck: totalNmck.value || null,
       contract_date: form.contract_date || null,
       delivery_date: form.delivery_date || null,
+      delivery_address: form.delivery_address || null,
+      procurement_planned_date: form.procurement_planned_date || null,
       execution_term: form.execution_term || null,
       execution_term_changed: form.execution_term_changed || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
@@ -2403,6 +2817,7 @@ const doSave = async (adminOverride: boolean) => {
       showSnack('Сохранено')
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
+      clearDraft()
       showSnack('Закупка создана')
       router.push(`/orders/${created.id}/edit`)
     }
@@ -2427,6 +2842,17 @@ const doTransition = async () => {
     showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {
     transitioning.value = false
+  }
+}
+
+const saveSubstatus = async (val: string | null) => {
+  if (!purchaseId.value) return
+  try {
+    const qs = val ? `substatus=${val}` : 'substatus='
+    await apiFetch(`/purchases/${purchaseId.value}/substatus?${qs}`, { method: 'PATCH' })
+    showSnack(val ? `Подстатус → ${SUBSTATUS_OPTIONS.find(o => o.value === val)?.title}` : 'Подстатус сброшен')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка обновления подстатуса', 'error')
   }
 }
 
@@ -2521,7 +2947,7 @@ const downloadDoc = async (docType: string, extraParams = '') => {
   if (!purchaseId.value) return
   docLoading.value = docType
   try {
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token')
+    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/documents/${docType}${extraParams}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -2653,3 +3079,36 @@ function copyContractorEmail(cid: number) {
   )
 }
 </script>
+
+<style scoped>
+.framework-siblings-label {
+  font-size: 12px;
+  color: var(--crm-text-muted);
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+}
+.framework-siblings-table {
+  border: 1px solid var(--crm-border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.framework-siblings-table thead tr th {
+  background: var(--crm-table-header);
+  font-size: 11px;
+  color: var(--crm-text-secondary);
+  font-weight: 600;
+  padding: 6px 10px !important;
+}
+.framework-siblings-table tbody tr td {
+  padding: 5px 10px !important;
+  font-size: 12px;
+}
+.framework-sibling-current {
+  background: var(--crm-surface-hover) !important;
+}
+.framework-total-row td {
+  background: var(--crm-table-stripe);
+  border-top: 2px solid var(--crm-border-strong);
+}
+</style>

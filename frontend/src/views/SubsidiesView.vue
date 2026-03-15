@@ -63,8 +63,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.budget) }}</div>
-            <div class="sc-budget-label">Бюджет</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.calculated_budget || s.budget) }}</div>
+            <div class="sc-budget-label">{{ (s.calculated_budget || 0) > 0 ? 'Рассчитанный бюджет' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini">
@@ -82,11 +82,21 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.budget)"
-              :color="progressColor(pct(s.planned, s.budget))"
+              :model-value="pct(s.planned, s.calculated_budget || s.budget)"
+              :color="progressColor(pct(s.planned, s.calculated_budget || s.budget))"
               height="6" rounded class="mt-3"
             />
-            <div class="sc-pct">{{ pct(s.planned, s.budget) }}% запланировано</div>
+            <div v-if="s.contractor_name" class="sc-contractor">
+              <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
+              <span>{{ s.contractor_name }}</span>
+            </div>
+            <div class="sc-footer">
+              <div class="sc-pct">{{ pct(s.planned, s.calculated_budget || s.budget) }}% запланировано</div>
+              <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
+                <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
+                ФЭО
+              </div>
+            </div>
           </div>
         </div>
 
@@ -97,27 +107,27 @@
             <span class="summary-value">{{ filteredSubsidies.length }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item">
-            <span class="summary-label">Итого бюджет</span>
+          <div class="summary-item summary-item--link" @click="router.push('/dashboard')">
+            <span class="summary-label">Бюджет ФЭО (итого)</span>
             <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item">
+          <div class="summary-item summary-item--link" @click="router.push('/orders')">
             <span class="summary-label">Запланировано</span>
             <span class="summary-value" style="color: #F59E0B;">{{ formatCurrency(totals.planned) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item">
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=contracted')">
             <span class="summary-label">Законтрактовано</span>
             <span class="summary-value" style="color: #3B82F6;">{{ formatCurrency(totals.contracted) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item">
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=paid')">
             <span class="summary-label">Оплачено</span>
             <span class="summary-value" style="color: #22C55E;">{{ formatCurrency(totals.paid) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item">
+          <div class="summary-item summary-item--link" @click="router.push('/dashboard')">
             <span class="summary-label">Свободно</span>
             <span class="summary-value" :style="{ color: totals.budget - totals.planned < 0 ? '#EF4444' : '#3B82F6' }">
               {{ formatCurrency(totals.budget - totals.planned) }}
@@ -136,8 +146,8 @@
           <!-- KPI mini-cards for selected subsidy -->
           <div class="detail-kpis">
             <div class="dkpi dkpi-budget">
-              <div class="dkpi-label">Бюджет</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.budget) }}</div>
+              <div class="dkpi-label">Бюджет (ФЭО)</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedBudget) }}</div>
             </div>
             <div class="dkpi dkpi-planned">
               <div class="dkpi-label">Запланировано</div>
@@ -147,10 +157,21 @@
               <div class="dkpi-label">Оплачено</div>
               <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
             </div>
-            <div class="dkpi dkpi-free" :class="selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
-              <div class="dkpi-label">{{ selectedSubsidy.budget - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedSubsidy.budget - selectedSubsidy.planned)) }}</div>
+            <div class="dkpi dkpi-free" :class="selectedBudget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
+              <div class="dkpi-label">{{ selectedBudget - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedBudget - selectedSubsidy.planned)) }}</div>
             </div>
+          </div>
+          <!-- Контрагент -->
+          <div v-if="selectedSubsidy.contractor_name" class="detail-contractor mt-2 mb-3">
+            <v-icon icon="mdi-account-tie" size="16" color="teal" class="mr-1" />
+            <span class="text-body-2 font-weight-medium">{{ selectedSubsidy.contractor_name }}</span>
+            <span v-if="selectedSubsidy.contractor_inn" class="text-caption text-medium-emphasis ml-2">ИНН {{ selectedSubsidy.contractor_inn }}</span>
+            <v-btn
+              icon="mdi-pencil-outline" size="x-small" variant="text" color="teal" class="ml-2"
+              title="Реквизиты контрагента для этой субсидии"
+              @click="openContractorOverride(selectedSubsidy)"
+            />
           </div>
 
           <!-- FEO categories -->
@@ -161,12 +182,22 @@
           <div v-else>
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
-              <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" class="ml-auto mr-2" @click="exportFeoToExcel">
-                Выгрузить
-              </v-btn>
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddFeoDialog = true">
-                Добавить направление
-              </v-btn>
+              <div class="d-flex align-center ml-auto" style="gap:8px">
+                <v-text-field
+                  v-model="feoSearch"
+                  prepend-inner-icon="mdi-magnify"
+                  placeholder="Поиск..."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  style="max-width:200px"
+                />
+                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportFeoToExcel">Выгрузить</v-btn>
+                <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
+                <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+                <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="feoForm.parentId = null; showAddFeoDialog = true">Добавить</v-btn>
+              </div>
             </div>
 
             <div v-if="feoCategories.length === 0" class="feo-empty">
@@ -174,7 +205,7 @@
               <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>
             </div>
 
-            <!-- FEO table with 3 columns -->
+            <!-- FEO table with D&D, inline edit, total row -->
             <div v-else class="feo-table-wrap">
               <table class="feo-table">
                 <thead>
@@ -186,105 +217,182 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
-                    v-for="node in visibleFeoNodes"
-                    :key="node.id"
-                    class="feo-tr"
-                    :class="[
-                      `feo-tr--l${node.level}`,
-                      feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'feo-tr--over' : ''
-                    ]"
-                  >
-                    <!-- Наименование -->
-                    <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
-                      <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                  <template v-for="node in visibleFeoNodes" :key="node.id">
+                    <tr
+                      v-if="isNodeVisible(node)"
+                      class="feo-tr"
+                      :class="[
+                        `feo-tr--l${node.level}`,
+                        feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'feo-tr--over' : '',
+                        dragOverId === node.id ? 'feo-drop-target' : '',
+                        dragNodeId === node.id ? 'feo-dragging' : '',
+                      ]"
+                      draggable="true"
+                      @dragstart="onDragStart($event, node)"
+                      @dragover.prevent="onDragOver($event, node)"
+                      @dragleave="onDragLeave"
+                      @drop="onDrop($event, node)"
+                      @dragend="onDragEnd"
+                    >
+                      <!-- Наименование -->
+                      <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
+                        <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                          <v-icon
+                            v-if="node.hasChildren"
+                            size="15"
+                            :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                            color="grey"
+                            class="mr-1 cursor-pointer"
+                          />
+                          <span v-else style="width:16px;display:inline-block" />
+                        </span>
                         <v-icon
-                          v-if="node.hasChildren"
-                          size="15"
-                          :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                          color="grey"
-                          class="mr-1 cursor-pointer"
+                          size="16"
+                          class="mr-1 flex-shrink-0"
+                          :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
+                          :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
                         />
-                        <span v-else style="width:16px;display:inline-block" />
-                      </span>
-                      <v-icon
-                        size="16"
-                        class="mr-1 flex-shrink-0"
-                        :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
-                        :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-                      />
-                      <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
-                      <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
-                      <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
-                    </td>
+                        <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
+                        <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
+                        <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
+                      </td>
 
-                    <!-- Финансирование по ФЭО -->
-                    <td class="feo-td feo-td-num">
-                      <!-- Авто-режим: дети имеют суммы -->
-                      <template v-if="isAutoNode(node)">
-                        <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
-                        <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
-                          title="Сумма автоматически считается из дочерних направлений"
-                        >авто</v-chip>
-                      </template>
-                      <!-- Ручной режим: задана сумма -->
-                      <template v-else-if="feoBudgetFor(node) > 0">
-                        <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
-                      </template>
-                      <!-- Ручной режим: пусто — подсказка задать -->
-                      <template v-else>
-                        <span class="feo-set-hint" title="Нажмите ✏️ чтобы задать сумму"
-                          @click="startFeoEdit(node)"
-                        >Задать</span>
-                      </template>
-                    </td>
+                      <!-- Финансирование по ФЭО (inline edit) -->
+                      <td class="feo-td feo-td-num">
+                        <div v-if="isAutoNode(node)" class="d-flex align-center justify-end">
+                          <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                            title="Сумма автоматически считается из дочерних направлений"
+                          >авто</v-chip>
+                        </div>
+                        <div v-else-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
+                          <input
+                            ref="inlineInputEl"
+                            v-model="inlineBudgetVal"
+                            type="number"
+                            class="inline-input"
+                            @blur="saveInlineBudget(node)"
+                            @keydown.enter="saveInlineBudget(node)"
+                            @keydown.esc="inlineBudgetId = null"
+                          />
+                        </div>
+                        <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
+                          <span v-if="feoBudgetFor(node) > 0" class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                          <span v-else class="feo-set-hint">Задать</span>
+                        </div>
+                      </td>
 
-                    <!-- Фактически запланировано -->
-                    <td class="feo-td feo-td-num">
-                      <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount' : 'feo-amount-empty'">
-                        {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
-                      </span>
-                    </td>
+                      <!-- Фактически запланировано -->
+                      <td class="feo-td feo-td-num">
+                        <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount' : 'feo-amount-empty'"
+                          :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#DC2626;font-weight:700' : ''"
+                        >
+                          {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
+                        </span>
+                      </td>
 
-                    <!-- Действия -->
-                    <td class="feo-td feo-td-actions">
-                      <v-btn
-                        icon="mdi-pencil"
-                        variant="text"
-                        size="x-small"
-                        color="primary"
-                        class="mr-1"
-                        title="Редактировать"
-                        @click="startFeoEdit(node)"
-                      />
-                      <v-btn
-                        v-if="!node.hasChildren"
-                        icon="mdi-delete"
-                        variant="text"
-                        size="x-small"
-                        color="error"
-                        title="Удалить"
-                        @click="confirmFeoDelete(node)"
-                      />
-                      <v-btn
-                        v-if="node.level < 3"
-                        icon="mdi-plus"
-                        variant="text"
-                        size="x-small"
-                        color="success"
-                        title="Добавить дочернее направление"
-                        @click="feoForm.parentId = node.id; showAddFeoDialog = true"
-                      />
+                      <!-- Действия -->
+                      <td class="feo-td feo-td-actions">
+                        <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
+                          title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
+                        <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
+                          title="Редактировать" @click="startFeoEdit(node)" />
+                        <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
+                          title="Удалить" @click="confirmFeoDelete(node)" />
+                      </td>
+                    </tr>
+                  </template>
+
+                  <!-- Drop zone: переместить на верхний уровень -->
+                  <tr v-if="dragNodeId"
+                    class="feo-tr feo-drop-root"
+                    :class="{ 'feo-drop-target': dragOverId === -1 }"
+                    @dragover.prevent="dragOverId = -1"
+                    @dragleave="dragOverId = null"
+                    @drop.prevent="onDropToRoot"
+                  >
+                    <td colspan="4" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                      <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
+                      Переместить на верхний уровень (корень)
                     </td>
+                  </tr>
+
+                  <!-- Итого -->
+                  <tr class="feo-tr feo-tr--total">
+                    <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
+                    <td class="feo-td" />
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
+
+          <!-- ── Мероприятия ── -->
+          <div class="mt-4">
+            <div class="detail-feo-header">
+              <span class="chart-card-title">Мероприятия</span>
+              <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
+                Добавить мероприятие
+              </v-btn>
+            </div>
+            <div v-if="subsidyEvents.length === 0" class="feo-empty">
+              <v-icon icon="mdi-calendar-blank" size="40" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет мероприятий</div>
+            </div>
+            <v-list v-else density="compact" class="pa-0">
+              <v-list-item v-for="ev in subsidyEvents" :key="ev.id" class="px-2">
+                <template #prepend>
+                  <v-icon :icon="ev.is_active ? 'mdi-calendar-check' : 'mdi-calendar-remove'" :color="ev.is_active ? 'success' : 'grey'" size="18" />
+                </template>
+                <v-list-item-title class="text-body-2">
+                  <template v-if="editingEventId === ev.id">
+                    <v-text-field
+                      v-model="editingEventName"
+                      density="compact" variant="outlined" hide-details
+                      class="d-inline-flex" style="max-width:300px"
+                      @keydown.enter="saveEventEdit(ev.id)"
+                      @keydown.esc="editingEventId = null"
+                    />
+                    <v-btn icon="mdi-check" size="x-small" variant="text" color="success" class="ml-1" @click="saveEventEdit(ev.id)" />
+                    <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="editingEventId = null" />
+                  </template>
+                  <template v-else>{{ ev.name }}</template>
+                </v-list-item-title>
+                <template v-if="isAdminLevel && editingEventId !== ev.id" #append>
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="startEventEdit(ev)" />
+                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteEvent(ev.id)" />
+                </template>
+              </v-list-item>
+            </v-list>
+          </div>
         </div>
 
       </template>
     </template>
+
+    <!-- ── Add Event Dialog ── -->
+    <v-dialog v-model="showAddEventDialog" max-width="420">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-calendar-plus" color="primary" class="mr-2" />
+          Добавить мероприятие
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddEventDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-4">
+          <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" hide-details />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="showAddEventDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="!newEventName.trim()" @click="addEvent">Добавить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- ── Add Subsidy Dialog ── -->
     <v-dialog v-model="showAddDialog" max-width="520">
@@ -305,6 +413,18 @@
               <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
+          <v-autocomplete
+            v-model="form.contractor_id"
+            :items="contractors"
+            item-title="name" item-value="id"
+            label="Контрагент"
+            variant="outlined" density="compact" clearable class="mt-3" hide-details
+            no-data-text="Нет контрагентов"
+          >
+            <template v-slot:item="{ item, props }">
+              <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
+            </template>
+          </v-autocomplete>
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -336,6 +456,18 @@
               <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
+          <v-autocomplete
+            v-model="editForm.contractor_id"
+            :items="contractors"
+            item-title="name" item-value="id"
+            label="Контрагент"
+            variant="outlined" density="compact" clearable class="mt-3" hide-details
+            no-data-text="Нет контрагентов"
+          >
+            <template v-slot:item="{ item, props }">
+              <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
+            </template>
+          </v-autocomplete>
           <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -452,10 +584,22 @@
               <v-text-field v-model="feoEditForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
             </v-col>
           </v-row>
+          <v-autocomplete
+            v-model="feoEditForm.parent_id"
+            :items="feoParentOptions"
+            item-title="name"
+            item-value="id"
+            label="Родительская категория"
+            variant="outlined"
+            density="compact"
+            clearable
+            class="mt-3"
+            hint="Очистите для корневого уровня. Или перетащите в таблице."
+            persistent-hint
+          />
           <v-divider class="my-3" />
           <div class="d-flex align-center mb-2">
             <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
-            <!-- "Авто" только у родительских категорий (есть дети) -->
             <v-switch
               v-if="feoEditForm.hasChildren"
               v-model="feoEditForm.budgetAuto"
@@ -466,7 +610,6 @@
               color="primary"
             />
           </div>
-          <!-- Для листовых категорий поле всегда видно; для родительских — только в ручном режиме -->
           <v-text-field
             v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
             v-model.number="feoEditForm.budget"
@@ -492,7 +635,7 @@
     </v-dialog>
 
     <!-- ── Delete FEO category dialog ── -->
-    <v-dialog v-model="showDeleteFeoDialog" max-width="420">
+    <v-dialog v-model="showDeleteFeoDialog" max-width="440">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
@@ -501,10 +644,12 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
+          <div class="mb-2">«{{ feoDeleteTarget?.name }}»</div>
+          <v-alert v-if="feoDeleteChildrenCount > 0" type="warning" density="compact" variant="tonal" class="mb-3">
+            Будет удалено вместе с {{ feoDeleteChildrenCount }}
+            {{ feoDeleteChildrenCount === 1 ? 'дочерней категорией' : 'дочерними категориями' }}
+          </v-alert>
           <v-alert v-if="feoDeleteError" type="error" variant="tonal" class="mb-3">{{ feoDeleteError }}</v-alert>
-          <template v-else>
-            Удалить направление <strong>{{ feoDeleteTarget?.name }}</strong>? Действие нельзя отменить.
-          </template>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -689,6 +834,103 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Contractor Override Dialog ── -->
+    <v-dialog v-model="showOverrideDialog" max-width="640" scrollable>
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-account-edit-outline" color="teal" class="mr-2" />
+          Реквизиты контрагента для субсидии
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showOverrideDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4" style="max-height: 500px">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+            Эти реквизиты будут использоваться при генерации документов для данной субсидии.
+            Если не заполнены — берутся из основной карточки контрагента.
+          </v-alert>
+          <v-text-field v-model="overrideForm.signatory" label="Подписант" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-text-field v-model="overrideForm.signatory_basis" label="Основание (Устав/Доверенность)" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-text-field v-model="overrideForm.address" label="Юридический адрес" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-text-field v-model="overrideForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-text-field v-model="overrideForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.phone" label="Телефон" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.email" label="Email" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-divider class="my-3" />
+          <div class="text-body-2 font-weight-medium mb-2">Банковские реквизиты</div>
+          <v-text-field v-model="overrideForm.settlement_account" label="Расчётный счёт" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-text-field v-model="overrideForm.bank_name" label="Название банка" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.bik" label="БИК" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.correspondent_account" label="Корр. счёт" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showOverrideDialog = false">Отмена</v-btn>
+          <v-btn color="teal" :loading="savingOverride" @click="saveContractorOverride">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Import FEO dialog ── -->
+    <v-dialog v-model="feoImport.show" max-width="540" persistent>
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-upload" color="primary" class="mr-2" />
+          Импорт категорий ФЭО из Excel
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="closeFeoImport" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <template v-if="feoImport.step === 1">
+            <p class="text-body-2 text-medium-emphasis mb-4">
+              Загрузите файл .xlsx с колонками:<br>
+              <strong>Наименование</strong> (обяз.), <strong>Субсидия</strong> (обяз.),
+              Родительская категория, Код, Приложение, Финансирование, Активна (да/нет).
+            </p>
+            <v-file-input
+              v-model="feoImport.fileList"
+              label="Файл Excel (.xlsx)"
+              accept=".xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-excel"
+              show-size
+              @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
+            />
+          </template>
+          <template v-else>
+            <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
+              Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
+              Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
+            </v-alert>
+            <div v-if="feoImport.result?.errors?.length" class="mt-2">
+              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
+              <v-list density="compact" class="bg-error-lighten-5 rounded">
+                <v-list-item v-for="(e, i) in feoImport.result.errors" :key="i"
+                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              </v-list>
+            </div>
+          </template>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
+            :disabled="!feoImport.file" @click="doFeoImport">Загрузить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Snackbar ── -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -698,16 +940,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+
+const { globalSubsidyId } = useGlobalSubsidy()
 
 const router = useRouter()
 const route  = useRoute()
 
 interface SubsidyRow {
   id: number; name: string; year: number; budget: number
+  calculated_budget?: number
   description?: string; planned: number; paid: number; contracted: number
+  feo_filled?: boolean
+  feo_budget_total?: number
+  contractor_id?: number
+  contractor_name?: string
+  contractor_inn?: string
 }
 
 interface FeoCategory {
@@ -796,12 +1047,52 @@ const feoEditTarget      = ref<FeoCategory | null>(null)
 const feoDeleteTarget    = ref<FeoCategory | null>(null)
 const feoDeleteError     = ref('')
 
+// FEO search
+const feoSearch = ref('')
+
+// FEO inline budget edit
+const inlineBudgetId = ref<number | null>(null)
+const inlineBudgetVal = ref('')
+const inlineInputEl = ref<HTMLInputElement | null>(null)
+
+// FEO Drag & Drop
+const dragNodeId = ref<number | null>(null)
+const dragOverId = ref<number | null>(null)
+
+// FEO Import
+const feoImport = reactive({
+  show: false, step: 1, file: null as File | null, fileList: [] as File[],
+  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+})
+
+// Contractor override state
+const showOverrideDialog = ref(false)
+const savingOverride = ref(false)
+const overrideSubsidyId = ref<number | null>(null)
+const overrideForm = ref({
+  signatory: '', signatory_basis: '', address: '', postal_address: '',
+  contact_person: '', phone: '', email: '',
+  bank_details: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
+})
+
+// Events (Мероприятия) state
+interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
+const subsidyEvents = ref<EventItem[]>([])
+const showAddEventDialog = ref(false)
+const newEventName = ref('')
+const editingEventId = ref<number | null>(null)
+const editingEventName = ref('')
+const userRoleRaw = localStorage.getItem('user_role') || ''
+const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
+
 const snack = ref({ show: false, text: '', color: 'success' })
 
-const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '' })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '' })
+const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
+
+const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false, parent_id: null as number | null })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -816,8 +1107,13 @@ const selectedSubsidy = computed(() =>
   allSubsidies.value.find(s => s.id === selectedId.value) ?? null
 )
 
+const selectedBudget = computed(() => {
+  if (!selectedSubsidy.value) return 0
+  return selectedSubsidy.value.calculated_budget || selectedSubsidy.value.budget
+})
+
 const totals = computed(() => ({
-  budget:      filteredSubsidies.value.reduce((s, x) => s + x.budget,      0),
+  budget:      filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || x.budget),      0),
   planned:     filteredSubsidies.value.reduce((s, x) => s + x.planned,     0),
   contracted:  filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
   paid:        filteredSubsidies.value.reduce((s, x) => s + x.paid,        0),
@@ -842,18 +1138,35 @@ const feoTree = computed<FeoNode[]>(() => {
   return roots
 })
 
-function flattenVisible(nodes: FeoNode[]): FeoNode[] {
-  const result: FeoNode[] = []
-  for (const node of nodes) {
-    result.push(node)
-    if (node.hasChildren && expandedIds.value.includes(node.id)) {
-      result.push(...flattenVisible(node.children))
-    }
-  }
-  return result
+function flattenAll(nodes: FeoNode[]): FeoNode[] {
+  return nodes.flatMap(n => [n, ...flattenAll(n.children)])
 }
 
-const visibleFeoNodes = computed(() => flattenVisible(feoTree.value))
+function isNodeVisible(node: FeoNode): boolean {
+  if (feoSearch.value) return true  // при поиске все найденные видны
+  if (!node.parent_id) return true
+  const checkParent = (pid: number): boolean => {
+    if (!expandedIds.value.includes(pid)) return false
+    const p = feoCategories.value.find(c => c.id === pid)
+    return !p?.parent_id || checkParent(p.parent_id)
+  }
+  return checkParent(node.parent_id)
+}
+
+const visibleFeoNodes = computed(() => {
+  const q = feoSearch.value.toLowerCase()
+  const all = flattenAll(feoTree.value)
+  if (q) return all.filter(n => n.name.toLowerCase().includes(q) || (n.code ?? '').toLowerCase().includes(q))
+  return all
+})
+
+const totalFeoBudget = computed(() => {
+  let sum = 0; let any = false
+  for (const r of feoTree.value) { const v = feoBudgetFor(r); if (v > 0) { sum += v; any = true } }
+  return any ? sum : null
+})
+
+const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
 
 // Бюджет по ФЭО:
 // - Листовой узел: всегда ручное значение
@@ -890,14 +1203,130 @@ function toggleExpand(id: number) {
   }
 }
 
+// ── Subtree helpers ──────────────────────────────
+function collectSubtreeIds(nodeId: number): number[] {
+  const ids = [nodeId]
+  const find = (pid: number) => {
+    for (const c of feoCategories.value) {
+      if (c.parent_id === pid) { ids.push(c.id); find(c.id) }
+    }
+  }
+  find(nodeId)
+  return ids
+}
+
+const feoParentOptions = computed(() => {
+  if (!feoEditTarget.value) return []
+  const excludeIds = new Set(collectSubtreeIds(feoEditTarget.value.id))
+  return feoCategories.value
+    .filter(c => !excludeIds.has(c.id))
+    .map(c => ({ id: c.id, name: '  '.repeat(c.level - 1) + c.name }))
+})
+
+const feoDeleteChildrenCount = computed(() => {
+  if (!feoDeleteTarget.value) return 0
+  return collectSubtreeIds(feoDeleteTarget.value.id).length - 1
+})
+
+// ── Inline budget edit ───────────────────────────
+async function startInlineBudget(node: FeoNode) {
+  if (isAutoNode(node)) return
+  inlineBudgetId.value = node.id
+  inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
+  await nextTick()
+  inlineInputEl.value?.focus()
+}
+
+async function saveInlineBudget(node: FeoNode) {
+  if (inlineBudgetId.value !== node.id) return
+  inlineBudgetId.value = null
+  const val = inlineBudgetVal.value.trim() === '' ? null : parseFloat(inlineBudgetVal.value)
+  try {
+    await apiFetch(`/feo-categories/${node.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
+        is_active: node.is_active, budget: val, subsidy_id: node.subsidy_id }),
+    })
+    const cat = feoCategories.value.find(c => c.id === node.id)
+    if (cat) cat.budget = val
+    feoCategories.value = [...feoCategories.value]
+    syncFeoFilled()
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+}
+
+// ── Drag & Drop ──────────────────────────────────
+function onDragStart(e: DragEvent, node: FeoNode) {
+  dragNodeId.value = node.id
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(node.id))
+}
+
+function onDragOver(e: DragEvent, node: FeoNode) {
+  if (!dragNodeId.value || dragNodeId.value === node.id) return
+  const subtree = collectSubtreeIds(dragNodeId.value)
+  if (subtree.includes(node.id)) return
+  dragOverId.value = node.id
+}
+
+function onDragLeave() { dragOverId.value = null }
+
+async function onDrop(e: DragEvent, targetNode: FeoNode) {
+  e.preventDefault()
+  if (!dragNodeId.value || dragNodeId.value === targetNode.id) return
+  const srcId = dragNodeId.value
+  const srcNode = visibleFeoNodes.value.find(n => n.id === srcId)
+  dragOverId.value = null; dragNodeId.value = null
+  if (!srcNode) return
+  const subtree = collectSubtreeIds(srcId)
+  if (subtree.includes(targetNode.id)) { showSnack('Нельзя переместить в собственное поддерево', 'error'); return }
+  if (srcNode.parent_id === targetNode.id) return
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${srcId}/move`, {
+      method: 'PATCH', body: JSON.stringify({ parent_id: targetNode.id }),
+    })
+    showSnack('Категория перемещена')
+    if (res?.warning) showSnack(res.warning, 'warning')
+    if (selectedId.value) await loadFeo(selectedId.value)
+    syncFeoFilled()
+  } catch (e: any) { showSnack(e.detail || 'Ошибка перемещения', 'error') }
+}
+
+async function onDropToRoot(e: DragEvent) {
+  e.preventDefault()
+  if (!dragNodeId.value) return
+  const srcId = dragNodeId.value
+  const srcNode = visibleFeoNodes.value.find(n => n.id === srcId)
+  dragOverId.value = null; dragNodeId.value = null
+  if (!srcNode || !srcNode.parent_id) return
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${srcId}/move`, {
+      method: 'PATCH', body: JSON.stringify({ parent_id: null }),
+    })
+    showSnack('Категория перемещена на верхний уровень')
+    if (res?.warning) showSnack(res.warning, 'warning')
+    if (selectedId.value) await loadFeo(selectedId.value)
+    syncFeoFilled()
+  } catch (e: any) { showSnack(e.detail || 'Ошибка перемещения', 'error') }
+}
+
+function onDragEnd() { dragNodeId.value = null; dragOverId.value = null }
+
 // ── Data load ─────────────────────────────────────
 async function loadAll() {
   loading.value = true
   try {
+    // Load contractors for selector
+    try { contractors.value = await apiFetch<any[]>('/contractors/') } catch {}
     const charts = await apiFetch<any>('/dashboard/charts')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
+      calculated_budget: s.calculated_budget ?? 0,
       planned: s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+      feo_budget_total: s.feo_budget_total ?? 0,
+      feo_filled: s.feo_filled ?? false,
+      contractor_id: s.contractor_id ?? null,
+      contractor_name: s.contractor_name ?? null,
+      contractor_inn: s.contractor_inn ?? null,
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year
@@ -936,6 +1365,51 @@ async function exportFeoToExcel() {
   URL.revokeObjectURL(url)
 }
 
+async function downloadFeoTemplate() {
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch('/api/feo-categories/import/template', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'feo_categories_template.xlsx'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function doFeoImport() {
+  if (!feoImport.file) return
+  feoImport.loading = true
+  try {
+    const fd = new FormData()
+    fd.append('file', feoImport.file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/feo-categories/import', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      showSnack(err.detail || 'Ошибка импорта', 'error'); return
+    }
+    feoImport.result = await res.json()
+    feoImport.step = 2
+    showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
+  } catch {
+    showSnack('Ошибка импорта', 'error')
+  } finally {
+    feoImport.loading = false
+  }
+}
+
+function closeFeoImport() {
+  const wasCreated = (feoImport.result?.created ?? 0) > 0
+  feoImport.show = false; feoImport.step = 1
+  feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  if (wasCreated && selectedId.value) { loadFeo(selectedId.value); syncFeoFilled() }
+}
+
 async function loadFeo(subsidyId: number) {
   loadingFeo.value = true
   feoCategories.value = []
@@ -956,13 +1430,26 @@ async function loadFeo(subsidyId: number) {
 
 // ── Actions ───────────────────────────────────────
 function toggleSelect(id: number) {
-  if (selectedId.value === id) { selectedId.value = null; return }
+  if (selectedId.value === id) { selectedId.value = null; globalSubsidyId.value = null; return }
   selectedId.value = id
+  globalSubsidyId.value = id
   loadFeo(id)
+  loadEvents(id)
 }
 
+// Sync: global → local
+watch(globalSubsidyId, (id: number | null) => {
+  if (id !== null && id !== selectedId.value) {
+    selectedId.value = id
+    loadFeo(id)
+    loadEvents(id)
+  } else if (id === null) {
+    selectedId.value = null
+  }
+})
+
 function startEdit(s: SubsidyRow) {
-  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '' }
+  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', contractor_id: s.contractor_id || null }
   showEditDialog.value = true
 }
 
@@ -977,11 +1464,11 @@ async function addSubsidy() {
   try {
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null })
+      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id })
     })
     allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0 })
     showAddDialog.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '' }
+    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null }
     showSnack('Субсидия добавлена')
   } catch {
     showSnack('Ошибка добавления', 'error')
@@ -995,7 +1482,7 @@ async function updateSubsidy() {
   try {
     const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id })
     })
     const i = allSubsidies.value.findIndex(s => s.id === res.id)
     if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }
@@ -1054,6 +1541,7 @@ async function addFeoCategory() {
     feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
+    syncFeoFilled()
   } catch {
     showSnack('Ошибка добавления направления', 'error')
   } finally {
@@ -1061,9 +1549,21 @@ async function addFeoCategory() {
   }
 }
 
+// Update calculated_budget on the card after FEO budget changes (using tree logic)
+function syncFeoFilled() {
+  if (!selectedId.value) return
+  // Recalculate from tree: use feoBudgetFor on root nodes
+  const total = feoTree.value.reduce((sum, root) => sum + feoBudgetFor(root), 0)
+  const s = allSubsidies.value.find(x => x.id === selectedId.value)
+  if (s) {
+    s.feo_filled = total > 0
+    s.feo_budget_total = total
+    s.calculated_budget = total
+  }
+}
+
 function startFeoEdit(node: FeoNode) {
   feoEditTarget.value = node
-  // "Авто из детей" — только если у категории есть дети И бюджет не задан вручную
   const autoMode = node.hasChildren && node.budget === null
   feoEditForm.value = {
     name: node.name,
@@ -1073,6 +1573,7 @@ function startFeoEdit(node: FeoNode) {
     budgetAuto: autoMode,
     is_active: node.is_active,
     hasChildren: node.hasChildren,
+    parent_id: node.parent_id ?? null,
   }
   showEditFeoDialog.value = true
 }
@@ -1081,11 +1582,21 @@ async function updateFeoCategory() {
   if (!feoEditTarget.value) return
   savingFeo.value = true
   try {
-    const res = await apiFetch<FeoCategory>(`/feo-categories/${feoEditTarget.value.id}`, {
+    // Если parent_id изменился — вызываем move endpoint
+    const oldParentId = feoEditTarget.value.parent_id ?? null
+    const newParentId = feoEditForm.value.parent_id ?? null
+    if (oldParentId !== newParentId) {
+      const moveRes = await apiFetch<any>(`/feo-categories/${feoEditTarget.value.id}/move`, {
+        method: 'PATCH', body: JSON.stringify({ parent_id: newParentId }),
+      })
+      if (moveRes?.warning) showSnack(moveRes.warning, 'warning')
+    }
+    // Обновляем остальные поля
+    await apiFetch<FeoCategory>(`/feo-categories/${feoEditTarget.value.id}`, {
       method: 'PUT',
       body: JSON.stringify({
         subsidy_id: feoEditTarget.value.subsidy_id,
-        parent_id: feoEditTarget.value.parent_id,
+        parent_id: newParentId,
         name: feoEditForm.value.name,
         code: feoEditForm.value.code || null,
         appendix: feoEditForm.value.appendix || null,
@@ -1093,10 +1604,10 @@ async function updateFeoCategory() {
         budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget || null),
       })
     })
-    const idx = feoCategories.value.findIndex(c => c.id === res.id)
-    if (idx >= 0) feoCategories.value[idx] = res
     showEditFeoDialog.value = false
     showSnack('Направление обновлено')
+    if (selectedId.value) await loadFeo(selectedId.value)
+    syncFeoFilled()
   } catch {
     showSnack('Ошибка обновления', 'error')
   } finally {
@@ -1116,9 +1627,10 @@ async function deleteFeoCategory() {
   feoDeleteError.value = ''
   try {
     await apiFetch(`/feo-categories/${feoDeleteTarget.value.id}`, { method: 'DELETE' })
-    feoCategories.value = feoCategories.value.filter(c => c.id !== feoDeleteTarget.value!.id)
     showDeleteFeoDialog.value = false
     showSnack('Направление удалено', 'warning')
+    if (selectedId.value) await loadFeo(selectedId.value)
+    syncFeoFilled()
   } catch (e: any) {
     feoDeleteError.value = e?.detail || 'Ошибка удаления'
   } finally {
@@ -1329,6 +1841,105 @@ function showSnack(text: string, color = 'success') {
   snack.value = { show: true, text, color }
 }
 
+// ── Contractor override ─────────────────────────
+async function openContractorOverride(s: SubsidyRow) {
+  if (!s.contractor_id) return
+  overrideSubsidyId.value = s.id
+  try {
+    const data = await apiFetch<any>(`/subsidies/${s.id}/contractor-override`)
+    overrideForm.value = {
+      signatory: data.signatory || '',
+      signatory_basis: data.signatory_basis || '',
+      address: data.address || '',
+      postal_address: data.postal_address || '',
+      contact_person: data.contact_person || '',
+      phone: data.phone || '',
+      email: data.email || '',
+      bank_details: data.bank_details || '',
+      settlement_account: data.settlement_account || '',
+      bank_name: data.bank_name || '',
+      bik: data.bik || '',
+      correspondent_account: data.correspondent_account || '',
+    }
+    showOverrideDialog.value = true
+  } catch {
+    showSnack('Ошибка загрузки реквизитов', 'error')
+  }
+}
+
+async function saveContractorOverride() {
+  if (!overrideSubsidyId.value) return
+  savingOverride.value = true
+  try {
+    await apiFetch(`/subsidies/${overrideSubsidyId.value}/contractor-override`, {
+      method: 'PUT',
+      body: JSON.stringify(overrideForm.value),
+    })
+    showOverrideDialog.value = false
+    showSnack('Реквизиты сохранены')
+  } catch {
+    showSnack('Ошибка сохранения', 'error')
+  } finally {
+    savingOverride.value = false
+  }
+}
+
+// ── Events (Мероприятия) CRUD ──
+async function loadEvents(subsidyId: number) {
+  try {
+    subsidyEvents.value = await apiFetch<EventItem[]>(`/events/?subsidy_id=${subsidyId}`)
+  } catch {
+    subsidyEvents.value = []
+  }
+}
+
+async function addEvent() {
+  if (!newEventName.value.trim() || !selectedId.value) return
+  try {
+    await apiFetch('/events/', {
+      method: 'POST',
+      body: JSON.stringify({ subsidy_id: selectedId.value, name: newEventName.value.trim(), is_active: true }),
+    })
+    showAddEventDialog.value = false
+    newEventName.value = ''
+    await loadEvents(selectedId.value)
+    snack.value = { show: true, text: 'Мероприятие добавлено', color: 'success' }
+  } catch (e: any) {
+    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+  }
+}
+
+function startEventEdit(ev: EventItem) {
+  editingEventId.value = ev.id
+  editingEventName.value = ev.name
+}
+
+async function saveEventEdit(eventId: number) {
+  if (!editingEventName.value.trim() || !selectedId.value) return
+  try {
+    await apiFetch(`/events/${eventId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ subsidy_id: selectedId.value, name: editingEventName.value.trim(), is_active: true }),
+    })
+    editingEventId.value = null
+    await loadEvents(selectedId.value)
+    snack.value = { show: true, text: 'Мероприятие обновлено', color: 'success' }
+  } catch (e: any) {
+    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+  }
+}
+
+async function deleteEvent(eventId: number) {
+  if (!selectedId.value) return
+  try {
+    await apiFetch(`/events/${eventId}`, { method: 'DELETE' })
+    await loadEvents(selectedId.value)
+    snack.value = { show: true, text: 'Мероприятие удалено', color: 'success' }
+  } catch (e: any) {
+    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+  }
+}
+
 onMounted(loadAll)
 </script>
 
@@ -1350,13 +1961,13 @@ onMounted(loadAll)
 }
 .page-header-left  { display: flex; align-items: center; }
 .page-header-right { display: flex; align-items: center; }
-.page-title    { font-size: 26px; font-weight: 700; color: #111827; line-height: 1.2; }
-.page-subtitle { font-size: 13px; color: #6B7280; margin-top: 2px; }
+.page-title    { font-size: 26px; font-weight: 700; color: var(--crm-text); line-height: 1.2; }
+.page-subtitle { font-size: 13px; color: var(--crm-text-muted); margin-top: 2px; }
 
 /* ── Empty state ── */
 .empty-state {
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 64px 0; color: #9CA3AF;
+  justify-content: center; padding: 64px 0; color: var(--crm-text-faint);
 }
 
 /* ── Subsidies grid ── */
@@ -1368,21 +1979,36 @@ onMounted(loadAll)
 }
 
 .subsidy-card {
-  background: #fff;
+  background: var(--crm-surface);
   border-radius: 12px;
-  border: 2px solid transparent;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  border: 2px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 18px 20px;
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  position: relative;
+}
+.subsidy-card::after {
+  content: 'Нажмите для подробностей';
+  position: absolute;
+  bottom: 6px;
+  right: 12px;
+  font-size: 10px;
+  color: var(--crm-text-faint);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.subsidy-card:hover::after {
+  opacity: 1;
 }
 .subsidy-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  box-shadow: 0 6px 20px var(--crm-shadow-hover);
+  border-color: rgba(var(--v-theme-primary), 0.3);
 }
 .subsidy-card--active {
   border-color: #3B82F6;
-  box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px rgba(0,0,0,0.1);
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px var(--crm-shadow-hover);
 }
 
 .sc-header {
@@ -1391,41 +2017,49 @@ onMounted(loadAll)
 }
 .sc-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: 4px; }
 .sc-name {
-  font-size: 14px; font-weight: 700; color: #111827;
+  font-size: 14px; font-weight: 700; color: var(--crm-text);
   line-height: 1.3; word-break: break-word;
 }
-.sc-budget      { font-size: 22px; font-weight: 700; color: #111827; }
-.sc-budget-label{ font-size: 11px; color: #9CA3AF; margin-bottom: 12px; }
+.sc-budget      { font-size: 22px; font-weight: 700; color: var(--crm-text); }
+.sc-budget-label{ font-size: 11px; color: var(--crm-text-faint); margin-bottom: 12px; }
 
 .sc-mini-row { display: flex; gap: 20px; }
-.sc-mini-label { font-size: 11px; color: #9CA3AF; margin-bottom: 2px; }
+.sc-mini-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 2px; }
 .sc-mini-val   { font-size: 13px; font-weight: 600; }
 
-.sc-pct { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+.sc-contractor { font-size: 12px; color: var(--crm-text-faint); display: flex; align-items: center; margin-top: 6px; }
+.sc-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.sc-pct { font-size: 11px; color: var(--crm-text-faint); }
+.sc-feo-badge { display: flex; align-items: center; font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 7px; }
+.sc-feo-badge--ok  { color: #16a34a; background: #dcfce7; }
+.sc-feo-badge--no  { color: var(--crm-text-faint); background: var(--crm-surface-hover); }
 
 /* ── Summary bar ── */
 .summary-bar {
   display: flex; align-items: center; gap: 0;
-  background: #fff;
+  background: var(--crm-surface);
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 14px 24px;
   margin-bottom: 20px;
   flex-wrap: wrap;
   gap: 16px;
 }
 .summary-item  { display: flex; flex-direction: column; gap: 2px; }
-.summary-sep   { width: 1px; height: 32px; background: #E5E7EB; flex-shrink: 0; }
-.summary-label { font-size: 11px; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.04em; }
-.summary-value { font-size: 15px; font-weight: 700; color: #111827; }
+.summary-item--link { cursor: pointer; border-radius: 8px; padding: 4px 8px; margin: -4px -8px; transition: background 0.15s; }
+.summary-item--link:hover { background: rgba(59,130,246,0.08); }
+.summary-item--link:hover .summary-label { color: #3B82F6; }
+.summary-sep   { width: 1px; height: 32px; background: var(--crm-border-strong); flex-shrink: 0; }
+.summary-label { font-size: 11px; color: var(--crm-text-faint); text-transform: uppercase; letter-spacing: 0.04em; transition: color 0.15s; }
+.summary-value { font-size: 15px; font-weight: 700; color: var(--crm-text); }
 
 /* ── Detail panel ── */
 .detail-panel {
-  background: #fff;
+  background: var(--crm-surface);
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.07);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 20px 24px;
   margin-bottom: 20px;
 }
@@ -1434,7 +2068,7 @@ onMounted(loadAll)
   margin-bottom: 16px;
 }
 .detail-title {
-  font-size: 15px; font-weight: 600; color: #374151;
+  font-size: 15px; font-weight: 600; color: var(--crm-text-secondary);
 }
 
 /* Detail KPI mini-cards */
@@ -1446,7 +2080,7 @@ onMounted(loadAll)
 }
 .dkpi {
   border-radius: 10px; padding: 14px 16px;
-  border: 1px solid rgba(0,0,0,0.07);
+  border: 1px solid var(--crm-border);
   border-top: 3px solid #CBD5E1;
 }
 .dkpi-budget    { border-top-color: #3B82F6; }
@@ -1455,8 +2089,8 @@ onMounted(loadAll)
 .dkpi-free      { border-top-color: #8B5CF6; }
 .dkpi-over      { border-top-color: #EF4444; }
 
-.dkpi-label { font-size: 11px; color: #9CA3AF; margin-bottom: 4px; }
-.dkpi-val   { font-size: 16px; font-weight: 700; color: #111827; }
+.dkpi-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 4px; }
+.dkpi-val   { font-size: 16px; font-weight: 700; color: var(--crm-text); }
 
 /* FEO section */
 .detail-feo-header {
@@ -1464,16 +2098,16 @@ onMounted(loadAll)
   margin-bottom: 12px;
 }
 .chart-card-title {
-  font-size: 14px; font-weight: 600; color: #374151;
+  font-size: 14px; font-weight: 600; color: var(--crm-text-secondary);
 }
 .feo-empty {
   display: flex; flex-direction: column; align-items: center;
-  padding: 32px 0; color: #9CA3AF;
+  padding: 32px 0; color: var(--crm-text-faint);
 }
 
 /* FEO table */
 .feo-table-wrap {
-  border: 1px solid #E5E7EB;
+  border: 1px solid var(--crm-border-strong);
   border-radius: 8px;
   overflow-x: hidden;
 }
@@ -1483,46 +2117,72 @@ onMounted(loadAll)
   table-layout: fixed;
 }
 .feo-th {
-  font-size: 11px; font-weight: 600; color: #6B7280;
+  font-size: 11px; font-weight: 600; color: var(--crm-text-muted);
   text-transform: uppercase; letter-spacing: 0.05em;
-  background: #F9FAFB; padding: 9px 12px;
+  background: var(--crm-table-header); padding: 9px 12px;
   text-align: left;
-  border-bottom: 1px solid #E5E7EB;
+  border-bottom: 1px solid var(--crm-border-strong);
 }
 .feo-th-num { text-align: right; width: 180px; }
 .feo-th-name { width: auto; }
 .feo-th-actions { width: 90px; }
 .feo-td {
-  padding: 8px 12px; border-bottom: 1px solid #F3F4F6;
+  padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
 }
 .feo-td-name { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
 .feo-td-actions { text-align: right; white-space: nowrap; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
-.feo-tr:hover .feo-td { background: #F9FAFB; }
-.feo-tr--l1 .feo-td { background: #FAFBFF; }
-.feo-tr--l1:hover .feo-td { background: #EFF6FF; }
+.feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
+.feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
+.feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
 .feo-tr--over .feo-td { background: #FEF2F2 !important; }
 .feo-tr--over:hover .feo-td { background: #FEE2E2 !important; }
 .feo-tr--over .feo-amount { color: #DC2626; font-weight: 700; }
-.feo-name { font-size: 13px; font-weight: 500; color: #111827; white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
+.feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }
-.feo-name--l3 { font-weight: 400; color: #374151; }
+.feo-name--l3 { font-weight: 400; color: var(--crm-text-secondary); }
 .feo-code {
-  font-size: 11px; color: #6B7280; background: #F3F4F6;
+  font-size: 11px; color: var(--crm-text-muted); background: var(--crm-input-bg);
   border-radius: 4px; padding: 1px 5px; font-family: monospace; white-space: nowrap;
 }
-.feo-appendix { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
-.feo-amount { font-size: 13px; font-weight: 500; color: #111827; }
-.feo-amount-empty { font-size: 13px; color: #9CA3AF; }
+.feo-appendix { font-size: 11px; color: var(--crm-text-faint); white-space: nowrap; }
+.feo-amount { font-size: 13px; font-weight: 500; color: var(--crm-text); }
+.feo-amount-empty { font-size: 13px; color: var(--crm-text-faint); }
 .feo-set-hint {
   font-size: 12px; color: #3B82F6; cursor: pointer; text-decoration: underline dotted;
 }
 .feo-set-hint:hover { color: #2563EB; }
 .feo-tree-chevron { display: inline-flex; align-items: center; }
 .cursor-pointer { cursor: pointer; }
+
+/* Inline budget edit */
+.feo-amount-cell { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; }
+.feo-amount-cell:hover { background: rgba(59,130,246,0.07); }
+.inline-input {
+  border: 1px solid rgba(59,130,246,0.7); border-radius: 4px;
+  padding: 2px 6px; width: 120px; text-align: right;
+  font-size: 0.875rem; outline: none; background: var(--crm-surface);
+  color: var(--crm-text);
+}
+
+/* Drag & Drop */
+.feo-tr[draggable="true"] { cursor: grab; }
+.feo-tr[draggable="true"]:active { cursor: grabbing; }
+.feo-dragging { opacity: 0.45; }
+.feo-dragging .feo-td { background: var(--crm-surface-alt) !important; }
+.feo-drop-target .feo-td {
+  background: rgba(59, 130, 246, 0.12) !important;
+  outline: 2px dashed rgba(59, 130, 246, 0.6);
+  outline-offset: -2px;
+}
+.feo-drop-root { border-top: 2px dashed var(--crm-border); transition: background 0.15s; }
+.feo-drop-root.feo-drop-target .feo-td { background: rgba(59, 130, 246, 0.08) !important; }
+
+/* Total row */
+.feo-tr--total .feo-td { background: var(--crm-surface-alt); border-top: 2px solid var(--crm-border-strong); }
 
 /* ── Dialogs ── */
 .dialog-card {}

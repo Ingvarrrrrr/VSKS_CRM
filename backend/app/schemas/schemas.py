@@ -259,7 +259,7 @@ class PurchaseFileOut(BaseModel):
     size: Optional[int] = None
     file_type: Optional[str] = "other"
     doc_format: Optional[str] = "scan"
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
 
 # Purchase
@@ -478,7 +478,7 @@ class CommercialRequestOut(BaseModel):
     delivery_date: Optional[str] = None
     status: str
     created_by: Optional[int] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     recipients: List[CommercialRequestRecipientOut] = []
 
 

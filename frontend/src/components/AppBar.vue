@@ -89,9 +89,7 @@
     <v-menu>
       <template v-slot:activator="{ props }">
         <v-btn v-bind="props" variant="text">
-          <v-avatar size="32" color="secondary" class="mr-2">
-            <v-icon icon="mdi-account" />
-          </v-avatar>
+          <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="32" class="mr-2" />
           <div class="text-left">
             <div>{{ userName }}</div>
             <div v-if="userOrgName && !isSuperadmin" class="text-caption opacity-70" style="line-height:1.1">{{ userOrgName }}</div>
@@ -101,11 +99,18 @@
       </template>
       <v-list>
         <v-list-item>
-          <v-list-item-title>
-            <v-icon icon="mdi-account" class="mr-2" />{{ userRole }}
+          <v-list-item-title class="d-flex align-center ga-2">
+            <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="28" />
+            {{ userRole }}
           </v-list-item-title>
         </v-list-item>
         <v-divider />
+        <v-list-item @click="photoUploadRef?.open()">
+          <v-list-item-title class="d-flex align-center">
+            <v-icon icon="mdi-camera-account" class="mr-2" />Моя фотография
+            <v-chip v-if="myPhotoUrl" size="x-small" color="success" variant="tonal" class="ml-2">есть</v-chip>
+          </v-list-item-title>
+        </v-list-item>
         <v-list-item @click="openSignaturePad">
           <v-list-item-title class="d-flex align-center">
             <v-icon icon="mdi-draw" class="mr-2" />Моя подпись
@@ -124,6 +129,8 @@
 
   <!-- Signature Pad dialog -->
   <SignaturePad ref="sigPadRef" @saved="onSignatureSaved" />
+  <!-- Profile Photo Upload dialog -->
+  <ProfilePhotoUpload ref="photoUploadRef" @saved="onPhotoSaved" />
   </v-app-bar>
 
   <!-- Superadmin org picker dialog -->
@@ -311,6 +318,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import GlobalSearch from './GlobalSearch.vue'
 import SignaturePad from './SignaturePad.vue'
+import ProfilePhotoUpload from './ProfilePhotoUpload.vue'
+import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch } from '@/api'
 
@@ -467,6 +476,22 @@ function openSignaturePad() {
 
 function onSignatureSaved(has: boolean) {
   hasSignature.value = has
+}
+
+// ── Profile photo ────────────────────────────────────────────────────────────
+const photoUploadRef = ref<InstanceType<typeof ProfilePhotoUpload> | null>(null)
+const myPhotoUrl = ref<string | null>(null)
+const myAvatar = computed(() => localStorage.getItem('user_avatar') || null)
+
+async function loadMyPhoto() {
+  try {
+    const data = await apiFetch<{ photo_url: string | null }>('/users/me/photo')
+    myPhotoUrl.value = data.photo_url || null
+  } catch { myPhotoUrl.value = null }
+}
+
+function onPhotoSaved(photoUrl: string | null) {
+  myPhotoUrl.value = photoUrl
 }
 
 const logout = () => {
@@ -652,6 +677,7 @@ onMounted(async () => {
   await loadMyOrgs()
   loadSubsidies()
   loadSignatureStatus()
+  loadMyPhoto()
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {

@@ -179,9 +179,7 @@
             density="comfortable"
           >
             <template v-slot:item.avatar="{ item }">
-              <v-avatar :color="getAvatar(item.avatar).color" size="32">
-                <v-icon :icon="getAvatar(item.avatar).icon" size="18" color="white" />
-              </v-avatar>
+              <UserAvatar :photo-url="item.photo_url" :avatar="item.avatar" :size="32" />
             </template>
             <template v-slot:item.role="{ item }">
               <v-chip :color="roleColor(item.role)" size="small" variant="tonal">
@@ -653,6 +651,7 @@
 import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import UserAvatar from '@/components/UserAvatar.vue'
 
 // ── Types ──
 interface UserItem {
@@ -665,6 +664,7 @@ interface UserItem {
   position?: string
   email?: string
   avatar?: string
+  photo_url?: string | null
   has_signature?: boolean
 }
 interface SubordinateItem { id: number; username: string; full_name?: string; role: string; avatar?: string }

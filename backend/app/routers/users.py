@@ -210,6 +210,37 @@ async def delete_my_signature(
     return {"ok": True}
 
 
+@router.get("/me/photo")
+async def get_my_photo(current_user: User = Depends(get_current_user)):
+    return {"photo_url": current_user.profile_photo}
+
+
+@router.put("/me/photo")
+async def save_my_photo(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    photo = body.get("photo_url", "")
+    if not photo or not photo.startswith("data:image/"):
+        raise HTTPException(422, "Фото должно быть в формате data:image/...;base64,...")
+    if len(photo) > 2_000_000:
+        raise HTTPException(422, "Фото слишком большое (макс 2 МБ)")
+    current_user.profile_photo = photo
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/me/photo")
+async def delete_my_photo(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.profile_photo = None
+    await db.commit()
+    return {"ok": True}
+
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,

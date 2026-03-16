@@ -56,6 +56,7 @@ class UserOut(BaseModel):
     telegram_id: Optional[str] = None
     email: Optional[str] = None
     avatar: Optional[str] = None
+    photo_url: Optional[str] = None
     org_id: Optional[int] = None
     is_email_confirmed: bool = True
     has_signature: bool = False
@@ -64,6 +65,7 @@ class UserOut(BaseModel):
     def from_orm_with_signature(cls, user):
         d = cls.model_validate(user)
         d.has_signature = bool(user.signature_image)
+        d.photo_url = user.profile_photo or None
         return d
 
     model_config = {"from_attributes": True}

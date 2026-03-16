@@ -659,9 +659,9 @@
         </v-card-text>
       </v-card>
 
-      <!-- 5. Акт приёмки / Закрывающие документы (admin+) -->
+      <!-- 5. Закрывающие документы (admin+) -->
       <v-card v-if="isAdminLevel && isSectionVisible('acceptance')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">{{ formMode === 'advance_report' ? 'Закрывающие документы' : 'Акт приёмки' }}</v-card-title>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Закрывающие документы</v-card-title>
         <v-card-text>
           <v-row>
             <v-col cols="12" md="6">

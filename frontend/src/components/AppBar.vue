@@ -400,6 +400,9 @@ const menuItems = computed(() => {
     { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', roles: MANAGER_ROLES },
     { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', roles: ADMIN_ROLES },
     { title: 'Организации', icon: 'mdi-domain', route: '/organizations', roles: ['superadmin'] },
+    { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
+    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: MANAGER_ROLES },
+    { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
   ]
   return items.filter(i => i.roles.includes(role))
 })

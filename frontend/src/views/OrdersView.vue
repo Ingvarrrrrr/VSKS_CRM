@@ -118,6 +118,8 @@
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
+        ref="ordersTableRef"
+        v-resizable-columns="'orders'"
         :headers="headers"
         :items="filteredOrders"
         :loading="loading"
@@ -316,17 +318,31 @@
 
           <!-- Step 1: Setup -->
           <template v-if="importDialog.step === 1">
-            <v-alert type="info" variant="tonal" class="mb-4" density="compact">
-              Поддерживаются файлы <strong>.xlsx / .xls</strong>. Первая строка — заголовки колонок.
-            </v-alert>
+            <!-- Format selection -->
+            <v-radio-group v-model="importDialog.format" inline class="mb-3" hide-details density="compact">
+              <template #label><span class="text-body-2 font-weight-medium mr-3">Формат файла:</span></template>
+              <v-radio value="standard" label="Стандартный (17 колонок)" />
+              <v-radio value="feo" label="ФЭО-формат (57 колонок)" />
+            </v-radio-group>
 
+            <!-- Standard: subsidy override -->
             <v-select
+              v-if="importDialog.format === 'standard'"
               v-model="importDialog.subsidyId"
               :items="[{ id: null, name: '— Из файла (колонка «Субсидия»)' }, ...subsidies]"
               item-title="name" item-value="id"
               label="Субсидия (переопределить для всего файла)"
               variant="outlined" density="compact" class="mb-3"
             />
+
+            <!-- FEO: info banner -->
+            <v-alert
+              v-else
+              type="info" variant="tonal" density="compact" class="mb-3"
+              prepend-icon="mdi-information-outline"
+            >
+              Субсидия определяется автоматически по категории ФЭО (колонка 5). Заголовки — в строке 6.
+            </v-alert>
 
             <v-file-input
               v-model="importDialog.file"
@@ -338,7 +354,7 @@
               show-size
             />
 
-            <div class="mt-3 text-caption text-medium-emphasis">
+            <div v-if="importDialog.format === 'standard'" class="mt-3 text-caption text-medium-emphasis">
               Допустимые заголовки колонок:
               <span class="fz-11">Наименование, Субсидия, Категория ФЭО, Контрагент, ИНН контрагента, НМЦК, Способ закупки, Реестровый №, № договора, Дата договора, Цена договора, Срок исполнения, ПП №, ПП дата, Оплачено, Статус, Год</span>
             </div>
@@ -494,10 +510,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -718,6 +735,8 @@ const loadSubsidies = async () => {
   try { subsidies.value = await apiFetch<Subsidy[]>('/subsidies/') } catch {}
 }
 
+const ordersTableRef = ref<any>(null)
+
 onMounted(() => {
   loadOrders()
   loadSubsidies()
@@ -731,6 +750,16 @@ onMounted(() => {
   }
   const qStatus = route.query.status
   if (qStatus && typeof qStatus === 'string') filterStatus.value = qStatus
+
+  // Enable column resize after table renders
+  setTimeout(() => {
+    const el = ordersTableRef.value?.$el?.querySelector('table') || document.querySelector('.v-data-table table')
+    if (el) {
+      el.setAttribute('data-resize-id', 'orders')
+      addResizeHandles(el)
+      restoreTableWidths(el)
+    }
+  }, 500)
 })
 
 // Bidirectional sync with global subsidy
@@ -812,6 +841,7 @@ const doDelete = async () => {
 const importDialog = reactive({
   show: false,
   step: 1,
+  format: 'standard' as 'standard' | 'feo',
   subsidyId: null as number | null,
   file: null as File | null,
   loading: false,
@@ -821,6 +851,7 @@ const importDialog = reactive({
 const resetImport = () => {
   importDialog.show = false
   importDialog.step = 1
+  importDialog.format = 'standard'
   importDialog.file = null
   importDialog.subsidyId = null
   importDialog.result = null
@@ -828,15 +859,17 @@ const resetImport = () => {
 
 const downloadTemplate = async () => {
   const token = localStorage.getItem('auth_token')
-  const response = await fetch('/api/purchases/import/template', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const url = importDialog.format === 'feo'
+    ? '/api/purchases/import/feo-format/template'
+    : '/api/purchases/import/template'
+  const filename = importDialog.format === 'feo' ? 'feo_import_template.xlsx' : 'import_template.xlsx'
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) return
   const blob = await response.blob()
-  const url = window.URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'import_template.xlsx'
+  const blobUrl = window.URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = blobUrl; a.download = filename
   document.body.appendChild(a); a.click()
-  window.URL.revokeObjectURL(url); document.body.removeChild(a)
+  window.URL.revokeObjectURL(blobUrl); document.body.removeChild(a)
 }
 
 const doImport = async () => {
@@ -846,8 +879,14 @@ const doImport = async () => {
     const formData = new FormData()
     formData.append('file', importDialog.file)
     const token = localStorage.getItem('auth_token')
-    const qs = importDialog.subsidyId ? `?subsidy_id=${importDialog.subsidyId}` : ''
-    const response = await fetch(`/api/purchases/import${qs}`, {
+    let endpoint: string
+    if (importDialog.format === 'feo') {
+      endpoint = '/api/purchases/import/feo-format'
+    } else {
+      const qs = importDialog.subsidyId ? `?subsidy_id=${importDialog.subsidyId}` : ''
+      endpoint = `/api/purchases/import${qs}`
+    }
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,

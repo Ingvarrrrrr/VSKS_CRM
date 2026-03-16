@@ -3,7 +3,7 @@
     <div class="d-flex align-center justify-space-between mb-6">
       <div>
         <h1 class="text-h5 font-weight-bold">
-          {{ isEdit ? `Закупка #${form.purchase_number || route.params.id}` : 'Новая закупка' }}
+          {{ pageTitle }}
         </h1>
         <div class="d-flex align-center gap-2 mt-1">
           <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
@@ -27,7 +27,7 @@
           </v-btn>
         </div>
       </div>
-      <v-btn variant="outlined" prepend-icon="mdi-arrow-left" to="/orders">К списку</v-btn>
+      <v-btn variant="outlined" prepend-icon="mdi-arrow-left" :to="backRoute">К списку</v-btn>
     </div>
 
     <v-alert v-if="budgetInfo" :type="budgetInfo.exceeded ? 'error' : 'info'" variant="tonal" class="mb-4" density="compact">
@@ -71,7 +71,7 @@
                 hint="По какой субсидии финансируется закупка" persistent-hint
                 :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
             </v-col>
-            <v-col v-if="!isEmployee" cols="12" md="3">
+            <v-col v-if="!isEmployee && isSectionVisible('contractor')" cols="12" md="3">
               <v-autocomplete
                 v-model="form.contractor_id"
                 :items="contractors"
@@ -99,7 +99,7 @@
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col v-if="!isEmployee" cols="12" md="2">
+            <v-col v-if="!isEmployee && isSectionVisible('contractor')" cols="12" md="2">
               <v-text-field
                 v-model="contractorInn"
                 label="ИНН"
@@ -121,9 +121,11 @@
               />
             </v-col>
             <v-col v-if="!isEmployee" cols="12" md="4">
-              <v-combobox
+              <v-autocomplete
                 v-model="form.responsible_person"
-                :items="responsiblePersonSuggestions"
+                :items="orgUsersList"
+                item-title="full_name"
+                item-value="full_name"
                 label="Ответственный исполнитель"
                 variant="outlined"
                 density="compact"
@@ -316,17 +318,29 @@
               <v-btn value="exact" size="small" style="text-transform:none;letter-spacing:0">Точное</v-btn>
               <v-btn value="44fz" size="small" style="text-transform:none;letter-spacing:0">44-ФЗ</v-btn>
             </v-btn-toggle>
-            <v-btn
-              v-if="isEdit"
-              size="small"
-              variant="tonal"
-              color="primary"
-              prepend-icon="mdi-file-word-outline"
-              :loading="docLoading === 'contract_tz'"
-              @click="downloadDoc('contract_tz')"
-            >
-              Скачать ТЗ (.docx)
-            </v-btn>
+            <v-menu v-if="isEdit">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  size="small"
+                  variant="tonal"
+                  color="primary"
+                  prepend-icon="mdi-file-word-outline"
+                  append-icon="mdi-chevron-down"
+                  :loading="docLoading === 'contract_tz'"
+                >
+                  Скачать ТЗ (.docx)
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=exact')">
+                  <v-list-item-title>Точное ТЗ</v-list-item-title>
+                </v-list-item>
+                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=44fz')">
+                  <v-list-item-title>ТЗ для 44-ФЗ</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             <v-chip v-else size="small" color="grey" variant="tonal">Сохраните закупку для скачивания</v-chip>
           </div>
         </v-card-title>
@@ -376,10 +390,10 @@
       </v-card>
 
       <!-- 3. Финансы (скрыто для employee и manager) -->
-      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Финансовые показатели</v-card-title>
+      <v-card v-if="isAdminLevel && (isSectionVisible('financial_indicators') || isSectionVisible('contract_type'))" variant="outlined" class="mb-4">
+        <v-card-title v-if="isSectionVisible('financial_indicators')" class="text-subtitle-1 font-weight-bold px-4 pt-4">Финансовые показатели</v-card-title>
         <v-card-text>
-          <v-row>
+          <v-row v-if="isSectionVisible('financial_indicators')">
             <v-col cols="12" md="3">
               <v-text-field :model-value="formatMoney(displayNmck)" label="НМЦК (итого)" variant="outlined"
                 density="compact" readonly bg-color="grey-lighten-4"
@@ -416,7 +430,7 @@
             </v-col>
           </v-row>
           <!-- Тип договора -->
-          <v-row class="mt-0">
+          <v-row v-if="isSectionVisible('contract_type')" class="mt-0">
             <v-col cols="12" md="3">
               <v-select
                 v-model="form.purchase_contract_type"
@@ -522,7 +536,9 @@
           <v-row>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.contract_number" label="Номер договора" variant="outlined" density="compact"
-                :hint="needsContract ? 'Обязательно для перехода в статус Договор' : ''" persistent-hint />
+                :placeholder="isNew ? 'Назначается автоматически' : ''"
+                :hint="needsContract ? 'Обязательно для перехода в статус Договор' : isNew ? 'Будет присвоен после сохранения' : ''"
+                persistent-hint />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.contract_date" label="Дата договора" variant="outlined"
@@ -538,8 +554,21 @@
                 variant="outlined" density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="6">
-              <v-text-field v-model="form.delivery_address" label="Адрес доставки"
-                variant="outlined" density="compact" />
+              <v-autocomplete
+                v-model="form.delivery_address"
+                :items="deliveryAddressSuggestions"
+                label="Адрес доставки"
+                variant="outlined"
+                density="compact"
+                clearable
+                hide-no-data
+                no-filter
+                return-object
+                :custom-filter="() => true"
+                @update:search="onDeliveryAddressSearch"
+                @update:model-value="onDeliveryAddressSelect"
+                placeholder="Начните вводить адрес..."
+              />
             </v-col>
             <v-col cols="12" md="2" class="d-flex align-center">
               <v-checkbox v-model="form.is_monthly_payment" label="Ежемесячный платёж"
@@ -578,7 +607,7 @@
       </v-card>
 
       <!-- 4а. Параметры для генерации договора (admin+) -->
-      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
+      <v-card v-if="isAdminLevel && isSectionVisible('contract_params')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры договора (для документа)</v-card-title>
         <v-card-text>
           <v-row>
@@ -626,7 +655,7 @@
       </v-card>
 
       <!-- 5. Акт приёмки (admin+) -->
-      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
+      <v-card v-if="isAdminLevel && isSectionVisible('acceptance')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Акт приёмки</v-card-title>
         <v-card-text>
           <v-row>
@@ -644,12 +673,16 @@
               <v-text-field v-model.number="form.acceptance_doc_amount" label="Сумма акта" variant="outlined"
                 density="compact" type="number" suffix="₽" />
             </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.country_origin" label="Страна производства" variant="outlined" density="compact"
+                hint="Колонка P в Приложении №3" persistent-hint />
+            </v-col>
           </v-row>
         </v-card-text>
       </v-card>
 
       <!-- 6. Платёж (admin+) -->
-      <v-card v-if="isAdminLevel" variant="outlined" class="mb-4">
+      <v-card v-if="isAdminLevel && isSectionVisible('payment')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Платёж</v-card-title>
         <v-card-text>
           <v-row>
@@ -667,6 +700,14 @@
             <v-col cols="12" md="4">
               <v-text-field v-model.number="form.payment_federal" label="в т.ч. федеральный бюджет" variant="outlined"
                 density="compact" type="number" suffix="₽" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.treasury_code" label="Казначейский код" variant="outlined" density="compact"
+                hint="Код для Приложения №3, колонка S" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-checkbox v-model="form.has_pretension" label="Претензионная работа" density="compact"
+                hint="Колонка U в Приложении №3" persistent-hint />
             </v-col>
           </v-row>
         </v-card-text>
@@ -715,7 +756,12 @@
                   {{ f.doc_format === 'editable' ? 'Ред.' : 'Скан' }}
                 </v-chip>
               </template>
-              <template #subtitle>{{ formatSize(f.size) }}</template>
+              <template #subtitle>
+                {{ formatSize(f.size) }}
+                <span v-if="f.uploaded_by_name || f.created_at" class="text-medium-emphasis ml-2">
+                  · {{ f.uploaded_by_name || '' }}{{ f.created_at ? ' · ' + formatDate(f.created_at) : '' }}
+                </span>
+              </template>
               <template #append>
                 <v-btn v-if="isPreviewable(f.mime_type)" icon="mdi-eye-outline" variant="text" size="small" color="primary"
                   @click="openPreview(f)" />
@@ -874,17 +920,30 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-            <v-btn v-if="isManagerLevel"
-              prepend-icon="mdi-file-word-outline"
-              variant="tonal"
-              color="blue-darken-2"
-              size="small"
-              :loading="docLoading === 'contract_tz'"
-              @click="downloadDoc('contract_tz')"
-            >
-              ТЗ
-            </v-btn>
-            <v-btn v-if="isManagerLevel"
+            <v-menu v-if="isManagerLevel">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  prepend-icon="mdi-file-word-outline"
+                  append-icon="mdi-chevron-down"
+                  variant="tonal"
+                  color="blue-darken-2"
+                  size="small"
+                  :loading="docLoading === 'contract_tz'"
+                >
+                  ТЗ
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=exact')">
+                  <v-list-item-title>Точное ТЗ</v-list-item-title>
+                </v-list-item>
+                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=44fz')">
+                  <v-list-item-title>ТЗ для 44-ФЗ</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            <v-btn v-if="isManagerLevel && isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
               color="indigo"
@@ -894,7 +953,7 @@
             >
               Договор
             </v-btn>
-            <v-btn v-if="isManagerLevel"
+            <v-btn v-if="isManagerLevel && isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-edit-outline"
               variant="tonal"
               color="deep-purple"
@@ -934,7 +993,7 @@
       />
 
       <!-- 9. Запрос КП (manager+) -->
-      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4" style="border-color:#0891B2">
+      <v-card v-if="isEdit && isManagerLevel && isSectionVisible('commercial_requests')" variant="outlined" class="mb-4" style="border-color:#0891B2">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-email-send-outline" color="cyan-darken-2" size="20" />
@@ -951,7 +1010,7 @@
       </v-card>
 
       <!-- 10. Публикация на площадках (admin+) -->
-      <v-card v-if="isEdit && isAdminLevel" variant="outlined" class="mb-4" style="border-color:#7C3AED">
+      <v-card v-if="isEdit && isAdminLevel && isSectionVisible('platform_publication')" variant="outlined" class="mb-4" style="border-color:#7C3AED">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
@@ -1009,7 +1068,7 @@
           :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
           label="Подстатус" variant="outlined" density="compact" clearable
           style="max-width:220px" hide-details class="ml-2" @update:model-value="saveSubstatus" />
-        <v-btn variant="outlined" to="/orders" size="large">Отмена</v-btn>
+        <v-btn variant="outlined" :to="backRoute" size="large">Отмена</v-btn>
       </div>
     </v-form>
 
@@ -1629,6 +1688,7 @@
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 
@@ -1644,6 +1704,40 @@ const isEmployee = computed(() => userRole === 'employee')
 const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
+
+// --- formMode: drives simplified views for service notes / advance reports ---
+const formMode = computed(() => (route.meta?.formMode as string) || 'default')
+
+const formModeHidden = computed((): Set<string> => {
+  if (formMode.value === 'service_note_delivery')
+    return new Set(['contractor', 'financial_indicators', 'contract_type',
+                    'contract_params', 'acceptance', 'payment',
+                    'platform_publication', 'commercial_requests'])
+  if (formMode.value === 'advance_report')
+    return new Set(['contractor', 'contract_type', 'contract_params',
+                    'platform_publication', 'commercial_requests'])
+  return new Set()
+})
+
+const { isSectionHidden: isOrgHidden, loadConfig: loadOrgConfig } = useOrgConfig()
+
+function isSectionVisible(key: string): boolean {
+  return !formModeHidden.value.has(key) && !isOrgHidden(key)
+}
+
+const pageTitle = computed(() => {
+  if (formMode.value === 'service_note_delivery')
+    return isEdit.value ? `Служебная записка #${form.purchase_number || route.params.id}` : 'Новая служебная записка на выдачу'
+  if (formMode.value === 'advance_report')
+    return isEdit.value ? `Авансовый отчёт #${form.purchase_number || route.params.id}` : 'Новый авансовый отчёт'
+  return isEdit.value ? `Закупка #${form.purchase_number || route.params.id}` : 'Новая закупка'
+})
+
+const backRoute = computed(() => {
+  if (formMode.value === 'service_note_delivery') return '/service-notes'
+  if (formMode.value === 'advance_report') return '/advance-reports'
+  return '/orders'
+})
 
 const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
@@ -1665,7 +1759,7 @@ const COUNTRIES = ['Российская Федерация', 'Беларусь'
 
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
 interface Contractor { id: number; name: string; inn?: string }
-interface Subsidy { id: number; name: string; year: number; budget: number }
+interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
@@ -1685,7 +1779,7 @@ interface OrderItem {
   _description?: string
   _description_44fz?: string
 }
-interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string }
+interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; uploaded_by_name?: string | null; created_at?: string | null }
 
 const FILE_TYPE_LABELS: Record<string, string> = {
   kp:           'КП',
@@ -1755,6 +1849,9 @@ const form = reactive({
   description_mode: 'exact' as string,
   event_id: null as number | null,
   approval_status: null as string | null,
+  country_origin: '' as string,
+  treasury_code: '' as string,
+  has_pretension: false as boolean,
 })
 
 function activeDescription(item: OrderItem): string | undefined {
@@ -1770,6 +1867,9 @@ const contractors = ref<Contractor[]>([])
 const allEvents = ref<EventItem[]>([])
 const filteredEvents = computed(() =>
   allEvents.value.filter(e => e.subsidy_id === form.subsidy_id && e.is_active)
+)
+const currentSubsidyOrgId = computed(() =>
+  subsidies.value.find(s => s.id === form.subsidy_id)?.org_id ?? null
 )
 const products = ref<Product[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
@@ -1788,6 +1888,48 @@ const docApprovers         = ref<DocApprover[]>([])
 const pickerApproverIds    = ref<number[]>([])
 const pickerInitiatorId    = ref<number | null>(null)
 const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
+
+// ── Org users list for executor dropdown ──
+interface OrgUser { id: number; full_name: string; position?: string | null }
+const orgUsersList = ref<OrgUser[]>([])
+async function loadOrgUsers() {
+  try {
+    const users = await apiFetch<any[]>('/users/')
+    orgUsersList.value = users
+      .filter(u => u.full_name)
+      .map(u => ({ id: u.id, full_name: u.full_name, position: u.position }))
+  } catch { orgUsersList.value = [] }
+}
+
+// ── Delivery address autocomplete ──
+const deliveryAddressSuggestions = ref<string[]>([])
+let _deliverySearchTimer: ReturnType<typeof setTimeout> | null = null
+async function onDeliveryAddressSearch(q: string) {
+  if (!q || q.length < 2) { deliveryAddressSuggestions.value = []; return }
+  if (_deliverySearchTimer) clearTimeout(_deliverySearchTimer)
+  _deliverySearchTimer = setTimeout(async () => {
+    try {
+      const orgId = currentSubsidyOrgId.value
+      if (!orgId) return
+      const results = await apiFetch<{ id: number; address: string }[]>(
+        `/delivery-addresses/?org_id=${orgId}&q=${encodeURIComponent(q)}`
+      )
+      deliveryAddressSuggestions.value = results.map(r => r.address)
+    } catch { deliveryAddressSuggestions.value = [] }
+  }, 300)
+}
+async function onDeliveryAddressSelect(val: string | null) {
+  // val is already a string (full_name), just set it
+  if (val) form.delivery_address = val
+}
+async function saveDeliveryAddressIfNew(address: string) {
+  if (!address?.trim()) return
+  try {
+    const orgId = currentSubsidyOrgId.value
+    if (!orgId) return
+    await apiFetch('/delivery-addresses/', { method: 'POST', body: { org_id: orgId, address: address.trim() } })
+  } catch { /* silent */ }
+}
 
 // ── Responsible persons suggestions (order form combobox) ──
 const responsiblePersonSuggestions = ref<string[]>([])
@@ -2391,6 +2533,7 @@ const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is compu
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
+const formatDate = (dt?: string | null) => dt ? new Date(dt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
 
 const fileIcon = (mime?: string) => {
   if (!mime) return 'mdi-file'
@@ -2452,7 +2595,7 @@ const resolveFeeLevels = (id: number) => {
   selectedFeo3.value = path[2] ?? null
 }
 
-const onSubsidyChange = () => {
+const onSubsidyChange = async () => {
   form.feo_category_id = null
   form.event_id = null
   selectedFeo1.value = null
@@ -2461,6 +2604,17 @@ const onSubsidyChange = () => {
   feoSaveAttempted.value = false
   calcBudget()
   loadResponsiblePersons()
+  // Pre-fill delivery address from org if empty
+  if (!form.delivery_address && form.subsidy_id) {
+    try {
+      const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
+      if (subsidy?.org_id) {
+        const orgs = await apiFetch<any[]>('/auth/my-orgs')
+        const org = orgs.find((o: any) => o.id === subsidy.org_id)
+        if (org?.address) form.delivery_address = org.address
+      }
+    } catch { /* silent */ }
+  }
 }
 
 const calcEconomy = () => {
@@ -2690,6 +2844,7 @@ const loadRefs = async () => {
   allFeoCategories.value = feos
   products.value = prods
   allEvents.value = evts
+  loadOrgUsers()
 }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
@@ -2756,6 +2911,9 @@ const loadPurchase = async () => {
     description_mode: data.description_mode || 'exact',
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
+    country_origin: data.country_origin || '',
+    treasury_code: data.treasury_code || '',
+    has_pretension: !!data.has_pretension,
   })
 
   // Save frozen НМЦК from DB
@@ -2859,6 +3017,7 @@ watch(form, () => {
 }, { deep: true })
 
 onMounted(async () => {
+  await loadOrgConfig()
   await loadRefs()
   if (isEdit.value && purchaseId.value) {
     await loadPurchase()
@@ -2866,6 +3025,13 @@ onMounted(async () => {
     approvalPanelRef.value?.loadApprovals()
   } else {
     loadDraft()
+    // Auto-fill based on route formMode
+    if (formMode.value === 'service_note_delivery') {
+      form.purchase_basis = 'service_note'
+      form.purchase_method = 'single'
+    } else if (formMode.value === 'advance_report') {
+      form.purchase_method = 'advance'
+    }
   }
 })
 
@@ -2909,6 +3075,9 @@ const doSave = async (adminOverride: boolean) => {
       payment_doc_date: form.payment_doc_date || null,
       items: validItems,
     }
+    // Save new delivery address to history
+    if (form.delivery_address) saveDeliveryAddressIfNew(form.delivery_address)
+
     const qs = adminOverride ? '?admin_override=true' : ''
     if (isEdit.value) {
       await apiFetch(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })

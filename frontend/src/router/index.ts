@@ -18,6 +18,9 @@ import RegisterView from '../views/RegisterView.vue'
 import VerifyEmailView from '../views/VerifyEmailView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
 import OrganizationsView from '../views/OrganizationsView.vue'
+import ServiceNotesView from '../views/ServiceNotesView.vue'
+import AdvanceReportsView from '../views/AdvanceReportsView.vue'
+import OrgSettingsView from '../views/OrgSettingsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -172,6 +175,51 @@ const router = createRouter({
       component: OrganizationsView,
       meta: { requiresAuth: false, title: 'Организации' }
     },
+    // Service notes
+    {
+      path: '/service-notes',
+      name: 'service-notes',
+      component: ServiceNotesView,
+      meta: { requiresAuth: false, title: 'Служебные записки' }
+    },
+    {
+      path: '/service-notes/create',
+      name: 'create-service-note',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Новая служебная записка', formMode: 'service_note_delivery' }
+    },
+    {
+      path: '/service-notes/:id/edit',
+      name: 'edit-service-note',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Служебная записка', formMode: 'service_note_delivery' }
+    },
+    // Advance reports
+    {
+      path: '/advance-reports',
+      name: 'advance-reports',
+      component: AdvanceReportsView,
+      meta: { requiresAuth: false, title: 'Авансовые отчёты' }
+    },
+    {
+      path: '/advance-reports/create',
+      name: 'create-advance-report',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Новый авансовый отчёт', formMode: 'advance_report' }
+    },
+    {
+      path: '/advance-reports/:id/edit',
+      name: 'edit-advance-report',
+      component: CreateOrderView,
+      meta: { requiresAuth: false, title: 'Авансовый отчёт', formMode: 'advance_report' }
+    },
+    // Org settings
+    {
+      path: '/org-settings',
+      name: 'org-settings',
+      component: OrgSettingsView,
+      meta: { requiresAuth: false, title: 'Настройки организации' }
+    },
   ]
 })
 
@@ -203,6 +251,8 @@ router.beforeEach((to, _, next) => {
       || path === '/orders'
       || path === '/create-order'
       || path.startsWith('/orders/')
+      || path.startsWith('/service-notes')
+      || path.startsWith('/advance-reports')
       || to.meta.public
     if (!allowed) {
       return next('/my-tasks')

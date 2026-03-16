@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import shutil
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -289,3 +292,130 @@ async def upsert_contractor_override(
     await db.commit()
     await db.refresh(override)
     return override
+
+
+# ── Per-subsidy document templates ──────────────────────────────────────────
+
+TEMPLATES_BASE = "/app/templates"
+SUPPORTED_DOC_TYPES = {
+    "contract":              "Договор",
+    "contract_tz":           "Договор с ТЗ",
+    "contract_fadm":         "Договор ФАДМ",
+    "service_note":          "Служебная записка",
+    "service_note_delivery": "СЗ на выдачу",
+    "service_note_payment":  "СЗ на оплату",
+    "approval_sheet":        "Лист согласования",
+    "order_purchase":        "Приказ на закупку",
+}
+
+
+@router.get("/{subsidy_id}/templates")
+async def list_subsidy_templates(
+    subsidy_id: int,
+    current_user=Depends(get_current_user),
+):
+    """List which doc types have a subsidy-specific template override."""
+    result = []
+    subsidy_dir = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id))
+    for doc_type, label in SUPPORTED_DOC_TYPES.items():
+        path = os.path.join(subsidy_dir, f"{doc_type}.docx")
+        global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
+        result.append({
+            "doc_type": doc_type,
+            "label": label,
+            "has_custom": os.path.exists(path),
+            "has_global": os.path.exists(global_path),
+        })
+    return result
+
+
+@router.put("/{subsidy_id}/templates/{doc_type}")
+async def upload_subsidy_template(
+    subsidy_id: int,
+    doc_type: str,
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """Upload a .docx template override for a specific subsidy and doc type."""
+    if doc_type not in SUPPORTED_DOC_TYPES:
+        raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(400, "Допускаются только .docx файлы")
+
+    subsidy_dir = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id))
+    os.makedirs(subsidy_dir, exist_ok=True)
+    dest = os.path.join(subsidy_dir, f"{doc_type}.docx")
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    return {"ok": True, "doc_type": doc_type, "label": SUPPORTED_DOC_TYPES[doc_type]}
+
+
+@router.get("/{subsidy_id}/templates/{doc_type}/download")
+async def download_subsidy_template(
+    subsidy_id: int,
+    doc_type: str,
+    current_user=Depends(get_current_user),
+):
+    """Download the current subsidy-specific template (or global if no override)."""
+    if doc_type not in SUPPORTED_DOC_TYPES:
+        raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
+
+    subsidy_path = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
+    global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
+
+    if os.path.exists(subsidy_path):
+        path = subsidy_path
+    elif os.path.exists(global_path):
+        path = global_path
+    else:
+        raise HTTPException(404, "Шаблон не найден")
+
+    return FileResponse(
+        path,
+        filename=f"{doc_type}_{subsidy_id}.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@router.delete("/{subsidy_id}/templates/{doc_type}")
+async def delete_subsidy_template(
+    subsidy_id: int,
+    doc_type: str,
+    current_user=Depends(get_current_user),
+):
+    """Delete subsidy-specific template override (falls back to global)."""
+    if doc_type not in SUPPORTED_DOC_TYPES:
+        raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
+
+    path = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Индивидуальный шаблон не найден")
+
+    os.remove(path)
+    return {"ok": True}
+
+
+# ── Global template upload (admin) ──────────────────────────────────────────
+
+@router.put("/global-templates/{doc_type}")
+async def upload_global_template(
+    doc_type: str,
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """Upload a global .docx template (superadmin/org_admin only)."""
+    from app.auth.jwt import ADMIN_ROLES
+    if current_user.role not in ADMIN_ROLES:
+        raise HTTPException(403, "Только администраторы могут загружать глобальные шаблоны")
+    if doc_type not in SUPPORTED_DOC_TYPES:
+        raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
+    if not file.filename.endswith(".docx"):
+        raise HTTPException(400, "Допускаются только .docx файлы")
+
+    dest = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    return {"ok": True, "doc_type": doc_type}

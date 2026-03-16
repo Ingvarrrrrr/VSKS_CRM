@@ -79,6 +79,7 @@ class OrganizationOut(BaseModel):
     id: int
     name: str
     inn: Optional[str] = None
+    address: Optional[str] = None
     is_active: bool
     created_at: datetime
     user_count: int = 0
@@ -260,6 +261,8 @@ class PurchaseFileOut(BaseModel):
     file_type: Optional[str] = "other"
     doc_format: Optional[str] = "scan"
     created_at: Optional[datetime] = None
+    uploaded_by_id: Optional[int] = None
+    uploaded_by_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Purchase
@@ -324,6 +327,8 @@ class PurchaseCreate(BaseModel):
     description_mode: Optional[str] = "exact"
     event_id: Optional[int] = None
     approval_status: Optional[str] = None
+    treasury_code: Optional[str] = None
+    has_pretension: Optional[bool] = False
     items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):
@@ -370,6 +375,7 @@ class ProductCreate(BaseModel):
     is_active: bool = True
     price: Optional[Decimal] = None
     price_links: List[PriceLink] = []
+    country_origin: Optional[str] = "Россия"
 
 class ProductOut(ProductCreate):
     id: int
@@ -378,6 +384,10 @@ class ProductOut(ProductCreate):
     contract_date: Optional[date] = None
     contract_org_id: Optional[int] = None
     price_shared: bool = False
+    tz_verified_at: Optional[datetime] = None
+    tz_verified_by: Optional[str] = None
+    tz_44fz_verified_at: Optional[datetime] = None
+    tz_44fz_verified_by: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Product Summary (сводная по продукции)
@@ -523,6 +533,15 @@ class EventCreate(BaseModel):
     subsidy_id: int
     name: str
     is_active: bool = True
+    region: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    order_decree: Optional[str] = None
+    planned_indicators: Optional[str] = None
+    actual_indicators: Optional[str] = None
+    media_link_1: Optional[str] = None
+    media_link_2: Optional[str] = None
+    media_link_3: Optional[str] = None
 
 class EventOut(EventCreate):
     id: int

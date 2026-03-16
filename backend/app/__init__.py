@@ -10,9 +10,12 @@ from .routers import (
     documents, publications, subsidy_approvers, responsible_persons,
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
-    tasks, departments,
+    tasks, departments, delivery_addresses,
 )
+from .routers import org_config
 from .models import platform_publication  # ensure table is registered
+from .models import org_section_config    # ensure org_section_configs table is created
+from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 
 app = FastAPI(title="VSKS CRM API", version="1.0.0")
@@ -88,6 +91,7 @@ app.include_router(subsidies.router)
 app.include_router(products.router)
 app.include_router(purchase_files.router)
 app.include_router(documents.router)
+app.include_router(documents_guide_router)
 app.include_router(publications.router)
 app.include_router(subsidy_approvers.router)
 app.include_router(responsible_persons.router)
@@ -102,3 +106,5 @@ app.include_router(events.router)
 app.include_router(purchase_approvals.router)
 app.include_router(tasks.router)
 app.include_router(departments.router)
+app.include_router(delivery_addresses.router)
+app.include_router(org_config.router)

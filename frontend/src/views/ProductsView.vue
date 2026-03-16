@@ -155,11 +155,64 @@
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
+        <!-- Country origin -->
+        <template #item.country_origin="{ item }">
+          <v-chip v-if="item.country_origin" size="x-small" variant="tonal"
+            :color="item.country_origin === 'Россия' ? 'primary' : 'orange'">
+            {{ item.country_origin }}
+          </v-chip>
+          <v-chip v-else size="x-small" variant="tonal" color="error">не указана</v-chip>
+        </template>
+
         <!-- Active -->
         <template #item.is_active="{ item }">
           <v-chip size="x-small" :color="item.is_active ? 'success' : 'grey'" variant="tonal">
             {{ item.is_active ? 'Активен' : 'Неактивен' }}
           </v-chip>
+        </template>
+
+        <!-- TZ verified -->
+        <template #item.tz_verified_at="{ item }">
+          <v-tooltip
+            :text="item.tz_verified_at
+              ? `${new Date(item.tz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_verified_by}`
+              : 'Нажмите чтобы подтвердить'"
+            location="top"
+          >
+            <template #activator="{ props }">
+              <v-progress-circular v-if="tzVerifying === item.id + '_standard'" indeterminate size="18" width="2" color="primary" />
+              <v-icon
+                v-else
+                v-bind="props"
+                :icon="item.tz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
+                :color="item.tz_verified_at ? 'success' : 'grey-lighten-1'"
+                style="cursor: pointer"
+                @click="!item.tz_verified_at && verifyTz(item, 'standard')"
+              />
+            </template>
+          </v-tooltip>
+        </template>
+
+        <!-- TZ 44fz verified -->
+        <template #item.tz_44fz_verified_at="{ item }">
+          <v-tooltip
+            :text="item.tz_44fz_verified_at
+              ? `${new Date(item.tz_44fz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_44fz_verified_by}`
+              : 'Нажмите чтобы подтвердить (44-ФЗ)'"
+            location="top"
+          >
+            <template #activator="{ props }">
+              <v-progress-circular v-if="tzVerifying === item.id + '_44fz'" indeterminate size="18" width="2" color="blue" />
+              <v-icon
+                v-else
+                v-bind="props"
+                :icon="item.tz_44fz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
+                :color="item.tz_44fz_verified_at ? 'blue-darken-2' : 'grey-lighten-1'"
+                style="cursor: pointer"
+                @click="!item.tz_44fz_verified_at && verifyTz(item, '44fz')"
+              />
+            </template>
+          </v-tooltip>
         </template>
 
         <!-- Actions -->
@@ -226,6 +279,17 @@
                 :items="categoryOptions"
                 label="Категория" variant="outlined" density="compact" clearable
                 hint="Выберите или введите новую" persistent-hint />
+            </v-col>
+
+            <!-- Страна производства -->
+            <v-col cols="12" md="6">
+              <v-text-field v-model="form.country_origin"
+                label="Страна производства *"
+                variant="outlined" density="compact"
+                hint="Обязательно для Приложения №3 (колонка P)"
+                persistent-hint
+                :rules="[v => !!v?.trim() || 'Укажите страну производства']"
+              />
             </v-col>
 
             <!-- Цена (авто из ссылок или ручная) -->
@@ -514,6 +578,9 @@ interface Product {
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
   price_links?: PriceLink[]
+  contract_price?: number; contract_number?: string; contract_date?: string; contract_org_id?: number; price_shared?: boolean
+  tz_verified_at?: string; tz_verified_by?: string
+  tz_44fz_verified_at?: string; tz_44fz_verified_by?: string
 }
 
 const userRole = localStorage.getItem('user_role') || ''
@@ -548,11 +615,27 @@ const photoPreview  = ref<string | null>(null)
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
+const tzVerifying = ref<string | null>(null)
+async function verifyTz(item: Product, tzType: 'standard' | '44fz') {
+  tzVerifying.value = `${item.id}_${tzType}`
+  try {
+    const updated = await apiFetch<Product>(`/products/${item.id}/verify-tz?tz_type=${tzType}`, { method: 'PATCH' })
+    const idx = products.value.findIndex(p => p.id === item.id)
+    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
+    showSnack('ТЗ подтверждено')
+  } catch {
+    showSnack('Ошибка подтверждения ТЗ', 'error')
+  } finally {
+    tzVerifying.value = null
+  }
+}
+
 const emptyForm = () => ({
   name: '', category: '', product_type: '', price: null as number | null,
   description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
+  country_origin: 'Россия' as string,
 })
 const form = reactive(emptyForm())
 
@@ -602,8 +685,11 @@ const headers = [
   { title: 'Категория', key: 'category',     minWidth: 140 },
   { title: 'Цена',      key: 'price',        width: 130, align: 'end' as const },
   { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
-  { title: 'Статус',    key: 'is_active',    width: 110 },
-  { title: 'Действия',  key: 'actions',      width: 100, sortable: false },
+  { title: 'Страна',    key: 'country_origin',   width: 120 },
+  { title: 'Статус',    key: 'is_active',        width: 110 },
+  { title: 'ТЗ проверено',     key: 'tz_verified_at',      width: 160, sortable: false },
+  { title: 'ТЗ 44-ФЗ проверено', key: 'tz_44fz_verified_at', width: 170, sortable: false },
+  { title: 'Действия',  key: 'actions',          width: 100, sortable: false },
 ]
 
 const filteredProducts = computed(() => {
@@ -666,6 +752,7 @@ function openEdit(p: Product) {
     is_active: p.is_active, is_reusable: p.is_reusable ?? true,
     feo_category_id: p.feo_category_id ?? null,
     priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
+    country_origin: p.country_origin || 'Россия',
   })
   resetPhotoState()
   editingId.value = p.id
@@ -674,6 +761,7 @@ function openEdit(p: Product) {
 
 async function save() {
   if (!form.name.trim()) { showSnack('Укажите наименование', 'error'); return }
+  if (!form.country_origin?.trim()) { showSnack('Укажите страну производства', 'error'); return }
   saving.value = true
   try {
     const payload = {

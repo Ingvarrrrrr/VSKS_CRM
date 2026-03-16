@@ -70,6 +70,10 @@ class Purchase(Base):
     assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     task_comment = Column(Text, nullable=True)
 
+    # Приложение №3 fields
+    treasury_code = Column(String(50), nullable=True)          # S: Казначейский код
+    has_pretension = Column(Boolean, nullable=True, default=False)  # U: Претензионная работа
+
     # Сводная по продукции
     delivery_address = Column(Text, nullable=True)          # адрес доставки
     procurement_planned_date = Column(Date, nullable=True)  # планируемая дата закупки

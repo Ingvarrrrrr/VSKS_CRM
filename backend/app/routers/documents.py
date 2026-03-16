@@ -3,7 +3,7 @@ from io import BytesIO
 from datetime import date
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from app.auth.jwt import get_current_user
 from typing import Optional
 
 router = APIRouter(prefix="/api/purchases", tags=["documents"])
+guide_router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 TEMPLATES_DIR = "/app/templates"
 
@@ -29,6 +30,7 @@ DOC_TYPES = {
     "contract":              ("contract.docx",              "Contract"),
     "contract_fadm":         ("contract_fadm.docx",         "Contract_FADM"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
+    "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
 }
 
 # Fields required to generate a FADM contract; maps field_path → label
@@ -239,6 +241,7 @@ async def generate_document(
     approver_ids: Optional[str] = Query(default=None, description="ID согласующих через запятую"),
     initiator_id: Optional[int] = Query(default=None, description="ID инициатора служебной записки"),
     responsible_name: Optional[str] = Query(default=None, description="ФИО ответственного исполнителя (переопределяет поле закупки)"),
+    tz_override_mode: Optional[str] = Query(default=None, description="Переопределить режим ТЗ: 'exact' или '44fz'"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -274,8 +277,8 @@ async def generate_document(
         raise HTTPException(404, "Закупка не найдена")
 
     # Override template path with subsidy-specific template if available
-    if doc_type == "contract" and p.subsidy_id:
-        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), "contract.docx")
+    if p.subsidy_id:
+        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_type}.docx")
         if os.path.exists(subsidy_template):
             template_path = subsidy_template
 
@@ -400,7 +403,7 @@ async def generate_document(
             "num": idx,
             "name": item.item_name or "",
             "description": (
-                (item.product.description_44fz if p.description_mode == "44fz" else item.product.description)
+                (item.product.description_44fz if (tz_override_mode or p.description_mode or "exact") == "44fz" else item.product.description)
                 if item.product else ""
             ) or "",
             "type": item.item_type or "",
@@ -645,4 +648,102 @@ async def generate_document(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
+    )
+
+
+# ── Template markup guide ────────────────────────────────────────────────────
+
+TEMPLATE_VARIABLES = [
+    ("{{purchase_number}}", "Номер закупки (например: 42)"),
+    ("{{registry_number}}", "Реестровый номер (например: ЗК-2026-042)"),
+    ("{{contract_number}}", "Номер договора (например: 2026/42)"),
+    ("{{contract_date}}", "Дата договора (например: 16.03.2026)"),
+    ("{{subject}}", "Предмет договора / закупки"),
+    ("{{contract_price}}", "Сумма договора цифрами (например: 150 000,00)"),
+    ("{{contract_price_words}}", "Сумма прописью (например: сто пятьдесят тысяч рублей 00 копеек)"),
+    ("{{purchase_method}}", "Способ закупки"),
+    ("{{execution_term}}", "Срок исполнения"),
+    ("{{subsidy_name}}", "Наименование субсидии"),
+    ("{{subsidy_year}}", "Год субсидии"),
+    ("{{org_name}}", "Наименование организации-заказчика"),
+    ("{{contractor_name}}", "Полное наименование контрагента"),
+    ("{{contractor_short_name}}", "Сокращённое наименование контрагента"),
+    ("{{contractor_inn}}", "ИНН контрагента"),
+    ("{{contractor_kpp}}", "КПП контрагента"),
+    ("{{contractor_address}}", "Юридический адрес контрагента"),
+    ("{{contractor_postal_address}}", "Почтовый адрес контрагента"),
+    ("{{contractor_signatory}}", "Подписант контрагента (ФИО)"),
+    ("{{contractor_signatory_basis}}", "Основание (Устав / Доверенность №...)"),
+    ("{{contractor_bank_name}}", "Наименование банка контрагента"),
+    ("{{contractor_bik}}", "БИК банка"),
+    ("{{contractor_settlement_account}}", "Расчётный счёт"),
+    ("{{contractor_correspondent_account}}", "Корреспондентский счёт"),
+    ("{{responsible_person}}", "ФИО ответственного исполнителя"),
+    ("{{delivery_address}}", "Адрес доставки"),
+    ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим (для таблицы)"),
+    ("{{a.num}}", "Порядковый номер согласующего"),
+    ("{{a.role_name}}", "Должность согласующего"),
+    ("{{a.full_name}}", "ФИО согласующего"),
+    ("{{a.decided_date}}", "Дата согласования"),
+    ("{{a.note}}", "Примечание (ФЭО путь)"),
+    ("{{a.signature_img}}", "Электронная подпись (изображение)"),
+    ("{%tr for item in items %} ... {%tr endfor %}", "Цикл по позициям закупки"),
+    ("{{item.num}}", "Порядковый номер позиции"),
+    ("{{item.name}}", "Наименование товара/услуги"),
+    ("{{item.quantity}}", "Количество"),
+    ("{{item.unit}}", "Единица измерения"),
+    ("{{item.price}}", "Цена за единицу"),
+    ("{{item.total}}", "Итого по позиции"),
+]
+
+
+@guide_router.get("/template-guide")
+async def download_template_guide(
+    current_user=Depends(get_current_user),
+):
+    """Download a .docx reference guide with all available template variables."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+    doc.add_heading("Руководство по разметке шаблонов документов", 0)
+
+    p = doc.add_paragraph(
+        "Шаблоны документов используют синтаксис Jinja2 (docxtpl). "
+        "Переменные заключаются в двойные фигурные скобки: {{variable}}. "
+        "Для циклов используется синтаксис: {%tr for item in items %} ... {%tr endfor %}."
+    )
+
+    doc.add_heading("Доступные переменные", 1)
+
+    table = doc.add_table(rows=1, cols=2)
+    table.style = "Table Grid"
+    hdr = table.rows[0].cells
+    hdr[0].text = "Переменная"
+    hdr[1].text = "Описание"
+    for cell in hdr:
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+
+    for var, desc in TEMPLATE_VARIABLES:
+        row = table.add_row().cells
+        row[0].text = var
+        row[1].text = desc
+
+    doc.add_heading("Пример строки таблицы согласующих", 1)
+    doc.add_paragraph(
+        '{%tr for a in approvers %}\n'
+        '| {{a.num}} | {{a.role_name}} | {{a.full_name}} | {{a.signature_img}} {{a.decided_date}} | {{a.note}} |\n'
+        '{%tr endfor %}'
+    )
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''Template_Guide.docx"},
     )

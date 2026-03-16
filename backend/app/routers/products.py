@@ -268,6 +268,31 @@ async def toggle_price_sharing(
     return product
 
 
+@router.patch("/{product_id}/verify-tz", response_model=ProductOut)
+async def verify_product_tz(
+    product_id: int,
+    tz_type: str = Query(..., description="'standard' или '44fz'"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Отметить ТЗ товара как проверенное (standard или 44fz)."""
+    from datetime import datetime as _dt
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    verifier_name = current_user.full_name or current_user.username
+    if tz_type == "44fz":
+        product.tz_44fz_verified_at = _dt.utcnow()
+        product.tz_44fz_verified_by = verifier_name
+    else:
+        product.tz_verified_at = _dt.utcnow()
+        product.tz_verified_by = verifier_name
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
 @router.delete("/{product_id}")
 async def delete_product(
     product_id: int,

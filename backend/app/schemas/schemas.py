@@ -575,12 +575,17 @@ class ApprovalDecisionRequest(BaseModel):
     sign_electronically: bool = False
 
 # Task (общие задачи, не связанные с закупками)
+class TaskAssigneeOut(BaseModel):
+    user_id: int
+    user_name: Optional[str] = None
+    model_config = {"from_attributes": True}
+
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     priority: str = "medium"
     due_date: Optional[datetime] = None
-    assigned_user_id: Optional[int] = None
+    assignee_ids: List[int] = []
     category: Optional[str] = None
     parent_task_id: Optional[int] = None
     import_to_parent: bool = False
@@ -591,7 +596,7 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     priority: Optional[str] = None
     due_date: Optional[datetime] = None
-    assigned_user_id: Optional[int] = None
+    assignee_ids: Optional[List[int]] = None
     category: Optional[str] = None
     import_to_parent: Optional[bool] = None
 
@@ -602,6 +607,8 @@ class TaskOut(BaseModel):
     status: str
     priority: str
     due_date: Optional[datetime] = None
+    assignees: List[TaskAssigneeOut] = []
+    # legacy single-assignee fields (for backward compat in frontend)
     assigned_user_id: Optional[int] = None
     assigned_user_name: Optional[str] = None
     created_by_id: int
@@ -613,7 +620,7 @@ class TaskOut(BaseModel):
     subtask_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    last_comment: Optional[str] = None           # preview (first 100 chars)
+    last_comment: Optional[str] = None
     last_comment_user: Optional[str] = None
     last_comment_at: Optional[datetime] = None
     comment_count: int = 0

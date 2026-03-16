@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_, func, case, and_
+from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.models.task import Task, TaskStatus, TaskPriority
+from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
 from app.models.task_comment import TaskComment
 from app.models.user import User
 from app.schemas.schemas import (
-    TaskCreate, TaskUpdate, TaskOut,
+    TaskCreate, TaskUpdate, TaskOut, TaskAssigneeOut,
     TaskCommentCreate, TaskCommentOut,
 )
 from app.auth.jwt import get_current_user, get_org_filter
@@ -19,22 +19,36 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
-    """Build TaskOut list with user names and last comment preview."""
+    """Build TaskOut list with user names, assignees and last comment preview."""
     if not tasks:
         return []
 
     task_ids = [t.id for t in tasks]
 
-    # User names
+    # Collect all user IDs needed
     user_ids = set()
     for t in tasks:
-        if t.assigned_user_id:
-            user_ids.add(t.assigned_user_id)
         user_ids.add(t.created_by_id)
     users_map = {}
     if user_ids:
         res = await db.execute(select(User).where(User.id.in_(user_ids)))
         for u in res.scalars().all():
+            users_map[u.id] = u.full_name or u.username
+
+    # Load all assignees for these tasks
+    assignee_rows = (await db.execute(
+        select(TaskAssignee).where(TaskAssignee.task_id.in_(task_ids))
+    )).scalars().all()
+    # group by task_id
+    assignees_map: dict[int, list] = {}
+    assignee_user_ids = set()
+    for a in assignee_rows:
+        assignees_map.setdefault(a.task_id, []).append(a)
+        assignee_user_ids.add(a.user_id)
+    # load assignee user names
+    if assignee_user_ids:
+        res2 = await db.execute(select(User).where(User.id.in_(assignee_user_ids)))
+        for u in res2.scalars().all():
             users_map[u.id] = u.full_name or u.username
 
     # Comment counts
@@ -43,8 +57,7 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
         .where(TaskComment.task_id.in_(task_ids))
         .group_by(TaskComment.task_id)
     )
-    count_rows = (await db.execute(count_q)).all()
-    count_map = {r.task_id: r.cnt for r in count_rows}
+    count_map = {r.task_id: r.cnt for r in (await db.execute(count_q)).all()}
 
     # Subtask counts
     subtask_q = (
@@ -52,14 +65,11 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
         .where(Task.parent_task_id.in_(task_ids))
         .group_by(Task.parent_task_id)
     )
-    subtask_rows = (await db.execute(subtask_q)).all()
-    subtask_map = {r.parent_task_id: r.cnt for r in subtask_rows}
+    subtask_map = {r.parent_task_id: r.cnt for r in (await db.execute(subtask_q)).all()}
 
-    # Last comment per task (using lateral / window)
-    from sqlalchemy import text
-    last_comments_map = {}
+    # Last comment per task
+    last_comments_map: dict = {}
     if task_ids:
-        # Simple approach: get latest comment per task
         subq = (
             select(
                 TaskComment.task_id,
@@ -74,8 +84,7 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
             .where(TaskComment.task_id.in_(task_ids))
             .subquery()
         )
-        last_q = select(subq).where(subq.c.rn == 1)
-        for row in (await db.execute(last_q)).all():
+        for row in (await db.execute(select(subq).where(subq.c.rn == 1))).all():
             last_comments_map[row.task_id] = {
                 "text": row.text[:100] if row.text else None,
                 "user": row.user_name,
@@ -85,13 +94,23 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
     out = []
     for t in tasks:
         lc = last_comments_map.get(t.id, {})
+        task_assignees = assignees_map.get(t.id, [])
+        assignees_out = [
+            TaskAssigneeOut(
+                user_id=a.user_id,
+                user_name=users_map.get(a.user_id),
+            ) for a in task_assignees
+        ]
+        # backward compat: first assignee as assigned_user_id
+        first_a = task_assignees[0] if task_assignees else None
         out.append(TaskOut(
             id=t.id, title=t.title, description=t.description,
             status=t.status.value if isinstance(t.status, TaskStatus) else t.status,
             priority=t.priority.value if isinstance(t.priority, TaskPriority) else t.priority,
             due_date=t.due_date,
-            assigned_user_id=t.assigned_user_id,
-            assigned_user_name=users_map.get(t.assigned_user_id),
+            assignees=assignees_out,
+            assigned_user_id=first_a.user_id if first_a else None,
+            assigned_user_name=users_map.get(first_a.user_id) if first_a else None,
             created_by_id=t.created_by_id,
             created_by_name=users_map.get(t.created_by_id),
             org_id=t.org_id, category=t.category,
@@ -105,6 +124,15 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
             comment_count=count_map.get(t.id, 0),
         ))
     return out
+
+
+async def _set_assignees(task_id: int, assignee_ids: List[int], db: AsyncSession):
+    """Replace all assignees for a task."""
+    await db.execute(
+        __import__("sqlalchemy").delete(TaskAssignee).where(TaskAssignee.task_id == task_id)
+    )
+    for uid in assignee_ids:
+        db.add(TaskAssignee(task_id=task_id, user_id=uid))
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -129,15 +157,16 @@ async def list_tasks(
     if status:
         q = q.where(Task.status == status)
     if assigned_to_me:
-        q = q.where(Task.assigned_user_id == current_user.id)
+        me_subq = select(TaskAssignee.task_id).where(TaskAssignee.user_id == current_user.id).scalar_subquery()
+        q = q.where(Task.id.in_(me_subq))
     if created_by_me:
         q = q.where(Task.created_by_id == current_user.id)
     if category:
         q = q.where(Task.category == category)
     if department:
-        # Filter tasks assigned to users in a specific department
         dept_users = select(User.id).where(User.department == department).scalar_subquery()
-        q = q.where(Task.assigned_user_id.in_(dept_users))
+        assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(dept_users)).scalar_subquery()
+        q = q.where(Task.id.in_(assignee_tasks))
     if search:
         q = q.where(or_(
             Task.title.ilike(f"%{search}%"),
@@ -154,10 +183,11 @@ async def my_tasks(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Задачи назначенные мне или созданные мной."""
+    """Задачи назначенные мне (через task_assignees) или созданные мной."""
+    me_task_ids = select(TaskAssignee.task_id).where(TaskAssignee.user_id == current_user.id).scalar_subquery()
     q = select(Task).where(
         or_(
-            Task.assigned_user_id == current_user.id,
+            Task.id.in_(me_task_ids),
             Task.created_by_id == current_user.id,
         ),
         Task.status.notin_([TaskStatus.done, TaskStatus.cancelled]),
@@ -182,7 +212,6 @@ async def list_departments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Список всех отделов в организации."""
     q = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
@@ -197,9 +226,9 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.auth.jwt import get_single_org_id
+    from app.auth.jwt import get_single_org_id, MANAGER_ROLES as _MR
+    from app.models.user_hierarchy import UserHierarchy
 
-    # Validate due_date >= today
     if task.due_date:
         today = date.today()
         due_d = task.due_date.date() if isinstance(task.due_date, datetime) else task.due_date
@@ -207,45 +236,43 @@ async def create_task(
             raise HTTPException(422, "Срок исполнения не может быть раньше текущей даты")
 
     org_id = get_single_org_id(current_user)
-
-    # Только manager и выше может назначать задачи другим; employee — только себе
-    # Exception: assignee of a parent task may delegate to their subordinates
-    from app.auth.jwt import MANAGER_ROLES as _MR
-    from app.models.user_hierarchy import UserHierarchy
-
     can_assign_others = current_user.role in _MR
-    effective_assignee = current_user.id
 
-    if task.assigned_user_id and task.assigned_user_id != current_user.id:
-        if can_assign_others:
-            effective_assignee = task.assigned_user_id
-        elif task.parent_task_id:
-            # Check if assignee is a subordinate of current user
-            parent = await db.get(Task, task.parent_task_id)
-            if parent and parent.assigned_user_id == current_user.id:
-                sub_check = await db.execute(
-                    select(UserHierarchy).where(
-                        UserHierarchy.manager_id == current_user.id,
-                        UserHierarchy.subordinate_id == task.assigned_user_id,
-                    )
-                )
-                if sub_check.scalar_one_or_none():
-                    effective_assignee = task.assigned_user_id
+    # Determine effective assignee IDs
+    assignee_ids = task.assignee_ids or []
+    if not assignee_ids:
+        assignee_ids = [current_user.id]
+
+    # Validate delegation permissions
+    if not can_assign_others:
+        non_self = [uid for uid in assignee_ids if uid != current_user.id]
+        if non_self:
+            if task.parent_task_id:
+                parent = await db.get(Task, task.parent_task_id)
+                parent_assignee_ids = [a.user_id for a in (await db.execute(
+                    select(TaskAssignee).where(TaskAssignee.task_id == task.parent_task_id)
+                )).scalars().all()]
+                if parent and current_user.id in parent_assignee_ids:
+                    for uid in non_self:
+                        sub_check = await db.execute(
+                            select(UserHierarchy).where(
+                                UserHierarchy.manager_id == current_user.id,
+                                UserHierarchy.subordinate_id == uid,
+                            )
+                        )
+                        if not sub_check.scalar_one_or_none():
+                            raise HTTPException(403, "Можно делегировать только своим подчинённым")
                 else:
-                    raise HTTPException(403, "Можно делегировать только своим подчинённым")
+                    raise HTTPException(403, "Делегирование доступно только исполнителю родительской задачи")
             else:
-                raise HTTPException(403, "Делегирование доступно только исполнителю родительской задачи")
-        else:
-            effective_assignee = current_user.id
-    elif task.assigned_user_id:
-        effective_assignee = task.assigned_user_id
+                assignee_ids = [current_user.id]
 
     db_task = Task(
         title=task.title,
         description=task.description,
         priority=task.priority,
         due_date=task.due_date,
-        assigned_user_id=effective_assignee,
+        assigned_user_id=assignee_ids[0] if assignee_ids else current_user.id,
         created_by_id=current_user.id,
         org_id=org_id,
         category=task.category,
@@ -253,6 +280,11 @@ async def create_task(
         import_to_parent=task.import_to_parent,
     )
     db.add(db_task)
+    await db.flush()  # get db_task.id
+
+    for uid in assignee_ids:
+        db.add(TaskAssignee(task_id=db_task.id, user_id=uid))
+
     await db.commit()
     await db.refresh(db_task)
 
@@ -271,24 +303,30 @@ async def update_task(
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Permission check: owner, admin, department head, or delegate
+    # Check if current user is an assignee
+    assignee_check = (await db.execute(
+        select(TaskAssignee).where(
+            TaskAssignee.task_id == task_id,
+            TaskAssignee.user_id == current_user.id,
+        )
+    )).scalar_one_or_none()
+    is_assignee = assignee_check is not None
+
     from app.routers.departments import can_edit_task_of_user
-    target_id = db_task.assigned_user_id or db_task.created_by_id
-    if current_user.id != db_task.created_by_id and current_user.id != db_task.assigned_user_id:
-        if not await can_edit_task_of_user(current_user, target_id, db):
+    if current_user.id != db_task.created_by_id and not is_assignee:
+        if not await can_edit_task_of_user(current_user, db_task.created_by_id, db):
             raise HTTPException(403, "Недостаточно прав для редактирования этой задачи")
 
     update_data = task.dict(exclude_unset=True)
 
-    # Assignee cannot change protected fields — only creator/admin/department-head can
-    PROTECTED_FIELDS = {"title", "description", "priority", "due_date", "assigned_user_id"}
+    # Assignee cannot change protected fields
+    PROTECTED_FIELDS = {"title", "description", "priority", "due_date", "assignee_ids"}
     is_creator = current_user.id == db_task.created_by_id
     if not is_creator and current_user.role not in ("superadmin", "org_admin", "admin"):
         blocked = PROTECTED_FIELDS & set(update_data.keys())
         if blocked:
             raise HTTPException(403, f"Исполнитель не может изменять: {', '.join(blocked)}")
 
-    # Validate due_date >= created_at date
     if "due_date" in update_data and update_data["due_date"]:
         due_val = update_data["due_date"]
         created_d = db_task.created_at.date() if db_task.created_at else date.today()
@@ -296,8 +334,21 @@ async def update_task(
         if due_d < created_d:
             raise HTTPException(422, "Срок исполнения не может быть раньше даты создания задачи")
 
+    # Handle assignee_ids separately
+    new_assignee_ids = update_data.pop("assignee_ids", None)
+
     for key, value in update_data.items():
         setattr(db_task, key, value)
+
+    if new_assignee_ids is not None:
+        import sqlalchemy
+        await db.execute(
+            sqlalchemy.delete(TaskAssignee).where(TaskAssignee.task_id == task_id)
+        )
+        for uid in new_assignee_ids:
+            db.add(TaskAssignee(task_id=task_id, user_id=uid))
+        if new_assignee_ids:
+            db_task.assigned_user_id = new_assignee_ids[0]
 
     await db.commit()
     await db.refresh(db_task)
@@ -325,7 +376,6 @@ async def list_subtasks(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Подзадачи (делегированные) для данной задачи."""
     tasks = (await db.execute(
         select(Task).where(Task.parent_task_id == task_id)
         .order_by(Task.due_date.asc().nullslast(), Task.created_at.asc())
@@ -400,7 +450,6 @@ async def delete_comment(
     comment = await db.get(TaskComment, comment_id)
     if not comment or comment.task_id != task_id:
         raise HTTPException(404, "Комментарий не найден")
-    # Only author or admin can delete
     from app.auth.jwt import ADMIN_ROLES
     if comment.user_id != current_user.id and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Вы можете удалять только свои комментарии")
@@ -418,13 +467,8 @@ async def department_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Отчёт по отделу: выполненные задачи за N недель, в работе, планируются.
-    Если department не указан — по всем отделам.
-    """
     org_ids = get_org_filter(current_user)
 
-    # Get users in department(s)
     user_q = select(User.id, User.full_name, User.username, User.department)
     if org_ids is not None:
         user_q = user_q.where(User.org_id.in_(org_ids))
@@ -440,25 +484,34 @@ async def department_report(
     if not user_ids:
         return {"departments": [], "summary": {}}
 
-    # Fetch tasks assigned to these users
+    # Get tasks where any of these users is an assignee
     since = datetime.now(timezone.utc) - timedelta(weeks=weeks)
-    tasks_q = select(Task).where(Task.assigned_user_id.in_(user_ids))
-    tasks = (await db.execute(tasks_q)).scalars().all()
+    assignee_task_ids = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(user_ids)).scalar_subquery()
+    tasks = (await db.execute(select(Task).where(Task.id.in_(assignee_task_ids)))).scalars().all()
 
-    # Group by department
+    # Load assignees for dept report
+    all_task_ids = [t.id for t in tasks]
+    assignee_rows = (await db.execute(
+        select(TaskAssignee).where(TaskAssignee.task_id.in_(all_task_ids))
+    )).scalars().all()
+    task_first_assignee = {}
+    for a in assignee_rows:
+        if a.task_id not in task_first_assignee and a.user_id in user_ids:
+            task_first_assignee[a.task_id] = a.user_id
+
     departments: dict = {}
     for t in tasks:
-        dept = user_depts.get(t.assigned_user_id, "Без отдела")
+        assignee_uid = task_first_assignee.get(t.id)
+        dept = user_depts.get(assignee_uid, "Без отдела") if assignee_uid else "Без отдела"
         if dept not in departments:
             departments[dept] = {"done": [], "in_progress": [], "todo": [], "overdue": []}
 
         st = t.status.value if isinstance(t.status, TaskStatus) else t.status
         entry = {
-            "id": t.id,
-            "title": t.title,
+            "id": t.id, "title": t.title,
             "priority": t.priority.value if isinstance(t.priority, TaskPriority) else t.priority,
             "due_date": t.due_date.isoformat() if t.due_date else None,
-            "assigned_user": user_names.get(t.assigned_user_id),
+            "assigned_user": user_names.get(assignee_uid),
             "status": st,
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "updated_at": t.updated_at.isoformat() if t.updated_at else None,
@@ -468,7 +521,6 @@ async def department_report(
             departments[dept]["done"].append(entry)
         elif st == "in_progress":
             departments[dept]["in_progress"].append(entry)
-            # Check overdue
             if t.due_date and t.due_date.date() < date.today():
                 departments[dept]["overdue"].append(entry)
         elif st == "todo":
@@ -482,10 +534,8 @@ async def department_report(
             "in_progress_count": len(groups["in_progress"]),
             "todo_count": len(groups["todo"]),
             "overdue_count": len(groups["overdue"]),
-            "done": groups["done"],
-            "in_progress": groups["in_progress"],
-            "todo": groups["todo"],
-            "overdue": groups["overdue"],
+            "done": groups["done"], "in_progress": groups["in_progress"],
+            "todo": groups["todo"], "overdue": groups["overdue"],
         })
 
     summary = {

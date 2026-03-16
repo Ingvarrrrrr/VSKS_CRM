@@ -15,6 +15,7 @@ from .routers import (
 from .routers import org_config
 from .models import platform_publication  # ensure table is registered
 from .models import org_section_config    # ensure org_section_configs table is created
+from .models.task import TaskAssignee     # ensure task_assignees table is created
 from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 

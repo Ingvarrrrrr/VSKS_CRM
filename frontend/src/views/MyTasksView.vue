@@ -211,8 +211,11 @@
                 <span><strong>{{ gt.last_comment_user }}:</strong> {{ gt.last_comment }}</span>
               </div>
               <div class="kanban-card-footer mt-1">
-                <span v-if="gt.assigned_user_name" class="kanban-card-meta"><v-icon icon="mdi-account" size="12" class="mr-1"/>{{ gt.assigned_user_name }}</span>
-                <span v-if="gt.created_by_name && gt.created_by_id !== gt.assigned_user_id" class="kanban-card-meta text-medium-emphasis" style="font-size:10px"><v-icon icon="mdi-account-arrow-right" size="10" class="mr-1"/>{{ gt.created_by_name }}</span>
+                <span v-if="gt.assignees?.length" class="kanban-card-meta">
+                  <v-icon icon="mdi-account-multiple" size="12" class="mr-1"/>
+                  {{ gt.assignees.map((a: any) => a.user_name?.split(' ')[0] || '?').join(', ') }}
+                </span>
+                <span v-if="gt.created_by_name && gt.created_by_id !== currentUserId" class="kanban-card-meta text-medium-emphasis" style="font-size:10px"><v-icon icon="mdi-account-arrow-right" size="10" class="mr-1"/>{{ gt.created_by_name }}</span>
                 <v-chip v-if="gt.due_date" :color="deadlineColor(gt.due_date)" size="x-small" variant="tonal">{{ formatDate(gt.due_date.split('T')[0]) }}</v-chip>
               </div>
             </div>
@@ -331,8 +334,8 @@
           </div>
           <div class="d-flex ga-2 mb-2">
             <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
-            <v-select v-if="!isEmployee" v-model="taskForm.assigned_user_id" :items="userItems" label="Исполнитель" variant="outlined" density="compact" clearable item-title="text" item-value="value" :disabled="isTaskReadonly" />
           </div>
+          <v-autocomplete v-if="!isEmployee" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" :disabled="isTaskReadonly" class="mb-2" />
 
           <!-- Subtasks (delegated) -->
           <template v-if="editingTask && taskSubtasks.length">
@@ -344,7 +347,7 @@
             <v-list density="compact" class="border rounded mb-2">
               <v-list-item v-for="st in taskSubtasks" :key="st.id"
                 :prepend-icon="'mdi-circle-small'"
-                :subtitle="`${st.assigned_user_name || '—'} · ${st.due_date ? st.due_date.split('T')[0] : 'без срока'}`"
+                :subtitle="`${st.assignees?.map((a:any)=>a.user_name?.split(' ')[0]).join(', ') || '—'} · ${st.due_date ? st.due_date.split('T')[0] : 'без срока'}`"
                 @click="openSubtask(st)">
                 <template #title>
                   <span class="text-body-2">{{ st.title }}</span>
@@ -429,13 +432,13 @@
             <v-select v-model="delegateForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" />
             <v-text-field v-model="delegateForm.due_date" label="Срок" variant="outlined" density="compact" type="date" :min="todayStr" />
           </div>
-          <v-select v-model="delegateForm.assigned_user_id" :items="subordinateItems" label="Исполнитель (подчинённый) *" variant="outlined" density="compact" item-title="text" item-value="value" class="mb-2" />
+          <v-autocomplete v-model="delegateForm.assignee_ids" :items="subordinateItems" label="Исполнители (подчинённые) *" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2" />
           <v-switch v-model="delegateForm.import_to_parent" label="Показывать в родительской задаче" color="teal" density="compact" hide-details />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="showDelegateDialog = false">Отмена</v-btn>
-          <v-btn color="teal" :disabled="!delegateForm.title || !delegateForm.assigned_user_id" :loading="delegateSaving" @click="saveDelegate">Делегировать</v-btn>
+          <v-btn color="teal" :disabled="!delegateForm.title || !delegateForm.assignee_ids.length" :loading="delegateSaving" @click="saveDelegate">Делегировать</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -497,7 +500,7 @@ const showTaskDialog = ref(false)
 const editingTask = ref<any>(null)
 const taskCategories = ref<string[]>([])
 const userItems = ref<{text:string, value:number}[]>([])
-const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assigned_user_id: null as number|null, category: '' })
+const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '' })
 
 // Task comments
 const taskComments = ref<any[]>([])
@@ -510,14 +513,14 @@ const taskSubtasks = ref<any[]>([])
 const showDelegateDialog = ref(false)
 const delegateSaving = ref(false)
 const subordinateItems = ref<{text:string, value:number}[]>([])
-const delegateForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assigned_user_id: null as number|null, import_to_parent: true })
+const delegateForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], import_to_parent: true })
 
 const isTaskReadonly = computed(() => {
   if (!editingTask.value) return false
   const uid = currentUserId
   const t = editingTask.value
-  // Readonly if: I am the assignee but NOT the creator
-  return t.assigned_user_id === uid && t.created_by_id !== uid
+  const isAssignee = (t.assignees || []).some((a: any) => a.user_id === uid)
+  return isAssignee && t.created_by_id !== uid
 })
 
 // Report
@@ -570,7 +573,7 @@ async function onDropGeneral(e: DragEvent, targetStatus: string) {
 
 function openNewTask() {
   editingTask.value = null
-  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assigned_user_id: null, category: '' }
+  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [], category: '' }
   taskComments.value = []
   newCommentText.value = ''
   showTaskDialog.value = true
@@ -581,7 +584,8 @@ function editGeneralTask(t: any) {
   taskForm.value = {
     title: t.title, description: t.description || '', priority: t.priority,
     due_date: t.due_date ? t.due_date.split('T')[0] : '',
-    assigned_user_id: t.assigned_user_id, category: t.category || '',
+    assignee_ids: (t.assignees || []).map((a: any) => a.user_id),
+    category: t.category || '',
   }
   taskSubtasks.value = []
   newCommentText.value = ''
@@ -615,14 +619,14 @@ async function openDelegateDialog() {
     description: editingTask.value.description || '',
     priority: editingTask.value.priority || 'medium',
     due_date: editingTask.value.due_date ? editingTask.value.due_date.split('T')[0] : '',
-    assigned_user_id: null,
+    assignee_ids: [],
     import_to_parent: true,
   }
   showDelegateDialog.value = true
 }
 
 async function saveDelegate() {
-  if (!editingTask.value || !delegateForm.value.assigned_user_id) return
+  if (!editingTask.value || !delegateForm.value.assignee_ids.length) return
   delegateSaving.value = true
   try {
     const body: any = {
@@ -778,7 +782,7 @@ async function saveGeneralTask() {
   if (body.due_date) body.due_date = body.due_date + 'T23:59:59Z'
   else delete body.due_date
   if (!body.category) delete body.category
-  if (!body.assigned_user_id) delete body.assigned_user_id
+  if (!body.assignee_ids?.length) body.assignee_ids = []
   try {
     if (editingTask.value) {
       const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, { method: 'PATCH', body: JSON.stringify(body) })

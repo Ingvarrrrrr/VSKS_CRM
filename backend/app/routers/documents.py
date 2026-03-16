@@ -409,6 +409,36 @@ async def generate_document(
             "photo": _resolve_photo(photo_url),
         })
 
+    # Load existing PurchaseApproval records (electronic signatures)
+    from app.models.purchase_approval import PurchaseApproval
+    pa_res = await db.execute(
+        select(PurchaseApproval)
+        .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.status == "approved")
+        .order_by(PurchaseApproval.order_num)
+    )
+    # Map subsidy_approver_id → PurchaseApproval (for signature lookup)
+    approval_map: dict[int, PurchaseApproval] = {}
+    for pa in pa_res.scalars().all():
+        if pa.subsidy_approver_id:
+            approval_map[pa.subsidy_approver_id] = pa
+
+    def _base64_to_inline(tpl_obj, b64_data: str):
+        """Convert base64 PNG data URL to docxtpl InlineImage."""
+        import tempfile, base64, re as _re
+        try:
+            from docxtpl import InlineImage
+            from docx.shared import Cm as _Cm
+            m = _re.match(r"data:image/\w+;base64,(.+)", b64_data, _re.DOTALL)
+            if not m:
+                return ""
+            raw = base64.b64decode(m.group(1))
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            tmp.write(raw)
+            tmp.close()
+            return InlineImage(tpl_obj, tmp.name, width=_Cm(3.0))
+        except Exception:
+            return ""
+
     approvers_list = []
     for i, a in enumerate(selected_approvers):
         full_name = a.full_name or ""
@@ -416,10 +446,22 @@ async def generate_document(
         if not full_name.strip().strip("_").strip():
             full_name = resolved_responsible
         note = feo_path if getattr(a, "show_feo_path", False) else ""
+
+        # Electronic signature
+        pa = approval_map.get(a.id)
+        signature_img = ""
+        decided_date = ""
+        if pa and pa.signature_data and pa.signature_algorithm == "visual":
+            signature_img = _base64_to_inline(tpl, pa.signature_data)
+            if pa.decided_at:
+                decided_date = pa.decided_at.strftime("%d.%m.%Y")
+
         approvers_list.append({
             "num": i + 1,
             "role_name": a.role_name,
             "full_name": full_name,
+            "signature_img": signature_img,
+            "decided_date": decided_date,
             "note": note,
         })
 

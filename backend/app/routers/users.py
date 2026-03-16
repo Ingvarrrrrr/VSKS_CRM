@@ -60,6 +60,8 @@ async def create_user(
         city=data.city,
         department=norm_dept,
         position=data.position,
+        phone=data.phone,
+        telegram_id=data.telegram_id,
         email=data.email,
         avatar=data.avatar,
         is_email_confirmed=True,
@@ -172,6 +174,41 @@ async def _sync_head_hierarchy(dept, db: AsyncSession):
         )).scalar_one_or_none()
         if not existing:
             db.add(UserHierarchy(manager_id=dept.head_user_id, subordinate_id=uid))
+
+# ---------------------------------------------------------------------------
+# Signature (подпись пользователя)
+# ---------------------------------------------------------------------------
+
+@router.get("/me/signature")
+async def get_my_signature(current_user: User = Depends(get_current_user)):
+    return {"signature": current_user.signature_image}
+
+
+@router.put("/me/signature")
+async def save_my_signature(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sig = body.get("signature", "")
+    if not sig or not sig.startswith("data:image/"):
+        raise HTTPException(422, "Подпись должна быть в формате data:image/png;base64,...")
+    if len(sig) > 500_000:
+        raise HTTPException(422, "Подпись слишком большая (макс 500 КБ)")
+    current_user.signature_image = sig
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/me/signature")
+async def delete_my_signature(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.signature_image = None
+    await db.commit()
+    return {"ok": True}
+
 
 @router.delete("/{user_id}")
 async def delete_user(

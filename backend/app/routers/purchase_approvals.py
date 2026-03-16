@@ -39,6 +39,8 @@ def _to_out(a: PurchaseApproval) -> dict:
         "decided_by_user_id": a.decided_by_user_id,
         "decided_by_username": a.decided_by_username,
         "created_at": a.created_at.isoformat() if a.created_at else None,
+        "has_signature": bool(a.signature_data),
+        "signature_algorithm": a.signature_algorithm,
     }
 
 
@@ -174,6 +176,13 @@ async def decide_approval(
     else:
         if not is_admin and current_user.role not in MANAGER_ROLES:
             raise HTTPException(403, "Согласующий не привязан к пользователю. Действие доступно менеджеру/админу.")
+
+    # Электронная подпись
+    if body.action == "approve" and body.sign_electronically:
+        if not current_user.signature_image:
+            raise HTTPException(422, "Электронная подпись не создана. Сначала нарисуйте подпись в профиле.")
+        approval.signature_data = current_user.signature_image
+        approval.signature_algorithm = "visual"
 
     # Record decision
     approval.status = body.action + ("d" if body.action == "approve" else "ed")  # approved / rejected

@@ -27,6 +27,8 @@ class UserCreate(BaseModel):
     city: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
     avatar: Optional[str] = None
     org_id: Optional[int] = None
 
@@ -36,6 +38,8 @@ class UserUpdate(BaseModel):
     city: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
     avatar: Optional[str] = None
@@ -48,10 +52,20 @@ class UserOut(BaseModel):
     city: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
     email: Optional[str] = None
     avatar: Optional[str] = None
     org_id: Optional[int] = None
     is_email_confirmed: bool = True
+    has_signature: bool = False
+
+    @classmethod
+    def from_orm_with_signature(cls, user):
+        d = cls.model_validate(user)
+        d.has_signature = bool(user.signature_image)
+        return d
+
     model_config = {"from_attributes": True}
 
 # Organization
@@ -529,11 +543,14 @@ class PurchaseApprovalOut(BaseModel):
     decided_by_user_id: Optional[int] = None
     decided_by_username: Optional[str] = None
     created_at: Optional[datetime] = None
+    has_signature: bool = False
+    signature_algorithm: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class ApprovalDecisionRequest(BaseModel):
     action: str  # "approve" | "reject"
     comment: Optional[str] = None
+    sign_electronically: bool = False
 
 # Task (общие задачи, не связанные с закупками)
 class TaskCreate(BaseModel):

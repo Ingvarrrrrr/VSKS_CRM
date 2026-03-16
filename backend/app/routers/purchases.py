@@ -468,6 +468,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
             selectinload(Purchase.feo_category),
             selectinload(Purchase.items).selectinload(PurchaseItem.product),
             selectinload(Purchase.files),
+            selectinload(Purchase.event),
         )
         .where(Purchase.id == pid)
     )
@@ -495,7 +496,7 @@ async def create_purchase(
     # Compute total_nmck from items
     total_nmck = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
 
-    if not admin_override:
+    if not admin_override and data.purchase_basis != 'service_note':
         await _check_budget(data.subsidy_id, total_nmck or data.planned_total_price, None, db)
 
     if not data.purchase_number:
@@ -559,7 +560,7 @@ async def update_purchase(
         p.total_nmck = items_sum
         p.planned_total_price = items_sum or p.planned_total_price
 
-    if not admin_override:
+    if not admin_override and data.purchase_basis != 'service_note':
         budget_amount = p.total_nmck if is_contracted else items_sum
         await _check_budget(data.subsidy_id, budget_amount or data.planned_total_price, pid, db)
 
@@ -648,6 +649,7 @@ async def transition_status(
             selectinload(Purchase.feo_category),
             selectinload(Purchase.items).selectinload(PurchaseItem.product),
             selectinload(Purchase.files),
+            selectinload(Purchase.event),
         )
         .where(Purchase.id == pid)
     )
@@ -732,7 +734,6 @@ async def transition_status(
             product.contract_org_id = contract_org_id
 
     await db.commit()
-    await db.refresh(p)
 
     # Auto-log status change event
     try:
@@ -747,6 +748,51 @@ async def transition_status(
     except Exception:
         pass
 
+    # Re-fetch with eager loads after commit
+    result2 = await db.execute(
+        select(Purchase)
+        .options(
+            selectinload(Purchase.contractor),
+            selectinload(Purchase.feo_category),
+            selectinload(Purchase.items).selectinload(PurchaseItem.product),
+            selectinload(Purchase.files),
+            selectinload(Purchase.event),
+        )
+        .where(Purchase.id == pid)
+    )
+    p = result2.scalar_one()
+    subsidies_r = await db.execute(select(Subsidy))
+    subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
+    contractors_r = await db.execute(select(Contractor))
+    contractors = {c.id: c.name for c in contractors_r.scalars().all()}
+    return _purchase_to_full(p, contractors, subsidies)
+
+
+@router.post("/{pid}/convert-to-order", response_model=PurchaseOutFull)
+async def convert_service_note_to_order(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
+):
+    """Конвертировать служебную записку на выдачу в закупку (меняет purchase_basis на plan_schedule)."""
+    result = await db.execute(
+        select(Purchase)
+        .options(
+            selectinload(Purchase.contractor),
+            selectinload(Purchase.feo_category),
+            selectinload(Purchase.items).selectinload(PurchaseItem.product),
+            selectinload(Purchase.files),
+            selectinload(Purchase.event),
+        )
+        .where(Purchase.id == pid)
+    )
+    p = result.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    if p.purchase_basis != 'service_note':
+        raise HTTPException(422, "Конвертация доступна только для служебных записок")
+    p.purchase_basis = 'plan_schedule'
+    await db.commit()
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))

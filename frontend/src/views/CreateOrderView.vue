@@ -1069,6 +1069,10 @@
           :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
           label="Подстатус" variant="outlined" density="compact" clearable
           style="max-width:220px" hide-details class="ml-2" @update:model-value="saveSubstatus" />
+        <v-btn v-if="isEdit && formMode === 'service_note_delivery'" variant="tonal" color="orange" size="large"
+          prepend-icon="mdi-swap-horizontal" :loading="converting" @click="convertToOrder">
+          Переоформить в закупку
+        </v-btn>
         <v-btn variant="outlined" :to="backRoute" size="large">Отмена</v-btn>
       </div>
     </v-form>
@@ -1877,6 +1881,7 @@ const allFeoCategories = ref<FeoCategory[]>([])
 const formRef = ref()
 const saving = ref(false)
 const transitioning = ref(false)
+const converting = ref(false)
 const uploading = ref(false)
 const docLoading = ref<string | null>(null)
 
@@ -3111,6 +3116,21 @@ const doTransition = async () => {
     showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {
     transitioning.value = false
+  }
+}
+
+const convertToOrder = async () => {
+  if (!purchaseId.value) return
+  if (!confirm('Переоформить служебную записку в закупку по плану-графику?')) return
+  converting.value = true
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/convert-to-order`, { method: 'POST' })
+    showSnack('Переоформлено в закупку. Перенаправление...')
+    setTimeout(() => router.push(`/orders/${purchaseId.value}`), 1000)
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка конвертации', 'error')
+  } finally {
+    converting.value = false
   }
 }
 

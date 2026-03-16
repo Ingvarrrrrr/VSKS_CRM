@@ -25,3 +25,7 @@ class User(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
 
     organization = relationship("Organization", back_populates="users")
+
+    @property
+    def has_signature(self) -> bool:
+        return bool(self.signature_image)

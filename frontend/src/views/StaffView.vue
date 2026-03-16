@@ -172,6 +172,7 @@
 
         <v-card variant="outlined">
           <v-data-table
+            v-resizable-columns="'staff-users'"
             :headers="userHeaders"
             :items="users"
             :loading="usersLoading"
@@ -189,6 +190,10 @@
             </template>
             <template v-slot:item.position="{ item }">
               <span class="text-body-2">{{ item.position || '---' }}</span>
+            </template>
+            <template v-slot:item.has_signature="{ item }">
+              <v-icon v-if="item.has_signature" icon="mdi-draw" size="18" color="success" title="Подпись создана" />
+              <v-icon v-else icon="mdi-draw-pen" size="18" color="grey-lighten-1" title="Подпись не создана" />
             </template>
             <template v-slot:item.actions="{ item }">
               <div class="d-flex gap-1" v-if="isAdmin">
@@ -259,11 +264,19 @@
       <v-card>
         <v-card-title class="pa-4">Добавить сотрудника</v-card-title>
         <v-card-text class="pa-4 pt-0">
+          <v-text-field v-model="createDialog.full_name" label="ФИО *" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-account" :rules="[v => !!v || 'ФИО обязательно']" />
           <v-text-field v-model="createDialog.email" label="Email *" variant="outlined" density="compact" class="mb-3"
             hint="Используется для входа в систему" persistent-hint prepend-inner-icon="mdi-email-outline"
-            type="email" :rules="[v => !!v || 'Email обязателен', v => /.+@.+\..+/.test(v) || 'Некорректный email']" />
-          <v-text-field v-model="createDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field v-model="createDialog.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-3" />
+            type="email" :rules="[v => !!v || 'Email обязателен', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
+          <v-text-field v-model="createDialog.phone" label="Телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67"
+            hint="Для связи и интеграции с Telegram" persistent-hint />
+          <v-text-field v-model="createDialog.telegram_id" label="Telegram" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-send" placeholder="@username"
+            hint="Для уведомлений через Telegram-бот" persistent-hint />
+          <v-text-field v-model="createDialog.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-3"
+            :rules="[v => !!v || 'Пароль обязателен', v => v.length >= 6 || 'Минимум 6 символов']" />
           <v-text-field v-model="createDialog.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-3"
             :error="!!createDialog.password_confirm && createDialog.password !== createDialog.password_confirm"
             :error-messages="createDialog.password_confirm && createDialog.password !== createDialog.password_confirm ? 'Пароли не совпадают' : ''" />
@@ -509,23 +522,58 @@
     </v-dialog>
 
     <!-- 7. Add member to dept dialog -->
-    <v-dialog v-model="addMemberDialog" max-width="440">
+    <v-dialog v-model="addMemberDialog" max-width="500">
       <v-card>
-        <v-card-title>Добавить сотрудника в отдел</v-card-title>
+        <v-card-title class="d-flex align-center">
+          Добавить сотрудника в отдел
+          <v-spacer />
+          <v-chip v-if="selectedDept" size="small" variant="tonal" color="primary">{{ selectedDept.name }}</v-chip>
+        </v-card-title>
         <v-card-text>
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            Выберите сотрудника из списка пользователей системы. Если нужного человека нет -- сначала добавьте его в разделе "Сотрудники".
-          </v-alert>
-          <v-select v-model="memberForm.user_id" :items="userDropdownItems" item-title="text" item-value="value"
-            label="Сотрудник *" variant="outlined" density="compact" class="mb-3"
-            hint="Список пользователей вашей организации" persistent-hint />
-          <v-text-field v-model="memberForm.position" label="Должность в отделе" variant="outlined" density="compact"
-            placeholder="Например: Менеджер, Специалист, Ведущий инженер" />
+          <!-- Toggle: existing or new -->
+          <v-btn-toggle v-model="addMemberMode" mandatory density="compact" color="primary" class="mb-3" style="width:100%">
+            <v-btn value="existing" size="small" style="flex:1"><v-icon icon="mdi-account-search" class="mr-1" size="16"/>Существующий</v-btn>
+            <v-btn value="new" size="small" style="flex:1"><v-icon icon="mdi-account-plus" class="mr-1" size="16"/>Создать нового</v-btn>
+          </v-btn-toggle>
+
+          <!-- Existing user -->
+          <template v-if="addMemberMode === 'existing'">
+            <v-select v-model="memberForm.user_id" :items="userDropdownItems" item-title="text" item-value="value"
+              label="Сотрудник *" variant="outlined" density="compact" class="mb-3"
+              hint="Список пользователей вашей организации" persistent-hint />
+            <v-combobox v-model="memberForm.position" :items="knownPositions" label="Должность в отделе" variant="outlined" density="compact"
+              hint="Выберите из списка или введите свою" persistent-hint />
+          </template>
+
+          <!-- New user (inline creation) -->
+          <template v-if="addMemberMode === 'new'">
+            <v-text-field v-model="newMemberForm.full_name" label="ФИО *" variant="outlined" density="compact" class="mb-2"
+              prepend-inner-icon="mdi-account" />
+            <v-text-field v-model="newMemberForm.email" label="Email *" variant="outlined" density="compact" class="mb-2"
+              type="email" prepend-inner-icon="mdi-email-outline"
+              :rules="[v => !!v || 'Обязательное поле', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
+            <v-text-field v-model="newMemberForm.phone" label="Телефон" variant="outlined" density="compact" class="mb-2"
+              prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67"
+              hint="Для связи и интеграции с Telegram" persistent-hint />
+            <v-text-field v-model="newMemberForm.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-2"
+              :rules="[v => !!v || 'Обязательное поле', v => v.length >= 6 || 'Минимум 6 символов']" />
+            <v-text-field v-model="newMemberForm.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-2"
+              :error="!!newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm"
+              :error-messages="newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm ? 'Пароли не совпадают' : ''" />
+            <v-select v-model="newMemberForm.role" :items="roleItems" item-title="label" item-value="value"
+              label="Роль" variant="outlined" density="compact" class="mb-2" />
+            <v-combobox v-model="newMemberForm.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" class="mb-2"
+              hint="Выберите из списка или введите свою" persistent-hint />
+            <v-text-field v-model="newMemberForm.city" label="Город" variant="outlined" density="compact" />
+          </template>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="addMemberDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :disabled="!memberForm.user_id" @click="addMember">Добавить</v-btn>
+          <v-btn v-if="addMemberMode === 'existing'" color="primary" :disabled="!memberForm.user_id" @click="addMember">Добавить</v-btn>
+          <v-btn v-else color="primary"
+            :disabled="!newMemberForm.email || !newMemberForm.password || !newMemberForm.full_name || newMemberForm.password.length < 6 || newMemberForm.password !== newMemberForm.password_confirm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberForm.email)"
+            :loading="newMemberSaving" @click="createAndAddMember">Создать и добавить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -602,7 +650,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, watch, defineComponent, h } from 'vue'
+import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
@@ -617,6 +665,7 @@ interface UserItem {
   position?: string
   email?: string
   avatar?: string
+  has_signature?: boolean
 }
 interface SubordinateItem { id: number; username: string; full_name?: string; role: string; avatar?: string }
 interface TreeNode extends UserItem { subordinates?: SubordinateItem[] }
@@ -705,12 +754,13 @@ const userHeaders = [
   { title: 'Отдел', key: 'department', minWidth: 120 },
   { title: 'Должность', key: 'position', minWidth: 120 },
   { title: 'Город', key: 'city', minWidth: 90 },
+  { title: 'Подпись', key: 'has_signature', width: 90, sortable: false },
   { title: '', key: 'actions', width: 100, sortable: false },
 ]
 
 const createDialog = reactive({
   show: false, full_name: '', email: '', password: '', password_confirm: '',
-  role: 'employee', city: '', department: '', position: '', avatar: '', saving: false,
+  role: 'employee', city: '', department: '', position: '', phone: '', telegram_id: '', avatar: '', saving: false,
   org_id: null as number | null, subsidy_id: null as number | null,
 })
 const organizations = ref<any[]>([])
@@ -765,7 +815,10 @@ const deptForm = ref({ name: '', subsidy_id: null as number | null, head_user_id
 
 // Member dialog
 const addMemberDialog = ref(false)
+const addMemberMode = ref<'existing' | 'new'>('existing')
 const memberForm = ref({ user_id: null as number | null, position: '' })
+const newMemberForm = ref({ email: '', full_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' })
+const newMemberSaving = ref(false)
 
 // Edit member position dialog
 const editMemberDialog = ref(false)
@@ -816,39 +869,46 @@ const DeptNode = defineComponent({
     return () => {
       const n = props.node
       const indent = props.depth * 24
+      const VIcon = resolveComponent('v-icon') as any
+      const VBtn = resolveComponent('v-btn') as any
+      const VChip = resolveComponent('v-chip') as any
+      const VSpacer = resolveComponent('v-spacer') as any
+
       const items = [
         h('div', {
           class: 'dept-tree-row', style: { paddingLeft: indent + 'px' },
           onClick: () => emit('select', n),
         }, [
           n.children?.length
-            ? h('v-icon', {
+            ? h(VIcon, {
                 icon: expanded.value ? 'mdi-chevron-down' : 'mdi-chevron-right',
                 size: 18, class: 'mr-1 dept-chevron',
                 onClick: (e: Event) => { e.stopPropagation(); expanded.value = !expanded.value },
               })
             : h('span', { style: 'width:22px;display:inline-block' }),
-          h('v-icon', { icon: 'mdi-folder-account', size: 18, color: 'primary', class: 'mr-2' }),
+          h(VIcon, { icon: 'mdi-folder-account', size: 18, color: 'primary', class: 'mr-2' }),
           h('span', { class: 'font-weight-medium text-body-2' }, n.name),
           n.head_user_name
-            ? h('v-chip', { size: 'x-small', variant: 'tonal', color: 'teal', class: 'ml-2' }, () => n.head_user_name)
+            ? h(VChip, { size: 'x-small', variant: 'tonal', color: 'teal', class: 'ml-2' }, () => n.head_user_name)
             : null,
-          h('v-chip', { size: 'x-small', variant: 'outlined', class: 'ml-1' }, () => `${n.members?.length || 0} чел.`),
-          h('v-spacer'),
-          h('v-btn', { icon: 'mdi-account-plus', size: 'x-small', variant: 'text', color: 'success', title: 'Добавить сотрудника', onClick: (e: Event) => { e.stopPropagation(); emit('add-member', n) } }),
-          h('v-btn', { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'grey', title: 'Редактировать отдел', onClick: (e: Event) => { e.stopPropagation(); emit('edit', n) } }),
-          h('v-btn', { icon: 'mdi-delete', size: 'x-small', variant: 'text', color: 'error', title: 'Удалить отдел', onClick: (e: Event) => { e.stopPropagation(); emit('delete', n) } }),
-          h('v-icon', { icon: 'mdi-chevron-right', size: 20, class: 'ml-1 dept-row-arrow', color: 'primary' }),
+          h(VChip, { size: 'x-small', variant: 'outlined', class: 'ml-1' }, () => `${n.members?.length || 0} чел.`),
+          h(VSpacer),
+          h(VBtn, { icon: 'mdi-account-plus', size: 'x-small', variant: 'text', color: 'success', title: 'Добавить сотрудника', onClick: (e: Event) => { e.stopPropagation(); emit('add-member', n) } }),
+          h(VBtn, { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'grey', title: 'Редактировать отдел', onClick: (e: Event) => { e.stopPropagation(); emit('edit', n) } }),
+          h(VBtn, { icon: 'mdi-delete', size: 'x-small', variant: 'text', color: 'error', title: 'Удалить отдел', onClick: (e: Event) => { e.stopPropagation(); emit('delete', n) } }),
+          h(VIcon, { icon: 'mdi-chevron-right', size: 20, class: 'ml-1 dept-row-arrow', color: 'primary' }),
         ]),
         // Members inline with edit/remove buttons
         ...(expanded.value ? (n.members || []).map((m: any) =>
           h('div', { class: 'dept-member-row', style: { paddingLeft: (indent + 28) + 'px' } }, [
-            h('v-icon', { icon: m.user_id === n.head_user_id ? 'mdi-crown' : 'mdi-account', size: 14, color: m.user_id === n.head_user_id ? 'teal' : 'grey', class: 'mr-2' }),
+            h(VIcon, { icon: m.user_id === n.head_user_id ? 'mdi-crown' : 'mdi-account', size: 14, color: m.user_id === n.head_user_id ? 'teal' : 'grey', class: 'mr-2' }),
             h('span', { class: 'text-body-2' }, m.name),
-            m.position ? h('span', { class: 'text-caption text-medium-emphasis ml-2' }, `(${m.position})`) : h('span', { class: 'text-caption text-medium-emphasis ml-2 feo-set-hint', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }, 'должность'),
-            h('v-spacer'),
-            h('v-btn', { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'primary', class: 'dept-member-action', title: 'Изменить должность', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }),
-            h('v-btn', { icon: 'mdi-close', size: 'x-small', variant: 'text', color: 'error', class: 'dept-member-action', title: 'Убрать из отдела', onClick: (e: Event) => { e.stopPropagation(); emit('remove-member', { deptId: n.id, userId: m.user_id }) } }),
+            m.position
+              ? h('span', { class: 'text-caption text-medium-emphasis ml-2' }, `(${m.position})`)
+              : h('span', { class: 'text-caption text-medium-emphasis ml-2', style: 'cursor:pointer;text-decoration:underline dotted;opacity:0.5', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }, '+ должность'),
+            h(VSpacer),
+            h(VBtn, { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'primary', class: 'dept-member-action', title: 'Изменить должность', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }),
+            h(VBtn, { icon: 'mdi-close', size: 'x-small', variant: 'text', color: 'error', class: 'dept-member-action', title: 'Убрать из отдела', onClick: (e: Event) => { e.stopPropagation(); emit('remove-member', { deptId: n.id, userId: m.user_id }) } }),
           ])
         ) : []),
         // Children
@@ -897,6 +957,8 @@ function openCreateUser() {
   createDialog.city = ''
   createDialog.department = ''
   createDialog.position = ''
+  createDialog.phone = ''
+  createDialog.telegram_id = ''
   createDialog.avatar = ''
   createDialog.org_id = currentOrgId
   createDialog.subsidy_id = null
@@ -929,6 +991,8 @@ async function saveUser() {
         city: createDialog.city || null,
         department: normalizeDepartment(createDialog.department) || null,
         position: createDialog.position || null,
+        phone: createDialog.phone || null,
+        telegram_id: createDialog.telegram_id || null,
         avatar: createDialog.avatar || randomAvatarId(),
         org_id: isSuperadmin.value ? createDialog.org_id : null,
       },
@@ -1188,7 +1252,43 @@ async function addMember() {
     memberForm.value = { user_id: null, position: '' }
     await loadDeptMembers(selectedDept.value.id)
     await loadDeptTree()
+    showSnack('Сотрудник добавлен в отдел')
   } catch (e: any) { showSnack(e?.detail || 'Ошибка', 'error') }
+}
+
+async function createAndAddMember() {
+  if (!selectedDept.value) return
+  newMemberSaving.value = true
+  try {
+    // 1. Create user
+    const user = await apiFetch<any>('/users/', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: newMemberForm.value.email,
+        password: newMemberForm.value.password,
+        full_name: newMemberForm.value.full_name,
+        role: newMemberForm.value.role,
+        city: newMemberForm.value.city || null,
+        phone: newMemberForm.value.phone || null,
+        department: selectedDept.value.name,
+        position: newMemberForm.value.position || null,
+      }),
+    })
+    // 2. Add to department
+    await apiFetch(`/departments/${selectedDept.value.id}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: user.id, position: newMemberForm.value.position || null }),
+    })
+    addMemberDialog.value = false
+    newMemberForm.value = { email: '', full_name: '', password: '', role: 'employee', position: '', city: '' }
+    // Refresh all
+    await Promise.all([loadUsers(), loadDeptMembers(selectedDept.value.id), loadDeptTree()])
+    showSnack(`Сотрудник ${user.full_name || user.username} создан и добавлен в отдел`)
+  } catch (e: any) {
+    showSnack(e?.detail || e?.message || 'Ошибка при создании сотрудника', 'error')
+  } finally {
+    newMemberSaving.value = false
+  }
 }
 
 async function removeMember(userId: number) {
@@ -1204,6 +1304,8 @@ async function removeMember(userId: number) {
 function onAddMemberInline(dept: any) {
   selectedDept.value = dept
   memberForm.value = { user_id: null, position: '' }
+  newMemberForm.value = { email: '', full_name: '', password: '', role: 'employee', position: '', city: '' }
+  addMemberMode.value = 'existing'
   addMemberDialog.value = true
 }
 

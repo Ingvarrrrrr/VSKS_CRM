@@ -106,6 +106,14 @@
           </v-list-item-title>
         </v-list-item>
         <v-divider />
+        <v-list-item @click="openSignaturePad">
+          <v-list-item-title class="d-flex align-center">
+            <v-icon icon="mdi-draw" class="mr-2" />Моя подпись
+            <v-chip v-if="hasSignature" size="x-small" color="success" variant="tonal" class="ml-2">есть</v-chip>
+            <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">нет</v-chip>
+          </v-list-item-title>
+        </v-list-item>
+        <v-divider />
         <v-list-item @click="logout">
           <v-list-item-title>
             <v-icon icon="mdi-logout" class="mr-2" />Выйти
@@ -113,6 +121,9 @@
         </v-list-item>
       </v-list>
     </v-menu>
+
+  <!-- Signature Pad dialog -->
+  <SignaturePad ref="sigPadRef" @saved="onSignatureSaved" />
   </v-app-bar>
 
   <!-- Superadmin org picker dialog -->
@@ -299,7 +310,9 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import GlobalSearch from './GlobalSearch.vue'
+import SignaturePad from './SignaturePad.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { apiFetch } from '@/api'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -366,10 +379,10 @@ const menuItems = computed(() => {
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
     { title: 'Мои задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
-    { title: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
-    { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: MANAGER_ROLES },
-    { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: MANAGER_ROLES },
-    { title: 'Товары', icon: 'mdi-package-variant', route: '/products', roles: MANAGER_ROLES },
+    { title: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
+    { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
+    { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: ALL_ROLES },
+    { title: 'Товары', icon: 'mdi-package-variant', route: '/products', roles: ALL_ROLES },
     { title: 'Сводная по продукции', icon: 'mdi-chart-box-outline', route: '/products-summary', roles: MANAGER_ROLES },
     { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', roles: ADMIN_ROLES },
     { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', roles: MANAGER_ROLES },
@@ -436,6 +449,25 @@ function onSidebarDragEnd() {
 
 const formatCurrency = (amount: number) =>
   amount.toLocaleString('ru-RU') + ' ₽'
+
+// ── Signature ───────────────────────────────────────────────────────────────
+const sigPadRef = ref<InstanceType<typeof SignaturePad> | null>(null)
+const hasSignature = ref(false)
+
+async function loadSignatureStatus() {
+  try {
+    const data = await apiFetch<{ signature: string | null }>('/users/me/signature')
+    hasSignature.value = !!data.signature
+  } catch { hasSignature.value = false }
+}
+
+function openSignaturePad() {
+  sigPadRef.value?.open()
+}
+
+function onSignatureSaved(has: boolean) {
+  hasSignature.value = has
+}
 
 const logout = () => {
   localStorage.removeItem('auth_token')
@@ -619,6 +651,7 @@ const loadSubsidies = async () => {
 onMounted(async () => {
   await loadMyOrgs()
   loadSubsidies()
+  loadSignatureStatus()
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {

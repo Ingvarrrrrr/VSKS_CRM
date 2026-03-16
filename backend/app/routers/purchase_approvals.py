@@ -331,3 +331,52 @@ async def my_pending_approvals(
         })
 
     return out
+
+
+# ── 6. Add approver to purchase (all roles) ─────────────────────────────────
+
+@router.post("/purchases/{pid}/approvals/add")
+async def add_approver(
+    pid: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add an approver to the purchase approval chain. Available to all roles."""
+    purchase = await db.get(Purchase, pid)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    role_name = (body.get("role_name") or "").strip()
+    full_name = (body.get("full_name") or "").strip()
+    user_id = body.get("user_id")
+
+    if not role_name or not full_name:
+        raise HTTPException(422, "Укажите должность и ФИО согласующего")
+
+    # Determine order_num — append after current max
+    existing = (await db.execute(
+        select(PurchaseApproval).where(PurchaseApproval.purchase_id == pid)
+    )).scalars().all()
+    max_order = max((a.order_num for a in existing), default=0)
+
+    new_approval = PurchaseApproval(
+        purchase_id=pid,
+        order_num=max_order + 1,
+        role_name=role_name,
+        approver_full_name=full_name,
+        user_id=user_id,
+        status="pending",
+    )
+    db.add(new_approval)
+
+    db.add(PurchaseEvent(
+        purchase_id=pid,
+        user_id=current_user.id,
+        event_type="member_added",
+        data={"role_name": role_name, "full_name": full_name},
+    ))
+
+    await db.commit()
+    await db.refresh(new_approval)
+    return _to_out(new_approval)

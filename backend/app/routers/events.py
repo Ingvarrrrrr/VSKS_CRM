@@ -39,6 +39,15 @@ async def create_event(
         name=data.name,
         is_active=data.is_active,
         org_id=get_single_org_id(current_user) or current_user.org_id,
+        region=data.region,
+        date_from=data.date_from,
+        date_to=data.date_to,
+        order_decree=data.order_decree,
+        planned_indicators=data.planned_indicators,
+        actual_indicators=data.actual_indicators,
+        media_link_1=data.media_link_1,
+        media_link_2=data.media_link_2,
+        media_link_3=data.media_link_3,
     )
     db.add(ev)
     await db.commit()
@@ -59,6 +68,15 @@ async def update_event(
     ev.subsidy_id = data.subsidy_id
     ev.name = data.name
     ev.is_active = data.is_active
+    ev.region = data.region
+    ev.date_from = data.date_from
+    ev.date_to = data.date_to
+    ev.order_decree = data.order_decree
+    ev.planned_indicators = data.planned_indicators
+    ev.actual_indicators = data.actual_indicators
+    ev.media_link_1 = data.media_link_1
+    ev.media_link_2 = data.media_link_2
+    ev.media_link_3 = data.media_link_3
     await db.commit()
     await db.refresh(ev)
     return ev

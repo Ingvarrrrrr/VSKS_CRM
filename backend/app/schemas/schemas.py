@@ -582,6 +582,8 @@ class TaskCreate(BaseModel):
     due_date: Optional[datetime] = None
     assigned_user_id: Optional[int] = None
     category: Optional[str] = None
+    parent_task_id: Optional[int] = None
+    import_to_parent: bool = False
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -591,6 +593,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     assigned_user_id: Optional[int] = None
     category: Optional[str] = None
+    import_to_parent: Optional[bool] = None
 
 class TaskOut(BaseModel):
     id: int
@@ -605,6 +608,9 @@ class TaskOut(BaseModel):
     created_by_name: Optional[str] = None
     org_id: Optional[int] = None
     category: Optional[str] = None
+    parent_task_id: Optional[int] = None
+    import_to_parent: bool = False
+    subtask_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_comment: Optional[str] = None           # preview (first 100 chars)

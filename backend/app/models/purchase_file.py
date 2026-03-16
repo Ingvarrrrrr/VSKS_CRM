@@ -17,5 +17,7 @@ class PurchaseFile(Base):
     file_type = Column(String(50), default="other")
     doc_format = Column(String(20), default="scan")
     created_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     purchase = relationship("Purchase", back_populates="files")
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")

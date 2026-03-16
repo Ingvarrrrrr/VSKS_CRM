@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SAEnum, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
@@ -31,5 +31,7 @@ class Task(Base):
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     category = Column(String(200), nullable=True)  # "Склад", "Документы", "Строительство" и т.д.
+    parent_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
+    import_to_parent = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -23,6 +23,8 @@ class MemberOut(BaseModel):
     role: str
     username: str
     full_name: Optional[str] = None
+    added_by_id: Optional[int] = None
+    added_by_name: Optional[str] = None
     created_at: Optional[str] = None
 
     class Config:
@@ -63,6 +65,8 @@ def _member_out(m: PurchaseMember) -> MemberOut:
         role=m.role,
         username=m.user.username if m.user else str(m.user_id),
         full_name=m.user.full_name if m.user else None,
+        added_by_id=m.added_by_id,
+        added_by_name=(m.added_by.full_name or m.added_by.username) if m.added_by else None,
         created_at=m.created_at.isoformat() if m.created_at else None,
     )
 
@@ -99,7 +103,7 @@ async def add_member(
     pid: int,
     body: AddMemberBody,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    current_user=Depends(require_role("admin", "manager")),
 ):
     purchase = (await db.execute(select(Purchase).where(Purchase.id == pid))).scalar_one_or_none()
     if not purchase:
@@ -117,7 +121,10 @@ async def add_member(
     if existing:
         existing.role = body.role
     else:
-        existing = PurchaseMember(purchase_id=pid, user_id=body.user_id, role=body.role)
+        existing = PurchaseMember(
+            purchase_id=pid, user_id=body.user_id, role=body.role,
+            added_by_id=current_user.id,
+        )
         db.add(existing)
     await db.commit()
     await db.refresh(existing)

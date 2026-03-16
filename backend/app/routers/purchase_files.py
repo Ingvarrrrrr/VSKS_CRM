@@ -14,6 +14,8 @@ from typing import List, Optional
 router = APIRouter(prefix="/api/purchases", tags=["purchase-files"])
 
 UPLOAD_DIR = "/app/uploads"
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
 ALLOWED_MIME = {
     "application/pdf",
     "application/msword",
@@ -23,6 +25,22 @@ ALLOWED_MIME = {
     "image/jpeg",
     "image/jpg",
     "image/png",
+}
+
+# Scan — only images and PDF; editable — only Office formats
+FORMAT_RULES = {
+    "scan": {
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+    },
+    "editable": {
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
 }
 
 FILE_TYPES = {
@@ -37,10 +55,13 @@ FILE_TYPES = {
     "other":        "Прочее",
 }
 
-
 DOC_FORMATS = {"scan", "editable"}
 
+
 def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
+    uploaded_by_name = None
+    if pf.uploaded_by:
+        uploaded_by_name = pf.uploaded_by.full_name or pf.uploaded_by.username
     return PurchaseFileOut(
         id=pf.id,
         purchase_id=pf.purchase_id,
@@ -49,7 +70,9 @@ def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
         size=pf.size,
         file_type=pf.file_type or "other",
         doc_format=pf.doc_format or "scan",
-        created_at=str(pf.created_at) if pf.created_at else None,
+        created_at=pf.created_at,
+        uploaded_by_id=pf.uploaded_by_id,
+        uploaded_by_name=uploaded_by_name,
     )
 
 
@@ -74,6 +97,14 @@ async def upload_file(
     if doc_format not in DOC_FORMATS:
         doc_format = "scan"
 
+    # Validate format rules
+    allowed_for_format = FORMAT_RULES.get(doc_format)
+    if allowed_for_format and file.content_type not in allowed_for_format:
+        if doc_format == "scan":
+            raise HTTPException(400, "Скан-копии: допускаются только JPEG, PNG, PDF. Редактируемые файлы (Word, Excel) нельзя загружать как скан.")
+        else:
+            raise HTTPException(400, "Редактируемые документы: допускаются только Word и Excel. JPEG и PDF нельзя загружать как редактируемый файл.")
+
     dest_dir = os.path.join(UPLOAD_DIR, str(pid))
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, file.filename)
@@ -82,6 +113,12 @@ async def upload_file(
         shutil.copyfileobj(file.file, f)
 
     size = os.path.getsize(dest_path)
+
+    # Check file size after saving
+    if size > MAX_FILE_SIZE:
+        os.remove(dest_path)
+        raise HTTPException(400, f"Файл превышает максимальный размер 50 МБ (загружено {size // (1024*1024)} МБ)")
+
     pf = PurchaseFile(
         purchase_id=pid,
         filename=file.filename,
@@ -91,10 +128,16 @@ async def upload_file(
         size=size,
         file_type=file_type,
         doc_format=doc_format,
+        uploaded_by_id=current_user.id,
     )
     db.add(pf)
     await db.commit()
     await db.refresh(pf)
+    # Reload with relationship
+    result2 = await db.execute(
+        select(PurchaseFile).where(PurchaseFile.id == pf.id)
+    )
+    pf = result2.scalar_one()
     return _file_out(pf)
 
 

@@ -17,10 +17,11 @@
         <v-chip
           v-for="m in members" :key="m.id"
           size="small" :color="roleColor(m.role)" variant="tonal"
-          :title="m.role"
+          :title="m.added_by_name ? `Добавил: ${m.added_by_name}` : m.role"
           :closable="canManage"
           @click:close="removeMember(m.user_id)">
           {{ m.full_name || m.username }}
+          <span v-if="m.added_by_name" class="text-caption ml-1 opacity-60">↑{{ m.added_by_name.split(' ')[0] }}</span>
         </v-chip>
       </div>
       <div v-else class="text-caption text-medium-emphasis">Нет участников</div>
@@ -30,7 +31,7 @@
 
     <!-- Event feed -->
     <div class="d-flex align-center mb-2">
-      <span class="text-body-2 font-weight-medium">Лента событий</span>
+      <span class="text-body-2 font-weight-medium">Чат согласования</span>
       <v-spacer />
       <v-btn size="x-small" variant="text" prepend-icon="mdi-refresh" @click="loadEvents">Обновить</v-btn>
     </div>
@@ -131,7 +132,7 @@ const canManage = computed(() => {
   return role === 'admin' || role === 'manager'
 })
 
-interface Member { id: number; purchase_id: number; user_id: number; role: string; username: string; full_name?: string }
+interface Member { id: number; purchase_id: number; user_id: number; role: string; username: string; full_name?: string; added_by_id?: number; added_by_name?: string }
 interface Event { id: number; purchase_id: number; user_id?: number; username?: string; full_name?: string; event_type: string; data?: any; created_at: string }
 interface UserItem { id: number; username: string; full_name?: string; display?: string }
 

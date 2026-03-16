@@ -132,27 +132,45 @@ async def create_category(
 
 @router.get("/import/template")
 async def download_feo_template():
-    """Шаблон Excel для импорта категорий ФЭО."""
+    """Шаблон Excel для импорта категорий ФЭО (4 уровня в отдельных столбцах)."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     wb = Workbook()
     ws = wb.active
     ws.title = "Категории ФЭО"
     headers = [
-        "Наименование", "Субсидия", "Родительская категория",
-        "Код", "Приложение", "Финансирование", "Активна",
+        "Субсидия",
+        "Уровень 2 (Направление расходов по ФЭО)",
+        "Уровень 3 (Тип расходов по ФЭО)",
+        "Уровень 4 (Конкретизированный)",
+        "Код",
+        "Приложение",
+        "Финансирование",
+        "Активна",
     ]
     ws.append(headers)
     fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
     font = Font(color="FFFFFF", bold=True, size=11)
     for cell in ws[1]:
         cell.fill = fill; cell.font = font
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    # Example rows showing hierarchy
-    ws.append(["Техническое оснащение", "ФАДМ_2026", "", "01", "Прил. 1", "5000000", "да"])
-    ws.append(["Компьютерная техника", "ФАДМ_2026", "Техническое оснащение", "01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["Мониторы", "ФАДМ_2026", "Компьютерная техника", "01.01.01", "Прил. 1", "500000", "да"])
-    for i, w in enumerate([40, 20, 40, 12, 15, 18, 10], 1):
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 48
+
+    # Пример строк — все 4 уровня
+    ws.append(["ФАДМ_2026", "Техническое оснащение деятельности штаба", "Техническое оснащение деятельности штаба", "Закупка рабочих компьютеров с процессором не ниже Intel Core I5", "01.01.01", "Прил. 1", "2000000", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение деятельности штаба", "Техническое оснащение деятельности штаба", "Закупка канцелярских принадлежностей", "01.01.02", "Прил. 1", "500000", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "Организация и проведение Слёта студентов", "Услуга по организации проживания и питания участников", "02.01.01", "Прил. 2", "3000000", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "Организация и проведение Слёта студентов", "Услуга по организации логистики участников", "02.01.02", "Прил. 2", "1500000", "да"])
+
+    # Комментарий в строке 6
+    ws.cell(6, 1).value = "← Субсидия (точное название как в системе)"
+    ws.cell(6, 2).value = "← Направление (уровень 1 в дереве ФЭО)"
+    ws.cell(6, 3).value = "← Тип расходов (уровень 2; если пусто — атрибуты идут на Ур.2)"
+    ws.cell(6, 4).value = "← Конкретизированный (уровень 3; если пусто — на Ур.2 или Ур.3)"
+    for col in range(1, 9):
+        ws.cell(6, col).font = Font(italic=True, color="888888", size=9)
+
+    for i, w in enumerate([20, 50, 50, 60, 12, 15, 18, 10], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -166,8 +184,11 @@ async def import_feo_from_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Импорт категорий ФЭО из Excel. Иерархия строится за 3 прохода (уровни 1→2→3).
-    Возвращает {created, skipped, errors}."""
+    """Импорт категорий ФЭО из Excel.
+    Формат: Субсидия | Уровень 2 | Уровень 3 | Уровень 4 | Код | Приложение | Финансирование | Активна
+    Каждая строка задаёт путь в иерархии. Промежуточные узлы создаются автоматически.
+    Код/Приложение/Финансирование/Активна применяются к самому глубокому указанному уровню.
+    Возвращает {created, updated, skipped, errors}."""
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
@@ -180,119 +201,133 @@ async def import_feo_from_excel(
     if len(rows) < 2:
         raise HTTPException(400, "Файл пустой")
 
+    # Определяем индексы столбцов по заголовку строки 1
     raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
-    COLUMN_MAP = {
-        "наименование": "name",
-        "субсидия": "subsidy_name",
-        "родительская категория": "parent_name",
-        "код": "code",
-        "приложение": "appendix",
-        "финансирование": "budget",
-        "активна": "is_active",
-        "активен": "is_active",
-    }
-    col_idx: dict[str, int] = {}
-    for i, h in enumerate(raw_headers):
-        field = COLUMN_MAP.get(h)
-        if field and field not in col_idx:
-            col_idx[field] = i
 
-    def cell(row, field):
-        idx = col_idx.get(field)
-        if idx is None or idx >= len(row): return None
-        v = row[idx]; return str(v).strip() if v is not None else None
+    def find_col(keywords: list[str]) -> int | None:
+        for kw in keywords:
+            for i, h in enumerate(raw_headers):
+                if kw in h:
+                    return i
+        return None
 
-    def to_bool(v):
+    c_subsidy  = find_col(["субсидия"])
+    c_lvl2     = find_col(["уровень 2", "направление расходов", "level 2"])
+    c_lvl3     = find_col(["уровень 3", "тип расходов", "level 3"])
+    c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
+    c_code     = find_col(["код"])
+    c_appendix = find_col(["приложение"])
+    c_budget   = find_col(["финансирование", "бюджет", "budget"])
+    c_active   = find_col(["активна", "активен", "active"])
+
+    if c_subsidy is None or c_lvl2 is None:
+        raise HTTPException(400, "Не найдены обязательные столбцы: 'Субсидия' и 'Уровень 2 (Направление расходов)'")
+
+    def get_cell(row: tuple, col: int | None) -> str | None:
+        if col is None or col >= len(row): return None
+        v = row[col]
+        return str(v).strip() if v is not None else None
+
+    def to_bool(v: str | None) -> bool:
         if v is None: return True
-        return str(v).lower().strip() in ("да", "yes", "true", "1", "+")
+        return v.lower() in ("да", "yes", "true", "1", "+")
 
-    def to_dec(v):
-        if v is None: return None
-        try: return Decimal(str(v).replace(" ", "").replace(",", "."))
+    def to_dec(v: str | None):
+        if not v: return None
+        try: return Decimal(v.replace(" ", "").replace(",", ".").replace("\xa0", ""))
         except: return None
 
-    # Load subsidies by name (case-insensitive)
     from app.models.subsidy import Subsidy
     sub_rows = (await db.execute(select(Subsidy))).scalars().all()
     sub_by_name = {s.name.lower().strip(): s.id for s in sub_rows}
 
-    # Load existing FEO categories for parent lookup: (subsidy_id, name.lower) → id
-    existing = (await db.execute(select(FeoCategory))).scalars().all()
-    created_map: dict[tuple, int] = {(c.subsidy_id, c.name.lower().strip()): c.id for c in existing}
+    # Кэш: (subsidy_id, parent_id_or_None, name_lower) → FeoCategory
+    existing_cats = (await db.execute(select(FeoCategory))).scalars().all()
+    cat_cache: dict[tuple, FeoCategory] = {}
+    for c in existing_cats:
+        cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
 
-    data_rows = [(i + 2, row) for i, row in enumerate(rows[1:])]
-    created = 0; skipped = 0; errors: list[dict] = []
+    created = 0; updated = 0; skipped = 0; errors: list[dict] = []
 
-    # Up to 3 passes to handle parent-child ordering
-    pending = data_rows[:]
-    for _pass in range(3):
-        if not pending:
-            break
-        still_pending = []
-        for row_num, row in pending:
-            try:
-                name = cell(row, "name")
-                if not name:
-                    skipped += 1
-                    continue
+    async def find_or_create(subsidy_id: int, parent_id, name: str, level: int) -> FeoCategory:
+        key = (subsidy_id, parent_id, name.lower().strip())
+        if key in cat_cache:
+            return cat_cache[key]
+        cat = FeoCategory(
+            name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
+            is_active=True,
+        )
+        db.add(cat)
+        await db.flush()
+        cat_cache[key] = cat
+        return cat
 
-                sub_name = cell(row, "subsidy_name")
-                if not sub_name:
-                    errors.append({"row": row_num, "name": name, "message": "Не указана субсидия"})
-                    continue
-                subsidy_id = sub_by_name.get(sub_name.lower().strip())
-                if not subsidy_id:
-                    errors.append({"row": row_num, "name": name, "message": f"Субсидия не найдена: {sub_name}"})
-                    continue
+    for row_num, row in enumerate(rows[1:], start=2):
+        # Пропускаем строки-комментарии (строка 6 в шаблоне — подсказка)
+        sub_name = get_cell(row, c_subsidy)
+        if not sub_name or sub_name.startswith("←"):
+            skipped += 1
+            continue
 
-                parent_name = cell(row, "parent_name")
-                parent_id = None
-                level = 1
-                if parent_name:
-                    parent_id = created_map.get((subsidy_id, parent_name.lower().strip()))
-                    if parent_id is None:
-                        # Parent not yet created — defer to next pass
-                        still_pending.append((row_num, row))
-                        continue
-                    # Determine level from parent
-                    parent_obj = (await db.execute(
-                        select(FeoCategory).where(FeoCategory.id == parent_id)
-                    )).scalar_one_or_none()
-                    level = (parent_obj.level + 1) if parent_obj else 2
-                    if level > 3:
-                        errors.append({"row": row_num, "name": name, "message": "Превышен макс. уровень вложенности (3)"})
-                        continue
+        lvl2_name = get_cell(row, c_lvl2)
+        if not lvl2_name or lvl2_name.startswith("←"):
+            skipped += 1
+            continue
 
-                # Skip duplicate (same subsidy + name)
-                if (subsidy_id, name.lower().strip()) in created_map:
-                    skipped += 1
-                    continue
+        subsidy_id = sub_by_name.get(sub_name.lower().strip())
+        if not subsidy_id:
+            errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
+            continue
 
-                cat = FeoCategory(
-                    name=name,
-                    subsidy_id=subsidy_id,
-                    parent_id=parent_id,
-                    level=level,
-                    code=cell(row, "code"),
-                    appendix=cell(row, "appendix"),
-                    budget=to_dec(cell(row, "budget")),
-                    is_active=to_bool(cell(row, "is_active")),
-                )
-                db.add(cat)
-                await db.flush()  # get cat.id
-                created_map[(subsidy_id, name.lower().strip())] = cat.id
+        lvl3_name = get_cell(row, c_lvl3) if c_lvl3 is not None else None
+        lvl4_name = get_cell(row, c_lvl4) if c_lvl4 is not None else None
+
+        code     = get_cell(row, c_code)
+        appendix = get_cell(row, c_appendix)
+        budget   = to_dec(get_cell(row, c_budget))
+        is_active = to_bool(get_cell(row, c_active))
+
+        try:
+            # Уровень 2 → FeoCategory.level=1
+            cat_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
+            if cat_l1.id and (subsidy_id, None, lvl2_name.lower().strip()) not in {k for k in cat_cache if cat_cache[k] is cat_l1 and cat_cache[k].id == cat_l1.id}:
                 created += 1
-            except Exception as e:
-                errors.append({"row": row_num, "name": cell(row, "name") or "?", "message": str(e)})
-        pending = still_pending
+            leaf = cat_l1
 
-    # Rows still pending after 3 passes → circular or unresolvable parent
-    for row_num, row in pending:
-        name = cell(row, "name") or "?"
-        errors.append({"row": row_num, "name": name, "message": "Родительская категория не найдена"})
+            if lvl3_name:
+                # Уровень 3 → FeoCategory.level=2, родитель = l1
+                is_new_l2 = (subsidy_id, cat_l1.id, lvl3_name.lower().strip()) not in cat_cache
+                cat_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
+                if is_new_l2 and cat_l2.id:
+                    created += 1
+                leaf = cat_l2
+
+                if lvl4_name:
+                    # Уровень 4 → FeoCategory.level=3, родитель = l2
+                    is_new_l3 = (subsidy_id, cat_l2.id, lvl4_name.lower().strip()) not in cat_cache
+                    cat_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
+                    if is_new_l3 and cat_l3.id:
+                        created += 1
+                    leaf = cat_l3
+
+            # Применяем атрибуты к листовому узлу
+            changed = False
+            if code is not None and leaf.code != code:
+                leaf.code = code; changed = True
+            if appendix is not None and leaf.appendix != appendix:
+                leaf.appendix = appendix; changed = True
+            if budget is not None and leaf.budget != budget:
+                leaf.budget = budget; changed = True
+            if leaf.is_active != is_active:
+                leaf.is_active = is_active; changed = True
+            if changed:
+                updated += 1
+
+        except Exception as e:
+            errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
 
     await db.commit()
-    return {"created": created, "skipped": skipped, "errors": errors}
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
 
 
 @router.get("/export")

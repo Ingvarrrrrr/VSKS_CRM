@@ -12,9 +12,11 @@ class PurchaseMember(Base):
     purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(50), default="viewer")
+    added_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    user = relationship("User", lazy="joined")
+    user = relationship("User", foreign_keys=[user_id], lazy="joined")
+    added_by = relationship("User", foreign_keys=[added_by_id], lazy="joined")
 
 
 class PurchaseEvent(Base):

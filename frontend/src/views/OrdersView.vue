@@ -585,10 +585,10 @@ const TRANSITION_REQUIRED: Record<string, { field: keyof Purchase; label: string
     { field: 'contract_date', label: 'Дата договора' },
   ],
   delivered: [
-    { field: 'acceptance_doc_name', label: 'Наименование акта' },
-    { field: 'acceptance_doc_date', label: 'Дата акта' },
-    { field: 'acceptance_doc_number', label: 'Номер акта' },
-    { field: 'acceptance_doc_amount', label: 'Сумма акта' },
+    { field: 'acceptance_doc_name', label: 'Наименование закрывающего документа' },
+    { field: 'acceptance_doc_date', label: 'Дата закрывающего документа' },
+    { field: 'acceptance_doc_number', label: 'Номер закрывающего документа' },
+    { field: 'acceptance_doc_amount', label: 'Сумма закрывающего документа' },
   ],
   paid: [
     { field: 'payment_doc_number', label: 'Номер платёжного поручения' },

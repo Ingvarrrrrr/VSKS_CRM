@@ -346,9 +346,15 @@
           <div class="mt-4">
             <div class="detail-feo-header">
               <span class="chart-card-title">Мероприятия</span>
-              <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
-                Добавить мероприятие
-              </v-btn>
+              <div class="d-flex gap-2">
+                <v-btn v-if="selectedId" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel"
+                  @click="downloadReport(selectedId)">
+                  Приложение №3
+                </v-btn>
+                <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
+                  Добавить
+                </v-btn>
+              </div>
             </div>
             <div v-if="subsidyEvents.length === 0" class="feo-empty">
               <v-icon icon="mdi-calendar-blank" size="40" color="grey-lighten-2" />
@@ -359,22 +365,14 @@
                 <template #prepend>
                   <v-icon :icon="ev.is_active ? 'mdi-calendar-check' : 'mdi-calendar-remove'" :color="ev.is_active ? 'success' : 'grey'" size="18" />
                 </template>
-                <v-list-item-title class="text-body-2">
-                  <template v-if="editingEventId === ev.id">
-                    <v-text-field
-                      v-model="editingEventName"
-                      density="compact" variant="outlined" hide-details
-                      class="d-inline-flex" style="max-width:300px"
-                      @keydown.enter="saveEventEdit(ev.id)"
-                      @keydown.esc="editingEventId = null"
-                    />
-                    <v-btn icon="mdi-check" size="x-small" variant="text" color="success" class="ml-1" @click="saveEventEdit(ev.id)" />
-                    <v-btn icon="mdi-close" size="x-small" variant="text" color="grey" @click="editingEventId = null" />
-                  </template>
-                  <template v-else>{{ ev.name }}</template>
-                </v-list-item-title>
-                <template v-if="isAdminLevel && editingEventId !== ev.id" #append>
-                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="startEventEdit(ev)" />
+                <v-list-item-title class="text-body-2">{{ ev.name }}</v-list-item-title>
+                <v-list-item-subtitle v-if="ev.region || ev.date_from" class="text-caption">
+                  <span v-if="ev.region">{{ ev.region }}</span>
+                  <span v-if="ev.region && ev.date_from"> · </span>
+                  <span v-if="ev.date_from">{{ ev.date_from }} — {{ ev.date_to }}</span>
+                </v-list-item-subtitle>
+                <template v-if="isAdminLevel" #append>
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditEventDialog(ev)" />
                   <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteEvent(ev.id)" />
                 </template>
               </v-list-item>
@@ -386,7 +384,7 @@
     </template>
 
     <!-- ── Add Event Dialog ── -->
-    <v-dialog v-model="showAddEventDialog" max-width="420">
+    <v-dialog v-model="showAddEventDialog" max-width="520">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-calendar-plus" color="primary" class="mr-2" />
@@ -395,12 +393,50 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pa-4">
-          <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" hide-details />
+          <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="newEventRegion" label="Регион проведения" variant="outlined" density="compact" hide-details />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="showAddEventDialog = false">Отмена</v-btn>
           <v-btn color="primary" variant="flat" :disabled="!newEventName.trim()" @click="addEvent">Добавить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Edit Event Dialog ── -->
+    <v-dialog v-model="showEditEventDialog" max-width="640">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-calendar-edit" color="primary" class="mr-2" />
+          Редактировать мероприятие
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditEventDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-4">
+          <v-text-field v-model="editEventForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" />
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="editEventForm.region" label="Регион проведения" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="editEventForm.date_from" label="Дата начала" type="date" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="editEventForm.date_to" label="Дата окончания" type="date" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-text-field v-model="editEventForm.order_decree" label="Реквизиты приказа (номер, дата)" variant="outlined" density="compact" class="mt-3" hide-details />
+          <v-textarea v-model="editEventForm.planned_indicators" label="Плановые показатели (KPI)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-textarea v-model="editEventForm.actual_indicators" label="Фактически достигнутые показатели" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-text-field v-model="editEventForm.media_link_1" label="Ссылка на СМИ 1" variant="outlined" density="compact" class="mt-3" hide-details />
+          <v-text-field v-model="editEventForm.media_link_2" label="Ссылка на СМИ 2" variant="outlined" density="compact" class="mt-2" hide-details />
+          <v-text-field v-model="editEventForm.media_link_3" label="Ссылка на СМИ 3" variant="outlined" density="compact" class="mt-2" hide-details />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="showEditEventDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="savingEvent" @click="saveEditEvent">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -782,64 +818,65 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Contract Template Dialog ── -->
-    <v-dialog v-model="showTemplateDialog" max-width="480">
+    <!-- ── Templates Dialog (multi-type) ── -->
+    <v-dialog v-model="showTemplateDialog" max-width="600" scrollable>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
-          <v-icon icon="mdi-file-document-outline" color="indigo" class="mr-2" />
-          Шаблон договора
+          <v-icon icon="mdi-file-document-multiple-outline" color="indigo" class="mr-2" />
+          Шаблоны документов
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showTemplateDialog = false" />
         </v-card-title>
         <v-divider />
-        <v-card-text class="pt-4">
+        <v-card-text class="pt-3">
           <div class="text-caption text-medium-emphasis mb-3">{{ templateSubsidy?.name }}</div>
-          <v-alert
-            v-if="templateExists"
-            type="success" variant="tonal" density="compact" class="mb-3"
-          >
-            Шаблон загружен. При генерации договора для этой субсидии будет использоваться этот файл вместо стандартного.
-          </v-alert>
-          <v-alert
-            v-else
-            type="info" variant="tonal" density="compact" class="mb-3"
-          >
-            Шаблон не загружен. Будет использоваться стандартный шаблон договора.
-          </v-alert>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4" text="Загруженные шаблоны используются при генерации документов для этой субсидии вместо глобальных." />
 
-          <div class="d-flex align-center gap-2">
-            <v-file-input
-              v-model="templateFile"
-              label="Выбрать .docx файл"
-              accept=".docx"
-              density="compact"
-              variant="outlined"
-              hide-details
-              prepend-icon=""
-              prepend-inner-icon="mdi-paperclip"
-              class="flex-grow-1"
-            />
-            <v-btn
-              color="indigo"
-              :loading="templateUploading"
-              :disabled="!templateFile || !templateFile.length"
-              @click="uploadTemplate"
-            >
-              Загрузить
-            </v-btn>
-          </div>
+          <v-list density="compact">
+            <v-list-item v-for="t in subsidyTemplatesList" :key="t.doc_type" class="px-0 mb-2">
+              <template #prepend>
+                <v-icon :color="t.has_custom ? 'green' : 'grey'" class="mr-2">
+                  {{ t.has_custom ? 'mdi-check-circle' : 'mdi-circle-outline' }}
+                </v-icon>
+              </template>
+              <template #title>
+                <span class="text-body-2 font-weight-medium">{{ t.label }}</span>
+                <v-chip v-if="t.has_custom" size="x-small" color="green" variant="tonal" class="ml-2">свой</v-chip>
+                <v-chip v-else-if="t.has_global" size="x-small" color="grey" variant="tonal" class="ml-2">глобальный</v-chip>
+                <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">нет шаблона</v-chip>
+              </template>
+              <template #append>
+                <div class="d-flex gap-1">
+                  <v-btn
+                    v-if="t.has_custom || t.has_global"
+                    icon="mdi-download" variant="text" size="small" color="indigo"
+                    title="Скачать текущий шаблон"
+                    @click="downloadSubsidyTemplate(t.doc_type)"
+                  />
+                  <v-btn
+                    icon="mdi-upload" variant="text" size="small" color="primary"
+                    title="Загрузить свой шаблон"
+                    @click="triggerTemplateUpload(t.doc_type)"
+                  />
+                  <v-btn
+                    v-if="t.has_custom"
+                    icon="mdi-delete-outline" variant="text" size="small" color="error"
+                    title="Удалить — вернётся к глобальному"
+                    @click="deleteSubsidyTemplate(t.doc_type)"
+                  />
+                </div>
+              </template>
+            </v-list-item>
+          </v-list>
+
+          <!-- Hidden file input for template upload -->
+          <input ref="templateFileInputRef" type="file" accept=".docx" style="display:none"
+            @change="onTemplateFileSelected" />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
-          <v-btn
-            v-if="templateExists"
-            variant="outlined"
-            color="indigo"
-            prepend-icon="mdi-download"
-            @click="downloadTemplate"
-          >
-            Скачать
+          <v-btn variant="outlined" prepend-icon="mdi-book-open-variant" color="indigo" @click="downloadMarkupGuide">
+            Руководство по переменным
           </v-btn>
           <v-spacer />
-          <v-btn v-if="templateExists" variant="text" color="error" @click="deleteTemplate">Удалить</v-btn>
           <v-btn variant="text" @click="showTemplateDialog = false">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
@@ -1050,13 +1087,13 @@ const approversList          = ref<SubsidyApprover[]>([])
 const approverEditTarget     = ref<SubsidyApprover | null>(null)
 const approverForm = ref({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false })
 
-// Contract template state
+// Template management state
 const showTemplateDialog  = ref(false)
 const templateSubsidy     = ref<SubsidyRow | null>(null)
-const templateExists      = ref(false)
-const templateUploading   = ref(false)
-const templateFile        = ref<File[]>([])
 const contractTemplates   = ref<Record<number, boolean>>({})
+const subsidyTemplatesList = ref<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean }>>([])
+const templateFileInputRef = ref<HTMLInputElement | null>(null)
+const uploadingDocType     = ref<string | null>(null)
 const deleteTarget       = ref<SubsidyRow | null>(null)
 const deleteErrorLinked  = ref(false)
 const feoEditTarget      = ref<FeoCategory | null>(null)
@@ -1092,12 +1129,24 @@ const overrideForm = ref({
 })
 
 // Events (Мероприятия) state
-interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
+interface EventItem {
+  id: number; subsidy_id: number; name: string; is_active: boolean
+  region?: string; date_from?: string; date_to?: string
+  order_decree?: string; planned_indicators?: string; actual_indicators?: string
+  media_link_1?: string; media_link_2?: string; media_link_3?: string
+}
 const subsidyEvents = ref<EventItem[]>([])
 const showAddEventDialog = ref(false)
 const newEventName = ref('')
-const editingEventId = ref<number | null>(null)
-const editingEventName = ref('')
+const newEventRegion = ref('')
+const showEditEventDialog = ref(false)
+const savingEvent = ref(false)
+const editEventForm = ref<EventItem>({
+  id: 0, subsidy_id: 0, name: '', is_active: true,
+  region: '', date_from: '', date_to: '',
+  order_decree: '', planned_indicators: '', actual_indicators: '',
+  media_link_1: '', media_link_2: '', media_link_3: '',
+})
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 
@@ -1761,51 +1810,57 @@ async function _renumberApprovers() {
   }
 }
 
-// ── Contract template management ──────────────────
+// ── Template management (multi-type) ──────────────
 async function openTemplateDialog(s: SubsidyRow) {
   templateSubsidy.value = s
-  templateFile.value = []
   showTemplateDialog.value = true
+  subsidyTemplatesList.value = []
   try {
-    const res = await apiFetch<{ exists: boolean }>(`/subsidies/${s.id}/contract-template/status`)
-    templateExists.value = res.exists
-    contractTemplates.value[s.id] = res.exists
+    const list = await apiFetch<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean }>>(
+      `/subsidies/${s.id}/templates`
+    )
+    subsidyTemplatesList.value = list
+    contractTemplates.value[s.id] = list.some(t => t.has_custom)
   } catch {
-    templateExists.value = false
+    subsidyTemplatesList.value = []
   }
 }
 
-async function uploadTemplate() {
-  if (!templateSubsidy.value || !templateFile.value?.length) return
-  templateUploading.value = true
+function triggerTemplateUpload(docType: string) {
+  uploadingDocType.value = docType
+  templateFileInputRef.value?.click()
+}
+
+async function onTemplateFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file || !templateSubsidy.value || !uploadingDocType.value) return
+  const token = localStorage.getItem('auth_token')
+  const fd = new FormData()
+  fd.append('file', file)
   try {
-    const token = localStorage.getItem('auth_token')
-    const fd = new FormData()
-    fd.append('file', templateFile.value[0])
-    const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/contract-template`, {
-      method: 'POST',
+    const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${uploadingDocType.value}`, {
+      method: 'PUT',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: fd,
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'upload failed')
+      throw new Error(err.detail || 'Ошибка загрузки')
     }
-    templateExists.value = true
-    contractTemplates.value[templateSubsidy.value.id] = true
-    templateFile.value = []
-    showSnack('Шаблон договора загружен')
+    showSnack('Шаблон загружен')
+    await openTemplateDialog(templateSubsidy.value)
   } catch (e: any) {
     showSnack(e.message || 'Ошибка загрузки шаблона', 'error')
   } finally {
-    templateUploading.value = false
+    uploadingDocType.value = null
+    ;(event.target as HTMLInputElement).value = ''
   }
 }
 
-async function downloadTemplate() {
+async function downloadSubsidyTemplate(docType: string) {
   if (!templateSubsidy.value) return
   const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/contract-template/download`, {
+  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${docType}/download`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
@@ -1813,21 +1868,35 @@ async function downloadTemplate() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `contract_template_subsidy_${templateSubsidy.value.id}.docx`
+  a.download = `template_${docType}_subsidy_${templateSubsidy.value.id}.docx`
   a.click()
   URL.revokeObjectURL(url)
 }
 
-async function deleteTemplate() {
+async function deleteSubsidyTemplate(docType: string) {
   if (!templateSubsidy.value) return
   try {
-    await apiFetch(`/subsidies/${templateSubsidy.value.id}/contract-template`, { method: 'DELETE' })
-    templateExists.value = false
-    contractTemplates.value[templateSubsidy.value.id] = false
-    showSnack('Шаблон договора удалён', 'warning')
+    await apiFetch(`/subsidies/${templateSubsidy.value.id}/templates/${docType}`, { method: 'DELETE' })
+    showSnack('Шаблон удалён', 'warning')
+    await openTemplateDialog(templateSubsidy.value)
   } catch {
     showSnack('Ошибка удаления шаблона', 'error')
   }
+}
+
+async function downloadMarkupGuide() {
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch('/api/documents/template-guide', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { showSnack('Ошибка скачивания руководства', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'template_guide.docx'
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -1914,10 +1983,16 @@ async function addEvent() {
   try {
     await apiFetch('/events/', {
       method: 'POST',
-      body: JSON.stringify({ subsidy_id: selectedId.value, name: newEventName.value.trim(), is_active: true }),
+      body: JSON.stringify({
+        subsidy_id: selectedId.value,
+        name: newEventName.value.trim(),
+        is_active: true,
+        region: newEventRegion.value.trim() || null,
+      }),
     })
     showAddEventDialog.value = false
     newEventName.value = ''
+    newEventRegion.value = ''
     await loadEvents(selectedId.value)
     snack.value = { show: true, text: 'Мероприятие добавлено', color: 'success' }
   } catch (e: any) {
@@ -1925,23 +2000,73 @@ async function addEvent() {
   }
 }
 
-function startEventEdit(ev: EventItem) {
-  editingEventId.value = ev.id
-  editingEventName.value = ev.name
+function openEditEventDialog(ev: EventItem) {
+  editEventForm.value = {
+    id: ev.id,
+    subsidy_id: ev.subsidy_id,
+    name: ev.name,
+    is_active: ev.is_active,
+    region: ev.region || '',
+    date_from: ev.date_from || '',
+    date_to: ev.date_to || '',
+    order_decree: ev.order_decree || '',
+    planned_indicators: ev.planned_indicators || '',
+    actual_indicators: ev.actual_indicators || '',
+    media_link_1: ev.media_link_1 || '',
+    media_link_2: ev.media_link_2 || '',
+    media_link_3: ev.media_link_3 || '',
+  }
+  showEditEventDialog.value = true
 }
 
-async function saveEventEdit(eventId: number) {
-  if (!editingEventName.value.trim() || !selectedId.value) return
+async function saveEditEvent() {
+  if (!editEventForm.value.name.trim() || !selectedId.value) return
+  savingEvent.value = true
   try {
-    await apiFetch(`/events/${eventId}`, {
+    const f = editEventForm.value
+    await apiFetch(`/events/${f.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ subsidy_id: selectedId.value, name: editingEventName.value.trim(), is_active: true }),
+      body: JSON.stringify({
+        subsidy_id: f.subsidy_id,
+        name: f.name.trim(),
+        is_active: f.is_active,
+        region: f.region || null,
+        date_from: f.date_from || null,
+        date_to: f.date_to || null,
+        order_decree: f.order_decree || null,
+        planned_indicators: f.planned_indicators || null,
+        actual_indicators: f.actual_indicators || null,
+        media_link_1: f.media_link_1 || null,
+        media_link_2: f.media_link_2 || null,
+        media_link_3: f.media_link_3 || null,
+      }),
     })
-    editingEventId.value = null
+    showEditEventDialog.value = false
     await loadEvents(selectedId.value)
     snack.value = { show: true, text: 'Мероприятие обновлено', color: 'success' }
   } catch (e: any) {
     snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+  } finally {
+    savingEvent.value = false
+  }
+}
+
+async function downloadReport(subsidyId: number) {
+  try {
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
+    const resp = await fetch(`/api/reports/subsidy/${subsidyId}/xlsx`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) throw new Error(`Ошибка ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Приложение_3_субсидия_${subsidyId}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    snack.value = { show: true, text: e.message || 'Ошибка скачивания', color: 'error' }
   }
 }
 

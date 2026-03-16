@@ -20,6 +20,10 @@
           prepend-icon="mdi-refresh" @click="resetApproval">
           Перезапустить
         </v-btn>
+        <v-btn color="primary" variant="tonal" size="small"
+          prepend-icon="mdi-account-plus-outline" @click="openAddApproverDialog">
+          Добавить
+        </v-btn>
       </div>
     </v-card-title>
 
@@ -161,6 +165,50 @@
 
   <!-- Signature pad -->
   <SignaturePad ref="sigPadRef" @saved="onSignatureSaved" />
+
+  <!-- ── Add Approver Dialog ── -->
+  <v-dialog v-model="addApproverDialog" max-width="480">
+    <v-card>
+      <v-card-title class="pt-4 px-5 d-flex align-center">
+        <v-icon icon="mdi-account-plus-outline" color="primary" class="mr-2" />
+        Добавить согласующего
+        <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="addApproverDialog = false" />
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-5 pt-4">
+        <v-autocomplete
+          v-model="addApproverForm.selectedUser"
+          :items="usersList"
+          item-title="full_name"
+          item-value="id"
+          label="Сотрудник *"
+          variant="outlined"
+          density="compact"
+          return-object
+          clearable
+          class="mb-3"
+        />
+        <v-text-field
+          v-model="addApproverForm.role_name"
+          label="Должность / роль *"
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="mb-3"
+        />
+      </v-card-text>
+      <v-card-actions class="px-5 pb-4">
+        <v-spacer />
+        <v-btn @click="addApproverDialog = false">Отмена</v-btn>
+        <v-btn color="primary" variant="flat"
+          :disabled="!addApproverForm.selectedUser || !addApproverForm.role_name.trim()"
+          :loading="addingApprover"
+          @click="submitAddApprover">
+          Добавить
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -214,6 +262,53 @@ const approveTargetId = ref<number | null>(null)
 const signMode = ref<'electronic' | 'paper'>('electronic')
 const userSignature = ref<string | null>(null)
 const sigPadRef = ref<InstanceType<typeof SignaturePad> | null>(null)
+
+// Add approver dialog
+const addApproverDialog = ref(false)
+const addingApprover = ref(false)
+const addApproverForm = ref<{ selectedUser: { id: number; full_name: string } | null; role_name: string }>({
+  selectedUser: null,
+  role_name: '',
+})
+const usersList = ref<Array<{ id: number; full_name: string }>>([])
+
+async function loadUsers() {
+  try {
+    const data = await apiFetch<any[]>('/users/')
+    usersList.value = data
+      .filter((u: any) => u.full_name)
+      .map((u: any) => ({ id: u.id, full_name: u.full_name }))
+  } catch { usersList.value = [] }
+}
+
+async function openAddApproverDialog() {
+  addApproverForm.value = { selectedUser: null, role_name: '' }
+  addApproverDialog.value = true
+  if (!usersList.value.length) await loadUsers()
+}
+
+async function submitAddApprover() {
+  const user = addApproverForm.value.selectedUser
+  if (!user || !addApproverForm.value.role_name.trim()) return
+  addingApprover.value = true
+  try {
+    await apiFetch(`/purchases/${props.purchaseId}/approvals/add`, {
+      method: 'POST',
+      body: {
+        user_id: user.id,
+        full_name: user.full_name,
+        role_name: addApproverForm.value.role_name.trim(),
+      },
+    })
+    await loadApprovals()
+    addApproverDialog.value = false
+    emit('snack', `${user.full_name} добавлен как согласующий`, 'success')
+  } catch (e: any) {
+    emit('snack', e?.detail || e?.message || 'Ошибка добавления', 'error')
+  } finally {
+    addingApprover.value = false
+  }
+}
 
 const canStart = computed(() => props.isManager || props.isAdmin)
 

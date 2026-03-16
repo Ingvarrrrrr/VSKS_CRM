@@ -46,6 +46,15 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
     count_rows = (await db.execute(count_q)).all()
     count_map = {r.task_id: r.cnt for r in count_rows}
 
+    # Subtask counts
+    subtask_q = (
+        select(Task.parent_task_id, func.count(Task.id).label("cnt"))
+        .where(Task.parent_task_id.in_(task_ids))
+        .group_by(Task.parent_task_id)
+    )
+    subtask_rows = (await db.execute(subtask_q)).all()
+    subtask_map = {r.parent_task_id: r.cnt for r in subtask_rows}
+
     # Last comment per task (using lateral / window)
     from sqlalchemy import text
     last_comments_map = {}
@@ -86,6 +95,9 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
             created_by_id=t.created_by_id,
             created_by_name=users_map.get(t.created_by_id),
             org_id=t.org_id, category=t.category,
+            parent_task_id=t.parent_task_id,
+            import_to_parent=t.import_to_parent,
+            subtask_count=subtask_map.get(t.id, 0),
             created_at=t.created_at, updated_at=t.updated_at,
             last_comment=lc.get("text"),
             last_comment_user=lc.get("user"),
@@ -197,10 +209,36 @@ async def create_task(
     org_id = get_single_org_id(current_user)
 
     # Только manager и выше может назначать задачи другим; employee — только себе
+    # Exception: assignee of a parent task may delegate to their subordinates
     from app.auth.jwt import MANAGER_ROLES as _MR
-    effective_assignee = (
-        task.assigned_user_id if current_user.role in _MR else current_user.id
-    )
+    from app.models.user_hierarchy import UserHierarchy
+
+    can_assign_others = current_user.role in _MR
+    effective_assignee = current_user.id
+
+    if task.assigned_user_id and task.assigned_user_id != current_user.id:
+        if can_assign_others:
+            effective_assignee = task.assigned_user_id
+        elif task.parent_task_id:
+            # Check if assignee is a subordinate of current user
+            parent = await db.get(Task, task.parent_task_id)
+            if parent and parent.assigned_user_id == current_user.id:
+                sub_check = await db.execute(
+                    select(UserHierarchy).where(
+                        UserHierarchy.manager_id == current_user.id,
+                        UserHierarchy.subordinate_id == task.assigned_user_id,
+                    )
+                )
+                if sub_check.scalar_one_or_none():
+                    effective_assignee = task.assigned_user_id
+                else:
+                    raise HTTPException(403, "Можно делегировать только своим подчинённым")
+            else:
+                raise HTTPException(403, "Делегирование доступно только исполнителю родительской задачи")
+        else:
+            effective_assignee = current_user.id
+    elif task.assigned_user_id:
+        effective_assignee = task.assigned_user_id
 
     db_task = Task(
         title=task.title,
@@ -211,6 +249,8 @@ async def create_task(
         created_by_id=current_user.id,
         org_id=org_id,
         category=task.category,
+        parent_task_id=task.parent_task_id,
+        import_to_parent=task.import_to_parent,
     )
     db.add(db_task)
     await db.commit()
@@ -240,6 +280,14 @@ async def update_task(
 
     update_data = task.dict(exclude_unset=True)
 
+    # Assignee cannot change protected fields — only creator/admin/department-head can
+    PROTECTED_FIELDS = {"title", "description", "priority", "due_date", "assigned_user_id"}
+    is_creator = current_user.id == db_task.created_by_id
+    if not is_creator and current_user.role not in ("superadmin", "org_admin", "admin"):
+        blocked = PROTECTED_FIELDS & set(update_data.keys())
+        if blocked:
+            raise HTTPException(403, f"Исполнитель не может изменять: {', '.join(blocked)}")
+
     # Validate due_date >= created_at date
     if "due_date" in update_data and update_data["due_date"]:
         due_val = update_data["due_date"]
@@ -256,6 +304,33 @@ async def update_task(
 
     result = await _enrich_tasks([db_task], db)
     return result[0]
+
+
+@router.get("/{task_id}", response_model=TaskOut)
+async def get_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    t = await db.get(Task, task_id)
+    if not t:
+        raise HTTPException(404, "Задача не найдена")
+    result = await _enrich_tasks([t], db)
+    return result[0]
+
+
+@router.get("/{task_id}/subtasks", response_model=List[TaskOut])
+async def list_subtasks(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Подзадачи (делегированные) для данной задачи."""
+    tasks = (await db.execute(
+        select(Task).where(Task.parent_task_id == task_id)
+        .order_by(Task.due_date.asc().nullslast(), Task.created_at.asc())
+    )).scalars().all()
+    return await _enrich_tasks(tasks, db)
 
 
 @router.delete("/{task_id}")

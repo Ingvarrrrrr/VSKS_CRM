@@ -192,7 +192,13 @@
               <div class="d-flex align-center ga-1 mb-1">
                 <v-chip :color="PRIORITY_COLOR[gt.priority] || 'grey'" size="x-small" variant="flat">{{ PRIORITY_LABEL[gt.priority] || gt.priority }}</v-chip>
                 <v-chip v-if="gt.category" size="x-small" variant="outlined">{{ gt.category }}</v-chip>
+                <v-chip v-if="gt.parent_task_id" size="x-small" variant="tonal" color="indigo" title="Подзадача">
+                  <v-icon icon="mdi-subdirectory-arrow-right" size="10" class="mr-1" />Подзадача
+                </v-chip>
                 <v-spacer />
+                <v-chip v-if="gt.subtask_count" size="x-small" variant="tonal" color="teal" :title="`${gt.subtask_count} делегировано`">
+                  <v-icon icon="mdi-sitemap-outline" size="10" class="mr-1" />{{ gt.subtask_count }}
+                </v-chip>
                 <v-chip v-if="gt.comment_count" size="x-small" variant="tonal" color="blue-grey">
                   <v-icon icon="mdi-comment-text-outline" size="10" class="mr-1" />{{ gt.comment_count }}
                 </v-chip>
@@ -206,6 +212,7 @@
               </div>
               <div class="kanban-card-footer mt-1">
                 <span v-if="gt.assigned_user_name" class="kanban-card-meta"><v-icon icon="mdi-account" size="12" class="mr-1"/>{{ gt.assigned_user_name }}</span>
+                <span v-if="gt.created_by_name && gt.created_by_id !== gt.assigned_user_id" class="kanban-card-meta text-medium-emphasis" style="font-size:10px"><v-icon icon="mdi-account-arrow-right" size="10" class="mr-1"/>{{ gt.created_by_name }}</span>
                 <v-chip v-if="gt.due_date" :color="deadlineColor(gt.due_date)" size="x-small" variant="tonal">{{ formatDate(gt.due_date.split('T')[0]) }}</v-chip>
               </div>
             </div>
@@ -302,20 +309,51 @@
     </template>
 
     <!-- General Task Dialog (create/edit) -->
-    <v-dialog v-model="showTaskDialog" max-width="600">
+    <v-dialog v-model="showTaskDialog" max-width="680">
       <v-card>
-        <v-card-title>{{ editingTask ? 'Редактировать задачу' : 'Новая задача' }}</v-card-title>
+        <v-card-title class="d-flex align-center justify-space-between">
+          <span>{{ editingTask ? 'Задача' : 'Новая задача' }}</span>
+          <div class="d-flex ga-1 align-center">
+            <v-chip v-if="editingTask && editingTask.created_by_name" size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-arrow-right">
+              Поставил: {{ editingTask.created_by_name }}
+            </v-chip>
+            <v-chip v-if="editingTask && isTaskReadonly" size="small" variant="tonal" color="warning" prepend-icon="mdi-lock-outline">
+              Только статус
+            </v-chip>
+          </div>
+        </v-card-title>
         <v-card-text>
-          <v-text-field v-model="taskForm.title" label="Название *" variant="outlined" density="compact" class="mb-2" />
-          <v-textarea v-model="taskForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mb-2" />
+          <v-text-field v-model="taskForm.title" label="Название *" variant="outlined" density="compact" class="mb-2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          <v-textarea v-model="taskForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mb-2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
           <div class="d-flex ga-2 mb-2">
-            <v-select v-model="taskForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" />
-            <v-combobox v-model="taskForm.category" :items="taskCategories" label="Категория" variant="outlined" density="compact" clearable />
+            <v-select v-model="taskForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" :disabled="isTaskReadonly" />
+            <v-combobox v-model="taskForm.category" :items="taskCategories" label="Категория" variant="outlined" density="compact" clearable :disabled="isTaskReadonly" />
           </div>
           <div class="d-flex ga-2 mb-2">
-            <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" />
-            <v-select v-if="!isEmployee" v-model="taskForm.assigned_user_id" :items="userItems" label="Исполнитель" variant="outlined" density="compact" clearable item-title="text" item-value="value" />
+            <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+            <v-select v-if="!isEmployee" v-model="taskForm.assigned_user_id" :items="userItems" label="Исполнитель" variant="outlined" density="compact" clearable item-title="text" item-value="value" :disabled="isTaskReadonly" />
           </div>
+
+          <!-- Subtasks (delegated) -->
+          <template v-if="editingTask && taskSubtasks.length">
+            <v-divider class="my-2" />
+            <div class="text-subtitle-2 font-weight-medium mb-1 d-flex align-center ga-1">
+              <v-icon icon="mdi-sitemap-outline" size="16" color="teal" />
+              Делегировано ({{ taskSubtasks.length }})
+            </div>
+            <v-list density="compact" class="border rounded mb-2">
+              <v-list-item v-for="st in taskSubtasks" :key="st.id"
+                :prepend-icon="'mdi-circle-small'"
+                :subtitle="`${st.assigned_user_name || '—'} · ${st.due_date ? st.due_date.split('T')[0] : 'без срока'}`"
+                @click="openSubtask(st)">
+                <template #title>
+                  <span class="text-body-2">{{ st.title }}</span>
+                  <v-chip :color="PRIORITY_COLOR[st.priority]||'grey'" size="x-small" variant="flat" class="ml-1">{{ PRIORITY_LABEL[st.priority] }}</v-chip>
+                  <v-chip :color="st.status==='done'?'success':st.status==='in_progress'?'primary':'warning'" size="x-small" variant="tonal" class="ml-1">{{ {todo:'К выполнению',in_progress:'В работе',done:'Готово'}[st.status]||st.status }}</v-chip>
+                </template>
+              </v-list-item>
+            </v-list>
+          </template>
 
           <!-- Chat section (only for existing tasks) -->
           <template v-if="editingTask">
@@ -366,10 +404,38 @@
           </template>
         </v-card-text>
         <v-card-actions>
-          <v-btn v-if="editingTask" color="error" variant="text" @click="deleteGeneralTask">Удалить</v-btn>
+          <v-btn v-if="editingTask && !isTaskReadonly" color="error" variant="text" @click="deleteGeneralTask">Удалить</v-btn>
+          <v-btn v-if="editingTask" color="teal" variant="tonal" prepend-icon="mdi-account-arrow-right-outline" size="small" @click="openDelegateDialog">
+            Делегировать
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="closeTaskDialog">Отмена</v-btn>
           <v-btn color="primary" :disabled="!taskForm.title" @click="saveGeneralTask">{{ editingTask ? 'Сохранить' : 'Создать' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delegation dialog -->
+    <v-dialog v-model="showDelegateDialog" max-width="520">
+      <v-card>
+        <v-card-title>Делегировать подзадачу</v-card-title>
+        <v-card-text>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            Создаётся подзадача на основе текущей. Вы устанавливаете исполнителя, сроки и приоритет сами.
+          </v-alert>
+          <v-text-field v-model="delegateForm.title" label="Название задачи *" variant="outlined" density="compact" class="mb-2" />
+          <v-textarea v-model="delegateForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mb-2" />
+          <div class="d-flex ga-2 mb-2">
+            <v-select v-model="delegateForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" />
+            <v-text-field v-model="delegateForm.due_date" label="Срок" variant="outlined" density="compact" type="date" :min="todayStr" />
+          </div>
+          <v-select v-model="delegateForm.assigned_user_id" :items="subordinateItems" label="Исполнитель (подчинённый) *" variant="outlined" density="compact" item-title="text" item-value="value" class="mb-2" />
+          <v-switch v-model="delegateForm.import_to_parent" label="Показывать в родительской задаче" color="teal" density="compact" hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showDelegateDialog = false">Отмена</v-btn>
+          <v-btn color="teal" :disabled="!delegateForm.title || !delegateForm.assigned_user_id" :loading="delegateSaving" @click="saveDelegate">Делегировать</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -439,6 +505,21 @@ const commentsLoading = ref(false)
 const newCommentText = ref('')
 const commentSaving = ref(false)
 
+// Subtasks and delegation
+const taskSubtasks = ref<any[]>([])
+const showDelegateDialog = ref(false)
+const delegateSaving = ref(false)
+const subordinateItems = ref<{text:string, value:number}[]>([])
+const delegateForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assigned_user_id: null as number|null, import_to_parent: true })
+
+const isTaskReadonly = computed(() => {
+  if (!editingTask.value) return false
+  const uid = currentUserId
+  const t = editingTask.value
+  // Readonly if: I am the assignee but NOT the creator
+  return t.assigned_user_id === uid && t.created_by_id !== uid
+})
+
 // Report
 const departments = ref<string[]>([])
 const reportDept = ref<string | null>(null)
@@ -502,15 +583,73 @@ function editGeneralTask(t: any) {
     due_date: t.due_date ? t.due_date.split('T')[0] : '',
     assigned_user_id: t.assigned_user_id, category: t.category || '',
   }
+  taskSubtasks.value = []
   newCommentText.value = ''
   showTaskDialog.value = true
   loadComments(t.id)
+  if (t.subtask_count > 0 || t.import_to_parent) loadSubtasks(t.id)
+}
+
+async function loadSubtasks(taskId: number) {
+  try {
+    taskSubtasks.value = await apiFetch<any[]>(`/tasks/${taskId}/subtasks`)
+  } catch { taskSubtasks.value = [] }
+}
+
+function openSubtask(st: any) {
+  closeTaskDialog()
+  setTimeout(() => editGeneralTask(st), 100)
+}
+
+async function openDelegateDialog() {
+  if (!editingTask.value) return
+  // Load subordinates of current user
+  try {
+    const subs = await apiFetch<any[]>(`/users/${currentUserId}/subordinates`)
+    subordinateItems.value = subs.map((u: any) => ({ text: u.full_name || u.username, value: u.id }))
+  } catch {
+    subordinateItems.value = userItems.value
+  }
+  delegateForm.value = {
+    title: editingTask.value.title,
+    description: editingTask.value.description || '',
+    priority: editingTask.value.priority || 'medium',
+    due_date: editingTask.value.due_date ? editingTask.value.due_date.split('T')[0] : '',
+    assigned_user_id: null,
+    import_to_parent: true,
+  }
+  showDelegateDialog.value = true
+}
+
+async function saveDelegate() {
+  if (!editingTask.value || !delegateForm.value.assigned_user_id) return
+  delegateSaving.value = true
+  try {
+    const body: any = {
+      ...delegateForm.value,
+      parent_task_id: editingTask.value.id,
+    }
+    if (body.due_date) body.due_date = body.due_date + 'T23:59:59Z'
+    else delete body.due_date
+    const created = await apiFetch<any>('/tasks/', { method: 'POST', body: JSON.stringify(body) })
+    generalTasks.value.push(created)
+    // Update subtask count on parent card
+    const parentCard = generalTasks.value.find(t => t.id === editingTask.value!.id)
+    if (parentCard) parentCard.subtask_count = (parentCard.subtask_count || 0) + 1
+    taskSubtasks.value.push(created)
+    showDelegateDialog.value = false
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка делегирования')
+  } finally {
+    delegateSaving.value = false
+  }
 }
 
 function closeTaskDialog() {
   showTaskDialog.value = false
   editingTask.value = null
   taskComments.value = []
+  taskSubtasks.value = []
 }
 
 async function loadComments(taskId: number) {

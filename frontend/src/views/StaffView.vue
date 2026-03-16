@@ -1042,7 +1042,7 @@ async function saveEditUser() {
       method: 'PATCH', body: JSON.stringify(body),
     })
     const idx = users.value.findIndex(u => u.id === editDialog.userId)
-    if (idx >= 0) users.value[idx] = updated
+    if (idx >= 0) users.value.splice(idx, 1, updated)
     editDialog.show = false
     showSnack('Пользователь обновлен')
     loadHierarchyTree()

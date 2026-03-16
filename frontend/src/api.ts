@@ -23,7 +23,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       localStorage.removeItem('auth_token')
       localStorage.removeItem('user_role')
       localStorage.removeItem('user_name')
-      window.location.href = '/login'
+      window.location.href = '/'
       throw new Error('Сессия истекла, войдите снова')
     }
     const text = await res.text()

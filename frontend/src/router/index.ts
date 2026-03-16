@@ -194,11 +194,15 @@ router.beforeEach((to, _, next) => {
     return next('/')
   }
 
-  // Employee guard: разрешить только /my-tasks и /orders/:id/edit (назначенные закупки)
+  // Employee guard: ограниченный доступ
   if (isAuthenticated && role === 'employee') {
     const path = to.path
     const allowed = path === '/my-tasks'
-      || path.startsWith('/orders/') && (path.endsWith('/edit') || !path.includes('/'))
+      || path === '/products'
+      || path === '/contractors'
+      || path === '/orders'
+      || path === '/create-order'
+      || path.startsWith('/orders/')
       || to.meta.public
     if (!allowed) {
       return next('/my-tasks')

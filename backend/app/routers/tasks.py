@@ -196,12 +196,18 @@ async def create_task(
 
     org_id = get_single_org_id(current_user)
 
+    # Только manager и выше может назначать задачи другим; employee — только себе
+    from app.auth.jwt import MANAGER_ROLES as _MR
+    effective_assignee = (
+        task.assigned_user_id if current_user.role in _MR else current_user.id
+    )
+
     db_task = Task(
         title=task.title,
         description=task.description,
         priority=task.priority,
         due_date=task.due_date,
-        assigned_user_id=task.assigned_user_id,
+        assigned_user_id=effective_assignee,
         created_by_id=current_user.id,
         org_id=org_id,
         category=task.category,

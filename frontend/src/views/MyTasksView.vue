@@ -314,7 +314,7 @@
           </div>
           <div class="d-flex ga-2 mb-2">
             <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" />
-            <v-select v-model="taskForm.assigned_user_id" :items="userItems" label="Исполнитель" variant="outlined" density="compact" clearable item-title="text" item-value="value" />
+            <v-select v-if="!isEmployee" v-model="taskForm.assigned_user_id" :items="userItems" label="Исполнитель" variant="outlined" density="compact" clearable item-title="text" item-value="value" />
           </div>
 
           <!-- Chat section (only for existing tasks) -->
@@ -399,6 +399,7 @@ import { apiFetch } from '@/api'
 const router = useRouter()
 const loading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
+const isEmployee = localStorage.getItem('user_role') === 'employee'
 const chatContainer = ref<HTMLElement | null>(null)
 const commentInput = ref<any>(null)
 const viewMode = ref<'kanban' | 'list'>('kanban')

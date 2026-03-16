@@ -308,6 +308,14 @@ async def list_purchases(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+    # Employee: only purchases they participate in
+    if current_user.role == 'employee':
+        from app.models.purchase_event import PurchaseMember
+        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
+        q = q.where(
+            (Purchase.assigned_user_id == current_user.id) |
+            (Purchase.id.in_(member_pids))
+        )
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:
@@ -470,7 +478,7 @@ async def create_purchase(
     data: PurchaseCreate,
     admin_override: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES))
+    current_user=Depends(get_current_user)
 ):
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
@@ -528,17 +536,38 @@ async def update_purchase(
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
 
     items_data = data.items or []
-    total_nmck = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+    items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+
+    # НМЦК logic: frozen after "contracted" status
+    CONTRACTED_STATUSES = ("contracted", "delivered", "paid")
+    is_contracted = p.status in CONTRACTED_STATUSES
+
+    if is_contracted:
+        # НМЦК зафиксирована — НЕ пересчитываем, берём из БД
+        # Обновляем только цену договора из текущих цен позиций
+        pass
+    else:
+        # До стадии "Договор" — НМЦК = сумма позиций
+        p.total_nmck = items_sum
+        p.planned_total_price = items_sum or p.planned_total_price
 
     if not admin_override:
-        await _check_budget(data.subsidy_id, total_nmck or data.planned_total_price, pid, db)
+        budget_amount = p.total_nmck if is_contracted else items_sum
+        await _check_budget(data.subsidy_id, budget_amount or data.planned_total_price, pid, db)
 
     # If contract_id or type changed, reset seq so it gets re-assigned
     old_contract_id = p.contract_id
     old_type = p.purchase_contract_type
     for k, v in data.model_dump(exclude={"items"}, exclude_unset=True).items():
+        # Don't overwrite frozen total_nmck
+        if is_contracted and k in ("total_nmck", "planned_total_price"):
+            continue
         setattr(p, k, v)
-    p.total_nmck = total_nmck
+
+    # Contract price: for single purchases = sum of current item prices
+    is_single = not p.purchase_contract_type or p.purchase_contract_type == "single"
+    if is_single and items_sum:
+        p.contract_price = items_sum
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below
     await _assign_framework_seq(p, db, exclude_id=pid)
@@ -746,8 +775,13 @@ async def kanban_status_change(
     current_user: User = Depends(get_current_user),
 ):
     """Quick status change from kanban board (same rules as transition)."""
+    # Map common aliases
+    STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule"}
+    target_status = STATUS_ALIASES.get(target_status, target_status)
     if target_status not in STATUS_ORDER:
-        raise HTTPException(422, f"Недопустимый статус: {target_status}")
+        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Поставлено", "Оплачено"]))
+        allowed = ", ".join(f"{k} ({v})" for k, v in STATUS_LABELS_RU.items())
+        raise HTTPException(422, f"Недопустимый статус: «{target_status}». Допустимые: {allowed}")
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:

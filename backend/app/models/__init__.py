@@ -25,4 +25,3 @@ from app.models.approval_signature_key import ApprovalSignatureKey
 from app.models.task import Task
 from app.models.task_comment import TaskComment
 from app.models.department import Department, DepartmentMember, TaskEditDelegate
-from app.models.delivery_address import DeliveryAddress

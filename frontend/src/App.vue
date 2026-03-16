@@ -25,12 +25,33 @@ const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== nu
 const showAppBar = computed(() => isAuthenticated.value && !PUBLIC_ROUTES.includes(route.path))
 
 // Restore theme preference + init global table resize
-onMounted(() => {
+onMounted(async () => {
   const saved = localStorage.getItem('theme')
   if (saved && (saved === 'dark' || saved === 'light')) {
     theme.global.name.value = saved
   }
   initTableResize()
+
+  // Refresh role/profile from server on every app load
+  const token = localStorage.getItem('auth_token')
+  if (token && token.startsWith('eyJ')) {
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const user = await res.json()
+        localStorage.setItem('user_role', user.role || '')
+        if (user.full_name) localStorage.setItem('user_name', user.full_name)
+        if (user.id) localStorage.setItem('user_id', String(user.id))
+      } else if (res.status === 401) {
+        localStorage.removeItem('auth_token')
+        localStorage.removeItem('user_role')
+        localStorage.removeItem('user_name')
+        window.location.href = '/'
+      }
+    } catch {}
+  }
 })
 </script>
 

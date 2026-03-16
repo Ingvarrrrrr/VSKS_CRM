@@ -85,6 +85,7 @@
       </v-toolbar>
 
       <v-data-table
+        v-resizable-columns="'products'"
         v-model="selectedIds"
         show-select
         item-value="id"

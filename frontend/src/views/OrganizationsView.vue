@@ -21,6 +21,7 @@
 
     <v-card variant="outlined">
       <v-data-table
+        v-resizable-columns="'organizations'"
         :headers="headers"
         :items="orgs"
         :loading="loading"

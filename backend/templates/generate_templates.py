@@ -314,8 +314,112 @@ def make_approval_sheet():
     print(f"[OK] {path}")
 
 
+# ── service_note_delivery.docx ────────────────────────────────────────────────
+def make_service_note_delivery():
+    doc = Document()
+    page_margins(doc)
+
+    t = doc.add_paragraph()
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = t.add_run("СЛУЖЕБНАЯ ЗАПИСКА")
+    r.bold = True; r.font.size = Pt(14)
+
+    sub = doc.add_paragraph()
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub.add_run("на выдачу поставленного товара / услуги").font.size = Pt(11)
+
+    doc.add_paragraph()
+
+    add_label_value(doc, "Дата:", "{{today}}")
+    add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
+    add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Договор:", "№{{contract_number}} от {{contract_date}}")
+    add_label_value(doc, "Дата поставки / исполнения:", "{{delivery_date}}")
+    add_label_value(doc, "Акт приёмки:", "{{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}")
+    add_label_value(doc, "Сумма по акту:", "{{acceptance_doc_amount}}")
+
+    doc.add_paragraph()
+
+    body = doc.add_paragraph()
+    body.add_run(
+        "Прошу принять и выдать поставленные товары (работы, услуги) по закупке "
+        "№{{purchase_number}} (реестр {{registry_number}}) "
+        "у контрагента {{contractor_name}} на основании договора №{{contract_number}} "
+        "от {{contract_date}} на сумму {{acceptance_doc_amount}}."
+    ).font.size = Pt(10)
+
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    sig = doc.add_paragraph()
+    sig.add_run("Исполнитель: _______________  /  ФИО  /  {{today}}").font.size = Pt(10)
+
+    path = os.path.join(TEMPLATES_DIR, "service_note_delivery.docx")
+    doc.save(path)
+    print(f"[OK] {path}")
+
+
+# ── service_note_payment.docx ─────────────────────────────────────────────────
+def make_service_note_payment():
+    doc = Document()
+    page_margins(doc)
+
+    t = doc.add_paragraph()
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = t.add_run("СЛУЖЕБНАЯ ЗАПИСКА")
+    r.bold = True; r.font.size = Pt(14)
+
+    sub = doc.add_paragraph()
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub.add_run("на оплату поставленного товара / услуги").font.size = Pt(11)
+
+    doc.add_paragraph()
+
+    add_label_value(doc, "Дата:", "{{today}}")
+    add_label_value(doc, "Субсидия:", "{{subsidy_name}} ({{subsidy_year}})")
+    add_label_value(doc, "Реестровый номер:", "{{registry_number}}")
+    add_label_value(doc, "Контрагент:", "{{contractor_name}}, ИНН {{contractor_inn}}")
+    add_label_value(doc, "Договор:", "№{{contract_number}} от {{contract_date}}")
+    add_label_value(doc, "Сумма договора:", "{{contract_price}}")
+    add_label_value(doc, "Акт приёмки:", "{{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}")
+    add_label_value(doc, "Сумма к оплате:", "{{acceptance_doc_amount}}")
+
+    hline(doc)
+
+    bank = doc.add_paragraph()
+    bank.add_run("Реквизиты получателя:").bold = True
+    bank.runs[0].font.size = Pt(10)
+
+    add_label_value(doc, "Расчётный счёт:", "{{contractor_settlement_account}}")
+    add_label_value(doc, "Банк:", "{{contractor_bank_name}}")
+    add_label_value(doc, "БИК:", "{{contractor_bik}}")
+
+    doc.add_paragraph()
+
+    body = doc.add_paragraph()
+    body.add_run(
+        "Прошу произвести оплату по закупке №{{purchase_number}} (реестр {{registry_number}}) "
+        "контрагенту {{contractor_name}} на сумму {{acceptance_doc_amount}} "
+        "в соответствии с договором №{{contract_number}} от {{contract_date}} "
+        "и актом приёмки {{acceptance_doc_name}} №{{acceptance_doc_number}} от {{acceptance_doc_date}}."
+    ).font.size = Pt(10)
+
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    sig = doc.add_paragraph()
+    sig.add_run("Исполнитель: _______________  /  ФИО  /  {{today}}").font.size = Pt(10)
+
+    path = os.path.join(TEMPLATES_DIR, "service_note_payment.docx")
+    doc.save(path)
+    print(f"[OK] {path}")
+
+
 if __name__ == "__main__":
     make_contract_tz()
     make_service_note()
+    make_service_note_delivery()
+    make_service_note_payment()
     make_approval_sheet()
     print("All templates generated.")

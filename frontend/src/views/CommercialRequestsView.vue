@@ -38,6 +38,7 @@
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
+        v-resizable-columns="'commercial-requests'"
         :headers="headers"
         :items="filteredRequests"
         :loading="loading"

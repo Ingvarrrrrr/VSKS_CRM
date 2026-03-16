@@ -210,10 +210,19 @@
               <table class="feo-table">
                 <thead>
                   <tr>
-                    <th class="feo-th feo-th-name">Наименование</th>
-                    <th class="feo-th feo-th-num">Финансирование по ФЭО</th>
-                    <th class="feo-th feo-th-num">Фактически запланировано</th>
-                    <th class="feo-th feo-th-actions"></th>
+                    <th class="feo-th feo-th-name" :style="feoResize.resizeStyle('name')">
+                      Наименование
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'name')"></span>
+                    </th>
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('budget')">
+                      Финансирование по ФЭО
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
+                    </th>
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
+                      Фактически запланировано
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
+                    </th>
+                    <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -236,25 +245,27 @@
                     >
                       <!-- Наименование -->
                       <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
-                        <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                        <div class="feo-name-inner">
+                          <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                            <v-icon
+                              v-if="node.hasChildren"
+                              size="15"
+                              :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                              color="grey"
+                              class="mr-1 cursor-pointer"
+                            />
+                            <span v-else style="width:16px;display:inline-block" />
+                          </span>
                           <v-icon
-                            v-if="node.hasChildren"
-                            size="15"
-                            :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                            color="grey"
-                            class="mr-1 cursor-pointer"
+                            size="16"
+                            class="mr-1 flex-shrink-0"
+                            :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
+                            :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
                           />
-                          <span v-else style="width:16px;display:inline-block" />
-                        </span>
-                        <v-icon
-                          size="16"
-                          class="mr-1 flex-shrink-0"
-                          :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
-                          :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-                        />
-                        <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
-                        <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
-                        <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
+                          <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
+                          <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
+                          <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
+                        </div>
                       </td>
 
                       <!-- Финансирование по ФЭО (inline edit) -->
@@ -944,8 +955,13 @@ import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { useResizableColumns } from '@/composables/useResizableColumns'
 
 const { globalSubsidyId } = useGlobalSubsidy()
+
+const feoResize = useResizableColumns('feo-table', {
+  name: 0, budget: 180, spent: 180, actions: 130,
+})
 
 const router = useRouter()
 const route  = useRoute()
@@ -2109,12 +2125,13 @@ onMounted(loadAll)
 .feo-table-wrap {
   border: 1px solid var(--crm-border-strong);
   border-radius: 8px;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 .feo-table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+  min-width: 700px;
 }
 .feo-th {
   font-size: 11px; font-weight: 600; color: var(--crm-text-muted);
@@ -2122,15 +2139,17 @@ onMounted(loadAll)
   background: var(--crm-table-header); padding: 9px 12px;
   text-align: left;
   border-bottom: 1px solid var(--crm-border-strong);
+  position: relative;
 }
-.feo-th-num { text-align: right; width: 180px; }
-.feo-th-name { width: auto; }
-.feo-th-actions { width: 90px; }
+.feo-th-num { text-align: right; }
+.feo-th-name { }
+.feo-th-actions { }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
 }
-.feo-td-name { display: flex; align-items: center; min-width: 0; }
+.feo-td-name { min-width: 0; }
+.feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
 .feo-td-actions { text-align: right; white-space: nowrap; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
@@ -2190,5 +2209,38 @@ onMounted(loadAll)
   display: flex; align-items: center;
   font-size: 16px !important; font-weight: 600 !important;
   padding: 16px 20px !important;
+}
+
+/* Column resize handle */
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.col-resize-handle::before {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+.v-theme--dark .col-resize-handle::before {
+  background: rgba(255, 255, 255, 0.22);
+}
+.col-resize-handle:hover::before,
+.col-resize-handle:active::before {
+  right: 2px;
+  top: 5%;
+  bottom: 5%;
+  width: 3px;
+  background: rgb(59, 130, 246);
 }
 </style>

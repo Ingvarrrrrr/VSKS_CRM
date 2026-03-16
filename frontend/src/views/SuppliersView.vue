@@ -18,6 +18,7 @@
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
+        v-resizable-columns="'suppliers'"
         :headers="headers"
         :items="filteredSuppliers"
         :loading="loading"

@@ -21,6 +21,7 @@
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
+        v-resizable-columns="'system-incidents'"
         :headers="headers"
         :items="incidents"
         :loading="loading"

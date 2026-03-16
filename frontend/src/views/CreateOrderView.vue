@@ -1,5 +1,5 @@
 <template>
-  <v-container fluid class="pa-6" style="max-width:1200px">
+  <v-container fluid class="pa-6" style="max-width:1600px">
     <div class="d-flex align-center justify-space-between mb-6">
       <div>
         <h1 class="text-h5 font-weight-bold">
@@ -49,22 +49,26 @@
             <v-col v-if="!isEmployee" cols="12" md="2">
               <v-select v-model="form.purchase_method"
                 :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
-                item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact" />
+                item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
+                hint="Как выбирается поставщик" persistent-hint />
             </v-col>
             <v-col cols="12" md="2">
               <v-select v-model="form.item_type"
                 :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'}]"
-                item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact" />
+                item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
+                hint="Товары или услуги" persistent-hint />
             </v-col>
             <v-col v-if="!isEmployee" cols="12" md="2">
               <v-select v-model="form.purchase_basis" clearable
                 :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
-                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact" />
+                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
+                hint="Документ-основание для закупки" persistent-hint />
             </v-col>
 
             <v-col cols="12" md="3">
               <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
                 label="Субсидия *" variant="outlined" density="compact"
+                hint="По какой субсидии финансируется закупка" persistent-hint
                 :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
             </v-col>
             <v-col v-if="!isEmployee" cols="12" md="3">
@@ -80,6 +84,7 @@
                 auto-select-first
                 :custom-filter="contractorFilter"
                 :menu-props="{ maxWidth: 500 }"
+                hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
                 @update:model-value="onContractorSelect"
               >
                 <template #item="{ item, props: itemProps }">
@@ -101,6 +106,7 @@
                 variant="outlined"
                 density="compact"
                 maxlength="12"
+                hint="Введите ИНН — контрагент подставится автоматически" persistent-hint
                 @update:model-value="onInnInput"
               />
             </v-col>
@@ -111,6 +117,7 @@
                 variant="outlined"
                 density="compact"
                 placeholder="Поставка оборудования..."
+                hint="Краткое описание: что закупается" persistent-hint
               />
             </v-col>
             <v-col v-if="!isEmployee" cols="12" md="4">
@@ -131,6 +138,7 @@
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo1" :items="feoLevel1Options" item-title="name" item-value="id"
                 label="Категория ФЭО (ур.1) *" variant="outlined" density="compact" clearable
+                hint="Направление расходования средств" persistent-hint
                 :error-messages="feoSaveAttempted && !selectedFeo1 ? 'Обязательное поле' : ''"
                 @update:model-value="onFeo1Change" />
             </v-col>
@@ -163,6 +171,7 @@
                 label="Мероприятие"
                 variant="outlined" density="compact"
                 clearable
+                hint="К какому мероприятию относится закупка" persistent-hint
               />
             </v-col>
           </v-row>
@@ -173,9 +182,14 @@
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
           <span>Позиции закупки</span>
-          <v-chip color="primary" variant="tonal" size="small">
-            НМЦК: {{ formatMoney(totalNmck) }}
-          </v-chip>
+          <div class="d-flex align-center ga-2">
+            <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" title="Зафиксирована при заключении договора">
+              НМЦК (фикс.): {{ formatMoney(savedNmck) }}
+            </v-chip>
+            <v-chip color="primary" variant="tonal" size="small">
+              {{ isContracted ? 'Текущая сумма' : 'НМЦК' }}: {{ formatMoney(totalNmck) }}
+            </v-chip>
+          </div>
         </v-card-title>
         <v-card-text>
           <div class="overflow-x-auto">
@@ -184,8 +198,8 @@
                 <tr>
                   <th style="min-width:420px">Наименование</th>
                   <th style="min-width:180px">Тип</th>
-                  <th style="min-width:70px">Кол-во</th>
-                  <th style="min-width:70px">Ед.</th>
+                  <th style="min-width:140px">Кол-во</th>
+                  <th style="min-width:140px">Ед. изм.</th>
                   <th style="min-width:150px">Цена ед., ₽</th>
                   <th style="min-width:150px">Сумма, ₽</th>
                   <th style="width:48px"></th>
@@ -213,15 +227,17 @@
                         </template>
                       </v-tooltip>
 
-                      <v-text-field
+                      <v-textarea
                         v-model="item.item_name"
                         density="compact"
                         variant="outlined"
                         hide-details
                         clearable
                         readonly
+                        rows="1"
+                        auto-grow
                         class="my-1"
-                        style="cursor:pointer"
+                        style="cursor:pointer;min-width:280px"
                         placeholder="Нажмите для выбора..."
                         @click="openProductPicker(idx)"
                         @click:clear.stop="clearItem(idx)"
@@ -252,9 +268,7 @@
                   </td>
                   <td>
                     <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                      variant="outlined" class="my-1"
-                      :hint="item._selectedProduct?.contract_price ? `По договору №${item._selectedProduct.contract_number || '?'}: ${Number(item._selectedProduct.contract_price).toLocaleString('ru-RU')} ₽` : ''"
-                      :persistent-hint="!!item._selectedProduct?.contract_price"
+                      variant="outlined" hide-details class="my-1"
                       @update:model-value="calcItemTotal(idx)" />
                   </td>
                   <td>
@@ -367,12 +381,17 @@
         <v-card-text>
           <v-row>
             <v-col cols="12" md="3">
-              <v-text-field :model-value="formatMoney(totalNmck)" label="НМЦК (итого)" variant="outlined"
-                density="compact" readonly bg-color="grey-lighten-4" />
+              <v-text-field :model-value="formatMoney(displayNmck)" label="НМЦК (итого)" variant="outlined"
+                density="compact" readonly bg-color="grey-lighten-4"
+                :hint="nmckHint" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model.number="form.contract_price" label="Цена договора" variant="outlined"
                 density="compact" type="number" suffix="₽"
+                :readonly="isSinglePurchase"
+                :bg-color="isSinglePurchase ? 'grey-lighten-4' : undefined"
+                :hint="contractPriceHint"
+                persistent-hint
                 :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined"
                 @update:model-value="calcEconomy">
                 <template v-slot:append-inner>
@@ -387,11 +406,13 @@
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
-                density="compact" suffix="₽" readonly bg-color="grey-lighten-4" />
+                density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
+                hint="НМЦК минус Цена договора. Считается автоматически." persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model.number="form.price_increase" label="Увеличение цены (доп. соглашения)"
-                variant="outlined" density="compact" type="number" suffix="₽" />
+              <v-text-field v-model.number="form.price_increase" label="Удорожание (доп. соглашения)"
+                variant="outlined" density="compact" type="number" suffix="₽"
+                hint="Указывается при увеличении цены по доп. соглашению к договору" persistent-hint />
             </v-col>
           </v-row>
           <!-- Тип договора -->
@@ -494,8 +515,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 4. Договор (скрыто для employee) -->
-      <v-card v-if="isManagerLevel" variant="outlined" class="mb-4">
+      <!-- 4. Договор -->
+      <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Договор</v-card-title>
         <v-card-text>
           <v-row>
@@ -813,22 +834,47 @@
         </v-card>
       </v-dialog>
 
-      <!-- 8. Формирование документов (manager+) -->
-      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
+      <!-- 8. Формирование документов -->
+      <v-card v-if="isEdit" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы</v-card-title>
         <v-card-text>
           <div class="d-flex gap-3 flex-wrap">
-            <v-btn
-              prepend-icon="mdi-file-word-outline"
-              variant="tonal"
-              color="blue-darken-2"
-              size="small"
-              :loading="docLoading === 'service_note'"
-              @click="openDocPicker('service_note')"
-            >
-              Служебная записка
-            </v-btn>
-            <v-btn
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  prepend-icon="mdi-file-word-outline"
+                  append-icon="mdi-chevron-down"
+                  variant="tonal"
+                  color="blue-darken-2"
+                  size="small"
+                  :loading="!!docLoading && docLoading.startsWith('service_note')"
+                >
+                  Служебная записка
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  prepend-icon="mdi-file-document-outline"
+                  @click="openDocPicker('service_note')"
+                >
+                  <v-list-item-title>На организацию закупки</v-list-item-title>
+                </v-list-item>
+                <v-list-item
+                  prepend-icon="mdi-truck-delivery-outline"
+                  @click="openDocPicker('service_note_delivery')"
+                >
+                  <v-list-item-title>На выдачу</v-list-item-title>
+                </v-list-item>
+                <v-list-item
+                  prepend-icon="mdi-cash-check"
+                  @click="openDocPicker('service_note_payment')"
+                >
+                  <v-list-item-title>На оплату поставленного</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            <v-btn v-if="isManagerLevel"
               prepend-icon="mdi-file-word-outline"
               variant="tonal"
               color="blue-darken-2"
@@ -838,7 +884,7 @@
             >
               ТЗ
             </v-btn>
-            <v-btn
+            <v-btn v-if="isManagerLevel"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
               color="indigo"
@@ -848,7 +894,7 @@
             >
               Договор
             </v-btn>
-            <v-btn
+            <v-btn v-if="isManagerLevel"
               prepend-icon="mdi-file-document-edit-outline"
               variant="tonal"
               color="deep-purple"
@@ -858,7 +904,7 @@
             >
               Договор ФАДМ
             </v-btn>
-            <v-btn
+            <v-btn v-if="isManagerLevel"
               prepend-icon="mdi-file-word-outline"
               variant="tonal"
               color="blue-darken-2"
@@ -1476,7 +1522,7 @@
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-account-check-outline" color="teal" class="mr-2" />
-          {{ docPickerType === 'service_note' ? 'Служебная записка — выбор инициатора' : 'Лист согласования — выбор согласующих' }}
+          {{ docPickerType.startsWith('service_note') ? 'Служебная записка — выбор инициатора' : 'Лист согласования — выбор согласующих' }}
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="docPickerDialog = false" />
         </v-card-title>
         <v-divider />
@@ -1489,7 +1535,7 @@
             Откройте страницу Субсидии → кнопка «Согласующие».
           </div>
           <!-- service_note: radio (один инициатор) -->
-          <v-radio-group v-else-if="docPickerType === 'service_note'" v-model="pickerInitiatorId" class="mt-0">
+          <v-radio-group v-else-if="docPickerType.startsWith('service_note')" v-model="pickerInitiatorId" class="mt-0">
             <v-radio
               v-for="a in docApproversInitiators"
               :key="a.id"
@@ -1547,7 +1593,7 @@
             variant="tonal"
             prepend-icon="mdi-download"
             :loading="docLoading === docPickerType"
-            :disabled="docPickerType === 'service_note' ? !pickerInitiatorId : !pickerApproverIds.length"
+            :disabled="docPickerType.startsWith('service_note') ? !pickerInitiatorId : !pickerApproverIds.length"
             @click="confirmDocDownload"
           >
             Скачать
@@ -1580,7 +1626,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
@@ -1736,7 +1782,7 @@ const docLoading = ref<string | null>(null)
 // ── Doc picker (approver selection before download) ──
 interface DocApprover { id: number; role_name: string; full_name: string; order_num: number; is_default: boolean; can_initiate: boolean }
 const docPickerDialog      = ref(false)
-const docPickerType        = ref<'service_note' | 'approval_sheet'>('approval_sheet')
+const docPickerType        = ref<'service_note' | 'service_note_delivery' | 'service_note_payment' | 'approval_sheet'>('approval_sheet')
 const loadingDocApprovers  = ref(false)
 const docApprovers         = ref<DocApprover[]>([])
 const pickerApproverIds    = ref<number[]>([])
@@ -1791,7 +1837,7 @@ async function saveNewResponsible() {
   finally { savingResponsible.value = false }
 }
 
-async function openDocPicker(type: 'service_note' | 'approval_sheet') {
+async function openDocPicker(type: 'service_note' | 'service_note_delivery' | 'service_note_payment' | 'approval_sheet') {
   if (!purchaseId.value || !form.subsidy_id) {
     downloadDoc(type)
     return
@@ -1822,9 +1868,9 @@ async function openDocPicker(type: 'service_note' | 'approval_sheet') {
 
 async function confirmDocDownload() {
   docPickerDialog.value = false
-  if (docPickerType.value === 'service_note') {
+  if (docPickerType.value.startsWith('service_note')) {
     const params = pickerInitiatorId.value ? `?initiator_id=${pickerInitiatorId.value}` : ''
-    await downloadDoc('service_note', params)
+    await downloadDoc(docPickerType.value, params)
   } else {
     const parts: string[] = []
     if (pickerApproverIds.value.length) parts.push(`approver_ids=${pickerApproverIds.value.join(',')}`)
@@ -2290,6 +2336,49 @@ const totalNmck = computed(() =>
   items.value.reduce((s, i) => s + (i.total_price || 0), 0)
 )
 
+// Single purchase = contract_price auto-filled from items
+const isSinglePurchase = computed(() =>
+  !form.purchase_contract_type || form.purchase_contract_type === 'single'
+)
+
+// Is purchase in contracted+ status (НМЦК frozen)
+const CONTRACTED_STATUSES = ['contracted', 'delivered', 'paid']
+const isContracted = computed(() => CONTRACTED_STATUSES.includes(form.status))
+
+// Saved НМЦК from DB (frozen value)
+const savedNmck = ref<number | null>(null)
+
+// Display НМЦК: frozen value for contracted, live calculation otherwise
+const displayNmck = computed(() => {
+  if (isContracted.value && savedNmck.value != null) return savedNmck.value
+  return totalNmck.value
+})
+
+const nmckHint = computed(() => {
+  if (isContracted.value && savedNmck.value != null) {
+    return 'Зафиксирована при заключении договора. Не пересчитывается.'
+  }
+  return 'Сумма всех позиций. Пересчитывается автоматически. Фиксируется при заключении договора.'
+})
+
+const contractPriceHint = computed(() => {
+  if (isSinglePurchase.value) {
+    if (isContracted.value) {
+      return 'Разовая закупка: = сумма текущих цен позиций (обновляется при изменении цен)'
+    }
+    return 'Разовая закупка: = сумма позиций (заполняется автоматически)'
+  }
+  return 'Рамочный договор: введите общую сумму договора вручную'
+})
+
+// Auto-sync contract_price for single purchases
+function syncContractPriceIfSingle() {
+  if (isSinglePurchase.value && totalNmck.value > 0) {
+    form.contract_price = totalNmck.value
+    calcEconomy()
+  }
+}
+
 const monthlyTotal = computed(() => {
   if (form.monthly_payment_count && form.monthly_payment_amount) {
     return form.monthly_payment_count * form.monthly_payment_amount
@@ -2375,14 +2464,17 @@ const onSubsidyChange = () => {
 }
 
 const calcEconomy = () => {
-  form.economy = (totalNmck.value > 0 && form.contract_price != null)
-    ? Math.round((totalNmck.value - form.contract_price) * 100) / 100
+  // Экономия = НМЦК (зафиксированная) - Цена договора
+  const nmck = displayNmck.value
+  form.economy = (nmck > 0 && form.contract_price != null)
+    ? Math.round((nmck - form.contract_price) * 100) / 100
     : null
 }
 
 const nmckExcessPct = computed(() => {
-  if (!totalNmck.value || !form.contract_price) return 0
-  return Math.round(((form.contract_price - totalNmck.value) / totalNmck.value) * 100)
+  const nmck = displayNmck.value
+  if (!nmck || !form.contract_price) return 0
+  return Math.round(((form.contract_price - nmck) / nmck) * 100)
 })
 
 const nmckWarningLevel = computed((): 'error' | 'warning' | null => {
@@ -2474,6 +2566,8 @@ const calcItemTotal = (idx: number) => {
   } else {
     item.total_price = null
   }
+  // Auto-sync contract_price for single purchases
+  nextTick(() => syncContractPriceIfSingle())
 }
 
 const onItemProductSelect = (idx: number, val: any) => {
@@ -2663,6 +2757,10 @@ const loadPurchase = async () => {
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
   })
+
+  // Save frozen НМЦК from DB
+  savedNmck.value = data.total_nmck ? Number(data.total_nmck) : null
+
   loadResponsiblePersons()
 
   // Restore selected framework contract

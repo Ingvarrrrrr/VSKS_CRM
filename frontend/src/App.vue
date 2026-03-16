@@ -14,6 +14,7 @@ import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import AppBar from './components/AppBar.vue'
 import ApiErrorDialog from './components/ApiErrorDialog.vue'
+import { initTableResize } from './composables/useTableResize'
 
 const route = useRoute()
 const theme = useTheme()
@@ -23,12 +24,13 @@ const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-pass
 const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)
 const showAppBar = computed(() => isAuthenticated.value && !PUBLIC_ROUTES.includes(route.path))
 
-// Restore theme preference
+// Restore theme preference + init global table resize
 onMounted(() => {
   const saved = localStorage.getItem('theme')
   if (saved && (saved === 'dark' || saved === 'light')) {
     theme.global.name.value = saved
   }
+  initTableResize()
 })
 </script>
 
@@ -122,5 +124,38 @@ onMounted(() => {
 .v-theme--dark .v-text-field[bg-color="grey-lighten-4"],
 .v-theme--dark .v-text-field .v-field--variant-outlined.bg-grey-lighten-4 {
   background-color: var(--crm-input-bg) !important;
+}
+
+/* ── Global column resize handles (v-resizable-columns directive) ── */
+.vrc-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.vrc-handle::before {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+.v-theme--dark .vrc-handle::before {
+  background: rgba(255, 255, 255, 0.22);
+}
+.vrc-handle:hover::before,
+.vrc-handle.vrc-active::before {
+  right: 2px;
+  top: 5%;
+  bottom: 5%;
+  width: 3px;
+  background: rgb(59, 130, 246);
 }
 </style>

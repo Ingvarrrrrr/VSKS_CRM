@@ -17,6 +17,7 @@ class PurchaseItem(Base):
     total_price = Column(Numeric(15, 2))
     final_unit_price = Column(Numeric(15, 2))
     final_total = Column(Numeric(15, 2))
+    country_origin = Column(String(100), nullable=True)
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

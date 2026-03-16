@@ -46,19 +46,19 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
         <v-card-text>
           <v-row>
-            <v-col v-if="!isEmployee" cols="12" md="2">
+            <v-col v-if="!isEmployee && formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
                 :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
                 hint="Как выбирается поставщик" persistent-hint />
             </v-col>
-            <v-col cols="12" md="2">
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.item_type"
                 :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'}]"
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
                 hint="Товары или услуги" persistent-hint />
             </v-col>
-            <v-col v-if="!isEmployee" cols="12" md="2">
+            <v-col v-if="!isEmployee && formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_basis" clearable
                 :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
                 item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
@@ -110,10 +110,10 @@
                 @update:model-value="onInnInput"
               />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
               <v-text-field
                 v-model="form.subject"
-                label="Предмет договора"
+                :label="formMode === 'advance_report' ? 'Предмет авансового' : 'Предмет договора'"
                 variant="outlined"
                 density="compact"
                 placeholder="Поставка оборудования..."
@@ -164,8 +164,8 @@
                 :bg-color="!isEdit ? 'grey-lighten-4' : undefined"
                 hint="Генерируется автоматически" persistent-hint />
             </v-col>
-            <!-- Мероприятие (после выбора субсидии) -->
-            <v-col v-if="form.subsidy_id && filteredEvents.length" cols="12" md="4">
+            <!-- Мероприятие (после выбора субсидии, или всегда для служебных записок) -->
+            <v-col v-if="(form.subsidy_id && filteredEvents.length) || formMode === 'service_note_delivery'" cols="12" md="4">
               <v-select
                 v-model="form.event_id"
                 :items="filteredEvents"
@@ -183,7 +183,7 @@
       <!-- 2. Позиции закупки -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
-          <span>Позиции закупки</span>
+          <span>{{ formMode === 'service_note_delivery' ? 'Оборудование для выдачи' : 'Позиции закупки' }}</span>
           <div class="d-flex align-center ga-2">
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" title="Зафиксирована при заключении договора">
               НМЦК (фикс.): {{ formatMoney(savedNmck) }}
@@ -204,6 +204,7 @@
                   <th style="min-width:140px">Ед. изм.</th>
                   <th style="min-width:150px">Цена ед., ₽</th>
                   <th style="min-width:150px">Сумма, ₽</th>
+                  <th style="min-width:150px">Страна происхождения</th>
                   <th style="width:48px"></th>
                 </tr>
               </thead>
@@ -278,12 +279,16 @@
                       variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
                   </td>
                   <td>
+                    <v-text-field v-model="item.country_origin" density="compact"
+                      variant="outlined" hide-details class="my-1" placeholder="Россия" />
+                  </td>
+                  <td>
                     <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                       @click="removeItem(idx)" />
                   </td>
                 </tr>
                 <tr v-if="!items.length">
-                  <td colspan="7" class="text-center text-medium-emphasis py-4">
+                  <td colspan="8" class="text-center text-medium-emphasis py-4">
                     Нет позиций. Нажмите «Добавить позицию».
                   </td>
                 </tr>
@@ -530,7 +535,7 @@
       </v-card>
 
       <!-- 4. Договор -->
-      <v-card variant="outlined" class="mb-4">
+      <v-card v-if="isSectionVisible('contract')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Договор</v-card-title>
         <v-card-text>
           <v-row>
@@ -654,9 +659,9 @@
         </v-card-text>
       </v-card>
 
-      <!-- 5. Акт приёмки (admin+) -->
+      <!-- 5. Акт приёмки / Закрывающие документы (admin+) -->
       <v-card v-if="isAdminLevel && isSectionVisible('acceptance')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Акт приёмки</v-card-title>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">{{ formMode === 'advance_report' ? 'Закрывающие документы' : 'Акт приёмки' }}</v-card-title>
         <v-card-text>
           <v-row>
             <v-col cols="12" md="6">
@@ -664,18 +669,14 @@
                 :hint="needsAcceptance ? 'Обязательно для перехода в статус Поставлено' : ''" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.acceptance_doc_number" label="Номер акта" variant="outlined" density="compact" />
+              <v-text-field v-model="form.acceptance_doc_number" label="Номер закрывающего документа" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.acceptance_doc_date" label="Дата акта" variant="outlined" density="compact" type="date" />
+              <v-text-field v-model="form.acceptance_doc_date" label="Дата закрывающего документа" variant="outlined" density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="4">
-              <v-text-field v-model.number="form.acceptance_doc_amount" label="Сумма акта" variant="outlined"
+              <v-text-field v-model.number="form.acceptance_doc_amount" label="Сумма закрывающего документа" variant="outlined"
                 density="compact" type="number" suffix="₽" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="form.country_origin" label="Страна производства" variant="outlined" density="compact"
-                hint="Колонка P в Приложении №3" persistent-hint />
             </v-col>
           </v-row>
         </v-card-text>
@@ -1058,7 +1059,7 @@
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap">
         <v-btn type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
-          {{ isEdit ? 'Сохранить' : 'Создать закупку' }}
+          {{ isEdit ? 'Сохранить' : formMode === 'advance_report' ? 'Сформировать авансовый' : 'Создать закупку' }}
         </v-btn>
         <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
@@ -1711,7 +1712,7 @@ const formMode = computed(() => (route.meta?.formMode as string) || 'default')
 const formModeHidden = computed((): Set<string> => {
   if (formMode.value === 'service_note_delivery')
     return new Set(['contractor', 'financial_indicators', 'contract_type',
-                    'contract_params', 'acceptance', 'payment',
+                    'contract', 'contract_params', 'acceptance', 'payment',
                     'platform_publication', 'commercial_requests'])
   if (formMode.value === 'advance_report')
     return new Set(['contractor', 'contract_type', 'contract_params',
@@ -2657,7 +2658,7 @@ watch(totalNmck, () => { calcEconomy(); calcBudget() })
 
 // Items
 const addItem = () => {
-  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, _selectedProduct: null, _photo_url: undefined, _description: undefined })
+  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, country_origin: '', _selectedProduct: null, _photo_url: undefined, _description: undefined })
 }
 
 const removeItem = (idx: number) => {
@@ -2944,6 +2945,7 @@ const loadPurchase = async () => {
         total_price: i.total_price ? Number(i.total_price) : null,
         final_unit_price: i.final_unit_price ? Number(i.final_unit_price) : null,
         final_total: i.final_total ? Number(i.final_total) : null,
+        country_origin: i.country_origin || '',
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: prod?.photo_url || undefined,
         _description: i.product_description || prod?.description || undefined,

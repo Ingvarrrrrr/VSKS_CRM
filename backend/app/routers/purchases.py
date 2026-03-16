@@ -241,6 +241,7 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
         total_price=item.total_price,
         final_unit_price=item.final_unit_price,
         final_total=item.final_total,
+        country_origin=item.country_origin,
         product_name=product_name,
         product_photo_url=product_photo_url,
         product_description=product_description,
@@ -306,6 +307,7 @@ async def list_purchases(
         selectinload(Purchase.feo_category),
         selectinload(Purchase.items).selectinload(PurchaseItem.product),
         selectinload(Purchase.files),
+        selectinload(Purchase.event),
     )
     org_ids = get_org_filter(current_user)
     if org_ids is not None:

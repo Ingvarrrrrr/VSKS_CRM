@@ -243,6 +243,7 @@ class PurchaseItemCreate(BaseModel):
     total_price: Optional[Decimal] = None
     final_unit_price: Optional[Decimal] = None
     final_total: Optional[Decimal] = None
+    country_origin: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

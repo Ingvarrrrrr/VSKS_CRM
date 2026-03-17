@@ -31,6 +31,7 @@ class UserCreate(BaseModel):
     telegram_id: Optional[str] = None
     avatar: Optional[str] = None
     org_id: Optional[int] = None
+    inn: Optional[str] = None
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -43,6 +44,7 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
     avatar: Optional[str] = None
+    inn: Optional[str] = None
 
 class UserOut(BaseModel):
     id: int
@@ -60,6 +62,7 @@ class UserOut(BaseModel):
     org_id: Optional[int] = None
     is_email_confirmed: bool = True
     has_signature: bool = False
+    inn: Optional[str] = None
 
     @classmethod
     def from_orm_with_signature(cls, user):
@@ -638,3 +641,40 @@ class TaskCommentOut(BaseModel):
     text: str
     created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
+
+
+# ── FeoPlannedItem ──────────────────────────────────────────────────────────
+
+class FeoPlannedItemCreate(BaseModel):
+    feo_category_id: int
+    name: str
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+class FeoPlannedItemOut(FeoPlannedItemCreate):
+    id: int
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
+
+class FeoActualItemOut(BaseModel):
+    """Фактическая позиция — purchase_item, связанный с feo_category через purchase."""
+    purchase_item_id: int
+    item_name: str
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    total_price: Optional[Decimal] = None
+    feo_planned_item_id: Optional[int] = None  # если сопоставлено
+    purchase_id: int
+    purchase_status: Optional[str] = None
+    contract_number: Optional[str] = None
+    contractor_name: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+
+class FeoComparisonOut(BaseModel):
+    planned: list[FeoPlannedItemOut]
+    actual: list[FeoActualItemOut]

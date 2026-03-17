@@ -61,6 +61,7 @@ class UserGraphOut(BaseModel):
     role: str
     org_id: Optional[int]
     avatar: Optional[str]
+    position: Optional[str] = None
 
 
 class UserUserEdgeOut(BaseModel):
@@ -120,6 +121,7 @@ async def get_hierarchy_graph(
 
     # Load dept members
     members_map: dict[int, list[int]] = {d.id: [] for d in depts}
+    user_position_map: dict[int, str] = {}  # user_id -> position from DepartmentMember
     if dept_ids:
         members = (await db.execute(
             select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
@@ -127,6 +129,12 @@ async def get_hierarchy_graph(
         for m in members:
             if m.department_id in members_map:
                 members_map[m.department_id].append(m.user_id)
+            if m.position:
+                user_position_map[m.user_id] = m.position
+    # Also ensure dept head is always in member_ids
+    for d in depts:
+        if d.head_user_id and d.head_user_id not in members_map.get(d.id, []):
+            members_map[d.id].append(d.head_user_id)
 
     # Load users
     q_users = select(User)
@@ -175,6 +183,7 @@ async def get_hierarchy_graph(
                 "role": u.role,
                 "org_id": u.org_id,
                 "avatar": getattr(u, "avatar", None),
+                "position": user_position_map.get(u.id) or getattr(u, "position", None),
             }
             for u in users
         ],

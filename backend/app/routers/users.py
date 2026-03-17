@@ -66,6 +66,7 @@ async def create_user(
         avatar=data.avatar,
         is_email_confirmed=True,
         org_id=org_id,
+        inn=data.inn,
     )
     db.add(user)
     await db.commit()
@@ -174,6 +175,66 @@ async def _sync_head_hierarchy(dept, db: AsyncSession):
         )).scalar_one_or_none()
         if not existing:
             db.add(UserHierarchy(manager_id=dept.head_user_id, subordinate_id=uid))
+
+# ---------------------------------------------------------------------------
+# Sync user to contractors
+# ---------------------------------------------------------------------------
+
+@router.post("/{user_id}/sync-contractor")
+async def sync_user_to_contractor(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Create or update a Contractor record from user data (same org, filtered accordingly)."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    if not user.full_name and not user.inn:
+        raise HTTPException(400, "У сотрудника нет ни ФИО, ни ИНН — нечего записывать")
+
+    from app.models.contractor import Contractor
+
+    # Try to find existing contractor by INN or by name within same org
+    contractor = None
+    if user.inn:
+        contractor = (await db.execute(
+            select(Contractor).where(
+                Contractor.inn == user.inn,
+                Contractor.org_id == user.org_id,
+            )
+        )).scalar_one_or_none()
+    if not contractor and user.full_name:
+        contractor = (await db.execute(
+            select(Contractor).where(
+                Contractor.name == user.full_name,
+                Contractor.org_id == user.org_id,
+            )
+        )).scalar_one_or_none()
+
+    if contractor:
+        if user.full_name: contractor.name = user.full_name
+        if user.inn: contractor.inn = user.inn
+        if user.phone: contractor.phone = user.phone
+        if user.email: contractor.email = user.email
+        contractor.contact_person = user.full_name
+        await db.commit()
+        return {"ok": True, "action": "updated", "contractor_id": contractor.id}
+    else:
+        c = Contractor(
+            name=user.full_name or user.username,
+            inn=user.inn,
+            phone=user.phone,
+            email=user.email,
+            contact_person=user.full_name,
+            org_type="Физ.лицо",
+            org_id=user.org_id,
+        )
+        db.add(c)
+        await db.commit()
+        await db.refresh(c)
+        return {"ok": True, "action": "created", "contractor_id": c.id}
+
 
 # ---------------------------------------------------------------------------
 # Signature (подпись пользователя)

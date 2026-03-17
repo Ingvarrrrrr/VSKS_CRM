@@ -23,6 +23,7 @@ class User(Base):
     password_reset_expires = Column(DateTime, nullable=True)
     signature_image = Column(Text, nullable=True)  # base64 PNG подписи пользователя
     profile_photo = Column(Text, nullable=True)    # base64 JPEG/PNG фото профиля
+    inn = Column(String(12), nullable=True)          # ИНН физ. лица
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
 
     organization = relationship("Organization", back_populates="users")

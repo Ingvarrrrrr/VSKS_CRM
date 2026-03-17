@@ -102,6 +102,7 @@ import {
 } from '@vue-flow/core'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number] }>()
 
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -117,7 +118,7 @@ import { apiFetch } from '@/api'
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 230     // dept container width in px
 const USER_W = 200     // user node width in px
-const USER_H = 60      // user node height in px
+const USER_H = 72      // user node height in px (name + position + role)
 const DEPT_HEADER_H = 48
 const USER_GAP = 8
 const DEPT_PAD_Y = 12  // bottom padding
@@ -209,6 +210,9 @@ const UserNode = markRaw({
               : null,
             p.data.label,
           ]),
+          p.data.position
+            ? h('div', { class: 'hnode-user-pos' }, p.data.position)
+            : null,
           h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
             roleLabels[p.data.role] || p.data.role),
         ]),
@@ -221,14 +225,19 @@ const nodeTypes = { org: OrgNode, dept: DeptNode, user: UserNode }
 const defaultEdgeOptions = { type: 'smoothstep' }
 
 // ── VueFlow composable ─────────────────────────────────────────────────────────
-const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop } = useVueFlow()
+const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick } = useVueFlow()
+
+onNodeDoubleClick(({ node }) => {
+  if (node.type === 'user') emit('edit-user', parseInt(node.id.replace('user-', '')))
+  else if (node.type === 'dept') emit('edit-dept', parseInt(node.id.replace('dept-', '')))
+})
 
 // ── Graph data ─────────────────────────────────────────────────────────────────
 
 interface GraphData {
   orgs: { id: number; name: string }[]
   departments: { id: number; name: string; org_id: number; head_user_id: number | null; member_ids: number[] }[]
-  users: { id: number; full_name: string | null; username: string; role: string; org_id: number; avatar: string | null }[]
+  users: { id: number; full_name: string | null; username: string; role: string; org_id: number; avatar: string | null; position: string | null }[]
   user_user_edges: { id: number; manager_id: number; subordinate_id: number }[]
   user_dept_edges: { id: number; manager_user_id: number; dept_id: number }[]
 }
@@ -313,7 +322,7 @@ function buildGraph(data: GraphData) {
         id, type: 'user',
         parentNode: `dept-${di.deptId}`,
         position: savedPos[id] || defaultRelPos,
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position },
         draggable: true,
         zIndex: 1000,
       })
@@ -323,7 +332,7 @@ function buildGraph(data: GraphData) {
       newNodes.push({
         id, type: 'user',
         position: savedPos[id] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position },
         draggable: true,
       })
       freeIdx++
@@ -663,7 +672,8 @@ onMounted(loadGraph)
 }
 :deep(.hnode-user-info) { flex: 1; min-width: 0; }
 :deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
-:deep(.hnode-user-role) { font-size: 11px; margin-top: 1px; }
+:deep(.hnode-user-pos) { font-size: 11px; color: #555; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:deep(.hnode-user-role) { font-size: 10px; margin-top: 1px; opacity: 0.75; }
 :deep(.hnode-crown) { color: #f59e0b; font-size: 13px; margin-right: 4px; }
 
 /* VueFlow controls */

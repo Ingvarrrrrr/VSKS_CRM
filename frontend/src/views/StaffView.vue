@@ -105,7 +105,7 @@
                     </template>
                     <v-list-item-title>{{ m.user_name }}</v-list-item-title>
                     <template v-slot:append>
-                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" class="mr-1" @click="onEditMemberInline({ dept: selectedDept, member: { user_id: m.user_id, name: m.user_name, position: m.position } })" />
+                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" class="mr-1" @click="openEditUserById(m.user_id)" title="Редактировать сотрудника" />
                       <v-btn icon="mdi-close" size="x-small" variant="text" color="error" @click="removeMember(m.user_id)" />
                     </template>
                   </v-list-item>
@@ -258,7 +258,7 @@
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
-        <HierarchyView :embedded="true" />
+        <HierarchyView :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" />
       </v-window-item>
     </v-window>
 
@@ -367,10 +367,16 @@
               </div>
             </div>
           </div>
+          <v-text-field v-model="editDialog.inn" label="ИНН" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-card-account-details-outline" placeholder="12 цифр"
+            hint="ИНН физ. лица — 12 цифр" persistent-hint maxlength="12" />
           <v-text-field v-model="editDialog.city" label="Город" variant="outlined" density="compact" class="mb-3" />
           <v-text-field v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
+          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-account-convert" @click="syncToContractor(editDialog.userId)">
+            В контрагенты
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="editDialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="flat" :loading="editDialog.saving" @click="saveEditUser">Сохранить</v-btn>
@@ -676,6 +682,7 @@ interface UserItem {
   avatar?: string
   photo_url?: string | null
   has_signature?: boolean
+  inn?: string
 }
 interface SubordinateItem { id: number; username: string; full_name?: string; role: string; avatar?: string }
 interface TreeNode extends UserItem { subordinates?: SubordinateItem[] }
@@ -806,7 +813,7 @@ const isSuperadmin = computed(() => currentRole === 'superadmin')
 
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
-  department: '', position: '', email: '', password: '', avatar: '', saving: false,
+  department: '', position: '', email: '', password: '', avatar: '', saving: false, inn: '',
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -943,7 +950,7 @@ const DeptNode = defineComponent({
               ? h('span', { class: 'text-caption text-medium-emphasis ml-2' }, `(${m.position})`)
               : h('span', { class: 'text-caption text-medium-emphasis ml-2', style: 'cursor:pointer;text-decoration:underline dotted;opacity:0.5', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }, '+ должность'),
             h(VSpacer),
-            h(VBtn, { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'primary', class: 'dept-member-action', title: 'Изменить должность', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m }) } }),
+            h(VBtn, { icon: 'mdi-pencil', size: 'x-small', variant: 'text', color: 'primary', class: 'dept-member-action', title: 'Редактировать сотрудника', onClick: (e: Event) => { e.stopPropagation(); emit('edit-member', { dept: n, member: m, fullEdit: true }) } }),
             h(VBtn, { icon: 'mdi-close', size: 'x-small', variant: 'text', color: 'error', class: 'dept-member-action', title: 'Убрать из отдела', onClick: (e: Event) => { e.stopPropagation(); emit('remove-member', { deptId: n.id, userId: m.user_id }) } }),
           ])
         ) : []),
@@ -1058,7 +1065,32 @@ function openEditUser(item: UserItem) {
   editDialog.email = item.email || ''
   editDialog.password = ''
   editDialog.avatar = item.avatar || ''
+  editDialog.inn = item.inn || ''
   editDialog.show = true
+}
+
+async function openEditUserById(userId: number) {
+  let user = users.value.find(u => u.id === userId)
+  if (!user) {
+    try { user = await apiFetch<UserItem>(`/users/${userId}`) } catch { return }
+  }
+  openEditUser(user)
+}
+
+async function openEditDeptById(deptId: number) {
+  const dept = flatDepts(deptTree.value).find(d => d.id === deptId)
+  if (dept) openEditDept(dept)
+}
+
+async function syncToContractor(userId: number) {
+  try {
+    const result = await apiFetch<{ ok: boolean; action: string; contractor_id: number }>(
+      `/users/${userId}/sync-contractor`, { method: 'POST' }
+    )
+    showSnack(result.action === 'created' ? 'Контрагент создан' : 'Контрагент обновлён')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка синхронизации', 'error')
+  }
 }
 
 async function saveEditUser() {
@@ -1072,6 +1104,7 @@ async function saveEditUser() {
       position: editDialog.position || null,
       email: editDialog.email || null,
       avatar: editDialog.avatar || null,
+      inn: editDialog.inn || null,
     }
     if (editDialog.password) body.password = editDialog.password
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
@@ -1345,7 +1378,12 @@ function onAddMemberInline(dept: any) {
   addMemberDialog.value = true
 }
 
-function onEditMemberInline(payload: { dept: any; member: any }) {
+function onEditMemberInline(payload: { dept: any; member: any; fullEdit?: boolean }) {
+  if (payload.fullEdit) {
+    // Open full user edit dialog instead of position-only dialog
+    openEditUserById(payload.member.user_id)
+    return
+  }
   selectedDept.value = payload.dept
   editMemberTarget.value = payload.member
   editMemberForm.value = { position: payload.member.position || '' }

@@ -382,6 +382,18 @@ async def remove_member(
         raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок). Сначала перераспределите задачи.")
     await db.delete(m)
     await db.commit()
+    # Clear user.department — check if user still has other dept memberships
+    other = (await db.execute(
+        select(DepartmentMember).where(
+            DepartmentMember.user_id == user_id,
+            DepartmentMember.department_id != dept_id,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if not other:
+        user = await db.get(User, user_id)
+        if user:
+            user.department = None
+            await db.commit()
     return {"ok": True}
 
 

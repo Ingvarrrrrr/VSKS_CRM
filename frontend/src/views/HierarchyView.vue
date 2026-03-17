@@ -150,6 +150,25 @@
       </v-card>
     </v-dialog>
 
+    <!-- Delete dept confirm dialog -->
+    <v-dialog v-model="deleteDeptConfirm.show" max-width="380">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-delete-alert" color="error" class="mr-2" />
+          Удалить отдел
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          Удалить отдел <strong>«{{ deleteDeptConfirm.name }}»</strong>?
+          Все сотрудники станут «Вне отдела».
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteDeptConfirm.show = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" @click="confirmDeleteDept">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Snackbar -->
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -276,6 +295,12 @@ const DeptNode = markRaw({
         class: 'mdi mdi-plus hnode-dept-add-btn',
         title: 'Добавить сотрудника в отдел',
         onClick: (e: Event) => { e.stopPropagation(); p.data.onAddMember?.(p.data.deptId) },
+      }),
+      // delete dept button
+      h('span', {
+        class: 'mdi mdi-delete-outline hnode-dept-del-btn',
+        title: 'Удалить отдел',
+        onClick: (e: Event) => { e.stopPropagation(); p.data.onDelete?.(p.data.deptId) },
       }),
       // Target handle for user→dept "manager of dept" edges
       h(Handle, {
@@ -433,6 +458,7 @@ function buildGraph(data: GraphData) {
         headUserId: dept.head_user_id,
         deptId: dept.id,
         onAddMember: (deptId: number) => openAddMemberDialog(deptId),
+        onDelete: (deptId: number) => deleteDeptNode(deptId),
       },
       draggable: true,
       zIndex: 0,
@@ -781,6 +807,28 @@ async function confirmAddMember() {
   }
 }
 
+// ── Delete dept ────────────────────────────────────────────────────────────────
+
+const deleteDeptConfirm = ref<{ show: boolean; deptId: number | null; name: string }>({ show: false, deptId: null, name: '' })
+
+function deleteDeptNode(deptId: number) {
+  const n = nodes.value.find(n => n.id === `dept-${deptId}`)
+  deleteDeptConfirm.value = { show: true, deptId, name: (n?.data as any)?.label || '' }
+}
+
+async function confirmDeleteDept() {
+  const { deptId } = deleteDeptConfirm.value
+  if (!deptId) return
+  try {
+    await apiFetch(`/departments/${deptId}`, { method: 'DELETE' })
+    showSnack('Отдел удалён')
+    deleteDeptConfirm.value.show = false
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка удаления отдела', 'error')
+  }
+}
+
 // ── Create new dept ────────────────────────────────────────────────────────────
 
 async function createNewDept() {
@@ -896,6 +944,20 @@ defineExpose({ refresh: loadGraph })
 }
 :deep(.hnode-dept-add-btn:hover) {
   background: rgba(255,255,255,0.25);
+  opacity: 1;
+}
+:deep(.hnode-dept-del-btn) {
+  cursor: pointer;
+  font-size: 16px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: background 0.15s, opacity 0.15s;
+}
+:deep(.hnode-dept-del-btn:hover) {
+  background: rgba(244,67,54,0.25);
   opacity: 1;
 }
 

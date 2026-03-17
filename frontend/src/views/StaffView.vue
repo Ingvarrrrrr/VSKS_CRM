@@ -70,6 +70,30 @@
                     <dept-node :node="node" :depth="0" @select="selectDept" @edit="openEditDept" @delete="deleteDept" @add-member="onAddMemberInline" @edit-member="onEditMemberInline" @remove-member="onRemoveMemberInline" />
                   </div>
                 </div>
+                <!-- Вне отделов -->
+                <div v-if="!deptLoading && unassignedUsers.length > 0" class="mt-2">
+                  <div class="unassigned-folder-header d-flex align-center pa-2 rounded cursor-pointer"
+                    @click="unassignedExpanded = !unassignedExpanded">
+                    <v-icon :icon="unassignedExpanded ? 'mdi-folder-open-outline' : 'mdi-folder-outline'"
+                      color="grey" size="18" class="mr-2" />
+                    <span class="text-body-2 font-weight-medium text-medium-emphasis">Вне отделов</span>
+                    <v-chip size="x-small" class="ml-2" color="grey" variant="tonal">{{ unassignedUsers.length }}</v-chip>
+                    <v-icon :icon="unassignedExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="16" class="ml-auto" color="grey" />
+                  </div>
+                  <v-expand-transition>
+                    <div v-if="unassignedExpanded" class="pl-6">
+                      <div v-for="u in unassignedUsers" :key="u.id"
+                        class="d-flex align-center pa-1 rounded unassigned-user-row"
+                        @click="openEditUser(u)">
+                        <UserAvatar :avatar-id="u.avatar" :size="26" class="mr-2 flex-shrink-0" />
+                        <div class="flex-1 min-width-0">
+                          <span class="text-body-2">{{ u.full_name || u.username }}</span>
+                          <span class="text-caption text-medium-emphasis ml-2">{{ u.position || '' }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </v-expand-transition>
+                </div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -756,6 +780,10 @@ const knownPositions = ref<string[]>([])
 const userDropdownItems = computed(() =>
   users.value.map(u => ({ text: u.full_name || u.username, value: u.id }))
 )
+
+// Users not in any department
+const unassignedUsers = computed(() => users.value.filter(u => !u.department))
+const unassignedExpanded = ref(true)
 
 /** Get avatar id for a department member by user_id */
 function getMemberAvatar(userId: number): string | undefined {
@@ -1536,6 +1564,12 @@ onMounted(async () => {
 .tree-label { display: flex; align-items: center; padding: 4px 0; }
 .tree-children { margin-left: 24px; border-left: 2px solid var(--crm-border); padding-left: 12px; margin-top: 4px; }
 .tree-child { display: flex; align-items: center; padding: 3px 0; gap: 4px; }
+
+/* Unassigned users folder */
+.unassigned-folder-header { border: 1px dashed rgba(0,0,0,0.15); background: rgba(0,0,0,0.02); transition: background 0.15s; }
+.unassigned-folder-header:hover { background: rgba(0,0,0,0.05); }
+.unassigned-user-row { cursor: pointer; transition: background 0.15s; border-radius: 6px; }
+.unassigned-user-row:hover { background: rgba(var(--v-theme-primary), 0.06); }
 
 /* Avatar picker styles */
 .avatar-pick { cursor: pointer; border-radius: 50%; padding: 2px; border: 2px solid transparent; transition: all 0.2s; }

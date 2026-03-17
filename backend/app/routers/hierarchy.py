@@ -32,13 +32,72 @@ class EdgeCreate(BaseModel):
     target_id: int
 
 
-class EdgeDeleteParams(BaseModel):
+class EdgeOut(BaseModel):
+    id: int
     type: str
+
+
+class OkOut(BaseModel):
+    ok: bool
+
+
+class OrgOut(BaseModel):
+    id: int
+    name: str
+
+
+class DeptGraphOut(BaseModel):
+    id: int
+    name: str
+    org_id: int
+    head_user_id: Optional[int]
+    member_ids: List[int]
+
+
+class UserGraphOut(BaseModel):
+    id: int
+    full_name: Optional[str]
+    username: str
+    role: str
+    org_id: Optional[int]
+    avatar: Optional[str]
+
+
+class UserUserEdgeOut(BaseModel):
+    id: int
+    manager_id: int
+    subordinate_id: int
+
+
+class UserDeptEdgeOut(BaseModel):
+    id: int
+    manager_user_id: int
+    dept_id: int
+
+
+class GraphOut(BaseModel):
+    orgs: List[OrgOut]
+    departments: List[DeptGraphOut]
+    users: List[UserGraphOut]
+    user_user_edges: List[UserUserEdgeOut]
+    user_dept_edges: List[UserDeptEdgeOut]
+
+
+class TaskAuthorityUserOut(BaseModel):
+    id: int
+    full_name: Optional[str]
+    username: str
+    role: str
+
+
+class TaskAuthorityOut(BaseModel):
+    can_assign_to: List[TaskAuthorityUserOut]
+    can_receive_from: List[TaskAuthorityUserOut]
 
 
 # ── Graph endpoint ─────────────────────────────────────────────────────────────
 
-@router.get("/api/hierarchy/graph")
+@router.get("/api/hierarchy/graph", response_model=GraphOut)
 async def get_hierarchy_graph(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -126,7 +185,7 @@ async def get_hierarchy_graph(
 
 # ── Edge CRUD ─────────────────────────────────────────────────────────────────
 
-@router.post("/api/hierarchy/edges")
+@router.post("/api/hierarchy/edges", response_model=EdgeOut)
 async def create_edge(
     body: EdgeCreate,
     db: AsyncSession = Depends(get_db),
@@ -183,7 +242,7 @@ async def create_edge(
         raise HTTPException(400, f"Неизвестный тип связи: {body.type}")
 
 
-@router.delete("/api/hierarchy/edges/{edge_id}")
+@router.delete("/api/hierarchy/edges/{edge_id}", response_model=OkOut)
 async def delete_edge(
     edge_id: int,
     type: str = Query(...),
@@ -212,7 +271,7 @@ async def delete_edge(
 
 # ── Task authority ─────────────────────────────────────────────────────────────
 
-@router.get("/api/users/{uid}/task-authority")
+@router.get("/api/users/{uid}/task-authority", response_model=TaskAuthorityOut)
 async def get_task_authority(
     uid: int,
     db: AsyncSession = Depends(get_db),

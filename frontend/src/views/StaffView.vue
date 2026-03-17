@@ -1222,6 +1222,7 @@ async function saveEditUser() {
           method: 'DELETE',
         })
       }
+    }
     // Note: if only position changed (same dept), PATCH /users above already syncs
     // DepartmentMember.position via _sync_user_department — no extra call needed.
 

@@ -371,9 +371,20 @@
           <v-text-field v-model="editDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
           <v-select v-model="editDialog.role" :items="roleItems" item-title="label" item-value="value"
             label="Роль" variant="outlined" density="compact" class="mb-3" />
-          <v-combobox v-model="editDialog.department" :items="knownDepartments" label="Отдел" variant="outlined" density="compact" clearable class="mb-3"
-            hint="Введите новый отдел или выберите из списка" persistent-hint
-            no-data-text="Введите название нового отдела" prepend-inner-icon="mdi-office-building-outline" />
+          <v-select
+            v-model="editDialog.deptId"
+            :items="[{ id: null, name: '— Вне отдела —' }, ...flatDepts(deptTree)]"
+            item-title="name"
+            item-value="id"
+            label="Отдел"
+            variant="outlined"
+            density="compact"
+            clearable
+            class="mb-3"
+            prepend-inner-icon="mdi-office-building-outline"
+            hint="Изменение отдела обновляет членство сотрудника"
+            persistent-hint
+          />
           <v-combobox v-model="editDialog.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" clearable class="mb-3"
             hint="Введите новую должность или выберите из списка" persistent-hint
             no-data-text="Введите название новой должности" prepend-inner-icon="mdi-briefcase-outline" />
@@ -867,6 +878,10 @@ const editDialog = reactive({
   department: '', position: '', email: '', password: '', avatar: '', saving: false, inn: '',
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
+  // Dept handled via ID (not text) — single source of truth via DepartmentMember table
+  deptId: null as number | null,
+  origDeptId: null as number | null,
+  origPosition: '',
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -1124,11 +1139,17 @@ async function openEditUser(item: UserItem) {
   editDialog.city = item.city || ''
   editDialog.department = item.department || ''
   editDialog.position = item.position || ''
+  editDialog.origPosition = item.position || ''
   editDialog.email = item.email || ''
   editDialog.password = ''
   editDialog.avatar = item.avatar || ''
   editDialog.inn = item.inn || ''
   editDialog.extraOrgIds = []
+  // Resolve dept ID from deptTree by matching name
+  const allDepts = flatDepts(deptTree.value)
+  const foundDept = allDepts.find((d: any) => d.name === item.department)
+  editDialog.deptId = foundDept?.id ?? null
+  editDialog.origDeptId = editDialog.deptId
   editDialog.show = true
 
   // Load extra orgs & all orgs lazily
@@ -1171,11 +1192,11 @@ async function syncToContractor(userId: number) {
 async function saveEditUser() {
   editDialog.saving = true
   try {
+    // PATCH user fields (NOT department text — managed via DepartmentMember API below)
     const body: any = {
       full_name: editDialog.full_name || null,
       role: editDialog.role,
       city: editDialog.city || null,
-      department: normalizeDepartment(editDialog.department) || null,
       position: editDialog.position || null,
       email: editDialog.email || null,
       avatar: editDialog.avatar || null,
@@ -1185,28 +1206,62 @@ async function saveEditUser() {
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
       method: 'PATCH', body: JSON.stringify(body),
     })
+
+    // Sync department membership (single source of truth — DepartmentMember table)
+    const deptChanged = editDialog.deptId !== editDialog.origDeptId
+    if (deptChanged) {
+      if (editDialog.deptId) {
+        // Add to new dept — backend auto-removes from old depts (exclusive)
+        await apiFetch(`/departments/${editDialog.deptId}/members`, {
+          method: 'POST',
+          body: { user_id: editDialog.userId, position: editDialog.position || undefined },
+        })
+      } else if (editDialog.origDeptId) {
+        // Cleared dept — remove from old dept
+        await apiFetch(`/departments/${editDialog.origDeptId}/members/${editDialog.userId}`, {
+          method: 'DELETE',
+        })
+      }
+    } else if (editDialog.deptId && editDialog.position !== editDialog.origPosition) {
+      // Same dept but position changed — sync DepartmentMember.position
+      try {
+        await apiFetch(`/departments/${editDialog.deptId}/members/${editDialog.userId}`, {
+          method: 'PATCH',
+          body: { position: editDialog.position || null },
+        })
+      } catch { /* non-critical */ }
+    }
+
     // Sync extra org memberships
     try {
       const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
       const currentExtraIds = new Set(res.extra.map((e: any) => e.id))
       const desiredIds = new Set(editDialog.extraOrgIds)
-      // Add new
       for (const oid of desiredIds) {
         if (!currentExtraIds.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'POST' })
         }
       }
-      // Remove removed
       for (const oid of currentExtraIds) {
         if (!desiredIds.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
         }
       }
     } catch { /* non-critical */ }
-    const idx = users.value.findIndex(u => u.id === editDialog.userId)
-    if (idx >= 0) users.value.splice(idx, 1, updated)
+
+    // Reload user from API to get fresh department text (updated by dept membership API)
+    try {
+      const fresh = await apiFetch<UserItem>(`/users/${editDialog.userId}`)
+      const idx = users.value.findIndex(u => u.id === editDialog.userId)
+      if (idx >= 0) users.value.splice(idx, 1, fresh)
+    } catch {
+      const idx = users.value.findIndex(u => u.id === editDialog.userId)
+      if (idx >= 0) users.value.splice(idx, 1, updated)
+    }
+
     editDialog.show = false
-    showSnack('Пользователь обновлен')
+    showSnack('Пользователь обновлён')
+    await loadDeptTree()
     loadHierarchyTree()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка', 'error')

@@ -132,45 +132,73 @@ async def create_category(
 
 @router.get("/import/template")
 async def download_feo_template():
-    """Шаблон Excel для импорта категорий ФЭО (4 уровня в отдельных столбцах)."""
+    """Шаблон Excel для импорта категорий ФЭО (5 уровней: A-D иерархия, E-H плановые позиции, I-L атрибуты)."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     wb = Workbook()
     ws = wb.active
     ws.title = "Категории ФЭО"
     headers = [
-        "Субсидия",
-        "Уровень 2 (Направление расходов по ФЭО)",
-        "Уровень 3 (Тип расходов по ФЭО)",
-        "Уровень 4 (Конкретизированный)",
-        "Код",
-        "Приложение",
-        "Финансирование",
-        "Активна",
+        "Субсидия",                                      # A
+        "Уровень 2 (Направление расходов по ФЭО)",       # B
+        "Уровень 3 (Тип расходов по ФЭО)",               # C
+        "Уровень 4 (Конкретизированный)",                # D
+        "Уровень 5 (Плановый товар/услуга)",             # E
+        "Количество (Ур.5)",                             # F
+        "Ед. измерения (Ур.5)",                          # G
+        "Сумма плановая (Ур.5)",                         # H
+        "Код",                                           # I
+        "Приложение",                                    # J
+        "Финансирование (Ур.4)",                         # K
+        "Активна",                                       # L
     ]
     ws.append(headers)
-    fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
-    font = Font(color="FFFFFF", bold=True, size=11)
-    for cell in ws[1]:
-        cell.fill = fill; cell.font = font
+
+    # Цветовое кодирование заголовков
+    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории
+    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — позиции
+    fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")  # фиолетовый — атрибуты
+    font_w = Font(color="FFFFFF", bold=True, size=10)
+
+    for i, cell in enumerate(ws[1], start=1):
+        if i <= 4:
+            cell.fill = fill_cat
+        elif i <= 8:
+            cell.fill = fill_item
+        else:
+            cell.fill = fill_attr
+        cell.font = font_w
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[1].height = 48
+    ws.row_dimensions[1].height = 52
 
-    # Пример строк — все 4 уровня
-    ws.append(["ФАДМ_2026", "Техническое оснащение деятельности штаба", "Техническое оснащение деятельности штаба", "Закупка рабочих компьютеров с процессором не ниже Intel Core I5", "01.01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["ФАДМ_2026", "Техническое оснащение деятельности штаба", "Техническое оснащение деятельности штаба", "Закупка канцелярских принадлежностей", "01.01.02", "Прил. 1", "500000", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "Организация и проведение Слёта студентов", "Услуга по организации проживания и питания участников", "02.01.01", "Прил. 2", "3000000", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "Организация и проведение Слёта студентов", "Услуга по организации логистики участников", "02.01.02", "Прил. 2", "1500000", "да"])
+    # Пример: категории без плановых позиций (старый формат — совместимо)
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
+    # Пример: категория + плановые позиции уровня 5
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "Слёт студентов-спасателей", "Услуги по организации", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "Слёт студентов-спасателей", "Услуги по организации", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
 
-    # Комментарий в строке 6
-    ws.cell(6, 1).value = "← Субсидия (точное название как в системе)"
-    ws.cell(6, 2).value = "← Направление (уровень 1 в дереве ФЭО)"
-    ws.cell(6, 3).value = "← Тип расходов (уровень 2; если пусто — атрибуты идут на Ур.2)"
-    ws.cell(6, 4).value = "← Конкретизированный (уровень 3; если пусто — на Ур.2 или Ур.3)"
-    for col in range(1, 9):
-        ws.cell(6, col).font = Font(italic=True, color="888888", size=9)
+    # Комментарий в строке 7
+    hints = [
+        "← Точное название как в системе",
+        "← Направление расходов (создаётся если нет)",
+        "← Тип расходов (если пусто — атрибуты к Ур.3)",
+        "← Конкретизированный (если пусто — к Ур.3)",
+        "← Плановый товар/услуга (необязательно)",
+        "← Кол-во (необязательно)",
+        "← Ед. изм. (шт, кг, услуга...)",
+        "← Плановая сумма позиции",
+        "← Код категории",
+        "← Номер приложения",
+        "← Бюджет категории Ур.4",
+        "← да/нет",
+    ]
+    for col, hint in enumerate(hints, start=1):
+        ws.cell(7, col).value = hint
+        ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    for i, w in enumerate([20, 50, 50, 60, 12, 15, 18, 10], 1):
+    for i, w in enumerate([18, 42, 42, 45, 45, 12, 14, 18, 10, 12, 18, 10], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -215,6 +243,10 @@ async def import_feo_from_excel(
     c_lvl2     = find_col(["уровень 2", "направление расходов", "level 2"])
     c_lvl3     = find_col(["уровень 3", "тип расходов", "level 3"])
     c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
+    c_lvl5     = find_col(["уровень 5", "плановый товар", "level 5"])
+    c_qty      = find_col(["количество", "кол-во", "qty"])
+    c_unit     = find_col(["ед. изм", "единица изм", "ед.изм"])
+    c_item_amt = find_col(["сумма плановая", "сумма (ур.5)", "сумма ур"])
     c_code     = find_col(["код"])
     c_appendix = find_col(["приложение"])
     c_budget   = find_col(["финансирование", "бюджет", "budget"])
@@ -281,11 +313,17 @@ async def import_feo_from_excel(
 
         lvl3_name = get_cell(row, c_lvl3) if c_lvl3 is not None else None
         lvl4_name = get_cell(row, c_lvl4) if c_lvl4 is not None else None
+        lvl5_name = get_cell(row, c_lvl5) if c_lvl5 is not None else None
 
-        code     = get_cell(row, c_code)
-        appendix = get_cell(row, c_appendix)
-        budget   = to_dec(get_cell(row, c_budget))
+        code      = get_cell(row, c_code)
+        appendix  = get_cell(row, c_appendix)
+        budget    = to_dec(get_cell(row, c_budget))
         is_active = to_bool(get_cell(row, c_active))
+
+        # Уровень 5 (плановый товар)
+        item_qty    = to_dec(get_cell(row, c_qty)) if c_qty is not None else None
+        item_unit   = get_cell(row, c_unit) if c_unit is not None else None
+        item_amount = to_dec(get_cell(row, c_item_amt)) if c_item_amt is not None else None
 
         try:
             # Уровень 2 → FeoCategory.level=1
@@ -310,7 +348,7 @@ async def import_feo_from_excel(
                         created += 1
                     leaf = cat_l3
 
-            # Применяем атрибуты к листовому узлу
+            # Применяем атрибуты к листовому узлу (уровень 4 или выше)
             changed = False
             if code is not None and leaf.code != code:
                 leaf.code = code; changed = True
@@ -322,6 +360,42 @@ async def import_feo_from_excel(
                 leaf.is_active = is_active; changed = True
             if changed:
                 updated += 1
+
+            # Уровень 5 → FeoPlannedItem (если заполнено)
+            if lvl5_name and lvl5_name not in ("←", ""):
+                from app.models.feo_planned_item import FeoPlannedItem
+                # Проверяем дубликат: (feo_category_id, name)
+                existing_item = (await db.execute(
+                    select(FeoPlannedItem).where(
+                        FeoPlannedItem.feo_category_id == leaf.id,
+                        FeoPlannedItem.name == lvl5_name,
+                    )
+                )).scalar_one_or_none()
+                if not existing_item:
+                    pi = FeoPlannedItem(
+                        feo_category_id=leaf.id,
+                        name=lvl5_name,
+                        quantity=item_qty,
+                        unit=item_unit,
+                        amount=item_amount,
+                        is_active=is_active,
+                    )
+                    db.add(pi)
+                    await db.flush()
+                    created += 1
+                else:
+                    # Обновляем если изменились
+                    ch2 = False
+                    if item_qty is not None and existing_item.quantity != item_qty:
+                        existing_item.quantity = item_qty; ch2 = True
+                    if item_unit is not None and existing_item.unit != item_unit:
+                        existing_item.unit = item_unit; ch2 = True
+                    if item_amount is not None and existing_item.amount != item_amount:
+                        existing_item.amount = item_amount; ch2 = True
+                    if ch2:
+                        updated += 1
+                    else:
+                        skipped += 1
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})

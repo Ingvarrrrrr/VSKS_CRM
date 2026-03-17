@@ -108,7 +108,7 @@
     </v-dialog>
 
     <!-- New dept dialog -->
-    <v-dialog v-model="newDeptDialog.show" max-width="400">
+    <v-dialog v-model="newDeptDialog.show" max-width="420">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-account-group" color="teal" class="mr-2" />
@@ -120,7 +120,21 @@
             label="Название отдела"
             prepend-inner-icon="mdi-account-group-outline"
             autofocus
+            class="mb-3"
             @keydown.enter="createNewDept"
+          />
+          <v-select
+            v-if="graphOrgs.length > 1"
+            v-model="newDeptDialog.orgId"
+            :items="graphOrgs"
+            item-title="name"
+            item-value="id"
+            label="Организация"
+            variant="outlined"
+            density="compact"
+            prepend-inner-icon="mdi-domain"
+            hint="К какой организации относится отдел"
+            persistent-hint
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -271,7 +285,8 @@ const helpDialog = ref(false)
 const snack = ref({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
 
-const newDeptDialog = ref({ show: false, name: '' })
+const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
+const graphOrgs = ref<{ id: number; name: string }[]>([])
 const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
   show: false, deptId: null, available: [],
 })
@@ -441,6 +456,12 @@ function buildGraph(data: GraphData) {
   const deptOrders = loadDeptOrders()
   const newNodes: Node[] = []
   const newEdges: Edge[] = []
+
+  // Store orgs list for dialogs
+  graphOrgs.value = data.orgs
+  if (newDeptDialog.value.orgId === null && data.orgs.length === 1) {
+    newDeptDialog.value.orgId = data.orgs[0].id
+  }
 
   // Build org name map for extra org badges
   const orgNameMap = new Map(data.orgs.map(o => [o.id, o.name]))
@@ -926,9 +947,11 @@ async function createNewDept() {
   const name = newDeptDialog.value.name.trim()
   if (!name) return
   try {
-    await apiFetch('/departments/', { method: 'POST', body: { name } })
+    const body: any = { name }
+    if (newDeptDialog.value.orgId) body.org_id = newDeptDialog.value.orgId
+    await apiFetch('/departments/', { method: 'POST', body })
     showSnack(`Отдел "${name}" создан`)
-    newDeptDialog.value = { show: false, name: '' }
+    newDeptDialog.value = { show: false, name: '', orgId: newDeptDialog.value.orgId }
     await loadGraph()
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка создания отдела', 'error')

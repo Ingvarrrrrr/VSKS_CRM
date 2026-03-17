@@ -1463,15 +1463,114 @@
 
           <!-- Contractor selector -->
           <div class="text-subtitle-2 mb-1 mt-3">Получатели</div>
-          <v-autocomplete
-            v-model="kpSelected"
-            :items="kpContractorOptions"
-            item-title="label"
-            item-value="id"
-            label="Выберите контрагентов"
-            variant="outlined" density="compact" multiple chips closable-chips
+          <div class="d-flex align-center gap-2 mb-2">
+            <v-autocomplete
+              v-model="kpSelected"
+              :items="kpContractorOptions"
+              item-title="label"
+              item-value="id"
+              label="Найти контрагента"
+              variant="outlined" density="compact"
+              multiple hide-selected hide-details
+              class="flex-grow-1"
+              no-data-text="Не найдено"
+            />
+          </div>
+
+          <!-- Selected contractors list -->
+          <div v-if="kpSelected.length" class="mb-3">
+            <div
+              v-for="cid in kpSelected" :key="cid"
+              class="d-flex align-center gap-2 pa-2 rounded mb-1"
+              style="border: 1px solid rgba(0,0,0,0.12);"
+            >
+              <v-icon icon="mdi-domain" size="small" color="cyan-darken-2" />
+              <span class="text-body-2 font-weight-medium" style="min-width:140px">
+                {{ kpContractorList.find(c=>c.id===cid)?.name }}
+              </span>
+
+              <template v-if="kpEditEmailId !== cid">
+                <span v-if="kpContractorList.find(c=>c.id===cid)?.email" class="text-body-2 text-medium-emphasis flex-grow-1">
+                  {{ kpContractorList.find(c=>c.id===cid)?.email }}
+                </span>
+                <v-chip v-else color="warning" size="x-small" variant="tonal" class="flex-grow-1">
+                  <v-icon start icon="mdi-alert-circle-outline" />
+                  нет email
+                </v-chip>
+                <v-btn
+                  :icon="kpContractorList.find(c=>c.id===cid)?.email ? 'mdi-pencil-outline' : 'mdi-email-plus-outline'"
+                  size="x-small" variant="text"
+                  :color="kpContractorList.find(c=>c.id===cid)?.email ? 'grey' : 'warning'"
+                  title="Добавить/изменить email контрагента"
+                  @click="kpStartEditEmail(cid)"
+                />
+              </template>
+              <template v-else>
+                <v-text-field
+                  v-model="kpEditEmailValue"
+                  label="Email"
+                  type="email"
+                  variant="outlined" density="compact" hide-details
+                  class="flex-grow-1"
+                  autofocus
+                  @keyup.enter="kpSaveEmail(cid)"
+                  @keyup.esc="kpEditEmailId = null"
+                />
+                <v-btn icon="mdi-check" size="x-small" variant="tonal" color="success"
+                  :loading="kpSavingEmail" @click="kpSaveEmail(cid)" />
+                <v-btn icon="mdi-close" size="x-small" variant="text" @click="kpEditEmailId = null" />
+              </template>
+
+              <v-btn
+                icon="mdi-close" size="x-small" variant="text" color="error"
+                title="Убрать из списка"
+                @click="kpSelected = kpSelected.filter(id => id !== cid)"
+              />
+            </div>
+          </div>
+
+          <!-- Free email recipients -->
+          <div v-if="kpFreeRecipients.length" class="mb-2">
+            <div v-for="(fr, i) in kpFreeRecipients" :key="i"
+              class="d-flex align-center gap-2 pa-2 rounded mb-1"
+              style="border: 1px solid rgba(0,0,0,0.12);"
+            >
+              <v-icon icon="mdi-email-outline" size="small" color="cyan-darken-2" />
+              <v-text-field
+                v-model="fr.name"
+                label="Название / имя"
+                variant="outlined" density="compact" hide-details
+                style="max-width:170px"
+              />
+              <v-text-field
+                v-model="fr.email"
+                label="Email *"
+                type="email"
+                variant="outlined" density="compact" hide-details
+                class="flex-grow-1"
+              />
+              <v-btn
+                icon="mdi-email-outline" size="x-small" variant="tonal" color="cyan-darken-2"
+                :disabled="!fr.email"
+                title="Открыть в почтовом клиенте"
+                @click="openMailtoFree(fr)"
+              />
+              <v-btn
+                icon="mdi-content-copy" size="x-small" variant="text"
+                title="Скопировать текст письма"
+                @click="copyFreeEmail(fr)"
+              />
+              <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
+                @click="kpFreeRecipients.splice(i, 1)" />
+            </div>
+          </div>
+          <v-btn
+            prepend-icon="mdi-email-plus-outline" size="small" variant="text" color="cyan-darken-2"
             class="mb-3"
-          />
+            @click="kpFreeRecipients.push({ name: '', email: '' })"
+          >
+            Добавить email вручную
+          </v-btn>
 
           <!-- Per-contractor preview -->
           <template v-if="kpSelected.length > 0">
@@ -1543,6 +1642,33 @@
         </v-card-text>
         <v-card-actions class="px-6 pb-4 gap-2">
           <v-btn variant="text" @click="kpDialog = false">Закрыть</v-btn>
+          <v-spacer />
+          <v-btn
+            variant="tonal"
+            prepend-icon="mdi-email-multiple-outline"
+            :disabled="kpAllEmails.length === 0"
+            @click="sendAllKp"
+          >
+            Открыть в почте
+          </v-btn>
+          <v-btn
+            color="teal" variant="flat"
+            prepend-icon="mdi-send-outline"
+            :loading="kpSendingAll"
+            :disabled="kpAllEmails.length === 0"
+            @click="sendAllKpViaApi"
+          >
+            Отправить ({{ kpAllEmails.length }})
+          </v-btn>
+          <v-btn
+            color="primary" variant="flat"
+            prepend-icon="mdi-content-save-outline"
+            :loading="kpSaving"
+            :disabled="kpAllEmails.length === 0"
+            @click="saveKpRequest"
+          >
+            Сохранить запрос
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -3266,6 +3392,24 @@ const kpSelected    = ref<number[]>([])
 const kpIntroText   = ref('')
 const kpDeliveryDate = ref('')
 const kpItemsLoading = ref(false)
+const kpFreeRecipients = ref<{ name: string; email: string }[]>([])
+const kpEditEmailId  = ref<number | null>(null)
+const kpEditEmailValue = ref('')
+const kpSavingEmail  = ref(false)
+const kpSaving       = ref(false)
+const kpSendingAll   = ref(false)
+
+const kpAllEmails = computed(() => {
+  const emails: string[] = []
+  for (const cid of kpSelected.value) {
+    const c = kpContractorList.value.find(c => c.id === cid)
+    if (c?.email) emails.push(c.email)
+  }
+  for (const fr of kpFreeRecipients.value) {
+    if (fr.email.trim()) emails.push(fr.email.trim())
+  }
+  return emails
+})
 
 interface ContractorKp {
   id: number; name: string; email?: string
@@ -3326,10 +3470,60 @@ ${itemLines || '— (товары не указаны)'}
 С уважением`
 }
 
+function kpStartEditEmail(cid: number) {
+  kpEditEmailId.value = cid
+  kpEditEmailValue.value = kpContractorList.value.find(c => c.id === cid)?.email || ''
+}
+
+async function kpSaveEmail(cid: number) {
+  if (!kpEditEmailValue.value.trim()) return
+  kpSavingEmail.value = true
+  try {
+    await apiFetch(`/contractors/${cid}/email`, {
+      method: 'PATCH',
+      body: { email: kpEditEmailValue.value.trim() },
+    })
+    const c = kpContractorList.value.find(c => c.id === cid)
+    if (c) c.email = kpEditEmailValue.value.trim()
+    kpEditEmailId.value = null
+    showSnack('Email контрагента сохранён')
+  } catch (e: any) {
+    showSnack('Ошибка сохранения email', 'error')
+  } finally {
+    kpSavingEmail.value = false
+  }
+}
+
+function openMailtoFree(fr: { name: string; email: string }) {
+  if (!fr.email) return
+  const subject = encodeURIComponent(`Запрос КП: ${form.subject || form.item_name || 'закупка'}`)
+  const body = encodeURIComponent(buildGenericEmail())
+  window.open(`mailto:${fr.email}?subject=${subject}&body=${body}`, '_blank')
+}
+
+function copyFreeEmail(fr: { name: string; email: string }) {
+  navigator.clipboard.writeText(buildGenericEmail()).then(
+    () => showSnack('Текст письма скопирован'),
+    () => showSnack('Не удалось скопировать', 'error')
+  )
+}
+
+function buildGenericEmail(): string {
+  const subject = form.subject || form.item_name || '—'
+  const delivery = kpDeliveryDate.value || form.execution_term || '—'
+  const intro = kpIntroText.value || 'Просим Вас направить коммерческое предложение на поставку товаров.'
+  const itemLines = kpItems.value.map((it, i) =>
+    `${i + 1}. ${it.item_name} — ${it.quantity} ${it.unit}`
+  ).join('\n')
+  return `Уважаемые коллеги,\n\n${intro}\n\nЗакупка: ${subject}\nСрок поставки: ${delivery}\n\nПеречень товаров (${kpItems.value.length} поз.):\n${itemLines || '— (товары не указаны)'}\n\nС уважением`
+}
+
 async function openKpDialog() {
   kpDialog.value = true
   kpIntroText.value = ''
   kpDeliveryDate.value = form.execution_term || ''
+  kpFreeRecipients.value = []
+  kpEditEmailId.value = null
 
   // Load contractors with product categories
   if (!kpContractorList.value.length) {
@@ -3366,6 +3560,89 @@ function copyContractorEmail(cid: number) {
     () => showSnack('Текст письма скопирован'),
     () => showSnack('Не удалось скопировать', 'error')
   )
+}
+
+function sendAllKp() {
+  // Opens mailto: as fallback
+  const emails = kpAllEmails.value
+  if (!emails.length) return
+  const subject = encodeURIComponent(`Запрос КП: ${form.subject || form.item_name || 'закупка'}`)
+  const body = encodeURIComponent(buildGenericEmail())
+  const [first, ...rest] = emails
+  const bcc = rest.length ? `&bcc=${encodeURIComponent(rest.join(','))}` : ''
+  window.open(`mailto:${first}?subject=${subject}${bcc}&body=${body}`, '_blank')
+}
+
+async function sendAllKpViaApi() {
+  kpSendingAll.value = true
+  try {
+    // Build recipients list
+    const recipients: { name: string | null; email: string }[] = []
+    for (const cid of kpSelected.value) {
+      const c = kpContractorList.value.find(c => c.id === cid)
+      if (c?.email) recipients.push({ name: c.name, email: c.email })
+    }
+    for (const fr of kpFreeRecipients.value) {
+      if (fr.email.trim()) recipients.push({ name: fr.name || null, email: fr.email.trim() })
+    }
+    if (!recipients.length) {
+      showSnack('Нет получателей с email', 'warning')
+      return
+    }
+
+    const result = await apiFetch<{ sent: number; failed: { email: string; error: string }[] }>(
+      '/commercial-requests/send',
+      {
+        method: 'POST',
+        body: {
+          recipients,
+          subject: `Запрос КП: ${form.subject || form.item_name || 'закупка'}`,
+          body: buildGenericEmail(),
+        },
+      }
+    )
+
+    if (result.failed.length) {
+      showSnack(`Отправлено: ${result.sent}, ошибки: ${result.failed.length}`, 'warning')
+    } else {
+      showSnack(`Отправлено ${result.sent} письмо(а)`)
+      kpDialog.value = false
+    }
+  } catch (e: any) {
+    const msg = e.message || 'Ошибка отправки'
+    if (msg.includes('SMTP не настроен')) {
+      showSnack('SMTP не настроен. Перейдите в Настройки организации → Email.', 'error')
+    } else {
+      showSnack(msg, 'error')
+    }
+  } finally {
+    kpSendingAll.value = false
+  }
+}
+
+async function saveKpRequest() {
+  if (!purchaseId.value) return
+  kpSaving.value = true
+  try {
+    const validFree = kpFreeRecipients.value.filter(r => r.email.trim())
+    await apiFetch('/commercial-requests/', {
+      method: 'POST',
+      body: {
+        purchase_id: purchaseId.value,
+        subject: `Запрос КП: ${form.subject || form.item_name || ''}`.trim(),
+        intro_text: kpIntroText.value || null,
+        delivery_date: kpDeliveryDate.value || null,
+        recipient_ids: kpSelected.value,
+        free_recipients: validFree.length ? validFree.map(r => ({ name: r.name || null, email: r.email })) : null,
+      },
+    })
+    showSnack('Запрос КП сохранён в реестре')
+    kpDialog.value = false
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка сохранения', 'error')
+  } finally {
+    kpSaving.value = false
+  }
 }
 </script>
 

@@ -471,12 +471,17 @@ class CommercialRequestRecipientOut(BaseModel):
     email: Optional[str] = None
     status: str
 
+class FreeRecipient(BaseModel):
+    name: Optional[str] = None
+    email: str
+
 class CommercialRequestCreate(BaseModel):
     purchase_id: int
     subject: Optional[str] = None
     intro_text: Optional[str] = None
     delivery_date: Optional[str] = None
     recipient_ids: Optional[List[int]] = None
+    free_recipients: Optional[List[FreeRecipient]] = None
 
 class CommercialRequestStatusUpdate(BaseModel):
     status: str

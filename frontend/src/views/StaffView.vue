@@ -426,6 +426,29 @@
               hint="Пользователь будет виден и доступен в этих организациях"
               persistent-hint
             />
+            <!-- Position per extra org -->
+            <div v-if="editDialog.extraOrgIds.length" class="mt-2">
+              <div class="text-caption text-medium-emphasis mb-1 d-flex align-center">
+                <v-icon size="12" class="mr-1">mdi-briefcase-outline</v-icon>
+                Должности в дополнительных организациях:
+              </div>
+              <div v-for="oid in editDialog.extraOrgIds" :key="oid" class="d-flex align-center mb-2 ga-2">
+                <v-chip size="x-small" color="purple" variant="tonal" style="min-width:80px;flex-shrink:0">
+                  {{ organizations.find(o => o.id === oid)?.name || `Орг #${oid}` }}
+                </v-chip>
+                <v-combobox
+                  :model-value="editDialog.orgPositions[oid] || ''"
+                  @update:model-value="v => editDialog.orgPositions[oid] = v || ''"
+                  :items="knownPositions"
+                  placeholder="Должность в этой орг."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  style="flex:1"
+                />
+              </div>
+            </div>
           </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -878,6 +901,7 @@ const editDialog = reactive({
   department: '', position: '', email: '', password: '', avatar: '', saving: false, inn: '',
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
+  orgPositions: {} as Record<number, string>,  // position per extra org
   // Dept handled via ID (not text) — single source of truth via DepartmentMember table
   deptId: null as number | null,
   origDeptId: null as number | null,
@@ -1157,9 +1181,15 @@ async function openEditUser(item: UserItem) {
     apiFetch<any[]>('/organizations/').then(r => { organizations.value = r }).catch(() => {})
   }
   editDialog.extraOrgsLoading = true
+  editDialog.orgPositions = {}
   try {
     const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`)
     editDialog.extraOrgIds = res.extra.map((e: any) => e.id)
+    const pos: Record<number, string> = {}
+    for (const e of res.extra) {
+      if (e.position) pos[e.id] = e.position
+    }
+    editDialog.orgPositions = pos
   } catch { /* ignore */ } finally {
     editDialog.extraOrgsLoading = false
   }
@@ -1226,17 +1256,24 @@ async function saveEditUser() {
     // Note: if only position changed (same dept), PATCH /users above already syncs
     // DepartmentMember.position via _sync_user_department — no extra call needed.
 
-    // Sync extra org memberships
+    // Sync extra org memberships + positions
     try {
       const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
-      const currentExtraIds = new Set(res.extra.map((e: any) => e.id))
+      const currentExtraMap = new Map(res.extra.map((e: any) => [e.id, e]))
       const desiredIds = new Set(editDialog.extraOrgIds)
       for (const oid of desiredIds) {
-        if (!currentExtraIds.has(oid)) {
-          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'POST' })
+        const pos = editDialog.orgPositions[oid] || null
+        if (!currentExtraMap.has(oid)) {
+          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
+            method: 'POST', body: { position: pos },
+          })
+        } else if (pos !== (currentExtraMap.get(oid)?.position ?? null)) {
+          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
+            method: 'PATCH', body: { position: pos },
+          })
         }
       }
-      for (const oid of currentExtraIds) {
+      for (const oid of currentExtraMap.keys()) {
         if (!desiredIds.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
         }
@@ -1257,6 +1294,7 @@ async function saveEditUser() {
     showSnack('Пользователь обновлён')
     await loadDeptTree()
     loadHierarchyTree()
+    hierarchyRef.value?.refresh()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка', 'error')
   } finally {

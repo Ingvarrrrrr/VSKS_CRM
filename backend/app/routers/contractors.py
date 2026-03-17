@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +82,22 @@ async def create_contractor(
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
     c = Contractor(**d)
     db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.patch("/{cid}/email", response_model=ContractorOut)
+async def patch_contractor_email(
+    cid: int,
+    email: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*MANAGER_ROLES)),
+):
+    c = (await db.execute(select(Contractor).where(Contractor.id == cid))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Not found")
+    c.email = email
     await db.commit()
     await db.refresh(c)
     return c

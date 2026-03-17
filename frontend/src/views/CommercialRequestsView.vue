@@ -129,17 +129,109 @@
             type="date"
             variant="outlined" density="compact" class="mb-3"
           />
-          <div class="mb-1 text-body-2 font-weight-medium">Получатели (контрагенты)</div>
-          <v-autocomplete
-            v-model="createDialog.recipient_ids"
-            :items="contractors"
-            item-title="name"
-            item-value="id"
-            label="Выбрать контрагентов"
-            variant="outlined" density="compact"
-            multiple chips closable-chips
-            :loading="createDialog.loadingContractors"
-          />
+          <!-- Recipients section -->
+          <div class="mb-2 text-body-2 font-weight-medium">Получатели</div>
+
+          <!-- Contractor search -->
+          <div class="d-flex align-center gap-2 mb-2">
+            <v-autocomplete
+              v-model="createDialog.recipient_ids"
+              :items="contractors"
+              item-title="name"
+              item-value="id"
+              label="Найти контрагента"
+              variant="outlined" density="compact"
+              multiple hide-selected hide-details
+              :loading="createDialog.loadingContractors"
+              class="flex-grow-1"
+              no-data-text="Не найдено"
+            />
+            <v-btn
+              icon="mdi-account-plus-outline"
+              size="small" variant="tonal" color="primary"
+              title="Создать нового контрагента"
+              @click="openQuickContractor"
+            />
+          </div>
+
+          <!-- Selected contractors list -->
+          <div v-if="createDialog.recipient_ids.length" class="mb-3">
+            <div
+              v-for="cid in createDialog.recipient_ids" :key="cid"
+              class="d-flex align-center gap-2 pa-2 rounded mb-1"
+              style="border: 1px solid rgba(0,0,0,0.12);"
+            >
+              <v-icon icon="mdi-domain" size="small" color="primary" />
+              <span class="text-body-2 font-weight-medium" style="min-width:140px">{{ getContractor(cid)?.name }}</span>
+
+              <!-- Email display/edit -->
+              <template v-if="editEmailId !== cid">
+                <span v-if="getContractor(cid)?.email" class="text-body-2 text-medium-emphasis flex-grow-1">
+                  {{ getContractor(cid)?.email }}
+                </span>
+                <v-chip v-else color="warning" size="x-small" variant="tonal" class="flex-grow-1">
+                  <v-icon start icon="mdi-alert-circle-outline" />
+                  нет email
+                </v-chip>
+                <v-btn
+                  :icon="getContractor(cid)?.email ? 'mdi-pencil-outline' : 'mdi-email-plus-outline'"
+                  size="x-small" variant="text"
+                  :color="getContractor(cid)?.email ? 'grey' : 'warning'"
+                  title="Добавить/изменить email контрагента"
+                  @click="startEditEmail(cid)"
+                />
+              </template>
+              <template v-else>
+                <v-text-field
+                  v-model="editEmailValue"
+                  label="Email"
+                  type="email"
+                  variant="outlined" density="compact" hide-details
+                  class="flex-grow-1"
+                  autofocus
+                  @keyup.enter="saveContractorEmail(cid)"
+                  @keyup.esc="editEmailId = null"
+                />
+                <v-btn icon="mdi-check" size="x-small" variant="tonal" color="success"
+                  :loading="savingEmail" title="Сохранить"
+                  @click="saveContractorEmail(cid)" />
+                <v-btn icon="mdi-close" size="x-small" variant="text"
+                  title="Отмена" @click="editEmailId = null" />
+              </template>
+
+              <v-btn
+                icon="mdi-close" size="x-small" variant="text" color="error"
+                title="Убрать из списка"
+                @click="createDialog.recipient_ids = createDialog.recipient_ids.filter(id => id !== cid)"
+              />
+            </div>
+          </div>
+
+          <!-- Free emails -->
+          <div v-if="createDialog.free_recipients.length" class="mb-2">
+            <div v-for="(fr, i) in createDialog.free_recipients" :key="i" class="d-flex align-center gap-2 mb-2">
+              <v-text-field
+                v-model="fr.name"
+                label="Название / имя"
+                variant="outlined" density="compact" hide-details
+                style="max-width:180px"
+              />
+              <v-text-field
+                v-model="fr.email"
+                label="Email *"
+                type="email"
+                variant="outlined" density="compact" hide-details
+                class="flex-grow-1"
+              />
+              <v-btn icon="mdi-close" size="x-small" variant="text" color="error" @click="createDialog.free_recipients.splice(i, 1)" />
+            </div>
+          </div>
+          <v-btn
+            prepend-icon="mdi-email-plus-outline" size="small" variant="text" color="primary"
+            @click="createDialog.free_recipients.push({ name: '', email: '' })"
+          >
+            Добавить email вручную
+          </v-btn>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -150,6 +242,31 @@
             :disabled="!createDialog.purchase_id"
             @click="saveRequest">
             Создать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Quick add contractor dialog -->
+    <v-dialog v-model="quickContractor.show" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon icon="mdi-account-plus-outline" color="primary" class="mr-2" />
+          Новый контрагент
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="quickContractor.show = false" />
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-text-field v-model="quickContractor.name" label="Название *" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="quickContractor.email" label="Email" type="email" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="quickContractor.inn" label="ИНН" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="quickContractor.phone" label="Телефон" variant="outlined" density="compact" />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="quickContractor.show = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="quickContractor.saving" :disabled="!quickContractor.name" @click="saveQuickContractor">
+            Создать и добавить
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -277,12 +394,54 @@ const createDialog = reactive({
   intro_text: '',
   delivery_date: '',
   recipient_ids: [] as number[],
+  free_recipients: [] as { name: string; email: string }[],
   saving: false,
   loadingPurchases: false,
   loadingContractors: false,
 })
 
+const quickContractor = reactive({
+  show: false,
+  name: '',
+  email: '',
+  inn: '',
+  phone: '',
+  saving: false,
+})
+
 const detailDialog = reactive({ show: false, item: null as CommercialRequest | null })
+
+const editEmailId = ref<number | null>(null)
+const editEmailValue = ref('')
+const savingEmail = ref(false)
+
+function getContractor(id: number) {
+  return contractors.value.find(c => c.id === id)
+}
+
+function startEditEmail(id: number) {
+  editEmailId.value = id
+  editEmailValue.value = getContractor(id)?.email || ''
+}
+
+async function saveContractorEmail(id: number) {
+  if (!editEmailValue.value.trim()) return
+  savingEmail.value = true
+  try {
+    await apiFetch(`/contractors/${id}/email`, {
+      method: 'PATCH',
+      body: { email: editEmailValue.value.trim() },
+    })
+    const c = contractors.value.find(c => c.id === id)
+    if (c) c.email = editEmailValue.value.trim()
+    editEmailId.value = null
+    showSnack('Email контрагента сохранён')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка сохранения email', 'error')
+  } finally {
+    savingEmail.value = false
+  }
+}
 
 const formatDate = (d: string) => {
   const [y, m, day] = d.split('-')
@@ -314,6 +473,7 @@ async function openCreateDialog() {
   createDialog.intro_text = ''
   createDialog.delivery_date = ''
   createDialog.recipient_ids = []
+  createDialog.free_recipients = []
   createDialog.show = true
 
   if (purchases.value.length === 0) {
@@ -338,15 +498,49 @@ async function openCreateDialog() {
   }
 }
 
+function openQuickContractor() {
+  quickContractor.name = ''
+  quickContractor.email = ''
+  quickContractor.inn = ''
+  quickContractor.phone = ''
+  quickContractor.show = true
+}
+
+async function saveQuickContractor() {
+  if (!quickContractor.name) return
+  quickContractor.saving = true
+  try {
+    const created = await apiFetch<Contractor>('/contractors/', {
+      method: 'POST',
+      body: {
+        name: quickContractor.name,
+        email: quickContractor.email || null,
+        inn: quickContractor.inn || null,
+        phone: quickContractor.phone || null,
+      },
+    })
+    contractors.value.push(created)
+    createDialog.recipient_ids = [...createDialog.recipient_ids, created.id]
+    quickContractor.show = false
+    showSnack(`Контрагент «${created.name}» добавлен`)
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка создания контрагента', 'error')
+  } finally {
+    quickContractor.saving = false
+  }
+}
+
 async function saveRequest() {
   createDialog.saving = true
   try {
+    const validFree = createDialog.free_recipients.filter(r => r.email.trim())
     const body: any = {
       purchase_id: createDialog.purchase_id,
       subject: createDialog.subject || null,
       intro_text: createDialog.intro_text || null,
       delivery_date: createDialog.delivery_date || null,
       recipient_ids: createDialog.recipient_ids,
+      free_recipients: validFree.length ? validFree.map(r => ({ name: r.name || null, email: r.email })) : null,
     }
     const created = await apiFetch<CommercialRequest>('/commercial-requests/', { method: 'POST', body })
     requests.value = [created, ...requests.value]

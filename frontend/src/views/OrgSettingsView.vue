@@ -61,6 +61,66 @@
       </v-card-actions>
     </v-card>
 
+    <!-- SMTP Settings -->
+    <v-card variant="outlined" class="mt-6">
+      <v-card-title class="text-subtitle-1 font-weight-bold px-6 pt-5 pb-3 d-flex align-center gap-2">
+        <v-icon icon="mdi-email-fast-outline" color="primary" />
+        Настройки Email (SMTP)
+        <v-chip v-if="smtpForm.is_configured" color="success" size="x-small" variant="tonal" class="ml-2">Настроен</v-chip>
+        <v-chip v-else color="warning" size="x-small" variant="tonal" class="ml-2">Не настроен</v-chip>
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-6 py-4">
+        <v-row dense>
+          <v-col cols="8">
+            <v-text-field v-model="smtpForm.smtp_host" label="SMTP Host" placeholder="smtp.gmail.com"
+              variant="outlined" density="compact" />
+          </v-col>
+          <v-col cols="4">
+            <v-text-field v-model.number="smtpForm.smtp_port" label="Порт" type="number"
+              variant="outlined" density="compact" />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field v-model="smtpForm.smtp_user" label="Логин (email)"
+              variant="outlined" density="compact" />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field v-model="smtpForm.smtp_password" label="Пароль"
+              type="password" variant="outlined" density="compact"
+              placeholder="Оставьте пустым — не изменится" />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field v-model="smtpForm.smtp_from" label="Email отправителя"
+              placeholder="noreply@example.com" variant="outlined" density="compact" />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field v-model="smtpForm.smtp_from_name" label="Имя отправителя"
+              placeholder="VSKS CRM" variant="outlined" density="compact" />
+          </v-col>
+          <v-col cols="12">
+            <v-switch v-model="smtpForm.smtp_ssl" label="SSL (вместо STARTTLS)" color="primary"
+              density="compact" hide-details />
+          </v-col>
+        </v-row>
+        <div class="d-flex align-center gap-2 mt-1">
+          <v-text-field v-model="smtpTestEmail" label="Email для теста"
+            type="email" variant="outlined" density="compact" hide-details
+            style="max-width:280px" placeholder="your@email.com" />
+          <v-btn color="teal" variant="tonal" prepend-icon="mdi-send-check-outline"
+            :loading="smtpTesting" :disabled="!smtpTestEmail"
+            @click="testSmtp">
+            Тест отправки
+          </v-btn>
+        </div>
+      </v-card-text>
+      <v-card-actions class="px-6 pb-4">
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-content-save"
+          :loading="smtpSaving" @click="saveSmtp">
+          Сохранить настройки Email
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+
     <!-- Warning dialog -->
     <v-dialog v-model="warnDialog.show" max-width="480" persistent>
       <v-card>
@@ -93,6 +153,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useOrgConfig } from '@/composables/useOrgConfig'
+import { apiFetch } from '@/api'
 
 const { hiddenSections, loadConfig, updateConfig, loading: configLoading } = useOrgConfig()
 
@@ -209,8 +270,61 @@ function resetToDefault() {
   localHidden.value = new Set()
 }
 
+// ── SMTP ──────────────────────────────────────────────────────────────────────
+const smtpForm = reactive({
+  smtp_host: '', smtp_port: 587, smtp_user: '', smtp_password: '',
+  smtp_from: '', smtp_from_name: '', smtp_ssl: false, is_configured: false,
+})
+const smtpSaving = ref(false)
+const smtpTesting = ref(false)
+const smtpTestEmail = ref('')
+
+async function loadSmtp() {
+  try {
+    const data = await apiFetch<any>('/settings/smtp')
+    Object.assign(smtpForm, data)
+  } catch { /* not admin — skip */ }
+}
+
+async function saveSmtp() {
+  smtpSaving.value = true
+  try {
+    const body: any = {
+      smtp_host: smtpForm.smtp_host,
+      smtp_port: smtpForm.smtp_port,
+      smtp_user: smtpForm.smtp_user,
+      smtp_from: smtpForm.smtp_from,
+      smtp_from_name: smtpForm.smtp_from_name || null,
+      smtp_ssl: smtpForm.smtp_ssl,
+    }
+    if (smtpForm.smtp_password) body.smtp_password = smtpForm.smtp_password
+    const updated = await apiFetch<any>('/settings/smtp', { method: 'PUT', body })
+    Object.assign(smtpForm, updated)
+    smtpForm.smtp_password = ''
+    showSnack('Настройки Email сохранены')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка сохранения', 'error')
+  } finally {
+    smtpSaving.value = false
+  }
+}
+
+async function testSmtp() {
+  if (!smtpTestEmail.value) return
+  smtpTesting.value = true
+  try {
+    const result = await apiFetch<any>(`/settings/smtp/test?to_email=${encodeURIComponent(smtpTestEmail.value)}`, { method: 'POST' })
+    showSnack(result.message || 'Письмо отправлено')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка отправки', 'error')
+  } finally {
+    smtpTesting.value = false
+  }
+}
+
 onMounted(async () => {
   await loadConfig()
   localHidden.value = new Set(hiddenSections.value)
+  await loadSmtp()
 })
 </script>

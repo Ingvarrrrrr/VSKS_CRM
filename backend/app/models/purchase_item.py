@@ -18,6 +18,8 @@ class PurchaseItem(Base):
     final_unit_price = Column(Numeric(15, 2))
     final_total = Column(Numeric(15, 2))
     country_origin = Column(String(100), nullable=True)
+    feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True)
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")
+    feo_planned_item = relationship("FeoPlannedItem", back_populates="purchase_items")

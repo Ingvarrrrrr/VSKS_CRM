@@ -520,7 +520,7 @@ const { globalSubsidyId } = useGlobalSubsidy()
 
 const route = useRoute()
 const userRole = localStorage.getItem('user_role') || ''
-const isAdmin = userRole === 'admin'
+const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
 interface PurchaseItem { id: number; item_name: string; item_type?: string; quantity?: number; unit?: string; unit_price?: number; total_price?: number }
 interface Subsidy { id: number; name: string; year: number }

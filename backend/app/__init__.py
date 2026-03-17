@@ -13,6 +13,8 @@ from .routers import (
     tasks, departments, delivery_addresses, hierarchy,
 )
 from .routers import org_config
+from .routers import feo_planned_items
+from .routers import settings as settings_router
 from .models import platform_publication  # ensure table is registered
 from .models import org_section_config    # ensure org_section_configs table is created
 from .models.task import TaskAssignee     # ensure task_assignees table is created
@@ -88,6 +90,8 @@ app.include_router(contracts.router)
 app.include_router(purchases.router)
 app.include_router(payments.router)
 app.include_router(feo_categories.router)
+app.include_router(feo_planned_items.router)
+app.include_router(settings_router.router)
 app.include_router(dashboard.router)
 app.include_router(subsidies.router)
 app.include_router(products.router)

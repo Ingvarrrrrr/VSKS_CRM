@@ -388,20 +388,28 @@ async def get_user_organizations(
         if org:
             primary = {"id": org.id, "name": org.name, "primary": True}
 
-    extra = [{"id": org.id, "name": org.name, "primary": False, "membership_id": uo.id}
-             for uo, org in rows if org.id != user.org_id]
+    extra = [
+        {"id": org.id, "name": org.name, "primary": False, "membership_id": uo.id,
+         "position": uo.position}
+        for uo, org in rows if org.id != user.org_id
+    ]
 
     return {"primary": primary, "extra": extra}
+
+
+class OrgMembershipBody(BaseModel):
+    position: Optional[str] = None
 
 
 @router.post("/api/users/{uid}/organizations/{org_id}")
 async def add_user_to_organization(
     uid: int,
     org_id: int,
+    body: OrgMembershipBody = OrgMembershipBody(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
-    """Add user to an extra organization."""
+    """Add user to an extra organization (or update position if already a member)."""
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Организация не найдена")
@@ -412,12 +420,37 @@ async def add_user_to_organization(
         )
     )).scalar_one_or_none()
     if existing:
+        if body.position is not None:
+            existing.position = body.position
+            await db.commit()
         return {"id": existing.id, "ok": True}
-    row = UserOrganization(user_id=uid, org_id=org_id)
+    row = UserOrganization(user_id=uid, org_id=org_id, position=body.position)
     db.add(row)
     await db.commit()
     await db.refresh(row)
     return {"id": row.id, "ok": True}
+
+
+@router.patch("/api/users/{uid}/organizations/{org_id}")
+async def update_user_org_position(
+    uid: int,
+    org_id: int,
+    body: OrgMembershipBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Update user's position in a specific extra organization."""
+    row = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == uid,
+            UserOrganization.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Членство не найдено")
+    row.position = body.position
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/api/users/{uid}/organizations/{org_id}")

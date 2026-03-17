@@ -1,6 +1,10 @@
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +20,7 @@ from app.schemas.schemas import (
     CommercialRequestRecipientOut,
     CommercialRequestStatusUpdate,
     CommercialRequestRecipientStatusUpdate,
+    FreeRecipient,
 )
 
 router = APIRouter(prefix="/api/commercial-requests", tags=["commercial_requests"])
@@ -54,6 +59,15 @@ async def create_commercial_request(
             contractor_id=c.id,
             contractor_name=c.name,
             email=c.email,
+            status="prepared",
+        ))
+
+    for fr in (data.free_recipients or []):
+        db.add(CommercialRequestRecipient(
+            request_id=req.id,
+            contractor_id=None,
+            contractor_name=fr.name or fr.email,
+            email=fr.email,
             status="prepared",
         ))
 
@@ -127,6 +141,68 @@ async def update_recipient_status(
         .where(CommercialRequest.id == recipient.request_id)
     )).scalar_one()
     return _to_out(req)
+
+
+class KpSendRequest(BaseModel):
+    recipients: List[FreeRecipient]  # name + email
+    subject: str
+    body: str
+
+
+@router.post("/send")
+async def send_kp_emails(
+    data: KpSendRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*MANAGER_ROLES)),
+):
+    """Отправить КП напрямую через SMTP (настройки из БД)."""
+    from app.routers.settings import get_setting
+
+    host = await get_setting(db, "smtp_host") or ""
+    port = int(await get_setting(db, "smtp_port") or 587)
+    user = await get_setting(db, "smtp_user") or ""
+    password = await get_setting(db, "smtp_password") or ""
+    frm_addr = await get_setting(db, "smtp_from") or user
+    frm_name = await get_setting(db, "smtp_from_name") or ""
+    ssl = (await get_setting(db, "smtp_ssl") or "false") == "true"
+
+    if not host or not user:
+        raise HTTPException(400, "SMTP не настроен. Перейдите в Настройки → Email.")
+
+    valid = [r for r in data.recipients if r.email and r.email.strip()]
+    if not valid:
+        raise HTTPException(400, "Нет получателей с email")
+
+    from_header = f"{frm_name} <{frm_addr}>" if frm_name else frm_addr
+
+    sent, failed = 0, []
+    try:
+        if ssl:
+            server = smtplib.SMTP_SSL(host, port)
+        else:
+            server = smtplib.SMTP(host, port)
+            server.starttls()
+        server.login(user, password)
+
+        for r in valid:
+            try:
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = data.subject
+                msg["From"] = from_header
+                msg["To"] = r.email.strip()
+                msg.attach(MIMEText(data.body, "plain", "utf-8"))
+                server.sendmail(frm_addr, r.email.strip(), msg.as_string())
+                sent += 1
+            except Exception as e:
+                failed.append({"email": r.email, "error": str(e)})
+
+        server.quit()
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(400, "Ошибка авторизации SMTP. Проверьте логин и пароль.")
+    except Exception as e:
+        raise HTTPException(400, f"Ошибка подключения к SMTP: {str(e)}")
+
+    return {"sent": sent, "failed": failed}
 
 
 def _to_out(r: CommercialRequest) -> CommercialRequestOut:

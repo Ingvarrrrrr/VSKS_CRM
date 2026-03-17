@@ -25,6 +25,7 @@ class DepartmentCreate(BaseModel):
     subsidy_id: Optional[int] = None
     head_user_id: Optional[int] = None
     parent_id: Optional[int] = None
+    org_id: Optional[int] = None  # Override org assignment (superadmin only)
 
 class DepartmentUpdate(BaseModel):
     name: Optional[str] = None
@@ -180,7 +181,11 @@ async def create_department(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
-    org_id = get_single_org_id(current_user) or current_user.org_id
+    # Superadmin can assign to any org via body.org_id; others use their org
+    if data.org_id and current_user.role in ('superadmin', 'org_admin'):
+        org_id = data.org_id
+    else:
+        org_id = get_single_org_id(current_user) or current_user.org_id
     norm_name = data.name.strip().title() if data.name else data.name
     dept = Department(
         name=norm_name, org_id=org_id,
@@ -276,7 +281,7 @@ async def list_members(
             id=m.id, department_id=m.department_id, user_id=m.user_id,
             user_name=(u.full_name or u.username) if u else None,
             user_role=u.role if u else None,
-            position=m.position,
+            position=m.position or (u.position if u else None),
         ))
     return out
 
@@ -340,7 +345,7 @@ async def add_member(
         id=m.id, department_id=m.department_id, user_id=m.user_id,
         user_name=(u.full_name or u.username) if u else None,
         user_role=u.role if u else None,
-        position=m.position,
+        position=m.position or (u.position if u else None),
     )
 
 

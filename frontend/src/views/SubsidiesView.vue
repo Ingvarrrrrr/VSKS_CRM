@@ -304,12 +304,138 @@
 
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
+                        <!-- Level 3: кнопка раскрытия позиций -->
+                        <v-btn v-if="node.level === 3"
+                          :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
+                          variant="text" size="x-small"
+                          :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
+                          title="Показать плановые / фактические позиции"
+                          @click="toggleItemPanel(node)"
+                        />
                         <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                           title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
                         <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
                           title="Редактировать" @click="startFeoEdit(node)" />
                         <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
                           title="Удалить" @click="confirmFeoDelete(node)" />
+                      </td>
+                    </tr>
+
+                    <!-- ── Level 5 панель: Плановые vs Фактические ── -->
+                    <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
+                      <td colspan="4" style="padding:0 0 0 60px; background:#F0FDF4">
+                        <div style="padding:10px 12px 12px">
+                          <!-- Заголовок панели -->
+                          <div class="d-flex align-center mb-2" style="gap:8px">
+                            <v-icon icon="mdi-compare-horizontal" size="16" color="teal" />
+                            <span style="font-size:12px;font-weight:600;color:#0f766e">Позиции: план vs факт</span>
+                            <v-spacer />
+                            <v-btn size="x-small" variant="tonal" color="teal" prepend-icon="mdi-plus"
+                              @click="openAddPlannedItem(node.id)">
+                              Добавить плановую
+                            </v-btn>
+                          </div>
+
+                          <!-- Спиннер загрузки -->
+                          <div v-if="loadingComparison.has(node.id)" class="d-flex align-center" style="gap:8px;padding:8px 0">
+                            <v-progress-circular indeterminate size="16" color="teal" />
+                            <span class="text-caption">Загрузка...</span>
+                          </div>
+
+                          <!-- Таблица сравнения -->
+                          <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
+                            <thead>
+                              <tr style="background:#CCFBF1">
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ПЛАН (Уровень 5)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Кол-во</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Сумма</th>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ФАКТ (из закупок)</th>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
+                                <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px">Статус</th>
+                                <th style="padding:4px 2px;width:60px;border-bottom:1px solid #99F6E4"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <!-- Сопоставленные пары: actual сгруппированы по planned_item_id -->
+                              <template v-for="planned in comparisonData[node.id].planned" :key="`p-${planned.id}`">
+                                <!-- Найдём все actual для этого planned -->
+                                <template v-for="(actual, ai) in comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id)" :key="`pa-${actual.purchase_item_id}`">
+                                  <tr style="border-bottom:1px solid #E0F2FE">
+                                    <td style="padding:4px 8px;color:#0c4a6e">
+                                      <span v-if="ai === 0">{{ planned.name }}</span>
+                                    </td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                      <span v-if="ai === 0 && planned.quantity">{{ planned.quantity }} {{ planned.unit || '' }}</span>
+                                    </td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                      <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
+                                    </td>
+                                    <td style="padding:4px 8px;color:#166534">{{ actual.item_name }}</td>
+                                    <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:center">
+                                      <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
+                                    </td>
+                                    <td style="padding:2px;text-align:center">
+                                      <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
+                                        title="Снять сопоставление"
+                                        @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
+                                      />
+                                    </td>
+                                  </tr>
+                                </template>
+                                <!-- Плановая без факта -->
+                                <tr v-if="comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id).length === 0"
+                                  style="border-bottom:1px solid #E0F2FE">
+                                  <td style="padding:4px 8px;color:#0c4a6e">{{ planned.name }}</td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    {{ planned.quantity ? `${planned.quantity} ${planned.unit || ''}` : '—' }}
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    {{ planned.amount ? formatCurrency(planned.amount) : '—' }}
+                                  </td>
+                                  <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
+                                  <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                  <td style="padding:4px 8px;text-align:center">
+                                    <v-icon icon="mdi-clock-outline" size="16" color="warning" title="Не куплено" />
+                                  </td>
+                                  <td style="padding:2px;text-align:center">
+                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                      title="Удалить плановую позицию"
+                                      @click="deletePlannedItem(planned)"
+                                    />
+                                  </td>
+                                </tr>
+                              </template>
+
+                              <!-- Фактические без плана -->
+                              <tr v-for="actual in comparisonData[node.id].actual.filter(a => !a.feo_planned_item_id)"
+                                :key="`a-${actual.purchase_item_id}`"
+                                style="border-bottom:1px solid #E0F2FE;background:#FFF7ED">
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;color:#92400e">{{ actual.item_name }}</td>
+                                <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
+                                <td style="padding:4px 8px;text-align:center">
+                                  <v-icon icon="mdi-alert-circle-outline" size="16" color="warning" title="Не в плане" />
+                                </td>
+                                <td style="padding:2px;text-align:center">
+                                  <v-btn icon="mdi-link-variant" size="x-small" variant="text" color="teal"
+                                    title="Сопоставить с плановой"
+                                    @click="openMapDialog(actual, node.id)"
+                                  />
+                                </td>
+                              </tr>
+
+                              <!-- Пусто -->
+                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length">
+                                <td colspan="7" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                                  Нет плановых позиций. Добавьте вручную или загрузите из Excel.
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
                       </td>
                     </tr>
                   </template>
@@ -696,7 +822,15 @@
             Будет удалено вместе с {{ feoDeleteChildrenCount }}
             {{ feoDeleteChildrenCount === 1 ? 'дочерней категорией' : 'дочерними категориями' }}
           </v-alert>
-          <v-alert v-if="feoDeleteError" type="error" variant="tonal" class="mb-3">{{ feoDeleteError }}</v-alert>
+          <v-alert v-if="feoDeleteError" type="error" variant="tonal" class="mb-3">
+            {{ feoDeleteError }}
+            <div class="mt-2">
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-right"
+                @click="showDeleteFeoDialog = false; router.push(`/orders?subsidy_id=${feoDeleteTarget?.subsidy_id}`)">
+                Перейти к закупкам
+              </v-btn>
+            </div>
+          </v-alert>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -984,6 +1118,97 @@
       {{ snack.text }}
     </v-snackbar>
 
+    <!-- ── Диалог сопоставления позиций ── -->
+    <v-dialog v-model="showMapDialog" max-width="520">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          <v-icon icon="mdi-link-variant" color="teal" class="mr-2" />
+          Сопоставить с плановой позицией
+        </v-card-title>
+        <v-card-text>
+          <div v-if="mapTarget" class="mb-3">
+            <div class="text-caption text-medium-emphasis mb-1">Фактическая позиция:</div>
+            <div class="font-weight-medium">{{ mapTarget.item_name }}</div>
+            <div class="text-caption text-medium-emphasis">Контрагент: {{ mapTarget.contractor_name || '—' }}</div>
+          </div>
+          <div class="text-caption text-medium-emphasis mb-2">Выберите плановую позицию:</div>
+          <v-list density="compact" v-if="mapCategoryId && comparisonData[mapCategoryId]">
+            <v-list-item
+              v-for="planned in comparisonData[mapCategoryId].planned"
+              :key="planned.id"
+              :title="planned.name"
+              :subtitle="planned.quantity ? `${planned.quantity} ${planned.unit || ''}` : undefined"
+              rounded="lg"
+              class="mb-1"
+              style="border:1px solid #e2e8f0"
+              @click="() => { mapTarget && (mapTarget.feo_planned_item_id = planned.id); applyMapping(planned.id) }"
+            >
+              <template #append>
+                <v-icon icon="mdi-check" color="teal" v-if="mapTarget && mapTarget.feo_planned_item_id === planned.id" />
+              </template>
+            </v-list-item>
+            <div v-if="!comparisonData[mapCategoryId].planned.length" class="text-caption text-medium-emphasis pa-2">
+              Нет плановых позиций. Сначала добавьте их.
+            </div>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showMapDialog = false">Отмена</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Диалог добавления плановой позиции ── -->
+    <v-dialog v-model="showAddPlannedDialog" max-width="440">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          <v-icon icon="mdi-plus-circle" color="teal" class="mr-2" />
+          Добавить плановую позицию
+        </v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="plannedItemForm.name"
+            label="Наименование товара/услуги"
+            variant="outlined" density="compact" class="mb-3"
+            placeholder="Например: Ноутбук HP 15 Intel i5"
+            autofocus
+          />
+          <v-row>
+            <v-col cols="5">
+              <v-text-field
+                v-model.number="plannedItemForm.quantity"
+                label="Количество" type="number"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+            <v-col cols="7">
+              <v-text-field
+                v-model="plannedItemForm.unit"
+                label="Единица измерения"
+                variant="outlined" density="compact"
+                placeholder="шт, кг, услуга..."
+              />
+            </v-col>
+          </v-row>
+          <v-text-field
+            v-model.number="plannedItemForm.amount"
+            label="Плановая сумма (₽)" type="number"
+            variant="outlined" density="compact" suffix="₽"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showAddPlannedDialog = false">Отмена</v-btn>
+          <v-btn color="teal" variant="flat" :loading="savingPlannedItem"
+            :disabled="!plannedItemForm.name.trim()"
+            @click="savePlannedItem">
+            Добавить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -1117,6 +1342,128 @@ const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
   loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
 })
+
+// ── FEO Level 5: Плановые позиции vs Фактические ──
+interface FeoPlannedItem {
+  id: number
+  feo_category_id: number
+  name: string
+  quantity: number | null
+  unit: string | null
+  amount: number | null
+  notes: string | null
+  is_active: boolean
+}
+interface FeoActualItem {
+  purchase_item_id: number
+  item_name: string
+  quantity: number | null
+  unit: string | null
+  total_price: number | null
+  feo_planned_item_id: number | null
+  purchase_id: number
+  purchase_status: string | null
+  contract_number: string | null
+  contractor_name: string | null
+}
+const expandedItemPanels = ref<Set<number>>(new Set())
+const comparisonData = ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>({})
+const loadingComparison = ref<Set<number>>(new Set())
+
+// Map dialog
+const showMapDialog = ref(false)
+const mapTarget = ref<FeoActualItem | null>(null)
+const mapCategoryId = ref<number | null>(null)
+const mappingInProgress = ref(false)
+
+// Add planned item dialog
+const showAddPlannedDialog = ref(false)
+const addPlannedCategoryId = ref<number | null>(null)
+const savingPlannedItem = ref(false)
+const plannedItemForm = ref({ name: '', quantity: null as number | null, unit: '', amount: null as number | null })
+
+async function toggleItemPanel(node: FeoNode) {
+  const id = node.id
+  if (expandedItemPanels.value.has(id)) {
+    expandedItemPanels.value.delete(id)
+    return
+  }
+  expandedItemPanels.value.add(id)
+  if (comparisonData.value[id]) return
+  loadingComparison.value.add(id)
+  try {
+    const subsId = selectedId.value
+    const res = await apiFetch<{ planned: FeoPlannedItem[]; actual: FeoActualItem[] }>(
+      `/feo-planned-items/comparison?feo_category_id=${id}${subsId ? `&subsidy_id=${subsId}` : ''}`
+    )
+    comparisonData.value[id] = res
+  } catch {
+    comparisonData.value[id] = { planned: [], actual: [] }
+  } finally {
+    loadingComparison.value.delete(id)
+  }
+}
+
+async function refreshComparison(categoryId: number) {
+  const subsId = selectedId.value
+  const res = await apiFetch<{ planned: FeoPlannedItem[]; actual: FeoActualItem[] }>(
+    `/feo-planned-items/comparison?feo_category_id=${categoryId}${subsId ? `&subsidy_id=${subsId}` : ''}`
+  )
+  comparisonData.value[categoryId] = res
+}
+
+function openMapDialog(item: FeoActualItem, categoryId: number) {
+  mapTarget.value = item
+  mapCategoryId.value = categoryId
+  showMapDialog.value = true
+}
+
+async function applyMapping(plannedItemId: number | null) {
+  if (!mapTarget.value) return
+  mappingInProgress.value = true
+  try {
+    await apiFetch(`/feo-planned-items/map?purchase_item_id=${mapTarget.value.purchase_item_id}&planned_item_id=${plannedItemId ?? ''}`, {
+      method: 'POST',
+    })
+    showMapDialog.value = false
+    if (mapCategoryId.value) await refreshComparison(mapCategoryId.value)
+  } finally {
+    mappingInProgress.value = false
+  }
+}
+
+function openAddPlannedItem(categoryId: number) {
+  addPlannedCategoryId.value = categoryId
+  plannedItemForm.value = { name: '', quantity: null, unit: '', amount: null }
+  showAddPlannedDialog.value = true
+}
+
+async function savePlannedItem() {
+  if (!addPlannedCategoryId.value || !plannedItemForm.value.name.trim()) return
+  savingPlannedItem.value = true
+  try {
+    await apiFetch('/feo-planned-items/', {
+      method: 'POST',
+      body: JSON.stringify({
+        feo_category_id: addPlannedCategoryId.value,
+        name: plannedItemForm.value.name.trim(),
+        quantity: plannedItemForm.value.quantity,
+        unit: plannedItemForm.value.unit || null,
+        amount: plannedItemForm.value.amount,
+        is_active: true,
+      }),
+    })
+    showAddPlannedDialog.value = false
+    await refreshComparison(addPlannedCategoryId.value)
+  } finally {
+    savingPlannedItem.value = false
+  }
+}
+
+async function deletePlannedItem(item: FeoPlannedItem) {
+  await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
+  await refreshComparison(item.feo_category_id)
+}
 
 // Contractor override state
 const showOverrideDialog = ref(false)

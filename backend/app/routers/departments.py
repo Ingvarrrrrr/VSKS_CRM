@@ -291,6 +291,17 @@ async def add_member(
     dept = await db.get(Department, dept_id)
     if not dept:
         raise HTTPException(404, "Отдел не найден")
+    # Remove from ALL other departments first (exclusive membership)
+    other_memberships = (await db.execute(
+        select(DepartmentMember).where(
+            DepartmentMember.user_id == data.user_id,
+            DepartmentMember.department_id != dept_id,
+        )
+    )).scalars().all()
+    for old_m in other_memberships:
+        await db.delete(old_m)
+    if other_memberships:
+        await db.commit()
     existing = (await db.execute(
         select(DepartmentMember).where(
             DepartmentMember.department_id == dept_id,

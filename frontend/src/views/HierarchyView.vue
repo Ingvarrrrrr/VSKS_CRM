@@ -751,10 +751,43 @@ onNodeDragStop(async ({ node }) => {
       try {
         await apiFetch(`/departments/${deptId}/members`, { method: 'POST', body: { user_id: userId } })
         showSnack('Сотрудник добавлен в отдел')
-        await loadGraph()
+
+        // Update nodes locally — no full reload to avoid flicker
+        // Backend may have removed user from another dept (exclusive membership)
+        // Find if user was visually inside another dept and remove them
+        const oldParentId = node.parentNode
+        if (oldParentId && oldParentId !== targetDept.id) {
+          const oldRemaining = nodes.value.filter(n => n.parentNode === oldParentId && n.id !== node.id).length
+          nodes.value = nodes.value.map(n => {
+            if (n.id === oldParentId) {
+              const newH = Math.max(calcDeptHeight(oldRemaining), 80)
+              return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: oldRemaining } }
+            }
+            return n
+          })
+        }
+
+        // Count existing children in target dept (excluding this user)
+        const existingCount = nodes.value.filter(n => n.parentNode === targetDept.id && n.id !== node.id).length
+        const relPos = { x: 10, y: DEPT_HEADER_H + 4 + existingCount * (USER_H + USER_GAP) }
+        const newCount = existingCount + 1
+
+        nodes.value = nodes.value.map(n => {
+          if (n.id === node.id) {
+            return { ...n, parentNode: targetDept.id, position: relPos, zIndex: 1000 }
+          }
+          if (n.id === targetDept.id) {
+            const newH = Math.max(calcDeptHeight(newCount), 80)
+            return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: newCount } }
+          }
+          return n
+        })
+
+        emit('data-changed')
+        savePositions(nodes.value)
       } catch (e: any) {
         showSnack(e?.message || 'Ошибка добавления в отдел', 'error')
-        loadGraph()
+        await loadGraph()
       }
       return
     }

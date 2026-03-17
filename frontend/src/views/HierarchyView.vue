@@ -140,6 +140,9 @@
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
+          <v-btn variant="text" color="primary" prepend-icon="mdi-account-plus" @click="addMemberDialog.show = false; emit('create-user')">
+            Создать нового
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="addMemberDialog.show = false">Отмена</v-btn>
           <v-btn color="teal" variant="flat" :disabled="!addMemberSelectedId" :loading="addMemberLoading" @click="confirmAddMember">Добавить</v-btn>
@@ -162,7 +165,7 @@ import {
 } from '@vue-flow/core'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
-const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number] }>()
+const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number]; 'create-user': [] }>()
 
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -794,6 +797,7 @@ async function createNewDept() {
 }
 
 onMounted(loadGraph)
+defineExpose({ refresh: loadGraph })
 </script>
 
 <style>

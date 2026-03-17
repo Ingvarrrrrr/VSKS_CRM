@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import (
@@ -203,6 +203,7 @@ async def update_department(
     dept = await db.get(Department, dept_id)
     if not dept:
         raise HTTPException(404, "Отдел не найден")
+    old_name = dept.name
     old_head = dept.head_user_id
     update = data.dict(exclude_unset=True)
     if "name" in update and update["name"]:
@@ -211,6 +212,13 @@ async def update_department(
         setattr(dept, k, v)
     await db.commit()
     await db.refresh(dept)
+    # If name changed, sync users.department for all members
+    if "name" in update and dept.name != old_name:
+        member_ids_q = select(DepartmentMember.user_id).where(DepartmentMember.dept_id == dept_id)
+        await db.execute(
+            sa_update(User).where(User.id.in_(member_ids_q)).values(department=dept.name)
+        )
+        await db.commit()
     # If head changed, sync hierarchy
     if dept.head_user_id and dept.head_user_id != old_head:
         from app.routers.users import _sync_head_hierarchy

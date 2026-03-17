@@ -258,7 +258,7 @@
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
-        <HierarchyView :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" />
+        <HierarchyView ref="hierarchyRef" :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" @create-user="openCreateUser" />
       </v-window-item>
     </v-window>
 
@@ -669,6 +669,9 @@ import { apiFetch } from '@/api'
 import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 
+// ── Hierarchy ref ──
+const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
+
 // ── Types ──
 interface UserItem {
   id: number
@@ -1047,6 +1050,7 @@ async function saveUser() {
     if (createDialog.department) {
       await loadDeptTree()
     }
+    hierarchyRef.value?.refresh()
   } catch (e: any) {
     showSnack(e.message || 'Ошибка', 'error')
   } finally {
@@ -1285,6 +1289,7 @@ async function saveDept() {
     deptDialog.value = false
     showSnack(editingDept.value ? 'Отдел обновлен' : 'Отдел создан')
     await loadDeptTree()
+    hierarchyRef.value?.refresh()
   } catch (e: any) { showSnack(e?.detail || 'Ошибка', 'error') }
 }
 

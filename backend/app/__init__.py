@@ -10,12 +10,13 @@ from .routers import (
     documents, publications, subsidy_approvers, responsible_persons,
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
-    tasks, departments, delivery_addresses,
+    tasks, departments, delivery_addresses, hierarchy,
 )
 from .routers import org_config
 from .models import platform_publication  # ensure table is registered
 from .models import org_section_config    # ensure org_section_configs table is created
 from .models.task import TaskAssignee     # ensure task_assignees table is created
+from .models.manager_department import ManagerDepartment  # ensure manager_departments table is created
 from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 
@@ -109,3 +110,4 @@ app.include_router(tasks.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)
+app.include_router(hierarchy.router)

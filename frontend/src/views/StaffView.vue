@@ -177,6 +177,11 @@
             :items="users"
             :loading="usersLoading"
             density="comfortable"
+            show-expand
+            expand-on-click
+            item-value="id"
+            v-model:expanded="expandedUsers"
+            @update:expanded="onUserExpanded"
           >
             <template v-slot:item.avatar="{ item }">
               <UserAvatar :photo-url="item.photo_url" :avatar="item.avatar" :size="32" />
@@ -196,12 +201,53 @@
             <template v-slot:item.actions="{ item }">
               <div class="d-flex gap-1" v-if="isAdmin">
                 <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
-                  @click="openEditUser(item)" title="Редактировать" />
+                  @click.stop="openEditUser(item)" title="Редактировать" />
                 <v-btn icon="mdi-account-supervisor" size="x-small" variant="text" color="teal"
-                  @click="openHierarchyDialog(item)" title="Настроить подчиненных" />
+                  @click.stop="openHierarchyDialog(item)" title="Настроить подчиненных" />
                 <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                  @click="confirmDelete(item)" :disabled="item.username === 'admin'" />
+                  @click.stop="confirmDelete(item)" :disabled="item.username === 'admin'" />
               </div>
+            </template>
+            <template v-slot:expanded-row="{ item, columns }">
+              <tr>
+                <td :colspan="columns.length + 1" class="pa-0">
+                  <div class="px-4 py-3 bg-grey-lighten-5">
+                    <div v-if="taskAuthorityLoading[item.id]" class="d-flex align-center ga-2 py-1">
+                      <v-progress-circular size="16" indeterminate />
+                      <span class="text-caption text-medium-emphasis">Загрузка...</span>
+                    </div>
+                    <div v-else class="d-flex ga-4 flex-wrap align-start">
+                      <div>
+                        <div class="text-caption font-weight-medium text-medium-emphasis mb-1 d-flex align-center">
+                          <v-icon size="14" class="mr-1" color="teal">mdi-arrow-right-circle</v-icon>
+                          Может ставить задачи:
+                        </div>
+                        <div v-if="!taskAuthority[item.id]?.can_assign_to?.length" class="text-caption text-medium-emphasis">—</div>
+                        <v-chip
+                          v-for="u in taskAuthority[item.id]?.can_assign_to" :key="u.id"
+                          size="x-small" color="teal" variant="tonal" class="mr-1 mb-1">
+                          {{ u.full_name || u.username }}
+                        </v-chip>
+                      </div>
+                      <div>
+                        <div class="text-caption font-weight-medium text-medium-emphasis mb-1 d-flex align-center">
+                          <v-icon size="14" class="mr-1" color="indigo">mdi-arrow-left-circle</v-icon>
+                          Кто ставит ему задачи:
+                        </div>
+                        <div v-if="!taskAuthority[item.id]?.can_receive_from?.length" class="text-caption text-medium-emphasis">—</div>
+                        <v-chip
+                          v-for="u in taskAuthority[item.id]?.can_receive_from" :key="u.id"
+                          size="x-small" color="indigo" variant="tonal" class="mr-1 mb-1">
+                          {{ u.full_name || u.username }}
+                        </v-chip>
+                      </div>
+                      <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-sitemap" to="/hierarchy">
+                        Настроить в Иерархии
+                      </v-btn>
+                    </div>
+                  </div>
+                </td>
+              </tr>
             </template>
           </v-data-table>
         </v-card>
@@ -211,9 +257,21 @@
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
+        <!-- Editor link banner -->
+        <v-alert
+          type="info" variant="tonal" density="compact" class="mb-4"
+          prepend-icon="mdi-sitemap"
+        >
+          <div class="d-flex align-center justify-space-between flex-wrap" style="gap:8px">
+            <span>Для создания и редактирования связей используйте визуальный редактор иерархии</span>
+            <v-btn color="primary" variant="flat" size="small" to="/hierarchy" prepend-icon="mdi-sitemap">
+              Открыть редактор иерархии →
+            </v-btn>
+          </div>
+        </v-alert>
         <v-card variant="outlined">
           <v-card-title class="pa-4 d-flex align-center">
-            <v-icon icon="mdi-family-tree" class="mr-2" />Дерево подчиненности
+            <v-icon icon="mdi-family-tree" class="mr-2" />Дерево подчиненности (только чтение)
             <v-spacer />
             <v-btn icon="mdi-refresh" variant="text" size="small" :loading="treeLoading" @click="loadHierarchyTree" />
           </v-card-title>
@@ -757,6 +815,32 @@ const userHeaders = [
   { title: 'Подпись', key: 'has_signature', width: 90, sortable: false },
   { title: '', key: 'actions', width: 100, sortable: false },
 ]
+
+// Task authority expand
+const expandedUsers = ref<number[]>([])
+const taskAuthority = ref<Record<number, { can_assign_to: any[]; can_receive_from: any[] }>>({})
+const taskAuthorityLoading = ref<Record<number, boolean>>({})
+
+async function loadTaskAuthority(userId: number) {
+  if (taskAuthority.value[userId]) return
+  taskAuthorityLoading.value = { ...taskAuthorityLoading.value, [userId]: true }
+  try {
+    const data = await apiFetch<{ can_assign_to: any[]; can_receive_from: any[] }>(`/users/${userId}/task-authority`)
+    taskAuthority.value = { ...taskAuthority.value, [userId]: data }
+  } catch {
+    taskAuthority.value = { ...taskAuthority.value, [userId]: { can_assign_to: [], can_receive_from: [] } }
+  } finally {
+    taskAuthorityLoading.value = { ...taskAuthorityLoading.value, [userId]: false }
+  }
+}
+
+async function onUserExpanded(expanded: number[]) {
+  for (const uid of expanded) {
+    if (!taskAuthority.value[uid]) {
+      loadTaskAuthority(uid)
+    }
+  }
+}
 
 const createDialog = reactive({
   show: false, full_name: '', email: '', password: '', password_confirm: '',

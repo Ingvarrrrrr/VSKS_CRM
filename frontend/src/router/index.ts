@@ -132,6 +132,12 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Персонал' }
     },
     {
+      path: '/hierarchy',
+      name: 'hierarchy',
+      component: () => import('../views/HierarchyView.vue'),
+      meta: { requiresAuth: false, title: 'Иерархия' }
+    },
+    {
       path: '/users',
       redirect: '/staff?tab=users',
     },

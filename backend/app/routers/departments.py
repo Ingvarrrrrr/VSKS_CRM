@@ -483,6 +483,18 @@ async def can_edit_task_of_user(
     )
     if delegate_check.first():
         return True
+    # ManagerDepartment: editor is manager of a dept containing task_owner?
+    from app.models.manager_department import ManagerDepartment
+    md_check = await db.execute(
+        select(ManagerDepartment.id).join(
+            DepartmentMember, DepartmentMember.department_id == ManagerDepartment.dept_id
+        ).where(
+            ManagerDepartment.manager_user_id == editor.id,
+            DepartmentMember.user_id == task_owner_id,
+        )
+    )
+    if md_check.first():
+        return True
     return False
 
 

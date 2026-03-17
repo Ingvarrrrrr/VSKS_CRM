@@ -611,9 +611,9 @@
           <v-select v-model="delegateForm.delegate_user_id" :items="userDropdownItems" item-title="text" item-value="value"
             label="Кто получает право редактировать *" variant="outlined" density="compact" class="mb-3"
             hint="Выберите пользователя, которому даете право" persistent-hint />
-          <v-select v-model="delegateForm.target_user_id" :items="memberUserItems" item-title="text" item-value="value"
+          <v-select v-model="delegateForm.target_user_id" :items="userDropdownItems" item-title="text" item-value="value"
             label="Чьи задачи можно будет редактировать *" variant="outlined" density="compact"
-            hint="Выберите сотрудника отдела" persistent-hint />
+            hint="Выберите сотрудника организации" persistent-hint />
         </v-card-text>
         <v-card-actions>
           <v-spacer />

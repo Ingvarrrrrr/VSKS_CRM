@@ -7,39 +7,32 @@
       <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-auto-fix" @click="autoLayout" class="mr-2">
         Авторасстановка
       </v-btn>
-      <v-btn size="small" variant="text" prepend-icon="mdi-refresh" @click="loadGraph" :loading="loading" class="mr-2">
+      <v-btn size="small" variant="text" prepend-icon="mdi-refresh" @click="loadGraph" :loading="loading">
         Обновить
       </v-btn>
       <v-spacer />
-      <!-- Legend -->
-      <div class="d-flex align-center ga-3 mr-4">
+      <div class="d-flex align-center ga-3 mr-3">
         <div class="d-flex align-center ga-1">
           <div class="legend-line legend-green" />
           <span class="text-caption">Подчинённость</span>
         </div>
         <div class="d-flex align-center ga-1">
-          <div class="legend-line legend-orange" />
-          <span class="text-caption">Начальник отдела</span>
+          <div class="legend-rect legend-dept" />
+          <span class="text-caption">Отдел (содержит сотрудников)</span>
         </div>
       </div>
-      <!-- Connection hint -->
-      <div class="d-flex align-center ga-2 mr-2">
-        <v-chip size="x-small" color="success" variant="tonal" prepend-icon="mdi-circle-medium">
-          тянуть → подчинённость
-        </v-chip>
-        <v-chip size="x-small" color="warning" variant="tonal" prepend-icon="mdi-circle-medium">
-          тянуть → к отделу
-        </v-chip>
-      </div>
-      <v-btn size="small" variant="text" prepend-icon="mdi-help-circle-outline" @click="helpDialog = true" />
+      <v-chip size="x-small" color="teal" variant="tonal" prepend-icon="mdi-drag" class="mr-2">
+        Тяни за пределы отдела — вывести / на отдел — добавить
+      </v-chip>
+      <v-btn size="small" variant="text" icon="mdi-help-circle-outline" @click="helpDialog = true" />
     </div>
 
-    <!-- Loading overlay -->
+    <!-- Loading -->
     <div v-if="loading" class="hierarchy-loading">
       <v-progress-circular indeterminate color="primary" size="48" />
     </div>
 
-    <!-- Vue Flow canvas -->
+    <!-- Canvas -->
     <VueFlow
       v-else
       v-model:nodes="nodes"
@@ -52,7 +45,6 @@
       fit-view-on-init
       class="hierarchy-canvas"
       @connect="onConnect"
-      @nodes-change="onNodesChange"
     >
       <Background pattern="dots" :gap="20" :size="1" />
       <Controls />
@@ -60,28 +52,31 @@
     </VueFlow>
 
     <!-- Help dialog -->
-    <v-dialog v-model="helpDialog" max-width="420">
+    <v-dialog v-model="helpDialog" max-width="460">
       <v-card>
-        <v-card-title class="pa-4 d-flex align-center">
+        <v-card-title class="pa-4">
           <v-icon icon="mdi-help-circle" color="primary" class="mr-2" />
           Как пользоваться
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
           <v-list density="compact">
-            <v-list-item prepend-icon="mdi-cursor-move">
-              <v-list-item-title class="text-body-2">Перемещайте узлы перетаскиванием</v-list-item-title>
+            <v-list-item prepend-icon="mdi-drag">
+              <v-list-item-title class="text-body-2">Перетащи сотрудника <strong>за пределы</strong> отдела — он выйдет из отдела</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-drag">
+              <v-list-item-title class="text-body-2">Перетащи свободного сотрудника <strong>на отдел</strong> — он вступит в отдел</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-arrow-right-circle">
-              <v-list-item-title class="text-body-2">Тяните от <strong>→</strong> одного сотрудника к другому — создаётся подчинённость</v-list-item-title>
+              <v-list-item-title class="text-body-2">Тяни от <strong>→</strong> (зелёная точка) сотрудника к другому — создаётся связь подчинённости</v-list-item-title>
             </v-list-item>
-            <v-list-item prepend-icon="mdi-office-building-outline">
-              <v-list-item-title class="text-body-2">Тяните от сотрудника к <strong>отделу</strong> — сотрудник становится начальником отдела</v-list-item-title>
+            <v-list-item prepend-icon="mdi-crown">
+              <v-list-item-title class="text-body-2">Корона — начальник отдела. При добавлении в отдел с начальником связь создаётся автоматически</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-close-circle-outline">
-              <v-list-item-title class="text-body-2">Нажмите <strong>×</strong> на связи для её удаления</v-list-item-title>
+              <v-list-item-title class="text-body-2">Нажми <strong>×</strong> на стрелке — удалить связь</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-auto-fix">
-              <v-list-item-title class="text-body-2">"Авторасстановка" перестроит граф по иерархии</v-list-item-title>
+              <v-list-item-title class="text-body-2">"Авторасстановка" — автоматически расставить узлы</v-list-item-title>
             </v-list-item>
           </v-list>
         </v-card-text>
@@ -100,10 +95,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, markRaw, h, onMounted } from 'vue'
-import { VueFlow, useVueFlow, Handle, Position, type Node, type Edge, type Connection, type NodeChange } from '@vue-flow/core'
+import { ref, markRaw, h, onMounted } from 'vue'
+import {
+  VueFlow, useVueFlow, Handle, Position,
+  type Node, type Edge, type Connection,
+} from '@vue-flow/core'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
@@ -111,12 +110,33 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
-import { apiFetch } from '@/api'
-
-// ── Dagre layout ───────────────────────────────────────────────────────────────
 // @ts-ignore
 import dagre from '@dagrejs/dagre'
+import { apiFetch } from '@/api'
 
+// ── Constants ──────────────────────────────────────────────────────────────────
+const DEPT_W = 230     // dept container width in px
+const USER_W = 200     // user node width in px
+const USER_H = 60      // user node height in px
+const DEPT_HEADER_H = 48
+const USER_GAP = 8
+const DEPT_PAD_Y = 12  // bottom padding
+
+function calcDeptHeight(memberCount: number) {
+  return DEPT_HEADER_H + Math.max(memberCount, 0) * (USER_H + USER_GAP) + DEPT_PAD_Y
+}
+
+function mkDeptStyle(memberCount: number): Record<string, string> {
+  return {
+    width: `${DEPT_W}px`,
+    height: `${Math.max(calcDeptHeight(memberCount), 80)}px`,
+    background: 'rgba(0, 105, 92, 0.05)',
+    border: '2px dashed #00897b',
+    borderRadius: '10px',
+  }
+}
+
+// ── State ──────────────────────────────────────────────────────────────────────
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 const loading = ref(false)
@@ -124,16 +144,16 @@ const helpDialog = ref(false)
 const snack = ref({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
 
-// ── Custom node components ────────────────────────────────────────────────────
+// ── Custom node components ─────────────────────────────────────────────────────
 
 const OrgNode = markRaw({
   name: 'OrgNode',
-  props: ['data', 'id'],
-  setup(props: any) {
+  props: ['data'],
+  setup(p: any) {
     return () => h('div', { class: 'hnode hnode-org' }, [
       h('div', { class: 'hnode-header hnode-header-org' }, [
         h('span', { class: 'mdi mdi-domain hnode-icon' }),
-        h('span', { class: 'hnode-title' }, props.data.label),
+        h('span', { class: 'hnode-title' }, p.data.label),
       ]),
     ])
   },
@@ -141,27 +161,25 @@ const OrgNode = markRaw({
 
 const DeptNode = markRaw({
   name: 'DeptNode',
-  props: ['data', 'id'],
-  setup(props: any) {
-    return () => h('div', { class: 'hnode hnode-dept' }, [
-      // Dept is TARGET only (someone becomes head of it)
-      h(Handle, { type: 'target', position: Position.Left, id: 'tgt',
-        style: 'background:#ff9800; width:12px; height:12px; border:2px solid white' }),
-      h('div', { class: 'hnode-header hnode-header-dept' }, [
-        h('span', { class: 'mdi mdi-account-group hnode-icon' }),
-        h('span', { class: 'hnode-title' }, props.data.label),
-      ]),
-      props.data.memberCount != null
-        ? h('div', { class: 'hnode-subtitle' }, `${props.data.memberCount} сотр.`)
-        : null,
+  props: ['data'],
+  setup(p: any) {
+    return () => h('div', { class: 'hnode-dept-header-bar' }, [
+      h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
+      h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
+      h('span', { class: 'hnode-dept-badge' }, `${p.data.memberCount}`),
+      // Target handle for user→dept "manager of dept" edges
+      h(Handle, {
+        type: 'target', position: Position.Left, id: 'tgt',
+        style: 'background:#ff9800;width:12px;height:12px;border:2px solid white;left:-6px;top:24px',
+      }),
     ])
   },
 })
 
 const UserNode = markRaw({
   name: 'UserNode',
-  props: ['data', 'id'],
-  setup(props: any) {
+  props: ['data'],
+  setup(p: any) {
     const roleColors: Record<string, string> = {
       superadmin: '#9c27b0', org_admin: '#f44336', admin: '#f44336',
       manager: '#2196f3', employee: '#009688',
@@ -171,41 +189,41 @@ const UserNode = markRaw({
       manager: 'Менеджер', employee: 'Сотрудник',
     }
     return () => h('div', { class: 'hnode hnode-user' }, [
-      // Source handle (right) — drag FROM here to create edge
-      h(Handle, { type: 'source', position: Position.Right, id: 'src',
-        style: 'background:#4caf50; width:14px; height:14px; border:2px solid white; cursor:crosshair',
-        title: 'Тяните отсюда чтобы создать связь' }),
-      // Target handle (left) — receives edge
-      h(Handle, { type: 'target', position: Position.Left, id: 'tgt',
-        style: 'background:#2196f3; width:14px; height:14px; border:2px solid white' }),
+      // Green source handle (right) — drag to create hierarchy edge
+      h(Handle, {
+        type: 'source', position: Position.Right, id: 'src',
+        style: 'background:#4caf50;width:14px;height:14px;border:2px solid white;cursor:crosshair',
+        title: 'Тяните отсюда чтобы создать связь подчинённости',
+      }),
+      // Blue target handle (left)
+      h(Handle, {
+        type: 'target', position: Position.Left, id: 'tgt',
+        style: 'background:#2196f3;width:14px;height:14px;border:2px solid white',
+      }),
       h('div', { class: 'hnode-user-row' }, [
-        h('div', { class: 'hnode-avatar' }, props.data.initials || '?'),
+        h('div', { class: 'hnode-avatar' }, p.data.initials || '?'),
         h('div', { class: 'hnode-user-info' }, [
-          h('div', { class: 'hnode-user-name' }, props.data.label),
-          h('div', {
-            class: 'hnode-user-role',
-            style: { color: roleColors[props.data.role] || '#666' }
-          }, roleLabels[props.data.role] || props.data.role),
+          h('div', { class: 'hnode-user-name' }, [
+            p.data.isHead
+              ? h('span', { class: 'mdi mdi-crown', style: 'font-size:13px;color:#f59e0b;margin-right:4px', title: 'Начальник отдела' })
+              : null,
+            p.data.label,
+          ]),
+          h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
+            roleLabels[p.data.role] || p.data.role),
         ]),
       ]),
     ])
   },
 })
 
-const nodeTypes = {
-  org: OrgNode,
-  dept: DeptNode,
-  user: UserNode,
-}
+const nodeTypes = { org: OrgNode, dept: DeptNode, user: UserNode }
+const defaultEdgeOptions = { type: 'smoothstep' }
 
-const defaultEdgeOptions = {
-  type: 'smoothstep',
-}
+// ── VueFlow composable ─────────────────────────────────────────────────────────
+const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop } = useVueFlow()
 
-// ── VueFlow instance ──────────────────────────────────────────────────────────
-const { addEdges, removeEdges, fitView } = useVueFlow()
-
-// ── Graph data ────────────────────────────────────────────────────────────────
+// ── Graph data ─────────────────────────────────────────────────────────────────
 
 interface GraphData {
   orgs: { id: number; name: string }[]
@@ -224,60 +242,92 @@ function getInitials(name: string | null, username: string): string {
   return username.slice(0, 2).toUpperCase()
 }
 
-const POSITIONS_KEY = 'hierarchy_node_positions'
+// ── Position persistence ───────────────────────────────────────────────────────
+const POS_KEY = 'hierarchy_node_positions'
 
 function loadPositions(): Record<string, { x: number; y: number }> {
-  try {
-    return JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}')
-  } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
 }
 
 function savePositions(ns: Node[]) {
   const pos: Record<string, { x: number; y: number }> = {}
   for (const n of ns) pos[n.id] = { x: n.position.x, y: n.position.y }
-  localStorage.setItem(POSITIONS_KEY, JSON.stringify(pos))
+  localStorage.setItem(POS_KEY, JSON.stringify(pos))
 }
+
+// ── Build graph ────────────────────────────────────────────────────────────────
 
 function buildGraph(data: GraphData) {
   const savedPos = loadPositions()
   const newNodes: Node[] = []
   const newEdges: Edge[] = []
 
+  // Map userId → { deptId, idx } — users sorted by id for stable ordering
+  const userDeptMap: Record<number, { deptId: number; idx: number }> = {}
+  for (const dept of data.departments) {
+    const sorted = [...dept.member_ids].sort((a, b) => a - b)
+    let idx = 0
+    for (const uid of sorted) {
+      if (!(uid in userDeptMap)) {
+        userDeptMap[uid] = { deptId: dept.id, idx: idx++ }
+      }
+    }
+  }
+
   // Org nodes
-  for (const org of data.orgs) {
+  data.orgs.forEach((org, oi) => {
     const id = `org-${org.id}`
     newNodes.push({
       id, type: 'org',
-      position: savedPos[id] || { x: 100, y: 50 },
+      position: savedPos[id] || { x: 80 + oi * 320, y: 60 },
       data: { label: org.name },
       draggable: true,
     })
-  }
+  })
 
   // Dept nodes
-  for (const dept of data.departments) {
+  data.departments.forEach((dept, di) => {
     const id = `dept-${dept.id}`
+    const mc = dept.member_ids.length
     newNodes.push({
       id, type: 'dept',
-      position: savedPos[id] || { x: 100, y: 200 },
-      data: { label: dept.name, memberCount: dept.member_ids.length },
+      position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
+      style: mkDeptStyle(mc),
+      data: { label: dept.name, memberCount: mc, headUserId: dept.head_user_id },
       draggable: true,
+      zIndex: 0,
     })
-  }
+  })
 
   // User nodes
+  let freeIdx = 0
   for (const user of data.users) {
     const id = `user-${user.id}`
-    newNodes.push({
-      id, type: 'user',
-      position: savedPos[id] || { x: 100, y: 350 },
-      data: {
-        label: user.full_name || user.username,
-        role: user.role,
-        initials: getInitials(user.full_name, user.username),
-      },
-      draggable: true,
-    })
+    const di = userDeptMap[user.id]
+    const dept = di ? data.departments.find(d => d.id === di.deptId) : undefined
+    const isHead = !!dept && dept.head_user_id === user.id
+
+    if (di) {
+      const defaultRelPos = { x: 10, y: DEPT_HEADER_H + 4 + di.idx * (USER_H + USER_GAP) }
+      newNodes.push({
+        id, type: 'user',
+        parentNode: `dept-${di.deptId}`,
+        position: savedPos[id] || defaultRelPos,
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead },
+        draggable: true,
+        zIndex: 1000,
+      })
+    } else {
+      const col = freeIdx % 4
+      const row = Math.floor(freeIdx / 4)
+      newNodes.push({
+        id, type: 'user',
+        position: savedPos[id] || { x: 80 + col * 240, y: 600 + row * 80 },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false },
+        draggable: true,
+      })
+      freeIdx++
+    }
   }
 
   // user-user edges
@@ -296,7 +346,7 @@ function buildGraph(data: GraphData) {
     })
   }
 
-  // user-dept edges
+  // user-dept edges (manager of dept)
   for (const e of data.user_dept_edges) {
     newEdges.push({
       id: `ud-${e.id}`,
@@ -320,55 +370,147 @@ async function loadGraph() {
   try {
     const data = await apiFetch<GraphData>('/hierarchy/graph')
     buildGraph(data)
-  } catch (e: any) {
+  } catch {
     showSnack('Ошибка загрузки графа', 'error')
   } finally {
     loading.value = false
   }
 }
 
-// ── Dagre auto-layout ─────────────────────────────────────────────────────────
+// ── Auto-layout ────────────────────────────────────────────────────────────────
 
 function autoLayout() {
-  const g = new dagre.graphlib.Graph()
-  g.setGraph({ rankdir: 'TB', ranksep: 80, nodesep: 50, marginx: 40, marginy: 40 })
-  g.setDefaultEdgeLabel(() => ({}))
+  const orgNodes = nodes.value.filter(n => n.type === 'org')
+  const deptNodes = nodes.value.filter(n => n.type === 'dept')
+  const freeUsers = nodes.value.filter(n => n.type === 'user' && !n.parentNode)
 
-  const nodeSizes: Record<string, { width: number; height: number }> = {
-    org: { width: 220, height: 50 },
-    dept: { width: 180, height: 60 },
-    user: { width: 180, height: 60 },
+  // Org row
+  let x = 60
+  for (const n of orgNodes) {
+    n.position = { x, y: 60 }
+    x += DEPT_W + 40
   }
 
-  for (const node of nodes.value) {
-    const sz = nodeSizes[node.type as string] || { width: 180, height: 60 }
-    g.setNode(node.id, { width: sz.width, height: sz.height })
+  // Dept row
+  x = 60
+  for (const n of deptNodes) {
+    n.position = { x, y: 200 }
+    x += DEPT_W + 40
   }
 
-  for (const edge of edges.value) {
-    g.setEdge(edge.source, edge.target)
+  // Users inside depts: arrange in column
+  for (const dept of deptNodes) {
+    const children = nodes.value.filter(n => n.type === 'user' && n.parentNode === dept.id)
+    children.forEach((u, i) => {
+      u.position = { x: 10, y: DEPT_HEADER_H + 4 + i * (USER_H + USER_GAP) }
+    })
+    // Resize dept
+    const newH = Math.max(calcDeptHeight(children.length), 80)
+    dept.style = { ...dept.style as object, height: `${newH}px` }
+    ;(dept.data as any).memberCount = children.length
   }
 
-  dagre.layout(g)
+  // Free users row
+  x = 60
+  let y = 600
+  for (const u of freeUsers) {
+    u.position = { x, y }
+    x += USER_W + 30
+    if (x > 1400) { x = 60; y += USER_H + 20 }
+  }
 
-  nodes.value = nodes.value.map(n => {
-    const pos = g.node(n.id)
-    return { ...n, position: { x: pos.x - pos.width / 2, y: pos.y - pos.height / 2 } }
-  })
-
+  nodes.value = [...nodes.value]
   savePositions(nodes.value)
-  setTimeout(() => fitView({ padding: 0.1 }), 50)
+  setTimeout(() => fitView({ padding: 0.12 }), 50)
 }
 
-// ── Connect handler ───────────────────────────────────────────────────────────
+// ── Drag in/out of dept ────────────────────────────────────────────────────────
+
+onNodeDragStop(async ({ node }) => {
+  if (node.type !== 'user') {
+    savePositions(nodes.value)
+    return
+  }
+
+  const userId = parseInt(node.id.replace('user-', ''))
+
+  if (node.parentNode) {
+    // Check if dragged OUTSIDE the parent dept
+    const parentNode = nodes.value.find(n => n.id === node.parentNode)
+    if (parentNode) {
+      const pw = parseFloat((parentNode.style as any)?.width) || DEPT_W
+      const ph = parseFloat((parentNode.style as any)?.height) || 200
+      // User center relative to parent
+      const cx = node.position.x + USER_W / 2
+      const cy = node.position.y + USER_H / 2
+      const outside = cx < 0 || cy < 0 || cx > pw || cy > ph
+
+      if (outside) {
+        const deptId = parseInt(node.parentNode.replace('dept-', ''))
+        const absPos = {
+          x: parentNode.position.x + node.position.x,
+          y: parentNode.position.y + node.position.y,
+        }
+        const oldParent = node.parentNode
+        try {
+          await apiFetch(`/departments/${deptId}/members/${userId}`, { method: 'DELETE' })
+          // Update node: remove from dept
+          nodes.value = nodes.value.map(n =>
+            n.id === node.id ? { ...n, parentNode: undefined, position: absPos, zIndex: undefined } : n
+          )
+          // Shrink dept
+          const remaining = nodes.value.filter(n => n.parentNode === oldParent).length
+          nodes.value = nodes.value.map(n => {
+            if (n.id === oldParent) {
+              const newH = Math.max(calcDeptHeight(remaining), 80)
+              return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: remaining } }
+            }
+            return n
+          })
+          showSnack('Сотрудник выведен из отдела')
+        } catch (e: any) {
+          showSnack(e?.message || 'Ошибка: нельзя вывести из отдела', 'error')
+          loadGraph()
+        }
+        return
+      }
+    }
+  } else {
+    // Free user — check if dropped ONTO a dept
+    const absPos = node.position
+    const targetDept = nodes.value.find(dn => {
+      if (dn.type !== 'dept') return false
+      const pw = parseFloat((dn.style as any)?.width) || DEPT_W
+      const ph = parseFloat((dn.style as any)?.height) || 200
+      const cx = absPos.x + USER_W / 2
+      const cy = absPos.y + USER_H / 2
+      return cx >= dn.position.x && cx <= dn.position.x + pw
+          && cy >= dn.position.y && cy <= dn.position.y + ph
+    })
+
+    if (targetDept) {
+      const deptId = parseInt(targetDept.id.replace('dept-', ''))
+      try {
+        await apiFetch(`/departments/${deptId}/members`, { method: 'POST', body: { user_id: userId } })
+        showSnack('Сотрудник добавлен в отдел')
+        await loadGraph()
+      } catch (e: any) {
+        showSnack(e?.message || 'Ошибка добавления в отдел', 'error')
+        loadGraph()
+      }
+      return
+    }
+  }
+
+  savePositions(nodes.value)
+})
+
+// ── Connect (create hierarchy edge) ───────────────────────────────────────────
 
 async function onConnect(conn: Connection) {
   const { source, target } = conn
-  if (!source || !target) return
-
-  // Only allow user as source
-  if (!source.startsWith('user-')) {
-    showSnack('Связь можно тянуть только от сотрудника', 'warning')
+  if (!source || !target || !source.startsWith('user-')) {
+    showSnack('Связь тянуть только от сотрудника', 'warning')
     return
   }
 
@@ -383,13 +525,10 @@ async function onConnect(conn: Connection) {
     })
 
     const edgeId = type === 'user_user' ? `uu-${result.id}` : `ud-${result.id}`
-    // Check if edge already exists (server returned existing)
     if (edges.value.some(e => e.id === edgeId)) return
 
     addEdges([{
-      id: edgeId,
-      source,
-      target,
+      id: edgeId, source, target,
       type: 'smoothstep',
       animated: type === 'user_user',
       style: {
@@ -408,23 +547,14 @@ async function onConnect(conn: Connection) {
   }
 }
 
-// ── Edge label click (delete) ─────────────────────────────────────────────────
-// VueFlow fires edge-label-click; we listen via edge click pattern
-// Actually in VueFlow, clicking the label fires edge click
-// Use onEdgeClick from useVueFlow
-
-const { onEdgeClick } = useVueFlow()
+// ── Delete edge on × click ────────────────────────────────────────────────────
 
 onEdgeClick(async ({ edge, event }) => {
-  // Check if click was on label (× symbol)
   const target = event.target as HTMLElement
   if (!target) return
-  // Check if user clicked on the label text (contains ×)
   if (target.textContent?.trim() !== '×' && !target.closest('.vue-flow__edge-textwrapper')) return
-
   const { relation_id, relation_type } = edge.data || {}
   if (!relation_id || !relation_type) return
-
   try {
     await apiFetch(`/hierarchy/edges/${relation_id}?type=${relation_type}`, { method: 'DELETE' })
     removeEdges([edge.id])
@@ -434,23 +564,15 @@ onEdgeClick(async ({ edge, event }) => {
   }
 })
 
-// ── Save positions on drag ────────────────────────────────────────────────────
-
-function onNodesChange(changes: NodeChange[]) {
-  const hasMoved = changes.some(c => c.type === 'position' && c.dragging === false)
-  if (hasMoved) {
-    savePositions(nodes.value)
-  }
-}
-
 onMounted(loadGraph)
 </script>
 
 <style>
-/* Import vue-flow styles globally (not scoped) */
-.vue-flow__edge-text {
-  cursor: pointer;
-}
+.vue-flow__edge-text { cursor: pointer; }
+/* Dept node container — style applied to wrapper by VueFlow via node.style */
+.vue-flow__node-dept { padding: 0 !important; overflow: visible !important; }
+.vue-flow__node-user { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+.vue-flow__node-org  { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
 </style>
 
 <style scoped>
@@ -465,7 +587,6 @@ onMounted(loadGraph)
   border-radius: 8px;
   border: 1px solid rgba(0,0,0,0.12);
 }
-
 .hierarchy-toolbar {
   display: flex;
   align-items: center;
@@ -475,126 +596,77 @@ onMounted(loadGraph)
   flex-shrink: 0;
   z-index: 10;
   gap: 4px;
+  flex-wrap: wrap;
 }
+.hierarchy-canvas { flex: 1; min-height: 0; }
+.hierarchy-loading { flex: 1; display: flex; align-items: center; justify-content: center; }
 
-.hierarchy-canvas {
-  flex: 1;
-  min-height: 0;
-}
-
-.hierarchy-loading {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.legend-line {
-  width: 24px;
-  height: 3px;
-  border-radius: 2px;
-}
+.legend-line { width: 24px; height: 3px; border-radius: 2px; }
 .legend-green { background: #4caf50; }
-.legend-orange { background: #ff9800; border-top: 1px dashed #ff9800; }
+.legend-rect { width: 20px; height: 14px; border: 2px dashed #00897b; border-radius: 3px; background: rgba(0,105,92,0.07); }
+.legend-dept {}
 
-/* Node styles */
+/* ── Node styles ── */
 :deep(.hnode) {
   background: white;
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
   min-width: 160px;
   overflow: hidden;
-  cursor: pointer;
+  cursor: grab;
   transition: box-shadow 0.15s;
-  border: 1.5px solid transparent;
+  border: 1.5px solid #e0e0e0;
 }
 :deep(.hnode:hover) {
   box-shadow: 0 4px 16px rgba(0,0,0,0.18);
   border-color: rgb(var(--v-theme-primary));
 }
-:deep(.hnode-org) {
-  min-width: 200px;
-  border-color: #1565c0;
-}
-:deep(.hnode-header) {
+
+/* Org node */
+:deep(.hnode-org) { min-width: 200px; border-color: #1565c0; }
+:deep(.hnode-header) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-weight: 600; font-size: 13px; }
+:deep(.hnode-header-org) { background: linear-gradient(135deg, #1565c0, #1e88e5); color: white; }
+:deep(.hnode-icon) { font-size: 16px; }
+:deep(.hnode-title) { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Dept header bar (inside the dashed container) */
+:deep(.hnode-dept-header-bar) {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  font-weight: 600;
-  font-size: 13px;
-}
-:deep(.hnode-header-org) {
-  background: linear-gradient(135deg, #1565c0, #1e88e5);
-  color: white;
-}
-:deep(.hnode-header-dept) {
+  padding: 8px 12px;
   background: linear-gradient(135deg, #00695c, #26a69a);
   color: white;
-}
-:deep(.hnode-icon) {
-  font-size: 16px;
-}
-:deep(.hnode-title) {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-:deep(.hnode-subtitle) {
-  padding: 4px 14px 8px;
-  font-size: 11px;
-  color: #666;
-}
-:deep(.hnode-user) {
-  min-width: 160px;
-  border-color: #e0e0e0;
-}
-:deep(.hnode-user-row) {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-}
-:deep(.hnode-avatar) {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #1e88e5);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-:deep(.hnode-user-info) {
-  flex: 1;
-  min-width: 0;
-}
-:deep(.hnode-user-name) {
   font-weight: 600;
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border-radius: 8px 8px 0 0;
+  min-height: 48px;
+  position: relative;
 }
-:deep(.hnode-user-role) {
+:deep(.hnode-dept-badge) {
+  background: rgba(255,255,255,0.3);
+  border-radius: 12px;
+  padding: 1px 8px;
   font-size: 11px;
-  margin-top: 1px;
+  font-weight: 700;
+  margin-left: 6px;
+  flex-shrink: 0;
 }
 
-/* VueFlow controls/minimap positioning */
-:deep(.vue-flow__controls) {
-  bottom: 16px;
-  left: 16px;
+/* User node */
+:deep(.hnode-user) { min-width: 160px; width: 200px; border-color: #e0e0e0; }
+:deep(.hnode-user-row) { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+:deep(.hnode-avatar) {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #1e88e5);
+  color: white; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: bold; flex-shrink: 0;
 }
-:deep(.vue-flow__minimap) {
-  bottom: 16px;
-  right: 16px;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-}
+:deep(.hnode-user-info) { flex: 1; min-width: 0; }
+:deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+:deep(.hnode-user-role) { font-size: 11px; margin-top: 1px; }
+:deep(.hnode-crown) { color: #f59e0b; font-size: 13px; margin-right: 4px; }
+
+/* VueFlow controls */
+:deep(.vue-flow__controls) { bottom: 16px; left: 16px; }
+:deep(.vue-flow__minimap) { bottom: 16px; right: 16px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
 </style>

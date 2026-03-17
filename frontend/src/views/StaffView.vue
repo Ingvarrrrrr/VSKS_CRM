@@ -33,6 +33,14 @@
         <!-- Dept toolbar -->
         <div class="d-flex align-center mb-4 flex-wrap" style="gap:8px">
           <v-select
+            v-model="filterDeptOrgId"
+            v-if="organizations.length > 1"
+            :items="organizations"
+            item-title="name" item-value="id"
+            label="Организация" variant="outlined" density="compact" clearable
+            style="max-width:200px" hide-details
+          />
+          <v-select
             v-model="filterSubsidyId"
             :items="subsidies"
             item-title="name" item-value="id"
@@ -67,7 +75,7 @@
                 </div>
                 <div v-else>
                   <div v-for="node in deptTree" :key="node.id">
-                    <dept-node :node="node" :depth="0" @select="selectDept" @edit="openEditDept" @delete="deleteDept" @add-member="onAddMemberInline" @edit-member="onEditMemberInline" @remove-member="onRemoveMemberInline" />
+                    <dept-node :node="node" :depth="0" :multi-org="organizations.length > 1" @select="selectDept" @edit="openEditDept" @delete="deleteDept" @add-member="onAddMemberInline" @edit-member="onEditMemberInline" @remove-member="onRemoveMemberInline" />
                   </div>
                 </div>
                 <!-- Вне отделов -->
@@ -185,6 +193,21 @@
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="users">
         <div class="d-flex align-center mb-4 flex-wrap" style="gap:8px">
+          <v-select
+            v-model="filterUserOrgId"
+            v-if="organizations.length > 1"
+            :items="organizations"
+            item-title="name" item-value="id"
+            label="Организация" variant="outlined" density="compact" clearable
+            style="max-width:200px" hide-details
+          />
+          <v-select
+            v-model="filterUserRole"
+            :items="roleItems"
+            item-title="label" item-value="value"
+            label="Роль" variant="outlined" density="compact" clearable
+            style="max-width:160px" hide-details
+          />
           <v-spacer />
           <v-btn v-if="isAdmin" variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadUserTemplate">
             Шаблон
@@ -198,7 +221,7 @@
           <v-data-table
             v-resizable-columns="'staff-users'"
             :headers="userHeaders"
-            :items="users"
+            :items="filteredUsers"
             :loading="usersLoading"
             density="comfortable"
             show-expand
@@ -764,6 +787,7 @@ interface UserItem {
   photo_url?: string | null
   has_signature?: boolean
   inn?: string
+  org_id?: number
 }
 interface SubordinateItem { id: number; username: string; full_name?: string; role: string; avatar?: string }
 interface TreeNode extends UserItem { subordinates?: SubordinateItem[] }
@@ -834,6 +858,13 @@ const knownPositions = ref<string[]>([])
 const userDropdownItems = computed(() =>
   users.value.map(u => ({ text: u.full_name || u.username, value: u.id }))
 )
+
+const filteredUsers = computed(() => {
+  let list = users.value
+  if (filterUserRole.value) list = list.filter(u => u.role === filterUserRole.value)
+  if (filterUserOrgId.value) list = list.filter(u => (u as any).org_id === filterUserOrgId.value)
+  return list
+})
 
 // Users not in any department
 const unassignedUsers = computed(() => users.value.filter(u => !u.department))
@@ -942,6 +973,9 @@ const selectedDept = ref<any>(null)
 const deptMembers = ref<any[]>([])
 const delegates = ref<any[]>([])
 const filterSubsidyId = ref<number | null>(null)
+const filterDeptOrgId = ref<number | null>(null)
+const filterUserRole = ref<string | null>(null)
+const filterUserOrgId = ref<number | null>(null)
 
 // Dept dialog
 const deptDialog = ref(false)
@@ -994,10 +1028,18 @@ function flatDepts(nodes: any[]): any[] {
   return out
 }
 
+// ── Org color map for dept nodes ──
+const ORG_COLORS = ['primary', 'purple', 'orange', 'teal', 'indigo', 'pink', 'brown']
+function orgColor(orgId: number | null | undefined) {
+  if (!orgId) return 'primary'
+  const idx = organizations.value.findIndex((o: any) => o.id === orgId)
+  return ORG_COLORS[idx >= 0 ? idx % ORG_COLORS.length : 0]
+}
+
 // ── Recursive dept-node component ──
 const DeptNode = defineComponent({
   name: 'DeptNode',
-  props: { node: Object, depth: { type: Number, default: 0 } },
+  props: { node: Object, depth: { type: Number, default: 0 }, multiOrg: { type: Boolean, default: false } },
   emits: ['select', 'edit', 'delete', 'add-member', 'edit-member', 'remove-member'],
   setup(props: any, { emit }: any) {
     const expanded = ref(true)
@@ -1008,10 +1050,11 @@ const DeptNode = defineComponent({
       const VBtn = resolveComponent('v-btn') as any
       const VChip = resolveComponent('v-chip') as any
       const VSpacer = resolveComponent('v-spacer') as any
+      const color = orgColor(n.org_id)
 
       const items = [
         h('div', {
-          class: 'dept-tree-row', style: { paddingLeft: indent + 'px' },
+          class: 'dept-tree-row', style: { paddingLeft: indent + 'px', borderLeftColor: `rgb(var(--v-theme-${color}))`, borderColor: `rgba(var(--v-theme-${color}), 0.25)` },
           onClick: () => emit('select', n),
         }, [
           n.children?.length
@@ -1021,8 +1064,11 @@ const DeptNode = defineComponent({
                 onClick: (e: Event) => { e.stopPropagation(); expanded.value = !expanded.value },
               })
             : h('span', { style: 'width:22px;display:inline-block' }),
-          h(VIcon, { icon: 'mdi-folder-account', size: 18, color: 'primary', class: 'mr-2' }),
+          h(VIcon, { icon: 'mdi-folder-account', size: 18, color, class: 'mr-2' }),
           h('span', { class: 'font-weight-medium text-body-2' }, n.name),
+          props.multiOrg && n.org_name
+            ? h(VChip, { size: 'x-small', variant: 'tonal', color, class: 'ml-2' }, () => n.org_name)
+            : null,
           n.head_user_name
             ? h(VChip, { size: 'x-small', variant: 'tonal', color: 'teal', class: 'ml-2' }, () => n.head_user_name)
             : null,
@@ -1049,7 +1095,7 @@ const DeptNode = defineComponent({
         // Children
         ...(expanded.value ? (n.children || []).map((child: any) =>
           h(DeptNode, {
-            node: child, depth: props.depth + 1,
+            node: child, depth: props.depth + 1, multiOrg: props.multiOrg,
             onSelect: (v: any) => emit('select', v),
             onEdit: (v: any) => emit('edit', v),
             onDelete: (v: any) => emit('delete', v),
@@ -1434,12 +1480,15 @@ async function removeSubordinate(subId: number) {
 // ═══════════════════════════════════════════════════════════════
 async function loadDeptTree() {
   deptLoading.value = true
-  const params = filterSubsidyId.value ? `?subsidy_id=${filterSubsidyId.value}` : ''
+  const qs = new URLSearchParams()
+  if (filterSubsidyId.value) qs.set('subsidy_id', String(filterSubsidyId.value))
+  if (filterDeptOrgId.value) qs.set('org_id', String(filterDeptOrgId.value))
+  const params = qs.toString() ? `?${qs.toString()}` : ''
   try { deptTree.value = await apiFetch<any[]>(`/departments/tree${params}`) } catch { deptTree.value = [] }
   finally { deptLoading.value = false }
 }
 
-watch(filterSubsidyId, () => { loadDeptTree() })
+watch([filterSubsidyId, filterDeptOrgId], () => { loadDeptTree() })
 
 function openCreateDept() {
   editingDept.value = null
@@ -1649,6 +1698,7 @@ onMounted(async () => {
   try { subsidies.value = await apiFetch<any[]>('/subsidies/') } catch { subsidies.value = [] }
   try { knownDepartments.value = await apiFetch<string[]>('/users/dictionaries/departments') } catch {}
   try { knownPositions.value = await apiFetch<string[]>('/users/dictionaries/positions') } catch {}
+  try { organizations.value = await apiFetch<any[]>('/organizations/') } catch { organizations.value = [] }
 })
 </script>
 

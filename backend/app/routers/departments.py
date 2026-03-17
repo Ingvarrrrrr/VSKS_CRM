@@ -13,6 +13,7 @@ from app.auth.jwt import (
 )
 from app.database import get_db
 from app.models.department import Department, DepartmentMember, TaskEditDelegate
+from app.models.organization import Organization
 from app.models.user import User
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
@@ -112,6 +113,7 @@ async def list_departments(
 @router.get("/tree")
 async def department_tree(
     subsidy_id: Optional[int] = Query(None),
+    org_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -122,6 +124,8 @@ async def department_tree(
         q = q.where(Department.org_id.in_(org_ids))
     if subsidy_id is not None:
         q = q.where(Department.subsidy_id == subsidy_id)
+    if org_id is not None:
+        q = q.where(Department.org_id == org_id)
     depts = (await db.execute(q)).scalars().all()
 
     dept_ids = [d.id for d in depts]
@@ -132,7 +136,7 @@ async def department_tree(
             select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
         )).scalars().all()
 
-    # Load user names
+    # Load user names + positions
     user_ids = {m.user_id for m in members}
     for d in depts:
         if d.head_user_id:
@@ -140,7 +144,14 @@ async def department_tree(
     users_map = {}
     if user_ids:
         for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():
-            users_map[u.id] = {"id": u.id, "name": u.full_name or u.username, "role": u.role}
+            users_map[u.id] = {"id": u.id, "name": u.full_name or u.username, "role": u.role, "position": u.position}
+
+    # Load org names
+    all_org_ids = {d.org_id for d in depts if d.org_id}
+    orgs_map: dict = {}
+    if all_org_ids:
+        for o in (await db.execute(select(Organization).where(Organization.id.in_(all_org_ids)))).scalars().all():
+            orgs_map[o.id] = o.name
 
     # Build tree
     by_id = {}
@@ -148,6 +159,7 @@ async def department_tree(
         head_u = users_map.get(d.head_user_id, {})
         by_id[d.id] = {
             "id": d.id, "name": d.name, "org_id": d.org_id,
+            "org_name": orgs_map.get(d.org_id),
             "subsidy_id": d.subsidy_id, "parent_id": d.parent_id,
             "head_user_id": d.head_user_id,
             "head_user_name": head_u.get("name"),
@@ -160,7 +172,7 @@ async def department_tree(
         entry = {
             "member_id": m.id, "user_id": m.user_id,
             "name": u.get("name", "?"), "role": u.get("role"),
-            "position": m.position,
+            "position": m.position or u.get("position"),
         }
         if m.department_id in by_id:
             by_id[m.department_id]["members"].append(entry)

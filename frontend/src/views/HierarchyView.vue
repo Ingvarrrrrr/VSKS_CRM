@@ -313,6 +313,7 @@ const OrgNode = markRaw({
   },
 })
 
+const ORG_COLORS_HV = ['#1976d2','#9c27b0','#ff9800','#009688','#3f51b5','#e91e63','#795548']
 const DeptNode = markRaw({
   name: 'DeptNode',
   props: ['data'],
@@ -320,6 +321,11 @@ const DeptNode = markRaw({
     return () => h('div', { class: 'hnode-dept-header-bar' }, [
       h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
       h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
+      p.data.orgName
+        ? h('span', {
+            style: `font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;flex-shrink:0;background:${p.data.orgColor || '#1976d2'};color:#fff;opacity:0.9`,
+          }, p.data.orgName)
+        : null,
       h('span', { class: 'hnode-dept-badge' }, `${p.data.memberCount}`),
       // "+" button to add member to dept
       h('span', {
@@ -494,9 +500,13 @@ function buildGraph(data: GraphData) {
   })
 
   // Dept nodes
+  const orgList = data.orgs || []
   data.departments.forEach((dept, di) => {
     const id = `dept-${dept.id}`
     const mc = dept.member_ids.length
+    const orgIdx = orgList.findIndex((o: any) => o.id === dept.org_id)
+    const orgName = orgList.length > 1 ? orgList[orgIdx]?.name : null
+    const orgColor = ORG_COLORS_HV[orgIdx >= 0 ? orgIdx % ORG_COLORS_HV.length : 0]
     newNodes.push({
       id, type: 'dept',
       position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
@@ -506,6 +516,8 @@ function buildGraph(data: GraphData) {
         memberCount: mc,
         headUserId: dept.head_user_id,
         deptId: dept.id,
+        orgName,
+        orgColor,
         onAddMember: (deptId: number) => openAddMemberDialog(deptId),
         onDelete: (deptId: number) => deleteDeptNode(deptId),
       },

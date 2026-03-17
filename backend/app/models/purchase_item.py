@@ -22,4 +22,4 @@ class PurchaseItem(Base):
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")
-    feo_planned_item = relationship("FeoPlannedItem", back_populates="purchase_items")
+    feo_planned_item = relationship("FeoPlannedItem")

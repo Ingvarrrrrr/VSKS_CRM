@@ -527,6 +527,30 @@ async def can_edit_task_of_user(
     )
     if md_check.first():
         return True
+    # ManagerOrganization: editor manages entire org that task_owner belongs to?
+    from app.models.manager_organization import ManagerOrganization
+    from app.models.user_organization import UserOrganization
+    task_owner = await db.get(User, task_owner_id)
+    if task_owner:
+        mo_check = await db.execute(
+            select(ManagerOrganization.id).where(
+                ManagerOrganization.manager_user_id == editor.id,
+                ManagerOrganization.org_id == task_owner.org_id,
+            )
+        )
+        if mo_check.first():
+            return True
+        # Also check extra org memberships
+        mo_extra = await db.execute(
+            select(ManagerOrganization.id).join(
+                UserOrganization, UserOrganization.org_id == ManagerOrganization.org_id
+            ).where(
+                ManagerOrganization.manager_user_id == editor.id,
+                UserOrganization.user_id == task_owner_id,
+            )
+        )
+        if mo_extra.first():
+            return True
     return False
 
 

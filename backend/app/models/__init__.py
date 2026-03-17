@@ -25,3 +25,9 @@ from app.models.approval_signature_key import ApprovalSignatureKey
 from app.models.task import Task
 from app.models.task_comment import TaskComment
 from app.models.department import Department, DepartmentMember, TaskEditDelegate
+from app.models.org_section_config import OrgSectionConfig
+from app.models.delivery_address import DeliveryAddress
+from app.models.feo_planned_item import FeoPlannedItem
+from app.models.system_setting import SystemSetting
+from app.models.manager_organization import ManagerOrganization
+from app.models.user_organization import UserOrganization

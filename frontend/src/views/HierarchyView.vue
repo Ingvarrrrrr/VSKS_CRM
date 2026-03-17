@@ -20,8 +20,16 @@
           <span class="text-caption">Подчинённость</span>
         </div>
         <div class="d-flex align-center ga-1">
+          <div class="legend-line legend-orange" />
+          <span class="text-caption">Начальник отдела</span>
+        </div>
+        <div class="d-flex align-center ga-1">
+          <div class="legend-line legend-purple" />
+          <span class="text-caption">Управляет организацией</span>
+        </div>
+        <div class="d-flex align-center ga-1">
           <div class="legend-rect legend-dept" />
-          <span class="text-caption">Отдел (содержит сотрудников)</span>
+          <span class="text-caption">Отдел</span>
         </div>
       </div>
       <v-chip size="x-small" color="teal" variant="tonal" prepend-icon="mdi-drag" class="mr-2">
@@ -77,6 +85,9 @@
             </v-list-item>
             <v-list-item prepend-icon="mdi-arrow-right-circle">
               <v-list-item-title class="text-body-2">Тяни от <strong>→</strong> (зелёная точка) сотрудника к другому — создаётся связь подчинённости</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-domain">
+              <v-list-item-title class="text-body-2">Тяни от сотрудника к <strong>организации</strong> — он станет руководителем всей организации (фиолетовая стрелка)</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-crown">
               <v-list-item-title class="text-body-2">Корона — начальник отдела. При добавлении в отдел с начальником связь создаётся автоматически</v-list-item-title>
@@ -274,6 +285,11 @@ const OrgNode = markRaw({
   props: ['data'],
   setup(p: any) {
     return () => h('div', { class: 'hnode hnode-org' }, [
+      // Purple target handle for user→org "manager of org" edges
+      h(Handle, {
+        type: 'target', position: Position.Left, id: 'tgt',
+        style: 'background:#9c27b0;width:14px;height:14px;border:2px solid white;left:-7px',
+      }),
       h('div', { class: 'hnode-header hnode-header-org' }, [
         h('span', { class: 'mdi mdi-domain hnode-icon' }),
         h('span', { class: 'hnode-title' }, p.data.label),
@@ -347,8 +363,16 @@ const UserNode = markRaw({
           p.data.position
             ? h('div', { class: 'hnode-user-pos' }, p.data.position)
             : null,
-          h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
-            roleLabels[p.data.role] || p.data.role),
+          h('div', { style: 'display:flex;align-items:center;gap:4px;flex-wrap:wrap' }, [
+            h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
+              roleLabels[p.data.role] || p.data.role),
+            ...(p.data.extraOrgNames || []).map((name: string) =>
+              h('span', {
+                title: `Также в: ${name}`,
+                style: 'background:#9c27b0;color:white;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600;cursor:default',
+              }, name.slice(0, 6))
+            ),
+          ]),
         ]),
       ]),
     ])
@@ -371,9 +395,10 @@ onNodeDoubleClick(({ node }) => {
 interface GraphData {
   orgs: { id: number; name: string }[]
   departments: { id: number; name: string; org_id: number; head_user_id: number | null; member_ids: number[] }[]
-  users: { id: number; full_name: string | null; username: string; role: string; org_id: number; avatar: string | null; position: string | null }[]
+  users: { id: number; full_name: string | null; username: string; role: string; org_id: number; extra_org_ids: number[]; avatar: string | null; position: string | null }[]
   user_user_edges: { id: number; manager_id: number; subordinate_id: number }[]
   user_dept_edges: { id: number; manager_user_id: number; dept_id: number }[]
+  user_org_edges: { id: number; manager_user_id: number; org_id: number }[]
 }
 
 function getInitials(name: string | null, username: string): string {
@@ -416,6 +441,9 @@ function buildGraph(data: GraphData) {
   const deptOrders = loadDeptOrders()
   const newNodes: Node[] = []
   const newEdges: Edge[] = []
+
+  // Build org name map for extra org badges
+  const orgNameMap = new Map(data.orgs.map(o => [o.id, o.name]))
 
   // Build user lookup map for rank sorting
   const userMap = new Map(data.users.map(u => [u.id, u]))
@@ -473,13 +501,17 @@ function buildGraph(data: GraphData) {
     const dept = di ? data.departments.find(d => d.id === di.deptId) : undefined
     const isHead = !!dept && dept.head_user_id === user.id
 
+    const extraOrgNames = (user.extra_org_ids || [])
+      .filter(oid => oid !== user.org_id)
+      .map(oid => orgNameMap.get(oid) || `Орг#${oid}`)
+
     if (di) {
       const defaultRelPos = { x: 10, y: DEPT_HEADER_H + 4 + di.idx * (USER_H + USER_GAP) }
       newNodes.push({
         id, type: 'user',
         parentNode: `dept-${di.deptId}`,
         position: savedPos[id] || defaultRelPos,
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames },
         draggable: true,
         zIndex: 1000,
       })
@@ -489,7 +521,7 @@ function buildGraph(data: GraphData) {
       newNodes.push({
         id, type: 'user',
         position: savedPos[id] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames },
         draggable: true,
       })
       freeIdx++
@@ -524,6 +556,22 @@ function buildGraph(data: GraphData) {
       label: '×',
       labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
       data: { relation_id: e.id, relation_type: 'user_dept' },
+    })
+  }
+
+  // user-org edges (manager of entire org — purple)
+  for (const e of (data.user_org_edges || [])) {
+    newEdges.push({
+      id: `uo-${e.id}`,
+      source: `user-${e.manager_user_id}`,
+      target: `org-${e.org_id}`,
+      type: 'smoothstep',
+      animated: true,
+      style: { stroke: '#9c27b0', strokeWidth: 2.5 },
+      markerEnd: { type: 'arrowclosed', color: '#9c27b0' },
+      label: '×',
+      labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
+      data: { relation_id: e.id, relation_type: 'user_org' },
     })
   }
 
@@ -724,7 +772,9 @@ async function onConnect(conn: Connection) {
     return
   }
 
-  const type = target.startsWith('dept-') ? 'user_dept' : 'user_user'
+  const type = target.startsWith('dept-') ? 'user_dept'
+    : target.startsWith('org-') ? 'user_org'
+    : 'user_user'
   const source_id = parseInt(source.replace('user-', ''))
   const target_id = parseInt(target.replace(/^\w+-/, ''))
 
@@ -734,24 +784,30 @@ async function onConnect(conn: Connection) {
       body: { type, source_id, target_id },
     })
 
-    const edgeId = type === 'user_user' ? `uu-${result.id}` : `ud-${result.id}`
+    const edgeId = type === 'user_user' ? `uu-${result.id}`
+      : type === 'user_dept' ? `ud-${result.id}`
+      : `uo-${result.id}`
     if (edges.value.some(e => e.id === edgeId)) return
 
+    const edgeColor = type === 'user_user' ? '#4caf50' : type === 'user_dept' ? '#ff9800' : '#9c27b0'
     addEdges([{
       id: edgeId, source, target,
       type: 'smoothstep',
-      animated: type === 'user_user',
+      animated: type !== 'user_dept',
       style: {
-        stroke: type === 'user_user' ? '#4caf50' : '#ff9800',
-        strokeWidth: 2,
+        stroke: edgeColor,
+        strokeWidth: type === 'user_org' ? 2.5 : 2,
         ...(type === 'user_dept' ? { strokeDasharray: '6 3' } : {}),
       },
-      markerEnd: { type: 'arrowclosed', color: type === 'user_user' ? '#4caf50' : '#ff9800' },
+      markerEnd: { type: 'arrowclosed', color: edgeColor },
       label: '×',
       labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
       data: { relation_id: result.id, relation_type: type },
     }])
-    showSnack(type === 'user_user' ? 'Связь подчинённости создана' : 'Назначен начальник отдела')
+    const msg = type === 'user_user' ? 'Связь подчинённости создана'
+      : type === 'user_dept' ? 'Назначен начальник отдела'
+      : 'Назначен руководитель организации'
+    showSnack(msg)
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка создания связи', 'error')
   }
@@ -886,6 +942,8 @@ defineExpose({ refresh: loadGraph })
 
 .legend-line { width: 24px; height: 3px; border-radius: 2px; }
 .legend-green { background: #4caf50; }
+.legend-orange { background: #ff9800; }
+.legend-purple { background: #9c27b0; }
 .legend-rect { width: 20px; height: 14px; border: 2px dashed #00897b; border-radius: 3px; background: rgba(0,105,92,0.07); }
 .legend-dept {}
 

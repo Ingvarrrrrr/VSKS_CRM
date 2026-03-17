@@ -3,7 +3,7 @@ Hierarchy graph management.
 
 Endpoints:
   GET    /api/hierarchy/graph         — full graph for canvas
-  POST   /api/hierarchy/edges         — create edge (user_user | user_dept)
+  POST   /api/hierarchy/edges         — create edge (user_user | user_dept | user_org)
   DELETE /api/hierarchy/edges/{id}    — remove edge
   GET    /api/users/{uid}/task-authority — who this user can assign tasks to and who can assign to them
 """
@@ -17,9 +17,11 @@ from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_R
 from app.database import get_db
 from app.models.department import Department, DepartmentMember
 from app.models.manager_department import ManagerDepartment
+from app.models.manager_organization import ManagerOrganization
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_hierarchy import UserHierarchy
+from app.models.user_organization import UserOrganization
 
 router = APIRouter(tags=["hierarchy"])
 
@@ -27,7 +29,7 @@ router = APIRouter(tags=["hierarchy"])
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class EdgeCreate(BaseModel):
-    type: str  # "user_user" | "user_dept"
+    type: str  # "user_user" | "user_dept" | "user_org"
     source_id: int
     target_id: int
 
@@ -60,6 +62,7 @@ class UserGraphOut(BaseModel):
     username: str
     role: str
     org_id: Optional[int]
+    extra_org_ids: List[int] = []
     avatar: Optional[str]
     position: Optional[str] = None
 
@@ -76,12 +79,19 @@ class UserDeptEdgeOut(BaseModel):
     dept_id: int
 
 
+class UserOrgEdgeOut(BaseModel):
+    id: int
+    manager_user_id: int
+    org_id: int
+
+
 class GraphOut(BaseModel):
     orgs: List[OrgOut]
     departments: List[DeptGraphOut]
     users: List[UserGraphOut]
     user_user_edges: List[UserUserEdgeOut]
     user_dept_edges: List[UserDeptEdgeOut]
+    user_org_edges: List[UserOrgEdgeOut]
 
 
 class TaskAuthorityUserOut(BaseModel):
@@ -142,8 +152,17 @@ async def get_hierarchy_graph(
         q_users = q_users.where(User.org_id.in_(org_ids))
     users = (await db.execute(q_users)).scalars().all()
 
-    # Load user-user edges (only within our org)
+    # Load extra org memberships (user_organizations)
     user_ids = {u.id for u in users}
+    extra_orgs_map: dict[int, list[int]] = {}
+    if user_ids:
+        uo_rows = (await db.execute(
+            select(UserOrganization).where(UserOrganization.user_id.in_(user_ids))
+        )).scalars().all()
+        for r in uo_rows:
+            extra_orgs_map.setdefault(r.user_id, []).append(r.org_id)
+
+    # Load user-user edges (only within our org)
     uu_edges = []
     if user_ids:
         rows = (await db.execute(
@@ -165,6 +184,17 @@ async def get_hierarchy_graph(
         )).scalars().all()
         ud_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "dept_id": r.dept_id} for r in ud_rows]
 
+    # Load user-org edges
+    uo_edges = []
+    if user_ids and org_id_set:
+        mo_rows = (await db.execute(
+            select(ManagerOrganization).where(
+                ManagerOrganization.manager_user_id.in_(user_ids),
+                ManagerOrganization.org_id.in_(org_id_set),
+            )
+        )).scalars().all()
+        uo_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "org_id": r.org_id} for r in mo_rows]
+
     return {
         "orgs": [{"id": o.id, "name": o.name} for o in orgs],
         "departments": [
@@ -182,6 +212,7 @@ async def get_hierarchy_graph(
                 "username": u.username,
                 "role": u.role,
                 "org_id": u.org_id,
+                "extra_org_ids": extra_orgs_map.get(u.id, []),
                 "avatar": getattr(u, "avatar", None),
                 "position": user_position_map.get(u.id) or getattr(u, "position", None),
             }
@@ -189,6 +220,7 @@ async def get_hierarchy_graph(
         ],
         "user_user_edges": uu_edges,
         "user_dept_edges": ud_edges,
+        "user_org_edges": uo_edges,
     }
 
 
@@ -247,6 +279,43 @@ async def create_edge(
         await db.refresh(row)
         return {"id": row.id, "type": "user_dept"}
 
+    elif body.type == "user_org":
+        org = await db.get(Organization, body.target_id)
+        if not org:
+            raise HTTPException(404, "Организация не найдена")
+        existing = (await db.execute(
+            select(ManagerOrganization).where(
+                ManagerOrganization.manager_user_id == body.source_id,
+                ManagerOrganization.org_id == body.target_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            return {"id": existing.id, "type": "user_org"}
+        row = ManagerOrganization(manager_user_id=body.source_id, org_id=body.target_id)
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return {"id": row.id, "type": "user_org"}
+
+    elif body.type == "user_extra_org":
+        # Multi-org membership
+        org = await db.get(Organization, body.target_id)
+        if not org:
+            raise HTTPException(404, "Организация не найдена")
+        existing = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == body.source_id,
+                UserOrganization.org_id == body.target_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            return {"id": existing.id, "type": "user_extra_org"}
+        row = UserOrganization(user_id=body.source_id, org_id=body.target_id)
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return {"id": row.id, "type": "user_extra_org"}
+
     else:
         raise HTTPException(400, f"Неизвестный тип связи: {body.type}")
 
@@ -274,8 +343,102 @@ async def delete_edge(
         await db.commit()
         return {"ok": True}
 
+    elif type == "user_org":
+        row = await db.get(ManagerOrganization, edge_id)
+        if not row:
+            raise HTTPException(404, "Связь не найдена")
+        await db.delete(row)
+        await db.commit()
+        return {"ok": True}
+
+    elif type == "user_extra_org":
+        row = await db.get(UserOrganization, edge_id)
+        if not row:
+            raise HTTPException(404, "Связь не найдена")
+        await db.delete(row)
+        await db.commit()
+        return {"ok": True}
+
     else:
         raise HTTPException(400, f"Неизвестный тип связи: {type}")
+
+
+# ── Multi-org membership CRUD ──────────────────────────────────────────────────
+
+@router.get("/api/users/{uid}/organizations")
+async def get_user_organizations(
+    uid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all organizations a user belongs to (primary + extra)."""
+    user = await db.get(User, uid)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+
+    rows = (await db.execute(
+        select(UserOrganization, Organization).join(
+            Organization, Organization.id == UserOrganization.org_id
+        ).where(UserOrganization.user_id == uid)
+    )).all()
+
+    primary = None
+    if user.org_id:
+        org = await db.get(Organization, user.org_id)
+        if org:
+            primary = {"id": org.id, "name": org.name, "primary": True}
+
+    extra = [{"id": org.id, "name": org.name, "primary": False, "membership_id": uo.id}
+             for uo, org in rows if org.id != user.org_id]
+
+    return {"primary": primary, "extra": extra}
+
+
+@router.post("/api/users/{uid}/organizations/{org_id}")
+async def add_user_to_organization(
+    uid: int,
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Add user to an extra organization."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "Организация не найдена")
+    existing = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == uid,
+            UserOrganization.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        return {"id": existing.id, "ok": True}
+    row = UserOrganization(user_id=uid, org_id=org_id)
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return {"id": row.id, "ok": True}
+
+
+@router.delete("/api/users/{uid}/organizations/{org_id}")
+async def remove_user_from_organization(
+    uid: int,
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Remove user from an extra organization."""
+    row = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == uid,
+            UserOrganization.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Членство не найдено")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True}
 
 
 # ── Task authority ─────────────────────────────────────────────────────────────
@@ -289,6 +452,7 @@ async def get_task_authority(
     """
     can_assign_to: direct subordinates from UserHierarchy
                    + all members of departments where user is ManagerDepartment
+                   + all users in orgs where user is ManagerOrganization
     can_receive_from: users who have uid as subordinate in UserHierarchy
     """
     # Direct subordinates
@@ -309,6 +473,26 @@ async def get_task_authority(
         for m in dept_members:
             if m.user_id != uid:
                 sub_ids.add(m.user_id)
+
+    # Organization manager: get all users in those orgs
+    mo_rows = (await db.execute(
+        select(ManagerOrganization).where(ManagerOrganization.manager_user_id == uid)
+    )).scalars().all()
+    if mo_rows:
+        mo_org_ids = [r.org_id for r in mo_rows]
+        org_users = (await db.execute(
+            select(User).where(User.org_id.in_(mo_org_ids))
+        )).scalars().all()
+        for u in org_users:
+            if u.id != uid:
+                sub_ids.add(u.id)
+        # Also users with extra membership in those orgs
+        extra_members = (await db.execute(
+            select(UserOrganization).where(UserOrganization.org_id.in_(mo_org_ids))
+        )).scalars().all()
+        for r in extra_members:
+            if r.user_id != uid:
+                sub_ids.add(r.user_id)
 
     can_assign_to = []
     if sub_ids:

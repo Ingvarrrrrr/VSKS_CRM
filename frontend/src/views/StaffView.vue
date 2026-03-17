@@ -396,6 +396,26 @@
             hint="ИНН физ. лица — 12 цифр" persistent-hint maxlength="12" />
           <v-text-field v-model="editDialog.city" label="Город" variant="outlined" density="compact" class="mb-3" />
           <v-text-field v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
+          <!-- Multi-org membership (available if orgs list loaded) -->
+          <div v-if="organizations.length > 1" class="mb-3">
+            <v-select
+              v-model="editDialog.extraOrgIds"
+              :items="organizations.filter(o => o.id !== currentOrgId)"
+              item-title="name"
+              item-value="id"
+              label="Также в организациях"
+              variant="outlined"
+              density="compact"
+              multiple
+              chips
+              closable-chips
+              clearable
+              prepend-inner-icon="mdi-domain-plus"
+              :loading="editDialog.extraOrgsLoading"
+              hint="Пользователь будет виден и доступен в этих организациях"
+              persistent-hint
+            />
+          </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-account-convert" @click="syncToContractor(editDialog.userId)">
@@ -845,6 +865,8 @@ const isSuperadmin = computed(() => currentRole === 'superadmin')
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
   department: '', position: '', email: '', password: '', avatar: '', saving: false, inn: '',
+  extraOrgIds: [] as number[],
+  extraOrgsLoading: false,
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -1094,7 +1116,7 @@ async function saveUser() {
   }
 }
 
-function openEditUser(item: UserItem) {
+async function openEditUser(item: UserItem) {
   editDialog.userId = item.id
   editDialog.username = item.username
   editDialog.full_name = item.full_name || ''
@@ -1106,7 +1128,20 @@ function openEditUser(item: UserItem) {
   editDialog.password = ''
   editDialog.avatar = item.avatar || ''
   editDialog.inn = item.inn || ''
+  editDialog.extraOrgIds = []
   editDialog.show = true
+
+  // Load extra orgs & all orgs lazily
+  if (organizations.value.length === 0) {
+    apiFetch<any[]>('/organizations/').then(r => { organizations.value = r }).catch(() => {})
+  }
+  editDialog.extraOrgsLoading = true
+  try {
+    const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`)
+    editDialog.extraOrgIds = res.extra.map((e: any) => e.id)
+  } catch { /* ignore */ } finally {
+    editDialog.extraOrgsLoading = false
+  }
 }
 
 async function openEditUserById(userId: number) {
@@ -1150,6 +1185,24 @@ async function saveEditUser() {
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
       method: 'PATCH', body: JSON.stringify(body),
     })
+    // Sync extra org memberships
+    try {
+      const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
+      const currentExtraIds = new Set(res.extra.map((e: any) => e.id))
+      const desiredIds = new Set(editDialog.extraOrgIds)
+      // Add new
+      for (const oid of desiredIds) {
+        if (!currentExtraIds.has(oid)) {
+          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'POST' })
+        }
+      }
+      // Remove removed
+      for (const oid of currentExtraIds) {
+        if (!desiredIds.has(oid)) {
+          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
+        }
+      }
+    } catch { /* non-critical */ }
     const idx = users.value.findIndex(u => u.id === editDialog.userId)
     if (idx >= 0) users.value.splice(idx, 1, updated)
     editDialog.show = false

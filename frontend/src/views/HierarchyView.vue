@@ -1,5 +1,5 @@
 <template>
-  <div class="hierarchy-page">
+  <div class="hierarchy-page" :class="{ embedded: props.embedded }">
     <!-- Toolbar -->
     <div class="hierarchy-toolbar elevation-1">
       <v-icon icon="mdi-sitemap" color="primary" class="mr-2" />
@@ -21,6 +21,15 @@
           <div class="legend-line legend-orange" />
           <span class="text-caption">Начальник отдела</span>
         </div>
+      </div>
+      <!-- Connection hint -->
+      <div class="d-flex align-center ga-2 mr-2">
+        <v-chip size="x-small" color="success" variant="tonal" prepend-icon="mdi-circle-medium">
+          тянуть → подчинённость
+        </v-chip>
+        <v-chip size="x-small" color="warning" variant="tonal" prepend-icon="mdi-circle-medium">
+          тянуть → к отделу
+        </v-chip>
       </div>
       <v-btn size="small" variant="text" prepend-icon="mdi-help-circle-outline" @click="helpDialog = true" />
     </div>
@@ -92,7 +101,9 @@
 
 <script setup lang="ts">
 import { ref, shallowRef, markRaw, h, onMounted } from 'vue'
-import { VueFlow, useVueFlow, type Node, type Edge, type Connection, type NodeChange } from '@vue-flow/core'
+import { VueFlow, useVueFlow, Handle, Position, type Node, type Edge, type Connection, type NodeChange } from '@vue-flow/core'
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
@@ -133,12 +144,15 @@ const DeptNode = markRaw({
   props: ['data', 'id'],
   setup(props: any) {
     return () => h('div', { class: 'hnode hnode-dept' }, [
+      // Dept is TARGET only (someone becomes head of it)
+      h(Handle, { type: 'target', position: Position.Left, id: 'tgt',
+        style: 'background:#ff9800; width:12px; height:12px; border:2px solid white' }),
       h('div', { class: 'hnode-header hnode-header-dept' }, [
         h('span', { class: 'mdi mdi-account-group hnode-icon' }),
         h('span', { class: 'hnode-title' }, props.data.label),
       ]),
       props.data.memberCount != null
-        ? h('div', { class: 'hnode-subtitle' }, `${props.data.memberCount} сотрудников`)
+        ? h('div', { class: 'hnode-subtitle' }, `${props.data.memberCount} сотр.`)
         : null,
     ])
   },
@@ -157,6 +171,13 @@ const UserNode = markRaw({
       manager: 'Менеджер', employee: 'Сотрудник',
     }
     return () => h('div', { class: 'hnode hnode-user' }, [
+      // Source handle (right) — drag FROM here to create edge
+      h(Handle, { type: 'source', position: Position.Right, id: 'src',
+        style: 'background:#4caf50; width:14px; height:14px; border:2px solid white; cursor:crosshair',
+        title: 'Тяните отсюда чтобы создать связь' }),
+      // Target handle (left) — receives edge
+      h(Handle, { type: 'target', position: Position.Left, id: 'tgt',
+        style: 'background:#2196f3; width:14px; height:14px; border:2px solid white' }),
       h('div', { class: 'hnode-user-row' }, [
         h('div', { class: 'hnode-avatar' }, props.data.initials || '?'),
         h('div', { class: 'hnode-user-info' }, [
@@ -436,8 +457,13 @@ onMounted(loadGraph)
 .hierarchy-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 48px); /* minus AppBar */
+  height: calc(100vh - 48px);
   overflow: hidden;
+}
+.hierarchy-page.embedded {
+  height: calc(100vh - 220px);
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.12);
 }
 
 .hierarchy-toolbar {

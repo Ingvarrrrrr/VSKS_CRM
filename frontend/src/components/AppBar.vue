@@ -396,7 +396,6 @@ const menuItems = computed(() => {
     { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', roles: ADMIN_ROLES },
     { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', roles: MANAGER_ROLES },
     { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', roles: ADMIN_ROLES },
-    { title: 'Иерархия', icon: 'mdi-sitemap', route: '/hierarchy', roles: ADMIN_ROLES },
     { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', roles: MANAGER_ROLES },
     { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', roles: MANAGER_ROLES },
     { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', roles: ADMIN_ROLES },

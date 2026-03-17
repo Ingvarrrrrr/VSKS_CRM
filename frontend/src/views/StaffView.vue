@@ -241,7 +241,8 @@
                           {{ u.full_name || u.username }}
                         </v-chip>
                       </div>
-                      <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-sitemap" to="/hierarchy">
+                      <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-sitemap"
+                        @click.stop="activeTab = 'hierarchy'">
                         Настроить в Иерархии
                       </v-btn>
                     </div>
@@ -257,57 +258,7 @@
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
-        <!-- Editor link banner -->
-        <v-alert
-          type="info" variant="tonal" density="compact" class="mb-4"
-          prepend-icon="mdi-sitemap"
-        >
-          <div class="d-flex align-center justify-space-between flex-wrap" style="gap:8px">
-            <span>Для создания и редактирования связей используйте визуальный редактор иерархии</span>
-            <v-btn color="primary" variant="flat" size="small" to="/hierarchy" prepend-icon="mdi-sitemap">
-              Открыть редактор иерархии →
-            </v-btn>
-          </div>
-        </v-alert>
-        <v-card variant="outlined">
-          <v-card-title class="pa-4 d-flex align-center">
-            <v-icon icon="mdi-family-tree" class="mr-2" />Дерево подчиненности (только чтение)
-            <v-spacer />
-            <v-btn icon="mdi-refresh" variant="text" size="small" :loading="treeLoading" @click="loadHierarchyTree" />
-          </v-card-title>
-          <v-card-text>
-            <div v-if="treeLoading" class="text-center py-4">
-              <v-progress-circular indeterminate size="24" />
-            </div>
-            <div v-else-if="hierarchyTree.length === 0" class="text-caption text-medium-emphasis text-center py-4">
-              Нет настроенной иерархии
-            </div>
-            <div v-else>
-              <div v-for="node in hierarchyTree" :key="node.id" class="tree-node">
-                <div class="tree-label">
-                  <v-avatar :color="getAvatar(node.avatar).color" size="24" class="mr-2">
-                    <v-icon :icon="getAvatar(node.avatar).icon" size="14" color="white" />
-                  </v-avatar>
-                  <span class="font-weight-medium text-body-2">{{ node.full_name || node.username }}</span>
-                  <v-chip size="x-small" :color="roleColor(node.role)" variant="tonal" class="ml-1">
-                    {{ ROLE_LABELS[node.role] || node.role }}
-                  </v-chip>
-                </div>
-                <div class="tree-children" v-if="node.subordinates?.length">
-                  <div v-for="sub in node.subordinates" :key="sub.id" class="tree-child">
-                    <v-avatar :color="getAvatar((sub as any).avatar).color" size="20" class="mr-1">
-                      <v-icon :icon="getAvatar((sub as any).avatar).icon" size="12" color="white" />
-                    </v-avatar>
-                    <span class="text-body-2">{{ sub.full_name || sub.username }}</span>
-                    <v-chip size="x-small" :color="roleColor(sub.role)" variant="tonal" class="ml-1">
-                      {{ ROLE_LABELS[sub.role] || sub.role }}
-                    </v-chip>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </v-card-text>
-        </v-card>
+        <HierarchyView :embedded="true" />
       </v-window-item>
     </v-window>
 
@@ -710,6 +661,7 @@ import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveC
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import UserAvatar from '@/components/UserAvatar.vue'
+import HierarchyView from './HierarchyView.vue'
 
 // ── Types ──
 interface UserItem {

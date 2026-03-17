@@ -10,6 +10,9 @@
       <v-btn size="small" variant="text" prepend-icon="mdi-refresh" @click="loadGraph" :loading="loading">
         Обновить
       </v-btn>
+      <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="newDeptDialog.show = true" class="ml-2">
+        Добавить отдел
+      </v-btn>
       <v-spacer />
       <div class="d-flex align-center ga-3 mr-3">
         <div class="d-flex align-center ga-1">
@@ -60,6 +63,12 @@
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
           <v-list density="compact">
+            <v-list-item prepend-icon="mdi-plus-circle-outline">
+              <v-list-item-title class="text-body-2">Нажми <strong>+</strong> в заголовке отдела — добавить сотрудника в отдел</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-drag">
+              <v-list-item-title class="text-body-2">Перетащи сотрудника <strong>внутри</strong> отдела — изменить порядок</v-list-item-title>
+            </v-list-item>
             <v-list-item prepend-icon="mdi-drag">
               <v-list-item-title class="text-body-2">Перетащи сотрудника <strong>за пределы</strong> отдела — он выйдет из отдела</v-list-item-title>
             </v-list-item>
@@ -76,13 +85,64 @@
               <v-list-item-title class="text-body-2">Нажми <strong>×</strong> на стрелке — удалить связь</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-auto-fix">
-              <v-list-item-title class="text-body-2">"Авторасстановка" — автоматически расставить узлы</v-list-item-title>
+              <v-list-item-title class="text-body-2">"Авторасстановка" — автоматически расставить по рангу (начальник → зам → специалист)</v-list-item-title>
             </v-list-item>
           </v-list>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn color="primary" variant="flat" @click="helpDialog = false">Понятно</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- New dept dialog -->
+    <v-dialog v-model="newDeptDialog.show" max-width="400">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-account-group" color="teal" class="mr-2" />
+          Новый отдел
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-text-field
+            v-model="newDeptDialog.name"
+            label="Название отдела"
+            prepend-inner-icon="mdi-account-group-outline"
+            autofocus
+            @keydown.enter="createNewDept"
+          />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="newDeptDialog.show = false">Отмена</v-btn>
+          <v-btn color="teal" variant="flat" :disabled="!newDeptDialog.name.trim()" @click="createNewDept">Создать</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Add member to dept dialog -->
+    <v-dialog v-model="addMemberDialog.show" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-account-plus" color="teal" class="mr-2" />
+          Добавить сотрудника в отдел
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-autocomplete
+            v-model="addMemberSelectedId"
+            :items="addMemberDialog.available"
+            item-title="label"
+            item-value="id"
+            label="Выберите сотрудника"
+            no-data-text="Нет доступных сотрудников"
+            prepend-inner-icon="mdi-account-search"
+            clearable
+          />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="addMemberDialog.show = false">Отмена</v-btn>
+          <v-btn color="teal" variant="flat" :disabled="!addMemberSelectedId" :loading="addMemberLoading" @click="confirmAddMember">Добавить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -137,6 +197,39 @@ function mkDeptStyle(memberCount: number): Record<string, string> {
   }
 }
 
+// ── Rank sorting ───────────────────────────────────────────────────────────────
+
+function getPositionRank(position: string | null): number {
+  if (!position) return 10
+  const p = position.toLowerCase()
+  if (p.includes('начальник') || p.includes('директор') || p.includes('руководитель')) return 1
+  if (p.includes('зам')) return 2
+  if (p.includes('главный') || p.includes('ведущий')) return 3
+  if (p.includes('старший')) return 4
+  if (p.includes('специалист') || p.includes('инженер')) return 5
+  return 8
+}
+
+function sortDeptMembers(
+  members: number[],
+  headUserId: number | null,
+  userMap: Map<number, any>,
+  savedOrder: number[] | null
+): number[] {
+  if (savedOrder?.length) {
+    const saved = savedOrder.filter(id => members.includes(id))
+    const missing = members.filter(id => !saved.includes(id))
+    return [...saved, ...missing]
+  }
+  return [...members].sort((a, b) => {
+    if (a === headUserId) return -1
+    if (b === headUserId) return 1
+    const ra = getPositionRank(userMap.get(a)?.position || null)
+    const rb = getPositionRank(userMap.get(b)?.position || null)
+    return ra - rb
+  })
+}
+
 // ── State ──────────────────────────────────────────────────────────────────────
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
@@ -144,6 +237,13 @@ const loading = ref(false)
 const helpDialog = ref(false)
 const snack = ref({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
+
+const newDeptDialog = ref({ show: false, name: '' })
+const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
+  show: false, deptId: null, available: [],
+})
+const addMemberSelectedId = ref<number | null>(null)
+const addMemberLoading = ref(false)
 
 // ── Custom node components ─────────────────────────────────────────────────────
 
@@ -168,6 +268,12 @@ const DeptNode = markRaw({
       h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
       h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
       h('span', { class: 'hnode-dept-badge' }, `${p.data.memberCount}`),
+      // "+" button to add member to dept
+      h('span', {
+        class: 'mdi mdi-plus hnode-dept-add-btn',
+        title: 'Добавить сотрудника в отдел',
+        onClick: (e: Event) => { e.stopPropagation(); p.data.onAddMember?.(p.data.deptId) },
+      }),
       // Target handle for user→dept "manager of dept" edges
       h(Handle, {
         type: 'target', position: Position.Left, id: 'tgt',
@@ -253,6 +359,7 @@ function getInitials(name: string | null, username: string): string {
 
 // ── Position persistence ───────────────────────────────────────────────────────
 const POS_KEY = 'hierarchy_node_positions'
+const ORDER_KEY = 'hierarchy_dept_order'
 
 function loadPositions(): Record<string, { x: number; y: number }> {
   try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
@@ -264,17 +371,32 @@ function savePositions(ns: Node[]) {
   localStorage.setItem(POS_KEY, JSON.stringify(pos))
 }
 
+function loadDeptOrders(): Record<number, number[]> {
+  try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '{}') } catch { return {} }
+}
+
+function saveDeptOrder(deptId: number, userIds: number[]) {
+  const all = loadDeptOrders()
+  all[deptId] = userIds
+  localStorage.setItem(ORDER_KEY, JSON.stringify(all))
+}
+
 // ── Build graph ────────────────────────────────────────────────────────────────
 
 function buildGraph(data: GraphData) {
   const savedPos = loadPositions()
+  const deptOrders = loadDeptOrders()
   const newNodes: Node[] = []
   const newEdges: Edge[] = []
 
-  // Map userId → { deptId, idx } — users sorted by id for stable ordering
+  // Build user lookup map for rank sorting
+  const userMap = new Map(data.users.map(u => [u.id, u]))
+
+  // Map userId → { deptId, idx } — users sorted by rank (head first, then position rank)
   const userDeptMap: Record<number, { deptId: number; idx: number }> = {}
   for (const dept of data.departments) {
-    const sorted = [...dept.member_ids].sort((a, b) => a - b)
+    const savedOrder = deptOrders[dept.id] || null
+    const sorted = sortDeptMembers(dept.member_ids, dept.head_user_id, userMap, savedOrder)
     let idx = 0
     for (const uid of sorted) {
       if (!(uid in userDeptMap)) {
@@ -302,7 +424,13 @@ function buildGraph(data: GraphData) {
       id, type: 'dept',
       position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
       style: mkDeptStyle(mc),
-      data: { label: dept.name, memberCount: mc, headUserId: dept.head_user_id },
+      data: {
+        label: dept.name,
+        memberCount: mc,
+        headUserId: dept.head_user_id,
+        deptId: dept.id,
+        onAddMember: (deptId: number) => openAddMemberDialog(deptId),
+      },
       draggable: true,
       zIndex: 0,
     })
@@ -407,16 +535,30 @@ function autoLayout() {
     x += DEPT_W + 40
   }
 
-  // Users inside depts: arrange in column
+  // Users inside depts: sort by rank, then arrange in column
   for (const dept of deptNodes) {
     const children = nodes.value.filter(n => n.type === 'user' && n.parentNode === dept.id)
-    children.forEach((u, i) => {
+    const headUserId = (dept.data as any).headUserId as number | null
+    // Sort by rank
+    const sorted = [...children].sort((a, b) => {
+      const aid = parseInt(a.id.replace('user-', ''))
+      const bid = parseInt(b.id.replace('user-', ''))
+      if (aid === headUserId) return -1
+      if (bid === headUserId) return 1
+      const ra = getPositionRank((a.data as any).position || null)
+      const rb = getPositionRank((b.data as any).position || null)
+      return ra - rb
+    })
+    sorted.forEach((u, i) => {
       u.position = { x: 10, y: DEPT_HEADER_H + 4 + i * (USER_H + USER_GAP) }
     })
+    // Save sorted order
+    const deptId = parseInt(dept.id.replace('dept-', ''))
+    saveDeptOrder(deptId, sorted.map(u => parseInt(u.id.replace('user-', ''))))
     // Resize dept
-    const newH = Math.max(calcDeptHeight(children.length), 80)
+    const newH = Math.max(calcDeptHeight(sorted.length), 80)
     dept.style = { ...dept.style as object, height: `${newH}px` }
-    ;(dept.data as any).memberCount = children.length
+    ;(dept.data as any).memberCount = sorted.length
   }
 
   // Free users row
@@ -431,6 +573,30 @@ function autoLayout() {
   nodes.value = [...nodes.value]
   savePositions(nodes.value)
   setTimeout(() => fitView({ padding: 0.12 }), 50)
+}
+
+// ── Snap to slot (reorder within dept) ────────────────────────────────────────
+
+function snapToSlot(draggedNode: Node) {
+  if (!draggedNode.parentNode) return
+  const deptId = parseInt(draggedNode.parentNode.replace('dept-', ''))
+  const siblings = nodes.value.filter(n => n.type === 'user' && n.parentNode === draggedNode.parentNode)
+
+  // Sort all users in dept by current y position to determine new order
+  const sorted = [...siblings].sort((a, b) => a.position.y - b.position.y)
+  const newOrderIds = sorted.map(n => parseInt(n.id.replace('user-', '')))
+
+  // Snap each to their slot position
+  nodes.value = nodes.value.map(n => {
+    const idx = sorted.findIndex(u => u.id === n.id)
+    if (idx >= 0 && n.parentNode === draggedNode.parentNode) {
+      return { ...n, position: { x: 10, y: DEPT_HEADER_H + 4 + idx * (USER_H + USER_GAP) } }
+    }
+    return n
+  })
+
+  saveDeptOrder(deptId, newOrderIds)
+  savePositions(nodes.value)
 }
 
 // ── Drag in/out of dept ────────────────────────────────────────────────────────
@@ -481,6 +647,10 @@ onNodeDragStop(async ({ node }) => {
           showSnack(e?.message || 'Ошибка: нельзя вывести из отдела', 'error')
           loadGraph()
         }
+        return
+      } else {
+        // Stayed within dept — snap to nearest slot to reorder
+        snapToSlot(node)
         return
       }
     }
@@ -573,6 +743,56 @@ onEdgeClick(async ({ edge, event }) => {
   }
 })
 
+// ── Add member to dept ─────────────────────────────────────────────────────────
+
+function openAddMemberDialog(deptId: number) {
+  // Find users not already in this dept
+  const deptMemberIds = new Set(
+    nodes.value
+      .filter(n => n.type === 'user' && n.parentNode === `dept-${deptId}`)
+      .map(n => parseInt(n.id.replace('user-', '')))
+  )
+  const available = nodes.value
+    .filter(n => n.type === 'user' && !deptMemberIds.has(parseInt(n.id.replace('user-', ''))))
+    .map(n => ({ id: parseInt(n.id.replace('user-', '')), label: (n.data as any).label || n.id }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+
+  addMemberDialog.value = { show: true, deptId, available }
+  addMemberSelectedId.value = null
+}
+
+async function confirmAddMember() {
+  const { deptId } = addMemberDialog.value
+  const userId = addMemberSelectedId.value
+  if (!deptId || !userId) return
+  addMemberLoading.value = true
+  try {
+    await apiFetch(`/departments/${deptId}/members`, { method: 'POST', body: { user_id: userId } })
+    showSnack('Сотрудник добавлен в отдел')
+    addMemberDialog.value.show = false
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка добавления', 'error')
+  } finally {
+    addMemberLoading.value = false
+  }
+}
+
+// ── Create new dept ────────────────────────────────────────────────────────────
+
+async function createNewDept() {
+  const name = newDeptDialog.value.name.trim()
+  if (!name) return
+  try {
+    await apiFetch('/departments/', { method: 'POST', body: { name } })
+    showSnack(`Отдел "${name}" создан`)
+    newDeptDialog.value = { show: false, name: '' }
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка создания отдела', 'error')
+  }
+}
+
 onMounted(loadGraph)
 </script>
 
@@ -659,6 +879,20 @@ onMounted(loadGraph)
   font-weight: 700;
   margin-left: 6px;
   flex-shrink: 0;
+}
+:deep(.hnode-dept-add-btn) {
+  cursor: pointer;
+  font-size: 18px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.85;
+  transition: background 0.15s, opacity 0.15s;
+}
+:deep(.hnode-dept-add-btn:hover) {
+  background: rgba(255,255,255,0.25);
+  opacity: 1;
 }
 
 /* User node */

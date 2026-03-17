@@ -282,7 +282,7 @@
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
-        <HierarchyView ref="hierarchyRef" :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" @create-user="openCreateUser" />
+        <HierarchyView ref="hierarchyRef" :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" @create-user="openCreateUser" @data-changed="onHierarchyDataChanged" />
       </v-window-item>
     </v-window>
 
@@ -1020,6 +1020,14 @@ async function loadUsers() {
   } finally {
     usersLoading.value = false
   }
+}
+
+async function onHierarchyDataChanged() {
+  // Reload users silently so dept/position changes from hierarchy are reflected
+  try {
+    users.value = await apiFetch<UserItem[]>('/users/')
+    await loadDeptTree()
+  } catch { /* silent */ }
 }
 
 function openCreateUser() {

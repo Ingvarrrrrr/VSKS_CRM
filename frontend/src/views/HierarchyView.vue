@@ -184,7 +184,7 @@ import {
 } from '@vue-flow/core'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
-const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number]; 'create-user': [] }>()
+const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number]; 'create-user': []; 'data-changed': [] }>()
 
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -198,10 +198,10 @@ import dagre from '@dagrejs/dagre'
 import { apiFetch } from '@/api'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const DEPT_W = 230     // dept container width in px
-const USER_W = 200     // user node width in px
-const USER_H = 72      // user node height in px (name + position + role)
-const DEPT_HEADER_H = 48
+const DEPT_W = 268     // dept container width in px
+const USER_W = 240     // user node width in px
+const USER_H = 88      // user node height in px (name + position + role, allows wrapping)
+const DEPT_HEADER_H = 60
 const USER_GAP = 8
 const DEPT_PAD_Y = 12  // bottom padding
 
@@ -536,6 +536,7 @@ async function loadGraph() {
   try {
     const data = await apiFetch<GraphData>('/hierarchy/graph')
     buildGraph(data)
+    emit('data-changed')
   } catch {
     showSnack('Ошибка загрузки графа', 'error')
   } finally {
@@ -672,6 +673,7 @@ onNodeDragStop(async ({ node }) => {
             return n
           })
           showSnack('Сотрудник выведен из отдела')
+          emit('data-changed')
         } catch (e: any) {
           showSnack(e?.message || 'Ошибка: нельзя вывести из отдела', 'error')
           loadGraph()
@@ -908,19 +910,21 @@ defineExpose({ refresh: loadGraph })
 :deep(.hnode-header) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-weight: 600; font-size: 13px; }
 :deep(.hnode-header-org) { background: linear-gradient(135deg, #1565c0, #1e88e5); color: white; }
 :deep(.hnode-icon) { font-size: 16px; }
-:deep(.hnode-title) { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:deep(.hnode-title) { flex: 1; white-space: normal; word-break: break-word; line-height: 1.3; overflow: visible; }
 
 /* Dept header bar (inside the dashed container) */
 :deep(.hnode-dept-header-bar) {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
   padding: 8px 12px;
   background: linear-gradient(135deg, #00695c, #26a69a);
   color: white;
   font-weight: 600;
   font-size: 13px;
   border-radius: 8px 8px 0 0;
-  min-height: 48px;
+  min-height: 60px;
   position: relative;
 }
 :deep(.hnode-dept-badge) {
@@ -962,18 +966,18 @@ defineExpose({ refresh: loadGraph })
 }
 
 /* User node */
-:deep(.hnode-user) { min-width: 160px; width: 200px; border-color: #e0e0e0; }
-:deep(.hnode-user-row) { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+:deep(.hnode-user) { min-width: 180px; width: 240px; border-color: #e0e0e0; }
+:deep(.hnode-user-row) { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; }
 :deep(.hnode-avatar) {
   width: 34px; height: 34px; border-radius: 50%;
   background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #1e88e5);
   color: white; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: bold; flex-shrink: 0;
+  font-size: 12px; font-weight: bold; flex-shrink: 0; margin-top: 2px;
 }
 :deep(.hnode-user-info) { flex: 1; min-width: 0; }
-:deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
-:deep(.hnode-user-pos) { font-size: 11px; color: #555; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:deep(.hnode-user-role) { font-size: 10px; margin-top: 1px; opacity: 0.75; }
+:deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: normal; word-break: break-word; overflow: visible; display: flex; align-items: flex-start; flex-wrap: wrap; line-height: 1.3; }
+:deep(.hnode-user-pos) { font-size: 11px; color: #555; margin-top: 2px; white-space: normal; word-break: break-word; line-height: 1.3; }
+:deep(.hnode-user-role) { font-size: 10px; margin-top: 2px; opacity: 0.75; }
 :deep(.hnode-crown) { color: #f59e0b; font-size: 13px; margin-right: 4px; }
 
 /* VueFlow controls */

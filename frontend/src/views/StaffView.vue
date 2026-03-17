@@ -1222,15 +1222,8 @@ async function saveEditUser() {
           method: 'DELETE',
         })
       }
-    } else if (editDialog.deptId && editDialog.position !== editDialog.origPosition) {
-      // Same dept but position changed — sync DepartmentMember.position
-      try {
-        await apiFetch(`/departments/${editDialog.deptId}/members/${editDialog.userId}`, {
-          method: 'PATCH',
-          body: { position: editDialog.position || null },
-        })
-      } catch { /* non-critical */ }
-    }
+    // Note: if only position changed (same dept), PATCH /users above already syncs
+    // DepartmentMember.position via _sync_user_department — no extra call needed.
 
     // Sync extra org memberships
     try {

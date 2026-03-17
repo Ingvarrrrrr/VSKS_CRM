@@ -77,6 +77,18 @@ async def create_user(
     return user
 
 
+@router.get("/{user_id}", response_model=UserOut)
+async def get_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return user
+
+
 @router.patch("/{user_id}", response_model=UserOut)
 async def update_user(
     user_id: int,

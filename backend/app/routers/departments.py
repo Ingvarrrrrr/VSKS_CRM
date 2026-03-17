@@ -304,6 +304,18 @@ async def add_member(
     if user:
         user.department = dept.name
         await db.commit()
+    # Auto-create hierarchy: new member becomes subordinate of dept head
+    if dept.head_user_id and dept.head_user_id != data.user_id:
+        from app.models.user_hierarchy import UserHierarchy
+        existing_uh = (await db.execute(
+            select(UserHierarchy).where(
+                UserHierarchy.manager_id == dept.head_user_id,
+                UserHierarchy.subordinate_id == data.user_id,
+            )
+        )).scalar_one_or_none()
+        if not existing_uh:
+            db.add(UserHierarchy(manager_id=dept.head_user_id, subordinate_id=data.user_id))
+            await db.commit()
     u = await db.get(User, m.user_id)
     return MemberOut(
         id=m.id, department_id=m.department_id, user_id=m.user_id,

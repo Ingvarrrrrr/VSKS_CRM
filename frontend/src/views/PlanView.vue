@@ -105,6 +105,7 @@
               <th class="th-contractor">Контрагент</th>
               <th class="th-money">Цена договора</th>
               <th class="th-money">Оплачено</th>
+              <th class="th-date">Плановая дата</th>
               <th class="th-date">Срок</th>
               <th class="th-status">Статус</th>
             </tr>
@@ -140,6 +141,9 @@
                 <span v-if="p.payment_amount" style="color:#22C55E">{{ fmt(Number(p.payment_amount)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
               </td>
+              <td class="th-date text-caption" :class="{ 'text-warning': isPastPlanned(p.procurement_planned_date) }">
+                {{ fmtDate(p.procurement_planned_date) }}
+              </td>
               <td class="th-date text-caption">{{ fmtDate(p.execution_term) }}</td>
               <td class="th-status">
                 <v-chip size="x-small" :color="statusColor(p.status)" variant="flat">
@@ -157,7 +161,7 @@
               <td />
               <td class="th-money font-weight-bold" style="color:#3B82F6">{{ fmt(totalContracted) }}</td>
               <td class="th-money font-weight-bold" style="color:#22C55E">{{ fmt(totalPaid) }}</td>
-              <td colspan="2" />
+              <td colspan="3" />
             </tr>
           </tfoot>
         </table>
@@ -195,6 +199,7 @@ interface Purchase {
   execution_term?: string | null
   contract_number?: string | null
   contract_date?: string | null
+  procurement_planned_date?: string | null
   status: string
 }
 
@@ -289,6 +294,11 @@ const fmtDate = (d?: string | null) => {
   return dt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+const isPastPlanned = (d?: string | null) => {
+  if (!d) return false
+  return new Date(d) < new Date()
+}
+
 const STATUS_LABELS: Record<string, string> = {
   planned: 'Планируется', confirmed: 'Подтверждено',
   contracted: 'Законтрактовано', delivered: 'Исполнено', paid: 'Оплачено',
@@ -309,7 +319,8 @@ const exportExcel = () => {
     const headers = [
       '№ п/п', 'Реестровый №', 'Предмет закупки', 'Категория ФЭО', 'Субсидия',
       'НМЦК (руб.)', 'Способ закупки', 'Контрагент', '№ договора', 'Дата договора',
-      'Цена договора (руб.)', 'Оплачено (руб.)', 'Экономия (руб.)', 'Срок исполнения', 'Статус',
+      'Цена договора (руб.)', 'Оплачено (руб.)', 'Экономия (руб.)',
+      'Плановая дата закупки', 'Срок исполнения', 'Статус',
     ]
 
     const rows = filtered.value.map((p, idx) => [
@@ -326,6 +337,7 @@ const exportExcel = () => {
       Number(p.contract_price || 0),
       Number(p.payment_amount || 0),
       Number(p.economy || 0),
+      p.procurement_planned_date ?? '',
       p.execution_term ?? '',
       statusLabel(p.status),
     ])
@@ -336,14 +348,14 @@ const exportExcel = () => {
     ws['!cols'] = [
       { wch: 5 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 20 },
       { wch: 16 }, { wch: 26 }, { wch: 28 }, { wch: 14 }, { wch: 14 },
-      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
+      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
     ]
 
     // Totals row
     const totalRow = [
       'ИТОГО', '', '', '', '',
       totalNmck.value, '', '', '', '',
-      totalContracted.value, totalPaid.value, totalEconomy.value, '', '',
+      totalContracted.value, totalPaid.value, totalEconomy.value, '', '', '',
     ]
     XLSX.utils.sheet_add_aoa(ws, [totalRow], { origin: -1 })
 

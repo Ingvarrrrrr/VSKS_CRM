@@ -6,7 +6,12 @@
         <h1 class="text-h5 font-weight-bold">Реестр договоров</h1>
         <span class="text-body-2 text-medium-emphasis">{{ contracts.length }} записей</span>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить договор</v-btn>
+      <div class="d-flex gap-2">
+        <v-btn v-if="isAdmin" variant="outlined" prepend-icon="mdi-database-import" @click="migrateDialog = true">
+          Мигрировать из закупок
+        </v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить договор</v-btn>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -229,6 +234,30 @@
       </v-card>
     </v-dialog>
 
+    <!-- Migrate from purchases dialog -->
+    <v-dialog v-model="migrateDialog" max-width="480">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Мигрировать договоры из закупок</v-card-title>
+        <v-card-text class="px-4">
+          <p class="text-body-2 mb-3">
+            Система найдёт все закупки с заполненным номером договора и создаст соответствующие записи в реестре договоров.
+            Уже существующие номера пропускаются.
+          </p>
+          <v-alert v-if="migrateResult" :type="migrateResult.created > 0 ? 'success' : 'info'" variant="tonal" density="compact">
+            Создано договоров: <strong>{{ migrateResult.created }}</strong>,
+            пропущено (уже есть): <strong>{{ migrateResult.skipped }}</strong>
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" @click="migrateDialog = false">Закрыть</v-btn>
+          <v-btn v-if="!migrateResult" color="primary" variant="tonal" :loading="migrating" @click="doMigrate">
+            Запустить миграцию
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
   </v-container>
 </template>
@@ -433,6 +462,27 @@ const doDelete = async () => {
     showSnack(e?.detail || 'Ошибка удаления', 'error')
   } finally {
     deleteDialog.deleting = false
+  }
+}
+
+// Migration
+const migrateDialog = ref(false)
+const migrating = ref(false)
+const migrateResult = ref<{ created: number; skipped: number } | null>(null)
+
+watch(migrateDialog, (v) => { if (!v) migrateResult.value = null })
+
+const doMigrate = async () => {
+  migrating.value = true
+  try {
+    const res = await apiFetch<{ created: number; skipped: number }>('/contracts/migrate-from-purchases', { method: 'POST' })
+    migrateResult.value = res
+    if (res.created > 0) await loadContracts()
+    showSnack(`Создано договоров: ${res.created}`)
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка миграции', 'error')
+  } finally {
+    migrating.value = false
   }
 }
 

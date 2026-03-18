@@ -93,3 +93,56 @@ async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depend
     await db.delete(c)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/migrate-from-purchases")
+async def migrate_contracts_from_purchases(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role("admin", "org_admin")),
+):
+    """Create Contract records from purchases.contract_number strings (skip existing)."""
+    # Get all purchases with a contract_number set but no contract_id
+    q = select(Purchase).where(
+        Purchase.contract_number.isnot(None),
+        Purchase.contract_number != "",
+    )
+    result = await db.execute(q)
+    purchases = result.scalars().all()
+
+    # Existing contract numbers
+    existing_result = await db.execute(select(Contract.number))
+    existing_numbers = {row[0] for row in existing_result.all() if row[0]}
+
+    created = 0
+    skipped = 0
+    # Map: contract_number -> new Contract (for purchases to link to)
+    new_contracts: dict[str, Contract] = {}
+
+    for p in purchases:
+        num = (p.contract_number or "").strip()
+        if not num:
+            continue
+        if num in existing_numbers or num in new_contracts:
+            skipped += 1
+            continue
+        c = Contract(
+            number=num,
+            date=p.contract_date if hasattr(p, "contract_date") else None,
+            contract_type="single",
+            subsidy_id=p.subsidy_id,
+            status="active",
+        )
+        db.add(c)
+        new_contracts[num] = c
+        created += 1
+
+    if new_contracts:
+        await db.flush()
+        # Link purchases to their new contracts
+        for p in purchases:
+            num = (p.contract_number or "").strip()
+            if num in new_contracts and p.contract_id is None:
+                p.contract_id = new_contracts[num].id
+
+    await db.commit()
+    return {"created": created, "skipped": skipped}

@@ -242,6 +242,7 @@ class ContractOut(ContractCreate):
     total_paid: Optional[Decimal] = None
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
+    subsidy_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # PurchaseItem

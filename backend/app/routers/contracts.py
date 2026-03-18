@@ -7,7 +7,7 @@ from app.models.contract import Contract
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut
-from app.auth.jwt import get_current_user, require_role, get_org_filter
+from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES
 from app.models.subsidy import Subsidy
 from typing import List, Optional
 from decimal import Decimal
@@ -23,7 +23,7 @@ async def list_contracts(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    q = select(Contract).options(selectinload(Contract.contractor)).order_by(Contract.id.desc())
+    q = select(Contract).options(selectinload(Contract.contractor), selectinload(Contract.subsidy)).order_by(Contract.id.desc())
     if subsidy_id is not None:
         q = q.where(Contract.subsidy_id == subsidy_id)
     if contract_type is not None:
@@ -62,11 +62,13 @@ async def list_contracts(
         if c.contractor:
             d.contractor_name = c.contractor.name
             d.contractor_inn = c.contractor.inn
+        if c.subsidy:
+            d.subsidy_name = c.subsidy.name
         out.append(d)
     return out
 
 @router.post("/", response_model=ContractOut)
-async def create_contract(data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role("admin", "manager"))):
+async def create_contract(data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
     c = Contract(**data.model_dump())
     db.add(c)
     await db.commit()
@@ -74,19 +76,30 @@ async def create_contract(data: ContractCreate, db: AsyncSession = Depends(get_d
     return ContractOut.model_validate(c)
 
 @router.put("/{cid}", response_model=ContractOut)
-async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role("admin", "manager"))):
+async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
+    old_number = c.number
     for k, v in data.model_dump().items():
         setattr(c, k, v)
+    # Sync changes to linked purchases
+    if data.number != old_number or data.date is not None:
+        linked = await db.execute(select(Purchase).where(Purchase.contract_id == cid))
+        for p in linked.scalars().all():
+            if data.number != old_number:
+                p.contract_number = data.number
+            if data.date is not None:
+                p.contract_date = data.date
+            if data.contractor_id is not None:
+                p.contractor_id = data.contractor_id
     await db.commit()
     await db.refresh(c)
     return ContractOut.model_validate(c)
 
 @router.delete("/{cid}")
-async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role("admin"))):
+async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
@@ -162,10 +175,14 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
     if not num:
         return
 
-    # Already linked to a contract with the same number → nothing to do
+    # Already linked — sync any changed fields (date, contractor) to contract record
     if p.contract_id:
         existing = await db.get(Contract, p.contract_id)
         if existing and existing.number == num:
+            if p.contract_date and existing.date != p.contract_date:
+                existing.date = p.contract_date
+            if p.contractor_id and existing.contractor_id != p.contractor_id:
+                existing.contractor_id = p.contractor_id
             return
 
     # Resolve contractor INN if we have a contractor_id

@@ -16,33 +16,7 @@
       </div>
     </div>
 
-    <!-- ── Unified search bar ── -->
-    <v-card class="mb-3" variant="flat" color="primary" rounded="lg">
-      <v-card-text class="py-3 px-4">
-        <div class="d-flex align-center gap-3">
-          <v-text-field
-            v-model="search"
-            prepend-inner-icon="mdi-magnify"
-            placeholder="Поиск по номеру, контрагенту, субсидии, предмету, ИНН..."
-            variant="outlined"
-            density="compact"
-            hide-details
-            clearable
-            bg-color="white"
-            style="max-width:600px"
-          />
-          <v-btn-toggle v-model="searchScope" density="compact" variant="outlined" color="white" mandatory rounded="lg">
-            <v-btn value="filtered" size="small" style="color:white">По фильтру</v-btn>
-            <v-btn value="all" size="small" style="color:white">По всей БД</v-btn>
-          </v-btn-toggle>
-          <v-chip v-if="search" size="small" color="white" variant="tonal" class="text-caption">
-            Найдено: {{ filtered.length }}
-          </v-chip>
-        </div>
-      </v-card-text>
-    </v-card>
-
-    <!-- ── Filters (collapsible) ── -->
+    <!-- ── Filters ── -->
     <v-card class="mb-4" variant="outlined" rounded="lg">
       <v-card-text class="py-2 px-3">
         <div class="d-flex align-center gap-1 mb-2">
@@ -377,8 +351,6 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
 // ── Filters (all multi-select, client-side) ────────────────────────────────
-const search = ref('')
-const searchScope = ref<'filtered' | 'all'>('filtered')
 const fSubsidy    = ref<number[]>([])
 const fType       = ref<string[]>([])
 const fMethod     = ref<string[]>([])
@@ -397,22 +369,8 @@ const clearFilters = () => {
   fStatus.value = []; fContractor.value = []; fDateFrom.value = ''; fDateTo.value = ''
 }
 
-function matchesSearch(c: Contract, q: string): boolean {
-  const lq = q.toLowerCase()
-  return [c.number, c.contractor_name, c.contractor_inn, c.subsidy_name, c.subject, c.notes]
-    .some(v => v?.toLowerCase().includes(lq))
-}
-
 const filtered = computed(() => {
-  const q = search.value.trim()
-
-  // "По всей БД" — ignore column filters, only apply search
-  if (q && searchScope.value === 'all') {
-    return contracts.value.filter(c => matchesSearch(c, q))
-  }
-
   let list = contracts.value
-
   if (fSubsidy.value.length)    list = list.filter(c => c.subsidy_id != null && fSubsidy.value.includes(c.subsidy_id))
   if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
   if (fMethod.value.length)     list = list.filter(c => c.purchase_method != null && fMethod.value.includes(c.purchase_method))
@@ -420,8 +378,6 @@ const filtered = computed(() => {
   if (fContractor.value.length) list = list.filter(c => c.contractor_id != null && fContractor.value.includes(c.contractor_id))
   if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
-  if (q)                        list = list.filter(c => matchesSearch(c, q))
-
   return list
 })
 

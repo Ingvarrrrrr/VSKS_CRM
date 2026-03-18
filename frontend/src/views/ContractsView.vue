@@ -1,80 +1,150 @@
 <template>
-  <v-container fluid class="pa-6">
+  <v-container fluid class="pa-4">
     <!-- Header -->
-    <div class="d-flex align-center justify-space-between mb-6">
+    <div class="d-flex align-center justify-space-between mb-4">
       <div>
         <h1 class="text-h5 font-weight-bold">Реестр договоров</h1>
-        <span class="text-body-2 text-medium-emphasis">{{ contracts.length }} записей</span>
+        <span class="text-body-2 text-medium-emphasis">
+          {{ filtered.length }} из {{ contracts.length }} записей
+        </span>
       </div>
       <div class="d-flex gap-2">
         <v-btn v-if="isAdmin" variant="outlined" prepend-icon="mdi-database-import" @click="migrateDialog = true">
           Мигрировать из закупок
         </v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить договор</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить</v-btn>
       </div>
     </div>
 
-    <!-- Filters -->
-    <v-card class="mb-4" variant="outlined">
-      <v-card-text class="py-3">
-        <div class="d-flex align-center gap-3 flex-wrap">
-          <v-select
-            v-model="filterSubsidyId"
-            :items="subsidies"
-            item-title="name" item-value="id"
-            label="Субсидия" clearable variant="outlined" density="compact"
-            style="max-width:220px" hide-details
+    <!-- ── Unified search bar ── -->
+    <v-card class="mb-3" variant="flat" color="primary" rounded="lg">
+      <v-card-text class="py-3 px-4">
+        <div class="d-flex align-center gap-3">
+          <v-text-field
+            v-model="search"
+            prepend-inner-icon="mdi-magnify"
+            placeholder="Поиск по номеру, контрагенту, субсидии, предмету, ИНН..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            bg-color="white"
+            style="max-width:600px"
           />
-          <v-select
-            v-model="filterContractType"
-            :items="contractTypeItems"
-            item-title="label" item-value="value"
-            label="Тип договора" clearable variant="outlined" density="compact"
-            style="max-width:220px" hide-details
-          />
-          <v-select
-            v-model="filterPurchaseMethod"
-            :items="purchaseMethodItems"
-            item-title="label" item-value="value"
-            label="Способ закупки" clearable variant="outlined" density="compact"
-            style="max-width:200px" hide-details
-          />
-          <v-select
-            v-model="filterStatus"
-            :items="statusItems"
-            item-title="label" item-value="value"
-            label="Статус" clearable variant="outlined" density="compact"
-            style="max-width:160px" hide-details
-          />
-          <v-btn variant="outlined" size="small" prepend-icon="mdi-filter-remove" @click="clearFilters" :disabled="!hasFilters">
-            Сбросить
-          </v-btn>
+          <v-btn-toggle v-model="searchScope" density="compact" variant="outlined" color="white" mandatory rounded="lg">
+            <v-btn value="filtered" size="small" style="color:white">По фильтру</v-btn>
+            <v-btn value="all" size="small" style="color:white">По всей БД</v-btn>
+          </v-btn-toggle>
+          <v-chip v-if="search" size="small" color="white" variant="tonal" class="text-caption">
+            Найдено: {{ filtered.length }}
+          </v-chip>
         </div>
       </v-card-text>
     </v-card>
 
-    <!-- Table -->
+    <!-- ── Filters (collapsible) ── -->
+    <v-card class="mb-4" variant="outlined" rounded="lg">
+      <v-card-text class="py-2 px-3">
+        <div class="d-flex align-center gap-1 mb-2">
+          <v-icon size="16" color="grey">mdi-filter</v-icon>
+          <span class="text-caption font-weight-medium text-medium-emphasis">ФИЛЬТРЫ (мульти-выбор)</span>
+          <v-spacer />
+          <v-btn v-if="hasFilters" variant="text" size="x-small" color="error" prepend-icon="mdi-filter-remove" @click="clearFilters">
+            Сбросить все
+          </v-btn>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+
+          <!-- Субсидия -->
+          <v-autocomplete
+            v-model="fSubsidy"
+            :items="subsidies"
+            item-title="name" item-value="id"
+            label="Субсидия" multiple chips closable-chips
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:200px; max-width:280px"
+          />
+
+          <!-- Тип документа -->
+          <v-autocomplete
+            v-model="fType"
+            :items="contractTypeItems"
+            item-title="label" item-value="value"
+            label="Тип документа" multiple chips closable-chips
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:200px; max-width:300px"
+          />
+
+          <!-- Способ закупки -->
+          <v-autocomplete
+            v-model="fMethod"
+            :items="purchaseMethodItems"
+            item-title="label" item-value="value"
+            label="Способ закупки" multiple chips closable-chips
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:180px; max-width:240px"
+          />
+
+          <!-- Статус -->
+          <v-autocomplete
+            v-model="fStatus"
+            :items="statusItems"
+            item-title="label" item-value="value"
+            label="Статус" multiple chips closable-chips
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:140px; max-width:200px"
+          />
+
+          <!-- Контрагент -->
+          <v-autocomplete
+            v-model="fContractor"
+            :items="contractors"
+            item-title="name" item-value="id"
+            label="Контрагент" multiple chips closable-chips
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:200px; max-width:300px"
+          />
+
+          <!-- Дата от/до -->
+          <v-text-field
+            v-model="fDateFrom"
+            label="Дата от" type="date"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:145px; max-width:145px"
+          />
+          <v-text-field
+            v-model="fDateTo"
+            label="Дата до" type="date"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:145px; max-width:145px"
+          />
+
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- ── Table ── -->
     <v-data-table
       :headers="headers"
-      :items="contracts"
+      :items="filtered"
       :loading="loading"
       density="compact"
       show-expand
       v-model:expanded="expanded"
       item-value="id"
       class="elevation-1"
-      items-per-page="25"
-      :items-per-page-options="[25,50,100]"
+      items-per-page="50"
+      :items-per-page-options="[25,50,100,-1]"
     >
       <template #item.number="{ item }">
         <span class="font-weight-medium">{{ item.number }}</span>
       </template>
       <template #item.date="{ item }">
-        {{ item.date ? new Date(item.date).toLocaleDateString('ru-RU') : '—' }}
+        {{ fmtDate(item.date) }}
       </template>
       <template #item.end_date="{ item }">
         <span :style="item.end_date && isExpired(item.end_date) ? 'color:#DC2626' : ''">
-          {{ item.end_date ? new Date(item.end_date).toLocaleDateString('ru-RU') : '—' }}
+          {{ fmtDate(item.end_date) }}
         </span>
       </template>
       <template #item.contract_type="{ item }">
@@ -84,6 +154,10 @@
       </template>
       <template #item.purchase_method="{ item }">
         <span class="text-caption">{{ item.purchase_method ? purchaseMethodLabel(item.purchase_method) : '—' }}</span>
+      </template>
+      <template #item.contractor_name="{ item }">
+        <div>{{ item.contractor_name || '—' }}</div>
+        <div v-if="item.contractor_inn" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
       </template>
       <template #item.max_amount="{ item }">
         {{ item.max_amount ? formatMoney(item.max_amount) : '—' }}
@@ -103,7 +177,7 @@
       </template>
       <template #item.status="{ item }">
         <v-chip size="x-small" :color="item.status === 'active' ? 'success' : 'grey'" variant="tonal">
-          {{ item.status === 'active' ? 'Активен' : item.status === 'closed' ? 'Закрыт' : item.status || '—' }}
+          {{ statusLabel(item.status) }}
         </v-chip>
       </template>
       <template #item.actions="{ item }">
@@ -117,7 +191,9 @@
         <tr>
           <td :colspan="columns.length" class="pa-0">
             <div class="pa-3 bg-grey-lighten-5">
-              <div class="text-caption font-weight-medium text-medium-emphasis mb-2">Закупки по договору {{ item.number }}</div>
+              <div class="text-caption font-weight-medium text-medium-emphasis mb-2">
+                Закупки по документу {{ item.number }}
+              </div>
               <div v-if="!purchasesByContract[item.id]" class="text-caption text-medium-emphasis">
                 <v-btn size="x-small" variant="text" @click="loadPurchasesForContract(item.id)">Загрузить</v-btn>
               </div>
@@ -137,12 +213,8 @@
                     <td>{{ p.purchase_number || p.id }}</td>
                     <td>{{ p.subject || p.item_name }}</td>
                     <td>{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
-                    <td>
-                      <v-chip size="x-small" variant="tonal">{{ p.status }}</v-chip>
-                    </td>
-                    <td>
-                      <v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" />
-                    </td>
+                    <td><v-chip size="x-small" variant="tonal">{{ p.status }}</v-chip></td>
+                    <td><v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" /></td>
                   </tr>
                 </tbody>
               </v-table>
@@ -153,23 +225,23 @@
     </v-data-table>
 
     <!-- Create/Edit Dialog -->
-    <v-dialog v-model="dialog.show" max-width="640">
+    <v-dialog v-model="dialog.show" max-width="680">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
-          {{ dialog.id ? 'Редактировать договор' : 'Новый договор' }}
+          {{ dialog.id ? 'Редактировать документ' : 'Новый документ' }}
         </v-card-title>
         <v-card-text class="px-4 pb-2">
           <v-row dense>
             <v-col cols="12" md="6">
-              <v-text-field v-model="dialog.form.number" label="Номер договора *" variant="outlined" density="compact" />
+              <v-text-field v-model="dialog.form.number" label="Номер *" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="6">
-              <v-text-field v-model="dialog.form.date" label="Дата договора" type="date" variant="outlined" density="compact" />
+              <v-text-field v-model="dialog.form.date" label="Дата" type="date" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="6">
               <v-select v-model="dialog.form.contract_type"
                 :items="contractTypeItems" item-title="label" item-value="value"
-                label="Тип договора *" variant="outlined" density="compact" />
+                label="Тип документа *" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="6">
               <v-select v-model="dialog.form.purchase_method"
@@ -187,7 +259,7 @@
                 label="Субсидия" variant="outlined" density="compact" clearable />
             </v-col>
             <v-col cols="12">
-              <v-text-field v-model="dialog.form.subject" label="Предмет договора" variant="outlined" density="compact" />
+              <v-text-field v-model="dialog.form.subject" label="Предмет" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field v-model.number="dialog.form.max_amount" label="Предельная сумма, ₽" type="number" variant="outlined" density="compact" />
@@ -222,9 +294,9 @@
     <!-- Delete confirm -->
     <v-dialog v-model="deleteDialog.show" max-width="400">
       <v-card>
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Удалить договор?</v-card-title>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Удалить запись?</v-card-title>
         <v-card-text class="px-4">
-          Удалить договор <strong>{{ deleteDialog.item?.number }}</strong>? Закупки по нему сохранятся.
+          Удалить <strong>{{ deleteDialog.item?.number }}</strong>? Закупки сохранятся.
         </v-card-text>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
@@ -234,25 +306,24 @@
       </v-card>
     </v-dialog>
 
-    <!-- Migrate from purchases dialog -->
+    <!-- Migrate dialog -->
     <v-dialog v-model="migrateDialog" max-width="480">
       <v-card>
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Мигрировать договоры из закупок</v-card-title>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Мигрировать из закупок</v-card-title>
         <v-card-text class="px-4">
           <p class="text-body-2 mb-3">
-            Система найдёт все закупки с заполненным номером договора и создаст соответствующие записи в реестре договоров.
-            Уже существующие номера пропускаются.
+            Создаст записи реестра из всех закупок с заполненным номером договора. Уже существующие номера пропускаются.
           </p>
           <v-alert v-if="migrateResult" :type="migrateResult.created > 0 ? 'success' : 'info'" variant="tonal" density="compact">
-            Создано договоров: <strong>{{ migrateResult.created }}</strong>,
-            пропущено (уже есть): <strong>{{ migrateResult.skipped }}</strong>
+            Создано: <strong>{{ migrateResult.created }}</strong>,
+            пропущено: <strong>{{ migrateResult.skipped }}</strong>
           </v-alert>
         </v-card-text>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
           <v-btn variant="text" @click="migrateDialog = false">Закрыть</v-btn>
           <v-btn v-if="!migrateResult" color="primary" variant="tonal" :loading="migrating" @click="doMigrate">
-            Запустить миграцию
+            Запустить
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -263,7 +334,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 
 const userRole = localStorage.getItem('user_role') || ''
@@ -305,21 +376,66 @@ const purchasesByContract = ref<Record<number, Purchase[]>>({})
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
-const filterSubsidyId = ref<number | null>(null)
-const filterContractType = ref<string | null>(null)
-const filterPurchaseMethod = ref<string | null>(null)
-const filterStatus = ref<string | null>(null)
+// ── Filters (all multi-select, client-side) ────────────────────────────────
+const search = ref('')
+const searchScope = ref<'filtered' | 'all'>('filtered')
+const fSubsidy    = ref<number[]>([])
+const fType       = ref<string[]>([])
+const fMethod     = ref<string[]>([])
+const fStatus     = ref<string[]>([])
+const fContractor = ref<number[]>([])
+const fDateFrom   = ref('')
+const fDateTo     = ref('')
 
-const hasFilters = computed(() => !!(filterSubsidyId.value || filterContractType.value || filterPurchaseMethod.value || filterStatus.value))
-const clearFilters = () => { filterSubsidyId.value = null; filterContractType.value = null; filterPurchaseMethod.value = null; filterStatus.value = null }
+const hasFilters = computed(() =>
+  fSubsidy.value.length > 0 || fType.value.length > 0 || fMethod.value.length > 0 ||
+  fStatus.value.length > 0 || fContractor.value.length > 0 || !!fDateFrom.value || !!fDateTo.value
+)
 
+const clearFilters = () => {
+  fSubsidy.value = []; fType.value = []; fMethod.value = []
+  fStatus.value = []; fContractor.value = []; fDateFrom.value = ''; fDateTo.value = ''
+}
+
+function matchesSearch(c: Contract, q: string): boolean {
+  const lq = q.toLowerCase()
+  return [c.number, c.contractor_name, c.contractor_inn, c.subsidy_name, c.subject, c.notes]
+    .some(v => v?.toLowerCase().includes(lq))
+}
+
+const filtered = computed(() => {
+  const q = search.value.trim()
+
+  // "По всей БД" — ignore column filters, only apply search
+  if (q && searchScope.value === 'all') {
+    return contracts.value.filter(c => matchesSearch(c, q))
+  }
+
+  let list = contracts.value
+
+  if (fSubsidy.value.length)    list = list.filter(c => c.subsidy_id != null && fSubsidy.value.includes(c.subsidy_id))
+  if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
+  if (fMethod.value.length)     list = list.filter(c => c.purchase_method != null && fMethod.value.includes(c.purchase_method))
+  if (fStatus.value.length)     list = list.filter(c => c.status != null && fStatus.value.includes(c.status))
+  if (fContractor.value.length) list = list.filter(c => c.contractor_id != null && fContractor.value.includes(c.contractor_id))
+  if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
+  if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
+  if (q)                        list = list.filter(c => matchesSearch(c, q))
+
+  return list
+})
+
+// ── Type / method / status lookup tables ──────────────────────────────────
 const contractTypeItems = [
-  { value: 'single', label: 'Разовая поставка' },
-  { value: 'framework_cumulative', label: 'Рамочный (нарастающий итог)' },
+  { value: 'single',                label: 'Разовая поставка' },
+  { value: 'framework_cumulative',  label: 'Рамочный (нарастающий итог)' },
   { value: 'framework_with_amount', label: 'Рамочный (с суммой)' },
+  { value: 'invoice',               label: 'Счёт' },
+  { value: 'invoice_contract',      label: 'Счёт-договор' },
+  { value: 'advance_report',        label: 'Авансовый отчёт' },
 ]
 const purchaseMethodItems = [
-  { value: 'single', label: 'Единственный поставщик' },
+  { value: 'single',      label: 'Единственный поставщик' },
   { value: 'competitive', label: 'Конкурсная процедура' },
 ]
 const statusItems = [
@@ -329,17 +445,27 @@ const statusItems = [
 
 const contractTypeLabel = (t?: string) => contractTypeItems.find(i => i.value === t)?.label || t || '—'
 const purchaseMethodLabel = (m?: string) => purchaseMethodItems.find(i => i.value === m)?.label || m || '—'
-const contractTypeColor = (t?: string) => t === 'single' ? 'blue' : 'orange'
+const statusLabel = (s?: string) => statusItems.find(i => i.value === s)?.label || s || '—'
+const contractTypeColor = (t?: string) => {
+  if (t === 'single') return 'blue'
+  if (t?.startsWith('framework')) return 'orange'
+  if (t === 'invoice' || t === 'invoice_contract') return 'teal'
+  if (t === 'advance_report') return 'purple'
+  return 'grey'
+}
 
 const isExpired = (d: string) => new Date(d) < new Date()
-const formatMoney = (v: number | string) => Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₽'
+const fmtDate = (d?: string) => d ? new Date(d).toLocaleDateString('ru-RU') : '—'
+const formatMoney = (v: number | string) =>
+  Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₽'
 
+// ── Table headers ──────────────────────────────────────────────────────────
 const headers = [
   { title: '', key: 'data-table-expand', width: 40, sortable: false },
-  { title: '№ договора', key: 'number', minWidth: 120 },
+  { title: '№ документа', key: 'number', minWidth: 120 },
   { title: 'Дата', key: 'date', width: 110 },
-  { title: 'Тип', key: 'contract_type', width: 160 },
-  { title: 'Способ', key: 'purchase_method', width: 160 },
+  { title: 'Тип', key: 'contract_type', width: 170 },
+  { title: 'Способ', key: 'purchase_method', width: 130 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 120 },
   { title: 'Предельная сумма', key: 'max_amount', align: 'end' as const, width: 140 },
@@ -348,19 +474,14 @@ const headers = [
   { title: 'Остаток', key: 'remaining', align: 'end' as const, width: 120 },
   { title: 'Срок', key: 'end_date', width: 110 },
   { title: 'Статус', key: 'status', width: 100 },
-  { title: 'Действия', key: 'actions', sortable: false, width: 90 },
+  { title: '', key: 'actions', sortable: false, width: 90 },
 ]
 
+// ── Load data (all contracts, no server-side filter) ──────────────────────
 const loadContracts = async () => {
   loading.value = true
   try {
-    const params = new URLSearchParams()
-    if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
-    if (filterContractType.value) params.set('contract_type', filterContractType.value)
-    if (filterPurchaseMethod.value) params.set('purchase_method', filterPurchaseMethod.value)
-    if (filterStatus.value) params.set('status', filterStatus.value)
-    const qs = params.toString()
-    contracts.value = await apiFetch<Contract[]>(`/contracts/${qs ? '?' + qs : ''}`)
+    contracts.value = await apiFetch<Contract[]>('/contracts/')
   } catch {
     showSnack('Ошибка загрузки', 'error')
   } finally {
@@ -368,27 +489,21 @@ const loadContracts = async () => {
   }
 }
 
-const loadSubsidies = async () => {
-  subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
-}
-const loadContractors = async () => {
-  contractors.value = await apiFetch<Contractor[]>('/contractors/')
-}
+const loadSubsidies = async () => { subsidies.value = await apiFetch<Subsidy[]>('/subsidies/') }
+const loadContractors = async () => { contractors.value = await apiFetch<Contractor[]>('/contractors/') }
 
 const loadPurchasesForContract = async (contractId: number) => {
   const items = await apiFetch<Purchase[]>(`/purchases/by-contract/${contractId}`)
   purchasesByContract.value = { ...purchasesByContract.value, [contractId]: items }
 }
 
-// Watch expanded to auto-load
-import { watch } from 'vue'
 watch(expanded, (newVal) => {
   for (const id of newVal) {
     if (!purchasesByContract.value[id]) loadPurchasesForContract(id)
   }
 })
 
-// Dialog
+// ── Dialog ─────────────────────────────────────────────────────────────────
 const emptyForm = () => ({
   number: '', date: '', contract_type: 'single', purchase_method: null as string | null,
   contractor_id: null as number | null, subsidy_id: null as number | null,
@@ -397,28 +512,17 @@ const emptyForm = () => ({
 })
 const dialog = reactive({ show: false, saving: false, id: 0, form: emptyForm() })
 
-const openCreate = () => {
-  dialog.id = 0
-  Object.assign(dialog.form, emptyForm())
-  dialog.show = true
-}
+const openCreate = () => { dialog.id = 0; Object.assign(dialog.form, emptyForm()); dialog.show = true }
 
 const openEdit = (c: Contract) => {
   dialog.id = c.id
   Object.assign(dialog.form, {
-    number: c.number || '',
-    date: c.date || '',
-    contract_type: c.contract_type || 'single',
-    purchase_method: c.purchase_method || null,
-    contractor_id: c.contractor_id || null,
-    subsidy_id: c.subsidy_id || null,
-    subject: c.subject || '',
-    max_amount: c.max_amount || null,
-    planned_monthly: c.planned_monthly || null,
-    start_date: c.start_date || '',
-    end_date: c.end_date || '',
-    status: c.status || 'active',
-    notes: c.notes || '',
+    number: c.number || '', date: c.date || '', contract_type: c.contract_type || 'single',
+    purchase_method: c.purchase_method || null, contractor_id: c.contractor_id || null,
+    subsidy_id: c.subsidy_id || null, subject: c.subject || '',
+    max_amount: c.max_amount || null, planned_monthly: c.planned_monthly || null,
+    start_date: c.start_date || '', end_date: c.end_date || '',
+    status: c.status || 'active', notes: c.notes || '',
   })
   dialog.show = true
 }
@@ -426,18 +530,13 @@ const openEdit = (c: Contract) => {
 const saveContract = async () => {
   dialog.saving = true
   try {
-    const body = {
-      ...dialog.form,
-      date: dialog.form.date || null,
-      start_date: dialog.form.start_date || null,
-      end_date: dialog.form.end_date || null,
-    }
+    const body = { ...dialog.form, date: dialog.form.date || null, start_date: dialog.form.start_date || null, end_date: dialog.form.end_date || null }
     if (dialog.id) {
       await apiFetch(`/contracts/${dialog.id}`, { method: 'PUT', body: JSON.stringify(body) })
-      showSnack('Договор обновлён')
+      showSnack('Сохранено')
     } else {
       await apiFetch('/contracts/', { method: 'POST', body: JSON.stringify(body) })
-      showSnack('Договор создан')
+      showSnack('Создано')
     }
     dialog.show = false
     await loadContracts()
@@ -455,7 +554,7 @@ const doDelete = async () => {
   deleteDialog.deleting = true
   try {
     await apiFetch(`/contracts/${deleteDialog.item.id}`, { method: 'DELETE' })
-    showSnack('Договор удалён', 'warning')
+    showSnack('Удалено', 'warning')
     deleteDialog.show = false
     await loadContracts()
   } catch (e: any) {
@@ -465,7 +564,7 @@ const doDelete = async () => {
   }
 }
 
-// Migration
+// ── Migration ──────────────────────────────────────────────────────────────
 const migrateDialog = ref(false)
 const migrating = ref(false)
 const migrateResult = ref<{ created: number; skipped: number } | null>(null)
@@ -478,7 +577,7 @@ const doMigrate = async () => {
     const res = await apiFetch<{ created: number; skipped: number }>('/contracts/migrate-from-purchases', { method: 'POST' })
     migrateResult.value = res
     if (res.created > 0) await loadContracts()
-    showSnack(`Создано договоров: ${res.created}`)
+    showSnack(`Создано: ${res.created}`)
   } catch (e: any) {
     showSnack(e?.detail || 'Ошибка миграции', 'error')
   } finally {
@@ -486,9 +585,5 @@ const doMigrate = async () => {
   }
 }
 
-onMounted(() => {
-  loadContracts()
-  loadSubsidies()
-  loadContractors()
-})
+onMounted(() => { loadContracts(); loadSubsidies(); loadContractors() })
 </script>

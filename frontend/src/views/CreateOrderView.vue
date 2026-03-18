@@ -54,9 +54,9 @@
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.item_type"
-                :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'}]"
+                :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'},{value:'mixed',title:'Поставка товаров и услуг'}]"
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
-                hint="Товары или услуги" persistent-hint />
+                hint="Выберите тип закупки" persistent-hint />
             </v-col>
             <v-col v-if="!isEmployee && formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_basis" clearable
@@ -258,6 +258,7 @@
                     <v-select v-model="item.item_type"
                       :items="[{value:'товар',title:'Товар'},{value:'услуга',title:'Услуга'},{value:'работа',title:'Работа'}]"
                       item-title="title" item-value="value" density="compact" variant="outlined"
+                      :error="form.item_type === 'mixed' && !!item.item_name?.trim() && !item.item_type"
                       hide-details class="my-1" />
                   </td>
                   <td>
@@ -271,7 +272,9 @@
                   </td>
                   <td>
                     <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                      variant="outlined" hide-details class="my-1"
+                      variant="outlined" class="my-1"
+                      :hint="item._selectedProduct?.price && item.unit_price !== item._selectedProduct.price ? 'Отличается от каталожной' : undefined"
+                      :persistent-hint="!!(item._selectedProduct?.price && item.unit_price !== item._selectedProduct.price)"
                       @update:model-value="calcItemTotal(idx)" />
                   </td>
                   <td>
@@ -1334,39 +1337,121 @@
     </v-dialog>
 
     <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="520">
+    <v-dialog v-model="itemsImportDialog" max-width="680">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
-          <v-icon icon="mdi-file-excel-outline" color="success" class="mr-2" />
-          Импорт позиций из Excel
+          <v-icon icon="mdi-file-import-outline" class="mr-2" />
+          Импорт позиций
         </v-card-title>
-        <v-card-text class="pa-4 pt-0">
-          <v-btn variant="text" color="primary" size="small" prepend-icon="mdi-download" class="mb-4"
-            @click="downloadItemsTemplate">
-            Скачать шаблон
-          </v-btn>
-          <v-file-input
-            v-model="itemsImportFile"
-            label="Выберите Excel файл"
-            accept=".xlsx,.xls"
-            variant="outlined" density="compact"
-            prepend-icon="mdi-file-upload-outline"
-            :disabled="itemsImportLoading"
-          />
-          <v-alert v-if="itemsImportResult" :type="itemsImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
-            Добавлено: {{ itemsImportResult.added }},
-            привязано к каталогу: {{ itemsImportResult.matched_catalog }},
-            не найдено в каталоге: {{ itemsImportResult.unmatched }}
-          </v-alert>
+        <v-tabs v-model="importTab" color="primary" class="px-2">
+          <v-tab value="excel">
+            <v-icon icon="mdi-file-excel-outline" color="success" class="mr-1" size="18" />По шаблону Excel
+          </v-tab>
+          <v-tab value="smart">
+            <v-icon icon="mdi-brain" color="primary" class="mr-1" size="18" />Из документа (PDF/Word/Excel)
+          </v-tab>
+        </v-tabs>
+        <v-divider />
+        <v-card-text class="pa-4">
+          <!-- Tab: Excel template -->
+          <div v-if="importTab === 'excel'">
+            <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
+              Для импорта нужно сначала сохранить заказ
+            </v-alert>
+            <v-btn variant="text" color="primary" size="small" prepend-icon="mdi-download" class="mb-3"
+              @click="downloadItemsTemplate">
+              Скачать шаблон
+            </v-btn>
+            <v-file-input
+              v-model="itemsImportFile"
+              label="Выберите Excel файл (.xlsx / .xls)"
+              accept=".xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-upload-outline"
+              :disabled="itemsImportLoading"
+            />
+            <v-alert v-if="itemsImportResult" :type="itemsImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
+              Добавлено: {{ itemsImportResult.added }},
+              привязано к каталогу: {{ itemsImportResult.matched_catalog }},
+              не найдено в каталоге: {{ itemsImportResult.unmatched }}
+            </v-alert>
+          </div>
+
+          <!-- Tab: Smart import -->
+          <div v-else>
+            <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
+              Для импорта нужно сначала сохранить заказ
+            </v-alert>
+            <p class="text-body-2 text-medium-emphasis mb-3">
+              Загрузите счёт, спецификацию или любой документ — система автоматически найдёт таблицу с позициями.
+            </p>
+            <v-file-input
+              v-model="smartImportFile"
+              label="PDF, DOCX или XLSX файл"
+              accept=".pdf,.docx,.doc,.xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-upload-outline"
+              :disabled="smartImportLoading"
+              @update:model-value="smartImportPreview = null; smartImportResult = null"
+            />
+            <div class="d-flex gap-2 mt-2">
+              <v-btn color="primary" variant="tonal" size="small" :loading="smartImportLoading"
+                :disabled="!smartImportFile || !purchaseId" @click="doSmartPreview">
+                <v-icon icon="mdi-eye-outline" class="mr-1" size="16" />Распознать
+              </v-btn>
+            </div>
+
+            <!-- Preview table -->
+            <div v-if="smartImportPreview" class="mt-3">
+              <div class="text-caption text-medium-emphasis mb-1">
+                Распознано строк: {{ smartImportPreview.length }}
+                <span v-if="smartImportColumns" class="ml-2">· колонки: {{ smartImportColumns.join(', ') }}</span>
+              </div>
+              <v-table density="compact" class="smart-preview-table" style="max-height:260px; overflow-y:auto">
+                <thead>
+                  <tr>
+                    <th>Наименование</th>
+                    <th>Тип</th>
+                    <th>Кол-во</th>
+                    <th>Ед.</th>
+                    <th>Цена</th>
+                    <th>Сумма</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, i) in smartImportPreview" :key="i">
+                    <td>{{ row.item_name }}</td>
+                    <td>{{ row.item_type }}</td>
+                    <td>{{ row.quantity }}</td>
+                    <td>{{ row.unit }}</td>
+                    <td>{{ row.unit_price != null ? row.unit_price.toLocaleString('ru-RU') : '—' }}</td>
+                    <td>{{ row.total_price != null ? row.total_price.toLocaleString('ru-RU') : '—' }}</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </div>
+
+            <v-alert v-if="smartImportResult" :type="smartImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
+              Добавлено: {{ smartImportResult.added }},
+              привязано к каталогу: {{ smartImportResult.matched_catalog }},
+              не найдено в каталоге: {{ smartImportResult.unmatched }}
+            </v-alert>
+          </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="itemsImportDialog = false">Закрыть</v-btn>
-          <v-btn color="success" variant="flat"
+          <v-btn v-if="importTab === 'excel'" color="success" variant="flat"
             :loading="itemsImportLoading"
-            :disabled="!itemsImportFile"
+            :disabled="!itemsImportFile || !purchaseId"
             @click="doItemsImport">
             Импортировать
+          </v-btn>
+          <v-btn v-else color="success" variant="flat"
+            :loading="smartImportLoading"
+            :disabled="!smartImportPreview?.length || !purchaseId"
+            @click="doSmartImport">
+            Импортировать {{ smartImportPreview?.length ? smartImportPreview.length + ' позиций' : '' }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1920,7 +2005,7 @@ const FILE_TYPE_LABELS: Record<string, string> = {
   order:        'Приказ',
   upd:          'УПД',
   contract:     'Договор',
-  act:          'Акт',
+  act:          'Закрывающий документ',
   other:        'Прочее',
 }
 const FILE_TYPE_OPTIONS = Object.entries(FILE_TYPE_LABELS).map(([value, title]) => ({ value, title }))
@@ -2789,7 +2874,8 @@ watch(totalNmck, () => { calcEconomy(); calcBudget() })
 
 // Items
 const addItem = () => {
-  items.value.push({ product_id: null, item_name: '', item_type: 'товар', quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, country_origin: '', _selectedProduct: null, _photo_url: undefined, _description: undefined })
+  const defaultType = form.item_type === 'mixed' ? '' : (form.item_type === 'услуга' ? 'услуга' : 'товар')
+  items.value.push({ product_id: null, item_name: '', item_type: defaultType, quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, country_origin: '', _selectedProduct: null, _photo_url: undefined, _description: undefined })
 }
 
 const removeItem = (idx: number) => {
@@ -2801,6 +2887,14 @@ const itemsImportDialog = ref(false)
 const itemsImportFile = ref<File | null>(null)
 const itemsImportLoading = ref(false)
 const itemsImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
+const importTab = ref<'excel' | 'smart'>('excel')
+
+// Smart import
+const smartImportFile = ref<File | null>(null)
+const smartImportLoading = ref(false)
+const smartImportPreview = ref<any[] | null>(null)
+const smartImportColumns = ref<string[] | null>(null)
+const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
 
 async function downloadItemsTemplate() {
   const token = localStorage.getItem('auth_token')
@@ -2817,7 +2911,11 @@ async function downloadItemsTemplate() {
 }
 
 async function doItemsImport() {
-  if (!itemsImportFile.value || !purchaseId.value) return
+  if (!itemsImportFile.value) return
+  if (!purchaseId.value) {
+    showSnack('Сначала сохраните заказ, затем импортируйте позиции', 'warning')
+    return
+  }
   itemsImportLoading.value = true
   itemsImportResult.value = null
   try {
@@ -2842,6 +2940,63 @@ async function doItemsImport() {
     showSnack(e.message || 'Ошибка импорта', 'error')
   } finally {
     itemsImportLoading.value = false
+  }
+}
+
+async function doSmartPreview() {
+  if (!smartImportFile.value || !purchaseId.value) return
+  smartImportLoading.value = true
+  smartImportPreview.value = null
+  smartImportResult.value = null
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', smartImportFile.value)
+    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import-smart?confirm=false`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
+    }
+    const data = await resp.json()
+    smartImportPreview.value = data.preview || []
+    smartImportColumns.value = data.columns_found || []
+    if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка распознавания', 'error')
+  } finally {
+    smartImportLoading.value = false
+  }
+}
+
+async function doSmartImport() {
+  if (!smartImportFile.value || !purchaseId.value || !smartImportPreview.value?.length) return
+  smartImportLoading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', smartImportFile.value)
+    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import-smart?confirm=true`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
+    }
+    smartImportResult.value = await resp.json()
+    if (smartImportResult.value!.added > 0) {
+      showSnack(`Импортировано ${smartImportResult.value!.added} позиций`)
+      await loadPurchase()
+    }
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка импорта', 'error')
+  } finally {
+    smartImportLoading.value = false
   }
 }
 
@@ -3123,7 +3278,7 @@ let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function saveDraft() {
   if (isEdit.value) return
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(form))
+  localStorage.setItem(DRAFT_KEY, JSON.stringify({ form: { ...form }, items: items.value, contractorInn: contractorInn.value }))
   draftSaved.value = true
   setTimeout(() => { draftSaved.value = false }, 2000)
 }
@@ -3134,7 +3289,11 @@ function loadDraft() {
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return
     const draft = JSON.parse(raw)
-    Object.assign(form, draft)
+    // Support both old format (plain form fields) and new format ({form, items, contractorInn})
+    const formData = draft.form || draft
+    Object.assign(form, formData)
+    if (draft.items?.length) items.value = draft.items
+    if (draft.contractorInn) contractorInn.value = draft.contractorInn
     showSnack('Черновик восстановлен', 'info')
   } catch {}
 }
@@ -3144,6 +3303,12 @@ function clearDraft() {
 }
 
 watch(form, () => {
+  if (isEdit.value) return
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(saveDraft, 3000)
+}, { deep: true })
+
+watch([items, contractorInn], () => {
   if (isEdit.value) return
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(saveDraft, 3000)
@@ -3175,6 +3340,13 @@ const save = async () => {
   if (!valid || feoErr) {
     if (feoErr) showSnack(feoErr, 'error')
     return
+  }
+  if (form.item_type === 'mixed') {
+    const missingType = items.value.filter(i => i.item_name?.trim() && !i.item_type)
+    if (missingType.length) {
+      showSnack(`Укажите тип для ${missingType.length} позиции(й) перед сохранением`, 'error')
+      return
+    }
   }
   if (budgetInfo.value?.exceeded) {
     if (!isAdmin.value) {

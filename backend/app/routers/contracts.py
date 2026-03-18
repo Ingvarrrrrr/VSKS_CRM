@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 async def list_contracts(
     subsidy_id: Optional[int] = Query(None),
     contract_type: Optional[str] = Query(None),
+    purchase_method: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -25,6 +27,10 @@ async def list_contracts(
         q = q.where(Contract.subsidy_id == subsidy_id)
     if contract_type is not None:
         q = q.where(Contract.contract_type == contract_type)
+    if purchase_method is not None:
+        q = q.where(Contract.purchase_method == purchase_method)
+    if status is not None:
+        q = q.where(Contract.status == status)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, Contract.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
@@ -37,9 +43,21 @@ async def list_contracts(
             .where(Purchase.contract_id == c.id)
         )
         total_payment = pay_result.scalar() or Decimal("0")
+        ordered_result = await db.execute(
+            select(func.coalesce(func.sum(Purchase.contract_price), 0))
+            .where(Purchase.contract_id == c.id)
+        )
+        total_ordered = ordered_result.scalar() or Decimal("0")
+        paid_result = await db.execute(
+            select(func.coalesce(func.sum(Purchase.payment_amount), 0))
+            .where(Purchase.contract_id == c.id, Purchase.status == "paid")
+        )
+        total_paid = paid_result.scalar() or Decimal("0")
         d = ContractOut.model_validate(c)
         d.total_payment = total_payment
         d.remaining = (c.max_amount or Decimal("0")) - total_payment
+        d.total_ordered = total_ordered
+        d.total_paid = total_paid
         if c.contractor:
             d.contractor_name = c.contractor.name
             d.contractor_inn = c.contractor.inn

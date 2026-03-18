@@ -300,7 +300,7 @@ const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
 const statusColor = (s: string) => STATUS_COLORS[s] ?? 'grey'
 
 const methodLabel = (m?: string | null) =>
-  m === 'single' ? 'Единственный исполнитель' : m === 'competitive' ? 'Конкурсная процедура' : ''
+  m === 'single' ? 'Единственный поставщик' : m === 'competitive' ? 'Конкурсная процедура' : ''
 
 // ─── Excel export ──────────────────────────────────────────────────────────────
 const exportExcel = () => {

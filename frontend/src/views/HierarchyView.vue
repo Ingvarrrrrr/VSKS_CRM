@@ -13,6 +13,9 @@
       <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="newDeptDialog.show = true" class="ml-2">
         Добавить отдел
       </v-btn>
+      <v-btn size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
+        Добавить сотрудника
+      </v-btn>
       <v-spacer />
       <div class="d-flex align-center ga-3 mr-3">
         <div class="d-flex align-center ga-1">

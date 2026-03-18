@@ -295,8 +295,10 @@
 
                       <!-- Фактически запланировано -->
                       <td class="feo-td feo-td-num">
-                        <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount' : 'feo-amount-empty'"
+                        <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
                           :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#DC2626;font-weight:700' : ''"
+                          :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
+                          @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
                           {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
                         </span>
@@ -347,12 +349,16 @@
                             <thead>
                               <tr style="background:#CCFBF1">
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ПЛАН (Уровень 5)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Кол-во</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Сумма</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ФАКТ (из закупок)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Разница</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
                                 <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px">Статус</th>
-                                <th style="padding:4px 2px;width:60px;border-bottom:1px solid #99F6E4"></th>
+                                <th style="padding:4px 2px;width:80px;border-bottom:1px solid #99F6E4"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -365,17 +371,29 @@
                                       <span v-if="ai === 0">{{ planned.name }}</span>
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                      <span v-if="ai === 0 && planned.quantity">{{ planned.quantity }} {{ planned.unit || '' }}</span>
+                                      <span v-if="ai === 0 && planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">
                                       <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                     </td>
                                     <td style="padding:4px 8px;color:#166534">{{ actual.item_name }}</td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:right;color:#166534;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                    <td v-if="ai === 0" :rowspan="comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id).length" style="padding:4px 8px;text-align:right">
+                                      <span v-if="planned.amount != null" :style="getDiffStyle(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))">
+                                        {{ formatCurrency(calcDiff(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))) }}
+                                      </span>
+                                    </td>
                                     <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                                     <td style="padding:4px 8px;text-align:center">
                                       <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
                                     </td>
                                     <td style="padding:2px;text-align:center">
+                                      <v-btn v-if="ai === 0" icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                        title="Редактировать плановую позицию"
+                                        @click="openEditPlannedItem(planned)"
+                                      />
                                       <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
                                         title="Снять сопоставление"
                                         @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
@@ -388,17 +406,25 @@
                                   style="border-bottom:1px solid #E0F2FE">
                                   <td style="padding:4px 8px;color:#0c4a6e">{{ planned.name }}</td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                    {{ planned.quantity ? `${planned.quantity} ${planned.unit || ''}` : '—' }}
+                                    {{ planned.quantity ? `${parseFloat(String(planned.quantity))} ${planned.unit || ''}` : '—' }}
                                   </td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
                                     {{ planned.amount ? formatCurrency(planned.amount) : '—' }}
                                   </td>
                                   <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
+                                  <td style="padding:4px 8px"></td>
+                                  <td style="padding:4px 8px"></td>
+                                  <td style="padding:4px 8px"></td>
+                                  <td style="padding:4px 8px;text-align:right;color:#9ca3af">{{ planned.amount ? formatCurrency(Number(planned.amount)) : '—' }}</td>
                                   <td style="padding:4px 8px;color:#9ca3af">—</td>
                                   <td style="padding:4px 8px;text-align:center">
                                     <v-icon icon="mdi-clock-outline" size="16" color="warning" title="Не куплено" />
                                   </td>
                                   <td style="padding:2px;text-align:center">
+                                    <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                      title="Редактировать плановую позицию"
+                                      @click="openEditPlannedItem(planned)"
+                                    />
                                     <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
                                       title="Удалить плановую позицию"
                                       @click="deletePlannedItem(planned)"
@@ -415,6 +441,10 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;color:#92400e">{{ actual.item_name }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#92400e;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning" title="Не в плане" />
@@ -429,11 +459,33 @@
 
                               <!-- Пусто -->
                               <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length">
-                                <td colspan="7" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                                <td colspan="11" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
                             </tbody>
+                            <!-- Итоговая строка -->
+                            <tfoot v-if="comparisonData[node.id].planned.length || comparisonData[node.id].actual.length">
+                              <tr style="background:#F0FDF4;font-weight:600;border-top:2px solid #86EFAC">
+                                <td style="padding:4px 8px;color:#166534">ИТОГО</td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right;color:#166534">
+                                  {{ formatCurrency(comparisonData[node.id].planned.reduce((s, p) => s + Number(p.amount || 0), 0)) }}
+                                </td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right;color:#166534">
+                                  {{ formatCurrency(comparisonData[node.id].actual.reduce((s, a) => s + Number(a.total_price || 0), 0)) }}
+                                </td>
+                                <td style="padding:4px 8px;text-align:right">
+                                  <span :style="comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) >= comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0) ? 'color:#166534' : 'color:#DC2626'">
+                                    {{ formatCurrency(comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) - comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0)) }}
+                                  </span>
+                                </td>
+                                <td colspan="3" style="padding:4px 8px"></td>
+                              </tr>
+                            </tfoot>
                           </table>
                         </div>
                       </td>
@@ -1118,6 +1170,32 @@
       {{ snack.text }}
     </v-snackbar>
 
+    <!-- ── Диалог редактирования плановой позиции ── -->
+    <v-dialog v-model="editPlannedDialog.show" max-width="480">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          <v-icon icon="mdi-pencil" color="blue" class="mr-2" />Редактировать плановую позицию
+        </v-card-title>
+        <v-card-text class="px-4 pb-2">
+          <v-text-field v-model="editPlannedDialog.name" label="Наименование" variant="outlined" density="compact" class="mb-2" autofocus />
+          <v-row dense>
+            <v-col cols="5">
+              <v-text-field v-model="editPlannedDialog.quantity" label="Кол-во" type="number" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="7">
+              <v-text-field v-model="editPlannedDialog.unit" label="Ед. изм." variant="outlined" density="compact" />
+            </v-col>
+          </v-row>
+          <v-text-field v-model="editPlannedDialog.amount" label="Сумма (план), ₽" type="number" variant="outlined" density="compact" />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" @click="editPlannedDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" variant="tonal" :loading="editPlannedDialog.saving" @click="saveEditPlannedItem">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Диалог сопоставления позиций ── -->
     <v-dialog v-model="showMapDialog" max-width="520">
       <v-card>
@@ -1359,6 +1437,7 @@ interface FeoActualItem {
   item_name: string
   quantity: number | null
   unit: string | null
+  unit_price: number | null
   total_price: number | null
   feo_planned_item_id: number | null
   purchase_id: number
@@ -1463,6 +1542,57 @@ async function savePlannedItem() {
 async function deletePlannedItem(item: FeoPlannedItem) {
   await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
   await refreshComparison(item.feo_category_id)
+}
+
+// ── Diff helpers ──────────────────────────────────────────────────────────
+function calcDiff(planned: FeoPlannedItem, actuals: FeoActualItem[]): number {
+  const factSum = actuals.reduce((s, a) => s + Number(a.total_price || 0), 0)
+  return Number(planned.amount || 0) - factSum
+}
+function getDiffStyle(planned: FeoPlannedItem, actuals: FeoActualItem[]): string {
+  const diff = calcDiff(planned, actuals)
+  return diff >= 0 ? 'color:#166534;font-weight:600' : 'color:#DC2626;font-weight:600'
+}
+
+// ── Edit planned item dialog ─────────────────────────────────────────────
+const editPlannedDialog = reactive({
+  show: false, saving: false,
+  id: 0, feo_category_id: 0,
+  name: '', quantity: '' as string | number, unit: '', amount: '' as string | number,
+})
+
+function openEditPlannedItem(item: FeoPlannedItem) {
+  editPlannedDialog.id = item.id
+  editPlannedDialog.feo_category_id = item.feo_category_id
+  editPlannedDialog.name = item.name
+  editPlannedDialog.quantity = item.quantity != null ? parseFloat(String(item.quantity)) : ''
+  editPlannedDialog.unit = item.unit || ''
+  editPlannedDialog.amount = item.amount != null ? parseFloat(String(item.amount)) : ''
+  editPlannedDialog.show = true
+}
+
+async function saveEditPlannedItem() {
+  editPlannedDialog.saving = true
+  try {
+    await apiFetch(`/feo-planned-items/${editPlannedDialog.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        feo_category_id: editPlannedDialog.feo_category_id,
+        name: editPlannedDialog.name,
+        quantity: editPlannedDialog.quantity !== '' ? Number(editPlannedDialog.quantity) : null,
+        unit: editPlannedDialog.unit || null,
+        amount: editPlannedDialog.amount !== '' ? Number(editPlannedDialog.amount) : null,
+        notes: null,
+        is_active: true,
+      }),
+    })
+    editPlannedDialog.show = false
+    await refreshComparison(editPlannedDialog.feo_category_id)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка сохранения', 'error')
+  } finally {
+    editPlannedDialog.saving = false
+  }
 }
 
 // Contractor override state
@@ -1662,6 +1792,7 @@ async function saveInlineBudget(node: FeoNode) {
     const cat = feoCategories.value.find(c => c.id === node.id)
     if (cat) cat.budget = val
     feoCategories.value = [...feoCategories.value]
+    if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
@@ -2641,6 +2772,8 @@ onMounted(loadAll)
 }
 .feo-appendix { font-size: 11px; color: var(--crm-text-faint); white-space: nowrap; }
 .feo-amount { font-size: 13px; font-weight: 500; color: var(--crm-text); }
+.feo-amount--link { cursor: pointer; text-decoration: underline dotted; }
+.feo-amount--link:hover { color: #1976d2; }
 .feo-amount-empty { font-size: 13px; color: var(--crm-text-faint); }
 .feo-set-hint {
   font-size: 12px; color: #3B82F6; cursor: pointer; text-decoration: underline dotted;

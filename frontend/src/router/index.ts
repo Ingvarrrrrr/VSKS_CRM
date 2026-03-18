@@ -80,6 +80,12 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Контрагенты' }
     },
     {
+      path: '/contracts',
+      name: 'contracts',
+      component: () => import('../views/ContractsView.vue'),
+      meta: { requiresAuth: false, title: 'Договоры' }
+    },
+    {
       path: '/feo-categories',
       name: 'feo-categories',
       component: FeoCategoriesView,

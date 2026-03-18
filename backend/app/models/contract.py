@@ -14,6 +14,10 @@ class Contract(Base):
     max_amount = Column(Numeric(15, 2))
     status = Column(String(50), default="active")
     notes = Column(Text)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    purchase_method = Column(String(50), nullable=True)  # single / competitive
+    planned_monthly = Column(Numeric(15, 2), nullable=True)
     contractor = relationship("Contractor")
     subsidy = relationship("Subsidy")
     purchases = relationship("Purchase", back_populates="contract")

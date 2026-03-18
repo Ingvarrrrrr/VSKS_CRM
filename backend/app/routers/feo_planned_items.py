@@ -164,6 +164,7 @@ async def get_comparison(
             item_name=pi.item_name,
             quantity=pi.quantity,
             unit=pi.unit,
+            unit_price=pi.unit_price,
             total_price=pi.total_price,
             feo_planned_item_id=pi.feo_planned_item_id,
             purchase_id=p.id,

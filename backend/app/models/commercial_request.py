@@ -8,7 +8,7 @@ class CommercialRequest(Base):
     __tablename__ = "commercial_requests"
 
     id = Column(Integer, primary_key=True, index=True)
-    purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False, index=True)
+    purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="CASCADE"), nullable=False, index=True)
     subject = Column(String(500), nullable=True)
     intro_text = Column(Text, nullable=True)
     delivery_date = Column(String(100), nullable=True)

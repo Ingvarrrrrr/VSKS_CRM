@@ -391,6 +391,7 @@ const menuItems = computed(() => {
     { title: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
     { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
     { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: ALL_ROLES },
+    { title: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
     { title: 'Товары', icon: 'mdi-package-variant', route: '/products', roles: ALL_ROLES },
     { title: 'Сводная по продукции', icon: 'mdi-chart-box-outline', route: '/products-summary', roles: MANAGER_ROLES },
     { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', roles: ADMIN_ROLES },

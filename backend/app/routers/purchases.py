@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
@@ -24,6 +24,16 @@ try:
 except ImportError:
     Workbook = None
     load_workbook = None
+
+try:
+    import pdfplumber as _pdfplumber
+except ImportError:
+    _pdfplumber = None
+
+try:
+    from docx import Document as _DocxDocument
+except ImportError:
+    _DocxDocument = None
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
@@ -64,11 +74,12 @@ ALL_EXPORT_COLUMNS = {
     "execution_term_changed": {"label": "Срок (изменён)",        "group": "Договор"},
     "delivery_date":          {"label": "Дата доставки",         "group": "Договор"},
     "contractor":             {"label": "Контрагент",            "group": "Контрагент"},
+    "contractor_inn":         {"label": "ИНН контрагента",       "group": "Контрагент"},
     "responsible_person":     {"label": "Ответственное лицо",    "group": "Контрагент"},
-    "acceptance_doc_name":    {"label": "Акт: наименование",     "group": "Исполнение"},
-    "acceptance_doc_number":  {"label": "Акт: №",               "group": "Исполнение"},
-    "acceptance_doc_date":    {"label": "Акт: дата",             "group": "Исполнение"},
-    "acceptance_doc_amount":  {"label": "Акт: сумма",            "group": "Исполнение"},
+    "acceptance_doc_name":    {"label": "Закрывающий документ: наименование", "group": "Исполнение"},
+    "acceptance_doc_number":  {"label": "Закрывающий документ: №",           "group": "Исполнение"},
+    "acceptance_doc_date":    {"label": "Закрывающий документ: дата",         "group": "Исполнение"},
+    "acceptance_doc_amount":  {"label": "Закрывающий документ: сумма",        "group": "Исполнение"},
     "payment_doc_number":     {"label": "ПП: №",                 "group": "Оплата"},
     "payment_doc_date":       {"label": "ПП: дата",              "group": "Оплата"},
     "payment_amount":         {"label": "ПП: сумма",             "group": "Оплата"},
@@ -82,7 +93,7 @@ ALL_EXPORT_COLUMNS = {
 DEFAULT_EXPORT_COLUMNS = [
     "purchase_number", "registry_number", "item_name", "item_type", "unit", "quantity",
     "nmck", "contract_price", "economy", "purchase_method",
-    "contract_number", "contract_date", "contractor",
+    "contract_number", "contract_date", "contractor", "contractor_inn",
     "execution_term", "country_origin",
     "acceptance_doc_name", "acceptance_doc_number", "acceptance_doc_date", "acceptance_doc_amount",
     "payment_doc_number", "payment_doc_date", "payment_amount", "payment_federal",
@@ -90,7 +101,7 @@ DEFAULT_EXPORT_COLUMNS = [
 ]
 
 _PURCHASE_METHOD_LABELS = {
-    "single": "Единственный исполнитель",
+    "single": "Единственный поставщик",
     "competitive": "Конкурсная процедура",
     "quote_request": "Запрос котировок",
 }
@@ -148,6 +159,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "execution_term_changed":  return str(p.execution_term_changed) if p.execution_term_changed else ""
     if key == "delivery_date":           return str(p.delivery_date) if p.delivery_date else ""
     if key == "contractor":              return ctx["contractors"].get(p.contractor_id, "")
+    if key == "contractor_inn":          return p.contractor.inn if p.contractor else ""
     if key == "responsible_person":      return p.responsible_person or ""
     if key == "acceptance_doc_name":     return p.acceptance_doc_name or ""
     if key == "acceptance_doc_number":   return p.acceptance_doc_number or ""
@@ -592,6 +604,31 @@ async def update_purchase(
     return p
 
 
+@router.delete("/bulk")
+async def bulk_delete_purchases(
+    ids: List[int] = Body(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
+):
+    deleted, failed = [], []
+    for pid in ids:
+        try:
+            result = await db.execute(select(Purchase).where(Purchase.id == pid))
+            p = result.scalar_one_or_none()
+            if not p:
+                failed.append({"id": pid, "reason": "Не найдено"})
+                continue
+            await db.delete(p)
+            await db.flush()
+            deleted.append(pid)
+        except Exception as e:
+            await db.rollback()
+            failed.append({"id": pid, "reason": str(e)[:200]})
+    if deleted:
+        await db.commit()
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.delete("/{pid}")
 async def delete_purchase(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
@@ -699,10 +736,10 @@ async def transition_status(
             labels = {
                 "contract_number": "Номер договора",
                 "contract_date": "Дата договора",
-                "acceptance_doc_name": "Наименование акта приёмки",
-                "acceptance_doc_date": "Дата акта",
-                "acceptance_doc_number": "Номер акта",
-                "acceptance_doc_amount": "Сумма акта",
+                "acceptance_doc_name": "Наименование закрывающего документа",
+                "acceptance_doc_date": "Дата закрывающего документа",
+                "acceptance_doc_number": "Номер закрывающего документа",
+                "acceptance_doc_amount": "Сумма закрывающего документа",
                 "payment_doc_number": "Номер платёжного поручения",
                 "payment_doc_date": "Дата платёжного поручения",
                 "payment_amount": "Сумма платежа",
@@ -1432,6 +1469,183 @@ async def import_items_excel(
 
     await db.commit()
     return {"added": added, "matched_catalog": matched_catalog, "unmatched": unmatched, "errors": errors_list}
+
+
+@router.post("/{pid}/items/import-smart")
+async def import_items_smart(
+    pid: int,
+    file: UploadFile = File(...),
+    confirm: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+):
+    """Smart import: extract items table from PDF / DOCX / XLSX."""
+    purchase = await db.get(Purchase, pid)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    content = await file.read()
+    filename = (file.filename or "").lower()
+
+    # --- Extract raw tables from file ---
+    raw_tables: list[list[list[str]]] = []
+    file_type = "unknown"
+
+    if filename.endswith((".xlsx", ".xls")):
+        file_type = "excel"
+        if not load_workbook:
+            raise HTTPException(500, "openpyxl не установлен")
+        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        rows = [[str(c) if c is not None else "" for c in row] for row in ws.iter_rows(values_only=True)]
+        if rows:
+            raw_tables.append(rows)
+    elif filename.endswith(".pdf"):
+        file_type = "pdf"
+        if not _pdfplumber:
+            raise HTTPException(500, "pdfplumber не установлен")
+        with _pdfplumber.open(BytesIO(content)) as pdf:
+            for page in pdf.pages:
+                tables = page.extract_tables() or []
+                for tbl in tables:
+                    if tbl:
+                        raw_tables.append([[str(c) if c is not None else "" for c in row] for row in tbl])
+    elif filename.endswith((".docx", ".doc")):
+        file_type = "docx"
+        if not _DocxDocument:
+            raise HTTPException(500, "python-docx не установлен")
+        doc = _DocxDocument(BytesIO(content))
+        for table in doc.tables:
+            rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+            if rows:
+                raw_tables.append(rows)
+    else:
+        raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS")
+
+    if not raw_tables:
+        raise HTTPException(400, "Таблицы в документе не найдены")
+
+    def _detect_columns(header_row: list[str]) -> dict:
+        col: dict = {}
+        for i, h in enumerate(header_row):
+            h_s = h.strip().lower()
+            if any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг")):
+                col.setdefault("item_name", i)
+            elif any(x in h_s for x in ("тип", "type", "вид")):
+                col.setdefault("item_type", i)
+            elif any(x in h_s for x in ("кол", "количеств", "qty", "quantity")):
+                col.setdefault("quantity", i)
+            elif any(x in h_s for x in ("ед.", "единиц", "unit", "изм")):
+                col.setdefault("unit", i)
+            elif any(x in h_s for x in ("цена ед", "цена за", "стоимость ед", "price")):
+                col.setdefault("unit_price", i)
+            elif any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
+                col.setdefault("total_price", i)
+        return col
+
+    # Pick best table (most matched columns)
+    best_table: list[list[str]] = []
+    best_col: dict = {}
+    best_header_row = 0
+    for table in raw_tables:
+        for r_idx, row in enumerate(table[:6]):
+            col = _detect_columns(row)
+            if "item_name" in col and len(col) > len(best_col):
+                best_col = col
+                best_table = table
+                best_header_row = r_idx
+
+    if not best_table or "item_name" not in best_col:
+        raise HTTPException(400, "Не удалось найти таблицу с позициями. Убедитесь что документ содержит колонку «Наименование».")
+
+    TYPE_MAP = {
+        "товар": "товар", "товары": "товар", "product": "товар",
+        "услуга": "услуга", "услуги": "услуга", "service": "услуга",
+        "работа": "работа", "работы": "работа",
+    }
+
+    def _to_dec(v: str):
+        if not v:
+            return None
+        try:
+            cleaned = v.replace(",", ".").replace(" ", "").replace("\xa0", "").replace("–", "").replace("—", "")
+            return Decimal(cleaned)
+        except Exception:
+            return None
+
+    def _parse_row(row: list[str]):
+        def _get(field: str) -> str:
+            idx = best_col.get(field)
+            if idx is None or idx >= len(row):
+                return ""
+            v = row[idx].strip()
+            return "" if v.lower() in ("none", "null", "-", "—", "") else v
+
+        item_name = _get("item_name")
+        if not item_name:
+            return None
+        item_type = TYPE_MAP.get(_get("item_type").lower(), "товар")
+        quantity = _to_dec(_get("quantity"))
+        unit = _get("unit") or "шт"
+        unit_price = _to_dec(_get("unit_price"))
+        total_price = _to_dec(_get("total_price"))
+        if unit_price is None and total_price is not None and quantity:
+            try:
+                unit_price = total_price / quantity
+            except Exception:
+                pass
+        if total_price is None and unit_price is not None and quantity:
+            total_price = unit_price * (quantity or Decimal("1"))
+        return {
+            "item_name": item_name,
+            "item_type": item_type,
+            "quantity": float(quantity) if quantity else None,
+            "unit": unit,
+            "unit_price": float(unit_price) if unit_price else None,
+            "total_price": float(total_price) if total_price else None,
+        }
+
+    data_rows = best_table[best_header_row + 1:]
+    preview = [r for r in (_parse_row(row) for row in data_rows[:100]) if r]
+
+    if not confirm:
+        return {"preview": preview, "total_rows": len(preview), "file_type": file_type, "columns_found": list(best_col.keys())}
+
+    # Save items to DB
+    org_id = get_single_org_id(current_user)
+    prod_q = select(Product)
+    if org_id:
+        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    products = (await db.execute(prod_q)).scalars().all()
+    product_by_name = {(p.name or "").lower().strip(): p for p in products}
+
+    added = matched_catalog = unmatched = 0
+    for row_data in preview:
+        item_name = row_data["item_name"]
+        qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
+        unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
+        total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
+        product_id = None
+        matched = product_by_name.get(item_name.lower().strip())
+        if matched:
+            product_id = matched.id
+            matched_catalog += 1
+            if not unit_price and matched.price:
+                unit_price = matched.price
+                total_price = qty * unit_price
+        else:
+            unmatched += 1
+        if total_price is None and unit_price:
+            total_price = qty * unit_price
+        db.add(PurchaseItem(
+            purchase_id=pid, product_id=product_id,
+            item_name=item_name, item_type=row_data["item_type"],
+            quantity=qty, unit=row_data["unit"],
+            unit_price=unit_price, total_price=total_price,
+        ))
+        added += 1
+    await db.commit()
+    return {"added": added, "matched_catalog": matched_catalog, "unmatched": unmatched}
 
 
 # ---------------------------------------------------------------------------

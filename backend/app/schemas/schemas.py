@@ -226,11 +226,17 @@ class ContractCreate(BaseModel):
     max_amount: Optional[Decimal] = None
     status: str = "active"
     notes: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    purchase_method: Optional[str] = None
+    planned_monthly: Optional[Decimal] = None
 
 class ContractOut(ContractCreate):
     id: int
     total_payment: Optional[Decimal] = None
     remaining: Optional[Decimal] = None
+    total_ordered: Optional[Decimal] = None
+    total_paid: Optional[Decimal] = None
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
     model_config = {"from_attributes": True}
@@ -671,6 +677,7 @@ class FeoActualItemOut(BaseModel):
     item_name: str
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
     total_price: Optional[Decimal] = None
     feo_planned_item_id: Optional[int] = None  # если сопоставлено
     purchase_id: int

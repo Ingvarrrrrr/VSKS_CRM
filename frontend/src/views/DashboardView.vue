@@ -926,7 +926,7 @@ const A_STATUS_COLORS: Record<string, string> = {
   contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
 }
 const A_METHOD_LABELS: Record<string, string> = {
-  single: 'Единственный исполнитель', competitive: 'Конкурсная процедура',
+  single: 'Единственный поставщик', competitive: 'Конкурсная процедура',
   quote_request: 'Запрос котировок', unknown: 'Не указано',
 }
 const A_METHOD_COLORS: Record<string, string> = {

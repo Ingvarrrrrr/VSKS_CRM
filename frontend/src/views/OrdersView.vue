@@ -89,6 +89,12 @@
       </v-chip>
     </v-chip-group>
 
+    <!-- FEO category filter badge -->
+    <v-chip v-if="filterFeoCategoryId" color="teal" variant="tonal" closable class="mb-3" prepend-icon="mdi-filter"
+      @click:close="filterFeoCategoryId = null; filterFeoCategoryName = ''">
+      ФЭО: {{ filterFeoCategoryName }}
+    </v-chip>
+
     <!-- Bulk actions bar -->
     <div v-if="selectedOrders.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
       <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
@@ -193,7 +199,7 @@
         <template #item.actions="{ item }">
           <div class="d-flex align-center gap-1">
             <v-btn
-              v-if="nextStatus(item.status)"
+              v-if="!isAdmin && nextStatus(item.status)"
               size="x-small"
               :color="STATUS_COLOR[nextStatus(item.status)!]"
               variant="tonal"
@@ -202,6 +208,21 @@
             >
               → {{ STATUS_LABEL[nextStatus(item.status)!] }}
             </v-btn>
+            <v-menu v-if="isAdmin">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" size="x-small" :color="STATUS_COLOR[item.status]" variant="tonal" :loading="transitioning === item.id" append-icon="mdi-chevron-down">
+                  {{ STATUS_LABEL[item.status] || item.status }}
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  v-for="s in statusItems" :key="s.value"
+                  :title="s.label"
+                  :active="item.status === s.value"
+                  @click="doForceStatus(item, s.value)"
+                />
+              </v-list>
+            </v-menu>
             <v-btn icon="mdi-pencil" variant="text" size="small" :to="`/orders/${item.id}/edit`" />
             <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDeleteOne(item)" />
           </div>
@@ -530,6 +551,7 @@ interface Purchase {
   item_name?: string
   contractor_name?: string
   feo_category_name?: string
+  feo_category_id?: number
   subsidy_name?: string
   subsidy_id?: number
   subject?: string
@@ -601,7 +623,6 @@ const headers = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false },
   { title: '№', key: 'purchase_number', width: 60 },
   { title: 'Предмет договора', key: 'subject', minWidth: 180 },
-  { title: 'Наименование', key: 'display_name', minWidth: 200 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 150 },
   { title: 'Цена', key: 'effective_price', align: 'end' as const, minWidth: 120, sortable: false },
@@ -618,6 +639,8 @@ const loading = ref(false)
 const transitioning = ref<number | null>(null)
 const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
+const filterFeoCategoryId = ref<number | null>(null)
+const filterFeoCategoryName = ref<string>('')
 const search = ref('')
 const expanded = ref<string[]>([])
 const selectedOrders = ref<Purchase[]>([])
@@ -717,6 +740,7 @@ const filteredOrders = computed(() => {
   let r = orders.value
   if (filterStatus.value) r = r.filter(o => o.status === filterStatus.value)
   if (filterSubsidyId.value) r = r.filter(o => o.subsidy_id === filterSubsidyId.value)
+  if (filterFeoCategoryId.value) r = r.filter(o => o.feo_category_id === filterFeoCategoryId.value)
   return r
 })
 
@@ -750,6 +774,17 @@ onMounted(() => {
   }
   const qStatus = route.query.status
   if (qStatus && typeof qStatus === 'string') filterStatus.value = qStatus
+  const qFeo = route.query.feo_category_id
+  if (qFeo) {
+    filterFeoCategoryId.value = Number(qFeo)
+    // Find feo category name from loaded orders (or set generic label)
+    filterFeoCategoryName.value = `ФЭО #${qFeo}`
+    // Update name once orders load
+    loadOrders().then(() => {
+      const found = orders.value.find(o => o.feo_category_id === Number(qFeo))
+      if (found?.feo_category_name) filterFeoCategoryName.value = found.feo_category_name
+    })
+  }
 
   // Enable column resize after table renders
   setTimeout(() => {
@@ -792,6 +827,20 @@ const doTransition = async (item: Purchase) => {
   }
 }
 
+const doForceStatus = async (item: Purchase, status: string) => {
+  if (item.status === status) return
+  transitioning.value = item.id
+  try {
+    await apiFetch(`/purchases/${item.id}/transition?status=${status}`, { method: 'POST' })
+    showSnack(`Статус изменён → ${STATUS_LABEL[status]}`)
+    await loadOrders()
+  } catch (e: any) {
+    showSnack(e?.detail || e?.message || 'Ошибка изменения статуса', 'error')
+  } finally {
+    transitioning.value = null
+  }
+}
+
 const confirmDeleteOne = (item: Purchase) => {
   deleteDialog.single = item
   deleteDialog.bulk = false
@@ -822,12 +871,23 @@ const bulkChangeStatus = async (status: string) => {
 const doDelete = async () => {
   deleteDialog.deleting = true
   try {
-    const targets = deleteDialog.bulk
-      ? selectedOrders.value.map(o => o.id)
-      : [deleteDialog.single!.id]
-    await Promise.all(targets.map(id => apiFetch(`/purchases/${id}`, { method: 'DELETE' })))
-    showSnack(`Удалено ${targets.length} закупок`, 'warning')
-    selectedOrders.value = []
+    if (deleteDialog.bulk) {
+      const ids = selectedOrders.value.map(o => o.id)
+      const res = await apiFetch('/purchases/bulk', {
+        method: 'DELETE',
+        body: JSON.stringify(ids),
+      })
+      const deletedIds = new Set<number>(res.deleted)
+      selectedOrders.value = selectedOrders.value.filter(o => !deletedIds.has(o.id))
+      if (res.failed?.length) {
+        showSnack(`Удалено: ${res.deleted.length}, не удалось: ${res.failed.length}`, 'warning')
+      } else {
+        showSnack(`Удалено ${res.deleted.length} закупок`, 'warning')
+      }
+    } else {
+      await apiFetch(`/purchases/${deleteDialog.single!.id}`, { method: 'DELETE' })
+      showSnack('Закупка удалена', 'warning')
+    }
     deleteDialog.show = false
     await loadOrders()
   } catch (e: any) {

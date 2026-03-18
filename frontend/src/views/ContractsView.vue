@@ -310,6 +310,9 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
+import { useAppSearch } from '@/composables/useAppSearch'
+
+const { appSearch, appSearchScope } = useAppSearch()
 
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
@@ -369,7 +372,18 @@ const clearFilters = () => {
   fStatus.value = []; fContractor.value = []; fDateFrom.value = ''; fDateTo.value = ''
 }
 
+function matchesSearch(c: Contract, q: string): boolean {
+  const lq = q.toLowerCase()
+  return [c.number, c.contractor_name, c.contractor_inn, c.subsidy_name, c.subject, c.notes]
+    .some(v => v?.toLowerCase().includes(lq))
+}
+
 const filtered = computed(() => {
+  const q = appSearch.value.trim()
+
+  // "По всей БД" — global search handled by GlobalSearch dialog, page shows all
+  if (q && appSearchScope.value === 'global') return contracts.value
+
   let list = contracts.value
   if (fSubsidy.value.length)    list = list.filter(c => c.subsidy_id != null && fSubsidy.value.includes(c.subsidy_id))
   if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
@@ -378,6 +392,8 @@ const filtered = computed(() => {
   if (fContractor.value.length) list = list.filter(c => c.contractor_id != null && fContractor.value.includes(c.contractor_id))
   if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
+  // "По странице" — filter current list by search query
+  if (q && appSearchScope.value === 'page') list = list.filter(c => matchesSearch(c, q))
   return list
 })
 

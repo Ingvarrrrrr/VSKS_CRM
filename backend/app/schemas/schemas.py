@@ -3,6 +3,9 @@ from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
 
+# Alias to avoid Pydantic v2 field-name-shadows-type bug for 'date: Optional[date]'
+_Date = date
+
 # Auth
 class LoginRequest(BaseModel):
     username: str
@@ -218,7 +221,7 @@ class ContractorOut(ContractorCreate):
 # Contract
 class ContractCreate(BaseModel):
     number: str
-    date: Optional[date] = None
+    date: Optional[_Date] = None
     contract_type: str  # single / framework_cumulative / framework_with_amount
     contractor_id: Optional[int] = None
     subsidy_id: Optional[int] = None

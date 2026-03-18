@@ -537,10 +537,18 @@
         </v-card-text>
       </v-card>
 
-      <!-- 4. Договор -->
+      <!-- 4. Договор / Счёт / Счёт-договор -->
       <v-card v-if="isSectionVisible('contract')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Договор</v-card-title>
+        <v-tabs v-model="form.payment_basis_type" density="compact" color="primary" class="px-2 pt-2">
+          <v-tab value="contract">Договор</v-tab>
+          <v-tab value="invoice">Счёт</v-tab>
+          <v-tab value="invoice_contract">Счёт-договор</v-tab>
+        </v-tabs>
+        <v-divider />
         <v-card-text>
+
+          <!-- ── Договор ── -->
+          <v-window-item v-if="form.payment_basis_type === 'contract'">
           <v-row>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.contract_number" label="Номер договора" variant="outlined" density="compact"
@@ -611,6 +619,113 @@
                 variant="outlined" density="compact" type="date" />
             </v-col>
           </v-row>
+          </v-window-item>
+
+          <!-- ── Счёт ── -->
+          <v-window-item v-if="form.payment_basis_type === 'invoice'">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            Счёт на оплату — выставляется поставщиком, является основанием для оплаты без заключения договора.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_number" label="Номер счёта" variant="outlined" density="compact"
+                hint="Номер счёта от поставщика" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_date" label="Дата счёта" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="form.delivery_address"
+                :items="deliveryAddressSuggestions"
+                label="Адрес доставки"
+                variant="outlined" density="compact" clearable hide-no-data no-filter return-object
+                :custom-filter="() => true"
+                @update:search="onDeliveryAddressSearch"
+                @update:model-value="onDeliveryAddressSelect"
+                placeholder="Начните вводить адрес..."
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+          </v-row>
+          </v-window-item>
+
+          <!-- ── Счёт-договор ── -->
+          <v-window-item v-if="form.payment_basis_type === 'invoice_contract'">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            Счёт-договор — упрощённая форма договора, объединяющая счёт и договорные условия. Применяется при сумме до 600 тыс. ₽.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_number" label="Номер счёт-договора" variant="outlined" density="compact"
+                hint="Номер документа от поставщика" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="form.contract_date" label="Дата счёт-договора" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="form.delivery_address"
+                :items="deliveryAddressSuggestions"
+                label="Адрес доставки"
+                variant="outlined" density="compact" clearable hide-no-data no-filter return-object
+                :custom-filter="() => true"
+                @update:search="onDeliveryAddressSearch"
+                @update:model-value="onDeliveryAddressSelect"
+                placeholder="Начните вводить адрес..."
+              />
+            </v-col>
+            <v-col cols="12" md="2" class="d-flex align-center">
+              <v-checkbox v-model="form.is_monthly_payment" label="Ежемесячный платёж"
+                density="compact" hide-details color="blue" />
+            </v-col>
+            <template v-if="form.is_monthly_payment">
+              <v-col cols="12" md="2">
+                <v-text-field v-model.number="form.monthly_payment_count" label="Кол-во платежей"
+                  variant="outlined" density="compact" type="number" min="1"
+                  @update:model-value="calcMonthlyTotal" />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field v-model.number="form.monthly_payment_amount" label="Сумма платежа, ₽"
+                  variant="outlined" density="compact" type="number" suffix="₽"
+                  @update:model-value="calcMonthlyTotal" />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field
+                  :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
+                  label="Итого обязательств" variant="outlined" density="compact" readonly
+                  bg-color="grey-lighten-4"
+                  hint="Не обязана совпадать с суммой договора" persistent-hint />
+              </v-col>
+            </template>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+          </v-row>
+          </v-window-item>
+
         </v-card-text>
       </v-card>
 
@@ -2068,6 +2183,7 @@ const form = reactive({
   country_origin: '' as string,
   treasury_code: '' as string,
   has_pretension: false as boolean,
+  payment_basis_type: 'contract' as string,
 })
 
 function activeDescription(item: OrderItem): string | undefined {
@@ -3201,6 +3317,7 @@ const loadPurchase = async () => {
     country_origin: data.country_origin || '',
     treasury_code: data.treasury_code || '',
     has_pretension: !!data.has_pretension,
+    payment_basis_type: data.payment_basis_type || 'contract',
   })
 
   // Save frozen НМЦК from DB

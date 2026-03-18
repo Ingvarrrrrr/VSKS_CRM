@@ -339,6 +339,7 @@ class PurchaseCreate(BaseModel):
     approval_status: Optional[str] = None
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = False
+    payment_basis_type: Optional[str] = "contract"
     items: List[PurchaseItemCreate] = []
 
 class PurchaseOut(PurchaseCreate):

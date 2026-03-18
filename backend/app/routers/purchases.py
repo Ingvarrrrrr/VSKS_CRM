@@ -14,6 +14,7 @@ from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.models.user import User
+from app.routers.contracts import ensure_contract_linked
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -599,6 +600,9 @@ async def update_purchase(
         item = PurchaseItem(purchase_id=pid, **item_d.model_dump())
         db.add(item)
 
+    # Auto-create/link contract record when contract_number is set
+    await ensure_contract_linked(p, db)
+
     await db.commit()
     await db.refresh(p)
     return p
@@ -769,6 +773,10 @@ async def transition_status(
             product.contract_number = p.contract_number
             product.contract_date = p.contract_date
             product.contract_org_id = contract_org_id
+
+    # Auto-create/link contract record when moving to contracted status
+    if target_status == "contracted":
+        await ensure_contract_linked(p, db)
 
     await db.commit()
 

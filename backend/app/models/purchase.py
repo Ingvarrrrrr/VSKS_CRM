@@ -78,6 +78,9 @@ class Purchase(Base):
     delivery_address = Column(Text, nullable=True)          # адрес доставки
     procurement_planned_date = Column(Date, nullable=True)  # планируемая дата закупки
 
+    # Основание для оплаты: 'contract' | 'invoice' | 'invoice_contract'
+    payment_basis_type = Column(String(30), nullable=True, default="contract")
+
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")
     contract = relationship("Contract", back_populates="purchases")

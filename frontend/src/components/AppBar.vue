@@ -340,6 +340,7 @@ const allNavShortcuts = [
   { label: 'Задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
   { label: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
+  { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
   { label: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: MANAGER_ROLES },
   { label: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', roles: MANAGER_ROLES },
 ]
@@ -678,6 +679,13 @@ const loadSubsidies = async () => {
 }
 
 onMounted(async () => {
+  // Refresh user role/name from server
+  try {
+    const me = await apiFetch<any>('/users/me')
+    if (me.role) localStorage.setItem('user_role', me.role)
+    if (me.full_name || me.username) localStorage.setItem('user_name', me.full_name || me.username)
+  } catch {}
+
   await loadMyOrgs()
   loadSubsidies()
   loadSignatureStatus()

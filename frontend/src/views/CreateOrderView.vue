@@ -308,7 +308,7 @@
             </v-btn>
             <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" size="small" color="success"
               @click="itemsImportDialog = true">
-              Импорт из Excel
+              Импорт из файла
             </v-btn>
           </div>
         </v-card-text>
@@ -1452,121 +1452,47 @@
     </v-dialog>
 
     <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="680">
+    <v-dialog v-model="itemsImportDialog" max-width="600">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
-          <v-icon icon="mdi-file-import-outline" class="mr-2" />
-          Импорт позиций
+          <v-icon icon="mdi-package-variant-plus" class="mr-2" />
+          Загрузка товаров в каталог
         </v-card-title>
-        <v-tabs v-model="importTab" color="primary" class="px-2">
-          <v-tab value="excel">
-            <v-icon icon="mdi-file-excel-outline" color="success" class="mr-1" size="18" />По шаблону Excel
-          </v-tab>
-          <v-tab value="smart">
-            <v-icon icon="mdi-brain" color="primary" class="mr-1" size="18" />Из документа (PDF/Word/Excel)
-          </v-tab>
-        </v-tabs>
         <v-divider />
         <v-card-text class="pa-4">
-          <!-- Tab: Excel template -->
-          <div v-if="importTab === 'excel'">
-            <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
-              Для импорта нужно сначала сохранить заказ
-            </v-alert>
-            <v-btn variant="text" color="primary" size="small" prepend-icon="mdi-download" class="mb-3"
-              @click="downloadItemsTemplate">
+          <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
+            Для добавления в закупку сначала сохраните заказ
+          </v-alert>
+          <p class="text-body-2 text-medium-emphasis mb-3">
+            Загрузите Excel-файл по шаблону — товары попадут в каталог и сразу будут добавлены в закупку.
+          </p>
+          <div class="d-flex gap-2 mb-3 flex-wrap">
+            <v-btn variant="text" color="teal" size="small" prepend-icon="mdi-download"
+              @click="downloadProductsTemplate">
               Скачать шаблон
             </v-btn>
-            <v-file-input
-              v-model="itemsImportFile"
-              label="Выберите Excel файл (.xlsx / .xls)"
-              accept=".xlsx,.xls"
-              variant="outlined" density="compact"
-              prepend-icon="mdi-file-upload-outline"
-              :disabled="itemsImportLoading"
-            />
-            <v-alert v-if="itemsImportResult" :type="itemsImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
-              Добавлено: {{ itemsImportResult.added }},
-              привязано к каталогу: {{ itemsImportResult.matched_catalog }},
-              не найдено в каталоге: {{ itemsImportResult.unmatched }}
-            </v-alert>
           </div>
+          <v-file-input
+            v-model="itemsImportFile"
+            label="Выберите Excel файл (.xlsx / .xls)"
+            accept=".xlsx,.xls"
+            variant="outlined" density="compact"
+            prepend-icon="mdi-file-upload-outline"
+            :disabled="itemsImportLoading"
+          />
+          <v-alert v-if="itemsImportResult" type="success" class="mt-3" density="compact">
+            Создано товаров: {{ itemsImportResult.added }}
+          </v-alert>
 
-          <!-- Tab: Smart import -->
-          <div v-else>
-            <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
-              Для импорта нужно сначала сохранить заказ
-            </v-alert>
-            <p class="text-body-2 text-medium-emphasis mb-3">
-              Загрузите счёт, спецификацию или любой документ — система автоматически найдёт таблицу с позициями.
-            </p>
-            <v-file-input
-              v-model="smartImportFile"
-              label="PDF, DOCX или XLSX файл"
-              accept=".pdf,.docx,.doc,.xlsx,.xls"
-              variant="outlined" density="compact"
-              prepend-icon="mdi-file-upload-outline"
-              :disabled="smartImportLoading"
-              @update:model-value="smartImportPreview = null; smartImportResult = null"
-            />
-            <div class="d-flex gap-2 mt-2">
-              <v-btn color="primary" variant="tonal" size="small" :loading="smartImportLoading"
-                :disabled="!smartImportFile || !purchaseId" @click="doSmartPreview">
-                <v-icon icon="mdi-eye-outline" class="mr-1" size="16" />Распознать
-              </v-btn>
-            </div>
-
-            <!-- Preview table -->
-            <div v-if="smartImportPreview" class="mt-3">
-              <div class="text-caption text-medium-emphasis mb-1">
-                Распознано строк: {{ smartImportPreview.length }}
-                <span v-if="smartImportColumns" class="ml-2">· колонки: {{ smartImportColumns.join(', ') }}</span>
-              </div>
-              <v-table density="compact" class="smart-preview-table" style="max-height:260px; overflow-y:auto">
-                <thead>
-                  <tr>
-                    <th>Наименование</th>
-                    <th>Тип</th>
-                    <th>Кол-во</th>
-                    <th>Ед.</th>
-                    <th>Цена</th>
-                    <th>Сумма</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, i) in smartImportPreview" :key="i">
-                    <td>{{ row.item_name }}</td>
-                    <td>{{ row.item_type }}</td>
-                    <td>{{ row.quantity }}</td>
-                    <td>{{ row.unit }}</td>
-                    <td>{{ row.unit_price != null ? row.unit_price.toLocaleString('ru-RU') : '—' }}</td>
-                    <td>{{ row.total_price != null ? row.total_price.toLocaleString('ru-RU') : '—' }}</td>
-                  </tr>
-                </tbody>
-              </v-table>
-            </div>
-
-            <v-alert v-if="smartImportResult" :type="smartImportResult.unmatched > 0 ? 'warning' : 'success'" class="mt-3" density="compact">
-              Добавлено: {{ smartImportResult.added }},
-              привязано к каталогу: {{ smartImportResult.matched_catalog }},
-              не найдено в каталоге: {{ smartImportResult.unmatched }}
-            </v-alert>
-          </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="itemsImportDialog = false">Закрыть</v-btn>
-          <v-btn v-if="importTab === 'excel'" color="success" variant="flat"
+          <v-btn color="success" variant="flat"
             :loading="itemsImportLoading"
-            :disabled="!itemsImportFile || !purchaseId"
+            :disabled="!itemsImportFile"
             @click="doItemsImport">
-            Импортировать
-          </v-btn>
-          <v-btn v-else color="success" variant="flat"
-            :loading="smartImportLoading"
-            :disabled="!smartImportPreview?.length || !purchaseId"
-            @click="doSmartImport">
-            Импортировать {{ smartImportPreview?.length ? smartImportPreview.length + ' позиций' : '' }}
+            Загрузить в каталог
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -3012,6 +2938,48 @@ const smartImportPreview = ref<any[] | null>(null)
 const smartImportColumns = ref<string[] | null>(null)
 const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
 
+// Column mapping
+const CRM_MAPPING_FIELDS: Record<string, string> = {
+  item_name: 'Наименование',
+  quantity: 'Кол-во',
+  unit: 'Ед. изм.',
+  unit_price: 'Цена за ед.',
+  total_price: 'Сумма',
+}
+const crmFieldSelectItems = [
+  { title: 'Наименование', value: 'item_name' },
+  { title: 'Кол-во', value: 'quantity' },
+  { title: 'Ед. изм.', value: 'unit' },
+  { title: 'Цена за ед.', value: 'unit_price' },
+  { title: 'Сумма', value: 'total_price' },
+  { title: '— игнорировать', value: '_ignore' },
+]
+const showMappingPanel = ref(false)
+const columnFieldMapping = ref<Record<string, string>>({})
+const columnMappingApplied = ref(false)
+
+watch(smartImportPreview, (v) => {
+  if (v) {
+    columnFieldMapping.value = Object.fromEntries(Object.keys(CRM_MAPPING_FIELDS).map(f => [f, f]))
+    columnMappingApplied.value = false
+    showMappingPanel.value = false
+  }
+})
+
+function applyColumnMapping() {
+  if (!smartImportPreview.value) return
+  const mapping = columnFieldMapping.value
+  smartImportPreview.value = smartImportPreview.value.map(row => {
+    const newRow: any = { ...row }
+    for (const [field, src] of Object.entries(mapping)) {
+      newRow[field] = src === '_ignore' ? null : (row[src as keyof typeof row] ?? null)
+    }
+    return newRow
+  })
+  columnMappingApplied.value = true
+  showMappingPanel.value = false
+}
+
 async function downloadItemsTemplate() {
   const token = localStorage.getItem('auth_token')
   const resp = await fetch('/api/purchases/items/import/template', {
@@ -3022,6 +2990,20 @@ async function downloadItemsTemplate() {
   const a = document.createElement('a')
   a.href = url
   a.download = 'items_template.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadProductsTemplate() {
+  const token = localStorage.getItem('auth_token')
+  const resp = await fetch('/api/products/import/template', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'products_template.xlsx'
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -3038,7 +3020,7 @@ async function doItemsImport() {
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', itemsImportFile.value)
-    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import`, {
+    const resp = await fetch(`/api/products/import?purchase_id=${purchaseId.value}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,
@@ -3047,10 +3029,13 @@ async function doItemsImport() {
       const err = await resp.json().catch(() => ({}))
       throw new Error(err.message || err.detail || `Ошибка ${resp.status}`)
     }
-    itemsImportResult.value = await resp.json()
-    if (itemsImportResult.value!.added > 0) {
-      showSnack(`Импортировано ${itemsImportResult.value!.added} позиций`)
+    const data = await resp.json()
+    itemsImportResult.value = { added: data.created || 0, matched_catalog: data.created || 0, unmatched: 0 }
+    if (data.created > 0) {
+      showSnack(`Создано ${data.created} товаров в каталоге и добавлено в закупку`)
       await loadPurchase()
+    } else {
+      showSnack(`Нет новых товаров (${data.skipped || 0} уже в каталоге)`, 'info')
     }
   } catch (e: any) {
     showSnack(e.message || 'Ошибка импорта', 'error')
@@ -3060,7 +3045,11 @@ async function doItemsImport() {
 }
 
 async function doSmartPreview() {
-  if (!smartImportFile.value || !purchaseId.value) return
+  if (!smartImportFile.value) return
+  if (!purchaseId.value) {
+    showSnack('Сначала сохраните закупку, затем нажмите «Распознать»', 'warning')
+    return
+  }
   smartImportLoading.value = true
   smartImportPreview.value = null
   smartImportResult.value = null
@@ -3089,7 +3078,33 @@ async function doSmartPreview() {
 }
 
 async function doSmartImport() {
-  if (!smartImportFile.value || !purchaseId.value || !smartImportPreview.value?.length) return
+  if (!purchaseId.value || !smartImportPreview.value?.length) return
+
+  // If user applied custom column mapping, add items directly from re-mapped preview
+  if (columnMappingApplied.value) {
+    const newItems = smartImportPreview.value.map(row => ({
+      product_id: null,
+      item_name: row.item_name || '',
+      item_type: row.item_type || 'товар',
+      quantity: row.quantity ?? null,
+      unit: row.unit || 'шт.',
+      unit_price: row.unit_price ?? null,
+      total_price: row.total_price ?? null,
+      final_unit_price: null,
+      final_total: null,
+      country_origin: '',
+      _selectedProduct: null,
+      _photo_url: undefined,
+      _description: undefined,
+    }))
+    items.value.push(...newItems)
+    smartImportResult.value = { added: newItems.length, matched_catalog: 0, unmatched: newItems.length }
+    showSnack(`${newItems.length} позиций добавлены в список. Сохраните закупку.`, 'info')
+    itemsImportDialog.value = false
+    return
+  }
+
+  if (!smartImportFile.value) return
   smartImportLoading.value = true
   try {
     const token = localStorage.getItem('auth_token')
@@ -3482,7 +3497,11 @@ const doSave = async (adminOverride: boolean) => {
   try {
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => rest)
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+        ...rest,
+        unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
+        quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
+      }))
     const payload = {
       ...form,
       planned_total_price: totalNmck.value || null,

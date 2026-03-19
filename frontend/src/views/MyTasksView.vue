@@ -9,7 +9,11 @@
       <v-spacer />
       <v-btn-toggle v-model="activeTab" mandatory density="compact" color="primary" class="mr-2">
         <v-btn value="purchases" size="small"><v-icon icon="mdi-cart" class="mr-1" size="18"/>Закупки</v-btn>
-        <v-btn value="general" size="small"><v-icon icon="mdi-clipboard-list" class="mr-1" size="18"/>Задачи <v-chip v-if="generalTasks.length" size="x-small" color="primary" class="ml-1">{{ generalTasks.length }}</v-chip></v-btn>
+        <v-btn value="general" size="small">
+          <v-icon icon="mdi-clipboard-list" class="mr-1" size="18"/>Задачи
+          <v-chip v-if="generalTasks.length" size="x-small" color="primary" class="ml-1">{{ generalTasks.length }}</v-chip>
+          <v-chip v-if="pendingConsentTasks.length" size="x-small" color="orange" class="ml-1">+{{ pendingConsentTasks.length }}</v-chip>
+        </v-btn>
         <v-btn value="report" size="small"><v-icon icon="mdi-chart-bar" class="mr-1" size="18"/>Отчёт</v-btn>
       </v-btn-toggle>
       <v-btn-toggle v-if="activeTab === 'purchases'" v-model="viewMode" mandatory density="compact" color="primary">
@@ -28,6 +32,108 @@
         Обновить
       </v-btn>
     </div>
+
+    <!-- ═══ PENDING CONSENT — always visible ═══ -->
+    <v-expand-transition>
+      <div v-if="pendingConsentTasks.length" class="mb-4">
+        <div class="d-flex align-center mb-2 ga-2">
+          <v-icon icon="mdi-bell-ring" color="orange" size="20" />
+          <span class="text-subtitle-2 font-weight-bold">Требуется ваше согласие на задачи</span>
+          <v-chip color="orange" size="small" variant="tonal">{{ pendingConsentTasks.length }}</v-chip>
+        </div>
+        <v-row dense>
+          <v-col v-for="pt in pendingConsentTasks" :key="pt.id" cols="12" sm="6" md="4">
+            <v-card variant="outlined" class="pa-3 h-100" style="border-color:rgba(245,158,11,0.6);border-width:2px">
+              <div class="d-flex align-start mb-1 ga-1">
+                <v-icon icon="mdi-clipboard-arrow-right-outline" color="orange" size="18" class="mt-0.5 flex-shrink-0" />
+                <span class="text-body-2 font-weight-medium">{{ pt.title }}</span>
+              </div>
+              <div class="text-caption text-medium-emphasis mb-3">
+                <span>Поставил: <b>{{ pt.created_by_name || '—' }}</b></span>
+                <span v-if="pt.due_date" class="ml-2">· 📅 {{ pt.due_date.split('T')[0] }}</span>
+                <span v-if="pt.priority" class="ml-2">· {{ {low:'Низкий',medium:'Средний',high:'Высокий',urgent:'Срочно'}[pt.priority] || pt.priority }}</span>
+              </div>
+              <div class="d-flex ga-2">
+                <v-btn size="small" color="success" variant="flat" rounded
+                  :loading="consentLoading === String(pt.id) + '_accept'"
+                  prepend-icon="mdi-check-circle"
+                  @click="respondConsent(pt.id, true)">
+                  Принять
+                </v-btn>
+                <v-btn size="small" color="error" variant="tonal" rounded
+                  :loading="consentLoading === String(pt.id) + '_decline'"
+                  prepend-icon="mdi-close-circle"
+                  @click="respondConsent(pt.id, false)">
+                  Отклонить
+                </v-btn>
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+      </div>
+    </v-expand-transition>
+
+    <!-- ═══ ACCEPTANCE NOTIFICATIONS — for task creators ═══ -->
+    <v-expand-transition>
+      <div v-if="acceptNotifs.length" class="mb-4">
+        <div class="d-flex align-center mb-2 ga-2">
+          <v-icon icon="mdi-check-circle" color="success" size="20" />
+          <span class="text-subtitle-2 font-weight-bold">Задачи приняты</span>
+          <v-chip color="success" size="small" variant="tonal">{{ acceptNotifs.length }}</v-chip>
+        </div>
+        <v-row dense>
+          <v-col v-for="d in acceptNotifs" :key="d.id" cols="12" sm="6" md="4">
+            <v-card variant="tonal" color="success" class="pa-3 h-100">
+              <div class="d-flex align-start mb-1 ga-1">
+                <v-icon icon="mdi-check-circle-outline" color="success" size="18" class="flex-shrink-0 mt-0.5" />
+                <span class="text-body-2 font-weight-medium">{{ d.task_title }}</span>
+              </div>
+              <div class="text-caption mb-3 text-medium-emphasis">
+                <b>{{ d.declined_by_name }}</b> принял задачу
+                <span v-if="d.created_at" class="ml-1">· {{ d.created_at.split('T')[0] }}</span>
+              </div>
+              <v-btn size="small" color="success" variant="flat" rounded
+                :loading="ackLoading === d.id"
+                prepend-icon="mdi-check"
+                @click="acknowledgeDecline(d.id)">
+                Понял
+              </v-btn>
+            </v-card>
+          </v-col>
+        </v-row>
+      </div>
+    </v-expand-transition>
+
+    <!-- ═══ DECLINE NOTIFICATIONS — for task creators ═══ -->
+    <v-expand-transition>
+      <div v-if="declineNotifs.length" class="mb-4">
+        <div class="d-flex align-center mb-2 ga-2">
+          <v-icon icon="mdi-account-cancel" color="error" size="20" />
+          <span class="text-subtitle-2 font-weight-bold">Ваши назначения отклонены</span>
+          <v-chip color="error" size="small" variant="tonal">{{ declineNotifs.length }}</v-chip>
+        </div>
+        <v-row dense>
+          <v-col v-for="d in declineNotifs" :key="d.id" cols="12" sm="6" md="4">
+            <v-card variant="tonal" color="error" class="pa-3 h-100">
+              <div class="d-flex align-start mb-1 ga-1">
+                <v-icon icon="mdi-close-circle-outline" color="error" size="18" class="flex-shrink-0 mt-0.5" />
+                <span class="text-body-2 font-weight-medium">{{ d.task_title }}</span>
+              </div>
+              <div class="text-caption mb-3 text-medium-emphasis">
+                <b>{{ d.declined_by_name }}</b> отклонил назначение
+                <span v-if="d.created_at" class="ml-1">· {{ d.created_at.split('T')[0] }}</span>
+              </div>
+              <v-btn size="small" color="error" variant="flat" rounded
+                :loading="ackLoading === d.id"
+                prepend-icon="mdi-check"
+                @click="acknowledgeDecline(d.id)">
+                Понял
+              </v-btn>
+            </v-card>
+          </v-col>
+        </v-row>
+      </div>
+    </v-expand-transition>
 
     <!-- ═══ PURCHASES TAB ═══ -->
     <template v-if="activeTab === 'purchases'">
@@ -165,6 +271,7 @@
 
     <!-- ═══ GENERAL TASKS TAB ═══ -->
     <template v-if="activeTab === 'general'">
+
       <div v-if="loading && generalTasks.length === 0" class="d-flex justify-center py-12">
         <v-progress-circular indeterminate color="primary" size="48" />
       </div>
@@ -215,7 +322,6 @@
                   <v-icon icon="mdi-account-multiple" size="12" class="mr-1"/>
                   {{ gt.assignees.map((a: any) => a.user_name?.split(' ')[0] || '?').join(', ') }}
                 </span>
-                <span v-if="gt.created_by_name && gt.created_by_id !== currentUserId" class="kanban-card-meta text-medium-emphasis" style="font-size:10px"><v-icon icon="mdi-account-arrow-right" size="10" class="mr-1"/>{{ gt.created_by_name }}</span>
                 <v-chip v-if="gt.due_date" :color="deadlineColor(gt.due_date)" size="x-small" variant="tonal">{{ formatDate(gt.due_date.split('T')[0]) }}</v-chip>
               </div>
             </div>
@@ -335,7 +441,15 @@
           <div class="d-flex ga-2 mb-2">
             <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
           </div>
-          <v-autocomplete v-if="!isEmployee" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" :disabled="isTaskReadonly" class="mb-2" />
+          <v-autocomplete v-if="!editingTask || !isTaskReadonly" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2">
+            <template #item="{ item, props }">
+              <v-list-item v-bind="props">
+                <template #append>
+                  <v-chip v-if="item.raw.value !== currentUserId && !subordinateIds.has(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
+                </template>
+              </v-list-item>
+            </template>
+          </v-autocomplete>
 
           <!-- Subtasks (delegated) -->
           <template v-if="editingTask && taskSubtasks.length">
@@ -413,7 +527,7 @@
           </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="closeTaskDialog">Отмена</v-btn>
-          <v-btn color="primary" :disabled="!taskForm.title" @click="saveGeneralTask">{{ editingTask ? 'Сохранить' : 'Создать' }}</v-btn>
+          <v-btn v-if="!editingTask || !isTaskReadonly" color="primary" :disabled="!taskForm.title" @click="saveGeneralTask">{{ editingTask ? 'Сохранить' : 'Создать' }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -461,14 +575,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
 const router = useRouter()
 const loading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
-const isEmployee = localStorage.getItem('user_role') === 'employee'
+const currentUserRole = localStorage.getItem('user_role') || 'employee'
+const isEmployee = currentUserRole === 'employee'
+const isManagerOrAdmin = ['superadmin', 'org_admin', 'admin', 'manager'].includes(currentUserRole)
 const chatContainer = ref<HTMLElement | null>(null)
 const commentInput = ref<any>(null)
 const viewMode = ref<'kanban' | 'list'>('kanban')
@@ -496,10 +612,17 @@ const dueDateRule = (v: string) => {
 
 // ── General tasks ──
 const generalTasks = ref<any[]>([])
+const pendingConsentTasks = ref<any[]>([])
+const consentLoading = ref<string | null>(null)
+const consentDeclines = ref<any[]>([])
+const declineNotifs = computed(() => consentDeclines.value.filter((d: any) => !d.is_accepted))
+const acceptNotifs = computed(() => consentDeclines.value.filter((d: any) => d.is_accepted))
+const ackLoading = ref<number | null>(null)
 const showTaskDialog = ref(false)
 const editingTask = ref<any>(null)
 const taskCategories = ref<string[]>([])
 const userItems = ref<{text:string, value:number}[]>([])
+const subordinateIds = ref<Set<number>>(new Set())
 const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '' })
 
 // Task comments
@@ -808,6 +931,33 @@ async function deleteGeneralTask() {
   closeTaskDialog()
 }
 
+async function acknowledgeDecline(declineId: number) {
+  ackLoading.value = declineId
+  try {
+    await apiFetch(`/tasks/consent-declines/${declineId}/acknowledge`, { method: 'POST' })
+    consentDeclines.value = consentDeclines.value.filter(d => d.id !== declineId)
+  } catch { /* silent */ } finally {
+    ackLoading.value = null
+  }
+}
+
+async function respondConsent(taskId: number, accept: boolean) {
+  const key = `${taskId}_${accept ? 'accept' : 'decline'}`
+  consentLoading.value = key
+  try {
+    await apiFetch(`/tasks/${taskId}/consent?accept=${accept}`, { method: 'POST' })
+    pendingConsentTasks.value = pendingConsentTasks.value.filter(t => t.id !== taskId)
+    if (accept) {
+      // Reload my tasks to include the accepted task
+      generalTasks.value = await apiFetch<any[]>('/tasks/my')
+    }
+  } catch(e: any) {
+    alert(e?.detail || 'Ошибка')
+  } finally {
+    consentLoading.value = null
+  }
+}
+
 // ── Report ──
 async function loadReport() {
   reportLoading.value = true
@@ -929,20 +1079,52 @@ async function load() {
   catch { pendingApprovals.value = [] }
   // Load general tasks
   try {
-    generalTasks.value = await apiFetch<any[]>('/tasks/my')
+    const [myTasks, pending, declines] = await Promise.all([
+      apiFetch<any[]>('/tasks/my'),
+      apiFetch<any[]>('/tasks/pending-consent').catch(() => []),
+      apiFetch<any[]>('/tasks/consent-declines').catch(() => []),
+    ])
+    generalTasks.value = myTasks
+    pendingConsentTasks.value = pending
+    consentDeclines.value = declines
     taskCategories.value = await apiFetch<string[]>('/tasks/categories')
   } catch { generalTasks.value = [] }
-  // Load users for assignment
+  // Load users for assignment + subordinate IDs for consent hint
   try {
-    const users = await apiFetch<any[]>('/users/')
+    const [users, subs] = await Promise.all([
+      apiFetch<any[]>('/users/'),
+      apiFetch<any[]>(`/users/${currentUserId}/subordinates`).catch(() => [] as any[]),
+    ])
     userItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
+    subordinateIds.value = new Set((subs as any[]).map((u: any) => u.id))
   } catch { userItems.value = [] }
   // Load departments
   try { departments.value = await apiFetch<string[]>('/tasks/departments') }
   catch { departments.value = [] }
 }
 
-onMounted(load)
+// ── Real-time polling: refresh tasks every 30 seconds ──
+async function pollTasks() {
+  try {
+    const [myTasks, pending, declines] = await Promise.all([
+      apiFetch<any[]>('/tasks/my'),
+      apiFetch<any[]>('/tasks/pending-consent').catch(() => [] as any[]),
+      apiFetch<any[]>('/tasks/consent-declines').catch(() => [] as any[]),
+    ])
+    generalTasks.value = myTasks
+    pendingConsentTasks.value = pending
+    consentDeclines.value = declines
+  } catch { /* silent */ }
+}
+
+let _pollInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  load()
+  _pollInterval = setInterval(pollTasks, 30_000)
+})
+onUnmounted(() => {
+  if (_pollInterval) clearInterval(_pollInterval)
+})
 </script>
 
 <style scoped>

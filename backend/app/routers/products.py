@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, 
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.jwt import get_current_user, get_org_filter
+from app.auth.jwt import get_current_user, get_org_filter, require_role, ADMIN_ROLES
 from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
@@ -357,6 +357,7 @@ async def download_products_template():
 @router.post("/import")
 async def import_products_from_excel(
     file: UploadFile = File(...),
+    purchase_id: Optional[int] = Query(None, description="Если передан — добавить импортированные товары в закупку"),
     db: AsyncSession = Depends(get_db),
 ):
     """Импорт товаров из Excel. Возвращает {created, skipped, errors}."""
@@ -438,12 +439,24 @@ async def import_products_from_excel(
         try: return Decimal(str(v).replace(" ", "").replace(",", "."))
         except: return None
 
+    # Load existing name+description keys to avoid duplicates
+    existing_result = await db.execute(select(Product.name, Product.description))
+    existing_keys = {
+        (r[0] or '').strip().lower() + '|' + (r[1] or '').strip().lower()
+        for r in existing_result.all()
+    }
+
     created = 0; skipped = 0; errors: list[dict] = []
+    new_products: list[Product] = []
 
     for row_num, row in enumerate(rows[1:], start=2):
         try:
             name = cell(row, "name")
             if not name: skipped += 1; continue
+            desc_val = cell(row, "description")
+            dedup_key = name.strip().lower() + '|' + (desc_val or '').strip().lower()
+            if dedup_key in existing_keys:
+                skipped += 1; continue
 
             # Collect price_links
             price_links = []
@@ -473,15 +486,85 @@ async def import_products_from_excel(
                 feo_category_id=feo_id,
                 price_links=price_links or [],
             )
-            db.add(p); created += 1
+            db.add(p)
+            new_products.append(p)
+            created += 1
         except Exception as e:
             errors.append({"row": row_num, "name": cell(row, "name") or "?", "message": str(e)})
 
+    # Flush to get product IDs before optional purchase_items creation
+    await db.flush()
+
+    product_ids: list[int] = [p.id for p in new_products]
+
+    # If purchase_id provided — add imported products as purchase items
+    if purchase_id and new_products:
+        from app.models.purchase_item import PurchaseItem
+        for p in new_products:
+            total = p.price if p.price else None
+            db.add(PurchaseItem(
+                purchase_id=purchase_id,
+                product_id=p.id,
+                item_name=p.name[:500],
+                item_type=p.product_type or 'товар',
+                quantity=Decimal('1'),
+                unit='шт.',
+                unit_price=p.price,
+                total_price=total,
+            ))
+
     await db.commit()
-    # Возвращаем распознанные колонки для диагностики
     recognized = {field: raw_headers[idx] for field, idx in col_idx.items()}
     return {"created": created, "skipped": skipped, "errors": errors,
+            "product_ids": product_ids,
             "headers_found": recognized, "headers_raw": raw_headers[:20]}
+
+
+@router.post("/deduplicate")
+async def deduplicate_products(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
+):
+    """Удалить дубликаты товаров по ключу name+description. Оставить приоритетную запись."""
+    result = await db.execute(select(Product))
+    all_products = result.scalars().all()
+
+    # Group by dedup key
+    from collections import defaultdict
+    groups: dict[str, list] = defaultdict(list)
+    for p in all_products:
+        key = (p.name or '').strip().lower() + '|' + (p.description or '').strip().lower()
+        groups[key].append(p)
+
+    def priority_score(p) -> tuple:
+        has_price_links = bool(p.price_links)
+        has_photo = bool(p.photo_url or p.photo_link)
+        contract_date_ts = p.contract_date.toordinal() if p.contract_date else 0
+        return (has_price_links, has_photo, contract_date_ts, p.id)
+
+    from sqlalchemy import update as sa_update
+    from app.models.purchase_item import PurchaseItem
+
+    deleted = 0
+    for key, products in groups.items():
+        if len(products) < 2:
+            continue
+        # Sort by priority descending — best record first
+        products.sort(key=priority_score, reverse=True)
+        winner_id = products[0].id
+        # Keep first, delete rest
+        for dup in products[1:]:
+            # Repoint any purchase_items referencing the duplicate to the winner
+            await db.execute(
+                sa_update(PurchaseItem)
+                .where(PurchaseItem.product_id == dup.id)
+                .values(product_id=winner_id)
+            )
+            await db.delete(dup)
+            deleted += 1
+
+    await db.commit()
+    return {"deleted": deleted, "kept": len(all_products) - deleted}
 
 
 def _download_and_save_photo(product_id: int, url: str) -> str:

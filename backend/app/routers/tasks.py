@@ -3,6 +3,7 @@ from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
+from app.models.task_decline import TaskConsentDecline
 from app.models.task_comment import TaskComment
 from app.models.user import User
 from app.schemas.schemas import (
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
+async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0) -> List[TaskOut]:
     """Build TaskOut list with user names, assignees and last comment preview."""
     if not tasks:
         return []
@@ -99,10 +100,15 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
             TaskAssigneeOut(
                 user_id=a.user_id,
                 user_name=users_map.get(a.user_id),
+                consent_pending=bool(getattr(a, 'consent_pending', False)),
             ) for a in task_assignees
         ]
         # backward compat: first assignee as assigned_user_id
         first_a = task_assignees[0] if task_assignees else None
+        needs_my_consent = any(
+            a.user_id == current_user_id and getattr(a, 'consent_pending', False)
+            for a in task_assignees
+        )
         out.append(TaskOut(
             id=t.id, title=t.title, description=t.description,
             status=t.status.value if isinstance(t.status, TaskStatus) else t.status,
@@ -122,6 +128,7 @@ async def _enrich_tasks(tasks: list, db: AsyncSession) -> List[TaskOut]:
             last_comment_user=lc.get("user"),
             last_comment_at=lc.get("at"),
             comment_count=count_map.get(t.id, 0),
+            needs_my_consent=needs_my_consent,
         ))
     return out
 
@@ -183,18 +190,161 @@ async def my_tasks(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Задачи назначенные мне (через task_assignees) или созданные мной."""
-    me_task_ids = select(TaskAssignee.task_id).where(TaskAssignee.user_id == current_user.id).scalar_subquery()
+    """Задачи назначенные мне (через task_assignees) или созданные мной. Исключает задачи, требующие моего согласия."""
+    # IDs задач где я исполнитель И согласие дано (consent_pending=False)
+    accepted_ids = select(TaskAssignee.task_id).where(
+        TaskAssignee.user_id == current_user.id,
+        TaskAssignee.consent_pending == False,  # noqa: E712
+    ).scalar_subquery()
     q = select(Task).where(
         or_(
-            Task.id.in_(me_task_ids),
+            Task.id.in_(accepted_ids),
             Task.created_by_id == current_user.id,
         ),
         Task.status.notin_([TaskStatus.done, TaskStatus.cancelled]),
     ).order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
 
     tasks = (await db.execute(q)).scalars().all()
-    return await _enrich_tasks(tasks, db)
+    return await _enrich_tasks(tasks, db, current_user_id=current_user.id)
+
+
+@router.get("/pending-consent", response_model=List[TaskOut])
+async def pending_consent_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Задачи, назначенные мне, но ожидающие моего согласия."""
+    pending_ids = select(TaskAssignee.task_id).where(
+        TaskAssignee.user_id == current_user.id,
+        TaskAssignee.consent_pending == True,  # noqa: E712
+    ).scalar_subquery()
+    q = select(Task).where(Task.id.in_(pending_ids)).order_by(Task.created_at.desc())
+    tasks = (await db.execute(q)).scalars().all()
+    return await _enrich_tasks(tasks, db, current_user_id=current_user.id)
+
+
+@router.post("/{task_id}/consent", response_model=TaskOut)
+async def respond_task_consent(
+    task_id: int,
+    accept: bool = Query(..., description="true=принять, false=отклонить"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Принять или отклонить задачу, ожидающую согласия."""
+    import sqlalchemy
+    assignee_row = (await db.execute(
+        select(TaskAssignee).where(
+            TaskAssignee.task_id == task_id,
+            TaskAssignee.user_id == current_user.id,
+            TaskAssignee.consent_pending == True,  # noqa: E712
+        )
+    )).scalar_one_or_none()
+    if not assignee_row:
+        raise HTTPException(404, "Задача не найдена или согласие не требуется")
+
+    if accept:
+        assignee_row.consent_pending = False
+        # Уведомить постановщика о принятии
+        db_task_obj = await db.get(Task, task_id)
+        if db_task_obj:
+            db.add(TaskConsentDecline(
+                task_id=task_id,
+                declined_user_id=current_user.id,
+                creator_id=db_task_obj.created_by_id,
+                is_accepted=True,
+            ))
+            try:
+                from app.notifications import notify_user
+                creator = await db.get(User, db_task_obj.created_by_id)
+                accepter_name = current_user.full_name or current_user.username
+                if creator:
+                    await notify_user(
+                        creator,
+                        f"✅ <b>{accepter_name}</b> принял задачу:\n<b>{db_task_obj.title}</b>"
+                    )
+            except Exception:
+                pass
+        await db.commit()
+        db_task = await db.get(Task, task_id)
+        result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
+        return result[0]
+    else:
+        # Отклонено: убрать пользователя из исполнителей
+        await db.execute(
+            sqlalchemy.delete(TaskAssignee).where(
+                TaskAssignee.task_id == task_id,
+                TaskAssignee.user_id == current_user.id,
+            )
+        )
+        # Создать запись об отклонении для постановщика
+        db_task_obj = await db.get(Task, task_id)
+        if db_task_obj:
+            db.add(TaskConsentDecline(
+                task_id=task_id,
+                declined_user_id=current_user.id,
+                creator_id=db_task_obj.created_by_id,
+            ))
+            # Уведомить постановщика
+            try:
+                from app.notifications import notify_user
+                from app.models.user import User as UserModel
+                creator = await db.get(UserModel, db_task_obj.created_by_id)
+                decliner_name = current_user.full_name or current_user.username
+                if creator:
+                    await notify_user(creator,
+                        f"❌ <b>{decliner_name}</b> отклонил назначение на задачу:\n"
+                        f"<b>{db_task_obj.title}</b>\n"
+                        f"Зайдите в CRM → Задачи для подтверждения."
+                    )
+            except Exception:
+                pass
+        await db.commit()
+        db_task = await db.get(Task, task_id)
+        result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
+        return result[0]
+
+
+@router.get("/consent-declines")
+async def list_consent_declines(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Непрочитанные уведомления об отклонённых назначениях (для постановщика)."""
+    result = await db.execute(
+        select(TaskConsentDecline).where(
+            TaskConsentDecline.creator_id == current_user.id,
+            TaskConsentDecline.acknowledged == False,  # noqa: E712
+        )
+    )
+    declines = result.scalars().all()
+    out = []
+    for d in declines:
+        task = d.task
+        decliner = d.declined_user
+        out.append({
+            "id": d.id,
+            "task_id": d.task_id,
+            "task_title": task.title if task else "—",
+            "declined_by_name": (decliner.full_name or decliner.username) if decliner else "—",
+            "is_accepted": d.is_accepted,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        })
+    return out
+
+
+@router.post("/consent-declines/{decline_id}/acknowledge")
+async def acknowledge_decline(
+    decline_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Подтвердить получение уведомления об отклонении."""
+    row = await db.get(TaskConsentDecline, decline_id)
+    if not row or row.creator_id != current_user.id:
+        raise HTTPException(404, "Уведомление не найдено")
+    row.acknowledged = True
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/categories", response_model=List[str])
@@ -243,29 +393,41 @@ async def create_task(
     if not assignee_ids:
         assignee_ids = [current_user.id]
 
-    # Validate delegation permissions
+    # Validate subtask due_date <= parent due_date
+    if task.parent_task_id and task.due_date:
+        parent_task = await db.get(Task, task.parent_task_id)
+        if parent_task and parent_task.due_date:
+            parent_due = parent_task.due_date.date() if hasattr(parent_task.due_date, 'date') else parent_task.due_date
+            task_due = task.due_date.date() if hasattr(task.due_date, 'date') else task.due_date
+            if task_due > parent_due:
+                raise HTTPException(422, "Срок подзадачи не может быть позже срока родительской задачи")
+
+    # For subtask delegation: verify current user is assignee of parent
+    if task.parent_task_id and not can_assign_others:
+        non_self = [uid for uid in assignee_ids if uid != current_user.id]
+        if non_self:
+            parent_assignee_ids = [a.user_id for a in (await db.execute(
+                select(TaskAssignee).where(TaskAssignee.task_id == task.parent_task_id)
+            )).scalars().all()]
+            if current_user.id not in parent_assignee_ids:
+                raise HTTPException(403, "Делегирование доступно только исполнителю родительской задачи")
+
+    # Determine which assignees need consent (no hierarchy authority)
+    # Managers/admins never need consent; assigning to self never needs consent
+    consent_needed: set[int] = set()
     if not can_assign_others:
         non_self = [uid for uid in assignee_ids if uid != current_user.id]
         if non_self:
-            if task.parent_task_id:
-                parent = await db.get(Task, task.parent_task_id)
-                parent_assignee_ids = [a.user_id for a in (await db.execute(
-                    select(TaskAssignee).where(TaskAssignee.task_id == task.parent_task_id)
-                )).scalars().all()]
-                if parent and current_user.id in parent_assignee_ids:
-                    for uid in non_self:
-                        sub_check = await db.execute(
-                            select(UserHierarchy).where(
-                                UserHierarchy.manager_id == current_user.id,
-                                UserHierarchy.subordinate_id == uid,
-                            )
-                        )
-                        if not sub_check.scalar_one_or_none():
-                            raise HTTPException(403, "Можно делегировать только своим подчинённым")
-                else:
-                    raise HTTPException(403, "Делегирование доступно только исполнителю родительской задачи")
-            else:
-                assignee_ids = [current_user.id]
+            # Load hierarchy: current user's subordinates
+            hier_res = await db.execute(
+                select(UserHierarchy.subordinate_id).where(
+                    UserHierarchy.manager_id == current_user.id
+                )
+            )
+            subordinate_ids = {r[0] for r in hier_res.all()}
+            for uid in non_self:
+                if uid not in subordinate_ids:
+                    consent_needed.add(uid)
 
     db_task = Task(
         title=task.title,
@@ -283,12 +445,33 @@ async def create_task(
     await db.flush()  # get db_task.id
 
     for uid in assignee_ids:
-        db.add(TaskAssignee(task_id=db_task.id, user_id=uid))
+        db.add(TaskAssignee(
+            task_id=db_task.id,
+            user_id=uid,
+            consent_pending=(uid in consent_needed),
+        ))
 
     await db.commit()
     await db.refresh(db_task)
 
-    result = await _enrich_tasks([db_task], db)
+    # Send notifications to assignees
+    try:
+        from app.notifications import notify_task_assigned, notify_consent_required
+        from app.models.user import User as UserModel
+        assigner_name = current_user.full_name or current_user.username
+        for uid in assignee_ids:
+            if uid == current_user.id:
+                continue
+            assignee_user = await db.get(UserModel, uid)
+            if assignee_user:
+                if uid in consent_needed:
+                    await notify_consent_required(db_task, assignee_user, assigner_name)
+                else:
+                    await notify_task_assigned(db_task, assignee_user, assigner_name)
+    except Exception:
+        pass  # notifications are best-effort
+
+    result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
     return result[0]
 
 
@@ -336,6 +519,15 @@ async def update_task(
 
     # Handle assignee_ids separately
     new_assignee_ids = update_data.pop("assignee_ids", None)
+
+    # Assignee cannot move status backwards
+    STATUS_ORDER = {"todo": 0, "in_progress": 1, "done": 2}
+    if "status" in update_data and not is_creator and current_user.role not in ("superadmin", "org_admin", "admin"):
+        new_status = update_data["status"]
+        new_status_str = new_status.value if hasattr(new_status, 'value') else str(new_status)
+        old_status_str = db_task.status.value if hasattr(db_task.status, 'value') else str(db_task.status)
+        if STATUS_ORDER.get(new_status_str, 0) < STATUS_ORDER.get(old_status_str, 0):
+            raise HTTPException(403, "Исполнитель не может переводить задачу назад по статусу")
 
     for key, value in update_data.items():
         setattr(db_task, key, value)

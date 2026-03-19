@@ -25,7 +25,13 @@
         />
       </v-card-text>
       <v-card-actions>
-        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyDetails">Скопировать</v-btn>
+        <v-btn
+          variant="text"
+          :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
+          :color="copied ? 'success' : undefined"
+          @click="copyDetails">
+          {{ copied ? 'Скопировано!' : 'Скопировать' }}
+        </v-btn>
         <v-spacer />
         <v-btn color="primary" variant="tonal" @click="show = false">Закрыть</v-btn>
       </v-card-actions>
@@ -34,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 interface ErrorPayload {
   code: string
@@ -45,10 +51,12 @@ interface ErrorPayload {
 
 const show = ref(false)
 const error = ref<ErrorPayload | null>(null)
+const copied = ref(false)
 
 function handleApiError(e: Event) {
   error.value = (e as CustomEvent<ErrorPayload>).detail
   show.value = true
+  copied.value = false
 }
 
 onMounted(() => window.addEventListener('api-error', handleApiError))
@@ -61,6 +69,33 @@ async function copyDetails() {
     error.value?.correlation_id ? `Correlation ID: ${error.value.correlation_id}` : '',
     error.value?.details ? `\nДетали:\n${error.value.details}` : '',
   ].filter(Boolean).join('\n')
-  await navigator.clipboard.writeText(text)
+
+  let ok = false
+  try {
+    await navigator.clipboard.writeText(text)
+    ok = true
+  } catch {
+    // fallback for HTTP / no clipboard permissions
+  }
+  if (!ok) {
+    try {
+      const el = document.createElement('textarea')
+      el.value = text
+      el.style.position = 'fixed'
+      el.style.top = '0'
+      el.style.left = '0'
+      el.style.opacity = '0'
+      document.body.appendChild(el)
+      el.focus()
+      el.select()
+      ok = document.execCommand('copy')
+      document.body.removeChild(el)
+    } catch { /* ignore */ }
+  }
+
+  if (ok) {
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  }
 }
 </script>

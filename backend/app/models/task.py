@@ -47,6 +47,7 @@ class TaskAssignee(Base):
     id = Column(Integer, primary_key=True)
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    consent_pending = Column(Boolean, default=False, nullable=False, server_default="false")
 
     task = relationship("Task", back_populates="assignees")
     user = relationship("User", foreign_keys=[user_id], lazy="joined")

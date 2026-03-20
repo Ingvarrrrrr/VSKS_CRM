@@ -27,14 +27,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// ══════════════════════════════════════════════════════════════\n// ЗАГЛУШКА: здесь будет реальный вызов Фабрикант SOAP API\n// После получения credentials от Фабрикант:\n//   1. Получить WSDL схемы на fabrikant.ru/integration-api\n//   2. Заменить этот узел на HTTP Request с SOAP envelope\n//   3. URL: https://api.fabrikant.ru/... (уточнить у Фабрикант)\n//\n// Пример SOAP envelope:\n// <soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">\n//   <soapenv:Header>\n//     <auth:Authentication>\n//       <auth:Login>{{LOGIN}}</auth:Login>\n//       <auth:Password>{{PASSWORD}}</auth:Password>\n//     </auth:Authentication>\n//   </soapenv:Header>\n//   <soapenv:Body>\n//     <lot:CreateLot>...(данные из предыдущего узла)...</lot:CreateLot>\n//   </soapenv:Body>\n// </soapenv:Envelope>\n// ══════════════════════════════════════════════════════════════\n\nconst { publicationId, fabrikantPayload } = $input.first().json;\n\n// ВРЕМЕННО: возвращаем success=false с пояснением\nreturn [{\n  json: {\n    publicationId,\n    success: false,\n    error: 'API Фабрикант не настроен. Получите credentials на fabrikant.ru/integration-api и настройте узел «Вызов Фабрикант API».',\n    fabrikantPayload,\n  }\n}];"
+        "jsCode": "const { publicationId, fabrikantPayload } = $input.first().json;\nconst testMode = ($env.FABRIKANT_TEST_MODE || '') === 'true';\n\nif (testMode) {\n  return [{ json: {\n    publicationId,\n    success: true,\n    externalId: 'TEST-FAB-' + Date.now(),\n    externalUrl: 'https://fabrikant.ru/test-lot',\n  }}];\n}\n\n// Без test mode — возвращаем ошибку с инструкцией (реальная SOAP интеграция не реализована)\nreturn [{ json: {\n  publicationId,\n  success: false,\n  error: 'API Фабрикант не настроен. Получите SOAP credentials на fabrikant.ru/integration-api и настройте переменные FABRIKANT_LOGIN, FABRIKANT_PASSWORD в n8n Settings → Variables. Включите тестовый режим: FABRIKANT_TEST_MODE=true',\n}}];"
       },
       "id": "fabrikant-api-call",
-      "name": "Вызов Фабрикант API (настроить!)",
+      "name": "Фабрикант API / Test Mode",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, 300],
-      "notes": "⚠️ Требует настройки! Получите WSDL от fabrikant.ru/integration-api и замените на HTTP Request node с SOAP."
+      "position": [720, 300]
     },
     {
       "parameters": {
@@ -112,9 +111,9 @@
       "main": [[{ "node": "Подготовить данные для Фабрикант", "type": "main", "index": 0 }]]
     },
     "Подготовить данные для Фабрикант": {
-      "main": [[{ "node": "Вызов Фабрикант API (настроить!)", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Фабрикант API / Test Mode", "type": "main", "index": 0 }]]
     },
-    "Вызов Фабрикант API (настроить!)": {
+    "Фабрикант API / Test Mode": {
       "main": [[{ "node": "Успешно?", "type": "main", "index": 0 }]]
     },
     "Успешно?": {

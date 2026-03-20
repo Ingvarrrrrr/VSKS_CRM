@@ -3,9 +3,9 @@
 ## Current State
 
 - **Phase:** 8 (Торговые площадки + КП email + E2E)
-- **Current Plan:** 08-03 (completed)
-- **Status:** In progress
-- **Last Updated:** 2026-03-20 (08-02 completed)
+- **Current Plan:** 08-04 (completed)
+- **Status:** Phase 08 complete
+- **Last Updated:** 2026-03-20 (08-04 completed)
 
 ## Completed Phases
 
@@ -49,6 +49,7 @@ Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + 
 - [08-02] ROSELTORG_TOKEN env var in n8n — empty token causes error callback with descriptive message (не падает молча)
 - [08-02] FABRIKANT_TEST_MODE проверяется как строка === 'true' для совместимости с n8n Variables
 - [08-03] Росэлторг publish uses two-step dialog with mandatory procedure_type dropdown; procedure_type sent to API in request body
+- [08-04] 409 on duplicate publication handled gracefully — GET existing pub list as fallback; nginx 307 redirect drops auth header — use trailing slash URLs; create-order route is /orders/{id}/edit
 
 ## Notes
 

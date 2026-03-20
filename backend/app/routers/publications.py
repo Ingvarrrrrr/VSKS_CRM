@@ -26,7 +26,7 @@ from app.auth.jwt import get_current_user
 router = APIRouter(prefix="/api/publications", tags=["publications"])
 
 ROSELTORG_TOKEN = os.getenv("ROSELTORG_TOKEN", "")
-ROSELTORG_URL = "https://rb.roseltorg.ru/api/v1/lots"
+ROSELTORG_URL = "https://business.roseltorg.ru/api/v1/lots"
 
 FABRIKANT_LOGIN = os.getenv("FABRIKANT_LOGIN", "")
 FABRIKANT_PASSWORD = os.getenv("FABRIKANT_PASSWORD", "")
@@ -124,6 +124,8 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
 
 # ── Росэлторг ────────────────────────────────────────────────────────────────
 
+ROSELTORG_AUTH_URL = "https://lk.roseltorg.ru/api/app/api/auth-integration/v1/auth"
+
 ROSELTORG_TEMPLATE_IDS = {
     "request_quotations": "1",
     "request_proposals":  "2",
@@ -132,9 +134,38 @@ ROSELTORG_TEMPLATE_IDS = {
 }
 
 
+async def _get_roseltorg_jwt() -> str:
+    """Обменивает интеграционный токен на JWT для API вызовов (двухшаговая авторизация)."""
+    body = json.dumps({
+        "grant_type": "integration",
+        "token": ROSELTORG_TOKEN,
+        "platform": "b2b",
+        "client": "b2b",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        ROSELTORG_AUTH_URL,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": "VSKS-CRM/1.0"},
+    )
+    loop = asyncio.get_event_loop()
+    resp = await loop.run_in_executor(
+        None, lambda: urllib.request.urlopen(req, timeout=30, context=_make_ssl_ctx())
+    )
+    data = json.loads(resp.read().decode("utf-8"))
+    return data["access_token"]
+
+
 async def _call_roseltorg(pub_id: int, payload: dict):
     if not ROSELTORG_TOKEN:
         await _set_pub_error(pub_id, "Не задан ROSELTORG_TOKEN в окружении сервера")
+        return
+
+    # Шаг 1: получаем JWT
+    try:
+        jwt_token = await _get_roseltorg_jwt()
+    except Exception as e:
+        await _set_pub_error(pub_id, f"Ошибка авторизации Росэлторг: {str(e)[:200]}")
         return
 
     procedure_type = payload.get("procedure_type", "request_quotations")
@@ -156,6 +187,7 @@ async def _call_roseltorg(pub_id: int, payload: dict):
         ],
     }
 
+    # Шаг 2: вызов API с JWT
     try:
         req_data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
@@ -163,7 +195,7 @@ async def _call_roseltorg(pub_id: int, payload: dict):
             data=req_data,
             method="POST",
             headers={
-                "Authorization": f"Bearer {ROSELTORG_TOKEN}",
+                "authorization": jwt_token,
                 "Content-Type": "application/json",
                 "User-Agent": "VSKS-CRM/1.0",
             },

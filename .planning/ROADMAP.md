@@ -108,6 +108,21 @@
 4. The subsidy detail view shows a budget history timeline/modal listing all changes with timestamps and user attribution.
 5. The existing BudgetDrillDownDialog in the dashboard loads FEO drill-down data correctly for all three levels without errors.
 
+### Phase 8: Торговые площадки + КП email + E2E — n8n workflow для Росэлторг.Бизнес (REST API, данные из полей закупки), улучшение заглушки Фабрикант (test mode), настройка и тест SMTP рассылки КП с z@vsks.ru на zakupki@vsks.ru, E2E Playwright тесты на публикацию и email
+
+**Goal:** Реализовать n8n workflow для Росэлторг.Бизнес с token check и выбором типа процедуры, добавить test mode в Фабрикант workflow, настроить E2E тесты на ошибочные сценарии публикаций и SMTP endpoint.
+
+**Requirements:** PUB-01, PUB-02, PUB-03, PUB-04, PUB-05, PUB-06, PUB-07, PUB-08, PUB-09, PUB-10
+
+**Depends on:** Phase 7
+**Plans:** 4 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Backend: procedure_type в PublishRequest + publications.py payload
+- [ ] 08-02-PLAN.md — n8n: roseltorg_publish.json workflow + fabrikant test mode
+- [ ] 08-03-PLAN.md — Frontend: dropdown типа процедуры в диалоге публикации
+- [ ] 08-04-PLAN.md — E2E: 12-publications.spec.ts (4 теста с mock callback)
+
 ---
 
 ### Phase 7: Roles + Wishes Workflow

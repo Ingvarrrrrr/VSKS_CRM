@@ -27,6 +27,11 @@ Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + 
 - **Landing page + dark theme** — ✓ completed (LandingView.vue, vuetify.ts dark theme, router guards)
 - **Multi-tenancy frontend** — ✓ completed (RegisterView, VerifyEmailView, OrganizationsView, AppBar updates)
 
+## Accumulated Context
+
+### Roadmap Evolution
+- Phase 8 added: Торговые площадки + КП email + E2E (n8n Росэлторг, Фабрикант test mode, SMTP КП, Playwright)
+
 ## Blockers
 
 - SMTP app password not yet obtained for z@vsks.ru (Yandex 360)

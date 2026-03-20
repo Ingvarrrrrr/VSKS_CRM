@@ -2,9 +2,10 @@
 
 ## Current State
 
-- **Phase:** 6 (Analytics + Budget History)
+- **Phase:** 8 (Торговые площадки + КП email + E2E)
+- **Current Plan:** 08-03 (completed)
 - **Status:** In progress
-- **Last Updated:** 2026-03-14
+- **Last Updated:** 2026-03-20
 
 ## Completed Phases
 
@@ -43,6 +44,9 @@ Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + 
 - n8n notifications deferred to v2
 - Status workflow is unidirectional; admin-only reverse approved
 - Tech stack locked: Vue 3 + FastAPI + PostgreSQL
+- [08-01] procedure_type оставлен Optional[str] без enum-валидации — значения templateId уточнятся после токена Росэлторг
+- [08-01] Обогащение n8n payload в publish_purchase (не в _build_publish_payload) — сохраняет чистоту helper-функции
+- [08-03] Росэлторг publish uses two-step dialog with mandatory procedure_type dropdown; procedure_type sent to API in request body
 
 ## Notes
 

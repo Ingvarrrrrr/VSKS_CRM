@@ -32,6 +32,7 @@ class UserCreate(BaseModel):
     position: Optional[str] = None
     phone: Optional[str] = None
     telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
     avatar: Optional[str] = None
     org_id: Optional[int] = None
     inn: Optional[str] = None
@@ -44,6 +45,7 @@ class UserUpdate(BaseModel):
     position: Optional[str] = None
     phone: Optional[str] = None
     telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
     avatar: Optional[str] = None
@@ -59,6 +61,7 @@ class UserOut(BaseModel):
     position: Optional[str] = None
     phone: Optional[str] = None
     telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
     email: Optional[str] = None
     avatar: Optional[str] = None
     photo_url: Optional[str] = None
@@ -338,6 +341,8 @@ class PurchaseCreate(BaseModel):
     vat_exemption_article: Optional[str] = None
     third_party_involved: Optional[bool] = False
     service_period_type: Optional[str] = None
+    service_start_date: Optional[date] = None
+    service_end_date: Optional[date] = None
     description_mode: Optional[str] = "exact"
     event_id: Optional[int] = None
     approval_status: Optional[str] = None
@@ -451,6 +456,7 @@ class DashboardSummary(BaseModel):
 # Platform publications
 class PublishRequest(BaseModel):
     platform: str  # fabrikant / roseltorg_rb
+    procedure_type: Optional[str] = None  # только для roseltorg_rb: request_quotations / request_proposals / competition / auction
 
 class PublicationStatusUpdate(BaseModel):
     status: str             # published / error
@@ -597,6 +603,7 @@ class ApprovalDecisionRequest(BaseModel):
 class TaskAssigneeOut(BaseModel):
     user_id: int
     user_name: Optional[str] = None
+    consent_pending: bool = False
     model_config = {"from_attributes": True}
 
 class TaskCreate(BaseModel):
@@ -643,6 +650,7 @@ class TaskOut(BaseModel):
     last_comment_user: Optional[str] = None
     last_comment_at: Optional[datetime] = None
     comment_count: int = 0
+    needs_my_consent: bool = False
     model_config = {"from_attributes": True}
 
 # Task Comments

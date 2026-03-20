@@ -115,7 +115,7 @@
 **Requirements:** PUB-01, PUB-02, PUB-03, PUB-04, PUB-05, PUB-06, PUB-07, PUB-08, PUB-09, PUB-10
 
 **Depends on:** Phase 7
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 - [x] 08-01-PLAN.md — Backend: procedure_type в PublishRequest + publications.py payload

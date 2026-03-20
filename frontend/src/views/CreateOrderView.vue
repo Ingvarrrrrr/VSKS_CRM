@@ -46,7 +46,7 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
         <v-card-text>
           <v-row>
-            <v-col v-if="!isEmployee && formMode !== 'service_note_delivery'" cols="12" md="2">
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
                 :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
@@ -58,7 +58,7 @@
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
                 hint="Выберите тип закупки" persistent-hint />
             </v-col>
-            <v-col v-if="!isEmployee && formMode !== 'service_note_delivery'" cols="12" md="2">
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_basis" clearable
                 :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
                 item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
@@ -71,7 +71,7 @@
                 hint="По какой субсидии финансируется закупка" persistent-hint
                 :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
             </v-col>
-            <v-col v-if="!isEmployee && isSectionVisible('contractor')" cols="12" md="3">
+            <v-col v-if="isSectionVisible('contractor')" cols="12" md="3">
               <v-autocomplete
                 v-model="form.contractor_id"
                 :items="contractors"
@@ -99,7 +99,7 @@
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col v-if="!isEmployee && isSectionVisible('contractor')" cols="12" md="2">
+            <v-col v-if="isSectionVisible('contractor')" cols="12" md="2">
               <v-text-field
                 v-model="contractorInn"
                 label="ИНН"
@@ -120,7 +120,7 @@
                 hint="Краткое описание: что закупается" persistent-hint
               />
             </v-col>
-            <v-col v-if="!isEmployee" cols="12" md="4">
+            <v-col cols="12" md="4">
               <v-autocomplete
                 v-model="form.responsible_person"
                 :items="orgUsersList"
@@ -158,7 +158,7 @@
                 :error-messages="feoSaveAttempted && !selectedFeo3 ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
             </v-col>
-            <v-col v-if="!isEmployee" cols="12" md="4">
+            <v-col cols="12" md="4">
               <v-text-field v-model="form.registry_number" label="Реестровый номер"
                 variant="outlined" density="compact" :readonly="!isEdit"
                 :bg-color="!isEdit ? 'grey-lighten-4' : undefined"
@@ -189,7 +189,7 @@
               НМЦК (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
             <v-chip color="primary" variant="tonal" size="small">
-              {{ isContracted ? 'Текущая сумма' : 'НМЦК' }}: {{ formatMoney(totalNmck) }}
+              {{ isContracted ? 'Текущая сумма' : 'НМЦК' }}: {{ formatMoney(displayNmck) }}
             </v-chip>
           </div>
         </v-card-title>
@@ -272,9 +272,7 @@
                   </td>
                   <td>
                     <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                      variant="outlined" class="my-1"
-                      :hint="item._selectedProduct?.price && item.unit_price !== item._selectedProduct.price ? 'Отличается от каталожной' : undefined"
-                      :persistent-hint="!!(item._selectedProduct?.price && item.unit_price !== item._selectedProduct.price)"
+                      variant="outlined" hide-details class="my-1"
                       @update:model-value="calcItemTotal(idx)" />
                   </td>
                   <td>
@@ -383,14 +381,14 @@
                 </td>
                 <td class="text-center">{{ item.quantity ?? '—' }}</td>
                 <td class="text-center">{{ item.unit || '—' }}</td>
-                <td class="text-right">{{ item.unit_price != null ? item.unit_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—' }}</td>
+                <td class="text-right">{{ nmckMode === 'manual' ? '—' : (item.unit_price != null ? item.unit_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—') }}</td>
                 <td class="text-right font-weight-medium">{{ item.total_price != null ? item.total_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—' }}</td>
               </tr>
             </tbody>
             <tfoot>
               <tr style="background:#F9FAFB">
                 <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦК:</td>
-                <td class="text-right font-weight-bold pa-3" style="font-size:13px;color:#3B82F6">{{ formatMoney(totalNmck) }}</td>
+                <td class="text-right font-weight-bold pa-3" style="font-size:13px;color:#3B82F6">{{ formatMoney(displayNmck) }}</td>
               </tr>
             </tfoot>
           </v-table>
@@ -398,21 +396,39 @@
       </v-card>
 
       <!-- 3. Финансы (скрыто для employee и manager) -->
-      <v-card v-if="isAdminLevel && (isSectionVisible('financial_indicators') || isSectionVisible('contract_type'))" variant="outlined" class="mb-4">
+      <v-card v-if="isSectionVisible('financial_indicators') || isSectionVisible('contract_type')" variant="outlined" class="mb-4">
         <v-card-title v-if="isSectionVisible('financial_indicators')" class="text-subtitle-1 font-weight-bold px-4 pt-4">Финансовые показатели</v-card-title>
         <v-card-text>
           <v-row v-if="isSectionVisible('financial_indicators')">
             <v-col cols="12" md="3">
-              <v-text-field :model-value="formatMoney(displayNmck)" label="НМЦК (итого)" variant="outlined"
-                density="compact" readonly bg-color="grey-lighten-4"
+              <div class="text-caption text-medium-emphasis mb-1">НМЦК (итого)</div>
+              <v-btn-toggle v-model="nmckMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
+                <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
+                <v-btn value="manual" size="small" style="flex:1;text-transform:none;letter-spacing:0">Вручную</v-btn>
+              </v-btn-toggle>
+              <v-text-field v-if="nmckMode === 'auto'"
+                :model-value="formatMoney(displayNmck)"
+                label="НМЦК (итого)" variant="outlined" density="compact"
+                readonly bg-color="grey-lighten-4"
                 :hint="nmckHint" persistent-hint />
+              <v-text-field v-else
+                v-model.number="nmckManualValue"
+                label="НМЦК (итого, вручную)" variant="outlined" density="compact"
+                type="number" suffix="₽"
+                hint="Введено вручную. Цена за единицу в ТЗ скрыта." persistent-hint
+                @update:model-value="calcEconomy" />
             </v-col>
             <v-col cols="12" md="3">
+              <div class="text-caption text-medium-emphasis mb-1">Цена договора</div>
+              <v-btn-toggle v-model="contractPriceMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
+                <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
+                <v-btn value="manual" size="small" style="flex:1;text-transform:none;letter-spacing:0">Вручную</v-btn>
+              </v-btn-toggle>
               <v-text-field v-model.number="form.contract_price" label="Цена договора" variant="outlined"
                 density="compact" type="number" suffix="₽"
-                :readonly="isSinglePurchase"
-                :bg-color="isSinglePurchase ? 'grey-lighten-4' : undefined"
-                :hint="contractPriceHint"
+                :readonly="contractPriceMode === 'auto'"
+                :bg-color="contractPriceMode === 'auto' ? 'grey-lighten-4' : undefined"
+                :hint="contractPriceMode === 'manual' ? 'Введено вручную' : contractPriceHint"
                 persistent-hint
                 :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined"
                 @update:model-value="calcEconomy">
@@ -730,11 +746,11 @@
       </v-card>
 
       <!-- 4а. Параметры для генерации договора (admin+) -->
-      <v-card v-if="isAdminLevel && isSectionVisible('contract_params')" variant="outlined" class="mb-4">
+      <v-card v-if="isSectionVisible('contract_params')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры договора (для документа)</v-card-title>
         <v-card-text>
           <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-select
                 v-model="form.service_period_type"
                 :items="[{title: 'Период (с... по...)', value: 'period'}, {title: 'Разовая дата', value: 'date'}]"
@@ -742,11 +758,23 @@
                 label="Тип срока оказания услуг" variant="outlined" density="compact" clearable
               />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col v-if="form.service_period_type === 'period'" cols="12" md="2">
+              <v-text-field v-model="form.service_start_date" label="Начало периода"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col v-if="form.service_period_type === 'period'" cols="12" md="2">
+              <v-text-field v-model="form.service_end_date" label="Конец периода"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col v-if="form.service_period_type === 'date'" cols="12" md="3">
+              <v-text-field v-model="form.service_start_date" label="Дата оказания услуг"
+                variant="outlined" density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
               <v-checkbox
                 v-model="form.third_party_involved"
                 label="Привлечение третьих лиц"
-                density="compact" hide-details
+                density="compact" hide-details class="mt-2"
               />
             </v-col>
           </v-row>
@@ -778,7 +806,7 @@
       </v-card>
 
       <!-- 5. Закрывающие документы (admin+) -->
-      <v-card v-if="isAdminLevel && isSectionVisible('acceptance')" variant="outlined" class="mb-4">
+      <v-card v-if="isSectionVisible('acceptance')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Закрывающие документы</v-card-title>
         <v-card-text>
           <v-row>
@@ -801,7 +829,7 @@
       </v-card>
 
       <!-- 6. Платёж (admin+) -->
-      <v-card v-if="isAdminLevel && isSectionVisible('payment')" variant="outlined" class="mb-4">
+      <v-card v-if="isSectionVisible('payment')" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Платёж</v-card-title>
         <v-card-text>
           <v-row>
@@ -1112,7 +1140,7 @@
       />
 
       <!-- 9. Запрос КП (manager+) -->
-      <v-card v-if="isEdit && isManagerLevel && isSectionVisible('commercial_requests')" variant="outlined" class="mb-4" style="border-color:#0891B2">
+      <v-card v-if="isEdit && isSectionVisible('commercial_requests')" variant="outlined" class="mb-4" style="border-color:#0891B2">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-email-send-outline" color="cyan-darken-2" size="20" />
@@ -1129,7 +1157,7 @@
       </v-card>
 
       <!-- 10. Публикация на площадках (admin+) -->
-      <v-card v-if="isEdit && isAdminLevel && isSectionVisible('platform_publication')" variant="outlined" class="mb-4" style="border-color:#7C3AED">
+      <v-card v-if="isEdit && isSectionVisible('platform_publication')" variant="outlined" class="mb-4" style="border-color:#7C3AED">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
@@ -1220,6 +1248,7 @@
               </template>
               <template #append>
                 <v-btn
+                  v-if="pl.value !== 'roseltorg_rb'"
                   color="deep-purple" variant="tonal" size="small"
                   :loading="publishingPlatform === pl.value"
                   :disabled="isPlatformPublished(pl.value)"
@@ -1227,13 +1256,52 @@
                 >
                   {{ isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
                 </v-btn>
+                <v-btn
+                  v-else
+                  color="deep-purple" variant="tonal" size="small"
+                  :loading="publishingPlatform === 'roseltorg_rb'"
+                  :disabled="isPlatformPublished('roseltorg_rb')"
+                  @click="pendingPlatform = 'roseltorg_rb'"
+                >
+                  {{ isPlatformPublished('roseltorg_rb') ? 'Опубликовано' : 'Опубликовать' }}
+                </v-btn>
               </template>
             </v-list-item>
           </v-list>
+
+          <!-- Выбор типа процедуры для Росэлторг -->
+          <v-expand-transition>
+            <div v-if="pendingPlatform === 'roseltorg_rb'" class="mt-3 px-1">
+              <v-divider class="mb-3" />
+              <div class="text-subtitle-2 mb-2">Тип процедуры Росэлторг.Бизнес</div>
+              <v-select
+                v-model="roseltorgProcedureType"
+                :items="ROSELTORG_PROCEDURE_TYPES"
+                item-title="title"
+                item-value="value"
+                label="Выберите тип процедуры"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+              <div class="d-flex gap-2 mt-3">
+                <v-btn
+                  variant="text"
+                  @click="pendingPlatform = null; roseltorgProcedureType = null"
+                >Назад</v-btn>
+                <v-btn
+                  color="deep-purple"
+                  :disabled="!roseltorgProcedureType"
+                  :loading="publishingPlatform === 'roseltorg_rb'"
+                  @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
+                >Опубликовать на Росэлторг</v-btn>
+              </div>
+            </div>
+          </v-expand-transition>
         </v-card-text>
         <v-card-actions class="px-6 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="publishDialog = false">Закрыть</v-btn>
+          <v-btn variant="text" @click="publishDialog = false; pendingPlatform = null; roseltorgProcedureType = null">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1962,6 +2030,12 @@ const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
 
+// НМЦК mode: auto (from items) or manual (user enters directly)
+const nmckMode = ref<'auto' | 'manual'>('auto')
+const nmckManualValue = ref<number | null>(null)
+// Цена договора mode
+const contractPriceMode = ref<'auto' | 'manual'>('auto')
+
 // --- formMode: drives simplified views for service notes / advance reports ---
 const formMode = computed(() => (route.meta?.formMode as string) || 'default')
 
@@ -2103,6 +2177,8 @@ const form = reactive({
   vat_exemption_article: '' as string,
   third_party_involved: false as boolean,
   service_period_type: 'period' as string,
+  service_start_date: '' as string,
+  service_end_date: '' as string,
   description_mode: 'exact' as string,
   event_id: null as number | null,
   approval_status: null as string | null,
@@ -2469,9 +2545,18 @@ const PUB_STATUS_LABEL: Record<string, string> = {
   error:      'Ошибка',
 }
 
+const ROSELTORG_PROCEDURE_TYPES = [
+  { value: 'request_quotations', title: 'Запрос котировок' },
+  { value: 'request_proposals',  title: 'Запрос предложений' },
+  { value: 'competition',        title: 'Конкурс' },
+  { value: 'auction',            title: 'Аукцион' },
+]
+
 const publications = ref<Publication[]>([])
 const publishDialog = ref(false)
 const publishingPlatform = ref<string | null>(null)
+const pendingPlatform = ref<string | null>(null)
+const roseltorgProcedureType = ref<string | null>(null)
 
 const isPlatformPublished = (platform: string) =>
   publications.value.some(p => p.platform === platform && p.status === 'published')
@@ -2483,16 +2568,20 @@ async function loadPublications() {
   } catch {}
 }
 
-async function doPublish(platform: string) {
+async function doPublish(platform: string, procedureType?: string | null) {
   publishingPlatform.value = platform
   try {
+    const body: Record<string, any> = { platform }
+    if (procedureType) body.procedure_type = procedureType
     const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
       method: 'POST',
-      body: { platform },
+      body,
     })
     publications.value.unshift(pub)
     showSnack(`Отправлено на публикацию: ${PLATFORM_LABELS[platform]}`)
     publishDialog.value = false
+    pendingPlatform.value = null
+    roseltorgProcedureType.value = null
     // Poll status for 30s
     pollPublication(pub.id)
   } catch (e: any) {
@@ -2749,8 +2838,9 @@ const isContracted = computed(() => CONTRACTED_STATUSES.includes(form.status))
 // Saved НМЦК from DB (frozen value)
 const savedNmck = ref<number | null>(null)
 
-// Display НМЦК: frozen value for contracted, live calculation otherwise
+// Display НМЦК: manual override → frozen contracted value → live from items
 const displayNmck = computed(() => {
+  if (nmckMode.value === 'manual' && nmckManualValue.value != null) return nmckManualValue.value
   if (isContracted.value && savedNmck.value != null) return savedNmck.value
   return totalNmck.value
 })
@@ -2772,10 +2862,11 @@ const contractPriceHint = computed(() => {
   return 'Рамочный договор: введите общую сумму договора вручную'
 })
 
-// Auto-sync contract_price for single purchases
+// Auto-sync contract_price when mode is auto
 function syncContractPriceIfSingle() {
-  if (isSinglePurchase.value && totalNmck.value > 0) {
-    form.contract_price = totalNmck.value
+  if (contractPriceMode.value === 'manual') return
+  if (isSinglePurchase.value && displayNmck.value > 0) {
+    form.contract_price = displayNmck.value
     calcEconomy()
   }
 }
@@ -2913,6 +3004,9 @@ const calcBudget = async () => {
 }
 
 watch(totalNmck, () => { calcEconomy(); calcBudget() })
+watch(nmckMode, () => { syncContractPriceIfSingle(); calcEconomy(); calcBudget() })
+watch(nmckManualValue, () => { syncContractPriceIfSingle(); calcEconomy() })
+watch(contractPriceMode, () => { syncContractPriceIfSingle() })
 
 // Items
 const addItem = () => {
@@ -3326,6 +3420,8 @@ const loadPurchase = async () => {
     vat_exemption_article: data.vat_exemption_article || '',
     third_party_involved: !!data.third_party_involved,
     service_period_type: data.service_period_type || 'period',
+    service_start_date: data.service_start_date || '',
+    service_end_date: data.service_end_date || '',
     description_mode: data.description_mode || 'exact',
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
@@ -3504,14 +3600,16 @@ const doSave = async (adminOverride: boolean) => {
       }))
     const payload = {
       ...form,
-      planned_total_price: totalNmck.value || null,
-      total_nmck: totalNmck.value || null,
+      planned_total_price: displayNmck.value || null,
+      total_nmck: displayNmck.value || null,
       contract_date: form.contract_date || null,
       delivery_date: form.delivery_date || null,
       delivery_address: form.delivery_address || null,
       procurement_planned_date: form.procurement_planned_date || null,
       execution_term: form.execution_term || null,
       execution_term_changed: form.execution_term_changed || null,
+      service_start_date: form.service_start_date || null,
+      service_end_date: form.service_end_date || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
       payment_doc_date: form.payment_doc_date || null,
       items: validItems,

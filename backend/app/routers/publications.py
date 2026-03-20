@@ -132,6 +132,10 @@ async def publish_purchase(
 
     payload = await _build_publish_payload(purchase_id, db)
 
+    # Добавляем procedure_type для Росэлторг (если задан)
+    if body.procedure_type:
+        payload["procedure_type"] = body.procedure_type
+
     pub = PlatformPublication(
         purchase_id=purchase_id,
         platform=body.platform,

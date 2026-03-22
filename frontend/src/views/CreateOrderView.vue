@@ -353,7 +353,7 @@
         <v-card-text class="pa-0">
           <v-table density="comfortable" class="tz-table">
             <thead>
-              <tr style="background:#F0F7FF">
+              <tr class="tz-table-header">
                 <th style="width:36px;text-align:center">№</th>
                 <th style="width:72px;text-align:center">Фото</th>
                 <th>Наименование и описание</th>
@@ -386,9 +386,9 @@
               </tr>
             </tbody>
             <tfoot>
-              <tr style="background:#F9FAFB">
+              <tr class="tz-table-footer">
                 <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦК:</td>
-                <td class="text-right font-weight-bold pa-3" style="font-size:13px;color:#3B82F6">{{ formatMoney(displayNmck) }}</td>
+                <td class="text-right font-weight-bold pa-3 text-primary" style="font-size:13px">{{ formatMoney(displayNmck) }}</td>
               </tr>
             </tfoot>
           </v-table>
@@ -559,23 +559,31 @@
           <v-tab value="contract">Договор</v-tab>
           <v-tab value="invoice">Счёт</v-tab>
           <v-tab value="invoice_contract">Счёт-договор</v-tab>
+          <v-tab value="framework_invoice">Счёт по РД</v-tab>
         </v-tabs>
         <v-divider />
         <v-card-text>
+          <v-window v-model="form.payment_basis_type">
 
           <!-- ── Договор ── -->
-          <v-window-item v-if="form.payment_basis_type === 'contract'">
-          <v-row>
-            <v-col cols="12" md="4">
+          <v-window-item value="contract">
+          <v-row class="mt-1">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_number" label="Номер договора" variant="outlined" density="compact"
                 :placeholder="isNew ? 'Назначается автоматически' : ''"
                 :hint="needsContract ? 'Обязательно для перехода в статус Договор' : isNew ? 'Будет присвоен после сохранения' : ''"
                 persistent-hint />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" label="Дата договора" variant="outlined"
+                density="compact" type="date" :rules="contractDateRules" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_end_date" label="Срок действия договора" variant="outlined"
                 density="compact" type="date"
-                :rules="contractDateRules" />
+                :readonly="isFramework && !!selectedFrameworkContract?.end_date"
+                :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
+                hint="Дата окончания действия договора" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
@@ -585,22 +593,11 @@
               <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
                 variant="outlined" density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="6">
-              <v-autocomplete
-                v-model="form.delivery_address"
-                :items="deliveryAddressSuggestions"
-                label="Адрес доставки"
-                variant="outlined"
-                density="compact"
-                clearable
-                hide-no-data
-                no-filter
-                return-object
-                :custom-filter="() => true"
-                @update:search="onDeliveryAddressSearch"
-                @update:model-value="onDeliveryAddressSelect"
-                placeholder="Начните вводить адрес..."
-              />
+            <v-col cols="12" md="5">
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
             </v-col>
             <v-col cols="12" md="2" class="d-flex align-center">
               <v-checkbox v-model="form.is_monthly_payment" label="Ежемесячный платёж"
@@ -609,26 +606,21 @@
             <template v-if="form.is_monthly_payment">
               <v-col cols="12" md="2">
                 <v-text-field v-model.number="form.monthly_payment_count" label="Кол-во платежей"
-                  variant="outlined" density="compact" type="number" min="1"
-                  @update:model-value="calcMonthlyTotal" />
+                  variant="outlined" density="compact" type="number" min="1" @update:model-value="calcMonthlyTotal" />
               </v-col>
               <v-col cols="12" md="3">
                 <v-text-field v-model.number="form.monthly_payment_amount" label="Сумма платежа, ₽"
-                  variant="outlined" density="compact" type="number" suffix="₽"
-                  @update:model-value="calcMonthlyTotal" />
+                  variant="outlined" density="compact" type="number" suffix="₽" @update:model-value="calcMonthlyTotal" />
               </v-col>
               <v-col cols="12" md="3">
-                <v-text-field
-                  :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
-                  label="Итого обязательств" variant="outlined" density="compact" readonly
-                  bg-color="grey-lighten-4"
+                <v-text-field :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
+                  label="Итого обязательств" variant="outlined" density="compact" readonly bg-color="grey-lighten-4"
                   hint="Не обязана совпадать с суммой договора" persistent-hint />
               </v-col>
             </template>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
-                density="compact" type="date"
-                :rules="executionTermRules" />
+                density="compact" type="date" :rules="executionTermRules" />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.execution_term_changed" label="Срок (с учётом изменений)"
@@ -638,16 +630,16 @@
           </v-window-item>
 
           <!-- ── Счёт ── -->
-          <v-window-item v-if="form.payment_basis_type === 'invoice'">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          <v-window-item value="invoice">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
             Счёт на оплату — выставляется поставщиком, является основанием для оплаты без заключения договора.
           </v-alert>
           <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_number" label="Номер счёта" variant="outlined" density="compact"
                 hint="Номер счёта от поставщика" persistent-hint />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" label="Дата счёта" variant="outlined"
                 density="compact" type="date" />
             </v-col>
@@ -660,16 +652,10 @@
                 variant="outlined" density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="6">
-              <v-autocomplete
-                v-model="form.delivery_address"
-                :items="deliveryAddressSuggestions"
-                label="Адрес доставки"
-                variant="outlined" density="compact" clearable hide-no-data no-filter return-object
-                :custom-filter="() => true"
-                @update:search="onDeliveryAddressSearch"
-                @update:model-value="onDeliveryAddressSelect"
-                placeholder="Начните вводить адрес..."
-              />
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
@@ -679,18 +665,22 @@
           </v-window-item>
 
           <!-- ── Счёт-договор ── -->
-          <v-window-item v-if="form.payment_basis_type === 'invoice_contract'">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          <v-window-item value="invoice_contract">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
             Счёт-договор — упрощённая форма договора, объединяющая счёт и договорные условия. Применяется при сумме до 600 тыс. ₽.
           </v-alert>
           <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_number" label="Номер счёт-договора" variant="outlined" density="compact"
                 hint="Номер документа от поставщика" persistent-hint />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" label="Дата счёт-договора" variant="outlined"
                 density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_end_date" label="Срок действия" variant="outlined"
+                density="compact" type="date" hint="Дата окончания действия" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
@@ -700,17 +690,11 @@
               <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
                 variant="outlined" density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="6">
-              <v-autocomplete
-                v-model="form.delivery_address"
-                :items="deliveryAddressSuggestions"
-                label="Адрес доставки"
-                variant="outlined" density="compact" clearable hide-no-data no-filter return-object
-                :custom-filter="() => true"
-                @update:search="onDeliveryAddressSearch"
-                @update:model-value="onDeliveryAddressSelect"
-                placeholder="Начните вводить адрес..."
-              />
+            <v-col cols="12" md="5">
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
             </v-col>
             <v-col cols="12" md="2" class="d-flex align-center">
               <v-checkbox v-model="form.is_monthly_payment" label="Ежемесячный платёж"
@@ -719,19 +703,15 @@
             <template v-if="form.is_monthly_payment">
               <v-col cols="12" md="2">
                 <v-text-field v-model.number="form.monthly_payment_count" label="Кол-во платежей"
-                  variant="outlined" density="compact" type="number" min="1"
-                  @update:model-value="calcMonthlyTotal" />
+                  variant="outlined" density="compact" type="number" min="1" @update:model-value="calcMonthlyTotal" />
               </v-col>
               <v-col cols="12" md="3">
                 <v-text-field v-model.number="form.monthly_payment_amount" label="Сумма платежа, ₽"
-                  variant="outlined" density="compact" type="number" suffix="₽"
-                  @update:model-value="calcMonthlyTotal" />
+                  variant="outlined" density="compact" type="number" suffix="₽" @update:model-value="calcMonthlyTotal" />
               </v-col>
               <v-col cols="12" md="3">
-                <v-text-field
-                  :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
-                  label="Итого обязательств" variant="outlined" density="compact" readonly
-                  bg-color="grey-lighten-4"
+                <v-text-field :model-value="monthlyTotal != null ? monthlyTotal.toLocaleString('ru-RU') + ' ₽' : '—'"
+                  label="Итого обязательств" variant="outlined" density="compact" readonly bg-color="grey-lighten-4"
                   hint="Не обязана совпадать с суммой договора" persistent-hint />
               </v-col>
             </template>
@@ -742,6 +722,69 @@
           </v-row>
           </v-window-item>
 
+          <!-- ── Счёт по РД ── -->
+          <v-window-item value="framework_invoice">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
+            Счёт в рамках рамочного договора (РД). Выберите РД контрагента, затем укажите номер и дату счёта.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="selectedFrameworkInvoiceContract"
+                :items="frameworkContractsForInvoice"
+                item-title="number"
+                item-value="id"
+                label="Рамочный договор"
+                variant="outlined"
+                density="compact"
+                clearable
+                return-object
+                hint="При выборе контрагента выше — показываются только его договора по данной субсидии"
+                persistent-hint
+                @update:model-value="onFrameworkInvoiceSelect"
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps" :title="undefined">
+                    <template #title>
+                      <span class="font-weight-medium">{{ item.raw.number }}</span>
+                      <span v-if="item.raw.contractor_name" class="text-caption text-medium-emphasis ml-2">{{ item.raw.contractor_name }}</span>
+                    </template>
+                    <template #subtitle>
+                      <span v-if="item.raw.max_amount" class="text-caption">
+                        Макс: {{ Number(item.raw.max_amount).toLocaleString('ru-RU') }} ₽
+                        <span v-if="item.raw.remaining != null"> · Остаток: {{ Number(item.raw.remaining).toLocaleString('ru-RU') }} ₽</span>
+                      </span>
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_number" label="Номер счёта" variant="outlined" density="compact"
+                hint="Номер счёта от поставщика" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_date" label="Дата счёта" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="5">
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
+            </v-col>
+          </v-row>
+          </v-window-item>
+
+          </v-window>
         </v-card-text>
       </v-card>
 
@@ -861,15 +904,125 @@
       </v-card>
 
       <!-- 7b. Участники и лента событий (только в режиме редактирования) -->
+      <!-- Чат по закупке -->
       <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
-          <v-icon icon="mdi-timeline-outline" class="mr-2" color="teal" />
-          Участники и события
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
+          <v-icon icon="mdi-chat-outline" class="mr-2" color="blue" />
+          Обсуждение
+          <v-chip v-if="purchaseComments.length" size="x-small" color="blue-grey" class="ml-2" variant="tonal">{{ purchaseComments.length }}</v-chip>
         </v-card-title>
         <v-card-text>
-          <purchase-event-feed :purchase-id="purchaseId" />
+          <!-- Участники -->
+          <div class="d-flex align-center flex-wrap ga-1 mb-3">
+            <span class="text-caption text-medium-emphasis mr-1">Участники:</span>
+            <v-chip v-for="m in purchaseMembers" :key="m.user_id" size="small" variant="tonal" color="primary"
+              closable @click:close="removePurchaseMember(m.user_id)">
+              {{ m.user_name || `#${m.user_id}` }}
+            </v-chip>
+            <v-menu :close-on-content-click="false">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-account-plus" size="x-small" variant="tonal" color="primary" title="Добавить участника" />
+              </template>
+              <v-card min-width="250">
+                <v-card-text class="pa-2">
+                  <v-autocomplete v-model="newMemberUserId" :items="allUsers" item-title="text" item-value="value"
+                    label="Добавить" variant="outlined" density="compact" hide-details
+                    @update:model-value="addPurchaseMember" />
+                </v-card-text>
+              </v-card>
+            </v-menu>
+          </div>
+          <div ref="purchaseChatContainer" class="purchase-chat-container mb-2">
+            <div v-for="c in purchaseComments" :key="c.id"
+              class="pchat-msg" :class="c.user_id === currentUserId ? 'pchat-msg--mine' : 'pchat-msg--other'">
+              <div class="pchat-msg-header">
+                <v-icon icon="mdi-account-circle" size="14" :color="c.user_id === currentUserId ? 'white' : 'primary'" class="mr-1" />
+                <span class="pchat-msg-author">{{ c.user_name }}</span>
+                <span class="pchat-msg-time">{{ c.created_at ? new Date(c.created_at).toLocaleString('ru') : '' }}</span>
+                <v-btn v-if="c.user_id === currentUserId" icon="mdi-delete-outline" size="x-small" variant="text" density="compact"
+                  :color="c.user_id === currentUserId ? 'white' : 'grey'" class="pchat-msg-delete"
+                  @click.stop="deletePurchaseComment(c.id)" />
+              </div>
+              <div class="pchat-msg-text" v-html="renderPurchaseMentions(c.text)"></div>
+            </div>
+            <div v-if="purchaseComments.length === 0" class="text-caption text-medium-emphasis text-center pa-4">Начните обсуждение</div>
+          </div>
+          <!-- Mention dropdown -->
+          <div v-if="pMentionOpen" class="purchase-mention-dropdown">
+            <div v-for="u in pFilteredMentionUsers" :key="u.value"
+              class="mention-item" @mousedown.prevent="pInsertMention(u)">
+              <v-icon icon="mdi-account" size="14" class="mr-1" />{{ u.text }}
+            </div>
+            <div v-if="pFilteredMentionUsers.length === 0" class="mention-item text-medium-emphasis">Нет совпадений</div>
+          </div>
+          <div class="d-flex ga-2 align-end">
+            <v-textarea
+              ref="purchaseCommentInput"
+              v-model="pCommentText"
+              :placeholder="pEnterToSend ? 'Сообщение... (Enter — отправить)' : 'Сообщение... (Ctrl+Enter — отправить)'"
+              variant="outlined" density="compact" rows="5" hide-details auto-grow
+              style="flex:1"
+              @keydown="onPurchaseCommentKeydown"
+              @input="onPurchaseCommentInput"
+            />
+            <div class="d-flex flex-column ga-1" style="min-width:36px">
+              <v-btn color="primary" icon size="small" :disabled="!pCommentText.trim()" :loading="pCommentSaving" @click="addPurchaseComment" title="Отправить">
+                <v-icon icon="mdi-send" size="18" />
+              </v-btn>
+              <v-btn icon size="small" variant="tonal" color="deep-purple" @click="pOpenMentionPicker" title="Упомянуть">
+                <v-icon icon="mdi-at" size="18" />
+              </v-btn>
+              <v-btn v-if="isManagerLevel" icon size="small" variant="tonal" color="orange" @click="openPurchaseBroadcast" title="Рассылка">
+                <v-icon icon="mdi-bullhorn" size="18" />
+              </v-btn>
+            </div>
+          </div>
+          <div class="d-flex align-center mt-1" style="font-size:11px;color:#888;user-select:none">
+            <span style="white-space:nowrap">{{ pEnterToSend ? 'Enter — отправка' : 'Enter — новая строка' }}</span>
+            <v-switch v-model="pEnterToSend" density="compact" hide-details color="primary"
+              style="flex:0 0 auto; margin: 0 16px"
+              @update:model-value="(v: any) => localStorage.setItem('pchat_enter_to_send', String(v))" />
+            <span style="white-space:nowrap">{{ pEnterToSend ? 'Ctrl+Enter — новая строка' : 'Ctrl+Enter — отправка' }}</span>
+          </div>
         </v-card-text>
       </v-card>
+
+      <!-- Purchase broadcast dialog -->
+      <v-dialog v-model="pBroadcastDialog" max-width="480" persistent>
+        <v-card>
+          <v-card-title class="d-flex align-center gap-2 pt-4">
+            <v-icon color="orange">mdi-bullhorn</v-icon>
+            Рассылка из закупки
+          </v-card-title>
+          <v-card-text>
+            <div class="text-caption text-medium-emphasis mb-3">
+              Сообщение будет отправлено каждому сотруднику индивидуально в Telegram
+            </div>
+            <v-radio-group v-model="pBroadcastScope" class="mb-3">
+              <v-radio value="department" label="Отдел" />
+              <v-radio value="organization" label="Организация" />
+              <v-radio v-if="pBroadcastOrgs.length > 1" value="all" label="Все организации" />
+            </v-radio-group>
+            <v-select v-if="pBroadcastScope === 'department'" v-model="pBroadcastScopeId"
+              :items="pBroadcastDepts" item-title="name" item-value="id"
+              label="Выберите отдел" variant="outlined" density="compact" class="mb-3" />
+            <v-select v-if="pBroadcastScope === 'organization'" v-model="pBroadcastScopeId"
+              :items="pBroadcastOrgs" item-title="name" item-value="id"
+              label="Выберите организацию" variant="outlined" density="compact" class="mb-3" />
+            <v-textarea v-model="pBroadcastText" label="Текст сообщения" variant="outlined"
+              density="compact" rows="3" autofocus />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="pBroadcastDialog = false">Отмена</v-btn>
+            <v-btn color="orange" variant="tonal" :loading="pBroadcastSending"
+              :disabled="!pBroadcastText.trim() || (pBroadcastScope !== 'all' && !pBroadcastScopeId)"
+              @click="sendPurchaseBroadcast">
+              Отправить
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <!-- 7. Файлы (скрыто для employee) -->
       <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
@@ -1132,6 +1285,7 @@
         ref="approvalPanelRef"
         :purchase-id="purchaseId!"
         :approval-status="form.approval_status"
+        :approval-mode="form.approval_mode"
         :is-manager="isManagerLevel"
         :is-admin="isAdminLevel"
         :visible="isEdit && showApprovalSection"
@@ -1173,24 +1327,35 @@
             Закупка ещё не публиковалась ни на одной площадке
           </div>
           <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th class="text-caption text-medium-emphasis" style="width:140px">Площадка</th>
+                <th class="text-caption text-medium-emphasis" style="width:130px">Статус</th>
+                <th class="text-caption text-medium-emphasis" style="width:160px">Номер закупки</th>
+                <th class="text-caption text-medium-emphasis">Ссылка на закупку</th>
+                <th class="text-caption text-medium-emphasis"></th>
+              </tr>
+            </thead>
             <tbody>
               <tr v-for="pub in publications" :key="pub.id">
-                <td style="width:160px" class="font-weight-medium">{{ PLATFORM_LABELS[pub.platform] || pub.platform }}</td>
-                <td style="width:140px">
+                <td class="font-weight-medium text-caption">{{ PLATFORM_LABELS[pub.platform] || pub.platform }}</td>
+                <td>
                   <v-chip size="x-small" :color="PUB_STATUS_COLOR[pub.status]" variant="tonal">
                     {{ PUB_STATUS_LABEL[pub.status] || pub.status }}
                   </v-chip>
                 </td>
-                <td>
-                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank"
-                    class="text-caption text-blue-darken-2 text-decoration-none">
-                    {{ pub.external_id || 'Открыть на площадке' }}
-                    <v-icon size="12">mdi-open-in-new</v-icon>
-                  </a>
-                  <span v-else-if="pub.external_id" class="text-caption">{{ pub.external_id }}</span>
+                <td class="text-caption">
+                  <span v-if="pub.external_id">{{ pub.external_id }}</span>
+                  <span v-else-if="pub.error_text" class="text-error">{{ pub.error_text }}</span>
+                  <span v-else class="text-medium-emphasis">—</span>
                 </td>
-                <td class="text-caption text-medium-emphasis">
-                  {{ pub.error_text || (pub.published_at ? new Date(pub.published_at).toLocaleDateString('ru-RU') : '') }}
+                <td class="text-caption">
+                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank"
+                    class="text-blue-darken-2 text-decoration-none">
+                    {{ pub.external_url }}
+                    <v-icon size="11">mdi-open-in-new</v-icon>
+                  </a>
+                  <span v-else class="text-medium-emphasis">—</span>
                 </td>
                 <td style="width:36px">
                   <v-btn v-if="pub.status === 'error'" icon="mdi-refresh" size="x-small" variant="text"
@@ -1201,6 +1366,132 @@
           </v-table>
         </v-card-text>
       </v-card>
+
+      <!-- Связанные задачи -->
+      <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 d-flex align-center gap-2">
+          <v-icon size="20">mdi-clipboard-check-outline</v-icon>
+          Связанные задачи
+          <v-chip size="x-small" variant="tonal" color="primary">{{ linkedTasks.length }}</v-chip>
+          <v-spacer />
+          <v-btn size="small" variant="tonal" color="secondary" prepend-icon="mdi-link-variant"
+            :to="`/my-tasks?link_purchase=${purchaseId}`" class="mr-2">
+            Привязать
+          </v-btn>
+          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus"
+            @click="openCreateLinkedTask">
+            Создать
+          </v-btn>
+        </v-card-title>
+        <v-card-text v-if="linkedTasks.length" class="pt-0">
+          <v-list density="compact" class="pa-0">
+            <v-list-item v-for="lt in linkedTasks" :key="lt.id" class="px-2"
+              @click="$router.push(`/my-tasks?task=${lt.id}`)">
+              <template #prepend>
+                <v-icon :color="taskStatusColor(lt.status)" size="18">
+                  {{ lt.status === 'done' ? 'mdi-check-circle' : lt.status === 'in_progress' ? 'mdi-progress-clock' : 'mdi-circle-outline' }}
+                </v-icon>
+              </template>
+              <v-list-item-title class="text-body-2">{{ lt.title }}</v-list-item-title>
+              <v-list-item-subtitle class="text-caption">
+                <v-chip size="x-small" variant="flat" :color="taskPriorityColor(lt.priority)" class="mr-1">
+                  {{ lt.priority }}
+                </v-chip>
+                <span v-if="lt.assignees?.length">
+                  {{ lt.assignees.map((a: any) => a.user_name || `#${a.user_id}`).join(', ') }}
+                </span>
+                <span v-if="lt.due_date" class="ml-2">
+                  · до {{ new Date(lt.due_date).toLocaleDateString('ru') }}
+                </span>
+              </v-list-item-subtitle>
+              <template #append>
+                <v-chip size="x-small" variant="tonal" :color="taskStatusColor(lt.status)" class="mr-1">
+                  {{ TASK_STATUS_LABEL[lt.status] || lt.status }}
+                </v-chip>
+                <v-btn icon="mdi-link-variant-off" size="x-small" variant="text" color="grey"
+                  title="Отвязать задачу" @click.stop="unlinkTask(lt.id)" />
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-text v-else class="text-caption text-medium-emphasis pt-0">
+          Нет связанных задач. Нажмите «Создать задачу» чтобы делегировать работу по этой закупке.
+        </v-card-text>
+      </v-card>
+
+      <!-- Диалог создания связанной задачи -->
+      <v-dialog v-model="linkedTaskDialog" max-width="560" persistent>
+        <v-card>
+          <v-card-title class="text-subtitle-1 pt-4 px-4">
+            <v-icon class="mr-1" size="20">mdi-clipboard-plus-outline</v-icon>
+            Задача по закупке
+          </v-card-title>
+          <v-card-text>
+            <v-text-field v-model="linkedTaskForm.title" label="Заголовок задачи" variant="outlined"
+              density="compact" class="mb-3" :rules="[v => !!v || 'Обязательно']" />
+            <v-textarea v-model="linkedTaskForm.description" label="Описание" variant="outlined"
+              density="compact" rows="2" class="mb-3" />
+            <div class="d-flex gap-3 mb-3">
+              <v-select v-model="linkedTaskForm.priority" :items="TASK_PRIORITIES"
+                item-title="title" item-value="value"
+                label="Приоритет" variant="outlined" density="compact" style="max-width:180px" />
+              <v-text-field v-model="linkedTaskForm.due_date" label="Срок" type="date"
+                variant="outlined" density="compact" />
+            </div>
+            <v-autocomplete v-model="linkedTaskForm.assignee_ids" :items="allUsers"
+              item-title="text" item-value="value" label="Исполнители" variant="outlined"
+              density="compact" multiple chips closable-chips />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="linkedTaskDialog = false">Отмена</v-btn>
+            <v-btn color="primary" variant="tonal" :loading="linkedTaskSaving"
+              :disabled="!linkedTaskForm.title" @click="saveLinkedTask">
+              Создать
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+
+      <!-- Диалог привязки существующей задачи -->
+      <v-dialog v-model="linkTaskDialog" max-width="520">
+        <v-card>
+          <v-card-title class="text-subtitle-1 pt-4 px-4">
+            <v-icon class="mr-1" size="20">mdi-link-variant</v-icon>
+            Привязать задачу к закупке
+          </v-card-title>
+          <v-card-text>
+            <v-text-field v-model="linkTaskSearch" label="Поиск по названию задачи" variant="outlined"
+              density="compact" prepend-inner-icon="mdi-magnify" clearable autofocus
+              @update:model-value="searchUnlinkedTasks" />
+            <div v-if="linkTaskSearching" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
+            <v-list v-else-if="linkTaskResults.length" density="compact" class="border rounded" style="max-height:300px;overflow-y:auto">
+              <v-list-item v-for="t in linkTaskResults" :key="t.id" @click="linkExistingTask(t.id)">
+                <template #prepend>
+                  <v-icon :color="taskStatusColor(t.status)" size="18">
+                    {{ t.status === 'done' ? 'mdi-check-circle' : t.status === 'in_progress' ? 'mdi-progress-clock' : 'mdi-circle-outline' }}
+                  </v-icon>
+                </template>
+                <v-list-item-title class="text-body-2">{{ t.title }}</v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  {{ t.assignees?.map((a: any) => a.user_name).join(', ') || 'Без исполнителя' }}
+                  <span v-if="t.purchase_id" class="text-warning ml-1">(уже привязана)</span>
+                </v-list-item-subtitle>
+              </v-list-item>
+            </v-list>
+            <div v-else-if="linkTaskSearch" class="text-caption text-medium-emphasis text-center py-4">
+              Задачи не найдены
+            </div>
+            <div v-else class="text-caption text-medium-emphasis text-center py-4">
+              Введите текст для поиска задач
+            </div>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" @click="linkTaskDialog = false">Закрыть</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap">
@@ -1838,6 +2129,16 @@
           <v-btn variant="text" @click="kpDialog = false">Закрыть</v-btn>
           <v-spacer />
           <v-btn
+            variant="outlined"
+            prepend-icon="mdi-file-excel-outline"
+            color="green-darken-1"
+            size="small"
+            :disabled="!purchaseId"
+            @click="downloadKpXlsx"
+          >
+            Скачать xlsx
+          </v-btn>
+          <v-btn
             variant="tonal"
             prepend-icon="mdi-email-multiple-outline"
             :disabled="kpAllEmails.length === 0"
@@ -2148,6 +2449,7 @@ const form = reactive({
   price_increase: null as number | null,
   contract_number: '',
   contract_date: '',
+  contract_end_date: '' as string,
   delivery_date: '',
   delivery_address: '',
   procurement_planned_date: '',
@@ -2182,10 +2484,12 @@ const form = reactive({
   description_mode: 'exact' as string,
   event_id: null as number | null,
   approval_status: null as string | null,
+  approval_mode: null as string | null,
   country_origin: '' as string,
   treasury_code: '' as string,
   has_pretension: false as boolean,
   payment_basis_type: 'contract' as string,
+  subsidy_allocations: [] as Array<{subsidy_id: number, amount: number | null}>,
 })
 
 function activeDescription(item: OrderItem): string | undefined {
@@ -2604,6 +2908,312 @@ function pollPublication(pubId: number, attempts = 0) {
   }, 2000)
 }
 
+// ── Linked tasks ─────────────────────────────────────────────────────────────
+const TASK_STATUS_LABEL: Record<string, string> = {
+  todo: 'К выполнению', in_progress: 'В работе', done: 'Выполнена', cancelled: 'Отменена',
+}
+const TASK_PRIORITIES = [
+  { value: 'low', title: 'Низкий' }, { value: 'medium', title: 'Средний' },
+  { value: 'high', title: 'Высокий' }, { value: 'urgent', title: 'Срочный' },
+]
+function taskStatusColor(s: string) {
+  return s === 'done' ? 'success' : s === 'in_progress' ? 'info' : s === 'cancelled' ? 'grey' : 'default'
+}
+function taskPriorityColor(p: string) {
+  return p === 'urgent' ? 'error' : p === 'high' ? 'warning' : p === 'medium' ? 'info' : 'default'
+}
+
+const linkedTasks = ref<any[]>([])
+const linkedTaskDialog = ref(false)
+const linkedTaskSaving = ref(false)
+const allUsers = ref<{ value: number; text: string }[]>([])
+const linkedTaskForm = reactive({
+  title: '', description: '', priority: 'medium',
+  due_date: '', assignee_ids: [] as number[],
+})
+
+async function loadLinkedTasks() {
+  if (!purchaseId.value) return
+  try {
+    linkedTasks.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/tasks/`)
+  } catch { linkedTasks.value = [] }
+}
+
+async function loadAllUsers() {
+  if (allUsers.value.length) return
+  try {
+    const users = await apiFetch<any[]>('/users/')
+    allUsers.value = users.map(u => ({ value: u.id, text: u.full_name || u.username }))
+  } catch {}
+}
+
+function openCreateLinkedTask() {
+  Object.assign(linkedTaskForm, {
+    title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [],
+  })
+  loadAllUsers()
+  linkedTaskDialog.value = true
+}
+
+async function saveLinkedTask() {
+  if (!linkedTaskForm.title || !purchaseId.value) return
+  linkedTaskSaving.value = true
+  try {
+    const body: Record<string, any> = {
+      title: linkedTaskForm.title,
+      description: linkedTaskForm.description || undefined,
+      priority: linkedTaskForm.priority,
+      purchase_id: purchaseId.value,
+      assignee_ids: linkedTaskForm.assignee_ids,
+    }
+    if (linkedTaskForm.due_date) body.due_date = linkedTaskForm.due_date + 'T23:59:59'
+    await apiFetch('/tasks/', { method: 'POST', body })
+    linkedTaskDialog.value = false
+    showSnack('Задача создана')
+    await loadLinkedTasks()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка при создании задачи', 'error')
+  } finally {
+    linkedTaskSaving.value = false
+  }
+}
+
+// ── Link existing task ───────────────────────────────────────────────────────
+const linkTaskDialog = ref(false)
+const linkTaskSearch = ref('')
+const linkTaskResults = ref<any[]>([])
+const linkTaskSearching = ref(false)
+let _linkSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+function openLinkExistingTask() {
+  linkTaskSearch.value = ''
+  linkTaskResults.value = []
+  linkTaskDialog.value = true
+}
+
+function searchUnlinkedTasks(q: string | null) {
+  if (_linkSearchTimer) clearTimeout(_linkSearchTimer)
+  if (!q || q.length < 2) { linkTaskResults.value = []; return }
+  _linkSearchTimer = setTimeout(async () => {
+    linkTaskSearching.value = true
+    try {
+      linkTaskResults.value = await apiFetch<any[]>(`/tasks/?search=${encodeURIComponent(q)}`)
+    } catch { linkTaskResults.value = [] }
+    finally { linkTaskSearching.value = false }
+  }, 300)
+}
+
+async function linkExistingTask(taskId: number) {
+  try {
+    await apiFetch(`/tasks/${taskId}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: purchaseId.value }),
+    })
+    linkTaskDialog.value = false
+    showSnack('Задача привязана к закупке')
+    await loadLinkedTasks()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка привязки', 'error')
+  }
+}
+
+async function unlinkTask(taskId: number) {
+  try {
+    await apiFetch(`/tasks/${taskId}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: null }),
+    })
+    showSnack('Задача отвязана')
+    await loadLinkedTasks()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка', 'error')
+  }
+}
+
+// ── Purchase members ─────────────────────────────────────────────────────────
+const purchaseMembers = ref<any[]>([])
+const newMemberUserId = ref<number | null>(null)
+
+async function loadPurchaseMembers() {
+  if (!purchaseId.value) return
+  try {
+    purchaseMembers.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/members`)
+  } catch { purchaseMembers.value = [] }
+}
+
+async function addPurchaseMember(userId: number | null) {
+  if (!userId || !purchaseId.value) return
+  try {
+    await apiFetch(`/purchase-events/${purchaseId.value}/members`, {
+      method: 'POST', body: JSON.stringify({ user_id: userId }),
+    })
+    await loadPurchaseMembers()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка', 'error')
+  }
+  newMemberUserId.value = null
+}
+
+async function removePurchaseMember(userId: number) {
+  if (!purchaseId.value) return
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/members/${userId}`, { method: 'DELETE' })
+    await loadPurchaseMembers()
+  } catch {}
+}
+
+// ── Purchase chat ────────────────────────────────────────────────────────────
+const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
+const purchaseChatContainer = ref<HTMLElement | null>(null)
+const purchaseCommentInput = ref<any>(null)
+const purchaseComments = ref<any[]>([])
+const pCommentText = ref('')
+const pCommentSaving = ref(false)
+const pEnterToSend = ref(localStorage.getItem('pchat_enter_to_send') !== 'false')
+const pMentionOpen = ref(false)
+const pMentionQuery = ref('')
+
+const pFilteredMentionUsers = computed(() => {
+  const q = pMentionQuery.value.toLowerCase()
+  if (!q) return allUsers.value.slice(0, 8)
+  return allUsers.value.filter(u => u.text.toLowerCase().includes(q)).slice(0, 6)
+})
+
+async function loadPurchaseComments() {
+  if (!purchaseId.value) return
+  try {
+    purchaseComments.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/comments`)
+    nextTick(() => {
+      if (purchaseChatContainer.value) purchaseChatContainer.value.scrollTop = purchaseChatContainer.value.scrollHeight
+    })
+  } catch { purchaseComments.value = [] }
+}
+
+async function addPurchaseComment() {
+  if (!purchaseId.value || !pCommentText.value.trim()) return
+  pCommentSaving.value = true
+  pMentionOpen.value = false
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/comments`, {
+      method: 'POST', body: JSON.stringify({ text: pCommentText.value.trim() }),
+    })
+    pCommentText.value = ''
+    await loadPurchaseComments()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка', 'error')
+  } finally { pCommentSaving.value = false }
+}
+
+async function deletePurchaseComment(commentId: number) {
+  if (!purchaseId.value) return
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/comments/${commentId}`, { method: 'DELETE' })
+    await loadPurchaseComments()
+  } catch {}
+}
+
+function onPurchaseCommentInput() {
+  const text = pCommentText.value
+  const atIdx = text.lastIndexOf('@')
+  if (atIdx >= 0) {
+    const afterAt = text.slice(atIdx + 1)
+    if (!afterAt.includes('\n') && afterAt.length <= 30) {
+      pMentionQuery.value = afterAt
+      pMentionOpen.value = true
+      return
+    }
+  }
+  pMentionOpen.value = false
+}
+
+function onPurchaseCommentKeydown(e: KeyboardEvent) {
+  if (pMentionOpen.value) {
+    if (e.key === 'Escape') { pMentionOpen.value = false; e.preventDefault(); return }
+    if ((e.key === 'Tab' || e.key === 'Enter') && pFilteredMentionUsers.value.length > 0) {
+      e.preventDefault(); pInsertMention(pFilteredMentionUsers.value[0]); return
+    }
+  }
+  if (e.key === 'Enter') {
+    const ctrl = e.ctrlKey || e.metaKey
+    if (pEnterToSend.value) {
+      if (ctrl) {
+        e.preventDefault()
+        const ta = (purchaseCommentInput.value as any)?.$el?.querySelector('textarea')
+        if (ta) { const s = ta.selectionStart; pCommentText.value = pCommentText.value.slice(0, s) + '\n' + pCommentText.value.slice(ta.selectionEnd); nextTick(() => { ta.selectionStart = ta.selectionEnd = s + 1 }) }
+        return
+      }
+      if (!e.shiftKey) { e.preventDefault(); addPurchaseComment() }
+    } else {
+      if (ctrl) { e.preventDefault(); addPurchaseComment() }
+    }
+  }
+}
+
+function pOpenMentionPicker() {
+  pMentionQuery.value = ''
+  const text = pCommentText.value
+  if (!text.endsWith('@')) pCommentText.value = text + (text && !text.endsWith(' ') ? ' @' : '@')
+  pMentionOpen.value = true
+  loadAllUsers()
+}
+
+function pInsertMention(user: { text: string; value: number }) {
+  const text = pCommentText.value
+  const atIdx = text.lastIndexOf('@')
+  if (atIdx >= 0) pCommentText.value = text.slice(0, atIdx) + `@${user.text} `
+  pMentionOpen.value = false
+  nextTick(() => {
+    const el = (purchaseCommentInput.value as any)?.$el?.querySelector('textarea')
+    if (el) el.focus()
+  })
+}
+
+function renderPurchaseMentions(text: string): string {
+  if (!text) return ''
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return escaped.replace(/@([A-Za-zА-Яа-яёЁ\s]+?)(\s|$)/g, '<span style="color:#1976d2;font-weight:500">@$1</span>$2')
+}
+
+// ── Purchase broadcast ──
+const pBroadcastDialog = ref(false)
+const pBroadcastScope = ref<string>('organization')
+const pBroadcastScopeId = ref<number | null>(null)
+const pBroadcastText = ref('')
+const pBroadcastSending = ref(false)
+const pBroadcastOrgs = ref<{ id: number; name: string }[]>([])
+const pBroadcastDepts = ref<{ id: number; name: string }[]>([])
+
+async function openPurchaseBroadcast() {
+  pBroadcastText.value = pCommentText.value || ''
+  pBroadcastScopeId.value = null
+  pBroadcastDialog.value = true
+  try {
+    const data = await apiFetch<any>('/tasks/broadcast/scopes')
+    pBroadcastOrgs.value = data.organizations || []
+    pBroadcastDepts.value = data.departments || []
+    if (pBroadcastOrgs.value.length === 1) pBroadcastScopeId.value = pBroadcastOrgs.value[0].id
+  } catch {}
+}
+
+async function sendPurchaseBroadcast() {
+  if (!purchaseId.value || !pBroadcastText.value.trim()) return
+  pBroadcastSending.value = true
+  try {
+    const res = await apiFetch<any>(`/purchases/${purchaseId.value}/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify({
+        text: pBroadcastText.value.trim(),
+        scope: pBroadcastScope.value,
+        scope_id: pBroadcastScope.value !== 'all' ? pBroadcastScopeId.value : undefined,
+      }),
+    })
+    pBroadcastDialog.value = false
+    pCommentText.value = ''
+    showSnack(`Отправлено: ${res.sent} из ${res.total_users} сотрудников`)
+    await loadPurchaseComments()
+  } catch (e: any) {
+    showSnack(e?.detail || 'Ошибка рассылки', 'error')
+  } finally { pBroadcastSending.value = false }
+}
+
 // Framework contracts
 const CONTRACT_TYPES = [
   { value: 'single', title: 'Разовый' },
@@ -2658,6 +3268,54 @@ const filteredFrameworkContracts = computed(() => {
     (c.contractor_inn || '').toLowerCase().includes(q) ||
     (c.subject || '').toLowerCase().includes(q)
   )
+})
+
+// ── Счёт по РД (framework_invoice) ──────────────────────────────────────────
+const selectedFrameworkInvoiceContract = ref<FrameworkContract | null>(null)
+
+const frameworkContractsForInvoice = computed(() => {
+  if (!form.contractor_id) return frameworkContracts.value
+  return frameworkContracts.value.filter(c => c.contractor_id === form.contractor_id)
+})
+
+async function loadFrameworkContractsForInvoice() {
+  if (form.payment_basis_type !== 'framework_invoice') return
+  try {
+    const params = new URLSearchParams()
+    if (form.subsidy_id) params.set('subsidy_id', String(form.subsidy_id))
+    if (form.contractor_id) params.set('contractor_id', String(form.contractor_id))
+    params.append('contract_type', 'framework_cumulative')
+    params.append('contract_type', 'framework_with_amount')
+    frameworkContracts.value = await apiFetch<FrameworkContract[]>(`/contracts/?${params}`)
+  } catch { /* silent */ }
+}
+
+function onFrameworkInvoiceSelect(c: FrameworkContract | null) {
+  if (c) {
+    form.contract_id = c.id
+  } else {
+    form.contract_id = null
+  }
+}
+
+watch(() => form.payment_basis_type, (newType) => {
+  if (newType === 'framework_invoice') {
+    loadFrameworkContractsForInvoice()
+  }
+})
+
+watch(() => form.contractor_id, () => {
+  if (form.payment_basis_type === 'framework_invoice') {
+    loadFrameworkContractsForInvoice()
+  }
+})
+
+// ── Со-финансирование (cofinancing subsidies) ────────────────────────────────
+const cofinancingSubsidies = computed(() => {
+  if (!form.subsidy_id) return []
+  const primary = subsidies.value.find(s => s.id === form.subsidy_id)
+  if (!primary) return []
+  return subsidies.value.filter(s => s.id !== form.subsidy_id && s.org_id === primary.org_id)
 })
 
 async function openFrameworkDialog() {
@@ -3392,6 +4050,7 @@ const loadPurchase = async () => {
     price_increase: data.price_increase ? Number(data.price_increase) : null,
     contract_number: data.contract_number || '',
     contract_date: data.contract_date || '',
+    contract_end_date: data.contract_end_date || '',
     delivery_date: data.delivery_date || '',
     delivery_address: data.delivery_address || '',
     procurement_planned_date: data.procurement_planned_date || '',
@@ -3425,10 +4084,15 @@ const loadPurchase = async () => {
     description_mode: data.description_mode || 'exact',
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
+    approval_mode: data.approval_mode ?? null,
     country_origin: data.country_origin || '',
     treasury_code: data.treasury_code || '',
     has_pretension: !!data.has_pretension,
     payment_basis_type: data.payment_basis_type || 'contract',
+    subsidy_allocations: (data.subsidy_allocations || []).map((a: any) => ({
+      subsidy_id: a.subsidy_id,
+      amount: a.amount != null ? Number(a.amount) : null,
+    })),
   })
 
   // Save frozen НМЦК from DB
@@ -3443,6 +4107,12 @@ const loadPurchase = async () => {
       selectedFrameworkContract.value = contracts.find(c => c.id === data.contract_id) ?? null
     } catch {}
     await loadFrameworkSiblings(data.contract_id)
+  }
+
+  // Restore selected framework invoice contract
+  if (data.contract_id && data.payment_basis_type === 'framework_invoice') {
+    await loadFrameworkContractsForInvoice()
+    selectedFrameworkInvoiceContract.value = frameworkContracts.value.find(c => c.id === data.contract_id) ?? null
   }
 
   // Load items
@@ -3494,6 +4164,15 @@ const loadPurchase = async () => {
   }
 
   calcBudget()
+
+  // Restore manual НМЦК if saved value differs from items total
+  if (savedNmck.value != null && !isContracted.value) {
+    const itemsTotal = items.value.reduce((s, i) => s + (i.total_price || 0), 0)
+    if (Math.abs(savedNmck.value - itemsTotal) > 0.01) {
+      nmckMode.value = 'manual'
+      nmckManualValue.value = savedNmck.value
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3548,6 +4227,10 @@ onMounted(async () => {
   if (isEdit.value && purchaseId.value) {
     await loadPurchase()
     await loadPublications()
+    await loadLinkedTasks()
+    await loadPurchaseComments()
+    await loadPurchaseMembers()
+    loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
   } else {
     loadDraft()
@@ -3603,6 +4286,7 @@ const doSave = async (adminOverride: boolean) => {
       planned_total_price: displayNmck.value || null,
       total_nmck: displayNmck.value || null,
       contract_date: form.contract_date || null,
+      contract_end_date: form.contract_end_date || null,
       delivery_date: form.delivery_date || null,
       delivery_address: form.delivery_address || null,
       procurement_planned_date: form.procurement_planned_date || null,
@@ -3613,6 +4297,7 @@ const doSave = async (adminOverride: boolean) => {
       acceptance_doc_date: form.acceptance_doc_date || null,
       payment_doc_date: form.payment_doc_date || null,
       items: validItems,
+      subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),
     }
     // Save new delivery address to history
     if (form.delivery_address) saveDeliveryAddressIfNew(form.delivery_address)
@@ -4050,6 +4735,26 @@ async function saveKpRequest() {
     kpSaving.value = false
   }
 }
+
+async function downloadKpXlsx() {
+  if (!purchaseId.value) return
+  try {
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
+    const resp = await fetch(`/api/documents/purchases/${purchaseId.value}/kp-xlsx`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!resp.ok) throw new Error('error')
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `KP_items_${purchaseId.value}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    showSnack('Ошибка загрузки xlsx', 'error')
+  }
+}
 </script>
 
 <style scoped>
@@ -4083,4 +4788,38 @@ async function saveKpRequest() {
   background: var(--crm-table-stripe);
   border-top: 2px solid var(--crm-border-strong);
 }
+.tz-table-header { background: var(--crm-table-header); }
+.tz-table-footer { background: var(--crm-table-stripe); }
+.purchase-chat-container {
+  max-height: 350px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--crm-border-strong);
+  border-radius: 8px;
+  background: var(--crm-table-stripe);
+}
+.pchat-msg { margin-bottom: 8px; padding: 6px 10px; border-radius: 12px; max-width: 85%; position: relative; }
+.pchat-msg--mine { background: #1976d2; color: white; margin-left: auto; border-bottom-right-radius: 4px; }
+.pchat-msg--other { background: var(--crm-surface-hover); border: 1px solid var(--crm-border-strong); border-bottom-left-radius: 4px; }
+.pchat-msg-header { display: flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 2px; }
+.pchat-msg-author { font-weight: 600; }
+.pchat-msg-time { opacity: 0.6; margin-left: auto; }
+.pchat-msg-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.pchat-msg-delete { opacity: 0; transition: opacity .15s; position: absolute; top: 2px; right: 2px; }
+.pchat-msg:hover .pchat-msg-delete { opacity: 1; }
+.purchase-mention-dropdown {
+  background: var(--crm-surface-hover);
+  border: 1px solid var(--crm-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+}
+.purchase-mention-dropdown .mention-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.purchase-mention-dropdown .mention-item:hover { background: var(--crm-table-stripe); }
 </style>

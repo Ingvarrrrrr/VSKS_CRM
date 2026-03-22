@@ -12,6 +12,7 @@
         <v-btn variant="outlined" prepend-icon="mdi-image-sync" color="teal" @click="openDownloadPhotosDialog">Скачать фото</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" :loading="deduplicating" @click="deduplicateProducts">Удалить дубликаты</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-table-column" @click="colConfigDialog = true">Столбцы</v-btn>
       </div>
     </div>
 
@@ -563,6 +564,49 @@
       </v-card>
     </v-dialog>
 
+    <!-- Column configurator dialog -->
+    <v-dialog v-model="colConfigDialog" max-width="360" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center justify-space-between">
+          Порядок столбцов
+          <v-btn variant="text" size="small" prepend-icon="mdi-restore" @click="resetColOrder">Сбросить</v-btn>
+        </v-card-title>
+        <v-card-subtitle class="px-5 pb-2 text-caption text-medium-emphasis">
+          Перетащите строки, чтобы изменить порядок
+        </v-card-subtitle>
+        <v-card-text class="px-3 py-0">
+          <v-list density="compact">
+            <v-list-item
+              v-for="(key, idx) in colOrder"
+              :key="key"
+              :draggable="true"
+              @dragstart="onDragStart(idx)"
+              @dragover="onDragOver($event, idx)"
+              @dragend="onDragEnd"
+              :style="dragSrcIdx === idx ? 'opacity:0.4' : ''"
+              class="col-drag-item px-2"
+              rounded="sm"
+            >
+              <template #prepend>
+                <v-icon icon="mdi-drag-vertical" color="grey" size="20" class="mr-1" style="cursor:grab" />
+              </template>
+              <v-list-item-title class="text-body-2">
+                {{ ALL_COLUMNS.find(c => c.key === key)?.title || key }}
+              </v-list-item-title>
+              <template #append>
+                <v-btn icon="mdi-chevron-up" variant="text" size="x-small" :disabled="idx === 0" @click="moveCol(idx, -1)" />
+                <v-btn icon="mdi-chevron-down" variant="text" size="x-small" :disabled="idx === colOrder.length - 1" @click="moveCol(idx, 1)" />
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-spacer />
+          <v-btn color="primary" @click="colConfigDialog = false">Готово</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
@@ -695,19 +739,74 @@ const avgPrice = computed<number | null>(() => {
 
 watch(avgPrice, (v) => { if (v !== null) form.price = v })
 
-const headers = [
-  { title: '',          key: 'photo',        width: 56,  sortable: false },
-  { title: 'Наименование', key: 'name',      minWidth: 240 },
-  { title: 'Тип',       key: 'product_type', width: 140 },
-  { title: 'Категория', key: 'category',     minWidth: 140 },
-  { title: 'Цена',      key: 'price',        width: 130, align: 'end' as const },
+// All available columns — порядок по умолчанию
+const ALL_COLUMNS = [
+  { title: '',          key: 'photo',              width: 56,  sortable: false, fixed: true },
+  { title: 'Наименование', key: 'name',            minWidth: 240, fixed: true },
+  { title: 'Тип',       key: 'product_type',       width: 140 },
+  { title: 'Категория', key: 'category',           minWidth: 140 },
+  { title: 'Цена',      key: 'price',              width: 130, align: 'end' as const },
   { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
-  { title: 'Страна',    key: 'country_origin',   width: 120 },
-  { title: 'Статус',    key: 'is_active',        width: 110 },
+  { title: 'Страна',    key: 'country_origin',     width: 120 },
+  { title: 'Статус',    key: 'is_active',          width: 110 },
+  { title: 'Действия',  key: 'actions',            width: 100, sortable: false },
   { title: 'ТЗ проверено',     key: 'tz_verified_at',      width: 160, sortable: false },
-  { title: 'ТЗ 44-ФЗ проверено', key: 'tz_44fz_verified_at', width: 170, sortable: false },
-  { title: 'Действия',  key: 'actions',          width: 100, sortable: false },
+  { title: 'ТЗ 44-ФЗ',        key: 'tz_44fz_verified_at', width: 150, sortable: false },
 ]
+
+function loadColOrder(): string[] {
+  try {
+    const saved = localStorage.getItem('products_col_order')
+    if (saved) {
+      const arr = JSON.parse(saved) as string[]
+      const allKeys = ALL_COLUMNS.map(c => c.key)
+      // merge: saved + any new columns not yet in saved
+      const merged = arr.filter(k => allKeys.includes(k))
+      allKeys.forEach(k => { if (!merged.includes(k)) merged.push(k) })
+      return merged
+    }
+  } catch {}
+  return ALL_COLUMNS.map(c => c.key)
+}
+
+const colOrder = ref<string[]>(loadColOrder())
+
+const headers = computed(() => {
+  const map = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
+  return colOrder.value.map(k => map[k]).filter(Boolean)
+})
+
+function saveColOrder() {
+  localStorage.setItem('products_col_order', JSON.stringify(colOrder.value))
+}
+
+// Column configurator dialog
+const colConfigDialog = ref(false)
+const dragSrcIdx = ref<number | null>(null)
+
+function onDragStart(idx: number) { dragSrcIdx.value = idx }
+function onDragOver(e: DragEvent, idx: number) {
+  e.preventDefault()
+  if (dragSrcIdx.value === null || dragSrcIdx.value === idx) return
+  const newOrder = [...colOrder.value]
+  const [moved] = newOrder.splice(dragSrcIdx.value, 1)
+  newOrder.splice(idx, 0, moved)
+  colOrder.value = newOrder
+  dragSrcIdx.value = idx
+}
+function onDragEnd() { dragSrcIdx.value = null; saveColOrder() }
+function moveCol(idx: number, dir: -1 | 1) {
+  const to = idx + dir
+  if (to < 0 || to >= colOrder.value.length) return
+  const newOrder = [...colOrder.value]
+  ;[newOrder[idx], newOrder[to]] = [newOrder[to], newOrder[idx]]
+  colOrder.value = newOrder
+  saveColOrder()
+}
+function resetColOrder() {
+  colOrder.value = ALL_COLUMNS.map(c => c.key)
+  saveColOrder()
+}
 
 const filteredProducts = computed(() => {
   let r = products.value
@@ -1008,4 +1107,6 @@ onMounted(load)
 
 <style scoped>
 .products-clickable :deep(tbody tr) { cursor: pointer; }
+.col-drag-item { cursor: default; user-select: none; }
+.col-drag-item:hover { background: rgba(var(--v-theme-on-surface), 0.04); }
 </style>

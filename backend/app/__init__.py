@@ -1,5 +1,8 @@
+import asyncio
 import traceback
 import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -10,19 +13,166 @@ from .routers import (
     documents, publications, subsidy_approvers, responsible_persons,
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
-    tasks, departments, delivery_addresses, hierarchy,
+    tasks, departments, delivery_addresses, hierarchy, billing,
 )
 from .routers import org_config
 from .routers import feo_planned_items
+from .routers import telegram_webhook
 from .routers import settings as settings_router
 from .models import platform_publication  # ensure table is registered
+from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
+from .models import contract_subsidy      # ensure contract_subsidies table is created
 from .models import org_section_config    # ensure org_section_configs table is created
-from .models.task import TaskAssignee     # ensure task_assignees table is created
+from .models.task import TaskAssignee, TelegramMessageMap  # ensure tables created
+from .models.task_decline import TaskConsentDecline  # ensure task_consent_declines table is created
 from .models.manager_department import ManagerDepartment  # ensure manager_departments table is created
+from .models.org_billing import OrgBillingPaid  # ensure org_billing_paid table is created
+from .models.purchase_comment import PurchaseComment  # ensure purchase_comments table is created
 from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 
-app = FastAPI(title="VSKS CRM API", version="1.0.0")
+
+async def _deadline_reminder_loop():
+    """Ежедневно в 09:00 UTC шлёт напоминания о задачах и закупках."""
+    import logging
+    from sqlalchemy import select
+    from .models.task import Task, TaskAssignee, TaskStatus
+    from .models.user import User
+    from .models.purchase import Purchase
+    from .models.purchase_event import PurchaseMember
+    from .models.purchase_approval import PurchaseApproval
+    from .notifications import notify_deadline_soon, notify_purchase_deadline
+
+    log = logging.getLogger(__name__)
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            next_run = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            if now >= next_run:
+                from datetime import timedelta
+                next_run += timedelta(days=1)
+            await asyncio.sleep((next_run - now).total_seconds())
+
+            async with async_session() as db:
+                today = datetime.now(timezone.utc).date()
+
+                # ── 1. Task deadlines (0, 1, 3 дня) ──
+                result = await db.execute(
+                    select(Task).where(
+                        Task.status.in_([TaskStatus.todo, TaskStatus.in_progress]),
+                        Task.due_date.isnot(None),
+                    )
+                )
+                for task in result.scalars().all():
+                    due_date = task.due_date.date() if hasattr(task.due_date, 'date') else task.due_date
+                    days_left = (due_date - today).days
+                    if days_left not in (0, 1, 3):
+                        continue
+                    assignees_result = await db.execute(
+                        select(TaskAssignee).where(
+                            TaskAssignee.task_id == task.id,
+                            TaskAssignee.consent_pending == False,  # noqa: E712
+                        )
+                    )
+                    for ta in assignees_result.scalars().all():
+                        user = await db.get(User, ta.user_id)
+                        if user:
+                            await notify_deadline_soon(task, user, days_left)
+
+                # ── 2. Purchase execution_term deadlines (0, 1, 3 дня) ──
+                active_statuses = ("confirmed", "work_in_progress", "contracted")
+                purch_result = await db.execute(
+                    select(Purchase).where(
+                        Purchase.status.in_(active_statuses),
+                        Purchase.execution_term.isnot(None),
+                    )
+                )
+                for p in purch_result.scalars().all():
+                    days_left = (p.execution_term - today).days
+                    if days_left not in (0, 1, 3, -1, -3):
+                        continue
+                    # Notify assigned user + members
+                    notified = set()
+                    if p.assigned_user_id:
+                        u = await db.get(User, p.assigned_user_id)
+                        if u:
+                            await notify_purchase_deadline(p, u, days_left, "execution_term")
+                            notified.add(p.assigned_user_id)
+                    members = (await db.execute(
+                        select(PurchaseMember).where(PurchaseMember.purchase_id == p.id)
+                    )).scalars().all()
+                    for m in members:
+                        if m.user_id not in notified:
+                            u = await db.get(User, m.user_id)
+                            if u:
+                                await notify_purchase_deadline(p, u, days_left, "execution_term")
+
+                # ── 3. Payment overdue: delivered >5 days ago, not paid ──
+                delivered_result = await db.execute(
+                    select(Purchase).where(
+                        Purchase.status == "delivered",
+                        Purchase.delivery_date.isnot(None),
+                    )
+                )
+                for p in delivered_result.scalars().all():
+                    days_since = (today - p.delivery_date).days
+                    if days_since < 5 or days_since % 5 != 0:  # remind every 5 days
+                        continue
+                    notified = set()
+                    if p.assigned_user_id:
+                        u = await db.get(User, p.assigned_user_id)
+                        if u:
+                            await notify_purchase_deadline(p, u, days_since, "payment_overdue")
+                            notified.add(p.assigned_user_id)
+                    members = (await db.execute(
+                        select(PurchaseMember).where(PurchaseMember.purchase_id == p.id)
+                    )).scalars().all()
+                    for m in members:
+                        if m.user_id not in notified:
+                            u = await db.get(User, m.user_id)
+                            if u:
+                                await notify_purchase_deadline(p, u, days_since, "payment_overdue")
+
+                # ── 4. Approval deadline overdue ──
+                overdue_approvals = (await db.execute(
+                    select(PurchaseApproval).where(
+                        PurchaseApproval.status == "pending",
+                        PurchaseApproval.approval_deadline.isnot(None),
+                        PurchaseApproval.approval_deadline < today,
+                    )
+                )).scalars().all()
+                for appr in overdue_approvals:
+                    days_overdue = (today - appr.approval_deadline).days
+                    if days_overdue not in (1, 3, 7):  # remind at 1, 3, 7 days overdue
+                        continue
+                    if appr.user_id:
+                        u = await db.get(User, appr.user_id)
+                        p = await db.get(Purchase, appr.purchase_id)
+                        if u and p:
+                            await notify_purchase_deadline(p, u, days_overdue, "approval_overdue")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Deadline reminder error: {e}")
+            await asyncio.sleep(3600)
+
+
+@asynccontextmanager
+async def lifespan(app_: FastAPI):
+    task = asyncio.create_task(_deadline_reminder_loop())
+    # Start Telegram bot polling for reply-to-comment routing
+    from .routers.telegram_webhook import start_polling as _start_tg_polling
+    _start_tg_polling()
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="VSKS CRM API", version="1.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -115,3 +265,5 @@ app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)
 app.include_router(hierarchy.router)
+app.include_router(billing.router)
+app.include_router(telegram_webhook.router)

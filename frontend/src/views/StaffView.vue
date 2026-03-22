@@ -326,9 +326,12 @@
           <v-text-field v-model="createDialog.phone" label="Телефон" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67"
             hint="Для связи и интеграции с Telegram" persistent-hint />
-          <v-text-field v-model="createDialog.telegram_id" label="Telegram" variant="outlined" density="compact" class="mb-3"
-            prepend-inner-icon="mdi-send" placeholder="@username"
-            hint="Для уведомлений через Telegram-бот" persistent-hint />
+          <v-text-field v-model="createDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-send" placeholder="123456789"
+            hint="Числовой ID чата Telegram (узнать: написать боту @userinfobot)" persistent-hint />
+          <v-text-field v-model="createDialog.max_chat_id" label="MAX (VK) Chat ID" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-message-processing" placeholder="123456789"
+            hint="Числовой ID для уведомлений через MAX-бот" persistent-hint />
           <v-text-field v-model="createDialog.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-3"
             :rules="[v => !!v || 'Пароль обязателен', v => v.length >= 6 || 'Минимум 6 символов']" />
           <v-text-field v-model="createDialog.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-3"
@@ -429,6 +432,14 @@
             prepend-inner-icon="mdi-card-account-details-outline" placeholder="12 цифр"
             hint="ИНН физ. лица — 12 цифр" persistent-hint maxlength="12" />
           <v-text-field v-model="editDialog.city" label="Город" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="editDialog.phone" label="Телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67" />
+          <v-text-field v-model="editDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-send" placeholder="123456789"
+            hint="Числовой ID — узнать: написать @userinfobot в Telegram" persistent-hint />
+          <v-text-field v-model="editDialog.max_chat_id" label="MAX (VK) Chat ID" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-message-processing" placeholder="123456789"
+            hint="Числовой ID для уведомлений через MAX-бот" persistent-hint />
           <v-text-field v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
           <!-- Multi-org membership (available if orgs list loaded) -->
           <div v-if="organizations.length > 1" class="mb-3">
@@ -929,7 +940,8 @@ const isSuperadmin = computed(() => currentRole === 'superadmin')
 
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
-  department: '', position: '', email: '', password: '', avatar: '', saving: false, inn: '',
+  department: '', position: '', phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
+  telegram_id: '', max_chat_id: '',
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
@@ -1214,6 +1226,9 @@ async function openEditUser(item: UserItem) {
   editDialog.password = ''
   editDialog.avatar = item.avatar || ''
   editDialog.inn = item.inn || ''
+  editDialog.phone = (item as any).phone || ''
+  editDialog.telegram_id = (item as any).telegram_id || ''
+  editDialog.max_chat_id = (item as any).max_chat_id || ''
   editDialog.extraOrgIds = []
   // Resolve dept ID from deptTree by matching name
   const allDepts = flatDepts(deptTree.value)
@@ -1277,6 +1292,9 @@ async function saveEditUser() {
       email: editDialog.email || null,
       avatar: editDialog.avatar || null,
       inn: editDialog.inn || null,
+      phone: editDialog.phone || null,
+      telegram_id: editDialog.telegram_id || null,
+      max_chat_id: editDialog.max_chat_id || null,
     }
     if (editDialog.password) body.password = editDialog.password
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {

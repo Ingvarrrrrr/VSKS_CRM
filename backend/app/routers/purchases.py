@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -11,7 +11,8 @@ from app.models.contract import Contract
 from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.feo_category import FeoCategory
-from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut
+from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut
+from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.models.user import User
 from app.routers.contracts import ensure_contract_linked
@@ -262,7 +263,7 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
     )
 
 
-def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict) -> PurchaseOutFull:
+def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     items = [_item_to_out(i) for i in (p.items or [])]
     files = [
@@ -276,6 +277,17 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict) -> Purcha
         )
         for f in (p.files or [])
     ]
+    alloc_out = None
+    if allocations is not None:
+        alloc_out = [
+            SubsidyAllocationOut(
+                id=a.id,
+                subsidy_id=a.subsidy_id,
+                subsidy_name=a.subsidy.name if a.subsidy else subsidies.get(a.subsidy_id),
+                amount=a.amount,
+            )
+            for a in allocations
+        ]
     return PurchaseOutFull(
         **data,
         items=items,
@@ -284,6 +296,7 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict) -> Purcha
         feo_category_name=p.feo_category.name if p.feo_category else None,
         subsidy_name=subsidies.get(p.subsidy_id),
         event_name=p.event.name if p.event else None,
+        subsidy_allocations=alloc_out,
     )
 
 
@@ -347,12 +360,18 @@ async def list_purchases(
         q = q.where(Purchase.purchase_basis == purchase_basis)
     if search:
         like = f"%{search}%"
-        q = q.where(
-            Purchase.item_name.ilike(like) |
-            Purchase.subject.ilike(like) |
-            Purchase.registry_number.ilike(like) |
-            Purchase.contract_number.ilike(like)
-        )
+        from sqlalchemy import cast, String as SAString
+        search_filters = [
+            Purchase.item_name.ilike(like),
+            Purchase.subject.ilike(like),
+            Purchase.registry_number.ilike(like),
+            Purchase.contract_number.ilike(like),
+            Purchase.order_number.ilike(like),
+        ]
+        # Search by purchase_number if numeric
+        if search.strip().isdigit():
+            search_filters.append(Purchase.purchase_number == int(search.strip()))
+        q = q.where(or_(*search_filters))
     q = q.order_by(Purchase.id.desc())
     if limit:
         q = q.limit(limit)
@@ -492,7 +511,13 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))
     contractors = {c.id: c.name for c in contractors_r.scalars().all()}
-    return _purchase_to_full(p, contractors, subsidies)
+    alloc_r = await db.execute(
+        select(PurchaseSubsidyAllocation)
+        .options(selectinload(PurchaseSubsidyAllocation.subsidy))
+        .where(PurchaseSubsidyAllocation.purchase_id == pid)
+    )
+    allocations = alloc_r.scalars().all()
+    return _purchase_to_full(p, contractors, subsidies, allocations=allocations)
 
 
 @router.post("/", response_model=PurchaseOut)
@@ -516,7 +541,7 @@ async def create_purchase(
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
         data.purchase_number = max_result.scalar() + 1
 
-    dump = data.model_dump(exclude={"items"})
+    dump = data.model_dump(exclude={"items", "subsidy_allocations"})
     dump["total_nmck"] = total_nmck
     p = Purchase(**dump)
     db.add(p)
@@ -531,11 +556,35 @@ async def create_purchase(
     await _assign_framework_seq(p, db)
 
     for item_d in items_data:
-        item = PurchaseItem(
-            purchase_id=p.id,
-            **item_d.model_dump(),
-        )
+        d = item_d.model_dump()
+        if not d.get("product_id") and d.get("item_name"):
+            from app.models.product import Product as _Prod
+            existing = (await db.execute(
+                select(_Prod).where(_Prod.name == d["item_name"].strip()).limit(1)
+            )).scalar_one_or_none()
+            if existing:
+                d["product_id"] = existing.id
+            else:
+                new_prod = _Prod(
+                    name=d["item_name"].strip(),
+                    product_type=d.get("item_type"),
+                    price=d.get("unit_price"),
+                    org_id=get_single_org_id(current_user) or current_user.org_id,
+                )
+                db.add(new_prod)
+                await db.flush()
+                d["product_id"] = new_prod.id
+        item = PurchaseItem(purchase_id=p.id, **d)
         db.add(item)
+
+    # Save subsidy allocations
+    if data.subsidy_allocations:
+        for alloc in data.subsidy_allocations:
+            db.add(PurchaseSubsidyAllocation(
+                purchase_id=p.id,
+                subsidy_id=alloc.subsidy_id,
+                amount=alloc.amount,
+            ))
 
     await db.commit()
     await db.refresh(p)
@@ -548,12 +597,15 @@ async def update_purchase(
     data: PurchaseCreate,
     admin_override: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES))
+    current_user=Depends(get_current_user)
 ):
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Not found")
+    # Allow employee to save their own purchase
+    if current_user.role not in MANAGER_ROLES and p.created_by_id != current_user.id:
+        raise HTTPException(403, "Insufficient permissions")
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
 
@@ -580,7 +632,7 @@ async def update_purchase(
     # If contract_id or type changed, reset seq so it gets re-assigned
     old_contract_id = p.contract_id
     old_type = p.purchase_contract_type
-    for k, v in data.model_dump(exclude={"items"}, exclude_unset=True).items():
+    for k, v in data.model_dump(exclude={"items", "subsidy_allocations"}, exclude_unset=True).items():
         # Don't overwrite frozen total_nmck
         if is_contracted and k in ("total_nmck", "planned_total_price"):
             continue
@@ -594,11 +646,41 @@ async def update_purchase(
         p.framework_seq = None  # force re-assignment below
     await _assign_framework_seq(p, db, exclude_id=pid)
 
-    # Replace items
+    # Replace items (auto-link to catalog if product_id is missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
     for item_d in items_data:
-        item = PurchaseItem(purchase_id=pid, **item_d.model_dump())
+        d = item_d.model_dump()
+        if not d.get("product_id") and d.get("item_name"):
+            # Try to find existing product by exact name
+            from app.models.product import Product as _Prod
+            existing = (await db.execute(
+                select(_Prod).where(_Prod.name == d["item_name"].strip()).limit(1)
+            )).scalar_one_or_none()
+            if existing:
+                d["product_id"] = existing.id
+            else:
+                # Auto-create product in catalog
+                new_prod = _Prod(
+                    name=d["item_name"].strip(),
+                    product_type=d.get("item_type"),
+                    price=d.get("unit_price"),
+                    org_id=get_single_org_id(current_user) or current_user.org_id,
+                )
+                db.add(new_prod)
+                await db.flush()
+                d["product_id"] = new_prod.id
+        item = PurchaseItem(purchase_id=pid, **d)
         db.add(item)
+
+    # Replace subsidy allocations
+    await db.execute(delete(PurchaseSubsidyAllocation).where(PurchaseSubsidyAllocation.purchase_id == pid))
+    if data.subsidy_allocations:
+        for alloc in data.subsidy_allocations:
+            db.add(PurchaseSubsidyAllocation(
+                purchase_id=pid,
+                subsidy_id=alloc.subsidy_id,
+                amount=alloc.amount,
+            ))
 
     # Auto-create/link contract record when contract_number is set
     await ensure_contract_linked(p, db)
@@ -718,16 +800,14 @@ async def transition_status(
             f"Текущий статус согласования: {p.approval_status}"
         )
 
-    # Catalog guard: all items must be linked to product catalog (except advance reports)
+    # Catalog guard: warn but don't block (except advance reports)
+    # Previously blocked status transition — now just logs a warning
     if target_status == "confirmed" and getattr(p, 'purchase_method', None) != "advance":
         unmatched = [i for i in (p.items or []) if not i.product_id]
         if unmatched:
-            names = ", ".join(i.item_name for i in unmatched[:3])
-            suffix = "..." if len(unmatched) > 3 else ""
-            raise HTTPException(
-                422,
-                f"Не все позиции привязаны к каталогу ({len(unmatched)} шт: {names}{suffix}). "
-                f"Привяжите позиции к каталогу продуктов или используйте авансовый отчёт."
+            import logging
+            logging.getLogger(__name__).warning(
+                "Purchase %s has %d items not linked to catalog", pid, len(unmatched)
             )
 
     # Field guards for specific target statuses
@@ -790,6 +870,56 @@ async def transition_status(
             data={"from": old_status, "to": target_status},
         ))
         await db.commit()
+    except Exception:
+        pass
+
+    # Notify purchase members + linked task assignees about status change
+    try:
+        from app.notifications import notify_purchase_status_changed
+        from app.models.purchase_event import PurchaseMember
+        from app.models.task import Task, TaskAssignee
+
+        notify_user_ids: set[int] = set()
+        notify_users = []
+
+        # 1. Purchase members
+        members_r = await db.execute(
+            select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
+        )
+        for m in members_r.scalars().all():
+            if m.user_id != current_user.id:
+                notify_user_ids.add(m.user_id)
+
+        # 2. Assigned user of purchase
+        if p.assigned_user_id and p.assigned_user_id != current_user.id:
+            notify_user_ids.add(p.assigned_user_id)
+
+        # 3. All assignees of tasks linked to this purchase
+        linked_tasks_r = await db.execute(
+            select(Task.id).where(Task.purchase_id == pid)
+        )
+        linked_task_ids = [r[0] for r in linked_tasks_r.all()]
+        if linked_task_ids:
+            ta_r = await db.execute(
+                select(TaskAssignee.user_id).where(
+                    TaskAssignee.task_id.in_(linked_task_ids)
+                )
+            )
+            for r in ta_r.all():
+                if r[0] != current_user.id:
+                    notify_user_ids.add(r[0])
+
+        # Load user objects
+        for uid in notify_user_ids:
+            u = await db.get(User, uid)
+            if u:
+                notify_users.append(u)
+
+        if notify_users:
+            await notify_purchase_status_changed(
+                p, current_user.full_name or current_user.username,
+                target_status, notify_users
+            )
     except Exception:
         pass
 
@@ -864,6 +994,23 @@ async def assign_purchase(
     p.assigned_user_id = user_id
     await db.commit()
     return {"ok": True, "assigned_user_id": user_id}
+
+
+@router.get("/{pid}/tasks")
+async def list_purchase_tasks(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all tasks linked to a purchase."""
+    from app.models.task import Task
+    from app.routers.tasks import _enrich_tasks
+    from app.schemas.schemas import TaskOut
+    result = await db.execute(
+        select(Task).where(Task.purchase_id == pid).order_by(Task.created_at.desc())
+    )
+    tasks = result.scalars().all()
+    return await _enrich_tasks(list(tasks), db, current_user_id=current_user.id)
 
 
 @router.patch("/{pid}/kanban-status")
@@ -1314,7 +1461,7 @@ async def items_import_template(_=Depends(require_role(*MANAGER_ROLES))):
     ws = wb.active
     ws.title = "Позиции"
 
-    headers = ["Наименование", "Тип (товар/услуга/работа)", "Количество", "Ед. изм.", "Цена за единицу"]
+    headers = ["Наименование", "Описание / ТЗ", "Тип (товар/услуга/работа)", "Количество", "Ед. изм.", "Цена за единицу"]
     required = {"Наименование"}
 
     header_fill = PatternFill("solid", fgColor="1E40AF")
@@ -1327,11 +1474,11 @@ async def items_import_template(_=Depends(require_role(*MANAGER_ROLES))):
         cell.fill = req_fill if h in required else header_fill
         cell.alignment = Alignment(horizontal="center")
 
-    example = ["Ноутбук Lenovo ThinkPad", "товар", "5", "шт", "85000"]
+    example = ["Ноутбук Lenovo ThinkPad", "Технические характеристики...", "товар", "5", "шт", "85000"]
     for ci, val in enumerate(example, 1):
         ws.cell(row=2, column=ci, value=val)
 
-    col_widths = [45, 25, 15, 15, 20]
+    col_widths = [45, 50, 25, 15, 15, 20]
     for ci, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
 
@@ -1382,6 +1529,8 @@ async def import_items_excel(
         h_str = _norm(h)
         if any(x in h_str for x in ('наименован', 'назван', 'name', 'товар', 'предмет')):
             col.setdefault('item_name', i)
+        elif any(x in h_str for x in ('описан', 'description', 'тз', 'техническ', 'specification', 'характерист')):
+            col.setdefault('description', i)
         elif any(x in h_str for x in ('тип', 'type', 'вид')):
             col.setdefault('item_type', i)
         elif any(x in h_str for x in ('кол', 'количеств', 'qty', 'quantity')):
@@ -1443,6 +1592,7 @@ async def import_items_excel(
         if not item_name:
             continue
 
+        description = _cell(row, 'description')
         item_type_raw = (_cell(row, 'item_type') or 'товар').lower().strip()
         item_type = TYPE_MAP.get(item_type_raw, 'товар')
         quantity = _to_dec(_cell(row, 'quantity')) or Decimal('1')
@@ -1485,12 +1635,15 @@ async def import_items_smart(
     file: UploadFile = File(...),
     confirm: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(get_current_user),
 ):
     """Smart import: extract items table from PDF / DOCX / XLSX."""
     purchase = await db.get(Purchase, pid)
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")
+    # Allow employee to import to their own purchase
+    if current_user.role not in MANAGER_ROLES and purchase.created_by_id != current_user.id:
+        raise HTTPException(403, "Insufficient permissions")
 
     content = await file.read()
     filename = (file.filename or "").lower()
@@ -1629,7 +1782,7 @@ async def import_items_smart(
 
     added = matched_catalog = unmatched = 0
     for row_data in preview:
-        item_name = row_data["item_name"]
+        item_name = (row_data["item_name"] or "")[:500]
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
@@ -2025,3 +2178,166 @@ async def import_feo_format(
 
     await db.commit()
     return {"created": created, "skipped": skipped, "errors": errors_list}
+
+
+# ── Purchase comments (chat) ────────────────────────────────────────────────
+
+@router.get("/{pid}/comments")
+async def list_purchase_comments(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_comment import PurchaseComment
+    result = await db.execute(
+        select(PurchaseComment)
+        .where(PurchaseComment.purchase_id == pid)
+        .order_by(PurchaseComment.created_at.asc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/{pid}/comments")
+async def add_purchase_comment(
+    pid: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_comment import PurchaseComment
+    import re as _re
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "Комментарий не может быть пустым")
+
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    comment = PurchaseComment(
+        purchase_id=pid,
+        user_id=current_user.id,
+        user_name=current_user.full_name or current_user.username,
+        text=text,
+    )
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+
+    # Notify @mentioned users via Telegram
+    try:
+        from app.notifications import notify_user, _esc, _purchase_url
+        mentions = _re.findall(r'@(\S+)', text)
+        if mentions:
+            all_users = (await db.execute(select(User))).scalars().all()
+            clean_text = _re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', text).strip()
+            clean_text = _re.sub(r'\s{2,}', ' ', clean_text) or text
+            preview = _esc(clean_text[:150])
+            subject = _esc(p.subject or f"Закупка №{p.purchase_number}")
+            sender = _esc(current_user.full_name or current_user.username)
+            msg = (
+                f"💬 <b>Вас упомянули в закупке</b>\n\n"
+                f"📌 <b>{subject}</b>\n"
+                f"👤 <i>{sender}</i>:\n"
+                f"{preview}"
+            )
+            for u in all_users:
+                for m in mentions:
+                    if (u.username and m.lower() == u.username.lower()) or \
+                       (u.full_name and m.lower() in u.full_name.lower()):
+                        if u.id != current_user.id:
+                            await notify_user(u, msg,
+                                               button_url=_purchase_url(p.id),
+                                               button_label="Открыть закупку")
+                            break
+    except Exception:
+        pass
+
+    return comment
+
+
+@router.delete("/{pid}/comments/{comment_id}")
+async def delete_purchase_comment(
+    pid: int, comment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_comment import PurchaseComment
+    c = await db.get(PurchaseComment, comment_id)
+    if not c or c.purchase_id != pid:
+        raise HTTPException(404, "Комментарий не найден")
+    if c.user_id != current_user.id and current_user.role not in ("superadmin", "org_admin", "admin"):
+        raise HTTPException(403, "Нельзя удалить чужой комментарий")
+    await db.delete(c)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{pid}/broadcast")
+async def broadcast_from_purchase(
+    pid: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Broadcast from purchase context."""
+    from app.models.organization import Organization
+    from app.models.department import Department, DepartmentMember
+    from app.models.purchase_comment import PurchaseComment
+    from app.notifications import notify_user, _esc, _purchase_url
+
+    BROADCAST_ROLES = ("superadmin", "org_admin", "admin", "manager")
+    if current_user.role not in BROADCAST_ROLES:
+        raise HTTPException(403, "Рассылка доступна только администраторам и менеджерам")
+
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "Текст сообщения обязателен")
+
+    scope = body.get("scope", "")
+    scope_id = body.get("scope_id")
+
+    q = select(User).where(User.id != current_user.id)
+    if scope == "department" and scope_id:
+        member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))
+        q = q.where(User.id.in_(member_uids))
+    elif scope == "organization" and scope_id:
+        q = q.where(User.org_id == int(scope_id))
+    elif scope == "all":
+        org_ids = get_org_filter(current_user)
+        if org_ids is not None:
+            q = q.where(User.org_id.in_(org_ids))
+    else:
+        raise HTTPException(422, "Укажите scope")
+
+    users = (await db.execute(q)).scalars().all()
+
+    sender_name = current_user.full_name or current_user.username
+    subject = _esc(p.subject or f"Закупка №{p.purchase_number}")
+    msg = (
+        f"📢 <b>Рассылка</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"👤 <i>{_esc(sender_name)}</i>:\n"
+        f"{_esc(text)}"
+    )
+
+    sent = 0
+    for u in users:
+        if getattr(u, "telegram_id", None) or getattr(u, "max_chat_id", None):
+            await notify_user(u, msg, button_url=_purchase_url(p.id), button_label="Открыть закупку")
+            sent += 1
+
+    # Save as comment
+    scope_label = {"department": "отделу", "organization": "организации", "all": "всем"}.get(scope, scope)
+    db.add(PurchaseComment(
+        purchase_id=pid, user_id=current_user.id, user_name=sender_name,
+        text=f"[Рассылка {scope_label}] {text}",
+    ))
+    await db.commit()
+
+    return {"ok": True, "sent": sent, "total_users": len(users)}

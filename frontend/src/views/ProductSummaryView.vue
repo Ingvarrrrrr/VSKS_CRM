@@ -8,13 +8,7 @@
           {{ groups.length }} продуктов, {{ totalPurchases }} закупок
         </span>
       </div>
-      <v-btn
-        variant="outlined"
-        size="small"
-        prepend-icon="mdi-refresh"
-        :loading="loading"
-        @click="loadData"
-      >
+      <v-btn variant="outlined" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadData">
         Обновить
       </v-btn>
     </div>
@@ -24,35 +18,18 @@
       <v-card-text class="py-3">
         <div class="d-flex align-center gap-3 flex-wrap">
           <v-select
-            v-model="filterCategory"
-            :items="categoryOptions"
-            label="Категория"
-            variant="outlined"
-            density="compact"
-            clearable
-            hide-details
+            v-model="filterCategory" :items="categoryOptions" label="Категория"
+            variant="outlined" density="compact" clearable hide-details
             style="min-width: 200px; max-width: 250px"
           />
           <v-select
-            v-model="filterSubsidy"
-            :items="subsidyOptions"
-            item-title="name"
-            item-value="id"
-            label="Субсидия"
-            variant="outlined"
-            density="compact"
-            clearable
-            hide-details
+            v-model="filterSubsidy" :items="subsidyOptions" item-title="name" item-value="id"
+            label="Субсидия" variant="outlined" density="compact" clearable hide-details
             style="min-width: 200px; max-width: 250px"
           />
           <v-text-field
-            v-model="searchText"
-            prepend-inner-icon="mdi-magnify"
-            label="Поиск по названию"
-            variant="outlined"
-            density="compact"
-            clearable
-            hide-details
+            v-model="searchText" prepend-inner-icon="mdi-magnify" label="Поиск по названию"
+            variant="outlined" density="compact" clearable hide-details
             style="min-width: 200px; max-width: 300px"
           />
         </div>
@@ -68,89 +45,109 @@
     <div v-else-if="filteredGroups.length === 0" class="text-center py-10">
       <v-icon icon="mdi-package-variant-remove" size="64" class="mb-3" style="color: var(--crm-text-faint)" />
       <div class="text-body-1" style="color: var(--crm-text-muted)">
-        {{ groups.length === 0 ? 'Нет данных о закупках с привязкой к товарам' : 'Ничего не найдено по заданным фильтрам' }}
+        {{ groups.length === 0 ? 'Нет данных о закупках с привязкой к товарам' : 'Ничего не найдено' }}
       </div>
     </div>
 
-    <!-- Product groups -->
-    <div v-else class="product-groups">
-      <div
-        v-for="group in filteredGroups"
-        :key="group.product_id"
-        class="product-group mb-3"
-      >
-        <!-- Group header -->
-        <div
-          class="group-header"
-          @click="toggleGroup(group.product_id)"
-        >
-          <div class="d-flex align-center gap-2 flex-grow-1">
-            <v-icon
-              :icon="expandedGroups.has(group.product_id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-              size="20"
-              style="color: var(--crm-text-muted)"
-            />
-            <span class="group-name">{{ group.product_name }}</span>
-            <v-chip v-if="group.category" size="x-small" variant="tonal" color="primary">
-              {{ group.category }}
-            </v-chip>
-            <v-chip v-if="group.product_type" size="x-small" variant="tonal">
-              {{ group.product_type }}
-            </v-chip>
-          </div>
-          <div class="d-flex align-center gap-4">
-            <span class="group-stat">
-              <strong>{{ formatQty(group.total_quantity) }}</strong> шт
-            </span>
-            <span class="group-stat">
-              <strong>{{ formatCurrency(group.total_amount) }}</strong>
-            </span>
-            <v-chip size="x-small" variant="tonal" color="info">
-              {{ group.purchase_count }} закуп{{ pluralize(group.purchase_count) }}
-            </v-chip>
-          </div>
-        </div>
+    <!-- Table -->
+    <div v-else class="summary-wrap">
+      <table class="summary-table">
+        <!-- SINGLE thead — headers only once at the top -->
+        <thead>
+          <tr>
+            <th :style="resizeStyle('org')">
+              Организация
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'org')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('sub')">
+              Субсидия
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'sub')">&nbsp;</span>
+            </th>
+            <th class="th-num" :style="resizeStyle('qty')">
+              Кол-во
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span>
+            </th>
+            <th class="th-num" :style="resizeStyle('amt')">
+              Сумма
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'amt')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('status')">
+              Статус
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'status')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('method')">
+              Способ
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'method')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('deliv')">
+              Доставка
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'deliv')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('date')">
+              Дата закупки
+              <span class="col-resize-handle" @mousedown="onResizeStart($event, 'date')">&nbsp;</span>
+            </th>
+            <th :style="resizeStyle('addr')">
+              Адрес
+            </th>
+          </tr>
+        </thead>
 
-        <!-- Group items table -->
-        <div v-if="expandedGroups.has(group.product_id)" class="group-items">
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th>Организация</th>
-                <th>Субсидия</th>
-                <th class="text-right">Кол-во</th>
-                <th class="text-right">Сумма</th>
-                <th>Статус</th>
-                <th>Способ</th>
-                <th>Доставка</th>
-                <th>Дата закупки</th>
-                <th>Адрес</th>
-              </tr>
-            </thead>
-            <tbody>
+        <!-- SINGLE tbody with template iteration — guarantees one thead, aligned columns -->
+        <tbody>
+          <template v-for="group in filteredGroups" :key="group.product_id">
+            <!-- Group header row -->
+            <tr class="group-row" @click="toggleGroup(group.product_id)">
+              <td colspan="2" class="group-name-cell">
+                <div class="d-flex align-center gap-2">
+                  <v-icon
+                    :icon="expandedGroups.has(group.product_id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                    size="17" class="flex-shrink-0" style="color: var(--crm-text-muted)"
+                  />
+                  <span class="group-name">{{ group.product_name }}</span>
+                  <v-chip v-if="group.category" size="x-small" variant="tonal" color="primary">{{ group.category }}</v-chip>
+                  <v-chip v-if="group.product_type" size="x-small" variant="tonal">{{ group.product_type }}</v-chip>
+                </div>
+              </td>
+              <td class="td-num group-total">
+                <strong>{{ formatQty(group.total_quantity) }}</strong>
+                <span class="unit-text">&nbsp;шт</span>
+              </td>
+              <td class="td-num group-total">
+                <strong>{{ formatCurrency(group.total_amount) }}</strong>
+              </td>
+              <td>
+                <v-chip size="x-small" variant="tonal" color="info">
+                  {{ group.purchase_count }}&nbsp;закуп{{ pluralize(group.purchase_count) }}
+                </v-chip>
+              </td>
+              <td colspan="4"></td>
+            </tr>
+
+            <!-- Item rows (expanded) -->
+            <template v-if="expandedGroups.has(group.product_id)">
               <tr v-for="item in group.items" :key="item.purchase_id" class="item-row">
-                <td>{{ item.org_name || '—' }}</td>
-                <td>{{ item.subsidy_name }}</td>
-                <td class="text-right">{{ formatQty(item.quantity) }} {{ item.unit || '' }}</td>
-                <td class="text-right">{{ item.total_price ? formatCurrency(item.total_price) : '—' }}</td>
+                <td class="td-clip">{{ item.org_name || '—' }}</td>
+                <td class="td-clip">{{ item.subsidy_name }}</td>
+                <td class="td-num">
+                  {{ formatQty(item.quantity) }}
+                  <span v-if="item.unit" class="unit-text">&nbsp;{{ item.unit }}</span>
+                </td>
+                <td class="td-num">{{ item.total_price ? formatCurrency(item.total_price) : '—' }}</td>
                 <td>
-                  <v-chip
-                    :color="statusColor(item.status)"
-                    size="x-small"
-                    variant="tonal"
-                  >
+                  <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
                     {{ statusLabel(item.status) }}
                   </v-chip>
                 </td>
-                <td>{{ methodLabel(item.purchase_method) }}</td>
+                <td class="td-clip">{{ methodLabel(item.purchase_method) }}</td>
                 <td>{{ item.delivery_date || '—' }}</td>
                 <td>{{ item.procurement_planned_date || '—' }}</td>
-                <td class="text-truncate" style="max-width: 180px">{{ item.delivery_address || '—' }}</td>
+                <td class="td-clip">{{ item.delivery_address || '—' }}</td>
               </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </template>
+          </template>
+        </tbody>
+      </table>
     </div>
   </v-container>
 </template>
@@ -158,6 +155,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useResizableColumns } from '@/composables/useResizableColumns'
 
 interface SummaryItem {
   purchase_id: number
@@ -190,12 +188,15 @@ interface SubsidyOption {
   name: string
 }
 
+const { onResizeStart, resizeStyle } = useResizableColumns('product-summary', {
+  org: 220, sub: 140, qty: 90, amt: 130, status: 110, method: 110, deliv: 110, date: 110, addr: 160,
+})
+
 const loading = ref(false)
 const groups = ref<SummaryGroup[]>([])
 const subsidies = ref<SubsidyOption[]>([])
 const expandedGroups = ref(new Set<number>())
 
-// Filters
 const filterCategory = ref<string | null>(null)
 const filterSubsidy = ref<number | null>(null)
 const searchText = ref('')
@@ -215,9 +216,8 @@ const subsidyOptions = computed(() => subsidies.value)
 const filteredGroups = computed(() => {
   let result = groups.value
 
-  if (filterCategory.value) {
+  if (filterCategory.value)
     result = result.filter(g => g.category === filterCategory.value)
-  }
 
   if (filterSubsidy.value) {
     result = result
@@ -246,11 +246,8 @@ const filteredGroups = computed(() => {
 })
 
 const toggleGroup = (id: number) => {
-  if (expandedGroups.value.has(id)) {
-    expandedGroups.value.delete(id)
-  } else {
-    expandedGroups.value.add(id)
-  }
+  if (expandedGroups.value.has(id)) expandedGroups.value.delete(id)
+  else expandedGroups.value.add(id)
 }
 
 const formatCurrency = (v: number | null) => {
@@ -264,8 +261,7 @@ const formatQty = (v: number | null) => {
 }
 
 const pluralize = (n: number) => {
-  const m = n % 10
-  const m100 = n % 100
+  const m = n % 10, m100 = n % 100
   if (m100 >= 11 && m100 <= 19) return 'ок'
   if (m === 1) return 'ка'
   if (m >= 2 && m <= 4) return 'ки'
@@ -290,10 +286,7 @@ const statusLabel = (s: string | null) => {
 
 const methodLabel = (m: string | null) => {
   if (!m) return '—'
-  const map: Record<string, string> = {
-    single: 'Единственный', competitive: 'Конкурентная',
-  }
-  return map[m] || m
+  return ({ single: 'Единственный', competitive: 'Конкурентная' } as Record<string, string>)[m] || m
 }
 
 const loadData = async () => {
@@ -312,94 +305,115 @@ const loadData = async () => {
 }
 
 const loadSubsidies = async () => {
-  try {
-    subsidies.value = await apiFetch<SubsidyOption[]>('/subsidies/')
-  } catch { /* ok */ }
+  try { subsidies.value = await apiFetch<SubsidyOption[]>('/subsidies/') } catch { /* ok */ }
 }
 
 onMounted(async () => {
   await Promise.all([loadData(), loadSubsidies()])
-  // Expand first group by default
-  if (groups.value.length > 0) {
-    expandedGroups.value.add(groups.value[0].product_id)
-  }
+  if (groups.value.length > 0) expandedGroups.value.add(groups.value[0].product_id)
 })
 </script>
 
 <style scoped>
-.page-title {
-  color: var(--crm-text);
-}
-.page-subtitle {
-  color: var(--crm-text-muted);
-}
-.filter-card {
-  background: var(--crm-surface);
-  border-color: var(--crm-border);
-}
+.page-title  { color: var(--crm-text); }
+.page-subtitle { color: var(--crm-text-muted); }
+.filter-card { background: var(--crm-surface); border-color: var(--crm-border); }
 
-.product-group {
+/* Table wrapper */
+.summary-wrap {
   background: var(--crm-surface);
   border: 1px solid var(--crm-border);
   border-radius: 8px;
   overflow: hidden;
+  overflow-x: auto;
   box-shadow: 0 1px 3px var(--crm-shadow);
 }
 
-.group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.group-header:hover {
-  background: var(--crm-surface-hover);
-}
-
-.group-name {
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: var(--crm-text);
-}
-
-.group-stat {
-  font-size: 0.85rem;
-  color: var(--crm-text-secondary);
-}
-
-.group-items {
-  border-top: 1px solid var(--crm-border);
-  overflow-x: auto;
-}
-
-.items-table {
+/* Table base */
+.summary-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+  table-layout: fixed;
 }
-.items-table th {
-  padding: 8px 12px;
+
+/* Header */
+.summary-table thead th {
+  position: relative;
+  padding: 10px 12px;
   text-align: left;
   font-weight: 600;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
   color: var(--crm-text-muted);
   background: var(--crm-table-header);
-  border-bottom: 1px solid var(--crm-border-strong);
+  border-bottom: 2px solid var(--crm-border-strong);
   white-space: nowrap;
+  overflow: hidden;
 }
-.items-table td {
-  padding: 8px 12px;
+.th-num { text-align: right !important; }
+
+/* Resize handle */
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  display: block;
+}
+.col-resize-handle:hover {
+  background: rgba(var(--v-theme-primary, 25,118,210), 0.25);
+}
+
+/* Cells */
+.summary-table td {
+  padding: 7px 12px;
   color: var(--crm-text-secondary);
   border-bottom: 1px solid var(--crm-border);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.item-row:hover td {
-  background: var(--crm-surface-alt);
+.td-num  { text-align: right !important; }
+.td-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Group separator row */
+.group-row {
+  cursor: pointer;
+  background: var(--crm-table-header);
+  border-top: 2px solid var(--crm-border-strong) !important;
 }
-.item-row:last-child td {
-  border-bottom: none;
+.group-row:hover td { background: var(--crm-surface-hover); }
+.group-row td { border-bottom: 1px solid var(--crm-border-strong); }
+
+/* Product name cell — allow text wrapping */
+.group-name-cell {
+  overflow: visible !important;
+  white-space: normal !important;
 }
+.group-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--crm-text);
+}
+
+/* Group totals */
+.group-total {
+  color: var(--crm-text) !important;
+  font-size: 0.88rem;
+}
+.unit-text {
+  font-size: 0.75rem;
+  color: var(--crm-text-muted);
+  font-weight: normal;
+}
+
+/* Item rows */
+.item-row:hover td { background: var(--crm-surface-alt); }
+.item-row:last-child td { border-bottom: none; }
 </style>

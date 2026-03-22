@@ -8,7 +8,7 @@ from app.models.task_comment import TaskComment
 from app.models.user import User
 from app.schemas.schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskAssigneeOut,
-    TaskCommentCreate, TaskCommentOut,
+    TaskCommentCreate, TaskCommentOut, ReviewCompleteRequest,
 )
 from app.auth.jwt import get_current_user, get_org_filter
 from typing import List, Optional
@@ -92,6 +92,15 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
                 "at": row.created_at,
             }
 
+    # Load linked purchases for tasks that have purchase_id
+    purchase_ids = {t.purchase_id for t in tasks if t.purchase_id}
+    purchase_map: dict = {}
+    if purchase_ids:
+        from app.models.purchase import Purchase
+        pq = await db.execute(select(Purchase).where(Purchase.id.in_(purchase_ids)))
+        for p in pq.scalars().all():
+            purchase_map[p.id] = p
+
     out = []
     for t in tasks:
         lc = last_comments_map.get(t.id, {})
@@ -109,8 +118,9 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
             a.user_id == current_user_id and getattr(a, 'consent_pending', False)
             for a in task_assignees
         )
+        linked_purchase = purchase_map.get(t.purchase_id) if t.purchase_id else None
         out.append(TaskOut(
-            id=t.id, title=t.title, description=t.description,
+            id=t.id, task_number=t.task_number, title=t.title, description=t.description,
             status=t.status.value if isinstance(t.status, TaskStatus) else t.status,
             priority=t.priority.value if isinstance(t.priority, TaskPriority) else t.priority,
             due_date=t.due_date,
@@ -121,6 +131,10 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
             created_by_name=users_map.get(t.created_by_id),
             org_id=t.org_id, category=t.category,
             parent_task_id=t.parent_task_id,
+            purchase_id=t.purchase_id,
+            purchase_subject=linked_purchase.subject if linked_purchase else None,
+            purchase_number=linked_purchase.purchase_number if linked_purchase else None,
+            purchase_status=linked_purchase.status if linked_purchase else None,
             import_to_parent=t.import_to_parent,
             subtask_count=subtask_map.get(t.id, 0),
             created_at=t.created_at, updated_at=t.updated_at,
@@ -175,14 +189,96 @@ async def list_tasks(
         assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(dept_users)).scalar_subquery()
         q = q.where(Task.id.in_(assignee_tasks))
     if search:
-        q = q.where(or_(
+        search_filters = [
             Task.title.ilike(f"%{search}%"),
             Task.description.ilike(f"%{search}%"),
-        ))
+        ]
+        # Search by task_number if numeric
+        if search.isdigit():
+            search_filters.append(Task.task_number == int(search))
+        q = q.where(or_(*search_filters))
 
     q = q.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
     tasks = (await db.execute(q)).scalars().all()
     return await _enrich_tasks(tasks, db)
+
+
+@router.get("/init")
+async def tasks_init(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Single endpoint returning all data needed for MyTasksView initial load."""
+    import asyncio
+
+    # Run all queries concurrently inside the server
+    accepted_ids = select(TaskAssignee.task_id).where(
+        TaskAssignee.user_id == current_user.id,
+        TaskAssignee.consent_pending == False,  # noqa: E712
+    ).scalar_subquery()
+    pending_ids = select(TaskAssignee.task_id).where(
+        TaskAssignee.user_id == current_user.id,
+        TaskAssignee.consent_pending == True,  # noqa: E712
+    ).scalar_subquery()
+
+    q_my = select(Task).where(
+        or_(Task.id.in_(accepted_ids), Task.created_by_id == current_user.id),
+        Task.status != TaskStatus.cancelled,
+    ).order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
+
+    q_pending = select(Task).where(Task.id.in_(pending_ids)).order_by(Task.created_at.desc())
+
+    from app.models.task_decline import TaskConsentDecline
+    q_declines = select(TaskConsentDecline).where(
+        TaskConsentDecline.creator_id == current_user.id,
+        TaskConsentDecline.acknowledged == False,  # noqa: E712
+    )
+
+    q_categories = select(Task.category).where(Task.category.isnot(None)).distinct()
+    q_departments = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
+
+    # Execute all queries
+    [r_my, r_pending, r_declines, r_cats, r_depts] = await asyncio.gather(
+        db.execute(q_my),
+        db.execute(q_pending),
+        db.execute(q_declines),
+        db.execute(q_categories),
+        db.execute(q_departments),
+    )
+
+    my_tasks_rows = r_my.scalars().all()
+    pending_rows = r_pending.scalars().all()
+    declines_rows = r_declines.scalars().all()
+    categories = sorted([r[0] for r in r_cats.all()])
+    departments = sorted([r[0] for r in r_depts.all()])
+
+    # Enrich tasks
+    [my_tasks_out, pending_out] = await asyncio.gather(
+        _enrich_tasks(my_tasks_rows, db, current_user_id=current_user.id),
+        _enrich_tasks(pending_rows, db, current_user_id=current_user.id),
+    )
+
+    # Format declines
+    declines_out = []
+    for d in declines_rows:
+        task = d.task
+        decliner = d.declined_user
+        declines_out.append({
+            "id": d.id,
+            "task_id": d.task_id,
+            "task_title": task.title if task else "—",
+            "declined_by_name": (decliner.full_name or decliner.username) if decliner else "—",
+            "is_accepted": d.is_accepted,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        })
+
+    return {
+        "my_tasks": [t.model_dump() for t in my_tasks_out],
+        "pending_consent": [t.model_dump() for t in pending_out],
+        "consent_declines": declines_out,
+        "categories": categories,
+        "departments": departments,
+    }
 
 
 @router.get("/my", response_model=List[TaskOut])
@@ -201,7 +297,7 @@ async def my_tasks(
             Task.id.in_(accepted_ids),
             Task.created_by_id == current_user.id,
         ),
-        Task.status.notin_([TaskStatus.done, TaskStatus.cancelled]),
+        Task.status != TaskStatus.cancelled,
     ).order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
 
     tasks = (await db.execute(q)).scalars().all()
@@ -347,6 +443,84 @@ async def acknowledge_decline(
     return {"ok": True}
 
 
+@router.get("/badges")
+async def get_badges(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get badge counts for sidebar: new tasks, task changes, new purchases, purchase changes."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_event import PurchaseMember
+
+    # Last seen timestamps from query param or default to 24h ago
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    # New tasks assigned to me in last 24h
+    my_task_ids = select(TaskAssignee.task_id).where(
+        TaskAssignee.user_id == current_user.id,
+    ).scalar_subquery()
+    new_tasks = (await db.execute(
+        select(func.count(Task.id)).where(
+            Task.id.in_(my_task_ids),
+            Task.created_at > cutoff,
+        )
+    )).scalar() or 0
+
+    # Task status changes in last 24h (tasks I'm involved in)
+    task_changes = (await db.execute(
+        select(func.count(Task.id)).where(
+            Task.id.in_(my_task_ids),
+            Task.updated_at > cutoff,
+            Task.created_at < cutoff,  # exclude newly created
+        )
+    )).scalar() or 0
+
+    # Purchases: I'm assigned or member
+    my_member_pids = select(PurchaseMember.purchase_id).where(
+        PurchaseMember.user_id == current_user.id
+    ).scalar_subquery()
+
+    from sqlalchemy import literal_column
+    # New purchases assigned to me or where I'm member
+    new_purchases_q = select(func.count(Purchase.id)).where(
+        or_(
+            Purchase.assigned_user_id == current_user.id,
+            Purchase.id.in_(my_member_pids),
+        ),
+    )
+    # We don't have created_at on purchases, use id-based heuristic
+    # Instead, count purchases with status changes
+    # Simpler: count tasks/purchases with recent activity
+
+    new_purchases = 0  # No created_at on Purchase model
+    purchase_changes = 0
+
+    # Use purchase_events for changes
+    try:
+        from app.models.purchase_event import PurchaseEvent
+        purchase_changes = (await db.execute(
+            select(func.count(PurchaseEvent.id)).where(
+                PurchaseEvent.created_at > cutoff,
+                or_(
+                    PurchaseEvent.purchase_id.in_(
+                        select(Purchase.id).where(Purchase.assigned_user_id == current_user.id)
+                    ),
+                    PurchaseEvent.purchase_id.in_(my_member_pids),
+                ),
+            )
+        )).scalar() or 0
+    except Exception:
+        pass
+
+    return {
+        "new_tasks": new_tasks,
+        "task_changes": task_changes,
+        "new_purchases": new_purchases,
+        "purchase_changes": purchase_changes,
+    }
+
+
 @router.get("/categories", response_model=List[str])
 async def list_categories(
     db: AsyncSession = Depends(get_db),
@@ -439,8 +613,13 @@ async def create_task(
         org_id=org_id,
         category=task.category,
         parent_task_id=task.parent_task_id,
+        purchase_id=task.purchase_id,
         import_to_parent=task.import_to_parent,
     )
+    # Auto-assign task_number
+    max_num = (await db.execute(select(func.coalesce(func.max(Task.task_number), 0)))).scalar()
+    db_task.task_number = max_num + 1
+
     db.add(db_task)
     await db.flush()  # get db_task.id
 
@@ -505,7 +684,7 @@ async def update_task(
     # Assignee cannot change protected fields
     PROTECTED_FIELDS = {"title", "description", "priority", "due_date", "assignee_ids"}
     is_creator = current_user.id == db_task.created_by_id
-    if not is_creator and current_user.role not in ("superadmin", "org_admin", "admin"):
+    if not is_creator and current_user.role not in ("superadmin", "account_owner", "admin"):
         blocked = PROTECTED_FIELDS & set(update_data.keys())
         if blocked:
             raise HTTPException(403, f"Исполнитель не может изменять: {', '.join(blocked)}")
@@ -521,13 +700,24 @@ async def update_task(
     new_assignee_ids = update_data.pop("assignee_ids", None)
 
     # Assignee cannot move status backwards
-    STATUS_ORDER = {"todo": 0, "in_progress": 1, "done": 2}
-    if "status" in update_data and not is_creator and current_user.role not in ("superadmin", "org_admin", "admin"):
+    STATUS_ORDER = {"todo": 0, "in_progress": 1, "review": 2, "done": 3}
+    old_status_str = db_task.status.value if hasattr(db_task.status, 'value') else str(db_task.status)
+    if "status" in update_data and not is_creator and current_user.role not in ("superadmin", "account_owner", "admin"):
         new_status = update_data["status"]
         new_status_str = new_status.value if hasattr(new_status, 'value') else str(new_status)
-        old_status_str = db_task.status.value if hasattr(db_task.status, 'value') else str(db_task.status)
         if STATUS_ORDER.get(new_status_str, 0) < STATUS_ORDER.get(old_status_str, 0):
             raise HTTPException(403, "Исполнитель не может переводить задачу назад по статусу")
+
+    # If non-creator moves task to "done" → intercept to "review" (creator must confirm)
+    req_status = update_data.get("status")
+    req_status_str = req_status.value if hasattr(req_status, 'value') else str(req_status) if req_status else None
+    if req_status_str == "done" and not is_creator and current_user.role not in ("superadmin", "account_owner", "admin"):
+        update_data["status"] = TaskStatus.review
+        req_status_str = "review"
+
+    new_status_str = update_data.get("status")
+    if new_status_str and hasattr(new_status_str, 'value'):
+        new_status_str = new_status_str.value
 
     for key, value in update_data.items():
         setattr(db_task, key, value)
@@ -544,6 +734,76 @@ async def update_task(
 
     await db.commit()
     await db.refresh(db_task)
+
+    # Notify all assignees about status change
+    if new_status_str and new_status_str != old_status_str:
+        try:
+            from app.notifications import notify_task_status_changed
+            from sqlalchemy.orm import selectinload as _sload
+            task_r = await db.execute(
+                select(Task).options(_sload(Task.assignees).selectinload(TaskAssignee.user)).where(Task.id == task_id)
+            )
+            task_full = task_r.scalar_one_or_none()
+            if task_full:
+                await notify_task_status_changed(
+                    task_full, current_user.full_name or current_user.username,
+                    new_status_str, current_user.id,
+                )
+        except Exception:
+            pass
+        # Notify creator if task sent for review
+        if new_status_str == "review":
+            try:
+                creator = await db.get(User, db_task.created_by_id)
+                if creator and creator.id != current_user.id:
+                    from app.notifications import notify_user
+                    actor = current_user.full_name or current_user.username
+                    msg = f"✅ «{actor}» отметил задачу «{db_task.title}» как выполненную. Подтвердите или верните в работу."
+                    await notify_user(creator, msg, task_id=db_task.id)
+            except Exception:
+                pass
+
+    result = await _enrich_tasks([db_task], db)
+    return result[0]
+
+
+@router.post("/{task_id}/review-complete", response_model=TaskOut)
+async def review_complete(
+    task_id: int,
+    body: ReviewCompleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Создатель подтверждает (confirm=true→done) или отклоняет (confirm=false→in_progress) выполнение задачи."""
+    db_task = await db.get(Task, task_id)
+    if not db_task:
+        raise HTTPException(404, "Задача не найдена")
+    if db_task.created_by_id != current_user.id:
+        raise HTTPException(403, "Только создатель задачи может подтвердить выполнение")
+    if db_task.status not in (TaskStatus.review, "review"):
+        raise HTTPException(400, "Задача не находится в статусе проверки")
+
+    old_status = db_task.status.value if hasattr(db_task.status, 'value') else str(db_task.status)
+    db_task.status = TaskStatus.done if body.confirm else TaskStatus.in_progress
+    new_status = db_task.status.value
+    await db.commit()
+    await db.refresh(db_task)
+
+    # Notify assignees about the decision
+    try:
+        from app.notifications import notify_task_status_changed
+        from sqlalchemy.orm import selectinload as _sload
+        task_r = await db.execute(
+            select(Task).options(_sload(Task.assignees).selectinload(TaskAssignee.user)).where(Task.id == task_id)
+        )
+        task_full = task_r.scalar_one_or_none()
+        if task_full:
+            await notify_task_status_changed(
+                task_full, current_user.full_name or current_user.username,
+                new_status, current_user.id,
+            )
+    except Exception:
+        pass
 
     result = await _enrich_tasks([db_task], db)
     return result[0]
@@ -629,6 +889,42 @@ async def add_comment(
     db.add(comment)
     await db.commit()
     await db.refresh(comment)
+
+    # Notify: mentioned users (@username) or all assignees
+    try:
+        import re as _re
+        from app.notifications import notify_task_comment
+        from sqlalchemy.orm import selectinload as _sload
+
+        # Reload task with assignees
+        task_r = await db.execute(
+            select(Task).options(_sload(Task.assignees).selectinload(TaskAssignee.user)).where(Task.id == task_id)
+        )
+        task_full = task_r.scalar_one_or_none()
+
+        # Find @mentions (match usernames or full names)
+        mentions = _re.findall(r'@(\S+)', body.text)
+        mentioned_users = []
+        if mentions:
+            all_users_r = await db.execute(select(User))
+            all_users = all_users_r.scalars().all()
+            for u in all_users:
+                for m in mentions:
+                    if (u.username and m.lower() == u.username.lower()) or \
+                       (u.full_name and m.lower() in u.full_name.lower()):
+                        if u.id != current_user.id:
+                            mentioned_users.append(u)
+
+        if task_full:
+            await notify_task_comment(
+                task_full,
+                current_user.full_name or current_user.username,
+                body.text.strip(),
+                mentioned_users=mentioned_users if mentioned_users else None,
+            )
+    except Exception:
+        pass
+
     return comment
 
 
@@ -739,3 +1035,113 @@ async def department_report(
     }
 
     return {"departments": result, "summary": summary}
+
+
+# ── Broadcast (рассылка) ─────────────────────────────────────────────────────
+
+@router.post("/{task_id}/broadcast")
+async def broadcast_from_task(
+    task_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Send a message from task context to selected scope: department / org / all.
+    Requires admin+ role. 'all' scope requires superadmin."""
+    from app.models.organization import Organization
+    from app.models.department import Department, DepartmentMember
+    from app.notifications import notify_user, _task_url
+
+    BROADCAST_ROLES = ("superadmin", "org_admin", "admin", "manager")
+    if current_user.role not in BROADCAST_ROLES:
+        raise HTTPException(403, "Рассылка доступна только администраторам и менеджерам")
+
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Задача не найдена")
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "Текст сообщения обязателен")
+
+    scope = body.get("scope", "")  # "department", "organization", "all"
+    scope_id = body.get("scope_id")  # department_id or org_id
+
+    # Build user query
+    q = select(User).where(User.id != current_user.id)
+
+    if scope == "department" and scope_id:
+        member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))
+        q = q.where(User.id.in_(member_uids))
+    elif scope == "organization" and scope_id:
+        q = q.where(User.org_id == int(scope_id))
+    elif scope == "all":
+        # org_admin/admin — only their org tree; superadmin — everyone
+        org_ids = get_org_filter(current_user)
+        if org_ids is not None:
+            q = q.where(User.org_id.in_(org_ids))
+    else:
+        raise HTTPException(422, "Укажите scope: department, organization или all")
+
+    users = (await db.execute(q)).scalars().all()
+
+    # Build notification
+    from app.notifications import _esc
+    sender_name = current_user.full_name or current_user.username
+    msg = (
+        f"📢 <b>Рассылка</b>\n\n"
+        f"📌 <b>{_esc(task.title)}</b>\n"
+        f"👤 <i>{_esc(sender_name)}</i>:\n"
+        f"{_esc(text)}"
+    )
+
+    sent = 0
+    for u in users:
+        tg = getattr(u, "telegram_id", None)
+        mx = getattr(u, "max_chat_id", None)
+        if tg or mx:
+            await notify_user(u, msg, task_id=task.id,
+                               button_url=_task_url(task.id), button_label="Перейти к задаче")
+            sent += 1
+
+    # Also save as comment
+    from app.models.task_comment import TaskComment
+    scope_label = {"department": "отделу", "organization": "организации", "all": "всем"}.get(scope, scope)
+    db.add(TaskComment(
+        task_id=task_id,
+        user_id=current_user.id,
+        user_name=sender_name,
+        text=f"[Рассылка {scope_label}] {text}",
+    ))
+    await db.commit()
+
+    return {"ok": True, "sent": sent, "total_users": len(users)}
+
+
+@router.get("/broadcast/scopes")
+async def broadcast_scopes(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get available broadcast scopes: departments and organizations."""
+    from app.models.organization import Organization
+    from app.models.department import Department
+
+    orgs = []
+    depts = []
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is None:
+        # superadmin — all orgs
+        res = await db.execute(select(Organization).where(Organization.is_active == True))
+        orgs = [{"id": o.id, "name": o.name} for o in res.scalars().all()]
+        dept_q = select(Department)
+    else:
+        res = await db.execute(select(Organization).where(Organization.id.in_(org_ids)))
+        orgs = [{"id": o.id, "name": o.name} for o in res.scalars().all()]
+        dept_q = select(Department).where(Department.org_id.in_(org_ids))
+
+    res2 = await db.execute(dept_q.order_by(Department.name))
+    depts = [{"id": d.id, "name": d.name, "org_id": d.org_id} for d in res2.scalars().all()]
+
+    return {"organizations": orgs, "departments": depts}

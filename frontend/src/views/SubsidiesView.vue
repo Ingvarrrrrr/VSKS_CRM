@@ -69,15 +69,15 @@
             <div class="sc-mini-row">
               <div class="sc-mini">
                 <div class="sc-mini-label">Запланировано</div>
-                <div class="sc-mini-val" style="color: #F59E0B;">{{ formatCurrencyShort(s.planned) }}</div>
+                <div class="sc-mini-val" style="color:var(--color-planned)">{{ formatCurrencyShort(s.planned) }}</div>
               </div>
               <div class="sc-mini">
                 <div class="sc-mini-label">Законтрактовано</div>
-                <div class="sc-mini-val" style="color: #3B82F6;">{{ formatCurrencyShort(s.contracted || 0) }}</div>
+                <div class="sc-mini-val" style="color:var(--color-contracted)">{{ formatCurrencyShort(s.contracted || 0) }}</div>
               </div>
               <div class="sc-mini">
                 <div class="sc-mini-label">Оплачено</div>
-                <div class="sc-mini-val" style="color: #22C55E;">{{ formatCurrencyShort(s.paid) }}</div>
+                <div class="sc-mini-val" style="color:var(--color-paid)">{{ formatCurrencyShort(s.paid) }}</div>
               </div>
             </div>
 
@@ -114,17 +114,17 @@
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/orders')">
             <span class="summary-label">Запланировано</span>
-            <span class="summary-value" style="color: #F59E0B;">{{ formatCurrency(totals.planned) }}</span>
+            <span class="summary-value" style="color:var(--color-planned)">{{ formatCurrency(totals.planned) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/orders?status=contracted')">
             <span class="summary-label">Законтрактовано</span>
-            <span class="summary-value" style="color: #3B82F6;">{{ formatCurrency(totals.contracted) }}</span>
+            <span class="summary-value" style="color:var(--color-contracted)">{{ formatCurrency(totals.contracted) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/orders?status=paid')">
             <span class="summary-label">Оплачено</span>
-            <span class="summary-value" style="color: #22C55E;">{{ formatCurrency(totals.paid) }}</span>
+            <span class="summary-value" style="color:var(--color-paid)">{{ formatCurrency(totals.paid) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/dashboard')">
@@ -183,16 +183,6 @@
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
               <div class="d-flex align-center ml-auto" style="gap:8px">
-                <v-text-field
-                  v-model="feoSearch"
-                  prepend-inner-icon="mdi-magnify"
-                  placeholder="Поиск..."
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                  clearable
-                  style="max-width:200px"
-                />
                 <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportFeoToExcel">Выгрузить</v-btn>
                 <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
                 <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
@@ -233,6 +223,7 @@
                       :class="[
                         `feo-tr--l${node.level}`,
                         feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'feo-tr--over' : '',
+                        node.hasChildren && node.budget != null && directChildSum(node) > node.budget ? 'feo-tr--children-exceed' : '',
                         dragOverId === node.id ? 'feo-drop-target' : '',
                         dragNodeId === node.id ? 'feo-dragging' : '',
                       ]"
@@ -562,7 +553,7 @@
     </template>
 
     <!-- ── Add Event Dialog ── -->
-    <v-dialog v-model="showAddEventDialog" max-width="520">
+    <v-dialog v-model="showAddEventDialog" max-width="640">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-calendar-plus" color="primary" class="mr-2" />
@@ -572,7 +563,23 @@
         <v-divider />
         <v-card-text class="pa-4">
           <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field v-model="newEventRegion" label="Регион проведения" variant="outlined" density="compact" hide-details />
+          <v-row dense>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="newEventRegion" label="Регион проведения" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="newEventDateFrom" label="Дата начала" type="date" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="newEventDateTo" label="Дата окончания" type="date" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-text-field v-model="newEventOrderDecree" label="Реквизиты приказа" variant="outlined" density="compact" class="mt-3" hide-details />
+          <v-textarea v-model="newEventPlannedIndicators" label="Плановые показатели (KPI)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-textarea v-model="newEventActualIndicators" label="Фактически достигнутые показатели" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-text-field v-model="newEventMediaLink1" label="Ссылка на СМИ 1" variant="outlined" density="compact" class="mt-3" hide-details />
+          <v-text-field v-model="newEventMediaLink2" label="Ссылка на СМИ 2" variant="outlined" density="compact" class="mt-2" hide-details />
+          <v-text-field v-model="newEventMediaLink3" label="Ссылка на СМИ 3" variant="outlined" density="compact" class="mt-2" hide-details />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -1616,6 +1623,14 @@ const subsidyEvents = ref<EventItem[]>([])
 const showAddEventDialog = ref(false)
 const newEventName = ref('')
 const newEventRegion = ref('')
+const newEventDateFrom = ref('')
+const newEventDateTo = ref('')
+const newEventOrderDecree = ref('')
+const newEventPlannedIndicators = ref('')
+const newEventActualIndicators = ref('')
+const newEventMediaLink1 = ref('')
+const newEventMediaLink2 = ref('')
+const newEventMediaLink3 = ref('')
 const showEditEventDialog = ref(false)
 const savingEvent = ref(false)
 const editEventForm = ref<EventItem>({
@@ -1711,19 +1726,23 @@ const totalFeoBudget = computed(() => {
 const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
 
 // Бюджет по ФЭО:
-// - Листовой узел: всегда ручное значение
-// - Родительский: если хоть у одного ребёнка есть сумма → авто-сумма (node.budget игнорируется)
-//                 если ни у кого нет → используем node.budget (ручное)
+// Правило: budget = NULL → авто из детей; budget = значение → ручной режим (приоритет)
 function feoBudgetFor(node: FeoNode): number {
   if (!node.hasChildren) return node.budget != null ? Number(node.budget) : 0
-  const childSum = node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
-  if (childSum > 0) return childSum   // авто-режим: дети имеют суммы
-  return node.budget != null ? Number(node.budget) : 0  // ручной режим
+  // Ручной режим: если явно задан бюджет — использовать его
+  if (node.budget != null) return Number(node.budget)
+  // Авто: сумма всех детей
+  return node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
+}
+
+// Только прямые дети (для проверки превышения)
+function directChildSum(node: FeoNode): number {
+  return node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
 }
 
 function isAutoNode(node: FeoNode): boolean {
   if (!node.hasChildren) return false
-  return node.children.some(c => feoBudgetFor(c) > 0)
+  return node.budget == null
 }
 
 // Фактически запланированные расходы:
@@ -1772,7 +1791,6 @@ const feoDeleteChildrenCount = computed(() => {
 
 // ── Inline budget edit ───────────────────────────
 async function startInlineBudget(node: FeoNode) {
-  if (isAutoNode(node)) return
   inlineBudgetId.value = node.id
   inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
   await nextTick()
@@ -2338,7 +2356,7 @@ async function onTemplateFileSelected(event: Event) {
 async function downloadSubsidyTemplate(docType: string) {
   if (!templateSubsidy.value) return
   const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${docType}/download`, {
+  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${docType}/download?t=${Date.now()}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
@@ -2466,11 +2484,27 @@ async function addEvent() {
         name: newEventName.value.trim(),
         is_active: true,
         region: newEventRegion.value.trim() || null,
+        date_from: newEventDateFrom.value || null,
+        date_to: newEventDateTo.value || null,
+        order_decree: newEventOrderDecree.value.trim() || null,
+        planned_indicators: newEventPlannedIndicators.value.trim() || null,
+        actual_indicators: newEventActualIndicators.value.trim() || null,
+        media_link_1: newEventMediaLink1.value.trim() || null,
+        media_link_2: newEventMediaLink2.value.trim() || null,
+        media_link_3: newEventMediaLink3.value.trim() || null,
       }),
     })
     showAddEventDialog.value = false
     newEventName.value = ''
     newEventRegion.value = ''
+    newEventDateFrom.value = ''
+    newEventDateTo.value = ''
+    newEventOrderDecree.value = ''
+    newEventPlannedIndicators.value = ''
+    newEventActualIndicators.value = ''
+    newEventMediaLink1.value = ''
+    newEventMediaLink2.value = ''
+    newEventMediaLink3.value = ''
     await loadEvents(selectedId.value)
     snack.value = { show: true, text: 'Мероприятие добавлено', color: 'success' }
   } catch (e: any) {
@@ -2762,6 +2796,8 @@ onMounted(loadAll)
 .feo-tr--over .feo-td { background: #FEF2F2 !important; }
 .feo-tr--over:hover .feo-td { background: #FEE2E2 !important; }
 .feo-tr--over .feo-amount { color: #DC2626; font-weight: 700; }
+.feo-tr--children-exceed .feo-td { background: #FEF2F2 !important; }
+.feo-tr--children-exceed .feo-amount { color: #DC2626; font-weight: 700; }
 .feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }

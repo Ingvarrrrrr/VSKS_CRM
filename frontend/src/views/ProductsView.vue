@@ -10,6 +10,7 @@
         <v-btn variant="outlined" prepend-icon="mdi-download-outline" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-upload-outline" color="secondary" @click="importDialog.show = true">Импорт Excel</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-image-sync" color="teal" @click="openDownloadPhotosDialog">Скачать фото</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" :loading="deduplicating" @click="deduplicateProducts">Удалить дубликаты</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
       </div>
     </div>
@@ -96,6 +97,8 @@
         density="compact"
         hover
         items-per-page="25"
+        class="products-clickable"
+        @click:row="onProductRowClick"
         :items-per-page-options="[25, 50, 100, -1]"
       >
         <!-- Photo -->
@@ -217,10 +220,9 @@
 
         <!-- Actions -->
         <template #item.actions="{ item }">
-          <div class="d-flex gap-1">
-            <v-btn icon="mdi-pencil" variant="text" size="small" @click="openEdit(item)" />
+          <div class="d-flex gap-1" @click.stop>
             <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-              @click="confirmDelete(item)" />
+              @click.stop="confirmDelete(item)" />
           </div>
         </template>
 
@@ -615,6 +617,21 @@ const photoPreview  = ref<string | null>(null)
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
+const deduplicating = ref(false)
+async function deduplicateProducts() {
+  if (!confirm('Удалить дублирующиеся товары? (совпадение по Наименованию + ТЗ)')) return
+  deduplicating.value = true
+  try {
+    const result = await apiFetch<{ deleted: number; kept: number }>('/products/deduplicate', { method: 'POST' })
+    showSnack(`Удалено дублей: ${result.deleted}, оставлено: ${result.kept}`)
+    if (result.deleted > 0) await load()
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка дедупликации', 'error')
+  } finally {
+    deduplicating.value = false
+  }
+}
+
 const tzVerifying = ref<string | null>(null)
 async function verifyTz(item: Product, tzType: 'standard' | '44fz') {
   tzVerifying.value = `${item.id}_${tzType}`
@@ -741,6 +758,10 @@ function openCreate() {
   resetPhotoState()
   editingId.value = null
   dialog.value = true
+}
+
+function onProductRowClick(_: any, { item }: { item: Product }) {
+  openEdit(item)
 }
 
 function openEdit(p: Product) {
@@ -984,3 +1005,7 @@ async function doImport() {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.products-clickable :deep(tbody tr) { cursor: pointer; }
+</style>

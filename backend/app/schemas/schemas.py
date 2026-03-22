@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -92,6 +92,8 @@ class OrganizationOut(BaseModel):
     is_active: bool
     created_at: datetime
     user_count: int = 0
+    root_org_id: Optional[int] = None
+    owner_user_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):
@@ -216,12 +218,19 @@ class ContractorCreate(BaseModel):
     bik: Optional[str] = None
     correspondent_account: Optional[str] = None
     org_type: Optional[str] = None
+    manual_product_categories: Optional[List[str]] = None
 
 class ContractorOut(ContractorCreate):
     id: int
     model_config = {"from_attributes": True}
 
 # Contract
+class ContractSubsidyOut(BaseModel):
+    id: int
+    subsidy_id: int
+    subsidy_name: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
 class ContractCreate(BaseModel):
     number: str
     date: Optional[_Date] = None
@@ -236,6 +245,7 @@ class ContractCreate(BaseModel):
     end_date: Optional[date] = None
     purchase_method: Optional[str] = None
     planned_monthly: Optional[Decimal] = None
+    extra_subsidy_ids: List[int] = []
 
 class ContractOut(ContractCreate):
     id: int
@@ -246,6 +256,7 @@ class ContractOut(ContractCreate):
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
     subsidy_name: Optional[str] = None
+    extra_subsidies: List[ContractSubsidyOut] = []
     model_config = {"from_attributes": True}
 
 # PurchaseItem
@@ -281,6 +292,18 @@ class PurchaseFileOut(BaseModel):
     uploaded_by_id: Optional[int] = None
     uploaded_by_name: Optional[str] = None
     model_config = {"from_attributes": True}
+
+# SubsidyAllocation
+class SubsidyAllocationIn(BaseModel):
+    subsidy_id: int
+    amount: Optional[Decimal] = None
+
+class SubsidyAllocationOut(BaseModel):
+    id: int
+    subsidy_id: int
+    subsidy_name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    model_config = ConfigDict(from_attributes=True)
 
 # Purchase
 class PurchaseCreate(BaseModel):
@@ -340,21 +363,26 @@ class PurchaseCreate(BaseModel):
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
     third_party_involved: Optional[bool] = False
+    contract_end_date: Optional[date] = None
     service_period_type: Optional[str] = None
     service_start_date: Optional[date] = None
     service_end_date: Optional[date] = None
     description_mode: Optional[str] = "exact"
     event_id: Optional[int] = None
     approval_status: Optional[str] = None
+    approval_mode: Optional[str] = None
+    approval_sign_type: Optional[str] = None
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = False
     payment_basis_type: Optional[str] = "contract"
     items: List[PurchaseItemCreate] = []
+    subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
 class PurchaseOut(PurchaseCreate):
     id: int
     items: List[PurchaseItemOut] = []
     files: List[PurchaseFileOut] = []
+    subsidy_allocations: Optional[List[SubsidyAllocationOut]] = None
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):
@@ -500,6 +528,11 @@ class CommercialRequestCreate(BaseModel):
     recipient_ids: Optional[List[int]] = None
     free_recipients: Optional[List[FreeRecipient]] = None
 
+class CommercialRequestUpdate(BaseModel):
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+
 class CommercialRequestStatusUpdate(BaseModel):
     status: str
 
@@ -614,6 +647,7 @@ class TaskCreate(BaseModel):
     assignee_ids: List[int] = []
     category: Optional[str] = None
     parent_task_id: Optional[int] = None
+    purchase_id: Optional[int] = None
     import_to_parent: bool = False
 
 class TaskUpdate(BaseModel):
@@ -624,10 +658,15 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     assignee_ids: Optional[List[int]] = None
     category: Optional[str] = None
+    purchase_id: Optional[int] = None
     import_to_parent: Optional[bool] = None
+
+class ReviewCompleteRequest(BaseModel):
+    confirm: bool
 
 class TaskOut(BaseModel):
     id: int
+    task_number: Optional[int] = None
     title: str
     description: Optional[str] = None
     status: str
@@ -642,6 +681,10 @@ class TaskOut(BaseModel):
     org_id: Optional[int] = None
     category: Optional[str] = None
     parent_task_id: Optional[int] = None
+    purchase_id: Optional[int] = None
+    purchase_subject: Optional[str] = None
+    purchase_number: Optional[int] = None
+    purchase_status: Optional[str] = None
     import_to_parent: bool = False
     subtask_count: int = 0
     created_at: Optional[datetime] = None

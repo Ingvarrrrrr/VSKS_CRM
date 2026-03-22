@@ -16,6 +16,9 @@
       <v-btn size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
         Добавить сотрудника
       </v-btn>
+      <v-btn v-if="isSuperadmin" size="small" variant="tonal" color="deep-purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
+        Организация
+      </v-btn>
       <v-spacer />
       <div class="d-flex align-center ga-3 mr-3">
         <div class="d-flex align-center ga-1">
@@ -197,6 +200,36 @@
       </v-card>
     </v-dialog>
 
+    <!-- New org dialog (superadmin only) -->
+    <v-dialog v-model="newOrgDialog.show" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-domain" color="deep-purple" class="mr-2" />
+          Новая организация
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-text-field
+            v-model="newOrgDialog.name"
+            label="Название организации"
+            prepend-inner-icon="mdi-domain"
+            autofocus
+            class="mb-3"
+            @keydown.enter="createNewOrg"
+          />
+          <v-text-field
+            v-model="newOrgDialog.inn"
+            label="ИНН (необязательно)"
+            prepend-inner-icon="mdi-identifier"
+          />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="newOrgDialog.show = false">Отмена</v-btn>
+          <v-btn color="deep-purple" variant="flat" :disabled="!newOrgDialog.name.trim()" :loading="newOrgDialog.loading" @click="createNewOrg">Создать</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Snackbar -->
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -288,7 +321,10 @@ const helpDialog = ref(false)
 const snack = ref({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
 
+const isSuperadmin = localStorage.getItem('user_role') === 'superadmin'
+
 const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
+const newOrgDialog = ref({ show: false, name: '', inn: '', loading: false })
 const graphOrgs = ref<{ id: number; name: string }[]>([])
 const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
   show: false, deptId: null, available: [],
@@ -934,6 +970,26 @@ async function confirmAddMember() {
   }
 }
 
+// ── Create new org ─────────────────────────────────────────────────────────────
+
+async function createNewOrg() {
+  const name = newOrgDialog.value.name.trim()
+  if (!name) return
+  newOrgDialog.value.loading = true
+  try {
+    const body: any = { name }
+    if (newOrgDialog.value.inn.trim()) body.inn = newOrgDialog.value.inn.trim()
+    await apiFetch('/organizations/', { method: 'POST', body })
+    showSnack(`Организация "${name}" создана`)
+    newOrgDialog.value = { show: false, name: '', inn: '', loading: false }
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка создания организации', 'error')
+  } finally {
+    newOrgDialog.value.loading = false
+  }
+}
+
 // ── Delete dept ────────────────────────────────────────────────────────────────
 
 const deleteDeptConfirm = ref<{ show: boolean; deptId: number | null; name: string }>({ show: false, deptId: null, name: '' })
@@ -983,6 +1039,35 @@ defineExpose({ refresh: loadGraph })
 .vue-flow__node-dept { padding: 0 !important; overflow: visible !important; }
 .vue-flow__node-user { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
 .vue-flow__node-org  { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
+
+/* ── Dark mode overrides ── */
+.v-theme--dark .hierarchy-toolbar { background: var(--crm-surface) !important; border-bottom-color: var(--crm-border) !important; }
+.v-theme--dark .hierarchy-page.embedded { border-color: var(--crm-border-strong) !important; }
+
+/* Dark: dept container (VueFlow applies inline styles — override with !important) */
+.v-theme--dark .vue-flow__node-dept > div[style] {
+  background: rgba(0, 150, 130, 0.1) !important;
+  border-color: #26a69a !important;
+}
+
+/* Dark: user/org node cards */
+.v-theme--dark .hnode {
+  background: var(--crm-surface) !important;
+  border-color: var(--crm-border-strong) !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5) !important;
+}
+.v-theme--dark .hnode:hover { border-color: #42a5f5 !important; }
+
+/* Dark: text inside nodes */
+.v-theme--dark .hnode-user-name { color: var(--crm-text) !important; }
+.v-theme--dark .hnode-user-pos  { color: var(--crm-text-muted) !important; }
+.v-theme--dark .hnode-user-role { color: var(--crm-text-faint) !important; }
+
+/* Dark: VueFlow canvas & controls */
+.v-theme--dark .vue-flow__background { background-color: var(--crm-bg) !important; }
+.v-theme--dark .vue-flow__controls { background: var(--crm-surface) !important; border-color: var(--crm-border) !important; }
+.v-theme--dark .vue-flow__controls-button { background: var(--crm-surface) !important; border-color: var(--crm-border) !important; fill: var(--crm-text) !important; }
+.v-theme--dark .vue-flow__minimap { background: var(--crm-surface) !important; }
 </style>
 
 <style scoped>
@@ -995,14 +1080,14 @@ defineExpose({ refresh: loadGraph })
 .hierarchy-page.embedded {
   height: calc(100vh - 220px);
   border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.12);
+  border: 1px solid var(--crm-border-strong);
 }
 .hierarchy-toolbar {
   display: flex;
   align-items: center;
   padding: 8px 16px;
-  background: var(--v-surface-base, #fff);
-  border-bottom: 1px solid rgba(0,0,0,0.08);
+  background: var(--crm-surface);
+  border-bottom: 1px solid var(--crm-border);
   flex-shrink: 0;
   z-index: 10;
   gap: 4px;
@@ -1105,7 +1190,7 @@ defineExpose({ refresh: loadGraph })
 }
 :deep(.hnode-user-info) { flex: 1; min-width: 0; }
 :deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: normal; word-break: break-word; overflow: visible; display: flex; align-items: flex-start; flex-wrap: wrap; line-height: 1.3; }
-:deep(.hnode-user-pos) { font-size: 11px; color: #555; margin-top: 2px; white-space: normal; word-break: break-word; line-height: 1.3; }
+:deep(.hnode-user-pos) { font-size: 11px; color: var(--crm-text-muted); margin-top: 2px; white-space: normal; word-break: break-word; line-height: 1.3; }
 :deep(.hnode-user-role) { font-size: 10px; margin-top: 2px; opacity: 0.75; }
 :deep(.hnode-crown) { color: #f59e0b; font-size: 13px; margin-right: 4px; }
 

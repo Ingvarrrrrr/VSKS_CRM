@@ -225,6 +225,13 @@ const router = createRouter({
       component: CreateOrderView,
       meta: { requiresAuth: false, title: 'Авансовый отчёт', formMode: 'advance_report' }
     },
+    // Billing
+    {
+      path: '/billing',
+      name: 'billing',
+      component: () => import('../views/BillingView.vue'),
+      meta: { requiresAuth: false, title: 'Биллинг' }
+    },
     // Org settings
     {
       path: '/org-settings',

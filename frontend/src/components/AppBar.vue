@@ -230,7 +230,17 @@
         @dragend="onSidebarDragEnd"
       >
         <template v-slot:append>
-          <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
+          <div class="d-flex align-center ga-1">
+            <span v-if="item.route === '/my-tasks' && badgeNewTasks > 0"
+              class="sidebar-badge sidebar-badge--new" :title="`${badgeNewTasks} новых задач`">{{ badgeNewTasks }}</span>
+            <span v-if="item.route === '/my-tasks' && badgeTaskChanges > 0"
+              class="sidebar-badge sidebar-badge--changes" :title="`${badgeTaskChanges} изменений`">{{ badgeTaskChanges }}</span>
+            <span v-if="item.route === '/orders' && badgeNewPurchases > 0"
+              class="sidebar-badge sidebar-badge--new" :title="`${badgeNewPurchases} новых закупок`">{{ badgeNewPurchases }}</span>
+            <span v-if="item.route === '/orders' && badgePurchaseChanges > 0"
+              class="sidebar-badge sidebar-badge--changes" :title="`${badgePurchaseChanges} изменений`">{{ badgePurchaseChanges }}</span>
+            <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
+          </div>
         </template>
       </v-list-item>
     </v-list>
@@ -313,7 +323,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import GlobalSearch from './GlobalSearch.vue'
@@ -347,6 +357,23 @@ const allNavShortcuts = [
 const navShortcuts = computed(() =>
   allNavShortcuts.filter(n => n.roles.includes(userRoleRaw.value))
 )
+// ── Sidebar badges ──
+const badgeNewTasks = ref(0)
+const badgeTaskChanges = ref(0)
+const badgeNewPurchases = ref(0)
+const badgePurchaseChanges = ref(0)
+let _badgeInterval: ReturnType<typeof setInterval> | null = null
+
+async function loadBadges() {
+  try {
+    const data = await apiFetch<any>('/tasks/badges')
+    badgeNewTasks.value = data.new_tasks || 0
+    badgeTaskChanges.value = data.task_changes || 0
+    badgeNewPurchases.value = data.new_purchases || 0
+    badgePurchaseChanges.value = data.purchase_changes || 0
+  } catch {}
+}
+
 const isDark = computed(() => vuetifyTheme.global.name.value === 'dark')
 function toggleTheme() {
   const next = isDark.value ? 'light' : 'dark'
@@ -402,6 +429,7 @@ const menuItems = computed(() => {
     { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', roles: MANAGER_ROLES },
     { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', roles: ADMIN_ROLES },
     { title: 'Организации', icon: 'mdi-domain', route: '/organizations', roles: ['superadmin'] },
+    { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', roles: ['superadmin', 'org_admin'] },
     { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
     { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: MANAGER_ROLES },
     { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
@@ -690,6 +718,8 @@ onMounted(async () => {
   loadSubsidies()
   loadSignatureStatus()
   loadMyPhoto()
+  loadBadges()
+  _badgeInterval = setInterval(loadBadges, 60_000)  // refresh every 60s
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {
@@ -759,5 +789,24 @@ onMounted(async () => {
 .sidebar-drag-over {
   border-top: 2px solid rgb(var(--v-theme-primary));
   margin-top: -2px;
+}
+.sidebar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  padding: 0 5px;
+  line-height: 1;
+}
+.sidebar-badge--new {
+  background: #4CAF50;
+}
+.sidebar-badge--changes {
+  background: #FF9800;
 }
 </style>

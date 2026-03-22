@@ -25,7 +25,7 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
 async def create_user(
     data: UserCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "org_admin")),
+    current_user: User = Depends(require_role("superadmin", "account_owner")),
 ):
     # Email uniqueness check
     existing_email = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()
@@ -77,6 +77,12 @@ async def create_user(
     return user
 
 
+@router.get("/me", response_model=UserOut)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Текущий пользователь (для синхронизации role/name в localStorage)."""
+    return UserOut.model_validate(current_user)
+
+
 @router.get("/{user_id}", response_model=UserOut)
 async def get_user(
     user_id: int,
@@ -94,12 +100,12 @@ async def update_user(
     user_id: int,
     data: UserUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "org_admin", "admin")),
+    current_user: User = Depends(require_role("superadmin", "account_owner", "admin")),
 ):
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
-    if current_user.role == 'org_admin' and user.org_id != current_user.org_id:
+    if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Нет доступа")
 
     update_data = data.dict(exclude_unset=True)
@@ -318,14 +324,14 @@ async def delete_my_photo(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "org_admin")),
+    current_user: User = Depends(require_role("superadmin", "account_owner")),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
     # Org admin can only delete users from their org
-    if current_user.role == 'org_admin' and user.org_id != current_user.org_id:
+    if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Insufficient permissions")
     await db.delete(user)
     await db.commit()
@@ -388,11 +394,11 @@ async def get_position_names(
 # Excel import
 # ---------------------------------------------------------------------------
 
-VALID_ROLES = ("employee", "manager", "admin", "org_admin")
+VALID_ROLES = ("employee", "manager", "admin", "account_owner")
 
 
 @router.get("/import/template")
-async def users_import_template(_=Depends(require_role("superadmin", "org_admin"))):
+async def users_import_template(_=Depends(require_role("superadmin", "account_owner"))):
     """Download xlsx template for bulk user import."""
     try:
         from openpyxl import Workbook
@@ -426,7 +432,7 @@ async def users_import_template(_=Depends(require_role("superadmin", "org_admin"
         ws.cell(row=2, column=ci, value=val)
 
     # Role hint row
-    ws.cell(row=3, column=5, value="Допустимые роли: employee, manager, admin, org_admin")
+    ws.cell(row=3, column=5, value="Допустимые роли: employee, manager, admin, account_owner")
 
     col_widths = [35, 30, 20, 20, 20, 20]
     for ci, w in enumerate(col_widths, 1):
@@ -446,7 +452,7 @@ async def users_import_template(_=Depends(require_role("superadmin", "org_admin"
 async def import_users_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "org_admin")),
+    current_user: User = Depends(require_role("superadmin", "account_owner")),
 ):
     """Bulk import users from Excel file."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):

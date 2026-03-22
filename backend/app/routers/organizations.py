@@ -6,7 +6,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import hash_password, get_current_user, require_superadmin
+from app.auth.jwt import hash_password, get_current_user, require_superadmin, OWNER_ROLES
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
@@ -29,17 +29,17 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if existing_username:
         username = data.email  # fallback to email as username
 
-    # Create organization
+    # Create organization (root of contour — owner set after user creation)
     org = Organization(name=data.org_name, inn=data.org_inn, is_active=True)
     db.add(org)
     await db.flush()  # get org.id
 
-    # Create org_admin user
+    # Create account_owner user
     token = str(uuid.uuid4())
     user = User(
         username=username,
         password_hash=hash_password(data.password),
-        role="org_admin",
+        role="account_owner",
         full_name=data.full_name,
         email=data.email,
         is_email_confirmed=False,
@@ -47,6 +47,9 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
         org_id=org.id,
     )
     db.add(user)
+    await db.flush()  # get user.id
+    # Link org to its owner
+    org.owner_user_id = user.id
     await db.commit()
     await db.refresh(user)
 
@@ -70,6 +73,33 @@ async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
     return RedirectResponse(url="/login?verified=1")
 
 
+@router.get("/api/organizations/my", response_model=List[OrganizationOut])
+async def my_organizations(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """account_owner: список всех org своего контура с числом пользователей."""
+    if current_user.role not in OWNER_ROLES:
+        raise HTTPException(403, "Недостаточно прав")
+    if current_user.role == 'superadmin':
+        orgs = (await db.execute(select(Organization).order_by(Organization.name))).scalars().all()
+    else:
+        orgs = (await db.execute(
+            select(Organization)
+            .where(Organization.owner_user_id == current_user.id)
+            .order_by(Organization.name)
+        )).scalars().all()
+    result = []
+    for org in orgs:
+        uc = (await db.execute(select(func.count()).where(User.org_id == org.id))).scalar() or 0
+        result.append(OrganizationOut(
+            id=org.id, name=org.name, inn=org.inn,
+            is_active=org.is_active, created_at=org.created_at,
+            user_count=uc, root_org_id=org.root_org_id, owner_user_id=org.owner_user_id,
+        ))
+    return result
+
+
 @router.get("/api/organizations/me")
 async def get_my_org(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not current_user.org_id:
@@ -78,6 +108,35 @@ async def get_my_org(current_user: User = Depends(get_current_user), db: AsyncSe
     if not org:
         raise HTTPException(404, "Организация не найдена")
     return {"id": org.id, "name": org.name, "is_active": org.is_active}
+
+
+@router.post("/api/organizations/", response_model=OrganizationOut, status_code=201)
+async def create_organization(
+    data: OrganizationCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Superadmin: создать любую org. account_owner: добавить дочернюю org к своему контуру."""
+    if current_user.role not in (*OWNER_ROLES,):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(403, "Недостаточно прав")
+    if current_user.role == 'account_owner':
+        org = Organization(
+            name=data.name, inn=data.inn, is_active=True,
+            root_org_id=current_user.org_id,
+            owner_user_id=current_user.id,
+        )
+    else:
+        # superadmin — standalone org
+        org = Organization(name=data.name, inn=data.inn, is_active=True)
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+    return OrganizationOut(
+        id=org.id, name=org.name, inn=org.inn,
+        is_active=org.is_active, created_at=org.created_at, user_count=0,
+        root_org_id=org.root_org_id, owner_user_id=org.owner_user_id,
+    )
 
 
 @router.get("/api/organizations/", response_model=List[OrganizationOut])

@@ -20,6 +20,10 @@
         <v-btn value="kanban" size="small"><v-icon icon="mdi-view-column" class="mr-1" size="18"/>Канбан</v-btn>
         <v-btn value="list" size="small"><v-icon icon="mdi-format-list-bulleted" class="mr-1" size="18"/>Список</v-btn>
       </v-btn-toggle>
+      <v-btn-toggle v-if="activeTab === 'general'" v-model="taskViewMode" mandatory density="compact" color="primary" class="mr-2">
+        <v-btn value="kanban" size="small"><v-icon icon="mdi-view-column" class="mr-1" size="18"/>Канбан</v-btn>
+        <v-btn value="list" size="small"><v-icon icon="mdi-format-list-bulleted" class="mr-1" size="18"/>Список</v-btn>
+      </v-btn-toggle>
       <v-btn v-if="activeTab === 'general'" color="primary" size="small" prepend-icon="mdi-plus" @click="openNewTask">
         Новая задача
       </v-btn>
@@ -272,6 +276,16 @@
     <!-- ═══ GENERAL TASKS TAB ═══ -->
     <template v-if="activeTab === 'general'">
 
+      <!-- Link purchase banner -->
+      <v-alert v-if="linkPurchaseId" type="info" variant="tonal" closable class="mb-3"
+        @click:close="linkPurchaseId = null; $router.replace({ query: {} })">
+        <div class="d-flex align-center ga-2">
+          <v-icon>mdi-link-variant</v-icon>
+          <span>Выберите задачу для привязки к закупке <b>#{{ linkPurchaseId }}</b></span>
+          <v-btn size="small" variant="text" @click="linkPurchaseId = null; $router.replace({ query: {} })">Отмена</v-btn>
+        </div>
+      </v-alert>
+
       <div v-if="loading && generalTasks.length === 0" class="d-flex justify-center py-12">
         <v-progress-circular indeterminate color="primary" size="48" />
       </div>
@@ -281,6 +295,55 @@
         <div class="text-body-2 text-medium-emphasis mt-1">Создайте первую задачу</div>
         <v-btn color="primary" class="mt-4" prepend-icon="mdi-plus" @click="openNewTask">Новая задача</v-btn>
       </div>
+
+      <!-- LIST VIEW -->
+      <v-card v-else-if="taskViewMode === 'list'" variant="outlined">
+        <v-data-table
+          :headers="taskListHeaders"
+          :items="generalTasks"
+          density="compact"
+          hover
+          items-per-page="25"
+          :items-per-page-options="[25,50,100]"
+          @click:row="(_e: any, { item }: any) => linkPurchaseId ? doLinkPurchase(item.id) : editGeneralTask(item)"
+        >
+          <template #item.task_number="{ item }">
+            <span class="text-caption font-weight-medium">{{ item.task_number || '—' }}</span>
+          </template>
+          <template #item.priority="{ item }">
+            <v-chip :color="PRIORITY_COLOR[item.priority]||'grey'" size="x-small" variant="flat">{{ PRIORITY_LABEL[item.priority] }}</v-chip>
+          </template>
+          <template #item.status="{ item }">
+            <v-chip :color="item.status==='done'?'success':item.status==='in_progress'?'primary':item.status==='review'?'purple':'warning'" size="x-small" variant="tonal">
+              {{ {todo:'К выполнению',in_progress:'В работе',review:'На проверке',done:'Готово',cancelled:'Отменена'}[item.status]||item.status }}
+            </v-chip>
+          </template>
+          <template #item.assignees="{ item }">
+            <span class="text-caption">{{ item.assignees?.map((a:any) => a.user_name?.split(' ')[0]).join(', ') || '—' }}</span>
+          </template>
+          <template #item.due_date="{ item }">
+            <v-chip v-if="item.due_date" :color="deadlineColor(item.due_date)" size="x-small" variant="tonal">{{ formatDate(item.due_date.split('T')[0]) }}</v-chip>
+            <span v-else class="text-caption text-medium-emphasis">—</span>
+          </template>
+          <template #item.purchase_subject="{ item }">
+            <v-chip v-if="item.purchase_id" size="x-small" variant="tonal" color="deep-purple"
+              @click.stop="$router.push(`/orders/${item.purchase_id}/edit`)">
+              {{ item.purchase_subject || `#${item.purchase_number || item.purchase_id}` }}
+            </v-chip>
+          </template>
+          <template #item.actions="{ item }">
+            <v-btn v-if="linkPurchaseId" size="x-small" variant="tonal" color="deep-purple"
+              prepend-icon="mdi-link-variant" @click.stop="doLinkPurchase(item.id)">Привязать</v-btn>
+            <template v-else-if="item.status === 'review' && item.created_by_id === currentUserId">
+              <v-btn size="x-small" color="success" variant="tonal" prepend-icon="mdi-check" class="mr-1" @click.stop="confirmTaskDone(item.id)">Подтвердить</v-btn>
+              <v-btn size="x-small" color="warning" variant="tonal" prepend-icon="mdi-undo" @click.stop="rejectTaskDone(item.id)">Вернуть</v-btn>
+            </template>
+            <v-btn v-else icon="mdi-pencil" variant="text" size="small" @click.stop="editGeneralTask(item)" />
+          </template>
+        </v-data-table>
+      </v-card>
+
+      <!-- KANBAN VIEW -->
       <div v-else class="kanban-board">
         <div v-for="col in GT_COLUMNS" :key="col.status" class="kanban-column" @dragover.prevent @drop="onDropGeneral($event, col.status)">
           <div class="kanban-column-header" :style="{ borderTopColor: col.color }">
@@ -294,7 +357,7 @@
               :style="gtCardStyle(gt)"
               draggable="true"
               @dragstart="onDragStartGeneral($event, gt)"
-              @click="editGeneralTask(gt)"
+              @click="linkPurchaseId ? doLinkPurchase(gt.id) : editGeneralTask(gt)"
             >
               <div class="d-flex align-center ga-1 mb-1">
                 <v-chip :color="PRIORITY_COLOR[gt.priority] || 'grey'" size="x-small" variant="flat">{{ PRIORITY_LABEL[gt.priority] || gt.priority }}</v-chip>
@@ -310,7 +373,14 @@
                   <v-icon icon="mdi-comment-text-outline" size="10" class="mr-1" />{{ gt.comment_count }}
                 </v-chip>
               </div>
-              <div class="kanban-card-title">{{ gt.title }}</div>
+              <!-- Linked purchase -->
+              <div v-if="gt.purchase_id" class="mb-1">
+                <v-chip size="x-small" variant="tonal" color="deep-purple" prepend-icon="mdi-cart-outline"
+                  @click.stop="$router.push(`/orders/${gt.purchase_id}/edit`)">
+                  {{ gt.purchase_subject || `Закупка #${gt.purchase_number || gt.purchase_id}` }}
+                </v-chip>
+              </div>
+              <div class="kanban-card-title"><span v-if="gt.task_number" class="text-caption text-medium-emphasis mr-1">#{{ gt.task_number }}</span>{{ gt.title }}</div>
               <div v-if="gt.description" class="kanban-card-meta" style="font-size:11px;opacity:.7">{{ gt.description.length > 80 ? gt.description.slice(0,80)+'…' : gt.description }}</div>
               <!-- Last comment preview -->
               <div v-if="gt.last_comment" class="kanban-card-comment">
@@ -323,6 +393,11 @@
                   {{ gt.assignees.map((a: any) => a.user_name?.split(' ')[0] || '?').join(', ') }}
                 </span>
                 <v-chip v-if="gt.due_date" :color="deadlineColor(gt.due_date)" size="x-small" variant="tonal">{{ formatDate(gt.due_date.split('T')[0]) }}</v-chip>
+              </div>
+              <!-- Review confirmation buttons for task creator -->
+              <div v-if="gt.status === 'review' && gt.created_by_id === currentUserId" class="d-flex ga-1 mt-2" @click.stop>
+                <v-btn size="x-small" color="success" variant="tonal" prepend-icon="mdi-check" @click.stop="confirmTaskDone(gt.id)">Подтвердить</v-btn>
+                <v-btn size="x-small" color="warning" variant="tonal" prepend-icon="mdi-undo" @click.stop="rejectTaskDone(gt.id)">Вернуть</v-btn>
               </div>
             </div>
             <div v-if="generalByStatus(col.status).length === 0" class="kanban-empty">Нет задач</div>
@@ -451,6 +526,63 @@
             </template>
           </v-autocomplete>
 
+          <!-- Linked purchase -->
+          <div class="mb-2 d-flex align-center ga-1 flex-wrap">
+            <template v-if="editingTask?.purchase_id">
+              <v-chip color="deep-purple" variant="tonal" prepend-icon="mdi-cart-outline"
+                @click="$router.push(`/orders/${editingTask.purchase_id}/edit`); showTaskDialog = false">
+                {{ editingTask.purchase_subject || `Закупка #${editingTask.purchase_number || editingTask.purchase_id}` }}
+                <v-icon end size="14">mdi-open-in-new</v-icon>
+              </v-chip>
+              <v-chip v-if="editingTask.purchase_status" size="x-small" variant="tonal">
+                {{ editingTask.purchase_status }}
+              </v-chip>
+              <v-btn v-if="!isTaskReadonly" icon="mdi-link-variant-off" size="x-small" variant="text"
+                color="grey" title="Отвязать закупку" @click="unlinkPurchaseFromTask" />
+            </template>
+            <v-btn v-else-if="editingTask && !isTaskReadonly" size="small" variant="tonal" color="deep-purple"
+              prepend-icon="mdi-cart-plus" @click="showTaskDialog = false; $router.push(`/orders?link_task=${editingTask.id}`)">
+              Привязать закупку
+            </v-btn>
+          </div>
+
+          <!-- Диалог привязки закупки -->
+          <v-dialog v-model="linkPurchaseDialog" max-width="520">
+            <v-card>
+              <v-card-title class="text-subtitle-1 pt-4 px-4">
+                <v-icon class="mr-1" size="20">mdi-cart-plus</v-icon>
+                Привязать закупку
+              </v-card-title>
+              <v-card-text>
+                <v-text-field v-model="linkPurchaseSearch" label="Поиск по названию / номеру"
+                  variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable autofocus
+                  @update:model-value="searchPurchases" />
+                <div v-if="linkPurchaseSearching" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
+                <v-list v-else-if="linkPurchaseResults.length" density="compact" class="border rounded"
+                  style="max-height:300px;overflow-y:auto">
+                  <v-list-item v-for="p in linkPurchaseResults" :key="p.id" @click="linkPurchaseToTask(p.id)">
+                    <v-list-item-title class="text-body-2">
+                      {{ p.subject || p.item_name || `Закупка #${p.purchase_number || p.id}` }}
+                    </v-list-item-title>
+                    <v-list-item-subtitle class="text-caption">
+                      {{ p.status }} · {{ p.contractor_name || '' }}
+                    </v-list-item-subtitle>
+                  </v-list-item>
+                </v-list>
+                <div v-else-if="linkPurchaseSearch" class="text-caption text-medium-emphasis text-center py-4">
+                  Не найдено
+                </div>
+                <div v-else class="text-caption text-medium-emphasis text-center py-4">
+                  Введите текст для поиска
+                </div>
+              </v-card-text>
+              <v-card-actions>
+                <v-spacer />
+                <v-btn variant="text" @click="linkPurchaseDialog = false">Закрыть</v-btn>
+              </v-card-actions>
+            </v-card>
+          </v-dialog>
+
           <!-- Subtasks (delegated) -->
           <template v-if="editingTask && taskSubtasks.length">
             <v-divider class="my-2" />
@@ -496,7 +628,7 @@
               </div>
               <div v-if="taskComments.length === 0" class="text-caption text-medium-emphasis text-center pa-4">Начните обсуждение</div>
             </div>
-            <!-- Mention dropdown -->
+            <!-- Mention dropdown (from @ button or typing @) -->
             <div v-if="mentionOpen" class="mention-dropdown">
               <div v-for="u in filteredMentionUsers" :key="u.value"
                 class="mention-item" @mousedown.prevent="insertMention(u)">
@@ -508,15 +640,30 @@
               <v-textarea
                 ref="commentInput"
                 v-model="newCommentText"
-                placeholder="Напишите сообщение... (@для упоминания)"
-                variant="outlined" density="compact" rows="2" hide-details auto-grow
+                :placeholder="enterToSend ? 'Сообщение... (Enter — отправить)' : 'Сообщение... (Ctrl+Enter — отправить)'"
+                variant="outlined" density="compact" rows="5" hide-details auto-grow
                 style="flex:1"
                 @keydown="onCommentKeydown"
                 @input="onCommentInput"
               />
-              <v-btn color="primary" size="small" :disabled="!newCommentText.trim()" :loading="commentSaving" @click="addComment">
-                <v-icon icon="mdi-send" />
-              </v-btn>
+              <div class="d-flex flex-column ga-1" style="min-width:36px">
+                <v-btn color="primary" icon size="small" :disabled="!newCommentText.trim()" :loading="commentSaving" @click="addComment" title="Отправить">
+                  <v-icon icon="mdi-send" size="18" />
+                </v-btn>
+                <v-btn icon size="small" variant="tonal" color="deep-purple" @click="openMentionPicker" title="Упомянуть участника">
+                  <v-icon icon="mdi-at" size="18" />
+                </v-btn>
+                <v-btn v-if="isManagerOrAdmin" icon size="small" variant="tonal" color="orange" @click="openBroadcastDialog" title="Рассылка">
+                  <v-icon icon="mdi-bullhorn" size="18" />
+                </v-btn>
+              </div>
+            </div>
+            <div class="d-flex align-center mt-1" style="font-size:11px;color:#888;user-select:none">
+              <span style="white-space:nowrap">{{ enterToSend ? 'Enter — отправка' : 'Enter — новая строка' }}</span>
+              <v-switch v-model="enterToSend" density="compact" hide-details color="primary"
+                style="flex:0 0 auto; margin: 0 16px"
+                @update:model-value="saveSendMode" />
+              <span style="white-space:nowrap">{{ enterToSend ? 'Ctrl+Enter — новая строка' : 'Ctrl+Enter — отправка' }}</span>
             </div>
           </template>
         </v-card-text>
@@ -571,15 +718,53 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Broadcast dialog -->
+    <v-dialog v-model="broadcastDialog" max-width="480" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center gap-2 pt-4">
+          <v-icon color="orange">mdi-bullhorn</v-icon>
+          Рассылка из задачи
+        </v-card-title>
+        <v-card-text>
+          <div class="text-caption text-medium-emphasis mb-3">
+            Сообщение будет отправлено каждому сотруднику индивидуально в Telegram
+          </div>
+          <v-radio-group v-model="broadcastScope" class="mb-3">
+            <v-radio value="department" label="Отдел" />
+            <v-radio value="organization" label="Организация" />
+            <v-radio v-if="broadcastOrgs.length > 1" value="all" label="Все организации" />
+          </v-radio-group>
+          <v-select v-if="broadcastScope === 'department'" v-model="broadcastScopeId"
+            :items="broadcastDepts" item-title="name" item-value="id"
+            label="Выберите отдел" variant="outlined" density="compact" class="mb-3" />
+          <v-select v-if="broadcastScope === 'organization'" v-model="broadcastScopeId"
+            :items="broadcastOrgs" item-title="name" item-value="id"
+            label="Выберите организацию" variant="outlined" density="compact" class="mb-3" />
+          <v-textarea v-model="broadcastText" label="Текст сообщения" variant="outlined"
+            density="compact" rows="3" autofocus />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="broadcastDialog = false">Отмена</v-btn>
+          <v-btn color="orange" variant="tonal" :loading="broadcastSending"
+            :disabled="!broadcastText.trim() || (broadcastScope !== 'all' && !broadcastScopeId)"
+            @click="sendBroadcast">
+            Отправить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
 const currentUserRole = localStorage.getItem('user_role') || 'employee'
@@ -588,12 +773,41 @@ const isManagerOrAdmin = ['superadmin', 'org_admin', 'admin', 'manager'].include
 const chatContainer = ref<HTMLElement | null>(null)
 const commentInput = ref<any>(null)
 const viewMode = ref<'kanban' | 'list'>('kanban')
+const taskViewMode = ref<'kanban' | 'list'>('kanban')
 const showArchive = ref(false)
+
+// Link purchase mode (from ?link_purchase=ID)
+const linkPurchaseId = ref<number | null>(null)
+
+const taskListHeaders = [
+  { title: '№', key: 'task_number', width: 60 },
+  { title: 'Название', key: 'title', minWidth: 200 },
+  { title: 'Приоритет', key: 'priority', width: 100 },
+  { title: 'Статус', key: 'status', width: 120 },
+  { title: 'Исполнители', key: 'assignees', width: 160, sortable: false },
+  { title: 'Срок', key: 'due_date', width: 110 },
+  { title: 'Закупка', key: 'purchase_subject', width: 150, sortable: false },
+  { title: '', key: 'actions', width: 80, sortable: false },
+]
+
+async function doLinkPurchase(taskId: number) {
+  if (!linkPurchaseId.value) return
+  try {
+    await apiFetch(`/tasks/${taskId}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: linkPurchaseId.value }),
+    })
+    const pid = linkPurchaseId.value
+    linkPurchaseId.value = null
+    router.replace({ path: `/orders/${pid}/edit` })
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка привязки')
+  }
+}
 const tasks = ref<any[]>([])
 const archiveTasks = ref<any[]>([])
 const pendingApprovals = ref<any[]>([])
 
-const activeTab = ref<'purchases' | 'general' | 'report'>('purchases')
+const activeTab = ref<'purchases' | 'general' | 'report'>('general')
 const commentDialog = ref(false)
 const commentText = ref('')
 const commentTaskId = ref<number | null>(null)
@@ -656,6 +870,7 @@ const reportData = ref<any>(null)
 const GT_COLUMNS = [
   { status: 'todo', label: 'К выполнению', color: '#F59E0B' },
   { status: 'in_progress', label: 'В работе', color: '#3B82F6' },
+  { status: 'review', label: 'На проверке', color: '#8B5CF6' },
   { status: 'done', label: 'Готово', color: '#22C55E' },
 ]
 const PRIORITY_LABEL: Record<string,string> = { low:'Низкий', medium:'Средний', high:'Высокий', urgent:'Срочно' }
@@ -692,6 +907,17 @@ async function onDropGeneral(e: DragEvent, targetStatus: string) {
   const old = t.status; t.status = targetStatus
   try { await apiFetch(`/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ status: targetStatus }) }) }
   catch { t.status = old }
+}
+
+async function confirmTaskDone(taskId: number) {
+  await apiFetch(`/tasks/${taskId}/review-complete`, { method: 'POST', body: JSON.stringify({ confirm: true }) })
+  const t = generalTasks.value.find(task => task.id === taskId)
+  if (t) t.status = 'done'
+}
+async function rejectTaskDone(taskId: number) {
+  await apiFetch(`/tasks/${taskId}/review-complete`, { method: 'POST', body: JSON.stringify({ confirm: false }) })
+  const t = generalTasks.value.find(t => t.id === taskId)
+  if (t) t.status = 'in_progress'
 }
 
 function openNewTask() {
@@ -772,11 +998,15 @@ async function saveDelegate() {
   }
 }
 
+// Auto-refresh comments every 5s when dialog is open
+let _commentsPollTimer: ReturnType<typeof setInterval> | null = null
+
 function closeTaskDialog() {
   showTaskDialog.value = false
   editingTask.value = null
   taskComments.value = []
   taskSubtasks.value = []
+  if (_commentsPollTimer) { clearInterval(_commentsPollTimer); _commentsPollTimer = null }
 }
 
 async function loadComments(taskId: number) {
@@ -787,6 +1017,23 @@ async function loadComments(taskId: number) {
     scrollChatToBottom()
   } catch { taskComments.value = [] }
   finally { commentsLoading.value = false }
+
+  // Start polling for new comments
+  if (_commentsPollTimer) clearInterval(_commentsPollTimer)
+  _commentsPollTimer = setInterval(async () => {
+    if (!showTaskDialog.value || !editingTask.value) {
+      if (_commentsPollTimer) { clearInterval(_commentsPollTimer); _commentsPollTimer = null }
+      return
+    }
+    try {
+      const fresh = await apiFetch<any[]>(`/tasks/${taskId}/comments`)
+      if (fresh.length !== taskComments.value.length) {
+        taskComments.value = fresh
+        await nextTick()
+        scrollChatToBottom()
+      }
+    } catch { /* ignore */ }
+  }, 5000)
 }
 
 async function addComment() {
@@ -820,13 +1067,49 @@ function scrollChatToBottom() {
 // ── @ Mentions ──
 const mentionOpen = ref(false)
 const mentionQuery = ref('')
+const mentionFromButton = ref(false)  // true when opened via @ button
+const enterToSend = ref(localStorage.getItem('chat_enter_to_send') !== 'false')  // default: true
+
+function saveSendMode() {
+  localStorage.setItem('chat_enter_to_send', String(enterToSend.value))
+}
+
+const mentionableUsers = computed(() => {
+  // Users in current task (assignees + creator)
+  if (!editingTask.value) return userItems.value
+  const taskUsers = new Set<number>()
+  if (editingTask.value.assignees) {
+    for (const a of editingTask.value.assignees) taskUsers.add(a.user_id)
+  }
+  if (editingTask.value.created_by_id) taskUsers.add(editingTask.value.created_by_id)
+  // Show task participants first, then others
+  const inTask = userItems.value.filter(u => taskUsers.has(u.value))
+  const others = userItems.value.filter(u => !taskUsers.has(u.value))
+  return [...inTask, ...others]
+})
 
 const filteredMentionUsers = computed(() => {
   const q = mentionQuery.value.toLowerCase()
-  return userItems.value.filter(u => u.text.toLowerCase().includes(q)).slice(0, 6)
+  if (mentionFromButton.value && !q) {
+    // Show task participants when opened via button
+    return mentionableUsers.value.slice(0, 8)
+  }
+  return mentionableUsers.value.filter(u => u.text.toLowerCase().includes(q)).slice(0, 6)
 })
 
+function openMentionPicker() {
+  mentionFromButton.value = true
+  mentionQuery.value = ''
+  // Add @ to text if not already there
+  const text = newCommentText.value
+  if (!text.endsWith('@')) {
+    newCommentText.value = text + (text && !text.endsWith(' ') ? ' @' : '@')
+  }
+  mentionOpen.value = true
+}
+
 function onCommentInput() {
+  mentionFromButton.value = false
   const text = newCommentText.value
   // Find if cursor is after a @ trigger
   const atIdx = text.lastIndexOf('@')
@@ -857,10 +1140,33 @@ function onCommentKeydown(e: KeyboardEvent) {
       }
     }
   }
-  // Ctrl+Enter to send
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault()
-    addComment()
+
+  if (e.key === 'Enter') {
+    const ctrlOrMeta = e.ctrlKey || e.metaKey
+    if (enterToSend.value) {
+      // Enter = send, Ctrl+Enter = newline
+      if (ctrlOrMeta) {
+        // Insert newline manually
+        e.preventDefault()
+        const ta = (commentInput.value as any)?.$el?.querySelector('textarea')
+        if (ta) {
+          const start = ta.selectionStart
+          newCommentText.value = newCommentText.value.slice(0, start) + '\n' + newCommentText.value.slice(ta.selectionEnd)
+          nextTick(() => { ta.selectionStart = ta.selectionEnd = start + 1 })
+        }
+        return
+      }
+      if (!e.shiftKey) {
+        e.preventDefault()
+        addComment()
+      }
+    } else {
+      // Ctrl+Enter = send, Enter = newline (default textarea behavior)
+      if (ctrlOrMeta) {
+        e.preventDefault()
+        addComment()
+      }
+    }
   }
 }
 
@@ -871,6 +1177,112 @@ function insertMention(user: { text: string; value: number }) {
     newCommentText.value = text.slice(0, atIdx) + `@${user.text} `
   }
   mentionOpen.value = false
+  mentionFromButton.value = false
+  // Focus back on input
+  nextTick(() => {
+    const el = (commentInput.value as any)?.$el?.querySelector('textarea')
+    if (el) el.focus()
+  })
+}
+
+// ── Link purchase to task ──
+const linkPurchaseDialog = ref(false)
+const linkPurchaseSearch = ref('')
+const linkPurchaseResults = ref<any[]>([])
+const linkPurchaseSearching = ref(false)
+let _purchaseSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+function openLinkPurchase() {
+  linkPurchaseSearch.value = ''
+  linkPurchaseResults.value = []
+  linkPurchaseDialog.value = true
+}
+
+function searchPurchases(q: string | null) {
+  if (_purchaseSearchTimer) clearTimeout(_purchaseSearchTimer)
+  if (!q || q.length < 2) { linkPurchaseResults.value = []; return }
+  _purchaseSearchTimer = setTimeout(async () => {
+    linkPurchaseSearching.value = true
+    try {
+      linkPurchaseResults.value = await apiFetch<any[]>(`/purchases/?search=${encodeURIComponent(q)}&limit=20`)
+    } catch { linkPurchaseResults.value = [] }
+    finally { linkPurchaseSearching.value = false }
+  }, 300)
+}
+
+async function linkPurchaseToTask(purchaseId: number) {
+  if (!editingTask.value) return
+  try {
+    const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: purchaseId }),
+    })
+    editingTask.value = { ...editingTask.value, ...updated }
+    const idx = generalTasks.value.findIndex(t => t.id === editingTask.value.id)
+    if (idx >= 0) generalTasks.value[idx] = editingTask.value
+    linkPurchaseDialog.value = false
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка привязки')
+  }
+}
+
+async function unlinkPurchaseFromTask() {
+  if (!editingTask.value) return
+  try {
+    const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: null }),
+    })
+    editingTask.value = { ...editingTask.value, ...updated, purchase_id: null, purchase_subject: null, purchase_number: null, purchase_status: null }
+    const idx = generalTasks.value.findIndex(t => t.id === editingTask.value.id)
+    if (idx >= 0) generalTasks.value[idx] = editingTask.value
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка')
+  }
+}
+
+// ── Broadcast ──
+const broadcastDialog = ref(false)
+const broadcastScope = ref<'department' | 'organization' | 'all'>('organization')
+const broadcastScopeId = ref<number | null>(null)
+const broadcastText = ref('')
+const broadcastSending = ref(false)
+const broadcastOrgs = ref<{ id: number; name: string }[]>([])
+const broadcastDepts = ref<{ id: number; name: string }[]>([])
+
+async function openBroadcastDialog() {
+  broadcastText.value = newCommentText.value || ''
+  broadcastScopeId.value = null
+  broadcastDialog.value = true
+  // Load scopes
+  try {
+    const data = await apiFetch<any>('/tasks/broadcast/scopes')
+    broadcastOrgs.value = data.organizations || []
+    broadcastDepts.value = data.departments || []
+    // Auto-select first org if only one
+    if (broadcastOrgs.value.length === 1) broadcastScopeId.value = broadcastOrgs.value[0].id
+  } catch {}
+}
+
+async function sendBroadcast() {
+  if (!editingTask.value || !broadcastText.value.trim()) return
+  broadcastSending.value = true
+  try {
+    const res = await apiFetch<any>(`/tasks/${editingTask.value.id}/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify({
+        text: broadcastText.value.trim(),
+        scope: broadcastScope.value,
+        scope_id: broadcastScope.value !== 'all' ? broadcastScopeId.value : undefined,
+      }),
+    })
+    broadcastDialog.value = false
+    newCommentText.value = ''
+    alert(`Отправлено: ${res.sent} из ${res.total_users} сотрудников`)
+    await loadComments(editingTask.value.id)
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка рассылки')
+  } finally {
+    broadcastSending.value = false
+  }
 }
 
 function renderMentions(text: string): string {
@@ -1066,41 +1478,37 @@ async function saveComment() {
 async function load() {
   loading.value = true
   try {
-    const [active, archived] = await Promise.all([
-      apiFetch<any[]>('/purchases/my-tasks'),
-      apiFetch<any[]>('/purchases/my-tasks?include_archive=true'),
+    await Promise.all([
+      // 1. All task data in ONE request (my + pending + declines + categories + departments)
+      apiFetch<any>('/tasks/init').then(data => {
+        generalTasks.value = data.my_tasks || []
+        pendingConsentTasks.value = data.pending_consent || []
+        consentDeclines.value = data.consent_declines || []
+        taskCategories.value = data.categories || []
+        departments.value = data.departments || []
+      }).catch(() => { generalTasks.value = [] }),
+      // 2. Purchases active
+      apiFetch<any[]>('/purchases/my-tasks')
+        .then(active => { tasks.value = active.filter(t => t.status !== 'paid') })
+        .catch(e => console.error('Load purchases error:', e)),
+      // 3. Purchases archive
+      apiFetch<any[]>('/purchases/my-tasks?include_archive=true')
+        .then(archived => { archiveTasks.value = archived.filter(t => t.status === 'paid') })
+        .catch(() => {}),
+      // 4. Approvals
+      apiFetch<any[]>('/approvals/my-pending')
+        .then(r => { pendingApprovals.value = r })
+        .catch(() => { pendingApprovals.value = [] }),
     ])
-    tasks.value = active.filter(t => t.status !== 'paid')
-    archiveTasks.value = archived.filter(t => t.status === 'paid')
-  } catch (e) { console.error('Load tasks error:', e) }
+  } catch (e) { console.error('Load error:', e) }
   finally { loading.value = false }
-  // Load pending approvals
-  try { pendingApprovals.value = await apiFetch<any[]>('/approvals/my-pending') }
-  catch { pendingApprovals.value = [] }
-  // Load general tasks
-  try {
-    const [myTasks, pending, declines] = await Promise.all([
-      apiFetch<any[]>('/tasks/my'),
-      apiFetch<any[]>('/tasks/pending-consent').catch(() => []),
-      apiFetch<any[]>('/tasks/consent-declines').catch(() => []),
-    ])
-    generalTasks.value = myTasks
-    pendingConsentTasks.value = pending
-    consentDeclines.value = declines
-    taskCategories.value = await apiFetch<string[]>('/tasks/categories')
-  } catch { generalTasks.value = [] }
-  // Load users for assignment + subordinate IDs for consent hint
-  try {
-    const [users, subs] = await Promise.all([
-      apiFetch<any[]>('/users/'),
-      apiFetch<any[]>(`/users/${currentUserId}/subordinates`).catch(() => [] as any[]),
-    ])
+  // Load users lazily after paint (needed only for task create/edit dialog)
+  apiFetch<any[]>('/users/').then(users => {
     userItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
+  }).catch(() => {})
+  apiFetch<any[]>(`/users/${currentUserId}/subordinates`).then(subs => {
     subordinateIds.value = new Set((subs as any[]).map((u: any) => u.id))
-  } catch { userItems.value = [] }
-  // Load departments
-  try { departments.value = await apiFetch<string[]>('/tasks/departments') }
-  catch { departments.value = [] }
+  }).catch(() => {})
 }
 
 // ── Real-time polling: refresh tasks every 30 seconds ──
@@ -1118,12 +1526,43 @@ async function pollTasks() {
 }
 
 let _pollInterval: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
   _pollInterval = setInterval(pollTasks, 30_000)
+
+  // Link purchase mode: ?link_purchase=ID
+  if (route.query.link_purchase) {
+    linkPurchaseId.value = Number(route.query.link_purchase)
+    activeTab.value = 'general'
+    taskViewMode.value = 'list'
+  }
+
+  // Deep link: ?task={id} — open specific task
+  const taskIdParam = route.query.task
+  if (taskIdParam) {
+    const taskId = Number(taskIdParam)
+    if (taskId) {
+      activeTab.value = 'general'
+      await nextTick()
+      // Try to find in loaded tasks
+      let found = generalTasks.value.find((t: any) => t.id === taskId)
+      if (!found) {
+        // Load individually
+        try {
+          found = await apiFetch<any>(`/tasks/${taskId}`)
+        } catch {}
+      }
+      if (found) {
+        editGeneralTask(found)
+      }
+      // Clean up URL
+      router.replace({ query: {} })
+    }
+  }
 })
 onUnmounted(() => {
   if (_pollInterval) clearInterval(_pollInterval)
+  if (_commentsPollTimer) clearInterval(_commentsPollTimer)
 })
 </script>
 
@@ -1337,5 +1776,25 @@ onUnmounted(() => {
 .chat-msg--mine :deep(.chat-mention) {
   color: white;
   background: rgba(255,255,255,0.25);
+}
+.send-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #aaa;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+.send-mode-toggle span.active {
+  color: #1976d2;
+  font-weight: 500;
+}
+.send-mode-toggle .sep {
+  color: #ddd;
+}
+.send-mode-toggle:hover {
+  color: #666;
 }
 </style>

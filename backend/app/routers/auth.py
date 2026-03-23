@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -30,13 +30,23 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_email_confirmed:
         raise HTTPException(status_code=403, detail="Подтвердите email перед входом")
     org_name = None
+    jwt_payload: dict = {"sub": user.username, "role": user.role, "org_id": user.org_id}
     if user.org_id:
         org = await db.get(Organization, user.org_id)
         if org:
-            if not org.is_active:
+            if not org.is_active and user.role not in ('superadmin', 'account_owner'):
                 raise HTTPException(status_code=403, detail="Подписка организации неактивна")
             org_name = org.name
-    token = create_access_token({"sub": user.username, "role": user.role, "org_id": user.org_id})
+    # account_owner: include all contour org_ids in JWT so get_org_filter works without DB
+    if user.role == 'account_owner':
+        contour_result = await db.execute(
+            select(Organization.id).where(Organization.owner_user_id == user.id)
+        )
+        contour_ids = [r[0] for r in contour_result.all()]
+        if user.org_id and user.org_id not in contour_ids:
+            contour_ids.insert(0, user.org_id)
+        jwt_payload["org_ids"] = contour_ids
+    token = create_access_token(jwt_payload)
     return Token(access_token=token, role=user.role, full_name=user.full_name,
                  org_id=user.org_id, org_name=org_name, user_id=user.id)
 
@@ -101,6 +111,12 @@ async def my_orgs(
         result = await db.execute(q)
         return [{"id": o.id, "name": o.name, "is_active": o.is_active} for o in result.scalars().all()]
 
+    if user.role == 'account_owner':
+        # All orgs in contour (where owner_user_id = me)
+        q = select(Organization).where(Organization.owner_user_id == user.id).order_by(Organization.name)
+        result = await db.execute(q)
+        return [{"id": o.id, "name": o.name, "is_active": o.is_active} for o in result.scalars().all()]
+
     result = await db.execute(
         select(Organization)
         .join(UserOrgAccess, UserOrgAccess.org_id == Organization.id)
@@ -134,7 +150,17 @@ async def switch_org(
     from app.models.user_org_access import UserOrgAccess
     target_org_id = req.org_id
 
-    if user.role != 'superadmin':
+    if user.role == 'account_owner':
+        # Can switch to any org in their contour
+        allowed = await db.execute(
+            select(Organization.id).where(
+                Organization.owner_user_id == user.id,
+                Organization.id == target_org_id,
+            )
+        )
+        if not allowed.scalar_one_or_none():
+            raise HTTPException(403, "Нет доступа к этой организации")
+    elif user.role != 'superadmin':
         access = await db.execute(
             select(UserOrgAccess)
             .where(UserOrgAccess.user_id == user.id, UserOrgAccess.org_id == target_org_id)

@@ -54,7 +54,14 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const theme = useTheme()
+const isDark = computed(() => theme.global.name.value === 'dark')
+const chartText  = computed(() => isDark.value ? '#E2E8F0' : '#374151')
+const chartMuted = computed(() => isDark.value ? '#94A3B8' : '#6B7280')
+const chartGrid  = computed(() => isDark.value ? 'rgba(255,255,255,0.08)' : '#E2E8F0')
 
 interface ChartItem {
   id: number
@@ -188,7 +195,8 @@ function goBack() {
 }
 
 // ── Chart config ────────────────────────────────────────────────────────────
-const SERIES_COLORS = ['#CBD5E1', '#F59E0B', '#3B82F6', '#22C55E']
+// Бюджет=фиолетовый, НМЦК=индиго, Законтрактовано=оранжевый, Оплачено=зелёный
+const SERIES_COLORS = ['#8B5CF6', '#6366F1', '#F59E0B', '#22C55E']
 
 const chartSeries = computed(() => {
   const items = chartItems.value
@@ -209,6 +217,7 @@ const chartOptions = computed(() => ({
     background: 'transparent',
     toolbar: { show: false },
     animations: { speed: 350 },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
     events: { click: handleBarClick },
     selection: { enabled: false },
   },
@@ -224,7 +233,7 @@ const chartOptions = computed(() => ({
   },
   dataLabels: {
     enabled: true,
-    style: { fontSize: '10px', colors: ['#374151'] },
+    style: { fontSize: '10px', colors: [chartText.value] },
     formatter: (v: number) => v > 0 ? fmtShort(v) : '',
     offsetX: 6,
   },
@@ -232,15 +241,15 @@ const chartOptions = computed(() => ({
     categories: chartItems.value.map(i => truncate(i.name, 40)),
     labels: {
       formatter: (v: number) => fmtShort(v),
-      style: { fontSize: '11px', colors: '#6B7280' },
+      style: { fontSize: '11px', colors: chartMuted.value },
     },
   },
   yaxis: {
-    labels: { style: { fontSize: '12px', colors: '#374151' } },
+    labels: { style: { fontSize: '12px', colors: chartText.value } },
   },
-  legend: { show: true, position: 'top', fontSize: '12px', labels: { colors: '#374151' } },
-  grid:   { borderColor: '#E2E8F0' },
-  tooltip: { y: { formatter: (v: number) => v.toLocaleString('ru-RU') + ' ₽' } },
+  legend: { show: true, position: 'top', fontSize: '12px', labels: { colors: chartText.value } },
+  grid:   { borderColor: chartGrid.value },
+  tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => v.toLocaleString('ru-RU') + ' ₽' } },
   states: {
     active: { filter: { type: 'darken', value: 0.8 } },
     hover:  { filter: { type: 'lighten', value: 0.1 } },
@@ -256,12 +265,12 @@ const summaryCards = computed(() => {
   const tPaid       = items.reduce((s, i) => s + i.paid,       0)
   const cards: any[] = []
   if (tBudget > 0) {
-    cards.push({ key: 'budget',     label: 'Бюджет',          value: tBudget,     color: '#64748B' })
+    cards.push({ key: 'budget',     label: 'Бюджет',          value: tBudget,     color: '#8B5CF6' })
   }
   cards.push(
-    { key: 'planned',    label: 'НМЦК',           value: tPlanned,    color: '#D97706' },
-    { key: 'contracted', label: 'Законтрактовано', value: tContracted, color: '#2563EB' },
-    { key: 'paid',       label: 'Оплачено',        value: tPaid,       color: '#16A34A' },
+    { key: 'planned',    label: 'НМЦК',           value: tPlanned,    color: '#6366F1' },
+    { key: 'contracted', label: 'Законтрактовано', value: tContracted, color: '#F59E0B' },
+    { key: 'paid',       label: 'Оплачено',        value: tPaid,       color: '#22C55E' },
   )
   return cards
 })

@@ -120,7 +120,7 @@
               Контрагенты не найдены
             </td>
           </tr>
-          <tr v-for="c in filtered" :key="c.id" class="contractor-row" :class="{ 'contractor-row--selected': selectedIds.has(c.id) }">
+          <tr v-for="c in filtered" :key="c.id" class="contractor-row" :class="{ 'contractor-row--selected': selectedIds.has(c.id) }" style="cursor:pointer" @click="openEdit(c)">
             <td>
               <v-checkbox
                 :model-value="selectedIds.has(c.id)"
@@ -141,27 +141,35 @@
             <td>
               <template v-if="c.product_categories.length > 0">
                 <v-chip
-                  v-for="cat in c.product_categories.slice(0, 2)"
-                  :key="cat"
+                  v-if="c.product_categories.includes('Все')"
                   size="x-small"
-                  color="teal"
+                  color="blue"
                   variant="tonal"
                   class="mr-1 mb-1"
-                >{{ cat }}</v-chip>
-                <v-chip
-                  v-if="c.product_categories.length > 2"
-                  size="x-small"
-                  color="grey"
-                  variant="tonal"
-                  class="cursor-pointer"
-                  @click="openCategoriesDialog(c)"
-                >+{{ c.product_categories.length - 2 }}</v-chip>
+                >Все категории</v-chip>
+                <template v-else>
+                  <v-chip
+                    v-for="cat in c.product_categories.slice(0, 2)"
+                    :key="cat"
+                    size="x-small"
+                    color="teal"
+                    variant="tonal"
+                    class="mr-1 mb-1"
+                  >{{ cat }}</v-chip>
+                  <v-chip
+                    v-if="c.product_categories.length > 2"
+                    size="x-small"
+                    color="grey"
+                    variant="tonal"
+                    class="cursor-pointer"
+                    @click="openCategoriesDialog(c)"
+                  >+{{ c.product_categories.length - 2 }}</v-chip>
+                </template>
               </template>
               <span v-else class="text-medium-emphasis text-caption">—</span>
             </td>
-            <td class="text-right">
-              <v-btn icon="mdi-pencil" variant="text" size="small" class="mr-1" @click="openEdit(c)" />
-              <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDelete(c)" />
+            <td class="text-right" @click.stop>
+              <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDelete(c)" />
             </td>
           </tr>
         </tbody>
@@ -266,6 +274,31 @@
               </v-col>
             </v-row>
             <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+
+            <div class="section-label mt-4">Категории товаров</div>
+            <v-combobox
+              v-model="form.manual_product_categories"
+              :items="categoryOptions"
+              label="Категории товаров / услуг"
+              variant="outlined"
+              density="compact"
+              multiple
+              chips
+              closable-chips
+              clearable
+              hide-details
+              hint="Введите категорию и нажмите Enter. Выберите «Все» для всех категорий."
+              persistent-hint
+              :disabled="form.manual_product_categories?.includes('Все')"
+            />
+            <v-checkbox
+              v-model="allCategoriesToggle"
+              label="Все категории"
+              density="compact"
+              hide-details
+              color="teal"
+              class="mt-1"
+            />
           </v-form>
         </v-card-text>
         <v-divider />
@@ -414,6 +447,8 @@ interface ContractorWithStats {
   bik?: string
   correspondent_account?: string
   product_categories: string[]
+  manual_product_categories?: string[]
+  org_type?: string
 }
 
 const contractors = ref<ContractorWithStats[]>([])
@@ -445,13 +480,43 @@ const emptyForm = () => ({
   signatory: '', signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
   org_type: '' as string | null,
+  manual_product_categories: [] as string[],
 })
 const form = ref(emptyForm())
 
 const allProductCategories = computed(() => {
   const cats = new Set<string>()
-  contractors.value.forEach(c => c.product_categories.forEach(p => cats.add(p)))
+  contractors.value.forEach(c => c.product_categories.forEach(p => { if (p !== 'Все') cats.add(p) }))
   return [...cats].sort()
+})
+
+// All known categories (from products + manual) — loaded from backend
+const allKnownCategories = ref<string[]>([])
+
+async function loadCategories() {
+  try {
+    allKnownCategories.value = await apiFetch<string[]>('/contractors/product-categories')
+  } catch { /* ignore */ }
+}
+
+// Options for category combobox: backend list + any currently in form (user-typed new ones)
+const categoryOptions = computed(() => {
+  const set = new Set(allKnownCategories.value)
+  // Add categories from loaded contractors too
+  contractors.value.forEach(c => c.product_categories.forEach(p => { if (p !== 'Все') set.add(p) }))
+  return [...set].sort()
+})
+
+// "All categories" toggle
+const allCategoriesToggle = computed({
+  get: () => form.value.manual_product_categories?.includes('Все') ?? false,
+  set: (val: boolean) => {
+    if (val) {
+      form.value.manual_product_categories = ['Все']
+    } else {
+      form.value.manual_product_categories = []
+    }
+  },
 })
 
 const filtered = computed(() => {
@@ -460,7 +525,7 @@ const filtered = computed(() => {
   if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.inn || '').includes(q))
   if (filterCategory.value) {
     const cat = filterCategory.value
-    list = list.filter(c => c.product_categories.includes(cat))
+    list = list.filter(c => c.product_categories.includes('Все') || c.product_categories.includes(cat))
   }
   return list
 })
@@ -515,8 +580,15 @@ function openEdit(c: ContractorWithStats) {
     bank_name:            c.bank_name            || '',
     bik:                  c.bik                  || '',
     correspondent_account: c.correspondent_account || '',
+    manual_product_categories: mergeCategories(c.manual_product_categories || [], c.product_categories || []),
   }
   dialog.value = true
+}
+
+/** Merge manual + auto categories, deduplicate */
+function mergeCategories(manual: string[], auto: string[]): string[] {
+  if (manual.includes('Все')) return ['Все']
+  return [...new Set([...manual, ...auto])]
 }
 
 async function save() {
@@ -539,6 +611,7 @@ async function save() {
     }
     dialog.value = false
     await loadContractors()
+    loadCategories()
   } catch (e: any) {
     showSnack(e.message || 'Ошибка сохранения', 'error')
   } finally {
@@ -664,7 +737,7 @@ function showSnack(text: string, color = 'success') {
   snack.value = { show: true, text, color }
 }
 
-onMounted(loadContractors)
+onMounted(() => { loadContractors(); loadCategories() })
 </script>
 
 <style scoped>

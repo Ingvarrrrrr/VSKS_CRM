@@ -21,3 +21,4 @@ class Contract(Base):
     contractor = relationship("Contractor")
     subsidy = relationship("Subsidy")
     purchases = relationship("Purchase", back_populates="contract")
+    extra_subsidies = relationship("ContractSubsidy", cascade="all, delete-orphan", lazy="selectin")

@@ -61,7 +61,7 @@ async def create_user(
         department=norm_dept,
         position=data.position,
         phone=data.phone,
-        telegram_id=data.telegram_id,
+        telegram_id=__import__('re').sub(r'[^0-9]', '', str(data.telegram_id)) if data.telegram_id else None,
         email=data.email,
         avatar=data.avatar,
         is_email_confirmed=True,
@@ -117,6 +117,11 @@ async def update_user(
     # Normalize department name to Title Case
     if "department" in update_data and update_data["department"]:
         update_data["department"] = update_data["department"].strip().title()
+
+    # Strip non-digits from telegram_id
+    import re as _re
+    if "telegram_id" in update_data and update_data["telegram_id"]:
+        update_data["telegram_id"] = _re.sub(r'[^0-9]', '', str(update_data["telegram_id"]))
 
     for k, v in update_data.items():
         setattr(user, k, v)

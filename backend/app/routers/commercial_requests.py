@@ -16,6 +16,7 @@ from app.models.contractor import Contractor
 from app.models.purchase import Purchase
 from app.schemas.schemas import (
     CommercialRequestCreate,
+    CommercialRequestUpdate,
     CommercialRequestOut,
     CommercialRequestRecipientOut,
     CommercialRequestStatusUpdate,
@@ -98,6 +99,29 @@ async def list_commercial_requests(
         q = q.join(Purchase, CommercialRequest.purchase_id == Purchase.id).join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     rows = (await db.execute(q)).scalars().all()
     return [_to_out(r) for r in rows]
+
+
+@router.put("/{request_id}", response_model=CommercialRequestOut)
+async def update_commercial_request(
+    request_id: int,
+    data: CommercialRequestUpdate,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*MANAGER_ROLES)),
+):
+    """Обновить тему, текст, срок КП запроса."""
+    req = (await db.execute(
+        select(CommercialRequest)
+        .options(selectinload(CommercialRequest.recipients))
+        .where(CommercialRequest.id == request_id)
+    )).scalar_one_or_none()
+    if not req:
+        raise HTTPException(404, "Запрос КП не найден")
+    req.subject = data.subject
+    req.intro_text = data.intro_text
+    req.delivery_date = data.delivery_date
+    await db.commit()
+    await db.refresh(req)
+    return _to_out(req)
 
 
 @router.patch("/{request_id}/status", response_model=CommercialRequestOut)

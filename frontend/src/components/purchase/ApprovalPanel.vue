@@ -12,8 +12,12 @@
         <v-chip v-if="approvals.length" size="small" variant="outlined">
           {{ approvals.filter(a => a.status === 'approved').length }}/{{ approvals.length }}
         </v-chip>
+        <v-chip v-if="approvalStatus === 'in_progress' && props.approvalMode === 'parallel'"
+          size="small" variant="tonal" color="blue" prepend-icon="mdi-account-group">
+          параллельно
+        </v-chip>
         <v-btn v-if="!approvalStatus && canStart" color="green-darken-2" variant="tonal" size="small"
-          prepend-icon="mdi-play-circle-outline" :loading="startingApproval" @click="startApprovalProcess">
+          prepend-icon="mdi-play-circle-outline" :loading="startingApproval" @click="startDialog = true">
           Запустить согласование
         </v-btn>
         <v-btn v-if="approvalStatus === 'rejected' && isAdmin" color="warning" variant="tonal" size="small"
@@ -163,6 +167,73 @@
     </v-card>
   </v-dialog>
 
+  <!-- ── Start approval dialog ── -->
+  <v-dialog v-model="startDialog" max-width="480">
+    <v-card>
+      <v-card-title class="pt-4 px-5">Запуск согласования</v-card-title>
+      <v-card-text class="px-5">
+        <!-- Sign type -->
+        <div class="text-body-2 font-weight-medium mb-2">Тип подписания</div>
+        <v-btn-toggle v-model="startSignType" mandatory color="primary" class="mb-4" density="compact">
+          <v-btn value="electronic" prepend-icon="mdi-draw" size="small">Электронное</v-btn>
+          <v-btn value="paper" prepend-icon="mdi-printer" size="small">Бумажное</v-btn>
+        </v-btn-toggle>
+
+        <!-- Approval mode (only for electronic) -->
+        <template v-if="startSignType === 'electronic'">
+          <div class="text-body-2 font-weight-medium mb-2">Порядок согласования</div>
+          <v-card
+            :variant="startMode === 'sequential' ? 'tonal' : 'outlined'"
+            :color="startMode === 'sequential' ? 'teal' : undefined"
+            class="mb-2 cursor-pointer"
+            @click="startMode = 'sequential'"
+          >
+            <v-card-text class="d-flex align-start ga-3 pa-3">
+              <v-icon icon="mdi-format-list-numbered" size="24"
+                :color="startMode === 'sequential' ? 'teal' : 'grey'" />
+              <div>
+                <div class="font-weight-medium">Последовательно</div>
+                <div class="text-caption text-medium-emphasis">
+                  Каждый согласующий подписывает по очереди, в порядке листа
+                </div>
+              </div>
+            </v-card-text>
+          </v-card>
+          <v-card
+            :variant="startMode === 'parallel' ? 'tonal' : 'outlined'"
+            :color="startMode === 'parallel' ? 'teal' : undefined"
+            class="cursor-pointer"
+            @click="startMode = 'parallel'"
+          >
+            <v-card-text class="d-flex align-start ga-3 pa-3">
+              <v-icon icon="mdi-account-group" size="24"
+                :color="startMode === 'parallel' ? 'teal' : 'grey'" />
+              <div>
+                <div class="font-weight-medium">Параллельно (всем сразу)</div>
+                <div class="text-caption text-medium-emphasis">
+                  Все согласующие могут подписать одновременно, порядок не важен
+                </div>
+              </div>
+            </v-card-text>
+          </v-card>
+        </template>
+      </v-card-text>
+      <v-card-text class="px-5 pt-0 pb-2">
+        <v-text-field v-model="approvalDeadline" label="Срок согласования (необязательно)"
+          type="date" variant="outlined" density="compact" hide-details clearable
+          hint="Если указан — напоминание при просрочке" />
+      </v-card-text>
+      <v-card-actions class="px-5 pb-4">
+        <v-spacer />
+        <v-btn @click="startDialog = false">Отмена</v-btn>
+        <v-btn color="green-darken-2" variant="flat" :loading="startingApproval"
+          prepend-icon="mdi-play-circle-outline" @click="startApprovalProcess">
+          Запустить
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <!-- Signature pad -->
   <SignaturePad ref="sigPadRef" @saved="onSignatureSaved" />
 
@@ -228,6 +299,7 @@ interface Approval {
 const props = defineProps<{
   purchaseId: number
   approvalStatus: string | null
+  approvalMode: string | null
   isManager: boolean
   isAdmin: boolean
   visible: boolean
@@ -310,6 +382,12 @@ async function submitAddApprover() {
   }
 }
 
+// Start dialog
+const startDialog = ref(false)
+const startMode = ref<'sequential' | 'parallel'>('sequential')
+const startSignType = ref<'electronic' | 'paper'>('electronic')
+const approvalDeadline = ref<string>('')
+
 const canStart = computed(() => props.isManager || props.isAdmin)
 
 async function loadApprovals() {
@@ -358,10 +436,20 @@ async function startApprovalProcess() {
   startingApproval.value = true
   try {
     approvals.value = await apiFetch<Approval[]>(
-      `/purchases/${props.purchaseId}/approvals/start`, { method: 'POST', body: {} }
+      `/purchases/${props.purchaseId}/approvals/start`, {
+        method: 'POST',
+        body: {
+          approval_mode: startSignType.value === 'electronic' ? startMode.value : 'sequential',
+          approval_sign_type: startSignType.value,
+          approval_deadline: approvalDeadline.value || undefined,
+        },
+      }
     )
     emit('update:approvalStatus', 'in_progress')
-    emit('snack', 'Процесс согласования запущен')
+    const modeLabel = startMode.value === 'parallel' ? 'параллельно' : 'последовательно'
+    const typeLabel = startSignType.value === 'electronic' ? 'электронно' : 'бумажно'
+    emit('snack', `Согласование запущено (${typeLabel}, ${modeLabel})`)
+    startDialog.value = false
   } catch (e: any) {
     emit('snack', e?.detail || e?.message || 'Ошибка запуска согласования', 'error')
   } finally { startingApproval.value = false }
@@ -370,8 +458,11 @@ async function startApprovalProcess() {
 function canDecideApproval(a: Approval): boolean {
   if (a.status !== 'pending') return false
   if (props.approvalStatus !== 'in_progress') return false
-  const prior = approvals.value.filter(x => x.order_num < a.order_num)
-  if (prior.some(x => x.status !== 'approved' && x.status !== 'skipped')) return false
+  // In sequential mode, check that all prior approvers are done
+  if (props.approvalMode !== 'parallel') {
+    const prior = approvals.value.filter(x => x.order_num < a.order_num)
+    if (prior.some(x => x.status !== 'approved' && x.status !== 'skipped')) return false
+  }
   if (a.user_id && a.user_id !== currentUserId && !props.isAdmin) return false
   if (!a.user_id && !props.isManager && !props.isAdmin) return false
   return true

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 
 class Contractor(Base):
@@ -23,3 +24,5 @@ class Contractor(Base):
     correspondent_account = Column(String(100))
     org_type = Column(String(50))  # Юр.лицо / ИП / Самозанятый / Физ.лицо
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
+    # Категории товаров (ручной ввод): ["Компьютеры", "Мебель"] или ["Все"]
+    manual_product_categories = Column(JSONB, nullable=True, default=list)

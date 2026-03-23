@@ -1,7 +1,11 @@
 import os
+import re
 import shutil
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -329,6 +333,84 @@ async def list_subsidy_templates(
     return result
 
 
+def _repair_docx_template(path: str) -> list[str]:
+    """Fix common Jinja2 errors in uploaded .docx templates.
+
+    Word often splits {{ variable }} across multiple XML runs, and users
+    accidentally put Russian text like 'г.' inside Jinja tags.
+    Returns list of fixes applied.
+    """
+    fixes = []
+    try:
+        from docx import Document
+        doc = Document(path)
+
+        def _fix_paragraph(para):
+            if not para.runs:
+                return False
+            full = "".join(r.text for r in para.runs)
+            if "{{" not in full and "{%" not in full:
+                return False
+
+            original = full
+            # Fix: {{ var something_russian }} -> {{ var }} something_russian
+            # Pattern: inside {{ }}, after a valid variable name, remove non-ASCII chars
+            def _clean_tag(m):
+                inner = m.group(1)
+                # Split into variable name and trailing junk
+                parts = inner.strip().split()
+                if len(parts) <= 1:
+                    return m.group(0)  # just {{ var }} — ok
+                var_name = parts[0]
+                # Check if first part looks like a variable (ascii, underscores, dots)
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', var_name):
+                    return m.group(0)
+                # Remaining parts — check if they contain non-ASCII (Russian text)
+                rest = " ".join(parts[1:])
+                if any(ord(c) > 127 for c in rest):
+                    return "{{ " + var_name + " }} " + rest
+                return m.group(0)
+
+            fixed = re.sub(r'\{\{([^}]+)\}\}', _clean_tag, full)
+
+            # Fix doubled text like "г. г." that can result from prior fixes
+            fixed = re.sub(r'(\b\w+\.)\s+\1', r'\1', fixed)
+
+            if fixed == original:
+                return False
+            # Write back: all text into first run, clear rest
+            para.runs[0].text = fixed
+            for r in para.runs[1:]:
+                r.text = ""
+            return True
+
+        count = 0
+        for para in doc.paragraphs:
+            if _fix_paragraph(para):
+                count += 1
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        if _fix_paragraph(para):
+                            count += 1
+
+        if count:
+            doc.save(path)
+            fixes.append(f"Исправлено {count} Jinja-тегов")
+
+        # Validate the template renders
+        from docxtpl import DocxTemplate
+        tpl = DocxTemplate(path)
+        tpl.get_undeclared_template_variables()
+
+    except Exception as e:
+        logger.warning("Template repair/validation warning for %s: %s", path, e)
+        fixes.append(f"Предупреждение: {e}")
+
+    return fixes
+
+
 @router.put("/{subsidy_id}/templates/{doc_type}")
 async def upload_subsidy_template(
     subsidy_id: int,
@@ -349,7 +431,8 @@ async def upload_subsidy_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    return {"ok": True, "doc_type": doc_type, "label": SUPPORTED_DOC_TYPES[doc_type]}
+    repairs = _repair_docx_template(dest)
+    return {"ok": True, "doc_type": doc_type, "label": SUPPORTED_DOC_TYPES[doc_type], "repairs": repairs}
 
 
 @router.get("/{subsidy_id}/templates/{doc_type}/download")
@@ -372,11 +455,13 @@ async def download_subsidy_template(
     else:
         raise HTTPException(404, "Шаблон не найден")
 
-    return FileResponse(
+    response = FileResponse(
         path,
         filename=f"{doc_type}_{subsidy_id}.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 @router.delete("/{subsidy_id}/templates/{doc_type}")
@@ -405,7 +490,7 @@ async def upload_global_template(
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
 ):
-    """Upload a global .docx template (superadmin/org_admin only)."""
+    """Upload a global .docx template (superadmin/account_owner only)."""
     from app.auth.jwt import ADMIN_ROLES
     if current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Только администраторы могут загружать глобальные шаблоны")
@@ -418,4 +503,5 @@ async def upload_global_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    return {"ok": True, "doc_type": doc_type}
+    repairs = _repair_docx_template(dest)
+    return {"ok": True, "doc_type": doc_type, "repairs": repairs}

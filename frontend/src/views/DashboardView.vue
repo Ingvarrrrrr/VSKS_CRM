@@ -87,12 +87,12 @@
     <!-- ── KPI Cards ── -->
     <v-row class="kpi-row">
       <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
-        <div class="kpi-card" :class="'kpi-' + card.key" @click="openBreakdown(card.key)">
+        <div class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
           <div class="kpi-icon-box">
             <v-icon :icon="card.icon" size="26" />
           </div>
           <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrencyShort(card.value) }}</div>
+            <div class="kpi-value">{{ formatCurrency(card.value) }}</div>
             <div class="kpi-label">{{ card.label }}</div>
           </div>
           <div class="kpi-badge" v-if="card.badge">{{ card.badge }}</div>
@@ -102,20 +102,35 @@
 
     <!-- ── Charts Row 1: Donut + Radial + Pie ── -->
     <v-row class="chart-row">
-      <!-- Budget Donut -->
+      <!-- Budget Donut / Inline Breakdown -->
       <v-col cols="12" md="4">
         <div class="chart-card">
           <div class="chart-card-header">
-            <v-icon icon="mdi-chart-donut" size="18" color="#3B82F6" class="mr-2" />
-            <span class="chart-card-title">Структура бюджета</span>
+            <template v-if="donutView === 'breakdown'">
+              <v-btn icon="mdi-arrow-left" variant="text" size="x-small" class="mr-1" @click="donutView = 'donut'" />
+              <v-icon size="18" class="mr-2"
+                :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]"
+                :color="['success','primary','warning','grey'][drillDownSegment ?? 0]" />
+              <span class="chart-card-title">{{ SEGMENT_LABELS[drillDownSegment ?? 0] }}</span>
+            </template>
+            <template v-else>
+              <v-icon icon="mdi-chart-donut" size="18" color="#3B82F6" class="mr-2" />
+              <span class="chart-card-title">Структура бюджета</span>
+              <span class="text-caption text-medium-emphasis ml-2">(нажмите на сегмент)</span>
+            </template>
           </div>
-          <div v-if="donutReady">
-            <apexchart type="donut" height="270" :options="donutOptions" :series="donutSeries" />
-          </div>
-          <div v-else class="chart-empty">
-            <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
-            <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
-          </div>
+          <Transition name="chart-fade" mode="out-in">
+            <div v-if="donutView === 'donut'" key="donut">
+              <apexchart v-if="donutReady" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
+              <div v-else class="chart-empty">
+                <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
+                <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
+              </div>
+            </div>
+            <div v-else key="breakdown">
+              <apexchart type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
+            </div>
+          </Transition>
         </div>
       </v-col>
 
@@ -143,9 +158,12 @@
             <span class="chart-card-title">Закупки по статусам</span>
           </div>
           <div v-if="statusPieReady">
+            <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
+              <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на сегмент для списка закупок
+            </div>
             <apexchart
               :key="statusPieKey"
-              type="pie" height="270"
+              type="pie" height="260"
               :options="statusPieOptions"
               :series="statusPieSeries"
             />
@@ -168,6 +186,9 @@
             <span class="chart-card-title">Субсидии — бюджет и исполнение</span>
           </div>
           <div v-if="barReady">
+            <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
+              <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на столбец для детализации по ФЭО категориям
+            </div>
             <apexchart type="bar" :height="Math.max(220, filteredSubsidyStats.length * 70)" :options="barOptions" :series="barSeries" />
           </div>
           <div v-else class="chart-empty">
@@ -241,10 +262,11 @@
           <tr>
             <th>Субсидия</th>
             <th class="text-right">Бюджет</th>
-            <th class="text-right">Законтрактовано</th>
+            <th class="text-right">Запланировано</th>
+            <th class="text-right">Заказано</th>
             <th class="text-right">Оплачено</th>
             <th class="text-right">Остаток</th>
-            <th style="width: 180px;" class="text-center">% освоения</th>
+            <th style="width: 160px;" class="text-center">% освоения</th>
             <th style="width: 60px;"></th>
           </tr>
         </thead>
@@ -260,7 +282,8 @@
               <div v-if="s.description" class="text-caption text-medium-emphasis">{{ s.description }}</div>
             </td>
             <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
-            <td class="text-right text-info">{{ formatCurrency(s.contracted) }}</td>
+            <td class="text-right text-warning">{{ formatCurrency(s.plan_schedule) }}</td>
+            <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
             <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
             <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
               {{ formatCurrency(s.budget - s.paid) }}
@@ -284,7 +307,8 @@
           <tr class="total-row">
             <td><strong>ИТОГО</strong></td>
             <td class="text-right"><strong>{{ formatCurrency(totalBudget) }}</strong></td>
-            <td class="text-right text-info"><strong>{{ formatCurrency(totalContracted) }}</strong></td>
+            <td class="text-right text-warning"><strong>{{ formatCurrency(totalPlanSchedule) }}</strong></td>
+            <td class="text-right text-primary"><strong>{{ formatCurrency(totalOrdered) }}</strong></td>
             <td class="text-right text-success"><strong>{{ formatCurrency(totalPaid) }}</strong></td>
             <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
               <strong>{{ formatCurrency(totalRemaining) }}</strong>
@@ -315,28 +339,28 @@
         <!-- KPI row -->
         <v-row class="mb-4">
           <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center">
+            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?overdue=1')">
               <div class="text-h4 font-weight-bold text-error">{{ analyticsData.overdue_count }}</div>
               <div class="text-body-2 text-medium-emphasis mt-1">Просрочено</div>
               <v-icon icon="mdi-alert-circle" color="error" class="mt-1" />
             </v-card>
           </v-col>
           <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center">
+            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?due_soon=1')">
               <div class="text-h4 font-weight-bold text-warning">{{ analyticsData.upcoming_deadlines.length }}</div>
               <div class="text-body-2 text-medium-emphasis mt-1">Срок до 30 дней</div>
               <v-icon icon="mdi-clock-alert" color="warning" class="mt-1" />
             </v-card>
           </v-col>
           <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center">
+            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?status=paid')">
               <div class="text-h4 font-weight-bold text-success">{{ analyticsTotalPaid }}</div>
               <div class="text-body-2 text-medium-emphasis mt-1">Оплачено за год</div>
               <v-icon icon="mdi-cash-check" color="success" class="mt-1" />
             </v-card>
           </v-col>
           <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center">
+            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders')">
               <div class="text-h4 font-weight-bold text-primary">{{ analyticsTotalPurchases }}</div>
               <div class="text-body-2 text-medium-emphasis mt-1">Всего закупок</div>
               <v-icon icon="mdi-clipboard-list" color="primary" class="mt-1" />
@@ -349,22 +373,16 @@
           <v-col cols="12" md="6">
             <v-card variant="outlined" class="pa-4">
               <div class="text-subtitle-1 font-weight-bold mb-3">Воронка закупок</div>
-              <div v-for="item in analyticsData.funnel" :key="item.status" class="mb-2">
+              <div v-for="item in analyticsData.funnel" :key="item.status" class="mb-3" style="cursor:pointer" @click="router.push(`/orders?status=${item.status}`)">
                 <div class="d-flex justify-space-between mb-1">
                   <span class="text-body-2">{{ A_STATUS_LABELS[item.status] || item.status }}</span>
-                  <span class="text-body-2 font-weight-medium">{{ item.count }}</span>
+                  <span class="text-body-2 font-weight-medium">{{ item.count }} шт{{ item.total ? ' · ' + formatCurrencyShort(item.total) : '' }}</span>
                 </div>
                 <v-progress-linear
-                  :model-value="analyticsFunnelPct(item.count)"
+                  :model-value="analyticsFunnelPct(item.total)"
                   :color="A_STATUS_COLORS[item.status] || 'grey'"
-                  rounded height="20" bg-color="grey-lighten-3"
-                >
-                  <template v-slot:default>
-                    <span v-if="item.total" class="text-caption text-white font-weight-bold">
-                      {{ formatCurrencyShort(item.total) }}
-                    </span>
-                  </template>
-                </v-progress-linear>
+                  rounded height="14" bg-color="grey-lighten-3"
+                />
               </div>
             </v-card>
           </v-col>
@@ -373,7 +391,7 @@
           <v-col cols="12" md="3">
             <v-card variant="outlined" class="pa-4" style="height:100%">
               <div class="text-subtitle-1 font-weight-bold mb-3">Способы закупки</div>
-              <div v-for="(cnt, method) in analyticsData.method_distribution" :key="method" class="mb-3">
+              <div v-for="(cnt, method) in analyticsData.method_distribution" :key="method" class="mb-3" style="cursor:pointer" @click="router.push(`/orders?method=${method}`)">
                 <div class="d-flex justify-space-between mb-1">
                   <span class="text-body-2">{{ A_METHOD_LABELS[method] || method }}</span>
                   <span class="text-body-2 font-weight-medium">{{ cnt }}</span>
@@ -495,7 +513,93 @@
     </v-window-item>
     </v-window>
 
-    <BudgetDrillDownDialog v-model="showBreakdownDialog" :subsidies="filteredSubsidies" :metric="breakdownMetric" />
+    <BudgetDrillDownDialog
+      v-model="showBreakdownDialog"
+      :subsidies="drillDialogSubsidies.length ? drillDialogSubsidies : filteredSubsidies"
+      :metric="breakdownMetric"
+      @update:modelValue="v => { if (!v) drillDialogSubsidies.value = [] }"
+    />
+
+    <!-- Status pie drill-down dialog -->
+    <v-dialog v-model="statusDrillDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
+          <v-icon :icon="'mdi-cart-outline'" :color="STATUS_COLORS[statusDrillStatus] || 'grey'" />
+          {{ STATUS_LABELS[statusDrillStatus] || statusDrillStatus }}
+          <v-chip size="x-small" variant="tonal" class="ml-1">{{ statusDrillPurchases.length }} шт.</v-chip>
+        </v-card-title>
+        <v-card-text class="pa-0">
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th class="px-4">№</th>
+                <th class="px-4">Предмет закупки</th>
+                <th class="text-right px-4">Сумма</th>
+                <th class="px-4">Субсидия</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in statusDrillPurchases" :key="p.id"
+                style="cursor:pointer" @click="$router.push(`/orders/${p.id}/edit`); statusDrillDialog = false">
+                <td class="px-4 text-medium-emphasis">{{ p.purchase_number || p.id }}</td>
+                <td class="px-4 py-2" style="max-width:280px;white-space:normal;font-size:13px">{{ p.subject || p.item_name || '—' }}</td>
+                <td class="text-right px-4 font-weight-medium text-primary">{{ formatCurrency(purchaseEffectivePrice(p)) }}</td>
+                <td class="px-4 text-caption text-medium-emphasis">{{ p.subsidy_name || '—' }}</td>
+              </tr>
+              <tr v-if="statusDrillPurchases.length === 0">
+                <td colspan="4" class="text-center py-6 text-medium-emphasis">Нет закупок</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-spacer /><v-btn @click="statusDrillDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Donut drill-down dialog (legacy, kept for direct use) -->
+    <v-dialog v-model="drillDownDialog" max-width="500">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
+          <v-icon :color="['success','primary','warning','grey'][drillDownSegment ?? 0]"
+            :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]" />
+          {{ drillDownSegment !== null ? SEGMENT_LABELS[drillDownSegment] : '' }}
+        </v-card-title>
+        <v-card-subtitle class="px-5 pb-1 text-caption text-medium-emphasis">Разбивка по субсидиям</v-card-subtitle>
+        <v-card-text class="pa-0">
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th class="px-5">Субсидия</th>
+                <th class="text-right px-5">Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in drillDownRows" :key="row.name">
+                <td class="px-5 py-2">{{ row.name }}</td>
+                <td class="text-right px-5 font-weight-medium text-primary">{{ formatCurrency(row.value) }}</td>
+              </tr>
+              <tr v-if="drillDownRows.length === 0">
+                <td colspan="2" class="text-center py-6 text-medium-emphasis">Нет данных</td>
+              </tr>
+            </tbody>
+            <tfoot v-if="drillDownRows.length > 1">
+              <tr style="border-top: 2px solid var(--crm-border-strong)">
+                <td class="px-5 py-2 font-weight-bold">Итого</td>
+                <td class="text-right px-5 font-weight-bold text-primary">
+                  {{ formatCurrency(drillDownRows.reduce((s, r) => s + r.value, 0)) }}
+                </td>
+              </tr>
+            </tfoot>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-spacer />
+          <v-btn @click="drillDownDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -518,11 +622,13 @@ const selectedYear = ref(new Date().getFullYear())
 const selectedSubsidyIds = ref<number[]>([])
 const showBreakdownDialog = ref(false)
 const activeTab = ref((route.query.tab as string) || 'summary')
+watch(activeTab, (tab) => router.replace({ query: { ...route.query, tab } }))
 
 // ── Data ──────────────────────────────────────────
 interface SubsidyRow {
   id: number; name: string; shortName: string; description: string; year: number
   budget: number; contracted: number; paid: number; planned: number
+  plan_schedule: number; ordered: number
 }
 
 const allSubsidies    = ref<SubsidyRow[]>([])
@@ -584,11 +690,13 @@ const recentPurchases = computed(() => {
     .slice(0, 8)
 })
 
-const totalBudget     = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.budget, 0))
-const totalContracted = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.contracted, 0))
-const totalPaid       = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.paid, 0))
-const totalPlanned    = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
-const totalRemaining  = computed(() => totalBudget.value - totalPaid.value)
+const totalBudget       = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.budget, 0))
+const totalContracted   = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.contracted, 0))
+const totalPaid         = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.paid, 0))
+const totalPlanned      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
+const totalPlanSchedule = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule, 0))
+const totalOrdered      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.ordered, 0))
+const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
 const overrunSubsidies = computed(() =>
@@ -603,19 +711,19 @@ const kpiCards = computed(() => [
     badge: `${filteredSubsidies.value.length} субс.`
   },
   {
-    key: 'contracted', label: 'Законтрактовано', value: totalContracted.value,
-    icon: 'mdi-file-sign',
-    badge: `${pct(totalContracted.value, totalBudget.value)}%`
+    key: 'plan_schedule', label: 'Запланировано', value: totalPlanSchedule.value,
+    icon: 'mdi-calendar-clock',
+    badge: `${pct(totalPlanSchedule.value, totalBudget.value)}%`
+  },
+  {
+    key: 'ordered', label: 'Заказано', value: totalOrdered.value,
+    icon: 'mdi-cart-check',
+    badge: `${pct(totalOrdered.value, totalBudget.value)}%`
   },
   {
     key: 'paid', label: 'Оплачено', value: totalPaid.value,
     icon: 'mdi-cash-check',
     badge: `${pct(totalPaid.value, totalBudget.value)}%`
-  },
-  {
-    key: 'remaining', label: 'Остаток', value: totalRemaining.value,
-    icon: 'mdi-cash-clock',
-    badge: `${pct(totalRemaining.value, totalBudget.value)}%`
   },
 ])
 
@@ -623,19 +731,124 @@ const kpiCards = computed(() => [
 const donutReady = computed(() => totalBudget.value > 0)
 
 const donutSeries = computed(() => {
-  const paid = totalPaid.value
-  const contracted = Math.max(0, totalContracted.value - paid)
-  const planned = Math.max(0, totalPlanned.value - totalContracted.value)
-  const free = Math.max(0, totalBudget.value - totalPlanned.value)
-  return [paid, contracted, planned, free]
+  const paid       = totalPaid.value
+  const ordered    = Math.max(0, totalOrdered.value - paid)         // заказано (договор), не оплачено
+  const planned    = totalPlanSchedule.value                        // запланировано (confirmed+wip)
+  const free       = Math.max(0, totalBudget.value - totalOrdered.value - planned)
+  return [paid, ordered, planned, free]
 })
 
+const SEGMENT_LABELS  = ['Оплачено', 'Заказано', 'Запланировано', 'Свободно']
+const SEGMENT_COLORS  = ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8']
+const SEGMENT_METRICS = ['paid', 'ordered', 'budget', 'budget'] // maps to BudgetDrillDownDialog metric
+
+const drillDownDialog  = ref(false)
+const drillDownSegment = ref<number | null>(null)
+const donutView        = ref<'donut' | 'breakdown'>('donut')
+
+// Drill-down: scoped dialog subsidiaries
+const drillDialogSubsidies = ref<any[]>([])
+
+// Status pie drill-down
+const statusDrillDialog = ref(false)
+const statusDrillStatus = ref('')
+
+const statusDrillPurchases = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  return allPurchases.value.filter((p: any) => {
+    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
+    return p.status === statusDrillStatus.value
+  })
+})
+
+// Status amounts for tooltip
+const filteredStatusAmounts = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const amounts: Record<string, number> = {}
+  for (const p of allPurchases.value) {
+    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) continue
+    amounts[p.status] = (amounts[p.status] || 0) + purchaseEffectivePrice(p)
+  }
+  return amounts
+})
+
+const drillDownRows = computed(() => {
+  if (drillDownSegment.value === null) return []
+  return filteredSubsidies.value.map(s => {
+    const values = [
+      s.paid,
+      Math.max(0, s.ordered - s.paid),
+      s.plan_schedule,
+      Math.max(0, s.budget - s.ordered - s.plan_schedule),
+    ]
+    return { name: s.name, value: values[drillDownSegment.value!] }
+  }).filter(r => r.value > 0).sort((a, b) => b.value - a.value)
+})
+
+const breakdownBarSeries = computed(() => [{
+  name: drillDownSegment.value !== null ? SEGMENT_LABELS[drillDownSegment.value] : '',
+  data: drillDownRows.value.map(r => r.value)
+}])
+
+const breakdownBarOptions = computed(() => ({
+  chart: {
+    type: 'bar', background: 'transparent', toolbar: { show: false },
+    animations: { speed: 350 },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_e: any, _ctx: any, config: any) => {
+        const row = drillDownRows.value[config.dataPointIndex]
+        if (!row) return
+        const sub = filteredSubsidies.value.find((s: any) => s.name === row.name)
+        if (sub) {
+          drillDialogSubsidies.value = [sub]
+          breakdownMetric.value = SEGMENT_METRICS[drillDownSegment.value ?? 0]
+          showBreakdownDialog.value = true
+        }
+      }
+    }
+  },
+  colors: [drillDownSegment.value !== null ? SEGMENT_COLORS[drillDownSegment.value] : '#3B82F6'],
+  plotOptions: { bar: { horizontal: true, barHeight: '55%', borderRadius: 4, borderRadiusApplication: 'end' } },
+  dataLabels: {
+    enabled: true,
+    formatter: (v: number) => formatCurrencyShort(v),
+    style: { fontSize: '10px', colors: [chartText.value] }
+  },
+  xaxis: {
+    categories: drillDownRows.value.map(r => truncate(r.name, 22)),
+    labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '10px' } }
+  },
+  yaxis: { labels: { style: { colors: chartText.value, fontSize: '11px' } } },
+  grid: { borderColor: chartGrid.value },
+  tooltip: {
+    theme: isDark.value ? 'dark' : 'light',
+    y: { formatter: (v: number) => formatCurrency(v) },
+    custom: () => `<div style="padding:6px 10px;font-size:12px">Нажмите для детализации →</div>`
+  }
+}))
+
 const donutOptions = computed(() => ({
-  chart: { type: 'donut', background: 'transparent', toolbar: { show: false }, animations: { speed: 500 } },
+  chart: {
+    type: 'donut', background: 'transparent', toolbar: { show: false },
+    animations: { speed: 500 },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_e: any, _ctx: any, config: any) => {
+        const idx = config.dataPointIndex
+        drillDownSegment.value = idx
+        donutView.value = 'breakdown'
+      }
+    }
+  },
   colors: ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8'],
-  labels: ['Оплачено', 'Законтрактовано', 'Запланировано', 'Свободно'],
+  labels: SEGMENT_LABELS,
   legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
-  dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
+  dataLabels: {
+    enabled: true,
+    style: { fontSize: '11px', colors: ['#fff', '#fff', '#fff', '#374151'] },
+    dropShadow: { enabled: false }
+  },
   plotOptions: {
     pie: {
       donut: {
@@ -648,7 +861,15 @@ const donutOptions = computed(() => ({
             color: chartMuted.value,
             fontSize: '13px',
             formatter: () => formatCurrencyShort(totalBudget.value)
-          }
+          },
+          value: {
+            show: true,
+            fontSize: '18px',
+            fontWeight: '600',
+            color: chartText.value,
+            formatter: (v: string) => formatCurrencyShort(Number(v))
+          },
+          name: { show: true, color: chartMuted.value }
         }
       }
     }
@@ -658,7 +879,7 @@ const donutOptions = computed(() => ({
 
 // ── Chart: Radial ─────────────────────────────────
 const radialOptions = computed(() => ({
-  chart: { type: 'radialBar', background: 'transparent', toolbar: { show: false } },
+  chart: { type: 'radialBar', background: 'transparent', toolbar: { show: false }, theme: { mode: isDark.value ? 'dark' : 'light' } },
   colors: [totalUsagePct.value >= 90 ? '#EF4444' : totalUsagePct.value >= 70 ? '#F59E0B' : '#22C55E'],
   plotOptions: {
     radialBar: {
@@ -692,8 +913,9 @@ const radialOptions = computed(() => ({
 
 // ── Chart: Status Pie ─────────────────────────────
 const STATUS_LABELS: Record<string, string> = {
+  wishes: 'Желания', plan_schedule: 'План-график',
   planned: 'Планируется', confirmed: 'Подтверждено',
-  in_progress: 'Ведётся работа',
+  in_progress: 'Ведётся работа', work_in_progress: 'В работе',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено'
 }
 
@@ -709,7 +931,9 @@ const filteredStatusCounts = computed(() => {
 })
 
 const STATUS_COLORS: Record<string, string> = {
-  planned: '#94A3B8', confirmed: '#3B82F6', in_progress: '#14B8A6',
+  wishes: '#6B7280', plan_schedule: '#F59E0B',
+  planned: '#94A3B8', confirmed: '#3B82F6',
+  in_progress: '#14B8A6', work_in_progress: '#14B8A6',
   contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E',
 }
 
@@ -732,12 +956,34 @@ const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATU
 const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
 
 const statusPieOptions = computed(() => ({
-  chart: { type: 'pie', background: 'transparent', toolbar: { show: false }, animations: { speed: 400 } },
+  chart: {
+    type: 'pie', background: 'transparent', toolbar: { show: false },
+    animations: { speed: 400 },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_e: any, _ctx: any, config: any) => {
+        const entry = statusPieEntries.value[config.dataPointIndex]
+        if (entry) {
+          statusDrillStatus.value = entry[0]
+          statusDrillDialog.value = true
+        }
+      }
+    }
+  },
   colors: statusPieColors.value,
   labels: statusPieLabels.value,
   legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
   dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
-  tooltip: { y: { formatter: (v: number) => `${v} шт.` } },
+  tooltip: {
+    theme: isDark.value ? 'dark' : 'light',
+    y: {
+      formatter: (v: number, { dataPointIndex }: any) => {
+        const status = statusPieEntries.value[dataPointIndex]?.[0]
+        const amount = filteredStatusAmounts.value[status] || 0
+        return `${v} шт.${amount > 0 ? ' · ' + formatCurrencyShort(amount) : ''}`
+      }
+    }
+  },
 }))
 
 // ── Chart: Bar ────────────────────────────────────
@@ -745,6 +991,7 @@ const barReady = computed(() => filteredSubsidyStats.value.length > 0)
 
 const barSeries = computed(() => [
   { name: 'Бюджет',          data: filteredSubsidyStats.value.map(s => s.budget) },
+  { name: 'Заказано',        data: filteredSubsidyStats.value.map(s => s.ordered) },
   { name: 'Законтрактовано', data: filteredSubsidyStats.value.map(s => s.contracted) },
   { name: 'Оплачено',        data: filteredSubsidyStats.value.map(s => s.paid) },
 ])
@@ -752,9 +999,20 @@ const barSeries = computed(() => [
 const barOptions = computed(() => ({
   chart: {
     type: 'bar', background: 'transparent', toolbar: { show: false },
-    animations: { speed: 500 }
+    animations: { speed: 500 },
+    theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_e: any, _ctx: any, config: any) => {
+        const sub = filteredSubsidyStats.value[config.dataPointIndex]
+        if (sub) {
+          drillDialogSubsidies.value = [sub]
+          breakdownMetric.value = 'budget'
+          showBreakdownDialog.value = true
+        }
+      }
+    }
   },
-  colors: ['#CBD5E1', '#3B82F6', '#22C55E'],
+  colors: ['#8B5CF6', '#3B82F6', '#F59E0B', '#22C55E'],
   plotOptions: {
     bar: {
       horizontal: true,
@@ -766,8 +1024,8 @@ const barOptions = computed(() => ({
   },
   dataLabels: {
     enabled: true,
-    style: { fontSize: '10px', colors: [chartText.value] },
-    formatter: (val: number) => formatCurrencyShort(val),
+    style: { fontSize: '10px', colors: ['#FFFFFF'] },
+    formatter: (val: number) => val > 0 ? formatCurrency(val) : '',
     offsetX: 5
   },
   xaxis: {
@@ -783,7 +1041,7 @@ const barOptions = computed(() => ({
     fontSize: '12px', labels: { colors: chartText.value }
   },
   grid: { borderColor: chartGrid.value },
-  tooltip: { y: { formatter: (v: number) => formatCurrency(v) } }
+  tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } }
 }))
 
 // ── Load data ─────────────────────────────────────
@@ -807,6 +1065,8 @@ async function loadAll() {
       contracted: s.total_confirmed,
       paid: s.total_paid,
       planned: s.total_planned,
+      plan_schedule: s.total_plan_schedule ?? 0,
+      ordered: s.total_ordered ?? 0,
     }))
 
     statusCounts.value = chartsData.status_counts
@@ -830,6 +1090,13 @@ async function loadAll() {
 function openBreakdown(metric = 'budget') {
   breakdownMetric.value = metric
   showBreakdownDialog.value = true
+}
+
+function handleKpiClick(key: string) {
+  if (key === 'plan_schedule') router.push('/orders?status=confirmed,work_in_progress')
+  else if (key === 'ordered')  router.push('/orders?status=contracted,delivered,paid')
+  else if (key === 'paid')     router.push('/orders?status=paid')
+  else openBreakdown(key)
 }
 
 function goToOrders() {
@@ -918,12 +1185,26 @@ const analyticsData = ref<AnalyticsData | null>(null)
 const analyticsLoading = ref(false)
 
 const A_STATUS_LABELS: Record<string, string> = {
-  planned: 'Планирование', confirmed: 'Подтверждена', in_progress: 'В работе',
-  contracted: 'Законтрактована', delivered: 'Поставлена', paid: 'Оплачена',
+  wishes:           'Пожелания',
+  plan_schedule:    'План-график',
+  confirmed:        'Подтверждена',
+  work_in_progress: 'В работе',
+  contracted:       'Законтрактована',
+  delivered:        'Поставлена',
+  paid:             'Оплачена',
+  planned:          'Планирование',
+  in_progress:      'В работе',
 }
 const A_STATUS_COLORS: Record<string, string> = {
-  planned: 'orange', confirmed: 'blue', in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  wishes:           'grey',
+  plan_schedule:    'blue-grey',
+  confirmed:        'blue',
+  work_in_progress: 'teal',
+  contracted:       'indigo',
+  delivered:        'deep-purple',
+  paid:             'green',
+  planned:          'orange',
+  in_progress:      'teal',
 }
 const A_METHOD_LABELS: Record<string, string> = {
   single: 'Единственный поставщик', competitive: 'Конкурсная процедура',
@@ -943,7 +1224,7 @@ const analyticsTotalPaid = computed(() => {
   return formatCurrencyShort(total)
 })
 const analyticsMaxFunnel = computed(() =>
-  analyticsData.value ? Math.max(...analyticsData.value.funnel.map(i => i.count), 1) : 1
+  analyticsData.value ? Math.max(...analyticsData.value.funnel.map(i => i.total), 1) : 1
 )
 const analyticsFunnelPct = (count: number) => (count / analyticsMaxFunnel.value) * 100
 const analyticsMaxContractor = computed(() =>
@@ -970,7 +1251,9 @@ function analyticsDeadlineColor(d: string): string {
 async function loadAnalytics() {
   analyticsLoading.value = true
   try {
-    analyticsData.value = await apiFetch<AnalyticsData>('/dashboard/analytics')
+    const ids = selectedSubsidyIds.value
+    const qs = ids.length > 0 ? `?subsidy_ids=${ids.join(',')}` : ''
+    analyticsData.value = await apiFetch<AnalyticsData>(`/dashboard/analytics${qs}`)
   } finally {
     analyticsLoading.value = false
   }
@@ -978,7 +1261,14 @@ async function loadAnalytics() {
 
 // Load analytics on tab switch (lazy)
 watch(activeTab, (tab) => {
-  if (tab === 'analytics' && !analyticsData.value) {
+  if (tab === 'analytics') {
+    loadAnalytics()
+  }
+})
+
+// Reload analytics when subsidy filter changes while on analytics tab
+watch(selectedSubsidyIds, () => {
+  if (activeTab.value === 'analytics') {
     loadAnalytics()
   }
 })
@@ -1093,15 +1383,17 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.kpi-budget .kpi-icon-box  { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
-.kpi-contracted .kpi-icon-box { background: var(--crm-kpi-bg-sky); color: #0284C7; }
-.kpi-paid .kpi-icon-box    { background: var(--crm-kpi-bg-green); color: #22C55E; }
-.kpi-remaining .kpi-icon-box { background: var(--crm-kpi-bg-amber); color: #F59E0B; }
+.kpi-budget .kpi-icon-box        { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
+.kpi-plan_schedule .kpi-icon-box { background: rgba(245,158,11,0.12); color: #F59E0B; }
+.kpi-ordered .kpi-icon-box       { background: rgba(59,130,246,0.12); color: #3B82F6; }
+.kpi-contracted .kpi-icon-box    { background: var(--crm-kpi-bg-sky); color: #0284C7; }
+.kpi-paid .kpi-icon-box          { background: var(--crm-kpi-bg-green); color: #22C55E; }
 
-.kpi-budget { border-top: 3px solid #3B82F6; }
-.kpi-contracted { border-top: 3px solid #0284C7; }
-.kpi-paid { border-top: 3px solid #22C55E; }
-.kpi-remaining { border-top: 3px solid #F59E0B; }
+.kpi-budget       { border-top: 3px solid #3B82F6; }
+.kpi-plan_schedule { border-top: 3px solid #F59E0B; }
+.kpi-ordered      { border-top: 3px solid #3B82F6; }
+.kpi-contracted   { border-top: 3px solid #0284C7; }
+.kpi-paid         { border-top: 3px solid #22C55E; }
 
 .kpi-body { flex: 1; min-width: 0; }
 .kpi-value {
@@ -1267,4 +1559,8 @@ onMounted(() => {
   transition: height 0.5s ease;
 }
 .analytics-bar-x { font-size: 9px; text-align: center; color: var(--crm-text-faint); margin-top: 4px; line-height: 1.2; }
+:deep(.apexcharts-pie-series path) { cursor: pointer; }
+.chart-fade-enter-active, .chart-fade-leave-active { transition: opacity 0.25s, transform 0.25s; }
+.chart-fade-enter-from { opacity: 0; transform: translateX(12px); }
+.chart-fade-leave-to  { opacity: 0; transform: translateX(-12px); }
 </style>

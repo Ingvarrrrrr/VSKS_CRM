@@ -13,6 +13,31 @@ from io import BytesIO
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
 
 
+@router.get("/product-categories")
+async def list_all_product_categories(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """All unique product categories from products + manual contractor categories."""
+    from app.models.product import Product
+    # From products table
+    prod_res = await db.execute(
+        select(distinct(Product.category))
+        .where(Product.category.isnot(None), Product.category != '')
+    )
+    cats = {r[0] for r in prod_res}
+    # From manual contractor categories
+    ctr_res = await db.execute(
+        select(Contractor.manual_product_categories)
+        .where(Contractor.manual_product_categories.isnot(None))
+    )
+    for row in ctr_res:
+        for c in (row[0] or []):
+            if c and c != 'Все':
+                cats.add(c)
+    return sorted(cats)
+
+
 @router.get("/with-stats")
 async def list_contractors_with_stats(
     db: AsyncSession = Depends(get_db),
@@ -51,7 +76,14 @@ async def list_contractors_with_stats(
     result = []
     for c in contractors:
         c_dict = ContractorOut.model_validate(c).model_dump()
-        c_dict["product_categories"] = prod_cat_map.get(c.id, [])
+        manual = c.manual_product_categories or []
+        auto = prod_cat_map.get(c.id, [])
+        # "Все" = special marker meaning all categories
+        if "Все" in manual:
+            c_dict["product_categories"] = ["Все"]
+        else:
+            merged = list(dict.fromkeys(manual + auto))  # deduplicate, keep order
+            c_dict["product_categories"] = merged
         result.append(c_dict)
     return result
 

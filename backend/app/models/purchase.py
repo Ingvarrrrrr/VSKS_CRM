@@ -59,12 +59,17 @@ class Purchase(Base):
     vat_rate = Column(Integer, nullable=True)                             # Ставка НДС (20, 10)
     vat_exemption_article = Column(String(200), nullable=True)           # Статья НК РФ
     third_party_involved = Column(Boolean, nullable=True, default=False)  # Привлечение третьих лиц
+    contract_end_date = Column(Date, nullable=True)                      # срок действия договора
     service_period_type = Column(String(10), nullable=True)              # 'period' | 'date'
+    service_start_date = Column(Date, nullable=True)                     # начало периода / разовая дата
+    service_end_date = Column(Date, nullable=True)                       # конец периода
     description_mode = Column(String(10), default="exact")               # 'exact' | '44fz'
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True)
 
     # Approval
     approval_status = Column(String(30), nullable=True)  # None / in_progress / approved / rejected
+    approval_mode = Column(String(20), nullable=True, default="sequential")  # sequential / parallel
+    approval_sign_type = Column(String(20), nullable=True, default="electronic")  # electronic / paper
 
     # Kanban / task assignment
     assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

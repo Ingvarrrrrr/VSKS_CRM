@@ -69,11 +69,11 @@
             <div class="sc-mini-row">
               <div class="sc-mini">
                 <div class="sc-mini-label">Запланировано</div>
-                <div class="sc-mini-val" style="color:var(--color-planned)">{{ formatCurrencyShort(s.planned) }}</div>
+                <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.plan_schedule) }}</div>
               </div>
               <div class="sc-mini">
-                <div class="sc-mini-label">Законтрактовано</div>
-                <div class="sc-mini-val" style="color:var(--color-contracted)">{{ formatCurrencyShort(s.contracted || 0) }}</div>
+                <div class="sc-mini-label">Заказано</div>
+                <div class="sc-mini-val" style="color:#3B82F6">{{ formatCurrencyShort(s.ordered) }}</div>
               </div>
               <div class="sc-mini">
                 <div class="sc-mini-label">Оплачено</div>
@@ -117,9 +117,14 @@
             <span class="summary-value" style="color:var(--color-planned)">{{ formatCurrency(totals.planned) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=contracted')">
-            <span class="summary-label">Законтрактовано</span>
-            <span class="summary-value" style="color:var(--color-contracted)">{{ formatCurrency(totals.contracted) }}</span>
+          <div class="summary-item">
+            <span class="summary-label">Запланировано</span>
+            <span class="summary-value" style="color:#F59E0B">{{ formatCurrency(totals.plan_schedule) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=confirmed')">
+            <span class="summary-label">Заказано</span>
+            <span class="summary-value" style="color:#3B82F6">{{ formatCurrency(totals.ordered) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/orders?status=paid')">
@@ -287,7 +292,7 @@
                       <!-- Фактически запланировано -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#DC2626;font-weight:700' : ''"
+                          :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
                           @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
@@ -316,12 +321,12 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="4" style="padding:0 0 0 60px; background:#F0FDF4">
+                      <td colspan="4" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
                             <v-icon icon="mdi-compare-horizontal" size="16" color="teal" />
-                            <span style="font-size:12px;font-weight:600;color:#0f766e">Позиции: план vs факт</span>
+                            <span style="font-size:12px;font-weight:600" class="text-teal-darken-2">Позиции: план vs факт</span>
                             <v-spacer />
                             <v-btn size="x-small" variant="tonal" color="teal" prepend-icon="mdi-plus"
                               @click="openAddPlannedItem(node.id)">
@@ -370,7 +375,7 @@
                                     <td style="padding:4px 8px;color:#166534">{{ actual.item_name }}</td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;color:#166534;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:right;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
                                     <td v-if="ai === 0" :rowspan="comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id).length" style="padding:4px 8px;text-align:right">
                                       <span v-if="planned.amount != null" :style="getDiffStyle(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))">
                                         {{ formatCurrency(calcDiff(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))) }}
@@ -427,16 +432,16 @@
                               <!-- Фактические без плана -->
                               <tr v-for="actual in comparisonData[node.id].actual.filter(a => !a.feo_planned_item_id)"
                                 :key="`a-${actual.purchase_item_id}`"
-                                style="border-bottom:1px solid #E0F2FE;background:#FFF7ED">
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
+                                style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
+                                <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;color:#92400e">{{ actual.item_name }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#92400e;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                <td style="padding:4px 8px" class="text-orange-darken-2">{{ actual.item_name }}</td>
+                                <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;font-weight:500" class="text-orange-darken-2">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
+                                <td style="padding:4px 8px;font-size:11px" class="text-medium-emphasis">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning" title="Не в плане" />
                                 </td>
@@ -457,20 +462,20 @@
                             </tbody>
                             <!-- Итоговая строка -->
                             <tfoot v-if="comparisonData[node.id].planned.length || comparisonData[node.id].actual.length">
-                              <tr style="background:#F0FDF4;font-weight:600;border-top:2px solid #86EFAC">
-                                <td style="padding:4px 8px;color:#166534">ИТОГО</td>
+                              <tr style="background:rgba(34,197,94,0.08);font-weight:600;border-top:2px solid rgba(34,197,94,0.3)">
+                                <td style="padding:4px 8px" class="text-success">ИТОГО</td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;text-align:right;color:#166534">
+                                <td style="padding:4px 8px;text-align:right">
                                   {{ formatCurrency(comparisonData[node.id].planned.reduce((s, p) => s + Number(p.amount || 0), 0)) }}
                                 </td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;text-align:right;color:#166534">
+                                <td style="padding:4px 8px;text-align:right">
                                   {{ formatCurrency(comparisonData[node.id].actual.reduce((s, a) => s + Number(a.total_price || 0), 0)) }}
                                 </td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  <span :style="comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) >= comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0) ? 'color:#166534' : 'color:#DC2626'">
+                                  <span :class="comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) >= comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0) ? 'text-success' : 'text-error'">
                                     {{ formatCurrency(comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) - comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0)) }}
                                   </span>
                                 </td>
@@ -1317,6 +1322,7 @@ interface SubsidyRow {
   id: number; name: string; year: number; budget: number
   calculated_budget?: number
   description?: string; planned: number; paid: number; contracted: number
+  plan_schedule: number; ordered: number
   feo_filled?: boolean
   feo_budget_total?: number
   contractor_id?: number
@@ -1670,10 +1676,12 @@ const selectedBudget = computed(() => {
 })
 
 const totals = computed(() => ({
-  budget:      filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || x.budget),      0),
-  planned:     filteredSubsidies.value.reduce((s, x) => s + x.planned,     0),
-  contracted:  filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
-  paid:        filteredSubsidies.value.reduce((s, x) => s + x.paid,        0),
+  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || x.budget), 0),
+  planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
+  plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
+  ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
+  contracted:    filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
+  paid:          filteredSubsidies.value.reduce((s, x) => s + x.paid,           0),
 }))
 
 // ── FEO tree ──────────────────────────────────────
@@ -1883,6 +1891,8 @@ async function loadAll() {
       id: s.id, name: s.name, year: s.year, budget: s.budget,
       calculated_budget: s.calculated_budget ?? 0,
       planned: s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+      plan_schedule: s.total_plan_schedule ?? 0,
+      ordered: s.total_ordered ?? 0,
       feo_budget_total: s.feo_budget_total ?? 0,
       feo_filled: s.feo_filled ?? false,
       contractor_id: s.contractor_id ?? null,
@@ -2027,7 +2037,7 @@ async function addSubsidy() {
       method: 'POST',
       body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id })
     })
-    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0 })
+    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0 })
     showAddDialog.value = false
     form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null }
     showSnack('Субсидия добавлена')
@@ -2793,11 +2803,11 @@ onMounted(loadAll)
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
-.feo-tr--over .feo-td { background: #FEF2F2 !important; }
-.feo-tr--over:hover .feo-td { background: #FEE2E2 !important; }
-.feo-tr--over .feo-amount { color: #DC2626; font-weight: 700; }
-.feo-tr--children-exceed .feo-td { background: #FEF2F2 !important; }
-.feo-tr--children-exceed .feo-amount { color: #DC2626; font-weight: 700; }
+.feo-tr--over .feo-td { background: rgba(239,68,68,0.08) !important; }
+.feo-tr--over:hover .feo-td { background: rgba(239,68,68,0.13) !important; }
+.feo-tr--over .feo-amount { color: #EF4444; font-weight: 700; }
+.feo-tr--children-exceed .feo-td { background: rgba(239,68,68,0.08) !important; }
+.feo-tr--children-exceed .feo-amount { color: #EF4444; font-weight: 700; }
 .feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }

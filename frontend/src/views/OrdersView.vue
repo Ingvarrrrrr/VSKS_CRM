@@ -121,6 +121,16 @@
       <v-btn variant="text" size="small" @click="selectedOrders = []">Снять выделение</v-btn>
     </div>
 
+    <!-- Link task banner -->
+    <v-alert v-if="linkTaskId" type="info" variant="tonal" closable class="mb-3"
+      @click:close="linkTaskId = null; $router.replace({ query: {} })">
+      <div class="d-flex align-center ga-2">
+        <v-icon>mdi-link-variant</v-icon>
+        <span>Выберите закупку для привязки к задаче <b>#{{ linkTaskId }}</b></span>
+        <v-btn size="small" variant="text" @click="linkTaskId = null; $router.replace({ query: {} })">Отмена</v-btn>
+      </div>
+    </v-alert>
+
     <!-- Table -->
     <v-card variant="outlined">
       <v-data-table
@@ -139,6 +149,8 @@
         items-per-page="25"
         :items-per-page-options="[25, 50, 100]"
         return-object
+        class="orders-clickable"
+        @click:row="(_, { item }) => router.push(`/orders/${item.id}/edit`)"
       >
         <!-- Expand toggle column -->
         <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
@@ -197,14 +209,14 @@
         </template>
 
         <template #item.actions="{ item }">
-          <div class="d-flex align-center gap-1">
+          <div class="d-flex align-center gap-1" @click.stop>
             <v-btn
               v-if="!isAdmin && nextStatus(item.status)"
               size="x-small"
               :color="STATUS_COLOR[nextStatus(item.status)!]"
               variant="tonal"
               :loading="transitioning === item.id"
-              @click="doTransition(item)"
+              @click.stop="doTransition(item)"
             >
               → {{ STATUS_LABEL[nextStatus(item.status)!] }}
             </v-btn>
@@ -223,8 +235,11 @@
                 />
               </v-list>
             </v-menu>
-            <v-btn icon="mdi-pencil" variant="text" size="small" :to="`/orders/${item.id}/edit`" />
-            <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDeleteOne(item)" />
+            <v-btn v-if="linkTaskId" size="x-small" variant="tonal" color="deep-purple"
+              prepend-icon="mdi-link-variant" @click.stop="doLinkTask(item.id)">
+              Привязать
+            </v-btn>
+            <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDeleteOne(item)" />
           </div>
         </template>
 
@@ -532,7 +547,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
@@ -540,6 +555,7 @@ import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResi
 const { globalSubsidyId } = useGlobalSubsidy()
 
 const route = useRoute()
+const router = useRouter()
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
@@ -575,6 +591,7 @@ interface Purchase {
   payment_amount?: number
   items?: PurchaseItem[]
   approval_status?: string
+  execution_term?: string
 }
 
 const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
@@ -633,6 +650,23 @@ const headers = [
   { title: 'Действия', key: 'actions', sortable: false, width: 200 },
 ]
 
+// ── Link task mode (from ?link_task=ID) ──
+const linkTaskId = ref<number | null>(null)
+
+async function doLinkTask(purchaseId: number) {
+  if (!linkTaskId.value) return
+  try {
+    await apiFetch(`/tasks/${linkTaskId.value}`, {
+      method: 'PATCH', body: JSON.stringify({ purchase_id: purchaseId }),
+    })
+    const tid = linkTaskId.value
+    linkTaskId.value = null
+    router.replace({ path: '/my-tasks', query: { task: String(tid) } })
+  } catch (e: any) {
+    alert(e?.detail || 'Ошибка привязки')
+  }
+}
+
 const orders = ref<Purchase[]>([])
 const subsidies = ref<Subsidy[]>([])
 const loading = ref(false)
@@ -640,6 +674,9 @@ const transitioning = ref<number | null>(null)
 const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
 const filterFeoCategoryId = ref<number | null>(null)
+const filterMethod   = ref<string>('')
+const filterOverdue  = ref(false)
+const filterDueSoon  = ref(false)
 const filterFeoCategoryName = ref<string>('')
 const search = ref('')
 const expanded = ref<string[]>([])
@@ -738,9 +775,22 @@ const nextStatus = (current: string): string | null => {
 
 const filteredOrders = computed(() => {
   let r = orders.value
-  if (filterStatus.value) r = r.filter(o => o.status === filterStatus.value)
+  if (filterStatus.value) {
+    const statuses = filterStatus.value.split(',').map(s => s.trim()).filter(Boolean)
+    r = r.filter(o => statuses.includes(o.status))
+  }
   if (filterSubsidyId.value) r = r.filter(o => o.subsidy_id === filterSubsidyId.value)
   if (filterFeoCategoryId.value) r = r.filter(o => o.feo_category_id === filterFeoCategoryId.value)
+  if (filterMethod.value) r = r.filter(o => o.purchase_method === filterMethod.value)
+  if (filterOverdue.value) {
+    const today = new Date().toISOString().slice(0, 10)
+    r = r.filter(o => o.execution_term && o.execution_term < today && !['paid', 'delivered'].includes(o.status))
+  }
+  if (filterDueSoon.value) {
+    const today = new Date().toISOString().slice(0, 10)
+    const in30  = new Date(Date.now() + 30 * 86400 * 1000).toISOString().slice(0, 10)
+    r = r.filter(o => o.execution_term && o.execution_term >= today && o.execution_term <= in30 && !['paid', 'delivered'].includes(o.status))
+  }
   return r
 })
 
@@ -765,6 +815,10 @@ onMounted(() => {
   loadOrders()
   loadSubsidies()
   loadFilterPresets()
+  // Link task mode
+  if (route.query.link_task) {
+    linkTaskId.value = Number(route.query.link_task)
+  }
   const qSub = route.query.subsidy_id
   if (qSub) {
     filterSubsidyId.value = Number(qSub)
@@ -774,6 +828,9 @@ onMounted(() => {
   }
   const qStatus = route.query.status
   if (qStatus && typeof qStatus === 'string') filterStatus.value = qStatus
+  if (route.query.method)   filterMethod.value  = route.query.method as string
+  if (route.query.overdue)  filterOverdue.value  = true
+  if (route.query.due_soon) filterDueSoon.value  = true
   const qFeo = route.query.feo_category_id
   if (qFeo) {
     filterFeoCategoryId.value = Number(qFeo)
@@ -1081,6 +1138,7 @@ async function doExport() {
 </script>
 
 <style scoped>
+.orders-clickable :deep(tbody tr) { cursor: pointer; }
 .import-result-row {
   display: flex; gap: 16px; justify-content: center; margin: 16px 0;
 }

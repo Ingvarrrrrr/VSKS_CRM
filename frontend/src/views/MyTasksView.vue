@@ -884,7 +884,15 @@ const generalByStatus = (status: string) => generalTasks.value.filter(t => t.sta
 
 // ── Deadline urgency for card background ──
 function gtCardStyle(gt: any): Record<string, string> {
-  if (gt.status === 'done') return {}
+  if (gt.status === 'done') {
+    if (!gt.due_date) return { background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.3)' }
+    const completedAt = gt.updated_at ? new Date(gt.updated_at) : new Date()
+    const dueDate = new Date(gt.due_date)
+    const diffDays = (dueDate.getTime() - completedAt.getTime()) / 86400000
+    if (diffDays < 0) return { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)' }   // просрочена
+    if (diffDays < 1) return { background: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.45)' } // впритык
+    return { background: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.45)' }                    // заранее
+  }
   if (!gt.due_date) return {}
   const diff = (new Date(gt.due_date).getTime() - Date.now()) / 86400000
   if (diff < 0) return { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.4)' }

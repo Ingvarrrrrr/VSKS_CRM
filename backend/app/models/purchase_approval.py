@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy import func
 from app.database import Base
@@ -33,6 +33,7 @@ class PurchaseApproval(Base):
     signature_data = Column(Text, nullable=True)
     signature_algorithm = Column(String(100), nullable=True)
 
+    approval_deadline = Column(Date, nullable=True)  # срок на согласование (опционально)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

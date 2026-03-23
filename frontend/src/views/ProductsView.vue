@@ -66,6 +66,11 @@
       </v-card-text>
     </v-card>
 
+    <!-- Horizontal scrollbar — always visible above the table -->
+    <div ref="mirrorScrollRef" class="mirror-hscroll">
+      <div :style="{ width: tableScrollWidth + 'px', height: '1px' }" />
+    </div>
+
     <!-- Table -->
     <v-card variant="outlined">
       <!-- Bulk action bar -->
@@ -96,9 +101,10 @@
         :loading="loading"
         :search="search"
         density="compact"
+        fixed-header
         hover
         items-per-page="25"
-        class="products-clickable"
+        class="products-clickable products-table"
         @click:row="onProductRowClick"
         :items-per-page-options="[25, 50, 100, -1]"
       >
@@ -177,46 +183,60 @@
 
         <!-- TZ verified -->
         <template #item.tz_verified_at="{ item }">
-          <v-tooltip
-            :text="item.tz_verified_at
-              ? `${new Date(item.tz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_verified_by}`
-              : 'Нажмите чтобы подтвердить'"
-            location="top"
-          >
-            <template #activator="{ props }">
-              <v-progress-circular v-if="tzVerifying === item.id + '_standard'" indeterminate size="18" width="2" color="primary" />
-              <v-icon
-                v-else
-                v-bind="props"
-                :icon="item.tz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
-                :color="item.tz_verified_at ? 'success' : 'grey-lighten-1'"
-                style="cursor: pointer"
-                @click="!item.tz_verified_at && verifyTz(item, 'standard')"
-              />
-            </template>
-          </v-tooltip>
+          <v-progress-circular v-if="tzVerifying === item.id + '_standard'" indeterminate size="18" width="2" color="primary" />
+          <div v-else class="d-flex align-center gap-1">
+            <v-tooltip
+              :text="item.tz_verified_at
+                ? `${new Date(item.tz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_verified_by}`
+                : 'Нажмите чтобы подтвердить'"
+              location="top"
+            >
+              <template #activator="{ props }">
+                <v-icon
+                  v-bind="props"
+                  :icon="item.tz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
+                  :color="item.tz_verified_at ? 'success' : 'grey-lighten-1'"
+                  style="cursor: pointer"
+                  @click.stop="!item.tz_verified_at ? verifyTz(item, 'standard') : null"
+                />
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="item.tz_verified_at && isAdmin" text="Снять отметку (Администратор)" location="top">
+              <template #activator="{ props }">
+                <v-icon v-bind="props" icon="mdi-close-circle-outline" color="error" size="14"
+                  style="cursor:pointer; opacity:0.7" @click.stop="unverifyTz(item, 'standard')" />
+              </template>
+            </v-tooltip>
+          </div>
         </template>
 
         <!-- TZ 44fz verified -->
         <template #item.tz_44fz_verified_at="{ item }">
-          <v-tooltip
-            :text="item.tz_44fz_verified_at
-              ? `${new Date(item.tz_44fz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_44fz_verified_by}`
-              : 'Нажмите чтобы подтвердить (44-ФЗ)'"
-            location="top"
-          >
-            <template #activator="{ props }">
-              <v-progress-circular v-if="tzVerifying === item.id + '_44fz'" indeterminate size="18" width="2" color="blue" />
-              <v-icon
-                v-else
-                v-bind="props"
-                :icon="item.tz_44fz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
-                :color="item.tz_44fz_verified_at ? 'blue-darken-2' : 'grey-lighten-1'"
-                style="cursor: pointer"
-                @click="!item.tz_44fz_verified_at && verifyTz(item, '44fz')"
-              />
-            </template>
-          </v-tooltip>
+          <v-progress-circular v-if="tzVerifying === item.id + '_44fz'" indeterminate size="18" width="2" color="blue" />
+          <div v-else class="d-flex align-center gap-1">
+            <v-tooltip
+              :text="item.tz_44fz_verified_at
+                ? `${new Date(item.tz_44fz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_44fz_verified_by}`
+                : 'Нажмите чтобы подтвердить (44-ФЗ)'"
+              location="top"
+            >
+              <template #activator="{ props }">
+                <v-icon
+                  v-bind="props"
+                  :icon="item.tz_44fz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
+                  :color="item.tz_44fz_verified_at ? 'blue-darken-2' : 'grey-lighten-1'"
+                  style="cursor: pointer"
+                  @click.stop="!item.tz_44fz_verified_at ? verifyTz(item, '44fz') : null"
+                />
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="item.tz_44fz_verified_at && isAdmin" text="Снять отметку (Администратор)" location="top">
+              <template #activator="{ props }">
+                <v-icon v-bind="props" icon="mdi-close-circle-outline" color="error" size="14"
+                  style="cursor:pointer; opacity:0.7" @click.stop="unverifyTz(item, '44fz')" />
+              </template>
+            </v-tooltip>
+          </div>
         </template>
 
         <!-- Actions -->
@@ -614,7 +634,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, reactive, watch } from 'vue'
 import { apiFetch } from '@/api'
 
 interface PriceLink { url: string; price: number | null }
@@ -631,6 +651,7 @@ interface Product {
 
 const userRole = localStorage.getItem('user_role') || ''
 const isSuperadmin = userRole === 'superadmin'
+const isAdmin = userRole === 'admin' || userRole === 'superadmin'
 
 const products = ref<Product[]>([])
 const loading  = ref(false)
@@ -686,6 +707,20 @@ async function verifyTz(item: Product, tzType: 'standard' | '44fz') {
     showSnack('ТЗ подтверждено')
   } catch {
     showSnack('Ошибка подтверждения ТЗ', 'error')
+  } finally {
+    tzVerifying.value = null
+  }
+}
+
+async function unverifyTz(item: Product, tzType: 'standard' | '44fz') {
+  tzVerifying.value = `${item.id}_${tzType}`
+  try {
+    const updated = await apiFetch<Product>(`/products/${item.id}/verify-tz?tz_type=${tzType}`, { method: 'DELETE' })
+    const idx = products.value.findIndex(p => p.id === item.id)
+    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
+    showSnack('Отметка снята')
+  } catch {
+    showSnack('Ошибка снятия отметки', 'error')
   } finally {
     tzVerifying.value = null
   }
@@ -1102,11 +1137,59 @@ async function doImport() {
   }
 }
 
-onMounted(load)
+// ── Mirror horizontal scrollbar (above the table) ────────────────────────────
+const mirrorScrollRef = ref<HTMLElement | null>(null)
+const tableScrollWidth = ref(0)
+
+function initMirrorScroll() {
+  const wrapper = document.querySelector('.products-table .v-table__wrapper') as HTMLElement
+  const mirror  = mirrorScrollRef.value
+  if (!wrapper || !mirror) return
+
+  const update = () => { tableScrollWidth.value = wrapper.scrollWidth }
+  update()
+
+  let syncing = false
+  mirror.addEventListener('scroll', () => {
+    if (syncing) return; syncing = true
+    wrapper.scrollLeft = mirror.scrollLeft
+    syncing = false
+  })
+  wrapper.addEventListener('scroll', () => {
+    if (syncing) return; syncing = true
+    mirror.scrollLeft = wrapper.scrollLeft
+    syncing = false
+  })
+
+  new ResizeObserver(update).observe(wrapper)
+}
+
+onMounted(async () => {
+  load()
+  await nextTick()
+  setTimeout(initMirrorScroll, 400)
+})
 </script>
 
 <style scoped>
 .products-clickable :deep(tbody tr) { cursor: pointer; }
 .col-drag-item { cursor: default; user-select: none; }
 .col-drag-item:hover { background: rgba(var(--v-theme-on-surface), 0.04); }
+/* Mirror scrollbar — between filter card and table card */
+.mirror-hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 16px;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 4px;
+  margin-bottom: 4px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+}
+/* Hide native scrollbar inside the table (mirror takes over) */
+.products-table :deep(.v-table__wrapper) {
+  scrollbar-width: none;
+}
+.products-table :deep(.v-table__wrapper::-webkit-scrollbar) {
+  display: none;
+}
 </style>

@@ -55,7 +55,7 @@ async def update_section_config(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role not in ("superadmin", "org_admin", "admin"):
+    if current_user.role not in ("superadmin", "account_owner", "admin"):
         raise HTTPException(403, "Недостаточно прав")
     org_id = current_user.org_id
     if not org_id:

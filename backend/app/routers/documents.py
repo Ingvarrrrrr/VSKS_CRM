@@ -14,8 +14,12 @@ from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.subsidy_approver import SubsidyApprover
 from app.models.feo_category import FeoCategory
+from app.models.event import Event
 from app.auth.jwt import get_current_user
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/purchases", tags=["documents"])
 guide_router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -285,6 +289,12 @@ async def generate_document(
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
 
+    # Load event if linked
+    event = None
+    if p.event_id:
+        ev_r = await db.execute(select(Event).where(Event.id == p.event_id))
+        event = ev_r.scalar_one_or_none()
+
     # Load approvers if requested
     selected_approvers = []
     if approver_ids:
@@ -312,22 +322,29 @@ async def generate_document(
         )
         selected_approvers = res.scalars().all()
 
-    # Build FEO category path (root → ... → selected)
+    # Build FEO category path (root → ... → selected) + individual levels
     feo_path = ""
+    feo_level_1 = ""
+    feo_level_2 = ""
+    feo_level_3 = ""
     if p.feo_category_id:
         feo_res = await db.execute(select(FeoCategory))
         all_feo = {f.id: f for f in feo_res.scalars().all()}
-        path_parts = []
+        path_nodes: list = []
         node_id = p.feo_category_id
-        visited = set()
+        visited: set = set()
         while node_id and node_id not in visited:
             visited.add(node_id)
             cat = all_feo.get(node_id)
             if not cat:
                 break
-            path_parts.append(cat.name.strip())
+            path_nodes.append(cat)
             node_id = cat.parent_id
-        feo_path = " → ".join(reversed(path_parts))
+        path_nodes.reverse()  # root → leaf
+        feo_path = " → ".join(n.name.strip() for n in path_nodes)
+        if len(path_nodes) >= 1: feo_level_1 = path_nodes[0].name.strip()
+        if len(path_nodes) >= 2: feo_level_2 = path_nodes[1].name.strip()
+        if len(path_nodes) >= 3: feo_level_3 = path_nodes[2].name.strip()
 
     # Resolved responsible person name
     resolved_responsible = responsible_name or p.responsible_person or ""
@@ -443,6 +460,14 @@ async def generate_document(
             return InlineImage(tpl_obj, tmp.name, width=_Cm(3.0))
         except Exception:
             return ""
+
+    # Collect unique product categories from items
+    item_categories = list(dict.fromkeys(
+        item.product.category
+        for item in (p.items or [])
+        if item.product and item.product.category
+    ))
+    item_categories_str = ", ".join(item_categories)
 
     approvers_list = []
     for i, a in enumerate(selected_approvers):
@@ -570,6 +595,10 @@ async def generate_document(
         ),
         # FEO
         "feo_category_name": p.feo_category.name if p.feo_category else "",
+        "feo_path":    feo_path,
+        "feo_level_1": feo_level_1,
+        "feo_level_2": feo_level_2,
+        "feo_level_3": feo_level_3,
         # Финансы
         "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
         "nmck": _fmt_money(p.nmck or p.total_nmck),
@@ -597,10 +626,15 @@ async def generate_document(
         "items": items_list,
         "items_count": len(items_list),
         "item_names": p.subject or ", ".join(i["name"] for i in items_list if i["name"]),
+        "item_categories": item_categories_str,
         # Согласующие
         "approvers": approvers_list,
         "initiator_name": initiator.full_name if initiator else "",
         "initiator_role": initiator.role_name if initiator else "",
+        # Мероприятие
+        "event_name": event.name if event else "",
+        # Тип договора
+        "contract_type": {"single": "Единственный поставщик", "framework_cumulative": "Рамочный (накопительный)", "framework_with_amount": "Рамочный (с суммой)"}.get(p.purchase_contract_type or "", p.purchase_contract_type or ""),
         # Служебные
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),
@@ -640,7 +674,127 @@ async def generate_document(
         tpl.save(buf)
         buf.seek(0)
     except Exception as e:
+        logger.exception("Document generation error for purchase %s, doc_type=%s, template=%s", pid, doc_type, template_path)
         raise HTTPException(500, f"Ошибка генерации документа: {e}")
+
+    # For contract docs: append ТЗ table with items
+    if doc_type in ("contract", "contract_fadm") and items_list:
+        try:
+            from docx import Document as _DocxDoc
+            from docx.shared import Pt, Cm, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.oxml.ns import qn
+            from docx.oxml import OxmlElement
+
+            doc = _DocxDoc(buf)
+
+            # Add page break before ТЗ
+            doc.add_page_break()
+
+            # Title
+            title_para = doc.add_paragraph()
+            title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = title_para.add_run("ТЕХНИЧЕСКОЕ ЗАДАНИЕ")
+            run.bold = True
+            run.font.size = Pt(12)
+
+            subtitle = doc.add_paragraph()
+            subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            subtitle.add_run(f"(Приложение к договору № {p.contract_number or '___'} от {_fmt_date(p.contract_date) or '__.__.____'})")
+
+            doc.add_paragraph()  # spacer
+
+            # Table with columns: №, Фото, Наименование и описание, Кол-во, Ед., Цена ед., Сумма
+            table = doc.add_table(rows=1, cols=7)
+            table.style = 'Table Grid'
+
+            # Header row
+            hdr_cells = table.rows[0].cells
+            headers_tz = ["№", "Фото", "Наименование и описание", "Кол-во", "Ед.", "Цена ед., ₽", "Сумма, ₽"]
+            col_widths_cm = [1.0, 2.5, 8.0, 1.8, 1.5, 2.8, 2.8]
+            for i, (hdr_cell, hdr_text, w) in enumerate(zip(hdr_cells, headers_tz, col_widths_cm)):
+                hdr_cell.width = Cm(w)
+                para = hdr_cell.paragraphs[0]
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = para.add_run(hdr_text)
+                run.bold = True
+                run.font.size = Pt(9)
+                # Blue background
+                tc = hdr_cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                shd = OxmlElement('w:shd')
+                shd.set(qn('w:fill'), '1E40AF')
+                shd.set(qn('w:color'), 'FFFFFF')
+                shd.set(qn('w:val'), 'clear')
+                tcPr.append(shd)
+                # White font
+                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+            # Data rows
+            total_sum = 0.0
+            for item_data in items_list:
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(item_data["num"])
+                row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Photo cell: leave empty
+                row_cells[1].text = ""
+                # Name + description
+                name_cell = row_cells[2]
+                name_para = name_cell.paragraphs[0]
+                name_run = name_para.add_run(str(item_data["name"]))
+                name_run.bold = True
+                name_run.font.size = Pt(9)
+                if item_data.get("description"):
+                    desc_para = name_cell.add_paragraph()
+                    desc_run = desc_para.add_run(str(item_data["description"]))
+                    desc_run.font.size = Pt(8)
+                    desc_run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+                qty_val = item_data.get("quantity", "")
+                row_cells[3].text = str(qty_val) if qty_val != "" else "—"
+                row_cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                row_cells[4].text = str(item_data.get("unit", "") or "—")
+                row_cells[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                row_cells[5].text = str(item_data.get("unit_price", "") or "—")
+                row_cells[5].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                row_cells[6].text = str(item_data.get("total_price", "") or "—")
+                row_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+                # Font size for all data cells
+                for cell in row_cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            if not run.font.size:
+                                run.font.size = Pt(9)
+
+                try:
+                    price_str = str(item_data.get("total_price", "")).replace(" ", "").replace(",", ".").replace("₽", "").strip()
+                    total_sum += float(price_str) if price_str else 0
+                except Exception:
+                    pass
+
+            # Total row
+            total_row_cells = table.add_row().cells
+            # Merge cells 0-5
+            total_row_cells[5].merge(total_row_cells[0])
+            merged_para = total_row_cells[0].paragraphs[0]
+            merged_run = merged_para.add_run("НМЦК итого:")
+            merged_run.bold = True
+            merged_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            total_row_cells[6].text = _fmt_money_plain(total_sum)
+            if total_row_cells[6].paragraphs[0].runs:
+                total_row_cells[6].paragraphs[0].runs[0].bold = True
+            total_row_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+            # Save back to buf
+            buf2 = BytesIO()
+            doc.save(buf2)
+            buf2.seek(0)
+            buf = buf2
+        except Exception as tz_err:
+            # Don't fail the whole request if ТЗ append fails — just log
+            import traceback
+            print(f"ТЗ append error: {tz_err}\n{traceback.format_exc()}")
 
     safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
     encoded_name = quote(safe_name, safe="-_.~")
@@ -651,49 +805,236 @@ async def generate_document(
     )
 
 
+# ── KP xlsx export ───────────────────────────────────────────────────────────
+
+@guide_router.get("/purchases/{pid}/kp-xlsx")
+async def download_kp_xlsx(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Generate xlsx with purchase items (for КП request attachment)."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    result = await db.execute(
+        select(Purchase)
+        .options(selectinload(Purchase.items).selectinload(PurchaseItem.product))
+        .where(Purchase.id == pid)
+    )
+    p = result.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Перечень товаров"
+
+    # Header style
+    header_fill = PatternFill("solid", fgColor="1E40AF")
+    header_font = Font(bold=True, color="FFFFFF", size=10)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin = Side(style="thin", color="AAAAAA")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    headers = ["№", "Фото", "Наименование и описание", "Кол-во", "Ед.", "Цена ед., ₽", "Сумма, ₽"]
+    col_widths = [5, 12, 50, 10, 8, 16, 16]
+
+    for col, (h, w) in enumerate(zip(headers, col_widths), start=1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = border
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    ws.row_dimensions[1].height = 32
+
+    # Data rows
+    data_align = Alignment(vertical="center", wrap_text=True)
+    data_align_center = Alignment(horizontal="center", vertical="center")
+    data_align_right = Alignment(horizontal="right", vertical="center")
+
+    items = [i for i in (p.items or []) if i.item_name and i.item_name.strip()]
+    for idx, item in enumerate(items, start=1):
+        row = idx + 1
+        description = ""
+        if item.product:
+            description = item.product.description or ""
+
+        full_name = item.item_name or ""
+        if description:
+            full_name = full_name + "\n" + description
+
+        ws.cell(row=row, column=1, value=idx).alignment = data_align_center
+        ws.cell(row=row, column=2, value="").alignment = data_align_center  # Фото — пусто
+        ws.cell(row=row, column=3, value=full_name).alignment = data_align
+        ws.cell(row=row, column=4, value=float(item.quantity) if item.quantity else "").alignment = data_align_center
+        ws.cell(row=row, column=5, value=item.unit or "").alignment = data_align_center
+        price_cell = ws.cell(row=row, column=6, value=float(item.unit_price) if item.unit_price else "")
+        price_cell.alignment = data_align_right
+        if item.unit_price:
+            price_cell.number_format = '# ##0.00'
+        total_cell = ws.cell(row=row, column=7, value=float(item.total_price) if item.total_price else "")
+        total_cell.alignment = data_align_right
+        if item.total_price:
+            total_cell.number_format = '# ##0.00'
+
+        ws.row_dimensions[row].height = 40 if description else 20
+
+        for col in range(1, 8):
+            ws.cell(row=row, column=col).border = border
+
+    # Total row
+    total_row = len(items) + 2
+    total_nmck = sum(float(i.total_price or 0) for i in items)
+    ws.cell(row=total_row, column=6, value="НМЦК итого:").font = Font(bold=True)
+    ws.cell(row=total_row, column=6).alignment = data_align_right
+    total_cell = ws.cell(row=total_row, column=7, value=total_nmck)
+    total_cell.font = Font(bold=True)
+    total_cell.number_format = '# ##0.00'
+    total_cell.alignment = data_align_right
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    fname = f"KP_items_{p.purchase_number or pid}.xlsx"
+    from urllib.parse import quote as _quote
+    encoded = _quote(fname, safe="")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
+    )
+
+
 # ── Template markup guide ────────────────────────────────────────────────────
 
 TEMPLATE_VARIABLES = [
+    # ── Закупка ──
+    ("", "ЗАКУПКА"),
     ("{{purchase_number}}", "Номер закупки (например: 42)"),
-    ("{{registry_number}}", "Реестровый номер (например: ЗК-2026-042)"),
-    ("{{contract_number}}", "Номер договора (например: 2026/42)"),
-    ("{{contract_date}}", "Дата договора (например: 16.03.2026)"),
-    ("{{subject}}", "Предмет договора / закупки"),
-    ("{{contract_price}}", "Сумма договора цифрами (например: 150 000,00)"),
-    ("{{contract_price_words}}", "Сумма прописью (например: сто пятьдесят тысяч рублей 00 копеек)"),
-    ("{{purchase_method}}", "Способ закупки"),
-    ("{{execution_term}}", "Срок исполнения"),
+    ("{{registry_number}}", "Реестровый номер (например: РЕЕ-2026-00042)"),
+    ("{{subject}}", "Предмет закупки"),
+    ("{{status}}", "Статус (planned / confirmed / contracted / delivered / paid)"),
+    ("{{purchase_method}}", "Способ закупки (Единственный поставщик / Конкурсная процедура / Авансовый отчёт)"),
+    ("{{purchase_basis}}", "Основание (план-график / служебная записка)"),
+    ("{{contract_type}}", "Тип договора (Единственный поставщик / Рамочный)"),
+    ("{{responsible_person}}", "ФИО ответственного исполнителя"),
+    ("{{feo_category_name}}", "Категория ФЭО (только выбранный узел)"),
+    ("{{feo_path}}",    "Полный путь ФЭО: Направление → Тип → Категория"),
+    ("{{feo_level_1}}", "ФЭО уровень 1 — Направление расходов"),
+    ("{{feo_level_2}}", "ФЭО уровень 2 — Тип расходов"),
+    ("{{feo_level_3}}", "ФЭО уровень 3 — Конкретизированная категория"),
+    # ── Субсидия и мероприятие ──
+    ("", "СУБСИДИЯ И МЕРОПРИЯТИЕ"),
     ("{{subsidy_name}}", "Наименование субсидии"),
     ("{{subsidy_year}}", "Год субсидии"),
-    ("{{org_name}}", "Наименование организации-заказчика"),
+    ("{{subsidy_budget}}", "Бюджет субсидии (например: 15 500 000,00 ₽)"),
+    ("{{event_name}}", "Название мероприятия"),
+    # ── Контрагент ──
+    ("", "КОНТРАГЕНТ"),
     ("{{contractor_name}}", "Полное наименование контрагента"),
-    ("{{contractor_short_name}}", "Сокращённое наименование контрагента"),
+    ("{{contractor_short_name}}", "Краткое наименование (из кавычек или первое слово)"),
+    ("{{contractor_org_type}}", "Тип организации (Юр.лицо / ИП / Самозанятый)"),
     ("{{contractor_inn}}", "ИНН контрагента"),
     ("{{contractor_kpp}}", "КПП контрагента"),
-    ("{{contractor_address}}", "Юридический адрес контрагента"),
-    ("{{contractor_postal_address}}", "Почтовый адрес контрагента"),
-    ("{{contractor_signatory}}", "Подписант контрагента (ФИО)"),
-    ("{{contractor_signatory_basis}}", "Основание (Устав / Доверенность №...)"),
-    ("{{contractor_bank_name}}", "Наименование банка контрагента"),
-    ("{{contractor_bik}}", "БИК банка"),
+    ("{{contractor_ogrn}}", "ОГРН / ОГРНИП"),
+    ("{{contractor_address}}", "Юридический адрес"),
+    ("{{contractor_postal_address}}", "Почтовый адрес"),
+    ("{{contractor_phone}}", "Телефон"),
+    ("{{contractor_email}}", "E-mail"),
+    ("{{contractor_signatory}}", "ФИО подписанта"),
+    ("{{contractor_signatory_basis}}", "Основание полномочий (Устав / Доверенность №...)"),
+    ("{{contractor_signatory_position}}", "Должность подписанта (Директор)"),
+    ("{{contractor_signatory_line}}", "ФИО + основание (комбинированное)"),
     ("{{contractor_settlement_account}}", "Расчётный счёт"),
+    ("{{contractor_bank_name}}", "Наименование банка"),
+    ("{{contractor_bank_details}}", "Реквизиты банка"),
+    ("{{contractor_bik}}", "БИК банка"),
     ("{{contractor_correspondent_account}}", "Корреспондентский счёт"),
-    ("{{responsible_person}}", "ФИО ответственного исполнителя"),
-    ("{{delivery_address}}", "Адрес доставки"),
-    ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим (для таблицы)"),
-    ("{{a.num}}", "Порядковый номер согласующего"),
-    ("{{a.role_name}}", "Должность согласующего"),
-    ("{{a.full_name}}", "ФИО согласующего"),
-    ("{{a.decided_date}}", "Дата согласования"),
-    ("{{a.note}}", "Примечание (ФЭО путь)"),
-    ("{{a.signature_img}}", "Электронная подпись (изображение)"),
-    ("{%tr for item in items %} ... {%tr endfor %}", "Цикл по позициям закупки"),
-    ("{{item.num}}", "Порядковый номер позиции"),
+    # ── Финансы ──
+    ("", "ФИНАНСЫ"),
+    ("{{total_nmck}}", "НМЦК итого (например: 135 000,00 ₽)"),
+    ("{{nmck}}", "НМЦК (синоним total_nmck)"),
+    ("{{contract_price}}", "Цена договора (например: 130 000,00 ₽)"),
+    ("{{contract_price_num}}", "Цена без валюты (130 000,00)"),
+    ("{{contract_price_words}}", "Цена прописью (сто тридцать тысяч рублей 00 копеек)"),
+    ("{{economy}}", "Экономия"),
+    ("{{price_increase}}", "Увеличение цены"),
+    # ── НДС ──
+    ("", "НДС"),
+    ("{{vat_applicable}}", "Облагается НДС (true / false)"),
+    ("{{vat_rate}}", "Ставка НДС (например: 20)"),
+    ("{{vat_amount_num}}", "Сумма НДС цифрами (21 666,67)"),
+    ("{{vat_amount_words}}", "Сумма НДС прописью"),
+    ("{{vat_exemption_article}}", "Статья освобождения от НДС"),
+    ("{{vat_info_line}}", "Готовая строка: «В том числе НДС 20%: ... руб.»"),
+    # ── Договор ──
+    ("", "ДОГОВОР"),
+    ("{{contract_number}}", "Номер договора (например: 2026/42)"),
+    ("{{contract_date}}", "Дата договора (15.01.2026)"),
+    ("{{contract_date_day}}", "День (15)"),
+    ("{{contract_date_month}}", "Месяц прописью (января)"),
+    ("{{contract_date_year}}", "Год (2026)"),
+    ("{{execution_term}}", "Срок исполнения (28.02.2026)"),
+    ("{{execution_term_changed}}", "Изменённый срок"),
+    ("{{delivery_date}}", "Дата поставки"),
+    ("{{country_origin}}", "Страна происхождения (Российская Федерация)"),
+    ("{{service_name}}", "Предмет (синоним subject)"),
+    ("{{period_type}}", "Тип срока (period / date)"),
+    ("{{service_start_date}}", "Начало оказания услуг"),
+    ("{{service_end_date}}", "Конец оказания услуг"),
+    ("{{service_date}}", "Дата оказания (разовая)"),
+    ("{{third_party_involved}}", "Привлечение третьих лиц (true / false)"),
+    # ── Акт приёмки ──
+    ("", "АКТ ПРИЁМКИ"),
+    ("{{acceptance_doc_name}}", "Наименование акта"),
+    ("{{acceptance_doc_number}}", "Номер акта"),
+    ("{{acceptance_doc_date}}", "Дата акта"),
+    ("{{acceptance_doc_amount}}", "Сумма акта"),
+    # ── Платёж ──
+    ("", "ПЛАТЁЖ"),
+    ("{{payment_doc_number}}", "Номер платёжного поручения"),
+    ("{{payment_doc_date}}", "Дата ПП"),
+    ("{{payment_amount}}", "Сумма платежа"),
+    ("{{payment_federal}}", "В т.ч. федеральный бюджет"),
+    # ── Инициатор ──
+    ("", "ИНИЦИАТОР (для служебных записок)"),
+    ("{{initiator_name}}", "ФИО инициатора"),
+    ("{{initiator_role}}", "Должность инициатора"),
+    # ── Согласующие (цикл) ──
+    ("", "СОГЛАСУЮЩИЕ (цикл для таблицы)"),
+    ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим"),
+    ("{{a.num}}", "Порядковый номер (1, 2, 3...)"),
+    ("{{a.role_name}}", "Должность"),
+    ("{{a.full_name}}", "ФИО"),
+    ("{{a.signature_img}}", "Электронная подпись (картинка)"),
+    ("{{a.decided_date}}", "Дата подписания"),
+    ("{{a.note}}", "Примечание (путь ФЭО)"),
+    # ── Позиции (цикл) ──
+    ("", "ПОЗИЦИИ ЗАКУПКИ (цикл для таблицы)"),
+    ("{%tr for item in items %} ... {%tr endfor %}", "Цикл по позициям"),
+    ("{{item.num}}", "Порядковый номер"),
     ("{{item.name}}", "Наименование товара/услуги"),
+    ("{{item.description}}", "Описание (из карточки продукта)"),
+    ("{{item.type}}", "Тип (товар/услуга)"),
     ("{{item.quantity}}", "Количество"),
     ("{{item.unit}}", "Единица измерения"),
-    ("{{item.price}}", "Цена за единицу"),
-    ("{{item.total}}", "Итого по позиции"),
+    ("{{item.unit_price}}", "Цена за единицу"),
+    ("{{item.total_price}}", "Сумма строки"),
+    ("{{item.photo}}", "Фото товара (картинка)"),
+    ("{{items_count}}", "Общее количество позиций"),
+    ("{{item_names}}", "Перечень названий через запятую"),
+    # ── Служебные ──
+    ("", "СЛУЖЕБНЫЕ"),
+    ("{{today}}", "Сегодняшняя дата (20.03.2026)"),
+    ("{{today_iso}}", "Дата ISO (2026-03-20)"),
 ]
 
 
@@ -727,15 +1068,65 @@ async def download_template_guide(
             run.bold = True
 
     for var, desc in TEMPLATE_VARIABLES:
+        if not var:
+            # Section header row
+            row = table.add_row().cells
+            row[0].merge(row[1])
+            p = row[0].paragraphs[0]
+            run = p.add_run(desc)
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.color.rgb = RGBColor(0x1E, 0x40, 0xAF)
+            continue
         row = table.add_row().cells
         row[0].text = var
         row[1].text = desc
 
-    doc.add_heading("Пример строки таблицы согласующих", 1)
+    doc.add_heading("Примеры использования в шаблоне Word", 1)
+
+    doc.add_heading("Таблица согласующих", 2)
     doc.add_paragraph(
         '{%tr for a in approvers %}\n'
-        '| {{a.num}} | {{a.role_name}} | {{a.full_name}} | {{a.signature_img}} {{a.decided_date}} | {{a.note}} |\n'
+        '| {{a.num}} | {{a.role_name}} | {{a.full_name}} | {{a.signature_img}} | {{a.decided_date}} |\n'
         '{%tr endfor %}'
+    )
+
+    doc.add_heading("Таблица позиций закупки", 2)
+    doc.add_paragraph(
+        '{%tr for item in items %}\n'
+        '| {{item.num}} | {{item.name}} | {{item.quantity}} | {{item.unit}} | {{item.unit_price}} | {{item.total_price}} |\n'
+        '{%tr endfor %}'
+    )
+
+    doc.add_heading("Уровни субсидии (ФЭО)", 2)
+    doc.add_paragraph(
+        "Вставьте одну из этих переменных в нужное место шаблона Word:\n\n"
+        "  Полный путь одной строкой:\n"
+        "    {{feo_path}}\n"
+        "  → Пример: «Персонал → Зарплата → Основной ФОТ»\n\n"
+        "  Отдельные уровни:\n"
+        "    Направление: {{feo_level_1}}\n"
+        "    Тип:         {{feo_level_2}}\n"
+        "    Категория:   {{feo_level_3}}\n\n"
+        "Если закупка без ФЭО-категорий — переменные будут пустыми.\n"
+        "Если у субсидии только 1 уровень — feo_level_2 и feo_level_3 пустые."
+    )
+
+    doc.add_heading("Условные блоки (НДС)", 2)
+    doc.add_paragraph(
+        '{% if vat_applicable %}\n'
+        'В том числе НДС {{vat_rate}}%: {{vat_amount_num}} руб.\n'
+        '{% else %}\n'
+        'НДС не облагается {{vat_exemption_article}}\n'
+        '{% endif %}'
+    )
+
+    doc.add_heading("Частые ошибки", 1)
+    doc.add_paragraph(
+        "1. Русский текст внутри {{ }} — ошибка: {{ contract_date г. }}\n"
+        "   Правильно: {{ contract_date }} г.\n\n"
+        "2. Word разбивает переменную на фрагменты — удалите и наберите заново\n\n"
+        "3. Пустое значение — поле не заполнено в карточке закупки"
     )
 
     buf = BytesIO()

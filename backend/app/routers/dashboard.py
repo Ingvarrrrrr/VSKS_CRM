@@ -1,6 +1,7 @@
 from datetime import date, timedelta
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, case, extract
+from typing import Optional
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, case, extract, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
@@ -142,6 +143,28 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case((Purchase.status == "paid", Purchase.payment_amount), else_=None)
             ), 0).label("total_paid"),
+            func.coalesce(func.sum(
+                case((Purchase.status.in_(["confirmed", "work_in_progress"]), Purchase.planned_total_price), else_=None)
+            ), 0).label("total_plan_schedule"),
+            func.coalesce(func.sum(
+                case(
+                    (
+                        and_(
+                            Purchase.status.in_(["contracted", "delivered", "paid"]),
+                            Purchase.purchase_contract_type.in_(["framework_cumulative", "framework_with_amount"])
+                        ),
+                        Purchase.planned_total_price
+                    ),
+                    (
+                        and_(
+                            Purchase.status.in_(["contracted", "delivered", "paid"]),
+                            Purchase.purchase_contract_type == "single"
+                        ),
+                        Purchase.contract_price
+                    ),
+                    else_=None
+                )
+            ), 0).label("total_ordered"),
         )
         .select_from(Subsidy)
         .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)
@@ -173,6 +196,8 @@ async def dashboard_charts(
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
+            "total_plan_schedule": float(row.total_plan_schedule),
+            "total_ordered": float(row.total_ordered),
             "feo_budget_total": calc,
             "feo_filled": calc > 0,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
@@ -190,16 +215,20 @@ async def dashboard_charts(
 async def analytics(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    subsidy_ids: Optional[str] = Query(None),
 ):
     today = date.today()
     org_ids = get_org_filter(current_user)
+    sid_filter = [int(x) for x in subsidy_ids.split(",") if x.strip()] if subsidy_ids else None
 
     def _pf(q):
-        """Apply purchase org filter inline."""
+        """Apply purchase org + subsidy filter inline."""
         if org_ids is not None:
-            return q.where(Purchase.subsidy_id.in_(
+            q = q.where(Purchase.subsidy_id.in_(
                 select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
             ))
+        if sid_filter:
+            q = q.where(Purchase.subsidy_id.in_(sid_filter))
         return q
 
     # 1. Purchase funnel
@@ -305,6 +334,8 @@ async def analytics(
     )
     if org_ids is not None:
         pf_q = pf_q.where(Subsidy.org_id.in_(org_ids))
+    if sid_filter:
+        pf_q = pf_q.where(Subsidy.id.in_(sid_filter))
     pf_result = await db.execute(pf_q)
     plan_fact = [
         {"subsidy": r.name, "plan": float(r.plan), "contracted": float(r.contracted), "paid": float(r.paid)}

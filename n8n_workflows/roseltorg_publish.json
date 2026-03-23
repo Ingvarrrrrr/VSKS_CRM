@@ -206,5 +206,5 @@
   },
   "settings": { "executionOrder": "v1" },
   "active": false,
-  "tags": [{ "name": "crm-integration" }]
+  "tags": []
 }

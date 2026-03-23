@@ -137,17 +137,24 @@
         {{ item.max_amount ? formatMoney(item.max_amount) : '—' }}
       </template>
       <template #item.total_ordered="{ item }">
-        <span :style="item.max_amount && Number(item.total_ordered) > Number(item.max_amount) ? 'color:#DC2626;font-weight:700' : ''">
+        <span :style="item.max_amount && Number(item.total_ordered) > Number(item.max_amount) ? 'color:var(--color-loss);font-weight:700' : ''">
           {{ item.total_ordered ? formatMoney(item.total_ordered) : '—' }}
         </span>
       </template>
       <template #item.total_paid="{ item }">
-        <span style="color:#166534">{{ item.total_paid ? formatMoney(item.total_paid) : '—' }}</span>
+        <span style="color:var(--color-profit)">{{ item.total_paid ? formatMoney(item.total_paid) : '—' }}</span>
       </template>
       <template #item.remaining="{ item }">
-        <span :style="Number(item.remaining) < 0 ? 'color:#DC2626;font-weight:700' : 'color:#166534'">
+        <span :style="Number(item.remaining) < 0 ? 'color:var(--color-loss);font-weight:700' : 'color:var(--color-profit)'">
           {{ item.remaining != null ? formatMoney(item.remaining) : '—' }}
         </span>
+      </template>
+      <template #item.subsidy_name="{ item }">
+        <div class="d-flex flex-wrap gap-1">
+          <v-chip v-if="item.subsidy_name" size="x-small" color="primary" variant="tonal">{{ item.subsidy_name }}</v-chip>
+          <v-chip v-for="es in (item.extra_subsidies || [])" :key="es.subsidy_id" size="x-small" color="secondary" variant="tonal">{{ es.subsidy_name }}</v-chip>
+          <span v-if="!item.subsidy_name && !(item.extra_subsidies?.length)" class="text-medium-emphasis">—</span>
+        </div>
       </template>
       <template #item.status="{ item }">
         <v-chip size="x-small" :color="item.status === 'active' ? 'success' : 'grey'" variant="tonal">
@@ -187,7 +194,7 @@
                     <td>{{ p.purchase_number || p.id }}</td>
                     <td>{{ p.subject || p.item_name }}</td>
                     <td>{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
-                    <td><v-chip size="x-small" variant="tonal">{{ p.status }}</v-chip></td>
+                    <td><v-chip size="x-small" variant="tonal" :color="PURCHASE_STATUS_COLOR[p.status] || 'grey'">{{ PURCHASE_STATUS_LABEL[p.status] || p.status }}</v-chip></td>
                     <td><v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" /></td>
                   </tr>
                 </tbody>
@@ -230,7 +237,16 @@
             <v-col cols="12" md="6">
               <v-select v-model="dialog.form.subsidy_id"
                 :items="subsidies" item-title="name" item-value="id"
-                label="Субсидия" variant="outlined" density="compact" clearable />
+                label="Основная субсидия" variant="outlined" density="compact" clearable />
+            </v-col>
+            <v-col cols="12">
+              <v-autocomplete v-model="dialog.form.extra_subsidy_ids"
+                :items="subsidies.filter(s => s.id !== dialog.form.subsidy_id)"
+                item-title="name" item-value="id"
+                label="Дополнительные субсидии" variant="outlined" density="compact"
+                multiple chips closable-chips clearable
+                hint="Договор может быть привязан к нескольким субсидиям одной организации"
+                persistent-hint />
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="dialog.form.subject" label="Предмет" variant="outlined" density="compact" />
@@ -317,6 +333,7 @@ const { appSearch, appSearchScope } = useAppSearch()
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
+interface ContractSubsidyItem { id: number; subsidy_id: number; subsidy_name?: string }
 interface Contract {
   id: number
   number: string
@@ -328,6 +345,7 @@ interface Contract {
   contractor_inn?: string
   subsidy_id?: number
   subsidy_name?: string
+  extra_subsidies?: ContractSubsidyItem[]
   subject?: string
   max_amount?: number
   total_ordered?: number
@@ -418,6 +436,16 @@ const statusItems = [
 const contractTypeLabel = (t?: string) => contractTypeItems.find(i => i.value === t)?.label || t || '—'
 const purchaseMethodLabel = (m?: string) => purchaseMethodItems.find(i => i.value === m)?.label || m || '—'
 const statusLabel = (s?: string) => statusItems.find(i => i.value === s)?.label || s || '—'
+
+const PURCHASE_STATUS_LABEL: Record<string, string> = {
+  wishes: 'Желания', plan_schedule: 'План-график', confirmed: 'Подтверждено',
+  work_in_progress: 'Ведётся работа', contracted: 'Договор',
+  delivered: 'Поставлено', paid: 'Оплачено',
+}
+const PURCHASE_STATUS_COLOR: Record<string, string> = {
+  wishes: 'grey', plan_schedule: 'orange', confirmed: 'blue',
+  work_in_progress: 'teal', contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+}
 const contractTypeColor = (t?: string) => {
   if (t === 'single') return 'blue'
   if (t?.startsWith('framework')) return 'orange'
@@ -479,6 +507,7 @@ watch(expanded, (newVal) => {
 const emptyForm = () => ({
   number: '', date: '', contract_type: 'single', purchase_method: null as string | null,
   contractor_id: null as number | null, subsidy_id: null as number | null,
+  extra_subsidy_ids: [] as number[],
   subject: '', max_amount: null as number | null, planned_monthly: null as number | null,
   start_date: '', end_date: '', status: 'active', notes: '',
 })
@@ -491,7 +520,9 @@ const openEdit = (c: Contract) => {
   Object.assign(dialog.form, {
     number: c.number || '', date: c.date || '', contract_type: c.contract_type || 'single',
     purchase_method: c.purchase_method || null, contractor_id: c.contractor_id || null,
-    subsidy_id: c.subsidy_id || null, subject: c.subject || '',
+    subsidy_id: c.subsidy_id || null,
+    extra_subsidy_ids: (c.extra_subsidies || []).map(es => es.subsidy_id),
+    subject: c.subject || '',
     max_amount: c.max_amount || null, planned_monthly: c.planned_monthly || null,
     start_date: c.start_date || '', end_date: c.end_date || '',
     status: c.status || 'active', notes: c.notes || '',

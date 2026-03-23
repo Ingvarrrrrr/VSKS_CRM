@@ -3042,8 +3042,8 @@ async function loadPurchaseMembers() {
 async function addPurchaseMember(userId: number | null) {
   if (!userId || !purchaseId.value) return
   try {
-    await apiFetch(`/purchase-events/${purchaseId.value}/members`, {
-      method: 'POST', body: JSON.stringify({ user_id: userId }),
+    await apiFetch(`/purchases/${purchaseId.value}/members`, {
+      method: 'POST', body: { user_id: userId },
     })
     await loadPurchaseMembers()
   } catch (e: any) {

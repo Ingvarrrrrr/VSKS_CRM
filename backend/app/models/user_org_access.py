@@ -10,7 +10,7 @@ class UserOrgAccess(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    role = Column(String(20), default="org_admin")
+    role = Column(String(20), default="account_owner")
 
     user = relationship("User", backref="org_access_list")
     organization = relationship("Organization")

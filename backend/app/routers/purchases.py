@@ -2180,6 +2180,114 @@ async def import_feo_format(
     return {"created": created, "skipped": skipped, "errors": errors_list}
 
 
+# ── Purchase members (discussion participants) ───────────────────────────────
+
+def _member_dict(m):
+    return {
+        "id": m.id,
+        "purchase_id": m.purchase_id,
+        "user_id": m.user_id,
+        "role": m.role,
+        "added_by_id": m.added_by_id,
+        "username": m.user.username if m.user else "",
+        "full_name": m.user.full_name if m.user else None,
+        "added_by_name": (m.added_by.full_name or m.added_by.username) if m.added_by else None,
+    }
+
+
+@router.get("/{pid}/members")
+async def list_purchase_members(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_event import PurchaseMember
+    result = await db.execute(
+        select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
+    )
+    return [_member_dict(m) for m in result.scalars().all()]
+
+
+@router.post("/{pid}/members")
+async def add_purchase_member(
+    pid: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_event import PurchaseMember, PurchaseEvent
+    user_id = int(body.get("user_id", 0))
+    role = body.get("role", "viewer")
+
+    existing = await db.execute(
+        select(PurchaseMember).where(
+            PurchaseMember.purchase_id == pid,
+            PurchaseMember.user_id == user_id,
+        )
+    )
+    m = existing.scalar_one_or_none()
+    if m:
+        m.role = role
+    else:
+        m = PurchaseMember(purchase_id=pid, user_id=user_id, role=role, added_by_id=current_user.id)
+        db.add(m)
+    await db.flush()
+
+    u = await db.get(User, user_id)
+    ev = PurchaseEvent(
+        purchase_id=pid,
+        user_id=current_user.id,
+        event_type="member_added",
+        data={"username": (u.full_name or u.username) if u else str(user_id)},
+    )
+    db.add(ev)
+    await db.commit()
+    await db.refresh(m)
+
+    # Notify added user
+    if u and u.id != current_user.id:
+        try:
+            from app.notifications import notify_purchase_member_added
+            purchase = await db.get(Purchase, pid)
+            if purchase:
+                await notify_purchase_member_added(
+                    purchase, u, current_user.full_name or current_user.username
+                )
+        except Exception as e:
+            logger.warning("Member add notify failed: %s", e)
+
+    return _member_dict(m)
+
+
+@router.delete("/{pid}/members/{user_id}")
+async def remove_purchase_member(
+    pid: int,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.purchase_event import PurchaseMember, PurchaseEvent
+    result = await db.execute(
+        select(PurchaseMember).where(
+            PurchaseMember.purchase_id == pid,
+            PurchaseMember.user_id == user_id,
+        )
+    )
+    m = result.scalar_one_or_none()
+    if m:
+        u = await db.get(User, user_id)
+        ev = PurchaseEvent(
+            purchase_id=pid,
+            user_id=current_user.id,
+            event_type="member_removed",
+            data={"username": (u.full_name or u.username) if u else str(user_id)},
+        )
+        db.add(ev)
+        await db.delete(m)
+        await db.commit()
+    return {"ok": True}
+
+
 # ── Purchase comments (chat) ────────────────────────────────────────────────
 
 @router.get("/{pid}/comments")

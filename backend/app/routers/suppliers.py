@@ -37,7 +37,7 @@ async def list_suppliers(
 async def create_supplier(
     data: SupplierCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "org_admin", "manager")),
+    current_user: User = Depends(require_role("superadmin", "account_owner", "manager")),
 ):
     d = data.model_dump()
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id

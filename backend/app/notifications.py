@@ -1,5 +1,6 @@
 """Push notifications via Telegram and MAX (VK) bots."""
 import os
+import re
 import logging
 import httpx
 
@@ -7,81 +8,322 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
+BASE_URL = os.getenv("BASE_URL", "http://85.239.53.155")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 MAX_API = "https://botapi.max.ru/messages/send?access_token={token}"
 
 
-async def _send_telegram(chat_id: str, text: str) -> None:
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
+async def _save_tg_mapping(chat_id: str, message_id: int, task_id: int) -> None:
+    """Save telegram message_id → task_id mapping to DB."""
+    try:
+        from app.database import async_session
+        from app.models.task import TelegramMessageMap
+        async with async_session() as db:
+            db.add(TelegramMessageMap(
+                chat_id=str(chat_id),
+                message_id=message_id,
+                task_id=task_id,
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Failed to save TG mapping: %s", e)
+
+
+def _button(url: str, label: str = "Открыть") -> dict:
+    """Build Telegram inline keyboard with one URL button."""
+    return {
+        "inline_keyboard": [[{"text": f"➡️ {label}", "url": url}]]
+    }
+
+
+def _callback_keyboard(buttons: list) -> dict:
+    """Build Telegram inline keyboard with callback_data buttons.
+    buttons: list of (label, callback_data)
+    """
+    return {
+        "inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]
+    }
+
+
+async def _send_telegram(chat_id: str, text: str, task_id: int = None,
+                          button_url: str = None, button_label: str = None,
+                          reply_markup_override: dict = None) -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        logger.debug("Telegram send skipped: no token")
+        return
+    if not chat_id:
+        logger.debug("Telegram send skipped: no chat_id")
         return
     url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_markup_override:
+        payload["reply_markup"] = reply_markup_override
+    elif button_url:
+        payload["reply_markup"] = _button(button_url, button_label or "Открыть")
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(url, json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-            })
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning("Telegram API error %d: %s", resp.status_code, resp.text)
+                return
+            # Save mapping for reply routing
+            if task_id:
+                data = resp.json()
+                msg_id = data.get("result", {}).get("message_id")
+                if msg_id:
+                    await _save_tg_mapping(chat_id, msg_id, task_id)
+            logger.info("Telegram sent to %s", chat_id)
     except Exception as e:
-        logger.warning(f"Telegram send failed: {e}")
+        logger.warning("Telegram send failed: %s", e)
 
 
 async def _send_max(chat_id: str, text: str) -> None:
     if not MAX_BOT_TOKEN or not chat_id:
         return
     url = MAX_API.format(token=MAX_BOT_TOKEN)
+    clean = re.sub(r"<[^>]+>", "", text)
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(url, json={
                 "user_id": int(chat_id),
-                "text": text,
+                "text": clean,
             })
     except Exception as e:
-        logger.warning(f"MAX send failed: {e}")
+        logger.warning("MAX send failed: %s", e)
 
 
-async def notify_user(user, text: str) -> None:
+async def notify_user(user, text: str, task_id: int = None,
+                       button_url: str = None, button_label: str = None) -> None:
     """Send notification to user via all configured channels."""
     tg = getattr(user, "telegram_id", None)
     mx = getattr(user, "max_chat_id", None)
     if tg:
-        await _send_telegram(str(tg), text)
+        await _send_telegram(str(tg), text, task_id=task_id,
+                              button_url=button_url, button_label=button_label)
     if mx:
         await _send_max(str(mx), text)
 
 
+def _task_url(task_id: int) -> str:
+    return f"{BASE_URL}/my-tasks?task={task_id}"
+
+
+def _purchase_url(purchase_id: int) -> str:
+    return f"{BASE_URL}/orders/{purchase_id}/edit"
+
+
+def _esc(s: str) -> str:
+    """Escape HTML special chars for Telegram."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ── Task notifications ────────────────────────────────────────────────────────
+
 async def notify_task_assigned(task, assignee_user, assigner_name: str) -> None:
-    due = ""
-    if task.due_date:
-        due = f"\n📅 Срок: {task.due_date.strftime('%d.%m.%Y')}"
+    due = f"\n📅 Срок: {task.due_date.strftime('%d.%m.%Y')}" if task.due_date else ""
     text = (
-        f"📋 <b>Новая задача</b>\n"
-        f"Назначил: {assigner_name}\n"
-        f"<b>{task.title}</b>{due}\n"
+        f"📋 <b>Новая задача</b>\n\n"
+        f"📌 <b>{_esc(task.title)}</b>{due}\n"
+        f"👤 Назначил: <i>{_esc(assigner_name)}</i>\n"
         f"Приоритет: {task.priority}"
     )
-    await notify_user(assignee_user, text)
+    await notify_user(assignee_user, text, task_id=task.id,
+                       button_url=_task_url(task.id), button_label="Перейти к задаче")
 
 
 async def notify_consent_required(task, assignee_user, assigner_name: str) -> None:
-    due = ""
-    if task.due_date:
-        due = f"\n📅 Срок: {task.due_date.strftime('%d.%m.%Y')}"
+    due = f"\n📅 Срок: {task.due_date.strftime('%d.%m.%Y')}" if task.due_date else ""
     text = (
-        f"🤝 <b>Требуется согласие на задачу</b>\n"
-        f"От: {assigner_name}\n"
-        f"<b>{task.title}</b>{due}\n"
-        f"Войдите в CRM → Задачи → примите или отклоните."
+        f"🤝 <b>Требуется согласие</b>\n\n"
+        f"📌 <b>{_esc(task.title)}</b>{due}\n"
+        f"👤 От: <i>{_esc(assigner_name)}</i>"
     )
-    await notify_user(assignee_user, text)
+    kb = _callback_keyboard([
+        ("✅ Принять", f"consent_accept:{task.id}"),
+        ("❌ Отклонить", f"consent_decline:{task.id}"),
+    ])
+    tg = getattr(assignee_user, "telegram_id", None)
+    mx = getattr(assignee_user, "max_chat_id", None)
+    if tg:
+        await _send_telegram(str(tg), text, task_id=task.id, reply_markup_override=kb)
+    if mx:
+        await _send_max(str(mx), text)
 
 
 async def notify_deadline_soon(task, assignee_user, days_left: int) -> None:
     label = "сегодня!" if days_left == 0 else f"через {days_left} дн."
     text = (
-        f"⏰ <b>Срок подходит</b> ({label})\n"
-        f"Задача: <b>{task.title}</b>\n"
+        f"⏰ <b>Срок подходит</b> ({label})\n\n"
+        f"📌 <b>{_esc(task.title)}</b>\n"
         f"Статус: {task.status}"
     )
-    await notify_user(assignee_user, text)
+    await notify_user(assignee_user, text, task_id=task.id,
+                       button_url=_task_url(task.id), button_label="Перейти к задаче")
+
+
+async def notify_task_status_changed(task, changed_by_name: str, new_status: str, changed_by_id: int = 0) -> None:
+    """Notify all task assignees about status change (except the one who changed it)."""
+    status_labels = {
+        "todo": "К выполнению", "in_progress": "В работе",
+        "done": "✅ Выполнена", "cancelled": "❌ Отменена",
+    }
+    label = status_labels.get(new_status, new_status)
+    text = (
+        f"🔄 <b>Статус задачи изменён</b>\n\n"
+        f"📌 <b>{_esc(task.title)}</b>\n"
+        f"Новый статус: {label}\n"
+        f"👤 Изменил: <i>{_esc(changed_by_name)}</i>"
+    )
+    if hasattr(task, "assignees"):
+        for ta in task.assignees:
+            if hasattr(ta, "user") and ta.user and ta.user.id != changed_by_id:
+                await notify_user(ta.user, text, task_id=task.id,
+                                   button_url=_task_url(task.id), button_label="Перейти к задаче")
+
+
+async def notify_task_comment(task, comment_user_name: str, comment_text: str, mentioned_users=None) -> None:
+    # Strip @mentions from preview — they're metadata, not content
+    clean_text = re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', comment_text).strip()
+    clean_text = re.sub(r'\s{2,}', ' ', clean_text)  # collapse whitespace
+    if not clean_text:
+        clean_text = comment_text  # fallback if only mentions
+    preview = _esc(clean_text[:150] + ("..." if len(clean_text) > 150 else ""))
+    # If there are @mentioned users — only they get Telegram notification
+    if mentioned_users:
+        text = (
+            f"💬 <b>Вас упомянули в задаче</b>\n\n"
+            f"📌 <b>{_esc(task.title)}</b>\n"
+            f"👤 <i>{_esc(comment_user_name)}</i>:\n"
+            f"{preview}"
+        )
+        for user in mentioned_users:
+            await notify_user(user, text, task_id=task.id,
+                               button_url=_task_url(task.id), button_label="Перейти к задаче")
+    # No @mentions — no Telegram, comments visible in CRM only
+
+
+# ── Purchase notifications ────────────────────────────────────────────────────
+
+async def notify_purchase_status_changed(purchase, changed_by_name: str, new_status: str, notify_users=None) -> None:
+    status_labels = {
+        "planned": "Запланирована", "confirmed": "Подтверждена",
+        "work_in_progress": "В работе", "contracted": "Договор заключён",
+        "delivered": "Доставлено", "paid": "Оплачено",
+    }
+    label = status_labels.get(new_status, new_status)
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"📦 <b>Статус закупки изменён</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"Новый статус: {label}\n"
+        f"👤 Изменил: <i>{_esc(changed_by_name)}</i>"
+    )
+    if notify_users:
+        for user in notify_users:
+            await notify_user(user, text,
+                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+
+
+# ── Approval notifications ────────────────────────────────────────────────────
+
+async def notify_approval_started(purchase, approver_users=None) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"✅ <b>Согласование запущено</b>\n\n"
+        f"📌 <b>{subject}</b>"
+    )
+    if approver_users:
+        for user in approver_users:
+            await notify_user(user, text,
+                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+
+
+async def notify_approval_decided(purchase, approver_name: str, action: str, comment: str = "", notify_users=None) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    icon = "✅" if action == "approved" else "❌"
+    action_label = "Согласовано" if action == "approved" else "Отклонено"
+    comment_line = f"\n💬 {_esc(comment)}" if comment else ""
+    text = (
+        f"{icon} <b>{action_label}</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"👤 Решение: <i>{_esc(approver_name)}</i>{comment_line}"
+    )
+    if notify_users:
+        for user in notify_users:
+            await notify_user(user, text,
+                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+
+
+async def notify_approval_your_turn(purchase, approver_user) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"🔔 <b>Ваша очередь согласовать</b>\n\n"
+        f"📌 <b>{subject}</b>"
+    )
+    await notify_user(approver_user, text,
+                       button_url=_purchase_url(purchase.id), button_label="Открыть и согласовать")
+
+
+async def notify_approval_completed(purchase, notify_users=None) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"🎉 <b>Согласование завершено</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"Все согласующие приняли решение."
+    )
+    if notify_users:
+        for user in notify_users:
+            await notify_user(user, text,
+                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+
+
+# ── Purchase deadline notifications ──────────────────────────────────────────
+
+async def notify_purchase_member_added(purchase, added_user, added_by_name: str) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"👥 <b>Вас добавили в обсуждение закупки</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"👤 Добавил: <i>{_esc(added_by_name)}</i>"
+    )
+    await notify_user(added_user, text,
+                       button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+
+
+async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
+    """Notify about approaching purchase deadline."""
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+
+    if deadline_type == "payment_overdue":
+        text = (
+            f"💰 <b>Оплата просрочена</b>\n\n"
+            f"📌 <b>{subject}</b>\n"
+            f"Товар доставлен {days_left} дн. назад, но не оплачен"
+        )
+    elif deadline_type == "approval_overdue":
+        text = (
+            f"⚠️ <b>Согласование просрочено</b>\n\n"
+            f"📌 <b>{subject}</b>\n"
+            f"Срок согласования истёк {days_left} дн. назад"
+        )
+    else:
+        labels = {"execution_term": "Срок исполнения", "delivery": "Срок поставки"}
+        label = labels.get(deadline_type, "Срок")
+        if days_left == 0:
+            time_label = "сегодня!"
+        elif days_left < 0:
+            time_label = f"просрочен на {-days_left} дн."
+        else:
+            time_label = f"через {days_left} дн."
+        text = (
+            f"⏰ <b>{label}</b> ({time_label})\n\n"
+            f"📌 <b>{subject}</b>"
+        )
+    await notify_user(user, text,
+                       button_url=_purchase_url(purchase.id), button_label="Открыть закупку")

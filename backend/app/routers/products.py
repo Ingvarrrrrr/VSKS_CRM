@@ -293,6 +293,31 @@ async def verify_product_tz(
     return product
 
 
+@router.delete("/{product_id}/verify-tz", response_model=ProductOut)
+async def unverify_product_tz(
+    product_id: int,
+    tz_type: str = Query(..., description="'standard' или '44fz'"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Снять отметку проверки ТЗ (только admin/superadmin)."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(403, "Только администратор может снять отметку проверки ТЗ")
+    result = await db.execute(select(Product).where(Product.id == product_id))
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    if tz_type == "44fz":
+        product.tz_44fz_verified_at = None
+        product.tz_44fz_verified_by = None
+    else:
+        product.tz_verified_at = None
+        product.tz_verified_by = None
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
 @router.delete("/{product_id}")
 async def delete_product(
     product_id: int,
@@ -440,9 +465,12 @@ async def import_products_from_excel(
         except: return None
 
     # Load existing name+description keys to avoid duplicates
+    def _norm_key(s) -> str:
+        return (s or '').replace('\r\n', '\n').replace('\r', '\n').strip().lower()
+
     existing_result = await db.execute(select(Product.name, Product.description))
     existing_keys = {
-        (r[0] or '').strip().lower() + '|' + (r[1] or '').strip().lower()
+        _norm_key(r[0]) + '|' + _norm_key(r[1])
         for r in existing_result.all()
     }
 
@@ -454,7 +482,7 @@ async def import_products_from_excel(
             name = cell(row, "name")
             if not name: skipped += 1; continue
             desc_val = cell(row, "description")
-            dedup_key = name.strip().lower() + '|' + (desc_val or '').strip().lower()
+            dedup_key = _norm_key(name) + '|' + _norm_key(desc_val)
             if dedup_key in existing_keys:
                 skipped += 1; continue
 
@@ -529,11 +557,14 @@ async def deduplicate_products(
     result = await db.execute(select(Product))
     all_products = result.scalars().all()
 
-    # Group by dedup key
+    # Group by dedup key — normalise \r\n → \n so Windows/Unix line endings match
     from collections import defaultdict
+    def _norm(s: str) -> str:
+        return (s or '').replace('\r\n', '\n').replace('\r', '\n').strip().lower()
+
     groups: dict[str, list] = defaultdict(list)
     for p in all_products:
-        key = (p.name or '').strip().lower() + '|' + (p.description or '').strip().lower()
+        key = _norm(p.name) + '|' + _norm(p.description)
         groups[key].append(p)
 
     def priority_score(p) -> tuple:

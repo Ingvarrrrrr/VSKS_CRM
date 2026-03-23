@@ -11,9 +11,10 @@ from app.database import get_db
 from app.models.user import User
 
 # Role constants
-ROLES = ("superadmin", "org_admin", "admin", "manager", "employee")
-ADMIN_ROLES = ("superadmin", "org_admin", "admin")
-MANAGER_ROLES = ("superadmin", "org_admin", "admin", "manager")
+ROLES = ("superadmin", "account_owner", "admin", "manager", "employee")
+ADMIN_ROLES = ("superadmin", "account_owner", "admin")
+MANAGER_ROLES = ("superadmin", "account_owner", "admin", "manager")
+OWNER_ROLES = ("superadmin", "account_owner")
 ALL_ROLES = ROLES
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -70,6 +71,12 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     if current_user.role == 'superadmin':
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
+    if current_user.role == 'account_owner':
+        # All contour org_ids are stored in JWT at login time
+        org_ids = getattr(current_user, '_active_org_ids', None)
+        if org_ids:
+            return org_ids
+        return [current_user.org_id] if current_user.org_id else None
     active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
     return [active_org_id] if active_org_id else None
 
@@ -84,7 +91,7 @@ def get_single_org_id(current_user: User) -> Optional[int]:
 
 async def check_org_active(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Dependency: raises 403 if user's org is inactive."""
-    if current_user.role == 'superadmin':
+    if current_user.role in ('superadmin', 'account_owner'):
         return current_user
     if current_user.org_id is None:
         raise HTTPException(status_code=403, detail="Пользователь не привязан к организации")

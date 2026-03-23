@@ -69,17 +69,17 @@
       <div class="stat-sep" />
       <div class="stat-item">
         <span class="stat-label">Законтрактовано</span>
-        <span class="stat-val" style="color:#3B82F6">{{ fmt(totalContracted) }}</span>
+        <span class="stat-val" style="color:var(--color-contracted)">{{ fmt(totalContracted) }}</span>
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
         <span class="stat-label">Оплачено</span>
-        <span class="stat-val" style="color:#22C55E">{{ fmt(totalPaid) }}</span>
+        <span class="stat-val" style="color:var(--color-paid)">{{ fmt(totalPaid) }}</span>
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
         <span class="stat-label">Экономия</span>
-        <span class="stat-val" style="color:#8B5CF6">{{ fmt(totalEconomy) }}</span>
+        <span class="stat-val" style="color:var(--color-savings)">{{ fmt(totalEconomy) }}</span>
       </div>
     </div>
 
@@ -134,11 +134,11 @@
               </td>
               <td class="th-contractor text-caption">{{ p.contractor_name || '—' }}</td>
               <td class="th-money">
-                <span v-if="p.contract_price" style="color:#3B82F6">{{ fmt(Number(p.contract_price)) }}</span>
+                <span v-if="p.contract_price" style="color:var(--color-contracted)">{{ fmt(Number(p.contract_price)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
               </td>
               <td class="th-money">
-                <span v-if="p.payment_amount" style="color:#22C55E">{{ fmt(Number(p.payment_amount)) }}</span>
+                <span v-if="p.payment_amount" style="color:var(--color-paid)">{{ fmt(Number(p.payment_amount)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
               </td>
               <td class="th-date text-caption" :class="{ 'text-warning': isPastPlanned(p.procurement_planned_date) }">
@@ -159,8 +159,8 @@
               <td class="th-money font-weight-bold">{{ fmt(totalNmck) }}</td>
               <td />
               <td />
-              <td class="th-money font-weight-bold" style="color:#3B82F6">{{ fmt(totalContracted) }}</td>
-              <td class="th-money font-weight-bold" style="color:#22C55E">{{ fmt(totalPaid) }}</td>
+              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">{{ fmt(totalContracted) }}</td>
+              <td class="th-money font-weight-bold" style="color:var(--color-paid)">{{ fmt(totalPaid) }}</td>
               <td colspan="3" />
             </tr>
           </tfoot>

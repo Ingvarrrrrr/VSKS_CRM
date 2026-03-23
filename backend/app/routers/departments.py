@@ -194,7 +194,7 @@ async def create_department(
     current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
     # Superadmin can assign to any org via body.org_id; others use their org
-    if data.org_id and current_user.role in ('superadmin', 'org_admin'):
+    if data.org_id and current_user.role in ('superadmin', 'account_owner'):
         org_id = data.org_id
     else:
         org_id = get_single_org_id(current_user) or current_user.org_id

@@ -49,6 +49,7 @@ def _to_out(a: PurchaseApproval) -> dict:
 @router.post("/purchases/{pid}/approvals/start", response_model=List[PurchaseApprovalOut])
 async def start_approval(
     pid: int,
+    body: dict = {},
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -69,6 +70,24 @@ async def start_approval(
     # Check no active chain already
     if p.approval_status == "in_progress":
         raise HTTPException(422, "Согласование уже запущено")
+
+    # Approval mode: sequential (default) or parallel
+    approval_mode = body.get("approval_mode", "sequential")
+    if approval_mode not in ("sequential", "parallel"):
+        approval_mode = "sequential"
+    # Sign type: electronic (default) or paper
+    approval_sign_type = body.get("approval_sign_type", "electronic")
+    if approval_sign_type not in ("electronic", "paper"):
+        approval_sign_type = "electronic"
+    # Optional deadline
+    from datetime import date as _date
+    approval_deadline_str = body.get("approval_deadline")
+    approval_deadline = None
+    if approval_deadline_str:
+        try:
+            approval_deadline = _date.fromisoformat(str(approval_deadline_str))
+        except (ValueError, TypeError):
+            pass
 
     # Clear old approvals if re-starting after rejection
     old = await db.execute(
@@ -98,23 +117,47 @@ async def start_approval(
             approver_full_name=sa.full_name,
             user_id=sa.user_id,
             status="pending",
+            approval_deadline=approval_deadline,
         )
         db.add(pa)
         created.append(pa)
 
     p.approval_status = "in_progress"
+    p.approval_mode = approval_mode
+    p.approval_sign_type = approval_sign_type
 
     # Event
     db.add(PurchaseEvent(
         purchase_id=pid,
         user_id=current_user.id,
         event_type="approval_started",
-        data={"approver_count": len(created)},
+        data={"approver_count": len(created), "mode": approval_mode, "sign_type": approval_sign_type},
     ))
 
     await db.commit()
     for pa in created:
         await db.refresh(pa)
+
+    # Notify approvers
+    try:
+        from app.notifications import notify_approval_started, notify_approval_your_turn
+        approver_users = []
+        for pa in created:
+            if pa.user_id:
+                u = await db.get(User, pa.user_id)
+                if u:
+                    approver_users.append(u)
+        await notify_approval_started(p, approver_users)
+        # In sequential mode, notify first approver it's their turn
+        if approval_mode != "parallel" and created:
+            first = created[0]
+            if first.user_id:
+                first_user = await db.get(User, first.user_id)
+                if first_user:
+                    await notify_approval_your_turn(p, first_user)
+    except Exception:
+        pass  # notifications are best-effort
+
     return [_to_out(pa) for pa in created]
 
 
@@ -158,15 +201,17 @@ async def decide_approval(
     if approval.status != "pending":
         raise HTTPException(422, f"Это согласование уже обработано (статус: {approval.status})")
 
-    # Check sequential order
-    result = await db.execute(
-        select(PurchaseApproval)
-        .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.order_num < approval.order_num)
-    )
-    prior = result.scalars().all()
-    for p in prior:
-        if p.status not in ("approved", "skipped"):
-            raise HTTPException(422, "Предыдущие согласующие ещё не приняли решение")
+    # Check sequential order (only in sequential mode)
+    purchase_for_mode = await db.get(Purchase, pid)
+    if purchase_for_mode and purchase_for_mode.approval_mode != "parallel":
+        result = await db.execute(
+            select(PurchaseApproval)
+            .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.order_num < approval.order_num)
+        )
+        prior = result.scalars().all()
+        for p in prior:
+            if p.status not in ("approved", "skipped"):
+                raise HTTPException(422, "Предыдущие согласующие ещё не приняли решение")
 
     # Authorization check
     is_admin = current_user.role in ADMIN_ROLES
@@ -242,6 +287,44 @@ async def decide_approval(
 
     await db.commit()
     await db.refresh(approval)
+
+    # Notifications
+    try:
+        from app.notifications import notify_approval_decided, notify_approval_your_turn, notify_approval_completed
+        approver_name = approval.approver_full_name or current_user.full_name
+
+        # Collect purchase members/creator to notify
+        notify_users = []
+        if purchase.created_by_id:
+            creator = await db.get(User, purchase.created_by_id)
+            if creator:
+                notify_users.append(creator)
+
+        await notify_approval_decided(
+            purchase, approver_name, approval.status,
+            comment=body.comment or "", notify_users=notify_users
+        )
+
+        if approval.status == "approved":
+            # If all done — notify completion
+            if purchase.approval_status == "approved":
+                await notify_approval_completed(purchase, notify_users)
+            else:
+                # Notify next approver in sequential mode
+                if purchase.approval_mode != "parallel":
+                    all_res = await db.execute(
+                        select(PurchaseApproval)
+                        .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.status == "pending")
+                        .order_by(PurchaseApproval.order_num)
+                    )
+                    next_pa = all_res.scalars().first()
+                    if next_pa and next_pa.user_id:
+                        next_user = await db.get(User, next_pa.user_id)
+                        if next_user:
+                            await notify_approval_your_turn(purchase, next_user)
+    except Exception:
+        pass  # best-effort
+
     return _to_out(approval)
 
 
@@ -300,22 +383,23 @@ async def my_pending_approvals(
 
     out = []
     for ap in my_approvals:
-        # Check if it's actually this user's turn (all prior must be approved/skipped)
-        prior_result = await db.execute(
-            select(PurchaseApproval)
-            .where(
-                PurchaseApproval.purchase_id == ap.purchase_id,
-                PurchaseApproval.order_num < ap.order_num,
-            )
-        )
-        prior = prior_result.scalars().all()
-        if any(p.status not in ("approved", "skipped") for p in prior):
-            continue  # Not this user's turn yet
-
         # Load purchase info
         purchase = await db.get(Purchase, ap.purchase_id)
         if not purchase or purchase.approval_status != "in_progress":
             continue
+
+        # Check if it's actually this user's turn (sequential mode only)
+        if purchase.approval_mode != "parallel":
+            prior_result = await db.execute(
+                select(PurchaseApproval)
+                .where(
+                    PurchaseApproval.purchase_id == ap.purchase_id,
+                    PurchaseApproval.order_num < ap.order_num,
+                )
+            )
+            prior = prior_result.scalars().all()
+            if any(p.status not in ("approved", "skipped") for p in prior):
+                continue  # Not this user's turn yet
 
         out.append({
             "approval": _to_out(ap),

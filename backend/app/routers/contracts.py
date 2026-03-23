@@ -4,9 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.contract import Contract
+from app.models.contract_subsidy import ContractSubsidy
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
-from app.schemas.schemas import ContractCreate, ContractOut
+from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES
 from app.models.subsidy import Subsidy
 from typing import List, Optional
@@ -20,10 +21,15 @@ async def list_contracts(
     contract_type: Optional[str] = Query(None),
     purchase_method: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    contractor_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    q = select(Contract).options(selectinload(Contract.contractor), selectinload(Contract.subsidy)).order_by(Contract.id.desc())
+    q = select(Contract).options(
+        selectinload(Contract.contractor),
+        selectinload(Contract.subsidy),
+        selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy),
+    ).order_by(Contract.id.desc())
     if subsidy_id is not None:
         q = q.where(Contract.subsidy_id == subsidy_id)
     if contract_type is not None:
@@ -32,6 +38,8 @@ async def list_contracts(
         q = q.where(Contract.purchase_method == purchase_method)
     if status is not None:
         q = q.where(Contract.status == status)
+    if contractor_id is not None:
+        q = q.where(Contract.contractor_id == contractor_id)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, Contract.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
@@ -64,16 +72,36 @@ async def list_contracts(
             d.contractor_inn = c.contractor.inn
         if c.subsidy:
             d.subsidy_name = c.subsidy.name
+        d.extra_subsidies = [
+            ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
+            for es in (c.extra_subsidies or [])
+        ]
         out.append(d)
     return out
 
 @router.post("/", response_model=ContractOut)
 async def create_contract(data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
-    c = Contract(**data.model_dump())
+    extra_ids = data.extra_subsidy_ids or []
+    dump = data.model_dump(exclude={"extra_subsidy_ids"})
+    c = Contract(**dump)
     db.add(c)
+    await db.flush()
+    for sid in extra_ids:
+        db.add(ContractSubsidy(contract_id=c.id, subsidy_id=sid))
     await db.commit()
     await db.refresh(c)
-    return ContractOut.model_validate(c)
+    result = await db.execute(
+        select(Contract).options(
+            selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy)
+        ).where(Contract.id == c.id)
+    )
+    c = result.scalar_one()
+    d = ContractOut.model_validate(c)
+    d.extra_subsidies = [
+        ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
+        for es in c.extra_subsidies
+    ]
+    return d
 
 @router.put("/{cid}", response_model=ContractOut)
 async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
@@ -82,7 +110,8 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     if not c:
         raise HTTPException(404, "Not found")
     old_number = c.number
-    for k, v in data.model_dump().items():
+    extra_ids = data.extra_subsidy_ids or []
+    for k, v in data.model_dump(exclude={"extra_subsidy_ids"}).items():
         setattr(c, k, v)
     # Sync changes to linked purchases
     if data.number != old_number or data.date is not None:
@@ -94,9 +123,25 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
                 p.contract_date = data.date
             if data.contractor_id is not None:
                 p.contractor_id = data.contractor_id
+    # Replace extra subsidies
+    old_extras = await db.execute(select(ContractSubsidy).where(ContractSubsidy.contract_id == cid))
+    for es in old_extras.scalars().all():
+        await db.delete(es)
+    for sid in extra_ids:
+        db.add(ContractSubsidy(contract_id=cid, subsidy_id=sid))
     await db.commit()
-    await db.refresh(c)
-    return ContractOut.model_validate(c)
+    result2 = await db.execute(
+        select(Contract).options(
+            selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy)
+        ).where(Contract.id == cid)
+    )
+    c = result2.scalar_one()
+    d = ContractOut.model_validate(c)
+    d.extra_subsidies = [
+        ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
+        for es in c.extra_subsidies
+    ]
+    return d
 
 @router.delete("/{cid}")
 async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
@@ -112,7 +157,7 @@ async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depend
 @router.post("/migrate-from-purchases")
 async def migrate_contracts_from_purchases(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("superadmin", "org_admin", "admin")),
+    _=Depends(require_role("superadmin", "account_owner", "admin")),
 ):
     """Create Contract records from purchases.contract_number strings (skip existing)."""
     # Get all purchases with a contract_number set but no contract_id

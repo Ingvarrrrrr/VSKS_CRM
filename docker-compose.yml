@@ -29,6 +29,8 @@ services:
       SMTP_PASSWORD: szbgaktpqomcwdou
       SMTP_FROM: z@vsks.ru
       BASE_URL: http://localhost:80
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

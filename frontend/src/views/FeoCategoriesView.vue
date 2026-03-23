@@ -47,11 +47,11 @@
           <div class="sc-mini-row">
             <div class="sc-mini">
               <div class="sc-mini-label">Запланировано</div>
-              <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.planned) }}</div>
+              <div class="sc-mini-val" style="color:var(--color-planned)">{{ formatCurrencyShort(s.planned) }}</div>
             </div>
             <div class="sc-mini">
               <div class="sc-mini-label">Оплачено</div>
-              <div class="sc-mini-val" style="color:#22C55E">{{ formatCurrencyShort(s.paid) }}</div>
+              <div class="sc-mini-val" style="color:var(--color-paid)">{{ formatCurrencyShort(s.paid) }}</div>
             </div>
           </div>
           <v-progress-linear

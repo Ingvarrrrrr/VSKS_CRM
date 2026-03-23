@@ -27,6 +27,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       BASE_URL: ${BASE_URL:-http://localhost}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

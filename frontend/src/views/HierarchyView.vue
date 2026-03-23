@@ -1105,14 +1105,14 @@ defineExpose({ refresh: loadGraph })
 
 /* ── Node styles ── */
 :deep(.hnode) {
-  background: white;
+  background: var(--crm-surface);
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12);
   min-width: 160px;
   overflow: hidden;
   cursor: grab;
   transition: box-shadow 0.15s;
-  border: 1.5px solid #e0e0e0;
+  border: 1.5px solid var(--crm-border-strong);
 }
 :deep(.hnode:hover) {
   box-shadow: 0 4px 16px rgba(0,0,0,0.18);

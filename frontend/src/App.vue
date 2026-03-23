@@ -100,10 +100,24 @@ onMounted(async () => {
   --crm-kpi-bg-amber: #FFF7ED;
   --crm-tz-header: #F0F7FF;
   --crm-tz-footer: #F9FAFB;
+  /* Semantic status colors */
+  --color-planned:    #F59E0B;
+  --color-contracted: #3B82F6;
+  --color-paid:       #22C55E;
+  --color-savings:    #8B5CF6;
+  --color-profit:     #166534;
+  --color-loss:       #DC2626;
 }
 
 .v-theme--dark {
   --crm-bg: #0F172A;
+  /* Semantic status colors — lighter for dark backgrounds */
+  --color-planned:    #FCD34D;
+  --color-contracted: #60A5FA;
+  --color-paid:       #4ADE80;
+  --color-savings:    #C4B5FD;
+  --color-profit:     #86EFAC;
+  --color-loss:       #FCA5A5;
   --crm-surface: #1E293B;
   --crm-surface-alt: #1E293B;
   --crm-surface-hover: #334155;

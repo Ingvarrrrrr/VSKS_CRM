@@ -45,6 +45,8 @@
         item-value="id"
         :items-per-page="20"
         density="comfortable"
+        class="cr-clickable"
+        @click:row="(_, { item }) => openDetailDialog(item)"
       >
         <template v-slot:item.status="{ item }">
           <v-chip :color="statusColor(item.status)" size="small" variant="tonal">
@@ -70,22 +72,21 @@
           {{ item.created_at ? item.created_at.slice(0, 10) : '—' }}
         </template>
         <template v-slot:item.actions="{ item }">
-          <div class="d-flex gap-1">
-            <v-btn icon="mdi-eye" size="x-small" variant="text" @click="openDetailDialog(item)" title="Подробнее" />
+          <div class="d-flex gap-1" @click.stop>
             <v-btn
               v-if="item.status === 'prepared'"
               icon="mdi-send" size="x-small" variant="text" color="primary"
-              @click="updateStatus(item.id, 'sent')" title="Отметить отправленным"
+              @click.stop="updateStatus(item.id, 'sent')" title="Отметить отправленным"
             />
             <v-btn
               v-if="item.status === 'sent'"
               icon="mdi-check-all" size="x-small" variant="text" color="success"
-              @click="updateStatus(item.id, 'received')" title="Получены ответы"
+              @click.stop="updateStatus(item.id, 'received')" title="Получены ответы"
             />
             <v-btn
               v-if="['prepared','sent','received'].includes(item.status)"
               icon="mdi-archive" size="x-small" variant="text" color="grey"
-              @click="updateStatus(item.id, 'closed')" title="Закрыть"
+              @click.stop="updateStatus(item.id, 'closed')" title="Закрыть"
             />
           </div>
         </template>
@@ -272,8 +273,8 @@
       </v-card>
     </v-dialog>
 
-    <!-- Detail Dialog -->
-    <v-dialog v-model="detailDialog.show" max-width="680" scrollable>
+    <!-- Detail / Edit Dialog -->
+    <v-dialog v-model="detailDialog.show" max-width="720" scrollable>
       <v-card v-if="detailDialog.item">
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-email-outline" color="primary" class="mr-2" />
@@ -282,18 +283,27 @@
             {{ statusLabel(detailDialog.item.status) }}
           </v-chip>
           <v-spacer />
+          <v-btn v-if="!detailDialog.editing" icon="mdi-pencil" variant="text" size="small" title="Редактировать" @click="startEdit" />
           <v-btn icon="mdi-close" variant="text" size="small" @click="detailDialog.show = false" />
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
-          <div class="mb-2"><span class="text-caption text-medium-emphasis">Тема:</span> {{ detailDialog.item.subject || '—' }}</div>
-          <div class="mb-2"><span class="text-caption text-medium-emphasis">Срок КП:</span> {{ detailDialog.item.delivery_date ? formatDate(detailDialog.item.delivery_date) : '—' }}</div>
-          <div v-if="detailDialog.item.intro_text" class="mb-3 text-body-2 bg-grey-lighten-4 pa-3 rounded">
-            {{ detailDialog.item.intro_text }}
-          </div>
-          <div class="text-body-2 font-weight-medium mb-2">Получатели:</div>
+          <!-- View mode -->
+          <template v-if="!detailDialog.editing">
+            <div class="mb-2"><span class="text-caption text-medium-emphasis">Тема:</span> {{ detailDialog.item.subject || '—' }}</div>
+            <div class="mb-2"><span class="text-caption text-medium-emphasis">Срок КП:</span> {{ detailDialog.item.delivery_date ? formatDate(detailDialog.item.delivery_date) : '—' }}</div>
+            <div v-if="detailDialog.item.intro_text" class="mb-3 text-body-2 bg-grey-lighten-4 pa-3 rounded" style="white-space:pre-wrap">{{ detailDialog.item.intro_text }}</div>
+          </template>
+          <!-- Edit mode -->
+          <template v-else>
+            <v-text-field v-model="detailDialog.editSubject" label="Тема письма" variant="outlined" density="compact" class="mb-3" />
+            <v-text-field v-model="detailDialog.editDeliveryDate" label="Срок предоставления КП" type="date" variant="outlined" density="compact" class="mb-3" />
+            <v-textarea v-model="detailDialog.editIntroText" label="Текст письма" variant="outlined" density="compact" rows="5" class="mb-3" />
+          </template>
+
+          <div class="text-body-2 font-weight-medium mb-2 mt-1">Получатели:</div>
           <v-table density="compact">
             <thead>
-              <tr><th>Контрагент</th><th>Email</th><th>Статус</th><th>Действие</th></tr>
+              <tr><th>Контрагент</th><th>Email</th><th>Статус</th><th style="width:140px">Изменить статус</th></tr>
             </thead>
             <tbody>
               <tr v-for="r in detailDialog.item.recipients" :key="r.id">
@@ -322,8 +332,15 @@
           </v-table>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="detailDialog.show = false">Закрыть</v-btn>
+          <template v-if="detailDialog.editing">
+            <v-btn variant="text" @click="detailDialog.editing = false">Отмена</v-btn>
+            <v-spacer />
+            <v-btn color="primary" variant="flat" :loading="detailDialog.saving" @click="saveEdit">Сохранить</v-btn>
+          </template>
+          <template v-else>
+            <v-spacer />
+            <v-btn variant="text" @click="detailDialog.show = false">Закрыть</v-btn>
+          </template>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -409,7 +426,15 @@ const quickContractor = reactive({
   saving: false,
 })
 
-const detailDialog = reactive({ show: false, item: null as CommercialRequest | null })
+const detailDialog = reactive({
+  show: false,
+  item: null as CommercialRequest | null,
+  editing: false,
+  saving: false,
+  editSubject: '',
+  editIntroText: '',
+  editDeliveryDate: '',
+})
 
 const editEmailId = ref<number | null>(null)
 const editEmailValue = ref('')
@@ -555,7 +580,40 @@ async function saveRequest() {
 
 function openDetailDialog(item: CommercialRequest) {
   detailDialog.item = item
+  detailDialog.editing = false
   detailDialog.show = true
+}
+
+function startEdit() {
+  if (!detailDialog.item) return
+  detailDialog.editSubject = detailDialog.item.subject || ''
+  detailDialog.editIntroText = detailDialog.item.intro_text || ''
+  detailDialog.editDeliveryDate = detailDialog.item.delivery_date || ''
+  detailDialog.editing = true
+}
+
+async function saveEdit() {
+  if (!detailDialog.item) return
+  detailDialog.saving = true
+  try {
+    const updated = await apiFetch<CommercialRequest>(`/commercial-requests/${detailDialog.item.id}`, {
+      method: 'PUT',
+      body: {
+        subject: detailDialog.editSubject || null,
+        intro_text: detailDialog.editIntroText || null,
+        delivery_date: detailDialog.editDeliveryDate || null,
+      },
+    })
+    const idx = requests.value.findIndex(r => r.id === updated.id)
+    if (idx >= 0) requests.value[idx] = updated
+    detailDialog.item = updated
+    detailDialog.editing = false
+    showSnack('Запрос КП обновлён')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка сохранения', 'error')
+  } finally {
+    detailDialog.saving = false
+  }
 }
 
 async function updateStatus(id: number, status: string) {
@@ -589,3 +647,7 @@ async function updateRecipientStatus(recipientId: number, status: string) {
 
 onMounted(loadRequests)
 </script>
+
+<style scoped>
+.cr-clickable :deep(tbody tr) { cursor: pointer; }
+</style>

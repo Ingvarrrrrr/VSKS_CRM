@@ -1,12 +1,15 @@
 <template>
   <v-app-bar color="primary" density="compact">
+    <!-- Hamburger — только на мобильных -->
+    <v-app-bar-nav-icon class="d-md-none" @click="drawerOpen = !drawerOpen" />
+
     <v-app-bar-title class="text-h6 font-weight-bold">
       <v-icon icon="mdi-account-cash" class="mr-2" />
       VSKS CRM
-      <span class="text-caption ml-2">Патриотика 2025</span>
+      <span class="text-caption ml-2 d-none d-sm-inline">Патриотика 2025</span>
     </v-app-bar-title>
 
-    <div class="nav-icons">
+    <div class="nav-icons d-none d-md-flex">
       <v-btn
         v-for="nav in navShortcuts"
         :key="nav.route"
@@ -212,7 +215,7 @@
     </v-card>
   </v-dialog>
 
-  <v-navigation-drawer permanent width="280" color="surface">
+  <v-navigation-drawer v-model="drawerOpen" :permanent="mdAndUp" width="280" color="surface">
     <v-list nav density="compact" class="mt-4">
       <v-list-item
         v-for="(item, idx) in orderedMenuItems"
@@ -323,9 +326,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import GlobalSearch from './GlobalSearch.vue'
 import SignaturePad from './SignaturePad.vue'
 import ProfilePhotoUpload from './ProfilePhotoUpload.vue'
@@ -337,6 +340,15 @@ const { globalSubsidyId } = useGlobalSubsidy()
 
 const router = useRouter()
 const $route = useRoute()
+const { mdAndUp } = useDisplay()
+
+// Drawer: open by default on desktop, closed on mobile
+const drawerOpen = ref(true)
+
+// Auto-close drawer on navigation (mobile)
+watch(() => $route.path, () => {
+  if (!mdAndUp.value) drawerOpen.value = false
+})
 const vuetifyTheme = useTheme()
 
 const ADMIN_ROLES = ['superadmin', 'org_admin', 'admin']

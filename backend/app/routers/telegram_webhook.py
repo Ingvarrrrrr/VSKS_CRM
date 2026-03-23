@@ -1,4 +1,4 @@
-"""Telegram Bot polling — routes replies from Telegram back to task comments."""
+"""Telegram Bot polling — routes replies from Telegram back to task/purchase comments."""
 import asyncio
 import logging
 import httpx
@@ -17,6 +17,9 @@ router = APIRouter(tags=["telegram"])
 _last_update_id = 0
 _polling_started = False
 
+# In-memory map: (chat_id, msg_id) → purchase_id for routing purchase replies
+_purchase_msg_map: dict[tuple, int] = {}
+
 
 async def _answer_cq(callback_query_id: str, text: str) -> None:
     if not TELEGRAM_BOT_TOKEN:
@@ -29,6 +32,30 @@ async def _answer_cq(callback_query_id: str, text: str) -> None:
         logger.warning("answerCallbackQuery failed: %s", e)
 
 
+async def _send_force_reply(chat_id: str, prompt: str, task_id: int = None, purchase_id: int = None) -> None:
+    """Send a ForceReply message so user can reply without using Telegram's native Reply."""
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={
+                "chat_id": chat_id,
+                "text": prompt,
+                "reply_markup": {"force_reply": True, "selective": True, "input_field_placeholder": "Введите комментарий..."},
+            })
+            if resp.status_code == 200:
+                msg_id = resp.json().get("result", {}).get("message_id")
+                if msg_id:
+                    if task_id:
+                        from app.notifications import _save_tg_mapping
+                        await _save_tg_mapping(chat_id, msg_id, task_id)
+                    elif purchase_id:
+                        _purchase_msg_map[(chat_id, msg_id)] = purchase_id
+    except Exception as e:
+        logger.warning("ForceReply send failed: %s", e)
+
+
 async def _handle_callback(cq: dict) -> None:
     """Handle inline keyboard callback — consent accept/decline."""
     import sqlalchemy
@@ -36,6 +63,20 @@ async def _handle_callback(cq: dict) -> None:
     data = cq.get("data", "")
     chat_id = str(cq.get("from", {}).get("id", ""))
 
+    # ── Reply callbacks ──────────────────────────────────────────────────────
+    if data.startswith("reply_task:"):
+        task_id = int(data.split(":", 1)[1])
+        await _answer_cq(cq_id, "")
+        await _send_force_reply(chat_id, "✉️ Введите ваш комментарий к задаче:", task_id=task_id)
+        return
+
+    if data.startswith("reply_purchase:"):
+        purchase_id = int(data.split(":", 1)[1])
+        await _answer_cq(cq_id, "")
+        await _send_force_reply(chat_id, "✉️ Введите ваш комментарий к закупке:", purchase_id=purchase_id)
+        return
+
+    # ── Consent callbacks ────────────────────────────────────────────────────
     if not data.startswith(("consent_accept:", "consent_decline:")):
         await _answer_cq(cq_id, "")
         return
@@ -131,9 +172,33 @@ async def _process_update(update: dict) -> None:
     if not chat_id:
         return
 
+    # ── Check purchase reply map (in-memory) ─────────────────────────────────
+    purchase_id = _purchase_msg_map.get((chat_id, reply_msg_id))
+    if purchase_id:
+        try:
+            async with async_session() as db:
+                user = (await db.execute(
+                    select(User).where(User.telegram_id == chat_id)
+                )).scalars().first()
+                if not user:
+                    return
+                from app.models.purchase_comment import PurchaseComment
+                comment = PurchaseComment(
+                    purchase_id=purchase_id,
+                    user_id=user.id,
+                    user_name=user.full_name or user.username,
+                    text=f"[Telegram] {text}",
+                )
+                db.add(comment)
+                await db.commit()
+                logger.info("TG reply → purchase %d by %s", purchase_id, user.username)
+        except Exception as e:
+            logger.error("TG purchase reply error: %s", e)
+        return
+
+    # ── Check task reply map (DB) ─────────────────────────────────────────────
     try:
         async with async_session() as db:
-            # Find task_id from DB mapping
             result = await db.execute(
                 select(TelegramMessageMap.task_id)
                 .where(
@@ -145,7 +210,6 @@ async def _process_update(update: dict) -> None:
             if not task_id:
                 return
 
-            # Find user
             user = (await db.execute(
                 select(User).where(User.telegram_id == chat_id)
             )).scalars().first()
@@ -153,7 +217,6 @@ async def _process_update(update: dict) -> None:
                 logger.info("TG reply from unknown chat_id=%s", chat_id)
                 return
 
-            # Create comment
             comment = TaskComment(
                 task_id=task_id,
                 user_id=user.id,
@@ -164,7 +227,6 @@ async def _process_update(update: dict) -> None:
             await db.commit()
             logger.info("TG reply → task %d by %s", task_id, user.username)
 
-            # Notify other assignees
             try:
                 from app.models.task import Task, TaskAssignee
                 from sqlalchemy.orm import selectinload

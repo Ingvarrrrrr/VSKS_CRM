@@ -46,6 +46,42 @@ def _callback_keyboard(buttons: list) -> dict:
     }
 
 
+def _task_keyboard(task_id: int) -> dict:
+    """Keyboard: open CRM + Reply button for task notifications."""
+    return {
+        "inline_keyboard": [[
+            {"text": "➡️ Открыть", "url": _task_url(task_id)},
+            {"text": "✉️ Ответить", "callback_data": f"reply_task:{task_id}"},
+        ]]
+    }
+
+
+def _purchase_keyboard(purchase_id: int) -> dict:
+    """Keyboard: open CRM + Reply button for purchase notifications."""
+    return {
+        "inline_keyboard": [[
+            {"text": "➡️ Открыть", "url": _purchase_url(purchase_id)},
+            {"text": "✉️ Ответить", "callback_data": f"reply_purchase:{purchase_id}"},
+        ]]
+    }
+
+
+def _consent_keyboard(task_id: int) -> dict:
+    """Keyboard: Accept/Decline row + Reply button for consent notifications."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Принять", "callback_data": f"consent_accept:{task_id}"},
+                {"text": "❌ Отклонить", "callback_data": f"consent_decline:{task_id}"},
+            ],
+            [
+                {"text": "➡️ Открыть", "url": _task_url(task_id)},
+                {"text": "✉️ Ответить", "callback_data": f"reply_task:{task_id}"},
+            ],
+        ]
+    }
+
+
 async def _send_telegram(chat_id: str, text: str, task_id: int = None,
                           button_url: str = None, button_label: str = None,
                           reply_markup_override: dict = None) -> None:
@@ -99,13 +135,15 @@ async def _send_max(chat_id: str, text: str) -> None:
 
 
 async def notify_user(user, text: str, task_id: int = None,
-                       button_url: str = None, button_label: str = None) -> None:
+                       button_url: str = None, button_label: str = None,
+                       reply_markup_override: dict = None) -> None:
     """Send notification to user via all configured channels."""
     tg = getattr(user, "telegram_id", None)
     mx = getattr(user, "max_chat_id", None)
     if tg:
         await _send_telegram(str(tg), text, task_id=task_id,
-                              button_url=button_url, button_label=button_label)
+                              button_url=button_url, button_label=button_label,
+                              reply_markup_override=reply_markup_override)
     if mx:
         await _send_max(str(mx), text)
 
@@ -134,7 +172,7 @@ async def notify_task_assigned(task, assignee_user, assigner_name: str) -> None:
         f"Приоритет: {task.priority}"
     )
     await notify_user(assignee_user, text, task_id=task.id,
-                       button_url=_task_url(task.id), button_label="Перейти к задаче")
+                       reply_markup_override=_task_keyboard(task.id))
 
 
 async def notify_consent_required(task, assignee_user, assigner_name: str) -> None:
@@ -144,14 +182,11 @@ async def notify_consent_required(task, assignee_user, assigner_name: str) -> No
         f"📌 <b>{_esc(task.title)}</b>{due}\n"
         f"👤 От: <i>{_esc(assigner_name)}</i>"
     )
-    kb = _callback_keyboard([
-        ("✅ Принять", f"consent_accept:{task.id}"),
-        ("❌ Отклонить", f"consent_decline:{task.id}"),
-    ])
     tg = getattr(assignee_user, "telegram_id", None)
     mx = getattr(assignee_user, "max_chat_id", None)
     if tg:
-        await _send_telegram(str(tg), text, task_id=task.id, reply_markup_override=kb)
+        await _send_telegram(str(tg), text, task_id=task.id,
+                              reply_markup_override=_consent_keyboard(task.id))
     if mx:
         await _send_max(str(mx), text)
 
@@ -164,7 +199,7 @@ async def notify_deadline_soon(task, assignee_user, days_left: int) -> None:
         f"Статус: {task.status}"
     )
     await notify_user(assignee_user, text, task_id=task.id,
-                       button_url=_task_url(task.id), button_label="Перейти к задаче")
+                       reply_markup_override=_task_keyboard(task.id))
 
 
 async def notify_task_status_changed(task, changed_by_name: str, new_status: str, changed_by_id: int = 0) -> None:
@@ -184,7 +219,7 @@ async def notify_task_status_changed(task, changed_by_name: str, new_status: str
         for ta in task.assignees:
             if hasattr(ta, "user") and ta.user and ta.user.id != changed_by_id:
                 await notify_user(ta.user, text, task_id=task.id,
-                                   button_url=_task_url(task.id), button_label="Перейти к задаче")
+                                   reply_markup_override=_task_keyboard(task.id))
 
 
 async def notify_task_comment(task, comment_user_name: str, comment_text: str, mentioned_users=None) -> None:
@@ -204,7 +239,7 @@ async def notify_task_comment(task, comment_user_name: str, comment_text: str, m
         )
         for user in mentioned_users:
             await notify_user(user, text, task_id=task.id,
-                               button_url=_task_url(task.id), button_label="Перейти к задаче")
+                               reply_markup_override=_task_keyboard(task.id))
     # No @mentions — no Telegram, comments visible in CRM only
 
 
@@ -227,7 +262,7 @@ async def notify_purchase_status_changed(purchase, changed_by_name: str, new_sta
     if notify_users:
         for user in notify_users:
             await notify_user(user, text,
-                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+                               reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 # ── Approval notifications ────────────────────────────────────────────────────
@@ -241,7 +276,7 @@ async def notify_approval_started(purchase, approver_users=None) -> None:
     if approver_users:
         for user in approver_users:
             await notify_user(user, text,
-                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+                               reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 async def notify_approval_decided(purchase, approver_name: str, action: str, comment: str = "", notify_users=None) -> None:
@@ -257,7 +292,7 @@ async def notify_approval_decided(purchase, approver_name: str, action: str, com
     if notify_users:
         for user in notify_users:
             await notify_user(user, text,
-                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+                               reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 async def notify_approval_your_turn(purchase, approver_user) -> None:
@@ -267,7 +302,7 @@ async def notify_approval_your_turn(purchase, approver_user) -> None:
         f"📌 <b>{subject}</b>"
     )
     await notify_user(approver_user, text,
-                       button_url=_purchase_url(purchase.id), button_label="Открыть и согласовать")
+                       reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 async def notify_approval_completed(purchase, notify_users=None) -> None:
@@ -280,7 +315,7 @@ async def notify_approval_completed(purchase, notify_users=None) -> None:
     if notify_users:
         for user in notify_users:
             await notify_user(user, text,
-                               button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+                               reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 # ── Purchase deadline notifications ──────────────────────────────────────────
@@ -293,7 +328,7 @@ async def notify_purchase_member_added(purchase, added_user, added_by_name: str)
         f"👤 Добавил: <i>{_esc(added_by_name)}</i>"
     )
     await notify_user(added_user, text,
-                       button_url=_purchase_url(purchase.id), button_label="Открыть закупку")
+                       reply_markup_override=_purchase_keyboard(purchase.id))
 
 
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:

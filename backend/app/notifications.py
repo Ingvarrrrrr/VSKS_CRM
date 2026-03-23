@@ -66,6 +66,22 @@ def _purchase_keyboard(purchase_id: int) -> dict:
     }
 
 
+def _purchase_consent_keyboard(purchase_id: int, user_id: int) -> dict:
+    """Keyboard: Accept/Decline + Reply for purchase membership consent."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Принять", "callback_data": f"pm_consent_accept:{purchase_id}:{user_id}"},
+                {"text": "❌ Отклонить", "callback_data": f"pm_consent_decline:{purchase_id}:{user_id}"},
+            ],
+            [
+                {"text": "➡️ Открыть", "url": _purchase_url(purchase_id)},
+                {"text": "✉️ Ответить", "callback_data": f"reply_purchase:{purchase_id}"},
+            ],
+        ]
+    }
+
+
 def _consent_keyboard(task_id: int) -> dict:
     """Keyboard: Accept/Decline row + Reply button for consent notifications."""
     return {
@@ -223,8 +239,9 @@ async def notify_task_status_changed(task, changed_by_name: str, new_status: str
 
 
 async def notify_task_comment(task, comment_user_name: str, comment_text: str, mentioned_users=None) -> None:
-    # Strip @mentions from preview — they're metadata, not content
-    clean_text = re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', comment_text).strip()
+    # Strip @mentions (e.g. "@Иванов Иван Иванович") — they're metadata, not content
+    # Match @ followed by 1-3 Russian/Latin words (full name format)
+    clean_text = re.sub(r'@[А-ЯЁа-яёA-Za-z]+(?:\s[А-ЯЁа-яёA-Za-z]+){0,2}', '', comment_text).strip()
     clean_text = re.sub(r'\s{2,}', ' ', clean_text)  # collapse whitespace
     if not clean_text:
         clean_text = comment_text  # fallback if only mentions
@@ -319,6 +336,23 @@ async def notify_approval_completed(purchase, notify_users=None) -> None:
 
 
 # ── Purchase deadline notifications ──────────────────────────────────────────
+
+async def notify_purchase_consent_required(purchase, added_user, added_by_name: str) -> None:
+    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    text = (
+        f"🤝 <b>Вас добавляют в обсуждение закупки</b>\n\n"
+        f"📌 <b>{subject}</b>\n"
+        f"👤 Добавил: <i>{_esc(added_by_name)}</i>\n\n"
+        f"Примите или отклоните участие:"
+    )
+    tg = getattr(added_user, "telegram_id", None)
+    mx = getattr(added_user, "max_chat_id", None)
+    if tg:
+        await _send_telegram(str(tg), text,
+                              reply_markup_override=_purchase_consent_keyboard(purchase.id, added_user.id))
+    if mx:
+        await _send_max(str(mx), text)
+
 
 async def notify_purchase_member_added(purchase, added_user, added_by_name: str) -> None:
     subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")

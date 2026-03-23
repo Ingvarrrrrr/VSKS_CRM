@@ -2226,10 +2226,14 @@ async def add_purchase_member(
         )
     )
     m = existing.scalar_one_or_none()
+    is_new = m is None
     if m:
         m.role = role
     else:
-        m = PurchaseMember(purchase_id=pid, user_id=user_id, role=role, added_by_id=current_user.id)
+        m = PurchaseMember(
+            purchase_id=pid, user_id=user_id, role=role,
+            added_by_id=current_user.id, consent_pending=(user_id != current_user.id),
+        )
         db.add(m)
     await db.flush()
 
@@ -2245,14 +2249,20 @@ async def add_purchase_member(
     await db.refresh(m)
 
     # Notify added user
-    if u and u.id != current_user.id:
+    if u and u.id != current_user.id and is_new:
         try:
-            from app.notifications import notify_purchase_member_added
             purchase = await db.get(Purchase, pid)
             if purchase:
-                await notify_purchase_member_added(
-                    purchase, u, current_user.full_name or current_user.username
-                )
+                if m.consent_pending:
+                    from app.notifications import notify_purchase_consent_required
+                    await notify_purchase_consent_required(
+                        purchase, u, current_user.full_name or current_user.username
+                    )
+                else:
+                    from app.notifications import notify_purchase_member_added
+                    await notify_purchase_member_added(
+                        purchase, u, current_user.full_name or current_user.username
+                    )
         except Exception as e:
             logger.warning("Member add notify failed: %s", e)
 

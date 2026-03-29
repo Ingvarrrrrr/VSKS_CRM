@@ -40,6 +40,11 @@
         <template v-slot:item.actions="{ item }">
           <div class="d-flex gap-1">
             <v-btn
+              icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+              title="Редактировать реквизиты"
+              @click="openEditOrg(item)"
+            />
+            <v-btn
               :icon="item.is_active ? 'mdi-toggle-switch' : 'mdi-toggle-switch-off'"
               :color="item.is_active ? 'success' : 'grey'"
               size="x-small" variant="text"
@@ -54,6 +59,29 @@
         </template>
       </v-data-table>
     </v-card>
+
+    <!-- Edit org dialog -->
+    <v-dialog v-model="editOrgDialog" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4">Реквизиты организации</v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-text-field v-model="editOrgItem.name" label="Название" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field
+            v-model="editOrgItem.inn"
+            label="ИНН"
+            variant="outlined"
+            density="compact"
+            hint="10 цифр (юр. лицо) или 12 цифр (ИП)"
+            persistent-hint
+          />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="editOrgDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="editOrgSaving" @click="saveOrg">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Delete confirm -->
     <v-dialog v-model="deleteDialog.show" max-width="360">
@@ -101,6 +129,32 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
 const deleteDialog = reactive({ show: false, item: null as Org | null, deleting: false })
+
+const editOrgDialog = ref(false)
+const editOrgSaving = ref(false)
+const editOrgItem = ref({ id: 0, name: '', inn: '' })
+
+function openEditOrg(org: Org) {
+  editOrgItem.value = { id: org.id, name: org.name, inn: org.inn || '' }
+  editOrgDialog.value = true
+}
+
+async function saveOrg() {
+  editOrgSaving.value = true
+  try {
+    await apiFetch(`/organizations/${editOrgItem.value.id}`, {
+      method: 'PUT',
+      body: { name: editOrgItem.value.name, inn: editOrgItem.value.inn || null }
+    })
+    editOrgDialog.value = false
+    await loadOrgs()
+    showSnack('Реквизиты сохранены')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка сохранения', 'error')
+  } finally {
+    editOrgSaving.value = false
+  }
+}
 
 const headers = [
   { title: 'ID', key: 'id', width: 60 },

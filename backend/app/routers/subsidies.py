@@ -92,6 +92,13 @@ async def list_subsidies(
         else:
             d["contractor_name"] = None
             d["contractor_inn"] = None
+        # org inn
+        if s.org_id:
+            from app.models.organization import Organization
+            org = await db.get(Organization, s.org_id)
+            d["org_inn"] = org.inn if org else None
+        else:
+            d["org_inn"] = None
         out.append(d)
 
     await db.commit()
@@ -248,6 +255,10 @@ async def get_contractor_override(
             "id": 0,
             "subsidy_id": subsidy_id,
             "contractor_id": subsidy.contractor_id,
+            "org_type": contractor.org_type,
+            "inn": contractor.inn,
+            "kpp": contractor.kpp,
+            "ogrn": contractor.ogrn,
             "signatory": contractor.signatory,
             "signatory_basis": contractor.signatory_basis,
             "address": contractor.address,

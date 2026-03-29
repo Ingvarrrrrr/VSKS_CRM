@@ -14,6 +14,10 @@ class SubsidyContractorOverride(Base):
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="CASCADE"), nullable=False)
 
     # Override fields — if set, these take precedence over contractor's defaults
+    org_type = Column(String(50), nullable=True)
+    inn = Column(String(20), nullable=True)
+    kpp = Column(String(20), nullable=True)
+    ogrn = Column(String(20), nullable=True)
     signatory = Column(String(255), nullable=True)
     signatory_basis = Column(String(500), nullable=True)
     address = Column(Text, nullable=True)
@@ -26,6 +30,8 @@ class SubsidyContractorOverride(Base):
     contact_person = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
     email = Column(String(255), nullable=True)
+    org_phone = Column(String(50), nullable=True)
+    org_email = Column(String(255), nullable=True)
 
     subsidy = relationship("Subsidy", back_populates="contractor_overrides")
     contractor = relationship("Contractor")

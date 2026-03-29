@@ -603,8 +603,8 @@ async def update_purchase(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Not found")
-    # Allow employee to save their own purchase
-    if current_user.role not in MANAGER_ROLES and p.created_by_id != current_user.id:
+    # Employees can save any purchase they have access to (org-level access checked at list level)
+    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
         raise HTTPException(403, "Insufficient permissions")
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
@@ -1492,18 +1492,37 @@ async def items_import_template(_=Depends(require_role(*MANAGER_ROLES))):
     )
 
 
+async def _upsert_product_to_catalog(db, item_name: str, item_type: str, unit_price, description: str = "") -> int:
+    """Find or create a product in the global catalog. Returns product.id."""
+    norm = item_name.strip().lower()
+    existing = (await db.execute(
+        select(Product).where(func.lower(Product.name) == norm)
+    )).scalar_one_or_none()
+    if existing:
+        return existing.id
+    p = Product(
+        name=item_name.strip(),
+        description=description or "",
+        product_type=item_type or "товар",
+        price=Decimal(str(unit_price)) if unit_price else Decimal("0"),
+        is_active=True,
+    )
+    db.add(p)
+    await db.flush()
+    return p.id
+
+
 @router.post("/{pid}/items/import")
 async def import_items_excel(
     pid: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(get_current_user),
 ):
     """Bulk import items into a purchase from Excel."""
-    if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):
+    fname = (file.filename or '').lower()
+    if not fname.endswith(('.xlsx', '.xls')):
         raise HTTPException(400, "Поддерживаются только файлы .xlsx / .xls")
-    if not load_workbook:
-        raise HTTPException(500, "openpyxl не установлен")
 
     purchase = await db.get(Purchase, pid)
     if not purchase:
@@ -1511,12 +1530,28 @@ async def import_items_excel(
 
     content = await file.read()
     try:
-        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        if fname.endswith('.xls'):
+            try:
+                import xlrd as _xlrd_mod
+            except ImportError:
+                raise HTTPException(500, "xlrd не установлен")
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+            ws_xls = wb_xls.sheet_by_index(0)
+            all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+            header_row = all_rows[0] if all_rows else None
+            data_iter = all_rows[1:] if len(all_rows) > 1 else []
+        else:
+            if not load_workbook:
+                raise HTTPException(500, "openpyxl не установлен")
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            all_rows_gen = list(ws.iter_rows(values_only=True))
+            header_row = all_rows_gen[0] if all_rows_gen else None
+            data_iter = all_rows_gen[1:] if len(all_rows_gen) > 1 else []
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, f"Не удалось прочитать файл: {e}")
-
-    ws = wb.active
-    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
     if not header_row:
         raise HTTPException(400, "Файл пустой")
 
@@ -1584,10 +1619,10 @@ async def import_items_excel(
 
     added = 0
     matched_catalog = 0
-    unmatched = 0
+    new_in_catalog = 0
     errors_list = []
 
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+    for row in data_iter:
         item_name = _cell(row, 'item_name')
         if not item_name:
             continue
@@ -1600,8 +1635,7 @@ async def import_items_excel(
         unit_price = _to_dec(_cell(row, 'unit_price'))
         total_price = (quantity * unit_price) if unit_price else None
 
-        # Auto-match product
-        product_id = None
+        # Auto-match or create in catalog
         matched_product = product_by_name.get(item_name.lower().strip())
         if matched_product:
             product_id = matched_product.id
@@ -1610,7 +1644,9 @@ async def import_items_excel(
                 unit_price = matched_product.price
                 total_price = quantity * unit_price
         else:
-            unmatched += 1
+            product_id = await _upsert_product_to_catalog(db, item_name, item_type, unit_price, description or "")
+            product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+            new_in_catalog += 1
 
         item = PurchaseItem(
             purchase_id=pid,
@@ -1626,7 +1662,229 @@ async def import_items_excel(
         added += 1
 
     await db.commit()
-    return {"added": added, "matched_catalog": matched_catalog, "unmatched": unmatched, "errors": errors_list}
+    return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
+
+
+# ---------------------------------------------------------------------------
+# Excel import with column mapping (preview + mapped import)
+# ---------------------------------------------------------------------------
+
+@router.post("/items/import-preview")
+async def import_items_preview(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Read Excel file and return sheets, headers, and sample rows for column mapping."""
+    fname = (file.filename or '').lower()
+    if not fname.endswith(('.xlsx', '.xls')):
+        raise HTTPException(400, "Поддерживаются только файлы .xlsx / .xls")
+
+    content = await file.read()
+
+    _NAME_HINTS = ('наименован', 'назван', 'товар', 'предмет', 'name', 'title', 'услуг', 'работ')
+    _ALL_HINTS = _NAME_HINTS + ('цена', 'описан', 'кол', 'тип', 'price', 'стоимост', 'ед.', 'единиц', 'катег', 'сумм', 'количеств', 'ед. изм')
+
+    def _detect_hdr(rows):
+        best_score, best_idx = 0, 0
+        for ri, row in enumerate(rows):
+            norm = [str(h).strip().lower() if h is not None else "" for h in row]
+            score = sum(1 for h in norm if h and any(x in h for x in _ALL_HINTS))
+            if score > best_score:
+                best_score = score; best_idx = ri
+        return best_idx
+
+    try:
+        if fname.endswith('.xls'):
+            try:
+                import xlrd as _xlrd_mod
+            except ImportError:
+                raise HTTPException(500, "xlrd не установлен")
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+            sheets = []
+            for sheet_name in wb_xls.sheet_names():
+                ws_xls = wb_xls.sheet_by_name(sheet_name)
+                all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+                if not all_rows:
+                    continue
+                hdr_idx = _detect_hdr(all_rows)
+                hdr_rows = all_rows[hdr_idx:]
+                if not hdr_rows:
+                    continue
+                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
+                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
+                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
+                               "total_rows": ws_xls.nrows - hdr_idx - 1, "header_row_offset": hdr_idx})
+        else:
+            if not load_workbook:
+                raise HTTPException(500, "openpyxl не установлен")
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+            sheets = []
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                all_rows = list(ws.iter_rows(values_only=True))
+                if not all_rows:
+                    continue
+                hdr_idx = _detect_hdr(all_rows)
+                hdr_rows = all_rows[hdr_idx:]
+                if not hdr_rows:
+                    continue
+                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
+                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
+                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
+                               "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx})
+            wb.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    if not sheets:
+        raise HTTPException(400, "Файл не содержит листов с данными")
+
+    return {"sheets": sheets}
+
+
+@router.post("/{pid}/items/import-mapped")
+async def import_items_mapped(
+    pid: int,
+    file: UploadFile = File(...),
+    sheet_name: str = Query(""),
+    col_item_name: int = Query(-1, description="Индекс столбца Наименование (0-based)"),
+    col_description: int = Query(-1, description="Индекс столбца Описание"),
+    col_quantity: int = Query(-1, description="Индекс столбца Количество"),
+    col_unit_price: int = Query(-1, description="Индекс столбца Цена"),
+    col_total_price: int = Query(-1, description="Индекс столбца Сумма"),
+    col_vat: int = Query(-1, description="Индекс столбца НДС"),
+    col_unit: int = Query(-1, description="Индекс столбца Ед. изм."),
+    header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (авто-определено при preview)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Import items using user-specified column mapping."""
+    if col_item_name < 0:
+        raise HTTPException(400, "Не указан столбец Наименование")
+
+    purchase = await db.get(Purchase, pid)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        if fname.endswith('.xls'):
+            try:
+                import xlrd as _xlrd_mod
+            except ImportError:
+                raise HTTPException(500, "xlrd не установлен")
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+            ws_xls = wb_xls.sheet_by_name(sheet_name) if sheet_name else wb_xls.sheet_by_index(0)
+            all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+            skip = header_row_offset + 1  # skip empty rows + header row itself
+            data_iter = all_rows[skip:] if len(all_rows) > skip else []
+        else:
+            if not load_workbook:
+                raise HTTPException(500, "openpyxl не установлен")
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+            ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+            all_rows_gen = list(ws.iter_rows(values_only=True))
+            skip = header_row_offset + 1
+            data_iter = all_rows_gen[skip:] if len(all_rows_gen) > skip else []
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    def _cell(row, idx):
+        if idx < 0 or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ('none', 'null', '-', '—', '0'):
+            return None
+        return s
+
+    def _to_dec(v):
+        if v is None:
+            return None
+        try:
+            return Decimal(str(v).replace(',', '.').replace(' ', '').replace('\xa0', ''))
+        except Exception:
+            return None
+
+    # Load products for auto-matching
+    org_id = get_single_org_id(current_user)
+    prod_q = select(Product)
+    if org_id:
+        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    prod_result = await db.execute(prod_q)
+    products = prod_result.scalars().all()
+    product_by_name: dict[str, Product] = {}
+    for p in products:
+        if p.name:
+            product_by_name[p.name.lower().strip()] = p
+
+    added = 0
+    matched_catalog = 0
+    new_in_catalog = 0
+    errors_list = []
+
+    for row in data_iter:
+        item_name = _cell(row, col_item_name)
+        if not item_name:
+            continue
+
+        description = _cell(row, col_description) if col_description >= 0 else None
+        quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
+        if not quantity:
+            quantity = Decimal('1')
+        unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
+        total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+        unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+
+        # Calculate missing values
+        if not total_price and unit_price:
+            total_price = quantity * unit_price
+        elif not unit_price and total_price and quantity:
+            unit_price = total_price / quantity
+
+        # VAT info → append to description
+        vat_str = _cell(row, col_vat) if col_vat >= 0 else None
+        if vat_str and description:
+            description = f"{description} (НДС: {vat_str})"
+        elif vat_str:
+            description = f"НДС: {vat_str}"
+
+        # Auto-match or create in catalog
+        matched_product = product_by_name.get(item_name.lower().strip())
+        if matched_product:
+            product_id = matched_product.id
+            matched_catalog += 1
+            if not unit_price and matched_product.price:
+                unit_price = matched_product.price
+                total_price = quantity * unit_price
+        else:
+            product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
+            product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+            new_in_catalog += 1
+
+        item = PurchaseItem(
+            purchase_id=pid,
+            product_id=product_id,
+            item_name=item_name,
+            item_type='товар',
+            quantity=quantity,
+            unit=unit,
+            unit_price=unit_price,
+            total_price=total_price,
+        )
+        db.add(item)
+        added += 1
+
+    await db.commit()
+    return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
 
 
 @router.post("/{pid}/items/import-smart")
@@ -1641,8 +1899,8 @@ async def import_items_smart(
     purchase = await db.get(Purchase, pid)
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")
-    # Allow employee to import to their own purchase
-    if current_user.role not in MANAGER_ROLES and purchase.created_by_id != current_user.id:
+    # Employees can import to any purchase they have access to
+    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
         raise HTTPException(403, "Insufficient permissions")
 
     content = await file.read()
@@ -1780,13 +2038,12 @@ async def import_items_smart(
     products = (await db.execute(prod_q)).scalars().all()
     product_by_name = {(p.name or "").lower().strip(): p for p in products}
 
-    added = matched_catalog = unmatched = 0
+    added = matched_catalog = new_in_catalog = 0
     for row_data in preview:
         item_name = (row_data["item_name"] or "")[:500]
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
-        product_id = None
         matched = product_by_name.get(item_name.lower().strip())
         if matched:
             product_id = matched.id
@@ -1795,7 +2052,8 @@ async def import_items_smart(
                 unit_price = matched.price
                 total_price = qty * unit_price
         else:
-            unmatched += 1
+            product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
+            new_in_catalog += 1
         if total_price is None and unit_price:
             total_price = qty * unit_price
         db.add(PurchaseItem(
@@ -1806,7 +2064,7 @@ async def import_items_smart(
         ))
         added += 1
     await db.commit()
-    return {"added": added, "matched_catalog": matched_catalog, "unmatched": unmatched}
+    return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog}
 
 
 # ---------------------------------------------------------------------------
@@ -2192,6 +2450,7 @@ def _member_dict(m):
         "username": m.user.username if m.user else "",
         "full_name": m.user.full_name if m.user else None,
         "added_by_name": (m.added_by.full_name or m.added_by.username) if m.added_by else None,
+        "consent_pending": bool(getattr(m, "consent_pending", False)),
     }
 
 

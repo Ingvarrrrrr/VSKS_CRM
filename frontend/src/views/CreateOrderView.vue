@@ -185,6 +185,11 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
           <span>{{ formMode === 'service_note_delivery' ? 'Оборудование для выдачи' : 'Позиции закупки' }}</span>
           <div class="d-flex align-center ga-2">
+            <v-btn v-if="selectedItemIdxs.length > 0"
+              variant="tonal" prepend-icon="mdi-delete-sweep-outline" size="small" color="error"
+              @click="removeSelectedItems">
+              Удалить ({{ selectedItemIdxs.length }})
+            </v-btn>
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" title="Зафиксирована при заключении договора">
               НМЦК (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
@@ -198,6 +203,12 @@
             <v-table density="compact">
               <thead>
                 <tr>
+                  <th style="width:36px;padding:0 4px;text-align:center">
+                    <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
+                      :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
+                      @update:model-value="toggleSelectAll" />
+                  </th>
+                  <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
                   <th style="min-width:420px">Наименование</th>
                   <th style="min-width:180px">Тип</th>
                   <th style="min-width:140px">Кол-во</th>
@@ -210,6 +221,11 @@
               </thead>
               <tbody>
                 <tr v-for="(item, idx) in items" :key="idx">
+                  <td style="width:36px;padding:0 4px;text-align:center">
+                    <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+                      @update:model-value="val => toggleItemSelect(idx, val)" />
+                  </td>
+                  <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
                   <td style="min-width:420px">
                     <div class="d-flex align-center gap-1">
                       <!-- Mini thumbnail in row -->
@@ -289,14 +305,14 @@
                   </td>
                 </tr>
                 <tr v-if="!items.length">
-                  <td colspan="8" class="text-center text-medium-emphasis py-4">
+                  <td colspan="10" class="text-center text-medium-emphasis py-4">
                     Нет позиций. Нажмите «Добавить позицию».
                   </td>
                 </tr>
               </tbody>
             </v-table>
           </div>
-          <div class="d-flex gap-2 mt-3">
+          <div class="d-flex gap-2 mt-3 flex-wrap">
             <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem">
               Добавить позицию
             </v-btn>
@@ -305,7 +321,7 @@
               Добавить товар в каталог
             </v-btn>
             <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" size="small" color="success"
-              @click="itemsImportDialog = true">
+              @click="closeImportDialog(); itemsImportDialog = true">
               Импорт из файла
             </v-btn>
           </div>
@@ -382,7 +398,7 @@
                 <td class="text-center">{{ item.quantity ?? '—' }}</td>
                 <td class="text-center">{{ item.unit || '—' }}</td>
                 <td class="text-right">{{ nmckMode === 'manual' ? '—' : (item.unit_price != null ? item.unit_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—') }}</td>
-                <td class="text-right font-weight-medium">{{ item.total_price != null ? item.total_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—' }}</td>
+                <td class="text-right font-weight-medium">{{ nmckMode === 'manual' ? '—' : (item.total_price != null ? item.total_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—') }}</td>
               </tr>
             </tbody>
             <tfoot>
@@ -499,9 +515,9 @@
             <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
               <v-text-field
                 v-model.number="form.framework_seq"
-                label="№ в рамках РД"
+                label="Порядковый № в рамочном договоре"
                 variant="outlined" density="compact" type="number" min="1"
-                hint="Авто, можно изменить" persistent-hint
+                hint="Номер закупки внутри рамочного договора. Подставляется автоматически." persistent-hint
               />
             </v-col>
             <!-- Таблица других закупок в том же РД -->
@@ -555,11 +571,12 @@
 
       <!-- 4. Договор / Счёт / Счёт-договор -->
       <v-card v-if="isSectionVisible('contract')" variant="outlined" class="mb-4">
-        <v-tabs v-model="form.payment_basis_type" density="compact" color="primary" class="px-2 pt-2">
-          <v-tab value="contract">Договор</v-tab>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 pb-0">Основание для закупки</v-card-title>
+        <v-tabs v-model="form.payment_basis_type" density="compact" color="primary" class="px-2 pt-1">
+          <v-tab value="contract">Разовый договор</v-tab>
           <v-tab value="invoice">Счёт</v-tab>
           <v-tab value="invoice_contract">Счёт-договор</v-tab>
-          <v-tab value="framework_invoice">Счёт по РД</v-tab>
+          <v-tab value="framework_invoice">Счёт по рамочному договору</v-tab>
         </v-tabs>
         <v-divider />
         <v-card-text>
@@ -915,20 +932,49 @@
           <!-- Участники -->
           <div class="d-flex align-center flex-wrap ga-1 mb-3">
             <span class="text-caption text-medium-emphasis mr-1">Участники:</span>
-            <v-chip v-for="m in purchaseMembers" :key="m.user_id" size="small" variant="tonal" color="primary"
-              closable @click:close="removePurchaseMember(m.user_id)">
-              {{ m.user_name || `#${m.user_id}` }}
+            <v-chip v-for="m in purchaseMembers" :key="m.user_id" size="small"
+              :variant="m.consent_pending ? 'outlined' : 'tonal'"
+              :color="m.consent_pending ? 'warning' : 'primary'"
+              closable @click:close="removePurchaseMember(m.user_id)"
+              :title="m.consent_pending ? 'Ожидает подтверждения' : ''">
+              <v-icon v-if="m.consent_pending" icon="mdi-clock-outline" size="12" class="mr-1" />
+              {{ m.full_name || m.username || `#${m.user_id}` }}
             </v-chip>
-            <v-menu :close-on-content-click="false">
+            <v-menu v-model="memberMenuOpen" :close-on-content-click="false">
               <template #activator="{ props: menuProps }">
                 <v-btn v-bind="menuProps" icon="mdi-account-plus" size="x-small" variant="tonal" color="primary" title="Добавить участника" />
               </template>
-              <v-card min-width="250">
-                <v-card-text class="pa-2">
-                  <v-autocomplete v-model="newMemberUserId" :items="allUsers" item-title="text" item-value="value"
-                    label="Добавить" variant="outlined" density="compact" hide-details
-                    @update:model-value="addPurchaseMember" />
+              <v-card min-width="300">
+                <v-card-text class="pa-2 pb-1">
+                  <v-autocomplete
+                    v-model="newMemberUserId"
+                    :items="memberSortedUsers"
+                    item-title="text"
+                    item-value="value"
+                    label="Выберите сотрудника"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    autofocus
+                  >
+                    <template #item="{ item, props: iProps }">
+                      <v-list-item
+                        v-bind="iProps"
+                        :subtitle="isMemberOfGroup(item.raw.value) ? 'Уже в обсуждении' : memberNeedsConsent(item.raw.value) ? 'Потребуется согласие сотрудника' : undefined"
+                      >
+                        <template #append>
+                          <v-chip v-if="isMemberOfGroup(item.raw.value)" size="x-small" color="primary" variant="tonal">в группе</v-chip>
+                          <v-chip v-else-if="memberNeedsConsent(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
                 </v-card-text>
+                <v-card-actions class="pt-0 px-2 pb-2">
+                  <v-spacer />
+                  <v-btn variant="text" size="small" @click="memberMenuOpen = false">Отмена</v-btn>
+                  <v-btn color="primary" size="small" variant="flat" :disabled="!newMemberUserId" :loading="memberAdding" @click="addPurchaseMemberAndClose">Добавить</v-btn>
+                </v-card-actions>
               </v-card>
             </v-menu>
           </div>
@@ -1318,7 +1364,7 @@
             Публикация на площадках
           </span>
           <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
-            @click="publishDialog = true">
+            @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null">
             Опубликовать
           </v-btn>
         </v-card-title>
@@ -1515,84 +1561,145 @@
     </v-form>
 
     <!-- Publish dialog -->
-    <v-dialog v-model="publishDialog" max-width="440">
+    <v-dialog v-model="publishDialog" max-width="480">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
           <v-icon color="deep-purple">mdi-broadcast</v-icon>
           Опубликовать закупку
         </v-card-title>
         <v-card-text class="px-6">
-          <p class="text-body-2 text-medium-emphasis mb-4">
-            Выберите площадку. Данные закупки будут отправлены автоматически.
-          </p>
-          <v-list density="compact" class="border rounded">
-            <v-list-item
-              v-for="pl in AVAILABLE_PLATFORMS" :key="pl.value"
-              :title="pl.title"
-              :subtitle="pl.subtitle"
-              class="py-3"
-            >
-              <template #prepend>
-                <v-avatar :color="pl.color" size="36" class="mr-3">
-                  <v-icon size="18" color="white">{{ pl.icon }}</v-icon>
-                </v-avatar>
-              </template>
-              <template #append>
-                <v-btn
-                  v-if="pl.value !== 'roseltorg_rb'"
-                  color="deep-purple" variant="tonal" size="small"
-                  :loading="publishingPlatform === pl.value"
-                  :disabled="isPlatformPublished(pl.value)"
-                  @click="doPublish(pl.value)"
-                >
-                  {{ isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
-                </v-btn>
-                <v-btn
-                  v-else
-                  color="deep-purple" variant="tonal" size="small"
-                  :loading="publishingPlatform === 'roseltorg_rb'"
-                  :disabled="isPlatformPublished('roseltorg_rb')"
-                  @click="pendingPlatform = 'roseltorg_rb'"
-                >
-                  {{ isPlatformPublished('roseltorg_rb') ? 'Опубликовано' : 'Опубликовать' }}
-                </v-btn>
-              </template>
-            </v-list-item>
-          </v-list>
 
-          <!-- Выбор типа процедуры для Росэлторг -->
-          <v-expand-transition>
-            <div v-if="pendingPlatform === 'roseltorg_rb'" class="mt-3 px-1">
-              <v-divider class="mb-3" />
-              <div class="text-subtitle-2 mb-2">Тип процедуры Росэлторг.Бизнес</div>
-              <v-select
-                v-model="roseltorgProcedureType"
-                :items="ROSELTORG_PROCEDURE_TYPES"
-                item-title="title"
-                item-value="value"
-                label="Выберите тип процедуры"
-                variant="outlined"
-                density="compact"
-                hide-details
-              />
-              <div class="d-flex gap-2 mt-3">
-                <v-btn
-                  variant="text"
-                  @click="pendingPlatform = null; roseltorgProcedureType = null"
-                >Назад</v-btn>
-                <v-btn
-                  color="deep-purple"
-                  :disabled="!roseltorgProcedureType"
-                  :loading="publishingPlatform === 'roseltorg_rb'"
-                  @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
-                >Опубликовать на Росэлторг</v-btn>
+          <!-- Ошибки валидации -->
+          <v-alert v-if="publishErrors.length" type="error" variant="tonal" density="compact" class="mb-4">
+            <div class="text-subtitle-2 mb-1">Заполните обязательные поля:</div>
+            <ul class="pl-4 mb-0">
+              <li v-for="e in publishErrors" :key="e" class="text-body-2">{{ e }}</li>
+            </ul>
+          </v-alert>
+
+          <template v-if="!publishErrors.length">
+            <p class="text-body-2 text-medium-emphasis mb-4">
+              Выберите площадку. Данные закупки будут отправлены автоматически.
+            </p>
+            <v-list density="compact" class="border rounded">
+              <v-list-item
+                v-for="pl in AVAILABLE_PLATFORMS" :key="pl.value"
+                :title="pl.title"
+                :subtitle="pl.subtitle"
+                class="py-3"
+              >
+                <template #prepend>
+                  <v-avatar :color="pl.color" size="36" class="mr-3">
+                    <v-icon size="18" color="white">{{ pl.icon }}</v-icon>
+                  </v-avatar>
+                </template>
+                <template #append>
+                  <v-btn
+                    color="deep-purple" variant="tonal" size="small"
+                    :loading="publishingPlatform === pl.value"
+                    :disabled="isPlatformPublished(pl.value)"
+                    @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') initFabrikantDates()"
+                  >
+                    {{ isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
+                  </v-btn>
+                </template>
+              </v-list-item>
+            </v-list>
+
+            <!-- Настройки Фабрикант: даты -->
+            <v-expand-transition>
+              <div v-if="pendingPlatform === 'fabrikant'" class="mt-3 px-1">
+                <v-divider class="mb-3" />
+                <div class="text-subtitle-2 mb-3">Параметры публикации на Фабрикант</div>
+                <v-alert v-if="!currentSubsidyOrgInn" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
+                  Не заполнен ИНН организации-заказчика. Перейдите в раздел <strong>Организации</strong> → нажмите карандаш → укажите ИНН.
+                </v-alert>
+                <v-text-field
+                  v-model="fabrikantOkpd2"
+                  label="Код ОКПД2 (обязательно)"
+                  hint="Пример: 47.99.9 — Торговля розничная прочая"
+                  persistent-hint
+                  variant="outlined"
+                  density="compact"
+                  class="mb-3"
+                  placeholder="47.99.9"
+                />
+                <v-row dense>
+                  <v-col cols="12" sm="6">
+                    <v-text-field
+                      v-model="fabrikantDates.proposal_start"
+                      type="datetime-local"
+                      label="Начало приёма предложений"
+                      variant="outlined" density="compact"
+                    />
+                  </v-col>
+                  <v-col cols="12" sm="6">
+                    <v-text-field
+                      v-model="fabrikantDates.proposal_end"
+                      type="datetime-local"
+                      label="Конец приёма предложений"
+                      variant="outlined" density="compact"
+                    />
+                  </v-col>
+                  <v-col cols="12" sm="6">
+                    <v-text-field
+                      v-model="fabrikantDates.determination_date"
+                      type="datetime-local"
+                      label="Определение победителя"
+                      variant="outlined" density="compact"
+                    />
+                  </v-col>
+                  <v-col cols="12" sm="6">
+                    <v-text-field
+                      v-model="fabrikantDates.summing_up_date"
+                      type="datetime-local"
+                      label="Подведение итогов"
+                      variant="outlined" density="compact"
+                    />
+                  </v-col>
+                </v-row>
+                <div class="d-flex gap-2 mt-1">
+                  <v-btn variant="text" @click="pendingPlatform = null">Назад</v-btn>
+                  <v-btn color="orange-darken-2"
+                    :loading="publishingPlatform === 'fabrikant'"
+                    :disabled="!fabrikantOkpd2 || !fabrikantDates.proposal_start || !fabrikantDates.proposal_end || !currentSubsidyOrgInn"
+                    @click="doPublish('fabrikant')"
+                  >Опубликовать на Фабрикант</v-btn>
+                </div>
               </div>
-            </div>
-          </v-expand-transition>
+            </v-expand-transition>
+
+            <!-- Выбор типа процедуры для Росэлторг -->
+            <v-expand-transition>
+              <div v-if="pendingPlatform === 'roseltorg_rb'" class="mt-3 px-1">
+                <v-divider class="mb-3" />
+                <div class="text-subtitle-2 mb-2">Тип процедуры Росэлторг.Бизнес</div>
+                <v-select
+                  v-model="roseltorgProcedureType"
+                  :items="ROSELTORG_PROCEDURE_TYPES"
+                  item-title="title"
+                  item-value="value"
+                  label="Выберите тип процедуры"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                />
+                <div class="d-flex gap-2 mt-3">
+                  <v-btn variant="text" @click="pendingPlatform = null; roseltorgProcedureType = null">Назад</v-btn>
+                  <v-btn
+                    color="deep-purple"
+                    :disabled="!roseltorgProcedureType"
+                    :loading="publishingPlatform === 'roseltorg_rb'"
+                    @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
+                  >Опубликовать на Росэлторг</v-btn>
+                </div>
+              </div>
+            </v-expand-transition>
+          </template>
         </v-card-text>
         <v-card-actions class="px-6 pb-4">
           <v-spacer />
-          <v-btn variant="text" @click="publishDialog = false; pendingPlatform = null; roseltorgProcedureType = null">Закрыть</v-btn>
+          <v-btn variant="text" @click="publishDialog = false; pendingPlatform = null; roseltorgProcedureType = null; publishErrors = []">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1811,47 +1918,143 @@
     </v-dialog>
 
     <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="600">
+    <v-dialog v-model="itemsImportDialog" max-width="980" scrollable>
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-package-variant-plus" class="mr-2" />
-          Загрузка товаров в каталог
+          Импорт товаров из Excel
+          <v-spacer />
+          <v-chip v-if="importStep > 1" size="small" color="primary" variant="tonal" class="ml-2">
+            Шаг {{ importStep }} / 3
+          </v-chip>
         </v-card-title>
         <v-divider />
         <v-card-text class="pa-4">
           <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
             Для добавления в закупку сначала сохраните заказ
           </v-alert>
-          <p class="text-body-2 text-medium-emphasis mb-3">
-            Загрузите Excel-файл по шаблону — товары попадут в каталог и сразу будут добавлены в закупку.
-          </p>
-          <div class="d-flex gap-2 mb-3 flex-wrap">
-            <v-btn variant="text" color="teal" size="small" prepend-icon="mdi-download"
-              @click="downloadProductsTemplate">
-              Скачать шаблон
-            </v-btn>
-          </div>
-          <v-file-input
-            v-model="itemsImportFile"
-            label="Выберите Excel файл (.xlsx / .xls)"
-            accept=".xlsx,.xls"
-            variant="outlined" density="compact"
-            prepend-icon="mdi-file-upload-outline"
-            :disabled="itemsImportLoading"
-          />
-          <v-alert v-if="itemsImportResult" type="success" class="mt-3" density="compact">
-            Создано товаров: {{ itemsImportResult.added }}
-          </v-alert>
+
+          <!-- Step 1: Upload file -->
+          <template v-if="importStep === 1">
+            <p class="text-body-2 text-medium-emphasis mb-3">
+              Загрузите любой Excel-файл — на следующем шаге вы укажете, какой столбец чему соответствует.
+            </p>
+            <v-file-input
+              v-model="itemsImportFile"
+              label="Выберите Excel файл (.xlsx / .xls)"
+              accept=".xlsx,.xls"
+              variant="outlined" density="compact"
+              prepend-icon="mdi-file-upload-outline"
+              :disabled="itemsImportLoading"
+            />
+          </template>
+
+          <!-- Step 2: Column mapping (table-style drag-and-drop) -->
+          <template v-if="importStep === 2 && importPreviewData">
+            <v-select
+              v-if="importPreviewData.sheets.length > 1"
+              v-model="importSelectedSheet"
+              :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
+              label="Выберите лист" variant="outlined" density="compact" class="mb-3"
+            />
+
+            <!-- COLUMN TABLE: headers on top, cards below -->
+            <div class="imap-grid">
+              <div v-for="target in TARGET_FIELDS" :key="target.value"
+                class="imap-col"
+                :class="{
+                  'imap-col--over': dragOverTarget === target.value,
+                  'imap-col--filled': isTargetFilled(target.value),
+                  'imap-col--required': target.required && !isTargetFilled(target.value),
+                }"
+                @dragover.prevent="dragOverTarget = target.value"
+                @dragleave="dragOverTarget = null"
+                @drop.prevent="onDropToTarget(target.value, $event)">
+                <!-- Fixed header -->
+                <div class="imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
+                <!-- Drop body -->
+                <div class="imap-col-body">
+                  <div v-if="isTargetFilled(target.value)"
+                    class="imap-card"
+                    draggable="true"
+                    @dragstart="onDragStart(dragMapping[target.value] as number, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ getColumnLabel(dragMapping[target.value] as number) }}</span>
+                      <button class="imap-card-x" @click.stop="unmapTarget(target.value)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ getSamples(dragMapping[target.value] as number).join(', ') || '—' }}</div>
+                  </div>
+                  <div v-else class="imap-col-empty">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NOT RESOLVED section -->
+            <div class="imap-unresolved mt-3"
+              :class="{ 'imap-unresolved--over': dragOverTarget === '_unresolved' }"
+              @dragover.prevent="dragOverTarget = '_unresolved'"
+              @dragleave="dragOverTarget = null"
+              @drop.prevent="onDropToUnresolved($event)">
+              <span class="imap-unresolved-label">Не определилось</span>
+              <div class="d-flex gap-2 flex-wrap mt-1">
+                <template v-for="(_, idx) in currentSheetHeaders" :key="idx">
+                  <div v-if="!isMapped(idx) && !isIgnored(idx)"
+                    class="imap-card imap-card--free"
+                    draggable="true"
+                    @dragstart="onDragStart(idx, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ getColumnLabel(idx) }}</span>
+                      <button class="imap-card-x imap-card-x--grey" title="Убрать" @click.stop="ignoreColumn(idx)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ getSamples(idx).join(', ') || '—' }}</div>
+                  </div>
+                </template>
+                <span v-if="unmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
+              </div>
+            </div>
+
+            <v-alert v-if="!mappingHasName" type="warning" density="compact" icon="mdi-alert" class="mt-3">
+              Укажите столбец «Наименование»
+            </v-alert>
+          </template>
+
+          <!-- Step 3: Result -->
+          <template v-if="importStep === 3">
+            <v-alert v-if="itemsImportResult" type="success" density="compact" class="mb-2">
+              <div>Добавлено позиций: <strong>{{ itemsImportResult.added }}</strong></div>
+              <div v-if="itemsImportResult.matched_catalog">Из каталога: {{ itemsImportResult.matched_catalog }}</div>
+              <div v-if="itemsImportResult.new_in_catalog">Новых в каталоге: {{ itemsImportResult.new_in_catalog }}</div>
+            </v-alert>
+            <v-alert v-if="importError" type="error" density="compact">
+              {{ importError }}
+            </v-alert>
+          </template>
 
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
+          <v-btn v-if="importStep > 1 && importStep < 3" variant="text" @click="importStep--">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="itemsImportDialog = false">Закрыть</v-btn>
-          <v-btn color="success" variant="flat"
+          <v-btn variant="text" @click="closeImportDialog">Закрыть</v-btn>
+
+          <v-btn v-if="importStep === 1" color="primary" variant="flat"
             :loading="itemsImportLoading"
             :disabled="!itemsImportFile"
-            @click="doItemsImport">
-            Загрузить в каталог
+            @click="doImportPreview">
+            Далее
+          </v-btn>
+
+          <v-btn v-if="importStep === 2" color="success" variant="flat"
+            :loading="itemsImportLoading"
+            :disabled="!mappingHasName"
+            @click="doMappedImport">
+            Импортировать
+          </v-btn>
+
+          <v-btn v-if="importStep === 3" color="primary" variant="flat"
+            @click="closeImportDialog">
+            Готово
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -2139,21 +2342,21 @@
             Скачать xlsx
           </v-btn>
           <v-btn
-            variant="tonal"
-            prepend-icon="mdi-email-multiple-outline"
-            :disabled="kpAllEmails.length === 0"
-            @click="sendAllKp"
-          >
-            Открыть в почте
-          </v-btn>
-          <v-btn
             color="teal" variant="flat"
             prepend-icon="mdi-send-outline"
             :loading="kpSendingAll"
             :disabled="kpAllEmails.length === 0"
             @click="sendAllKpViaApi"
           >
-            Отправить ({{ kpAllEmails.length }})
+            Отправить письма ({{ kpAllEmails.length }})
+          </v-btn>
+          <v-btn
+            variant="text" size="small"
+            prepend-icon="mdi-email-multiple-outline"
+            :disabled="kpAllEmails.length === 0"
+            @click="sendAllKp"
+          >
+            Открыть в почтовом клиенте
           </v-btn>
           <v-btn
             color="primary" variant="flat"
@@ -2169,12 +2372,12 @@
     </v-dialog>
 
     <!-- New framework contract dialog -->
-    <v-dialog v-model="newFrameworkDialog" max-width="520">
+    <v-dialog v-model="newFrameworkDialog" max-width="520" @after-enter="focusNewContractNumber">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">Новый рамочный договор</v-card-title>
         <v-card-text class="px-6 pb-2">
-          <v-text-field v-model="newFrameworkForm.number" label="Номер договора *" variant="outlined"
-            density="compact" class="mb-3" autofocus />
+          <v-text-field ref="newContractNumberRef" v-model="newFrameworkForm.number" label="Номер договора *" variant="outlined"
+            density="compact" class="mb-3" />
           <v-text-field v-model="newFrameworkForm.date" label="Дата договора" variant="outlined"
             density="compact" type="date" class="mb-3" />
           <v-autocomplete v-model="newFrameworkForm.contractor_id"
@@ -2219,18 +2422,29 @@
             Для этой субсидии не настроены согласующие.<br>
             Откройте страницу Субсидии → кнопка «Согласующие».
           </div>
-          <!-- service_note: radio (один инициатор) -->
-          <v-radio-group v-else-if="docPickerType.startsWith('service_note')" v-model="pickerInitiatorId" class="mt-0">
-            <v-radio
-              v-for="a in docApproversInitiators"
-              :key="a.id"
-              :value="a.id"
-              :label="`${a.role_name} — ${a.full_name}`"
-            />
-            <div v-if="!docApproversInitiators.length" class="text-medium-emphasis text-caption">
-              Нет людей с пометкой «Может быть инициатором». Отредактируйте согласующих.
-            </div>
-          </v-radio-group>
+          <!-- service_note: autocomplete из всех сотрудников -->
+          <div v-else-if="docPickerType.startsWith('service_note')" class="mt-1">
+            <v-autocomplete
+              v-model="pickerInitiatorId"
+              :items="orgUsersList"
+              item-title="full_name"
+              item-value="id"
+              label="Специалист (инициатор)"
+              variant="outlined"
+              density="compact"
+              clearable
+              hide-details
+              :no-data-text="loadingDocApprovers ? 'Загрузка...' : 'Нет сотрудников'"
+            >
+              <template #item="{ item, props }">
+                <v-list-item v-bind="props">
+                  <template #subtitle>
+                    <span v-if="item.raw.position" class="text-caption text-medium-emphasis">{{ item.raw.position }}</span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-autocomplete>
+          </div>
           <!-- approval_sheet: responsible person + checkboxes -->
           <div v-else>
             <!-- Ответственный исполнитель -->
@@ -2391,7 +2605,7 @@ const COUNTRIES = ['Российская Федерация', 'Беларусь'
 
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
 interface Contractor { id: number; name: string; inn?: string }
-interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null }
+interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
@@ -2637,8 +2851,15 @@ async function openDocPicker(type: 'service_note' | 'service_note_delivery' | 's
     if (type === 'approval_sheet') {
       pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
     } else {
-      const def = list.find(a => a.can_initiate && a.is_default) || list.find(a => a.can_initiate)
-      pickerInitiatorId.value = def?.id ?? null
+      // Load all users and default to current user
+      await loadOrgUsers()
+      // Default: current logged-in user
+      if (currentUserId && orgUsersList.value.find(u => u.id === currentUserId)) {
+        pickerInitiatorId.value = currentUserId
+      } else {
+        const def = list.find(a => a.can_initiate && a.is_default) || list.find(a => a.can_initiate)
+        pickerInitiatorId.value = def?.id ?? null
+      }
     }
   } catch {
     docApprovers.value = []
@@ -2861,6 +3082,35 @@ const publishDialog = ref(false)
 const publishingPlatform = ref<string | null>(null)
 const pendingPlatform = ref<string | null>(null)
 const roseltorgProcedureType = ref<string | null>(null)
+const publishErrors = ref<string[]>([])
+
+const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
+const fabrikantOkpd2 = ref('')
+
+function initFabrikantDates() {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const now = new Date()
+  const end = new Date(now.getTime() + 7*24*60*60*1000)
+  fabrikantDates.value = {
+    proposal_start: fmt(new Date(now.getTime() + 60*60*1000)),
+    proposal_end: fmt(end),
+    determination_date: fmt(new Date(end.getTime() + 24*60*60*1000)),
+    summing_up_date: fmt(new Date(end.getTime() + 2*24*60*60*1000)),
+  }
+}
+
+function checkPublishReady(): string[] {
+  const errors: string[] = []
+  if (!form.subject?.trim()) errors.push('Не заполнено наименование закупки')
+  if (!(displayNmck.value > 0)) errors.push('Не указана НМЦК (сумма закупки)')
+  if (!items.value.some(i => i.item_name?.trim())) errors.push('Нет позиций в закупке (добавьте хотя бы одну)')
+  return errors
+}
+
+const currentSubsidyOrgInn = computed(() =>
+  subsidies.value.find(s => s.id === form.subsidy_id)?.org_inn ?? null
+)
 
 const isPlatformPublished = (platform: string) =>
   publications.value.some(p => p.platform === platform && p.status === 'published')
@@ -2877,6 +3127,13 @@ async function doPublish(platform: string, procedureType?: string | null) {
   try {
     const body: Record<string, any> = { platform }
     if (procedureType) body.procedure_type = procedureType
+    if (platform === 'fabrikant') {
+      body.okpd2_code = fabrikantOkpd2.value
+      body.proposal_start = fabrikantDates.value.proposal_start
+      body.proposal_end = fabrikantDates.value.proposal_end
+      body.determination_date = fabrikantDates.value.determination_date
+      body.summing_up_date = fabrikantDates.value.summing_up_date
+    }
     const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
       method: 'POST',
       body,
@@ -2904,7 +3161,13 @@ function pollPublication(pubId: number, attempts = 0) {
   setTimeout(async () => {
     await loadPublications()
     const pub = publications.value.find(p => p.id === pubId)
-    if (pub && pub.status === 'publishing') pollPublication(pubId, attempts + 1)
+    if (pub && pub.status === 'error') {
+      showSnack(pub.error_text || 'Ошибка публикации', 'error')
+    } else if (pub && pub.status === 'published') {
+      showSnack(`Закупка опубликована на ${PLATFORM_LABELS[pub.platform] || pub.platform}`, 'success')
+    } else if (pub && pub.status === 'publishing') {
+      pollPublication(pubId, attempts + 1)
+    }
   }, 2000)
 }
 
@@ -3031,6 +3294,45 @@ async function unlinkTask(taskId: number) {
 // ── Purchase members ─────────────────────────────────────────────────────────
 const purchaseMembers = ref<any[]>([])
 const newMemberUserId = ref<number | null>(null)
+const memberMenuOpen = ref(false)
+const memberAdding = ref(false)
+
+const memberSubordinateIds = ref<Set<number>>(new Set())
+
+async function loadMemberSubordinates() {
+  try {
+    const subs = await apiFetch<any[]>(`/users/${currentUserId}/subordinates`)
+    memberSubordinateIds.value = new Set(subs.map((u: any) => u.id))
+  } catch {}
+}
+
+function memberNeedsConsent(userId: number): boolean {
+  // Discussion group: always show consent notice when adding someone else
+  if (userId === currentUserId) return false
+  return true
+}
+
+watch(memberMenuOpen, async (open) => {
+  if (open) {
+    await Promise.all([loadAllUsers(), loadPurchaseMembers(), loadMemberSubordinates()])
+    newMemberUserId.value = null
+  }
+})
+
+const memberSortedUsers = computed(() => {
+  const memberIds = new Set(purchaseMembers.value.map((m: any) => m.user_id))
+  const inGroup = allUsers.value
+    .filter(u => memberIds.has(u.value))
+    .sort((a, b) => a.text.localeCompare(b.text, 'ru'))
+  const others = allUsers.value
+    .filter(u => !memberIds.has(u.value))
+    .sort((a, b) => a.text.localeCompare(b.text, 'ru'))
+  return [...inGroup, ...others]
+})
+
+function isMemberOfGroup(userId: number): boolean {
+  return purchaseMembers.value.some((m: any) => m.user_id === userId)
+}
 
 async function loadPurchaseMembers() {
   if (!purchaseId.value) return
@@ -3050,6 +3352,13 @@ async function addPurchaseMember(userId: number | null) {
     showSnack(e?.detail || 'Ошибка', 'error')
   }
   newMemberUserId.value = null
+}
+
+async function addPurchaseMemberAndClose() {
+  memberAdding.value = true
+  await addPurchaseMember(newMemberUserId.value)
+  memberAdding.value = false
+  memberMenuOpen.value = false
 }
 
 async function removePurchaseMember(userId: number) {
@@ -3227,6 +3536,10 @@ const frameworkSearch = ref('')
 const selectedFrameworkContract = ref<FrameworkContract | null>(null)
 const newFrameworkDialog = ref(false)
 const newFrameworkSaving = ref(false)
+const newContractNumberRef = ref<any>(null)
+function focusNewContractNumber() {
+  nextTick(() => newContractNumberRef.value?.focus())
+}
 const newFrameworkForm = reactive({
   number: '', date: '', contractor_id: null as number | null, subject: '', max_amount: null as number | null,
 })
@@ -3379,8 +3692,13 @@ async function saveNewFrameworkContract() {
     newFrameworkForm.contractor_id = null
     newFrameworkForm.subject = ''
     newFrameworkForm.max_amount = null
-  } catch {
-    showSnack('Ошибка создания договора', 'error')
+  } catch (err: any) {
+    const msg = err?.body?.message || err?.message || ''
+    if (msg.includes('уже существует') || err?.status === 409) {
+      showSnack('Договор с таким номером, контрагентом и датой уже существует', 'warning')
+    } else {
+      showSnack('Ошибка создания договора', 'error')
+    }
   } finally {
     newFrameworkSaving.value = false
   }
@@ -3674,14 +3992,114 @@ const addItem = () => {
 
 const removeItem = (idx: number) => {
   items.value.splice(idx, 1)
+  selectedItemIdxs.value = selectedItemIdxs.value
+    .filter(i => i !== idx)
+    .map(i => (i > idx ? i - 1 : i))
 }
 
-// Items import from Excel
+const selectedItemIdxs = ref<number[]>([])
+const allItemsSelected = computed(() =>
+  items.value.length > 0 && selectedItemIdxs.value.length === items.value.length
+)
+function toggleSelectAll(val: boolean | null) {
+  selectedItemIdxs.value = val ? items.value.map((_, i) => i) : []
+}
+function toggleItemSelect(idx: number, val: boolean | null) {
+  if (val) {
+    if (!selectedItemIdxs.value.includes(idx)) selectedItemIdxs.value.push(idx)
+  } else {
+    selectedItemIdxs.value = selectedItemIdxs.value.filter(i => i !== idx)
+  }
+}
+function removeSelectedItems() {
+  const toRemove = new Set(selectedItemIdxs.value)
+  items.value = items.value.filter((_, i) => !toRemove.has(i))
+  selectedItemIdxs.value = []
+  if (isEdit.value) doSave(false)
+}
+
+// Items import from Excel (step-by-step with column mapping)
 const itemsImportDialog = ref(false)
 const itemsImportFile = ref<File | null>(null)
 const itemsImportLoading = ref(false)
-const itemsImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
-const importTab = ref<'excel' | 'smart'>('excel')
+const itemsImportResult = ref<{ added: number; matched_catalog: number; new_in_catalog: number } | null>(null)
+const importStep = ref(1)
+const importPreviewData = ref<any>(null)
+const importSelectedSheet = ref('')
+// drag-and-drop mapping: target field → source column index (null = not assigned)
+const dragMapping = ref<Record<string, number | null>>({})
+const ignoredColumns = ref<number[]>([])
+const dragOverTarget = ref<string | null>(null)
+const importError = ref('')
+
+const TARGET_FIELDS = [
+  { value: 'item_name',   title: 'Наименование', required: true },
+  { value: 'unit_price',  title: 'Цена за ед.',  required: false },
+  { value: 'quantity',    title: 'Количество',    required: false },
+  { value: 'unit',        title: 'Ед. изм.',      required: false },
+  { value: 'total_price', title: 'Сумма',         required: false },
+  { value: 'description', title: 'Описание',      required: false },
+]
+
+const currentSheetData = computed(() => {
+  if (!importPreviewData.value) return null
+  const sheets = importPreviewData.value.sheets
+  return sheets.find((s: any) => s.name === importSelectedSheet.value) || sheets[0]
+})
+const currentSheetHeaders = computed(() => currentSheetData.value?.headers || [])
+const mappingHasName = computed(() =>
+  dragMapping.value['item_name'] !== null && dragMapping.value['item_name'] !== undefined
+)
+
+function isMapped(idx: number): boolean {
+  return Object.values(dragMapping.value).includes(idx)
+}
+function isIgnored(idx: number): boolean {
+  return ignoredColumns.value.includes(idx)
+}
+function isTargetFilled(field: string): boolean {
+  return dragMapping.value[field] !== null && dragMapping.value[field] !== undefined
+}
+function getColumnLabel(idx: number): string {
+  return (currentSheetHeaders.value[idx] as string) || `Столбец ${idx + 1}`
+}
+const unmappedCount = computed(() =>
+  currentSheetHeaders.value.filter((_: any, i: number) => !isMapped(i) && !isIgnored(i)).length
+)
+function getSamples(idx: number): string[] {
+  const sample = currentSheetData.value?.sample || []
+  return (sample as any[][]).slice(0, 1)
+    .map((row: any[]) => String(row[idx] ?? '').trim())
+    .filter(Boolean)
+}
+function onDragStart(idx: number, e: DragEvent) {
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(idx))
+}
+function onDropToTarget(field: string, e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  dragMapping.value[field] = idx
+  dragOverTarget.value = null
+}
+function onDropToUnresolved(e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  dragOverTarget.value = null
+}
+function unmapTarget(field: string) {
+  dragMapping.value[field] = null
+}
+function ignoreColumn(idx: number) {
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  if (!ignoredColumns.value.includes(idx)) ignoredColumns.value.push(idx)
+}
 
 // Smart import
 const smartImportFile = ref<File | null>(null)
@@ -3746,6 +4164,136 @@ async function downloadItemsTemplate() {
   URL.revokeObjectURL(url)
 }
 
+function closeImportDialog() {
+  itemsImportDialog.value = false
+  importStep.value = 1
+  itemsImportFile.value = null
+  importPreviewData.value = null
+  dragMapping.value = {}
+  ignoredColumns.value = []
+  itemsImportResult.value = null
+  importError.value = ''
+}
+
+function autoDetectMapping(headers: string[]) {
+  const mapping: Record<string, number | null> = {}
+  TARGET_FIELDS.forEach(f => { mapping[f.value] = null })
+  const keywords: Record<string, string[]> = {
+    item_name:   ['наименован', 'назван', 'товар', 'предмет', 'name', 'продукц'],
+    description: ['описан', 'характерист', 'тз', 'спецификац', 'specification'],
+    quantity:    ['кол-во', 'количеств', 'qty', 'кол.'],
+    unit_price:  ['цена', 'price', 'за единиц', 'за ед'],
+    total_price: ['сумм', 'итого', 'total', 'стоимость'],
+    unit:        ['ед.', 'единиц', 'изм', 'unit'],
+  }
+  const used = new Set<number>()
+  for (const [field, kws] of Object.entries(keywords)) {
+    for (let i = 0; i < headers.length; i++) {
+      if (used.has(i)) continue
+      const h = headers[i].toLowerCase()
+      if (kws.some(kw => h.includes(kw))) {
+        mapping[field] = i; used.add(i); break
+      }
+    }
+  }
+  return mapping
+}
+
+async function doImportPreview() {
+  if (!itemsImportFile.value) return
+  itemsImportLoading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', itemsImportFile.value)
+    const resp = await fetch('/api/purchases/items/import-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || `Ошибка ${resp.status}`)
+    }
+    const data = await resp.json()
+    importPreviewData.value = data
+    importSelectedSheet.value = data.sheets[0]?.name || ''
+    dragMapping.value = autoDetectMapping(data.sheets[0]?.headers || [])
+    ignoredColumns.value = []
+    importStep.value = 2
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка чтения файла', 'error')
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
+// Re-detect mapping when sheet changes
+watch(importSelectedSheet, (newSheet) => {
+  if (!importPreviewData.value) return
+  const sheet = importPreviewData.value.sheets.find((s: any) => s.name === newSheet)
+  if (sheet) {
+    dragMapping.value = autoDetectMapping(sheet.headers)
+    ignoredColumns.value = []
+  }
+})
+
+async function doMappedImport() {
+  if (!itemsImportFile.value || !purchaseId.value) return
+  itemsImportLoading.value = true
+  itemsImportResult.value = null
+  importError.value = ''
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', itemsImportFile.value)
+
+    // Build query params from mapping
+    const params = new URLSearchParams()
+    if (importSelectedSheet.value) params.set('sheet_name', importSelectedSheet.value)
+    const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
+    if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
+    const paramMap: Record<string, string> = {
+      item_name: 'col_item_name',
+      description: 'col_description',
+      quantity: 'col_quantity',
+      unit_price: 'col_unit_price',
+      total_price: 'col_total_price',
+      vat: 'col_vat',
+      unit: 'col_unit',
+    }
+    for (const [field, colIdx] of Object.entries(dragMapping.value)) {
+      if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
+        params.set(paramMap[field], String(colIdx))
+      }
+    }
+
+    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import-mapped?${params}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || `Ошибка ${resp.status}`)
+    }
+    const data = await resp.json()
+    itemsImportResult.value = data
+    importStep.value = 3
+    if (data.added > 0) {
+      showSnack(`Импортировано ${data.added} позиций`)
+      await loadPurchase()
+    } else {
+      importError.value = 'Не удалось импортировать ни одной позиции. Проверьте маппинг столбцов.'
+    }
+  } catch (e: any) {
+    importError.value = e.message || 'Ошибка импорта'
+    importStep.value = 3
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
 async function downloadProductsTemplate() {
   const token = localStorage.getItem('auth_token')
   const resp = await fetch('/api/products/import/template', {
@@ -3758,42 +4306,6 @@ async function downloadProductsTemplate() {
   a.download = 'products_template.xlsx'
   a.click()
   URL.revokeObjectURL(url)
-}
-
-async function doItemsImport() {
-  if (!itemsImportFile.value) return
-  if (!purchaseId.value) {
-    showSnack('Сначала сохраните заказ, затем импортируйте позиции', 'warning')
-    return
-  }
-  itemsImportLoading.value = true
-  itemsImportResult.value = null
-  try {
-    const token = localStorage.getItem('auth_token')
-    const fd = new FormData()
-    fd.append('file', itemsImportFile.value)
-    const resp = await fetch(`/api/products/import?purchase_id=${purchaseId.value}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      throw new Error(err.message || err.detail || `Ошибка ${resp.status}`)
-    }
-    const data = await resp.json()
-    itemsImportResult.value = { added: data.created || 0, matched_catalog: data.created || 0, unmatched: 0 }
-    if (data.created > 0) {
-      showSnack(`Создано ${data.created} товаров в каталоге и добавлено в закупку`)
-      await loadPurchase()
-    } else {
-      showSnack(`Нет новых товаров (${data.skipped || 0} уже в каталоге)`, 'info')
-    }
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка импорта', 'error')
-  } finally {
-    itemsImportLoading.value = false
-  }
 }
 
 async function doSmartPreview() {
@@ -4667,6 +5179,24 @@ function sendAllKp() {
 async function sendAllKpViaApi() {
   kpSendingAll.value = true
   try {
+    // Auto-save КП request before sending if purchase exists
+    if (purchaseId.value) {
+      const validFree = kpFreeRecipients.value.filter(r => r.email.trim())
+      try {
+        await apiFetch('/commercial-requests/', {
+          method: 'POST',
+          body: {
+            purchase_id: purchaseId.value,
+            subject: `Запрос КП: ${form.subject || form.item_name || ''}`.trim(),
+            intro_text: kpIntroText.value || null,
+            delivery_date: kpDeliveryDate.value || null,
+            recipient_ids: kpSelected.value,
+            free_recipients: validFree.length ? validFree.map(r => ({ name: r.name || null, email: r.email })) : null,
+          },
+        })
+      } catch { /* silent — save failure shouldn't block send */ }
+    }
+
     // Build recipients list
     const recipients: { name: string | null; email: string }[] = []
     for (const cid of kpSelected.value) {
@@ -4758,6 +5288,127 @@ async function downloadKpXlsx() {
 </script>
 
 <style scoped>
+/* ── Import column-mapping table (imap) ─────────────────── */
+.imap-grid {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.imap-col {
+  flex: 1;
+  min-width: 110px;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  transition: border-color 0.15s, background 0.15s;
+}
+.imap-col--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.imap-col--filled {
+  border-style: solid;
+  border-color: #43A047;
+  background: #f6fff6;
+}
+.imap-col--required {
+  border-color: #ef9a9a;
+  background: #fff8f8;
+}
+.imap-col-hdr {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #555;
+  padding: 5px 7px 3px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.imap-col-body {
+  padding: 5px;
+  min-height: 58px;
+}
+.imap-col-empty {
+  font-size: 10px;
+  color: #ccc;
+  text-align: center;
+  margin-top: 10px;
+  font-style: italic;
+}
+.imap-card {
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  padding: 4px 6px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.imap-card:hover {
+  border-color: #1976D2;
+  box-shadow: 0 1px 5px rgba(25, 118, 210, 0.15);
+}
+.imap-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.imap-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.imap-card-x {
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.imap-card-x:hover { color: #e53935; }
+.imap-card-x--grey { color: #bbb; }
+.imap-card-samples {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+.imap-card--free {
+  background: #fafafa;
+}
+.imap-unresolved {
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 44px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.imap-unresolved--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.imap-unresolved-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #aaa;
+  letter-spacing: 0.3px;
+}
+/* ────────────────────────────────────────────────── */
 .framework-siblings-label {
   font-size: 12px;
   color: var(--crm-text-muted);

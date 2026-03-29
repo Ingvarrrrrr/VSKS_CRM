@@ -8,7 +8,7 @@ from app.models.contract_subsidy import ContractSubsidy
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut
-from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES
+from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.models.subsidy import Subsidy
 from typing import List, Optional
 from decimal import Decimal
@@ -80,7 +80,27 @@ async def list_contracts(
     return out
 
 @router.post("/", response_model=ContractOut)
-async def create_contract(data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
+async def create_contract(
+    data: ContractCreate,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ALL_ROLES)),
+):
+    # Duplicate check: same number + contractor INN + date + amount
+    if data.contractor_id and data.number:
+        dup_q = select(Contract).where(
+            Contract.number == data.number,
+            Contract.contractor_id == data.contractor_id,
+        )
+        if data.date:
+            dup_q = dup_q.where(Contract.date == data.date)
+        if data.max_amount is not None:
+            dup_q = dup_q.where(Contract.max_amount == data.max_amount)
+        dup = (await db.execute(dup_q)).scalar_one_or_none()
+        if dup:
+            raise HTTPException(
+                409,
+                f"Договор с таким номером, контрагентом и датой уже существует (ID {dup.id})"
+            )
     extra_ids = data.extra_subsidy_ids or []
     dump = data.model_dump(exclude={"extra_subsidy_ids"})
     c = Contract(**dump)

@@ -71,12 +71,11 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     if current_user.role == 'superadmin':
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
-    if current_user.role == 'account_owner':
-        # All contour org_ids are stored in JWT at login time
-        org_ids = getattr(current_user, '_active_org_ids', None)
-        if org_ids:
-            return org_ids
-        return [current_user.org_id] if current_user.org_id else None
+    # For all other roles: use contour org_ids from JWT if available
+    org_ids = getattr(current_user, '_active_org_ids', None)
+    if org_ids:
+        return org_ids
+    # Fallback: single org
     active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
     return [active_org_id] if active_org_id else None
 

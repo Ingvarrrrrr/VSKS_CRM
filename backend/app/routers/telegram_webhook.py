@@ -184,6 +184,14 @@ async def _handle_callback(cq: dict) -> None:
                         task_id=task_id, declined_user_id=user.id,
                         creator_id=task_obj.created_by_id,
                     ))
+                    # Add comment to task chat
+                    from app.models.task_comment import TaskComment
+                    db.add(TaskComment(
+                        task_id=task_id,
+                        user_id=user.id,
+                        user_name=user.full_name or user.username,
+                        text=f"❌ {user.full_name or user.username} отклонил добавление в задачу",
+                    ))
                     creator = await db.get(User, task_obj.created_by_id)
                     if creator:
                         from app.notifications import notify_user

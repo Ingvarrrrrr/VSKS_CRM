@@ -15,6 +15,16 @@
 - Phase 4: Contract Registry — ✓ completed outside GSD
 - Phase 5: Export / Import Excel — ✓ completed outside GSD
 
+## Completed Phases (additional)
+
+- Phase 8: Торговые площадки + КП email + E2E — ✓ completed 2026-03-20
+  - roseltorg_publish.json (n8n, production URL + token check + procedure_type mapping) — активен на сервере
+  - fabrikant_publish.json (test mode FABRIKANT_TEST_MODE=true) — активен на сервере
+  - CreateOrderView.vue — двухшаговый диалог с dropdown для Росэлторг
+  - E2E тесты (e2e/12-publications.spec.ts) — 4 теста, все pass
+  - n8n на сервере: ROSELTORG_TOKEN, FABRIKANT_TEST_MODE=true в env
+  - n8n пароль admin: Admin123! (был reset)
+
 ## Active Phase
 
 Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + charts exist; budget history log needs verification; FEO drill-down in BudgetDrillDownDialog needs check)
@@ -35,7 +45,8 @@ Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + 
 
 ## Blockers
 
-- SMTP app password not yet obtained for z@vsks.ru (Yandex 360)
+- ~~SMTP~~ ✅ настроен (szbgaktpqomcwdou)
+- Фабрикант: IP whitelist от поддержки (403)
 
 ## Key Decisions
 
@@ -50,6 +61,12 @@ Phase 6: Analytics + Budget History — partially implemented (dashboard KPIs + 
 - [08-02] FABRIKANT_TEST_MODE проверяется как строка === 'true' для совместимости с n8n Variables
 - [08-03] Росэлторг publish uses two-step dialog with mandatory procedure_type dropdown; procedure_type sent to API in request body
 - [08-04] 409 on duplicate publication handled gracefully — GET existing pub list as fallback; nginx 307 redirect drops auth header — use trailing slash URLs; create-order route is /orders/{id}/edit
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 1 | Улучшить визуализацию FruitShop магазина | 2026-03-27 | 199a137 | [1-fruitshop](./quick/1-fruitshop/) |
 
 ## Notes
 

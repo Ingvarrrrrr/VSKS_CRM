@@ -181,14 +181,22 @@ def _esc(s: str) -> str:
 
 async def notify_task_assigned(task, assignee_user, assigner_name: str) -> None:
     due = f"\n📅 Срок: {task.due_date.strftime('%d.%m.%Y')}" if task.due_date else ""
+    priority_val = task.priority.value if hasattr(task.priority, 'value') else str(task.priority)
+    PRIORITY_LABELS = {"low": "Низкий", "medium": "Средний", "high": "Высокий", "urgent": "Срочно"}
+    priority_label = PRIORITY_LABELS.get(priority_val, priority_val)
     text = (
         f"📋 <b>Новая задача</b>\n\n"
         f"📌 <b>{_esc(task.title)}</b>{due}\n"
         f"👤 Назначил: <i>{_esc(assigner_name)}</i>\n"
-        f"Приоритет: {task.priority}"
+        f"Приоритет: {priority_label}"
     )
-    await notify_user(assignee_user, text, task_id=task.id,
-                       reply_markup_override=_task_keyboard(task.id))
+    tg = getattr(assignee_user, "telegram_id", None)
+    mx = getattr(assignee_user, "max_chat_id", None)
+    if tg:
+        await _send_telegram(str(tg), text, task_id=task.id,
+                              reply_markup_override=_consent_keyboard(task.id))
+    if mx:
+        await _send_max(str(mx), text)
 
 
 async def notify_consent_required(task, assignee_user, assigner_name: str) -> None:

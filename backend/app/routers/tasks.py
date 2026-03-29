@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,14 +6,17 @@ from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
 from app.models.task_decline import TaskConsentDecline
 from app.models.task_comment import TaskComment
+from app.models.task_change import TaskChange, TaskFieldSeen
 from app.models.user import User
 from app.schemas.schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskAssigneeOut,
-    TaskCommentCreate, TaskCommentOut, ReviewCompleteRequest,
+    TaskCommentCreate, TaskCommentOut, ReviewCompleteRequest, DismissFieldRequest,
 )
 from app.auth.jwt import get_current_user, get_org_filter
 from typing import List, Optional
 from datetime import date, datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -101,6 +105,36 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
         for p in pq.scalars().all():
             purchase_map[p.id] = p
 
+    # Load unseen field changes for current user
+    # changes_map: task_id → {field_name: latest_changed_at}
+    changes_map: dict[int, dict] = {}
+    # seen_map: (task_id, field_name) → dismissed_at
+    seen_map: dict[tuple, object] = {}
+    if current_user_id and task_ids:
+        try:
+            change_rows = (await db.execute(
+                select(TaskChange).where(
+                    TaskChange.task_id.in_(task_ids),
+                    or_(TaskChange.changed_by_id != current_user_id,
+                        TaskChange.changed_by_id.is_(None)),
+                ).order_by(TaskChange.changed_at.asc())
+            )).scalars().all()
+            for c in change_rows:
+                # Keep latest per (task_id, field_name)
+                task_fields = changes_map.setdefault(c.task_id, {})
+                task_fields[c.field_name] = c.changed_at
+
+            seen_rows = (await db.execute(
+                select(TaskFieldSeen).where(
+                    TaskFieldSeen.user_id == current_user_id,
+                    TaskFieldSeen.task_id.in_(task_ids),
+                )
+            )).scalars().all()
+            for s in seen_rows:
+                seen_map[(s.task_id, s.field_name)] = s.dismissed_at
+        except Exception as exc:
+            logger.warning("unseen changes query failed: %s", exc)
+
     out = []
     for t in tasks:
         lc = last_comments_map.get(t.id, {})
@@ -119,6 +153,15 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
             for a in task_assignees
         )
         linked_purchase = purchase_map.get(t.purchase_id) if t.purchase_id else None
+
+        # Compute unseen fields for this task
+        unseen_fields: list = []
+        task_changes = changes_map.get(t.id, {})
+        for fname, fat in task_changes.items():
+            dismissed_at = seen_map.get((t.id, fname))
+            if dismissed_at is None or fat > dismissed_at:
+                unseen_fields.append(fname)
+
         out.append(TaskOut(
             id=t.id, task_number=t.task_number, title=t.title, description=t.description,
             status=t.status.value if isinstance(t.status, TaskStatus) else t.status,
@@ -143,6 +186,8 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
             last_comment_at=lc.get("at"),
             comment_count=count_map.get(t.id, 0),
             needs_my_consent=needs_my_consent,
+            unseen_changes_count=len(unseen_fields),
+            unseen_fields=unseen_fields,
         ))
     return out
 
@@ -647,8 +692,8 @@ async def create_task(
                     await notify_consent_required(db_task, assignee_user, assigner_name)
                 else:
                     await notify_task_assigned(db_task, assignee_user, assigner_name)
-    except Exception:
-        pass  # notifications are best-effort
+    except Exception as exc:
+        logger.error("Notification error on task create (task_id=%s): %s", db_task.id, exc, exc_info=True)
 
     result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
     return result[0]
@@ -699,6 +744,17 @@ async def update_task(
     # Handle assignee_ids separately
     new_assignee_ids = update_data.pop("assignee_ids", None)
 
+    # Snapshot old values BEFORE changes (for change tracking)
+    TRACKED_FIELDS = {"status", "priority", "due_date", "description", "title"}
+    old_values = {f: getattr(db_task, f, None) for f in TRACKED_FIELDS}
+    old_assignee_ids: set | None = None
+    if new_assignee_ids is not None:
+        old_assignee_ids = {
+            a.user_id for a in (await db.execute(
+                select(TaskAssignee).where(TaskAssignee.task_id == task_id)
+            )).scalars().all()
+        }
+
     # Assignee cannot move status backwards
     STATUS_ORDER = {"todo": 0, "in_progress": 1, "review": 2, "done": 3}
     old_status_str = db_task.status.value if hasattr(db_task.status, 'value') else str(db_task.status)
@@ -722,18 +778,103 @@ async def update_task(
     for key, value in update_data.items():
         setattr(db_task, key, value)
 
+    consent_needed_update: set[int] = set()
+    newly_added_ids: set[int] = set()
+
     if new_assignee_ids is not None:
         import sqlalchemy
+        from app.auth.jwt import MANAGER_ROLES as _MR
+        from app.models.user_hierarchy import UserHierarchy as _UH
+
+        # Detect newly added users and determine consent
+        can_assign_others = current_user.role in _MR
+        newly_added_ids = set(new_assignee_ids) - (old_assignee_ids or set())
+        if not can_assign_others and newly_added_ids:
+            non_self = [uid for uid in newly_added_ids if uid != current_user.id]
+            if non_self:
+                hier_res = await db.execute(
+                    select(_UH.subordinate_id).where(_UH.manager_id == current_user.id)
+                )
+                subordinate_ids = {r[0] for r in hier_res.all()}
+                for uid in non_self:
+                    if uid not in subordinate_ids:
+                        consent_needed_update.add(uid)
+
         await db.execute(
             sqlalchemy.delete(TaskAssignee).where(TaskAssignee.task_id == task_id)
         )
         for uid in new_assignee_ids:
-            db.add(TaskAssignee(task_id=task_id, user_id=uid))
+            db.add(TaskAssignee(
+                task_id=task_id,
+                user_id=uid,
+                consent_pending=(uid in consent_needed_update),
+            ))
         if new_assignee_ids:
             db_task.assigned_user_id = new_assignee_ids[0]
 
     await db.commit()
     await db.refresh(db_task)
+
+    # Record field changes for unseen tracking
+    try:
+        actor_name = current_user.full_name or current_user.username
+        changes_to_add = []
+        for f in TRACKED_FIELDS:
+            if f in update_data:
+                old_v = old_values.get(f)
+                new_v = update_data.get(f)
+                old_s = old_v.value if hasattr(old_v, 'value') else str(old_v) if old_v is not None else ''
+                new_s = new_v.value if hasattr(new_v, 'value') else str(new_v) if new_v is not None else ''
+                if old_s != new_s:
+                    changes_to_add.append(TaskChange(
+                        task_id=task_id, field_name=f,
+                        changed_by_id=current_user.id, changed_by_name=actor_name,
+                    ))
+        if old_assignee_ids is not None:
+            new_set = set(new_assignee_ids or [])
+            if old_assignee_ids != new_set:
+                changes_to_add.append(TaskChange(
+                    task_id=task_id, field_name="assignees",
+                    changed_by_id=current_user.id, changed_by_name=actor_name,
+                ))
+        if changes_to_add:
+            for ch in changes_to_add:
+                db.add(ch)
+            await db.commit()
+    except Exception as exc:
+        logger.warning("task change tracking failed: %s", exc)
+
+    # Notify newly added / removed assignees
+    if newly_added_ids or (old_assignee_ids is not None and new_assignee_ids is not None):
+        removed_ids = (old_assignee_ids or set()) - set(new_assignee_ids or []) if new_assignee_ids is not None else set()
+        try:
+            from app.notifications import notify_task_assigned, notify_consent_required, notify_user
+            assigner_name = current_user.full_name or current_user.username
+            # Added
+            for uid in newly_added_ids:
+                if uid == current_user.id:
+                    continue
+                assignee_user = await db.get(User, uid)
+                if assignee_user:
+                    if uid in consent_needed_update:
+                        await notify_consent_required(db_task, assignee_user, assigner_name)
+                    else:
+                        await notify_task_assigned(db_task, assignee_user, assigner_name)
+            # Removed
+            for uid in removed_ids:
+                if uid == current_user.id:
+                    continue
+                removed_user = await db.get(User, uid)
+                if removed_user:
+                    from app.notifications import _esc, _task_keyboard
+                    msg = (
+                        f"🚫 <b>Вас удалили из задачи</b>\n\n"
+                        f"📌 <b>{_esc(db_task.title)}</b>\n"
+                        f"👤 <i>{_esc(assigner_name)}</i>"
+                    )
+                    await notify_user(removed_user, msg)
+        except Exception as exc:
+            logger.error("Notification error on assignee update (task_id=%s): %s", task_id, exc, exc_info=True)
 
     # Notify all assignees about status change
     if new_status_str and new_status_str != old_status_str:
@@ -1116,6 +1257,37 @@ async def broadcast_from_task(
     await db.commit()
 
     return {"ok": True, "sent": sent, "total_users": len(users)}
+
+
+# ── Dismiss field change ──────────────────────────────────────────────────────
+
+@router.post("/{task_id}/dismiss-field")
+async def dismiss_field(
+    task_id: int,
+    body: DismissFieldRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a specific changed field as seen (dismiss its highlight) for current user."""
+    existing = (await db.execute(
+        select(TaskFieldSeen).where(
+            TaskFieldSeen.user_id == current_user.id,
+            TaskFieldSeen.task_id == task_id,
+            TaskFieldSeen.field_name == body.field_name,
+        )
+    )).scalar_one_or_none()
+
+    if existing:
+        existing.dismissed_at = func.now()
+    else:
+        db.add(TaskFieldSeen(
+            user_id=current_user.id,
+            task_id=task_id,
+            field_name=body.field_name,
+        ))
+
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/broadcast/scopes")

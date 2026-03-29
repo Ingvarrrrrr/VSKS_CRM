@@ -650,18 +650,23 @@
               <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
-          <v-autocomplete
-            v-model="form.contractor_id"
-            :items="contractors"
-            item-title="name" item-value="id"
-            label="Контрагент"
-            variant="outlined" density="compact" clearable class="mt-3" hide-details
-            no-data-text="Нет контрагентов"
-          >
-            <template v-slot:item="{ item, props }">
-              <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
-            </template>
-          </v-autocomplete>
+          <div class="d-flex align-center ga-2 mt-3">
+            <v-autocomplete
+              v-model="form.contractor_id"
+              :items="contractors"
+              item-title="name" item-value="id"
+              label="Контрагент"
+              variant="outlined" density="compact" clearable hide-details
+              no-data-text="Нет контрагентов"
+              style="flex:1"
+            >
+              <template v-slot:item="{ item, props }">
+                <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
+              </template>
+            </v-autocomplete>
+            <v-btn icon="mdi-plus" size="small" variant="tonal" color="primary"
+              title="Создать нового контрагента" @click="quickContractorDialog = true" />
+          </div>
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -693,18 +698,23 @@
               <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
-          <v-autocomplete
-            v-model="editForm.contractor_id"
-            :items="contractors"
-            item-title="name" item-value="id"
-            label="Контрагент"
-            variant="outlined" density="compact" clearable class="mt-3" hide-details
-            no-data-text="Нет контрагентов"
-          >
-            <template v-slot:item="{ item, props }">
-              <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
-            </template>
-          </v-autocomplete>
+          <div class="d-flex align-center ga-2 mt-3">
+            <v-autocomplete
+              v-model="editForm.contractor_id"
+              :items="contractors"
+              item-title="name" item-value="id"
+              label="Контрагент"
+              variant="outlined" density="compact" clearable hide-details
+              no-data-text="Нет контрагентов"
+              style="flex:1"
+            >
+              <template v-slot:item="{ item, props }">
+                <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
+              </template>
+            </v-autocomplete>
+            <v-btn icon="mdi-plus" size="small" variant="tonal" color="primary"
+              title="Создать нового контрагента" @click="quickContractorDialog = true" />
+          </div>
           <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -1089,36 +1099,66 @@
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showOverrideDialog = false" />
         </v-card-title>
         <v-divider />
-        <v-card-text class="pt-4" style="max-height: 500px">
+        <v-card-text class="pt-4" style="max-height:75vh">
           <v-alert type="info" variant="tonal" density="compact" class="mb-4">
             Эти реквизиты будут использоваться при генерации документов для данной субсидии.
             Если не заполнены — берутся из основной карточки контрагента.
           </v-alert>
-          <v-text-field v-model="overrideForm.signatory" label="Подписант" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-text-field v-model="overrideForm.signatory_basis" label="Основание (Устав/Доверенность)" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-text-field v-model="overrideForm.address" label="Юридический адрес" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-text-field v-model="overrideForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-text-field v-model="overrideForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.phone" label="Телефон" variant="outlined" density="compact" hide-details />
+
+          <div class="section-label">Основные данные</div>
+          <v-select v-model="overrideForm.org_type" :items="['Юр.лицо','ИП','Самозанятый','Физ.лицо']"
+            label="Форма организации" variant="outlined" density="compact" clearable hide-details class="mb-3" />
+          <v-row dense>
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.inn" label="ИНН" variant="outlined" density="compact" hide-details />
             </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.email" label="Email" variant="outlined" density="compact" hide-details />
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.kpp" label="КПП" variant="outlined" density="compact" hide-details />
             </v-col>
-          </v-row>
-          <v-divider class="my-3" />
-          <div class="text-body-2 font-weight-medium mb-2">Банковские реквизиты</div>
-          <v-text-field v-model="overrideForm.settlement_account" label="Расчётный счёт" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-text-field v-model="overrideForm.bank_name" label="Название банка" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.bik" label="БИК" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.correspondent_account" label="Корр. счёт" variant="outlined" density="compact" hide-details />
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
             </v-col>
           </v-row>
+          <v-textarea v-model="overrideForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-textarea v-model="overrideForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+
+          <div class="section-label mt-4">Подписант</div>
+          <v-text-field v-model="overrideForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-text-field v-model="overrideForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
+            placeholder="Устава, доверенности №..." />
+
+          <div class="section-label mt-4">Контакты</div>
+          <v-row dense class="mb-3">
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-text-field v-model="overrideForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+
+          <div class="section-label mt-4">Банковские реквизиты</div>
+          <v-text-field v-model="overrideForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
+          <v-text-field v-model="overrideForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details
+            placeholder="в ПАО «Сбербанк»..." />
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="overrideForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" />
+            </v-col>
+          </v-row>
+          <v-textarea v-model="overrideForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -1295,6 +1335,62 @@
             @click="savePlannedItem">
             Добавить
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Quick contractor create dialog -->
+    <v-dialog v-model="quickContractorDialog" max-width="560" persistent scrollable>
+      <v-card>
+        <v-card-title class="text-subtitle-1 pt-4 px-4">
+          <v-icon class="mr-1" size="20" color="primary">mdi-account-plus</v-icon>
+          Новый контрагент
+        </v-card-title>
+        <v-card-text style="max-height:75vh">
+          <div class="section-label">Основные данные</div>
+          <v-text-field v-model="qcForm.name" label="Наименование *" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-select
+            v-model="qcForm.org_type"
+            :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
+            label="Тип организации" variant="outlined" density="compact" class="mb-3" hide-details clearable
+          />
+          <v-row dense class="mb-3">
+            <v-col cols="4"><v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="4"><v-text-field v-model="qcForm.kpp" label="КПП" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="4"><v-text-field v-model="qcForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details /></v-col>
+          </v-row>
+          <v-textarea v-model="qcForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
+          <v-textarea v-model="qcForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
+
+          <div class="section-label mt-4">Подписант</div>
+          <v-text-field v-model="qcForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-text-field v-model="qcForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" class="mb-3" hide-details placeholder="Устава, доверенности №..." />
+
+          <div class="section-label mt-4">Контакты</div>
+          <v-row dense class="mb-3">
+            <v-col cols="6"><v-text-field v-model="qcForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6"><v-text-field v-model="qcForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details /></v-col>
+          </v-row>
+          <v-text-field v-model="qcForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row dense class="mb-3">
+            <v-col cols="6"><v-text-field v-model="qcForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6"><v-text-field v-model="qcForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details /></v-col>
+          </v-row>
+
+          <div class="section-label mt-4">Банковские реквизиты</div>
+          <v-text-field v-model="qcForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
+          <v-text-field v-model="qcForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details placeholder="в ПАО «Сбербанк»..." />
+          <v-row dense class="mb-3">
+            <v-col cols="6"><v-text-field v-model="qcForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" /></v-col>
+            <v-col cols="6"><v-text-field v-model="qcForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" /></v-col>
+          </v-row>
+          <v-textarea v-model="qcForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="quickContractorDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="tonal" :loading="qcSaving" :disabled="!qcForm.name.trim()"
+            @click="saveQuickContractor">Создать</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1613,8 +1709,9 @@ const showOverrideDialog = ref(false)
 const savingOverride = ref(false)
 const overrideSubsidyId = ref<number | null>(null)
 const overrideForm = ref({
+  org_type: '', inn: '', kpp: '', ogrn: '',
   signatory: '', signatory_basis: '', address: '', postal_address: '',
-  contact_person: '', phone: '', email: '',
+  contact_person: '', phone: '', email: '', org_phone: '', org_email: '',
   bank_details: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
 })
 
@@ -1651,6 +1748,37 @@ const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 const snack = ref({ show: false, text: '', color: 'success' })
 
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
+
+// Quick contractor creation
+const quickContractorDialog = ref(false)
+const qcSaving = ref(false)
+const qcFormDefault = () => ({
+  name: '', org_type: '', inn: '', kpp: '', ogrn: '',
+  address: '', postal_address: '',
+  signatory: '', signatory_basis: '',
+  contact_person: '', phone: '', email: '', org_phone: '', org_email: '',
+  settlement_account: '', bank_name: '', bik: '', correspondent_account: '', bank_details: ''
+})
+const qcForm = ref(qcFormDefault())
+
+async function saveQuickContractor() {
+  if (!qcForm.value.name.trim()) return
+  qcSaving.value = true
+  try {
+    const body: any = { name: qcForm.value.name.trim() }
+    const fields = ['org_type','inn','kpp','ogrn','address','postal_address','signatory','signatory_basis','contact_person','phone','email','org_phone','org_email','settlement_account','bank_name','bik','correspondent_account','bank_details'] as const
+    for (const f of fields) { if (qcForm.value[f]) body[f] = (qcForm.value[f] as string).trim() }
+    const created = await apiFetch<any>('/contractors/', { method: 'POST', body })
+    contractors.value.push({ id: created.id, name: created.name, inn: created.inn })
+    form.value.contractor_id = created.id
+    editForm.value.contractor_id = created.id
+    quickContractorDialog.value = false
+    qcForm.value = qcFormDefault()
+    snack.value = { show: true, text: `Контрагент "${created.name}" создан`, color: 'success' }
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.detail || 'Ошибка создания', color: 'error' }
+  } finally { qcSaving.value = false }
+}
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
@@ -2439,6 +2567,10 @@ async function openContractorOverride(s: SubsidyRow) {
   try {
     const data = await apiFetch<any>(`/subsidies/${s.id}/contractor-override`)
     overrideForm.value = {
+      org_type: data.org_type || '',
+      inn: data.inn || '',
+      kpp: data.kpp || '',
+      ogrn: data.ogrn || '',
       signatory: data.signatory || '',
       signatory_basis: data.signatory_basis || '',
       address: data.address || '',
@@ -2446,6 +2578,8 @@ async function openContractorOverride(s: SubsidyRow) {
       contact_person: data.contact_person || '',
       phone: data.phone || '',
       email: data.email || '',
+      org_phone: data.org_phone || '',
+      org_email: data.org_email || '',
       bank_details: data.bank_details || '',
       settlement_account: data.settlement_account || '',
       bank_name: data.bank_name || '',

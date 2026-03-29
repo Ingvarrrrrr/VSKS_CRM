@@ -1,16 +1,126 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractorCreate, ContractorOut
-from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES
+from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.models.user import User
-from typing import List
+from typing import List, Optional
 from io import BytesIO
 
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
+
+try:
+    import pdfplumber as _pdfplumber
+except ImportError:
+    _pdfplumber = None
+
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
+
+
+# ---------------------------------------------------------------------------
+# Shared file parsing helpers
+# ---------------------------------------------------------------------------
+
+_CONTRACTOR_HINTS = (
+    'назван', 'наимен', 'инн', 'inn', 'кпп', 'огрн', 'адрес',
+    'email', 'телефон', 'банк', 'бик', 'контакт', 'подписант',
+)
+
+
+def _detect_hdr(rows):
+    """Return index of the row most likely to be a header row."""
+    best_score, best_idx = 0, 0
+    for ri, row in enumerate(rows):
+        norm = [str(h).strip().lower() if h is not None else "" for h in row]
+        score = sum(1 for h in norm if h and any(x in h for x in _CONTRACTOR_HINTS))
+        if score > best_score:
+            best_score = score
+            best_idx = ri
+    return best_idx
+
+
+def _parse_file_to_rows(fname: str, content: bytes):
+    """Parse xlsx/xls/docx/doc/pdf and return (all_rows, hdr_idx)."""
+    fname = fname.lower()
+
+    if fname.endswith('.xls') and not fname.endswith('.xlsx'):
+        try:
+            import xlrd as _xlrd_mod
+        except ImportError:
+            raise HTTPException(500, "xlrd не установлен")
+        try:
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .xls файл: {e}")
+        ws_xls = wb_xls.sheet_by_index(0)
+        all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+
+    elif fname.endswith('.xlsx'):
+        if not load_workbook:
+            raise HTTPException(500, "openpyxl не установлен")
+        try:
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .xlsx файл: {e}")
+        ws = wb.active
+        all_rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+
+    elif fname.endswith(('.docx', '.doc')):
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(500, "python-docx не установлен")
+        try:
+            doc = Document(BytesIO(content))
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .docx файл: {e}")
+        if not doc.tables:
+            raise HTTPException(400, "В документе .docx не найдено таблиц")
+        tbl = doc.tables[0]
+        all_rows = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]
+
+    elif fname.endswith('.pdf'):
+        if not _pdfplumber:
+            raise HTTPException(500, "pdfplumber не установлен")
+        try:
+            with _pdfplumber.open(BytesIO(content)) as pdf:
+                all_rows = []
+                for page in pdf.pages:
+                    tables = page.extract_tables()
+                    if tables:
+                        for tbl in tables:
+                            all_rows.extend([r for r in tbl if r])
+                # Fallback: if no tables found, try extracting text lines
+                if not all_rows:
+                    for page in _pdfplumber.open(BytesIO(content)).pages:
+                        text = page.extract_text()
+                        if text:
+                            for line in text.strip().split('\n'):
+                                cells = [c.strip() for c in line.split('\t')]
+                                if len(cells) < 2:
+                                    cells = [c.strip() for c in line.split('  ') if c.strip()]
+                                if cells:
+                                    all_rows.append(cells)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .pdf файл: {e}")
+        if not all_rows:
+            raise HTTPException(400, "В PDF не найдено таблиц. Попробуйте Excel формат.")
+
+    else:
+        raise HTTPException(400, "Неподдерживаемый формат файла. Используйте .xlsx, .xls, .docx, .doc или .pdf")
+
+    if not all_rows:
+        raise HTTPException(400, "Файл пустой или не содержит данных")
+
+    hdr_idx = _detect_hdr(all_rows)
+    return all_rows, hdr_idx
 
 
 @router.get("/product-categories")
@@ -108,7 +218,7 @@ async def list_contractors(
 async def create_contractor(
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
 ):
     d = data.model_dump()
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
@@ -124,7 +234,7 @@ async def patch_contractor_email(
     cid: int,
     email: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES)),
+    _=Depends(require_role(*ALL_ROLES)),
 ):
     c = (await db.execute(select(Contractor).where(Contractor.id == cid))).scalar_one_or_none()
     if not c:
@@ -140,7 +250,7 @@ async def update_contractor(
     cid: int,
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES))
+    _=Depends(require_role(*ALL_ROLES))
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
@@ -263,15 +373,13 @@ async def contractors_import_template(_=Depends(require_role(*MANAGER_ROLES))):
 async def import_contractors_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES))
+    _=Depends(require_role(*ALL_ROLES))
 ):
     """Bulk import contractors from Excel. First row must be headers."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):
         raise HTTPException(400, "Поддерживаются только файлы .xlsx / .xls")
 
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
+    if not load_workbook:
         raise HTTPException(500, "openpyxl не установлен")
 
     content = await file.read()
@@ -397,3 +505,174 @@ async def import_contractors_excel(
 
     await db.commit()
     return {"created": created, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# New multi-format import endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/import/preview")
+async def contractors_import_preview(
+    file: UploadFile = File(...),
+    _=Depends(require_role(*ALL_ROLES)),
+):
+    """Parse uploaded file and return headers + sample rows for column mapping UI."""
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        all_rows, hdr_idx = _parse_file_to_rows(fname, content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    hdr_rows = all_rows[hdr_idx:]
+    if not hdr_rows:
+        raise HTTPException(400, "Файл пустой или не содержит данных после заголовка")
+
+    headers = [
+        str(c).strip() if c else f"Столбец {j + 1}"
+        for j, c in enumerate(hdr_rows[0])
+    ]
+    sample = [
+        [str(c).strip() if c is not None else "" for c in row]
+        for row in hdr_rows[1:min(4, len(hdr_rows))]
+    ]
+    total_rows = len(all_rows) - hdr_idx - 1
+
+    return {
+        "headers": headers,
+        "sample": sample,
+        "total_rows": max(total_rows, 0),
+        "header_row_offset": hdr_idx,
+    }
+
+
+@router.post("/import/mapped")
+async def contractors_import_mapped(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ALL_ROLES)),
+    col_name: Optional[int] = Query(None),
+    col_inn: Optional[int] = Query(None),
+    col_kpp: Optional[int] = Query(None),
+    col_ogrn: Optional[int] = Query(None),
+    col_address: Optional[int] = Query(None),
+    col_postal_address: Optional[int] = Query(None),
+    col_signatory: Optional[int] = Query(None),
+    col_signatory_basis: Optional[int] = Query(None),
+    col_contact_person: Optional[int] = Query(None),
+    col_phone: Optional[int] = Query(None),
+    col_email: Optional[int] = Query(None),
+    col_settlement_account: Optional[int] = Query(None),
+    col_bank_name: Optional[int] = Query(None),
+    col_bik: Optional[int] = Query(None),
+    col_correspondent_account: Optional[int] = Query(None),
+    col_bank_details: Optional[int] = Query(None),
+    header_row_offset: int = Query(0),
+):
+    """Import contractors using user-specified column mapping."""
+    if col_name is None:
+        raise HTTPException(400, "Не указан столбец «Наименование»")
+
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        all_rows, _ = _parse_file_to_rows(fname, content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    # Skip header row
+    skip = header_row_offset + 1
+    data_rows = all_rows[skip:]
+
+    _limits = {
+        'inn': 12, 'kpp': 9, 'ogrn': 20, 'bik': 20,
+        'settlement_account': 100, 'correspondent_account': 100,
+        'phone': 50, 'email': 255, 'contact_person': 255,
+        'signatory': 255, 'signatory_basis': 500, 'bank_name': 500,
+    }
+
+    col_map = {
+        'name': col_name,
+        'inn': col_inn,
+        'kpp': col_kpp,
+        'ogrn': col_ogrn,
+        'address': col_address,
+        'postal_address': col_postal_address,
+        'signatory': col_signatory,
+        'signatory_basis': col_signatory_basis,
+        'contact_person': col_contact_person,
+        'phone': col_phone,
+        'email': col_email,
+        'settlement_account': col_settlement_account,
+        'bank_name': col_bank_name,
+        'bik': col_bik,
+        'correspondent_account': col_correspondent_account,
+        'bank_details': col_bank_details,
+    }
+
+    def _get(row, field):
+        idx = col_map.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ('none', 'null', '-', '—'):
+            return None
+        limit = _limits.get(field)
+        return s[:limit] if limit else s
+
+    # Collect existing INNs for dedup
+    inn_result = await db.execute(select(Contractor.inn).where(Contractor.inn.isnot(None)))
+    existing_inns = {r[0] for r in inn_result}
+
+    created = 0
+    skipped = 0
+    errors_list = []
+
+    for row in data_rows:
+        try:
+            name = _get(row, 'name')
+            if not name:
+                skipped += 1
+                continue
+
+            inn = _get(row, 'inn')
+            if inn and inn in existing_inns:
+                skipped += 1
+                continue
+
+            c = Contractor(
+                name=name,
+                inn=inn,
+                kpp=_get(row, 'kpp'),
+                ogrn=_get(row, 'ogrn'),
+                address=_get(row, 'address'),
+                postal_address=_get(row, 'postal_address'),
+                signatory=_get(row, 'signatory'),
+                signatory_basis=_get(row, 'signatory_basis'),
+                contact_person=_get(row, 'contact_person'),
+                phone=_get(row, 'phone'),
+                email=_get(row, 'email'),
+                settlement_account=_get(row, 'settlement_account'),
+                bank_name=_get(row, 'bank_name'),
+                bik=_get(row, 'bik'),
+                correspondent_account=_get(row, 'correspondent_account'),
+                bank_details=_get(row, 'bank_details'),
+            )
+            db.add(c)
+            if inn:
+                existing_inns.add(inn)
+            created += 1
+        except Exception as e:
+            errors_list.append(str(e))
+
+    await db.commit()
+    return {"created": created, "skipped": skipped, "errors": errors_list}

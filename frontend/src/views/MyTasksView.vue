@@ -366,6 +366,9 @@
                   <v-icon icon="mdi-subdirectory-arrow-right" size="10" class="mr-1" />Подзадача
                 </v-chip>
                 <v-spacer />
+                <v-chip v-if="gt.unseen_changes_count" size="x-small" variant="flat" color="warning" :title="`${gt.unseen_changes_count} новых изменений`">
+                  <v-icon icon="mdi-bell-ring" size="10" class="mr-1" />{{ gt.unseen_changes_count }}
+                </v-chip>
                 <v-chip v-if="gt.subtask_count" size="x-small" variant="tonal" color="teal" :title="`${gt.subtask_count} делегировано`">
                   <v-icon icon="mdi-sitemap-outline" size="10" class="mr-1" />{{ gt.subtask_count }}
                 </v-chip>
@@ -507,15 +510,22 @@
           </div>
         </v-card-title>
         <v-card-text>
-          <v-text-field v-model="taskForm.title" label="Название *" variant="outlined" density="compact" class="mb-2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
-          <v-textarea v-model="taskForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mb-2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          <div :class="isFieldUnseen('title') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('title')">
+            <v-text-field v-model="taskForm.title" label="Название *" variant="outlined" density="compact" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          </div>
+          <div :class="isFieldUnseen('description') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('description')">
+            <v-textarea v-model="taskForm.description" label="Описание" variant="outlined" density="compact" rows="2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          </div>
           <div class="d-flex ga-2 mb-2">
-            <v-select v-model="taskForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" :disabled="isTaskReadonly" />
+            <div :class="isFieldUnseen('priority') ? 'field-changed' : ''" style="max-width:200px;flex:0 0 auto" @click="dismissField('priority')">
+              <v-select v-model="taskForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" :disabled="isTaskReadonly" />
+            </div>
             <v-combobox v-model="taskForm.category" :items="taskCategories" label="Категория" variant="outlined" density="compact" clearable :disabled="isTaskReadonly" />
           </div>
-          <div class="d-flex ga-2 mb-2">
+          <div :class="isFieldUnseen('due_date') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('due_date')">
             <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
           </div>
+          <div :class="isFieldUnseen('assignees') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('assignees')">
           <v-autocomplete v-if="!editingTask || !isTaskReadonly" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2">
             <template #item="{ item, props }">
               <v-list-item v-bind="props">
@@ -525,6 +535,7 @@
               </v-list-item>
             </template>
           </v-autocomplete>
+          </div>
 
           <!-- Linked purchase -->
           <div class="mb-2 d-flex align-center ga-1 flex-wrap">
@@ -934,6 +945,28 @@ function openNewTask() {
   taskComments.value = []
   newCommentText.value = ''
   showTaskDialog.value = true
+}
+
+function isFieldUnseen(fieldName: string): boolean {
+  return (editingTask.value?.unseen_fields || []).includes(fieldName)
+}
+
+async function dismissField(fieldName: string) {
+  if (!editingTask.value) return
+  if (!isFieldUnseen(fieldName)) return
+  try {
+    await apiFetch(`/tasks/${editingTask.value.id}/dismiss-field`, {
+      method: 'POST',
+      body: { field_name: fieldName } as any,
+    })
+    editingTask.value.unseen_fields = (editingTask.value.unseen_fields || []).filter((f: string) => f !== fieldName)
+    editingTask.value.unseen_changes_count = Math.max(0, (editingTask.value.unseen_changes_count || 0) - 1)
+    // Sync to the task list
+    const idx = generalTasks.value.findIndex((t: any) => t.id === editingTask.value.id)
+    if (idx >= 0) {
+      generalTasks.value[idx] = { ...generalTasks.value[idx], unseen_fields: editingTask.value.unseen_fields, unseen_changes_count: editingTask.value.unseen_changes_count }
+    }
+  } catch { /* best-effort */ }
 }
 
 function editGeneralTask(t: any) {
@@ -1804,5 +1837,16 @@ onUnmounted(() => {
 }
 .send-mode-toggle:hover {
   color: #666;
+}
+/* Field change highlight — click to dismiss */
+.field-changed {
+  border-radius: 6px;
+  outline: 2px solid #F59E0B;
+  outline-offset: 2px;
+  cursor: pointer;
+  transition: outline-color 0.2s;
+}
+.field-changed:hover {
+  outline-color: #D97706;
 }
 </style>

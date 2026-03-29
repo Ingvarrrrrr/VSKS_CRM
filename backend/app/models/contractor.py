@@ -12,6 +12,8 @@ class Contractor(Base):
     contact_person = Column(String(255))
     phone = Column(String(50))
     email = Column(String(255))
+    org_phone = Column(String(50))
+    org_email = Column(String(255))
     bank_details = Column(Text)
     # Contract document fields
     signatory = Column(String(255))

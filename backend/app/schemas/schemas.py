@@ -122,12 +122,18 @@ class SubsidyOut(BaseModel):
     contractor_id: Optional[int] = None
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
+    org_id: Optional[int] = None
+    org_inn: Optional[str] = None
     feo_filled: bool = False
     feo_budget_total: float = 0.0
     model_config = {"from_attributes": True}
 
 
 class SubsidyContractorOverrideCreate(BaseModel):
+    org_type: Optional[str] = None
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
     signatory: Optional[str] = None
     signatory_basis: Optional[str] = None
     address: Optional[str] = None
@@ -140,6 +146,8 @@ class SubsidyContractorOverrideCreate(BaseModel):
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    org_phone: Optional[str] = None
+    org_email: Optional[str] = None
 
 class SubsidyContractorOverrideOut(SubsidyContractorOverrideCreate):
     id: int
@@ -207,6 +215,8 @@ class ContractorCreate(BaseModel):
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    org_phone: Optional[str] = None
+    org_email: Optional[str] = None
     bank_details: Optional[str] = None
     # Contract document fields
     signatory: Optional[str] = None
@@ -485,6 +495,11 @@ class DashboardSummary(BaseModel):
 class PublishRequest(BaseModel):
     platform: str  # fabrikant / roseltorg_rb
     procedure_type: Optional[str] = None  # только для roseltorg_rb: request_quotations / request_proposals / competition / auction
+    proposal_start: Optional[str] = None       # ISO datetime, Фабрикант: начало приёма предложений
+    proposal_end: Optional[str] = None         # ISO datetime, Фабрикант: конец приёма предложений
+    determination_date: Optional[str] = None   # ISO datetime, Фабрикант: определение победителя
+    summing_up_date: Optional[str] = None      # ISO datetime, Фабрикант: подведение итогов
+    okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
 
 class PublicationStatusUpdate(BaseModel):
     status: str             # published / error
@@ -694,7 +709,13 @@ class TaskOut(BaseModel):
     last_comment_at: Optional[datetime] = None
     comment_count: int = 0
     needs_my_consent: bool = False
+    unseen_changes_count: int = 0
+    unseen_fields: List[str] = []
     model_config = {"from_attributes": True}
+
+
+class DismissFieldRequest(BaseModel):
+    field_name: str
 
 # Task Comments
 class TaskCommentCreate(BaseModel):

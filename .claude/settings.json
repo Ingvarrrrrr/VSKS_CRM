@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/1/Documents/VAULT_for_LLM/Projects/VSKS_CRM/**)",
+      "Read(//c/Users/1/Documents/VAULT_for_LLM/**)",
+      "Read(//c/Users/1/.claude/**)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

@@ -23,20 +23,12 @@
         <v-btn
           variant="tonal"
           color="success"
-          prepend-icon="mdi-microsoft-excel"
+          prepend-icon="mdi-file-import-outline"
           class="mr-2"
-          :loading="importing"
-          @click="triggerImport"
+          @click="contractorImportDialog = true; contractorImportStep = 1"
         >
-          Импорт из Excel
+          Импорт из файла
         </v-btn>
-        <input
-          ref="excelInput"
-          type="file"
-          accept=".xlsx,.xls"
-          style="display:none"
-          @change="handleImport"
-        />
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openAdd">
           Добавить контрагента
         </v-btn>
@@ -121,7 +113,7 @@
             </td>
           </tr>
           <tr v-for="c in filtered" :key="c.id" class="contractor-row" :class="{ 'contractor-row--selected': selectedIds.has(c.id) }" style="cursor:pointer" @click="openEdit(c)">
-            <td>
+            <td @click.stop>
               <v-checkbox
                 :model-value="selectedIds.has(c.id)"
                 density="compact"
@@ -251,13 +243,21 @@
               placeholder="Устава, доверенности №..." />
 
             <div class="section-label mt-4">Контакты</div>
+            <v-row dense class="mb-3">
+              <v-col cols="6">
+                <v-text-field v-model="form.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.org_email" label="Email организации" variant="outlined" density="compact" hide-details />
+              </v-col>
+            </v-row>
             <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
             <v-row dense>
               <v-col cols="6">
-                <v-text-field v-model="form.phone" label="Телефон" variant="outlined" density="compact" hide-details />
+                <v-text-field v-model="form.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
               </v-col>
               <v-col cols="6">
-                <v-text-field v-model="form.email" label="Email" variant="outlined" density="compact" hide-details />
+                <v-text-field v-model="form.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
               </v-col>
             </v-row>
 
@@ -368,49 +368,105 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Import hint dialog ── -->
-    <v-dialog v-model="importHintDialog" max-width="580" persistent>
+    <!-- ── Contractor Import Dialog ── -->
+    <v-dialog v-model="contractorImportDialog" max-width="1000" persistent scrollable>
       <v-card>
-        <v-card-title class="text-h6 pa-4">Импорт контрагентов из Excel</v-card-title>
-        <v-card-text class="pt-0">
-          <p class="mb-3">Загрузите файл <strong>.xlsx</strong>. Первая строка — заголовки.</p>
-          <v-table density="compact" class="mb-3">
-            <thead>
-              <tr>
-                <th>Колонка</th>
-                <th style="width:110px">Обязательна</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td>Наименование</td><td><v-chip size="x-small" color="error">обяз.</v-chip></td></tr>
-              <tr><td>ИНН</td><td><v-chip size="x-small" color="error">обяз., уникальный</v-chip></td></tr>
-              <tr><td>КПП</td><td></td></tr>
-              <tr><td>ОГРН</td><td></td></tr>
-              <tr><td>Адрес местонахождения</td><td></td></tr>
-              <tr><td>Почтовый адрес</td><td></td></tr>
-              <tr><td>Подписант</td><td></td></tr>
-              <tr><td>Основание</td><td></td></tr>
-              <tr><td>Контактное лицо</td><td></td></tr>
-              <tr><td>Телефон</td><td></td></tr>
-              <tr><td>Email</td><td></td></tr>
-              <tr><td>Расчётный счёт</td><td></td></tr>
-              <tr><td>Банк</td><td></td></tr>
-              <tr><td>БИК</td><td></td></tr>
-              <tr><td>Корр. счёт</td><td></td></tr>
-              <tr><td>Банковские реквизиты</td><td></td></tr>
-            </tbody>
-          </v-table>
-          <p class="text-caption text-medium-emphasis">
-            Колонки распознаются по частичному совпадению названия. Строки с дублирующимся ИНН пропускаются.
-            Скачайте шаблон — там уже правильные заголовки и пример строки.
-          </p>
+        <v-card-title class="d-flex align-center pa-4">
+          <span>Импорт контрагентов — шаг {{ contractorImportStep }} из 2</span>
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="closeContractorImport" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text style="min-height:300px">
+
+          <!-- Step 1 -->
+          <template v-if="contractorImportStep === 1">
+            <p class="mb-3">Поддерживаемые форматы: <strong>.xlsx, .xls, .docx, .doc, .pdf</strong></p>
+            <v-file-input
+              v-model="contractorImportFile"
+              label="Выберите файл"
+              accept=".xlsx,.xls,.docx,.doc,.pdf"
+              variant="outlined" density="compact" prepend-icon=""
+              prepend-inner-icon="mdi-file-import-outline"
+              hide-details class="mb-4" />
+            <v-alert v-if="contractorImportError" type="error" density="compact" class="mt-2">{{ contractorImportError }}</v-alert>
+          </template>
+
+          <!-- Step 2: mapping -->
+          <template v-if="contractorImportStep === 2 && contractorImportPreview">
+            <p class="text-caption text-medium-emphasis mb-2">
+              Перетащите столбцы из файла в нужные поля. Всего строк: {{ contractorImportPreview.total_rows }}
+            </p>
+            <!-- TARGET ZONES (imap-grid) -->
+            <div class="imap-grid mb-4">
+              <div v-for="target in CONTRACTOR_TARGET_FIELDS" :key="target.value"
+                class="imap-col"
+                :class="{
+                  'imap-col--over': contractorDragOverTarget === target.value,
+                  'imap-col--filled': contractorIsTargetFilled(target.value),
+                  'imap-col--required': target.required && !contractorIsTargetFilled(target.value),
+                }"
+                @dragover.prevent="contractorDragOverTarget = target.value"
+                @dragleave="contractorDragOverTarget = null"
+                @drop.prevent="contractorOnDropToTarget(target.value, $event)">
+                <div class="imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
+                <div class="imap-col-body">
+                  <div v-if="contractorIsTargetFilled(target.value)"
+                    class="imap-card" draggable="true"
+                    @dragstart="contractorOnDragStart(contractorDragMapping[target.value] as number, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ contractorGetLabel(contractorDragMapping[target.value] as number) }}</span>
+                      <button class="imap-card-x" @click.stop="contractorUnmapTarget(target.value)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ contractorGetSamples(contractorDragMapping[target.value] as number).join(', ') || '—' }}</div>
+                  </div>
+                  <div v-else class="imap-col-empty">—</div>
+                </div>
+              </div>
+            </div>
+            <!-- UNRESOLVED -->
+            <div class="imap-unresolved"
+              :class="{'imap-unresolved--over': contractorDragOverTarget === '_unresolved'}"
+              @dragover.prevent="contractorDragOverTarget = '_unresolved'"
+              @dragleave="contractorDragOverTarget = null"
+              @drop.prevent="contractorOnDropToUnresolved($event)">
+              <span class="imap-unresolved-label">Не определилось</span>
+              <div class="d-flex gap-2 flex-wrap mt-1">
+                <template v-for="(h, idx) in contractorImportPreview.headers" :key="idx">
+                  <div v-if="!contractorIsMapped(idx) && !contractorIsIgnored(idx)"
+                    class="imap-card imap-card--free" draggable="true"
+                    @dragstart="contractorOnDragStart(idx, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ h || `Столбец ${idx+1}` }}</span>
+                      <button class="imap-card-x imap-card-x--grey" @click.stop="contractorIgnoreCol(idx)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ contractorGetSamples(idx).join(', ') || '—' }}</div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <v-alert v-if="!contractorIsTargetFilled('name')" type="warning" density="compact" class="mt-3">
+              Укажите хотя бы столбец «Наименование»
+            </v-alert>
+          </template>
+
+          <!-- Step 3: result -->
+          <template v-if="contractorImportStep === 3 && contractorImportResult">
+            <v-alert type="success" class="mb-3">
+              Добавлено: <strong>{{ contractorImportResult.created }}</strong>, пропущено: {{ contractorImportResult.skipped }}
+            </v-alert>
+          </template>
         </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-btn variant="text" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
+        <v-divider />
+        <v-card-actions class="pa-4">
           <v-spacer />
-          <v-btn variant="text" @click="importHintDialog = false">Отмена</v-btn>
-          <v-btn color="success" variant="tonal" prepend-icon="mdi-microsoft-excel" @click="confirmImport">
-            Выбрать файл
+          <v-btn variant="text" @click="closeContractorImport">{{ contractorImportStep === 3 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn v-if="contractorImportStep === 1" color="primary" :loading="contractorImportLoading"
+            :disabled="!contractorImportFile" @click="doContractorImportPreview">
+            Далее →
+          </v-btn>
+          <v-btn v-if="contractorImportStep === 2" color="success" :loading="contractorImportLoading"
+            :disabled="!contractorIsTargetFilled('name')" @click="doContractorImportMapped">
+            Импортировать
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -451,10 +507,27 @@ interface ContractorWithStats {
   org_type?: string
 }
 
+const CONTRACTOR_TARGET_FIELDS = [
+  { value: 'name',                  title: 'Наименование',    required: true },
+  { value: 'inn',                   title: 'ИНН',             required: false },
+  { value: 'kpp',                   title: 'КПП',             required: false },
+  { value: 'ogrn',                  title: 'ОГРН',            required: false },
+  { value: 'address',               title: 'Адрес',           required: false },
+  { value: 'postal_address',        title: 'Почт. адрес',     required: false },
+  { value: 'email',                 title: 'Email',           required: false },
+  { value: 'phone',                 title: 'Телефон',         required: false },
+  { value: 'contact_person',        title: 'Контакт. лицо',   required: false },
+  { value: 'signatory',             title: 'Подписант',       required: false },
+  { value: 'signatory_basis',       title: 'Основание',       required: false },
+  { value: 'settlement_account',    title: 'Расч. счёт',      required: false },
+  { value: 'bank_name',             title: 'Банк',            required: false },
+  { value: 'bik',                   title: 'БИК',             required: false },
+  { value: 'correspondent_account', title: 'Корр. счёт',      required: false },
+]
+
 const contractors = ref<ContractorWithStats[]>([])
 const loading     = ref(false)
 const saving      = ref(false)
-const importing   = ref(false)
 const search      = ref('')
 const filterCategory = ref<string | null>(null)
 const dialog      = ref(false)
@@ -464,8 +537,6 @@ const bulkDeleteConfirmCount = ref('')
 const editId      = ref<number | null>(null)
 const deleteTarget  = ref<ContractorWithStats | null>(null)
 const formRef     = ref()
-const excelInput  = ref<HTMLInputElement>()
-const importHintDialog = ref(false)
 const selectedIds = ref(new Set<number>())
 
 // Categories dialog
@@ -474,9 +545,26 @@ const categoriesDialogContractor = ref<ContractorWithStats | null>(null)
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
+// ── Contractor import state ──
+const contractorImportDialog  = ref(false)
+const contractorImportStep    = ref(1)
+const contractorImportFile    = ref<File | null>(null)
+const contractorImportLoading = ref(false)
+const contractorImportPreview = ref<{
+  headers: string[]
+  sample: string[][]
+  total_rows: number
+  header_row_offset: number
+} | null>(null)
+const contractorDragMapping   = ref<Record<string, number | null>>({})
+const contractorIgnoredCols   = ref<number[]>([])
+const contractorDragOverTarget = ref<string | null>(null)
+const contractorImportResult  = ref<{ created: number; skipped: number } | null>(null)
+const contractorImportError   = ref('')
+
 const emptyForm = () => ({
   name: '', inn: '', kpp: '', address: '',
-  contact_person: '', phone: '', email: '', bank_details: '',
+  contact_person: '', phone: '', email: '', org_phone: '', org_email: '', bank_details: '',
   signatory: '', signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
   org_type: '' as string | null,
@@ -678,16 +766,7 @@ async function doDelete() {
   }
 }
 
-// ── Excel import ──────────────────────────────────
-function triggerImport() {
-  importHintDialog.value = true
-}
-
-function confirmImport() {
-  importHintDialog.value = false
-  excelInput.value?.click()
-}
-
+// ── Template download ──────────────────────────────
 async function downloadTemplate() {
   const token = localStorage.getItem('auth_token') || ''
   const res = await fetch('/api/contractors/import/template', {
@@ -701,35 +780,197 @@ async function downloadTemplate() {
   URL.revokeObjectURL(url)
 }
 
-async function handleImport(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  ;(event.target as HTMLInputElement).value = ''
+// ── Contractor import helpers ──────────────────────
+const _FIELD_KEYWORDS: Record<string, string[]> = {
+  name:                  ['назван', 'наимен', 'name', 'органи'],
+  inn:                   ['инн', 'inn', 'идентиф'],
+  kpp:                   ['кпп', 'kpp'],
+  ogrn:                  ['огрн', 'ogrn'],
+  address:               ['адрес', 'address'],
+  postal_address:        ['почтов', 'postal'],
+  email:                 ['email', 'e-mail', 'mail'],
+  phone:                 ['телефон', 'phone', 'тел'],
+  contact_person:        ['контакт', 'contact', 'лицо'],
+  signatory:             ['подписант', 'signatory', 'директор', 'руководит'],
+  signatory_basis:       ['основан', 'basis', 'устав', 'действует'],
+  settlement_account:    ['расч', 'р/с', 'settlement'],
+  bank_name:             ['банк', 'bank'],
+  bik:                   ['бик', 'bik'],
+  correspondent_account: ['корр', 'к/с', 'correspondent'],
+}
 
-  importing.value = true
+function contractorAutoDetect(headers: string[]): Record<string, number | null> {
+  const mapping: Record<string, number | null> = {}
+  const used = new Set<number>()
+  for (const field of CONTRACTOR_TARGET_FIELDS) {
+    const kws = _FIELD_KEYWORDS[field.value] || []
+    for (let i = 0; i < headers.length; i++) {
+      if (used.has(i)) continue
+      const h = (headers[i] || '').toLowerCase()
+      if (kws.some(k => h.includes(k))) {
+        mapping[field.value] = i
+        used.add(i)
+        break
+      }
+    }
+  }
+  return mapping
+}
+
+function contractorIsMapped(idx: number): boolean {
+  return Object.values(contractorDragMapping.value).includes(idx)
+}
+
+function contractorIsIgnored(idx: number): boolean {
+  return contractorIgnoredCols.value.includes(idx)
+}
+
+function contractorIsTargetFilled(field: string): boolean {
+  return contractorDragMapping.value[field] != null
+}
+
+function contractorGetLabel(idx: number): string {
+  return contractorImportPreview.value?.headers[idx] || `Столбец ${idx + 1}`
+}
+
+function contractorGetSamples(idx: number): string[] {
+  if (!contractorImportPreview.value) return []
+  return contractorImportPreview.value.sample
+    .slice(0, 1)
+    .map(row => (row[idx] != null ? String(row[idx]).trim() : ''))
+    .filter(Boolean)
+}
+
+let _dragIdx: number | null = null
+
+function contractorOnDragStart(idx: number, e: DragEvent) {
+  _dragIdx = idx
+  e.dataTransfer?.setData('text/plain', String(idx))
+}
+
+function contractorOnDropToTarget(field: string, e: DragEvent) {
+  contractorDragOverTarget.value = null
+  const raw = e.dataTransfer?.getData('text/plain')
+  const idx = raw != null ? parseInt(raw) : _dragIdx
+  if (idx == null || isNaN(idx as number)) return
+  // Unmap if this idx was in another target
+  for (const [f, v] of Object.entries(contractorDragMapping.value)) {
+    if (v === idx) contractorDragMapping.value[f] = null
+  }
+  contractorDragMapping.value[field] = idx as number
+  // Remove from ignored
+  contractorIgnoredCols.value = contractorIgnoredCols.value.filter(i => i !== idx)
+}
+
+function contractorOnDropToUnresolved(e: DragEvent) {
+  contractorDragOverTarget.value = null
+  const raw = e.dataTransfer?.getData('text/plain')
+  const idx = raw != null ? parseInt(raw) : _dragIdx
+  if (idx == null || isNaN(idx as number)) return
+  for (const [f, v] of Object.entries(contractorDragMapping.value)) {
+    if (v === idx) contractorDragMapping.value[f] = null
+  }
+}
+
+function contractorUnmapTarget(field: string) {
+  contractorDragMapping.value[field] = null
+}
+
+function contractorIgnoreCol(idx: number) {
+  if (!contractorIgnoredCols.value.includes(idx)) {
+    contractorIgnoredCols.value.push(idx)
+  }
+}
+
+async function doContractorImportPreview() {
+  if (!contractorImportFile.value) return
+  contractorImportLoading.value = true
+  contractorImportError.value = ''
   try {
     const token = localStorage.getItem('auth_token') || ''
     const fd = new FormData()
-    fd.append('file', file)
-    const res = await fetch('/api/contractors/import/excel', {
+    // contractorImportFile from v-file-input may be a File[] or File
+    const fileObj = Array.isArray(contractorImportFile.value)
+      ? contractorImportFile.value[0]
+      : contractorImportFile.value
+    fd.append('file', fileObj)
+    const res = await fetch('/api/contractors/import/preview', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,
     })
     if (!res.ok) {
-      const text = await res.text()
-      let detail = text
-      try { detail = JSON.parse(text).detail } catch {}
+      let detail = await res.text()
+      try { detail = JSON.parse(detail).detail } catch {}
       throw new Error(detail)
     }
     const data = await res.json()
-    showSnack(`Импорт завершён: добавлено ${data.created}, пропущено ${data.skipped}`, 'success')
+    contractorImportPreview.value = data
+    contractorDragMapping.value = contractorAutoDetect(data.headers)
+    contractorIgnoredCols.value = []
+    contractorImportStep.value = 2
+  } catch (e: any) {
+    contractorImportError.value = e.message || 'Ошибка чтения файла'
+  } finally {
+    contractorImportLoading.value = false
+  }
+}
+
+async function doContractorImportMapped() {
+  if (!contractorImportFile.value || !contractorImportPreview.value) return
+  contractorImportLoading.value = true
+  contractorImportError.value = ''
+  try {
+    const token = localStorage.getItem('auth_token') || ''
+    const fd = new FormData()
+    const fileObj = Array.isArray(contractorImportFile.value)
+      ? contractorImportFile.value[0]
+      : contractorImportFile.value
+    fd.append('file', fileObj)
+
+    const params = new URLSearchParams()
+    params.set('header_row_offset', String(contractorImportPreview.value.header_row_offset))
+    const m = contractorDragMapping.value
+    const colFields = [
+      'name', 'inn', 'kpp', 'ogrn', 'address', 'postal_address',
+      'signatory', 'signatory_basis', 'contact_person', 'phone', 'email',
+      'settlement_account', 'bank_name', 'bik', 'correspondent_account', 'bank_details',
+    ]
+    for (const f of colFields) {
+      if (m[f] != null) params.set(`col_${f}`, String(m[f]))
+    }
+
+    const res = await fetch(`/api/contractors/import/mapped?${params.toString()}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      let detail = await res.text()
+      try { detail = JSON.parse(detail).detail } catch {}
+      throw new Error(detail)
+    }
+    const data = await res.json()
+    contractorImportResult.value = data
+    contractorImportStep.value = 3
+    showSnack(`Импортировано: ${data.created}, пропущено: ${data.skipped}`, 'success')
     await loadContractors()
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка импорта', 'error')
+    contractorImportError.value = e.message || 'Ошибка импорта'
   } finally {
-    importing.value = false
+    contractorImportLoading.value = false
   }
+}
+
+function closeContractorImport() {
+  contractorImportDialog.value = false
+  contractorImportStep.value = 1
+  contractorImportFile.value = null
+  contractorImportPreview.value = null
+  contractorDragMapping.value = {}
+  contractorIgnoredCols.value = []
+  contractorImportResult.value = null
+  contractorImportError.value = ''
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -820,4 +1061,26 @@ onMounted(() => { loadContractors(); loadCategories() })
   padding-bottom: 4px;
   border-bottom: 1px solid var(--crm-border);
 }
+
+/* ── imap drag-and-drop (contractor import) ── */
+.imap-grid { display:flex; gap:4px; overflow-x:auto; padding-bottom:4px; flex-wrap:wrap; }
+.imap-col { flex:1; min-width:100px; border:1px dashed #ccc; border-radius:6px; background:#fafafa; transition:border-color .15s,background .15s; }
+.imap-col--over { border-color:#1976D2; background:rgba(25,118,210,.04); }
+.imap-col--filled { border-style:solid; border-color:#43A047; background:#f6fff6; }
+.imap-col--required { border-color:#ef9a9a; background:#fff8f8; }
+.imap-col-hdr { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:#555; padding:5px 7px 3px; border-bottom:1px solid #e8e8e8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.imap-col-body { padding:5px; min-height:58px; }
+.imap-col-empty { font-size:10px; color:#ccc; text-align:center; margin-top:10px; font-style:italic; }
+.imap-card { border-radius:4px; background:#fff; border:1px solid #e0e0e0; padding:4px 6px; cursor:grab; user-select:none; transition:border-color .15s,box-shadow .15s; }
+.imap-card:hover { border-color:#1976D2; box-shadow:0 1px 5px rgba(25,118,210,.15); }
+.imap-card-row { display:flex; align-items:center; justify-content:space-between; gap:2px; }
+.imap-card-name { font-size:11px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.imap-card-x { font-size:14px; line-height:1; background:none; border:none; cursor:pointer; color:#aaa; padding:0 2px; flex-shrink:0; }
+.imap-card-x:hover { color:#e53935; }
+.imap-card-x--grey { color:#bbb; }
+.imap-card-samples { font-size:10px; color:#999; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; line-height:1.3; }
+.imap-card--free { background:#fafafa; }
+.imap-unresolved { border:1px dashed #ccc; border-radius:6px; padding:6px 10px; min-height:44px; transition:border-color .15s,background .15s; }
+.imap-unresolved--over { border-color:#1976D2; background:rgba(25,118,210,.04); }
+.imap-unresolved-label { font-size:10px; font-weight:700; text-transform:uppercase; color:#aaa; letter-spacing:.3px; }
 </style>

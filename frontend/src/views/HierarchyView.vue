@@ -16,7 +16,7 @@
       <v-btn size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
         Добавить сотрудника
       </v-btn>
-      <v-btn v-if="isSuperadmin" size="small" variant="tonal" color="deep-purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
+      <v-btn v-if="isSuperadmin || isAccountOwner" size="small" variant="tonal" color="deep-purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
         Организация
       </v-btn>
       <v-spacer />
@@ -322,6 +322,7 @@ const snack = ref({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
 
 const isSuperadmin = localStorage.getItem('user_role') === 'superadmin'
+const isAccountOwner = localStorage.getItem('user_role') === 'account_owner'
 
 const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
 const newOrgDialog = ref({ show: false, name: '', inn: '', loading: false })

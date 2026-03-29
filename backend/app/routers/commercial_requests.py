@@ -1,7 +1,10 @@
 import smtplib
+import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -9,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES, get_org_filter
+from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES, ALL_ROLES, get_org_filter
 from app.database import get_db
 from app.models.commercial_request import CommercialRequest, CommercialRequestRecipient
 from app.models.contractor import Contractor
@@ -31,7 +34,7 @@ router = APIRouter(prefix="/api/commercial-requests", tags=["commercial_requests
 async def create_commercial_request(
     data: CommercialRequestCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_role(*ALL_ROLES)),
 ):
     purchase = (await db.execute(select(Purchase).where(Purchase.id == data.purchase_id))).scalar_one_or_none()
     if not purchase:
@@ -177,7 +180,7 @@ class KpSendRequest(BaseModel):
 async def send_kp_emails(
     data: KpSendRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES)),
+    _=Depends(require_role(*ALL_ROLES)),
 ):
     """Отправить КП напрямую через SMTP (настройки из БД)."""
     from app.routers.settings import get_setting
@@ -199,12 +202,14 @@ async def send_kp_emails(
 
     from_header = f"{frm_name} <{frm_addr}>" if frm_name else frm_addr
 
+    logger.info("KP send: %d recipients via %s:%s (ssl=%s)", len(valid), host, port, ssl)
+
     sent, failed = 0, []
     try:
         if ssl:
-            server = smtplib.SMTP_SSL(host, port)
+            server = smtplib.SMTP_SSL(host, port, timeout=15)
         else:
-            server = smtplib.SMTP(host, port)
+            server = smtplib.SMTP(host, port, timeout=15)
             server.starttls()
         server.login(user, password)
 
@@ -217,13 +222,17 @@ async def send_kp_emails(
                 msg.attach(MIMEText(data.body, "plain", "utf-8"))
                 server.sendmail(frm_addr, r.email.strip(), msg.as_string())
                 sent += 1
+                logger.info("KP email sent → %s", r.email.strip())
             except Exception as e:
+                logger.warning("KP email failed → %s: %s", r.email, e)
                 failed.append({"email": r.email, "error": str(e)})
 
         server.quit()
     except smtplib.SMTPAuthenticationError:
+        logger.error("SMTP auth error for user=%s", user)
         raise HTTPException(400, "Ошибка авторизации SMTP. Проверьте логин и пароль.")
     except Exception as e:
+        logger.error("SMTP connect error: %s", e)
         raise HTTPException(400, f"Ошибка подключения к SMTP: {str(e)}")
 
     return {"sent": sent, "failed": failed}

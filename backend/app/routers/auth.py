@@ -37,15 +37,22 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             if not org.is_active and user.role not in ('superadmin', 'account_owner'):
                 raise HTTPException(status_code=403, detail="Подписка организации неактивна")
             org_name = org.name
-    # account_owner: include all contour org_ids in JWT so get_org_filter works without DB
-    if user.role == 'account_owner':
+    # Include contour org_ids in JWT for all non-superadmin users
+    # account_owner: own org + children (root_org_id = own org) + owned orgs
+    # admin/manager/employee: own org + children (if org has children)
+    if user.role != 'superadmin' and user.org_id:
+        from sqlalchemy import or_ as _or
+        contour_filters = [Organization.root_org_id == user.org_id]
+        if user.role == 'account_owner':
+            contour_filters.append(Organization.owner_user_id == user.id)
         contour_result = await db.execute(
-            select(Organization.id).where(Organization.owner_user_id == user.id)
+            select(Organization.id).where(_or(*contour_filters))
         )
         contour_ids = [r[0] for r in contour_result.all()]
-        if user.org_id and user.org_id not in contour_ids:
+        if user.org_id not in contour_ids:
             contour_ids.insert(0, user.org_id)
-        jwt_payload["org_ids"] = contour_ids
+        if len(contour_ids) > 1:
+            jwt_payload["org_ids"] = contour_ids
     token = create_access_token(jwt_payload)
     return Token(access_token=token, role=user.role, full_name=user.full_name,
                  org_id=user.org_id, org_name=org_name, user_id=user.id)

@@ -19,6 +19,35 @@ except ImportError:
     Workbook = None
     load_workbook = None
 
+try:
+    import xlrd as _xlrd
+except ImportError:
+    _xlrd = None
+
+
+def _read_excel_rows(content: bytes, filename: str):
+    """Read rows from xlsx or xls file. Returns list of tuples (best sheet)."""
+    if filename.lower().endswith(".xls"):
+        if _xlrd is None:
+            raise HTTPException(500, "xlrd не установлен")
+        wb = _xlrd.open_workbook(file_contents=content)
+        # Pick the sheet with the most non-empty rows
+        best_sheet = wb.sheet_by_index(0)
+        best_count = sum(1 for i in range(best_sheet.nrows) if any(v for v in best_sheet.row_values(i)))
+        for si in range(1, wb.nsheets):
+            sh = wb.sheet_by_index(si)
+            cnt = sum(1 for i in range(sh.nrows) if any(v for v in sh.row_values(i)))
+            if cnt > best_count:
+                best_count = cnt
+                best_sheet = sh
+        return [tuple(best_sheet.row_values(i)) for i in range(best_sheet.nrows)]
+    else:
+        if load_workbook is None:
+            raise HTTPException(500, "openpyxl не установлен")
+        wb = load_workbook(BytesIO(content), data_only=True)
+        ws = wb.active
+        return list(ws.iter_rows(values_only=True))
+
 PRODUCT_UPLOAD_DIR = "/app/uploads/products"
 ALLOWED_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
 
@@ -386,17 +415,31 @@ async def import_products_from_excel(
     db: AsyncSession = Depends(get_db),
 ):
     """Импорт товаров из Excel. Возвращает {created, skipped, errors}."""
-    if load_workbook is None:
-        raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Поддерживаются только .xlsx и .xls")
 
     content = await file.read()
-    wb = load_workbook(BytesIO(content), data_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
+    try:
+        rows = _read_excel_rows(content, file.filename or "")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Не удалось прочитать файл. Убедитесь, что файл не повреждён.")
     if len(rows) < 2:
         raise HTTPException(400, "Файл пустой")
+
+    # Auto-detect header row — scan ALL rows for the one with most recognizable column names
+    NAME_HINTS = ('наименован', 'назван', 'товар', 'предмет', 'name', 'title', 'услуг', 'работ')
+    ALL_HINTS = NAME_HINTS + ('цена', 'описан', 'кол', 'тип', 'price', 'стоимост', 'ед.', 'единиц', 'катег')
+    header_row_idx = 0
+    best_score = 0
+    for ri, row in enumerate(rows):
+        norm = [str(h).strip().lower() if h is not None else "" for h in row]
+        score = sum(1 for h in norm if h and any(x in h for x in ALL_HINTS))
+        if score > best_score:
+            best_score = score
+            header_row_idx = ri
+    rows = rows[header_row_idx:]  # trim leading rows above header
 
     raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
     COLUMN_MAP = {
@@ -431,19 +474,51 @@ async def import_products_from_excel(
         "направление фэо": "feo_category_name",
     }
     # Also map Ссылка N / Цена ссылки N
+    import re as _re
     col_idx: dict[str, int] = {}
     for i, h in enumerate(raw_headers):
+        # Exact match first
         field = COLUMN_MAP.get(h)
         if field and field not in col_idx:
             col_idx[field] = i
+        # Fuzzy/partial match for name and common fields
+        if 'name' not in col_idx and any(x in h for x in ('наименован', 'назван', 'товар', 'предмет', 'наимен')):
+            col_idx['name'] = i
+        elif 'description' not in col_idx and any(x in h for x in ('описан', 'техническ', 'характерист', 'specification')):
+            col_idx['description'] = i
+        elif 'price' not in col_idx and any(x in h for x in ('цена', 'стоимость', 'price')) and 'сумм' not in h:
+            col_idx['price'] = i
+        elif 'product_type' not in col_idx and any(x in h for x in ('тип', 'вид', 'type')):
+            col_idx['product_type'] = i
+        elif 'category' not in col_idx and 'категор' in h:
+            col_idx['category'] = i
+        elif 'quantity' not in col_idx and any(x in h for x in ('кол-во', 'количеств', 'qty', 'кол.')):
+            col_idx['quantity'] = i
+        elif 'unit' not in col_idx and any(x in h for x in ('ед.', 'ед. изм', 'единиц', 'unit')):
+            col_idx['unit'] = i
         # Dynamic link columns
-        import re
-        m = re.match(r"ссылка (\d+)$", h)
+        m = _re.match(r"ссылка (\d+)$", h)
         if m:
             col_idx[f"link_url_{m.group(1)}"] = i
-        m2 = re.match(r"цена ссылки (\d+)$", h)
+        m2 = _re.match(r"цена ссылки (\d+)$", h)
         if m2:
             col_idx[f"link_price_{m2.group(1)}"] = i
+
+    # Post-map validation: if 'name' column contains numbers in data rows,
+    # find the first string-heavy column instead (handles article+name dual-column files)
+    if 'name' in col_idx and len(rows) > 1:
+        name_col = col_idx['name']
+        sample_vals = [rows[i][name_col] for i in range(1, min(4, len(rows))) if name_col < len(rows[i])]
+        numeric_count = sum(1 for v in sample_vals if isinstance(v, (int, float)) and v == v)
+        if numeric_count >= len(sample_vals) and sample_vals:
+            # Mapped name column has only numbers — find the first string column
+            for ci in range(len(rows[0])):
+                if ci == name_col:
+                    continue
+                str_vals = [rows[i][ci] for i in range(1, min(4, len(rows))) if ci < len(rows[i])]
+                if sum(1 for v in str_vals if isinstance(v, str) and len(v.strip()) > 5) >= len(str_vals) // 2 + 1:
+                    col_idx['name'] = ci
+                    break
 
     # FEO lookup
     from app.models.feo_category import FeoCategory
@@ -464,27 +539,26 @@ async def import_products_from_excel(
         try: return Decimal(str(v).replace(" ", "").replace(",", "."))
         except: return None
 
-    # Load existing name+description keys to avoid duplicates
+    # Load existing products for dedup check (key → Product)
     def _norm_key(s) -> str:
         return (s or '').replace('\r\n', '\n').replace('\r', '\n').strip().lower()
 
-    existing_result = await db.execute(select(Product.name, Product.description))
-    existing_keys = {
-        _norm_key(r[0]) + '|' + _norm_key(r[1])
-        for r in existing_result.all()
-    }
+    existing_result = await db.execute(select(Product))
+    existing_by_key: dict[str, Product] = {}
+    for ep in existing_result.scalars().all():
+        k = _norm_key(ep.name) + '|' + _norm_key(ep.description)
+        existing_by_key[k] = ep
 
     created = 0; skipped = 0; errors: list[dict] = []
-    new_products: list[Product] = []
+    all_products: list[Product] = []   # both new and existing (for purchase items)
+    product_row_data: list[dict] = []  # qty/unit per product for PurchaseItem
 
     for row_num, row in enumerate(rows[1:], start=2):
         try:
             name = cell(row, "name")
-            if not name: skipped += 1; continue
+            if not name: continue  # empty row — don't count as skipped product
             desc_val = cell(row, "description")
             dedup_key = _norm_key(name) + '|' + _norm_key(desc_val)
-            if dedup_key in existing_keys:
-                skipped += 1; continue
 
             # Collect price_links
             price_links = []
@@ -502,6 +576,23 @@ async def import_products_from_excel(
                 prices = [l["price"] for l in price_links if l["price"]]
                 if prices: price = Decimal(str(round(sum(prices) / len(prices), 2)))
 
+            qty_str = cell(row, "quantity")
+            unit_str = cell(row, "unit") or "шт."
+            row_qty = None
+            if qty_str:
+                try: row_qty = Decimal(str(qty_str).replace(',', '.').replace(' ', ''))
+                except: pass
+
+            if dedup_key in existing_by_key:
+                # Product already in catalog — update price if file has a newer one
+                ep = existing_by_key[dedup_key]
+                if price and ep.price != price:
+                    ep.price = price
+                all_products.append(ep)
+                product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
+                skipped += 1
+                continue
+
             p = Product(
                 name=name,
                 description=cell(row, "description"),
@@ -515,29 +606,34 @@ async def import_products_from_excel(
                 price_links=price_links or [],
             )
             db.add(p)
-            new_products.append(p)
+            all_products.append(p)
+            product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price})
             created += 1
         except Exception as e:
             errors.append({"row": row_num, "name": cell(row, "name") or "?", "message": str(e)})
 
-    # Flush to get product IDs before optional purchase_items creation
+    # Flush to get product IDs
     await db.flush()
 
-    product_ids: list[int] = [p.id for p in new_products]
+    product_ids: list[int] = [p.id for p in all_products]
 
-    # If purchase_id provided — add imported products as purchase items
-    if purchase_id and new_products:
+    # If purchase_id provided — add ALL products (new + existing) as purchase items
+    if purchase_id and all_products:
         from app.models.purchase_item import PurchaseItem
-        for p in new_products:
-            total = p.price if p.price else None
+        for idx_p, p in enumerate(all_products):
+            rd = product_row_data[idx_p] if idx_p < len(product_row_data) else {}
+            qty = rd.get("qty") or Decimal('1')
+            unit = rd.get("unit") or 'шт.'
+            unit_price = rd.get("price") or p.price
+            total = (qty * unit_price) if unit_price else None
             db.add(PurchaseItem(
                 purchase_id=purchase_id,
                 product_id=p.id,
                 item_name=p.name[:500],
                 item_type=p.product_type or 'товар',
-                quantity=Decimal('1'),
-                unit='шт.',
-                unit_price=p.price,
+                quantity=qty,
+                unit=unit,
+                unit_price=unit_price,
                 total_price=total,
             ))
 

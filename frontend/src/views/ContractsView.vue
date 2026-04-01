@@ -12,7 +12,15 @@
         <v-btn v-if="isAdmin" variant="outlined" prepend-icon="mdi-database-import" @click="migrateDialog = true">
           Мигрировать из закупок
         </v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-file-upload-outline" color="info" @click="importDialog.show = true">
+        <v-btn variant="outlined" prepend-icon="mdi-file-upload-outline" color="info"
+          @click="importDialog.show = true"
+          @dragover.prevent.stop
+          @dragenter.prevent.stop
+          @drop.prevent.stop="onButtonDrop"
+          class="import-drop-btn"
+          :class="{ 'import-drop-btn--hover': btnDragOver }"
+          @dragenter="btnDragOver = true" @dragleave="btnDragOver = false"
+        >
           Импорт из файла
         </v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" @click="checkDuplicates" :loading="dupLoading">
@@ -518,12 +526,33 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
 
 const router = useRouter()
+
+// Prevent browser from opening dropped files globally
+const preventDrop = (e: DragEvent) => { e.preventDefault(); e.stopPropagation() }
+onMounted(() => {
+  document.addEventListener('dragover', preventDrop)
+  document.addEventListener('drop', preventDrop)
+})
+onUnmounted(() => {
+  document.removeEventListener('dragover', preventDrop)
+  document.removeEventListener('drop', preventDrop)
+})
+
+const btnDragOver = ref(false)
+function onButtonDrop(e: DragEvent) {
+  btnDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) {
+    importDialog.file = file
+    importDialog.show = true
+  }
+}
 
 const { appSearch, appSearchScope } = useAppSearch()
 
@@ -1264,5 +1293,10 @@ onMounted(() => { loadContracts(); loadSubsidies(); loadContractors() })
 .import-dropzone:hover {
   border-color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.04);
+}
+.import-drop-btn--hover {
+  outline: 2px dashed rgb(var(--v-theme-info));
+  outline-offset: 2px;
+  background: rgba(var(--v-theme-info), 0.08) !important;
 }
 </style>

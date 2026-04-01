@@ -338,12 +338,51 @@ async def list_purchases(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-    # Employee: only purchases they participate in
-    if current_user.role == 'employee':
+    # Visibility by hierarchy position:
+    # - superadmin/account_owner/admin/org_admin: see all in org (already filtered above)
+    # - manager/employee with subordinates: see own + subordinates' purchases
+    # - plain employee: see only purchases they participate in
+    if current_user.role in ('employee', 'manager'):
+        from app.models.user_hierarchy import UserHierarchy
+        from app.models.manager_organization import ManagerOrganization
+        from app.models.manager_department import ManagerDepartment
+        from app.models.department import DepartmentMember
+
+        # Collect all user IDs this user can see
+        visible_user_ids = {current_user.id}
+
+        # Direct subordinates
+        sub_res = await db.execute(
+            select(UserHierarchy.subordinate_id).where(UserHierarchy.manager_id == current_user.id)
+        )
+        visible_user_ids.update(r[0] for r in sub_res.all())
+
+        # Members of managed depts
+        md_res = await db.execute(
+            select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
+        )
+        managed_dept_ids = [r[0] for r in md_res.all()]
+        if managed_dept_ids:
+            dm_res = await db.execute(
+                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
+            )
+            visible_user_ids.update(r[0] for r in dm_res.all())
+
+        # Members of managed orgs — see all
+        mo_res = await db.execute(
+            select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
+        )
+        managed_org_ids = [r[0] for r in mo_res.all()]
+        if managed_org_ids:
+            org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
+            visible_user_ids.update(r[0] for r in org_users.all())
+
+        # Filter: assigned to visible user OR no assigned user (shared)
         from app.models.purchase_event import PurchaseMember
-        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
+        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
         q = q.where(
-            (Purchase.assigned_user_id == current_user.id) |
+            (Purchase.assigned_user_id.in_(visible_user_ids)) |
+            (Purchase.assigned_user_id.is_(None)) |
             (Purchase.id.in_(member_pids))
         )
     if contract_id:
@@ -612,6 +651,11 @@ async def update_purchase(
     items_data = data.items or []
     items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
 
+    # Auto-assign purchase_number if missing
+    if not p.purchase_number:
+        max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
+        p.purchase_number = max_result.scalar() + 1
+
     # НМЦК logic: frozen after "contracted" status
     CONTRACTED_STATUSES = ("contracted", "delivered", "paid")
     is_contracted = p.status in CONTRACTED_STATUSES
@@ -735,6 +779,7 @@ async def purchases_by_contract(
     """Все закупки в рамках одного договора, отсортированные по framework_seq."""
     result = await db.execute(
         select(Purchase)
+        .options(selectinload(Purchase.items), selectinload(Purchase.contractor))
         .where(Purchase.contract_id == contract_id)
         .order_by(
             Purchase.framework_seq.asc().nulls_last(),
@@ -812,8 +857,13 @@ async def transition_status(
 
     # Field guards for specific target statuses
     if target_status in TRANSITION_REQUIRED:
+        # acceptance_docs JSONB overrides legacy single fields
+        has_acceptance_docs = bool(p.acceptance_docs and len(p.acceptance_docs) > 0 and any(d.get("name") for d in p.acceptance_docs))
+        required_fields = TRANSITION_REQUIRED[target_status]
+        if has_acceptance_docs and target_status == "delivered":
+            required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
         missing = [
-            f for f in TRANSITION_REQUIRED[target_status]
+            f for f in required_fields
             if not getattr(p, f, None)
         ]
         if missing:
@@ -1674,10 +1724,10 @@ async def import_items_preview(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ):
-    """Read Excel file and return sheets, headers, and sample rows for column mapping."""
+    """Read Excel/PDF/DOCX file and return sheets, headers, and sample rows for column mapping."""
     fname = (file.filename or '').lower()
-    if not fname.endswith(('.xlsx', '.xls')):
-        raise HTTPException(400, "Поддерживаются только файлы .xlsx / .xls")
+    if not fname.endswith(('.xlsx', '.xls', '.pdf', '.docx', '.doc')):
+        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .pdf, .docx")
 
     content = await file.read()
 
@@ -1694,6 +1744,65 @@ async def import_items_preview(
         return best_idx
 
     try:
+        # ── PDF ──
+        if fname.endswith('.pdf'):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows = []
+            text_lines = []
+            for page in pdf.pages:
+                # Try tables
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows.extend([[str(c).strip() if c else "" for c in row] for row in t])
+                # Also collect text lines as fallback
+                for line in (page.extract_text() or "").split('\n'):
+                    line = line.strip()
+                    if line:
+                        text_lines.append(line)
+            pdf.close()
+            if not all_rows and text_lines:
+                # Split text lines by tabs/multiple spaces to detect columns
+                import re
+                for line in text_lines:
+                    parts = re.split(r'\t|  +', line)
+                    all_rows.append([p.strip() for p in parts if p.strip()])
+            if not all_rows:
+                raise HTTPException(400, f"Не удалось извлечь данные из PDF. Страниц: {len(pdf.pages) if hasattr(pdf, 'pages') else '?'}, текст: {len(text_lines)} строк")
+            hdr_idx = _detect_hdr(all_rows)
+            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
+            data = all_rows[hdr_idx + 1:]
+            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+            return {"sheets": [{"name": "PDF", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+
+        # ── DOCX ──
+        if fname.endswith(('.docx', '.doc')):
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows.append([cell.text.strip() for cell in row.cells])
+            if not all_rows:
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        all_rows.append([text])
+            if not all_rows:
+                raise HTTPException(400, "Не удалось извлечь данные из документа")
+            hdr_idx = _detect_hdr(all_rows)
+            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
+            data = all_rows[hdr_idx + 1:]
+            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+            return {"sheets": [{"name": "Document", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+
+        # ── Excel ──
         if fname.endswith('.xls'):
             try:
                 import xlrd as _xlrd_mod

@@ -396,14 +396,10 @@
 
           <!-- Step 1 -->
           <template v-if="contractorImportStep === 1">
-            <p class="mb-3">Поддерживаемые форматы: <strong>.xlsx, .xls, .docx, .doc, .pdf</strong></p>
-            <v-file-input
-              v-model="contractorImportFile"
-              label="Выберите файл"
+            <FileDropZone v-model="contractorImportFile"
               accept=".xlsx,.xls,.docx,.doc,.pdf"
-              variant="outlined" density="compact" prepend-icon=""
-              prepend-inner-icon="mdi-file-import-outline"
-              hide-details class="mb-4" />
+              hint=".xlsx, .xls, .docx, .doc, .pdf — перетащите или нажмите"
+              class="mb-4" />
             <v-alert v-if="contractorImportError" type="error" density="compact" class="mt-2">{{ contractorImportError }}</v-alert>
           </template>
 
@@ -510,6 +506,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
+import FileDropZone from '@/components/FileDropZone.vue'
 
 interface ContractorWithStats {
   id: number

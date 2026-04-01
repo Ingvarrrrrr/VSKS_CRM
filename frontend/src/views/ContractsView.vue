@@ -437,31 +437,8 @@
         <v-card-text class="px-4">
           <!-- Step 1: File upload with drag-and-drop -->
           <div v-if="importDialog.step === 1">
-            <div
-              class="import-dropzone pa-8 text-center rounded-lg mb-3"
-              :class="{ 'import-dropzone--active': importDialog.dragging }"
-              @dragenter.prevent="importDialog.dragging = true"
-              @dragover.prevent="importDialog.dragging = true"
-              @dragleave.prevent="importDialog.dragging = false"
-              @drop.prevent="onImportDrop"
-            >
-              <v-icon size="48" color="grey-lighten-1" class="mb-2">mdi-file-upload-outline</v-icon>
-              <div class="text-body-1 mb-1">Перетащите файл сюда</div>
-              <div class="text-body-2 text-medium-emphasis mb-3">
-                PDF, Excel (.xlsx, .xls), Word (.docx) — таблица с договорами
-              </div>
-              <v-btn variant="outlined" size="small" @click="($refs.importFileInput as HTMLInputElement).click()">
-                Или выберите файл
-              </v-btn>
-              <input ref="importFileInput" type="file" hidden accept=".pdf,.xlsx,.xls,.docx,.doc" @change="onImportFileSelect" />
-            </div>
-            <div v-if="importDialog.file" class="d-flex align-center gap-2 mb-2">
-              <v-icon size="20">mdi-file-document-outline</v-icon>
-              <span class="text-body-2">{{ importDialog.file.name }}</span>
-              <v-btn icon size="x-small" variant="text" @click="importDialog.file = null">
-                <v-icon size="16">mdi-close</v-icon>
-              </v-btn>
-            </div>
+            <FileDropZone v-model="importDialog.file" accept=".pdf,.xlsx,.xls,.docx,.doc"
+              hint="PDF, Excel (.xlsx, .xls), Word (.docx) — таблица с договорами" class="mb-3" />
             <v-select v-model="importDialog.subsidyId" :items="subsidyOptions" item-title="name" item-value="id"
               label="Субсидия (для всех импортируемых)" variant="outlined" density="compact" clearable class="mt-2" />
           </div>
@@ -530,6 +507,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
+import FileDropZone from '@/components/FileDropZone.vue'
 
 const router = useRouter()
 
@@ -1188,17 +1166,6 @@ function closeImportDialog() {
   importDialog.error = ''
   importDialog.subsidyId = null
   if (importDialog.result?.created) loadContracts()
-}
-
-function onImportDrop(e: DragEvent) {
-  importDialog.dragging = false
-  const file = e.dataTransfer?.files?.[0]
-  if (file) importDialog.file = file
-}
-
-function onImportFileSelect(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (input.files?.[0]) importDialog.file = input.files[0]
 }
 
 async function doImportPreview() {

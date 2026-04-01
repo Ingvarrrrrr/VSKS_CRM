@@ -380,15 +380,10 @@
               Субсидия определяется автоматически по категории ФЭО (колонка 5). Заголовки — в строке 6.
             </v-alert>
 
-            <v-file-input
-              v-model="importDialog.file"
-              label="Выберите Excel файл"
+            <FileDropZone v-model="importDialog.file"
               accept=".xlsx,.xls"
-              prepend-icon="mdi-microsoft-excel"
-              variant="outlined" density="compact"
-              :rules="[f => !!f || 'Выберите файл']"
-              show-size
-            />
+              hint="Excel (.xlsx, .xls) — перетащите или нажмите"
+              class="mb-2" />
 
             <div v-if="importDialog.format === 'standard'" class="mt-3 text-caption text-medium-emphasis">
               Допустимые заголовки колонок:
@@ -551,6 +546,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
+import FileDropZone from '@/components/FileDropZone.vue'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 

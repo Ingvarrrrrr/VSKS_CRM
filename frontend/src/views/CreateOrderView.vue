@@ -1180,13 +1180,17 @@
       <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
         <v-card-text>
-          <div class="d-flex align-center gap-3 mb-3">
-            <v-btn prepend-icon="mdi-upload" variant="tonal" size="small"
-              :loading="uploading" @click="openUploadDialog">
-              Загрузить файл
-            </v-btn>
-            <span class="text-caption text-medium-emphasis">PDF, Word, Excel, JPEG, PNG</span>
-          </div>
+          <FileDropZone accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true"
+            hint="PDF, Word, Excel, JPEG, PNG — перетащите или нажмите"
+            @files="onDocFilesDropped" class="mb-3">
+            <template #default="{ dragging, open }">
+              <div class="d-flex align-center justify-center gap-3 pa-4" style="min-height:60px">
+                <v-icon :color="dragging ? 'primary' : 'grey'" size="24">mdi-upload</v-icon>
+                <span class="text-body-2">Перетащите файлы сюда или</span>
+                <v-btn variant="tonal" size="small" :loading="uploading" @click.stop="open()">Выбрать файл</v-btn>
+              </div>
+            </template>
+          </FileDropZone>
           <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
           <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
@@ -1976,12 +1980,11 @@
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
           <!-- Import from file -->
-          <div class="d-flex align-center gap-2 mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
-            <v-file-input v-model="addContractorFile" label="Загрузить данные из файла" accept=".xlsx,.xls,.pdf,.docx,.doc"
-              variant="outlined" density="compact" hide-details prepend-icon="mdi-file-upload-outline" style="max-width:340px"
-              hint="Excel (.xlsx), Word (.docx) или PDF" persistent-hint />
-            <v-btn variant="tonal" color="primary" size="small" :loading="addContractorImporting"
-              :disabled="!addContractorFile" @click="importContractorFromFile">Заполнить поля</v-btn>
+          <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+            <FileDropZone v-model="addContractorFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
+              hint="Excel, Word, PDF — перетащите или нажмите" class="mb-2" />
+            <v-btn v-if="addContractorFile" variant="tonal" color="primary" size="small" :loading="addContractorImporting"
+              @click="importContractorFromFile">Заполнить поля из файла</v-btn>
           </div>
           <v-select v-model="addContractorForm.org_type" :items="['Юридическое лицо', 'ИП', 'Самозанятый', 'Физическое лицо']"
             label="Тип организации" variant="outlined" density="compact" class="mb-3" />
@@ -2123,17 +2126,10 @@
 
           <!-- Step 1: Upload file -->
           <template v-if="importStep === 1">
-            <p class="text-body-2 text-medium-emphasis mb-3">
-              Загрузите Excel, PDF или Word файл — на следующем шаге вы укажете, какой столбец чему соответствует.
-            </p>
-            <v-file-input
-              v-model="itemsImportFile"
-              label="Файл (.xlsx, .xls, .pdf, .docx)"
+            <FileDropZone v-model="itemsImportFile"
               accept=".xlsx,.xls,.pdf,.docx,.doc"
-              variant="outlined" density="compact"
-              prepend-icon="mdi-file-upload-outline"
-              :disabled="itemsImportLoading"
-            />
+              hint="Excel, PDF, Word — перетащите или нажмите"
+              class="mb-2" />
           </template>
 
           <!-- Step 2: Column mapping (table-style drag-and-drop) -->
@@ -2718,6 +2714,7 @@ import { apiFetch } from '@/api'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
+import FileDropZone from '@/components/FileDropZone.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -5315,6 +5312,39 @@ const uploadFile = async (event: Event) => {
   } finally {
     uploading.value = false
     if (fileInputEl.value) fileInputEl.value.value = ''
+  }
+}
+
+async function onDocFilesDropped(files: File[]) {
+  if (!purchaseId.value || !files.length) return
+  uploading.value = true
+  try {
+    for (const file of files) {
+      const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('file_type', 'other')
+      fd.append('doc_format', resolvedFormat)
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      if (!res.ok) {
+        let detail = 'Ошибка загрузки'
+        try { const err = await res.json(); detail = err.detail || detail } catch {}
+        showSnack(`${file.name}: ${detail}`, 'error')
+        continue
+      }
+      const uploaded = await res.json()
+      uploadedFiles.value.push(uploaded)
+    }
+    showSnack(`Загружено файлов: ${files.length}`)
+  } catch {
+    showSnack('Ошибка загрузки файлов', 'error')
+  } finally {
+    uploading.value = false
   }
 }
 

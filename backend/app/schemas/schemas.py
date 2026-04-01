@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, model_validator
+from typing import Optional, List, Any
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -242,6 +242,15 @@ class ContractSubsidyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class ContractCreate(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def empty_strings_to_none(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value == '' or value == '':
+                    data[key] = None
+        return data
+
     number: str
     date: Optional[_Date] = None
     contract_type: str  # single / framework_cumulative / framework_with_amount
@@ -320,6 +329,16 @@ class SubsidyAllocationOut(BaseModel):
 
 # Purchase
 class PurchaseCreate(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def empty_strings_to_none(cls, data: Any) -> Any:
+        """Convert empty strings to None for Optional fields to avoid validation errors."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value == '' or value == '':
+                    data[key] = None
+        return data
+
     row_number: Optional[int] = None
     purchase_number: Optional[int] = None
     order_number: Optional[str] = None

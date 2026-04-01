@@ -341,6 +341,7 @@ def _parse_contract_file(fname: str, content: bytes):
         try:
             with _pdfplumber.open(BytesIO(content)) as pdf:
                 all_rows = []
+                has_text = False
                 for page in pdf.pages:
                     tables = page.extract_tables()
                     if tables:
@@ -350,6 +351,7 @@ def _parse_contract_file(fname: str, content: bytes):
                     for page in _pdfplumber.open(BytesIO(content)).pages:
                         text = page.extract_text()
                         if text:
+                            has_text = True
                             for line in text.strip().split('\n'):
                                 cells = [c.strip() for c in line.split('\t')]
                                 if len(cells) < 2:
@@ -357,9 +359,20 @@ def _parse_contract_file(fname: str, content: bytes):
                                 if cells:
                                     all_rows.append(cells)
         except Exception as e:
-            raise HTTPException(400, f"Не удалось прочитать .pdf: {e}")
+            raise HTTPException(400, f"Не удалось прочитать PDF-файл: {e}")
         if not all_rows:
-            raise HTTPException(400, "В PDF не найдено таблиц. Попробуйте Excel формат.")
+            if not has_text:
+                raise HTTPException(
+                    400,
+                    "Этот PDF — скан (изображение). Текст из него извлечь нельзя. "
+                    "Пожалуйста, используйте Excel (.xlsx) или Word (.docx), "
+                    "либо PDF с текстовым слоем (не скан)."
+                )
+            raise HTTPException(
+                400,
+                "В PDF найден текст, но не удалось распознать таблицу. "
+                "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
+            )
     else:
         raise HTTPException(400, "Неподдерживаемый формат. Используйте .xlsx, .xls, .docx, .doc или .pdf")
 

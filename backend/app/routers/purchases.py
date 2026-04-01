@@ -1771,7 +1771,17 @@ async def import_items_preview(
                     parts = re.split(r'\t|  +', line)
                     all_rows.append([p.strip() for p in parts if p.strip()])
             if not all_rows:
-                raise HTTPException(400, f"Не удалось извлечь данные из PDF. Страниц: {len(pdf.pages) if hasattr(pdf, 'pages') else '?'}, текст: {len(text_lines)} строк")
+                if not text_lines:
+                    raise HTTPException(
+                        400,
+                        "Этот PDF — скан (изображение). Текст из него извлечь нельзя. "
+                        "Пожалуйста, сохраните данные в Excel (.xlsx) или Word (.docx) и загрузите повторно."
+                    )
+                raise HTTPException(
+                    400,
+                    "В PDF найден текст, но не удалось распознать таблицу с данными. "
+                    "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
+                )
             hdr_idx = _detect_hdr(all_rows)
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
             data = all_rows[hdr_idx + 1:]
@@ -2051,6 +2061,12 @@ async def import_items_smart(
         raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS")
 
     if not raw_tables:
+        if file_type == "pdf":
+            raise HTTPException(
+                400,
+                "В PDF-файле не найдено таблиц. Возможно, это скан (изображение). "
+                "Сохраните данные в Excel (.xlsx) и загрузите повторно."
+            )
         raise HTTPException(400, "Таблицы в документе не найдены")
 
     def _detect_columns(header_row: list[str]) -> dict:

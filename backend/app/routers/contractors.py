@@ -89,6 +89,7 @@ def _parse_file_to_rows(fname: str, content: bytes):
     elif fname.endswith('.pdf'):
         if not _pdfplumber:
             raise HTTPException(500, "pdfplumber не установлен")
+        has_text = False
         try:
             with _pdfplumber.open(BytesIO(content)) as pdf:
                 all_rows = []
@@ -97,11 +98,11 @@ def _parse_file_to_rows(fname: str, content: bytes):
                     if tables:
                         for tbl in tables:
                             all_rows.extend([r for r in tbl if r])
-                # Fallback: if no tables found, try extracting text lines
                 if not all_rows:
                     for page in _pdfplumber.open(BytesIO(content)).pages:
                         text = page.extract_text()
                         if text:
+                            has_text = True
                             for line in text.strip().split('\n'):
                                 cells = [c.strip() for c in line.split('\t')]
                                 if len(cells) < 2:
@@ -109,9 +110,19 @@ def _parse_file_to_rows(fname: str, content: bytes):
                                 if cells:
                                     all_rows.append(cells)
         except Exception as e:
-            raise HTTPException(400, f"Не удалось прочитать .pdf файл: {e}")
+            raise HTTPException(400, f"Не удалось прочитать PDF-файл: {e}")
         if not all_rows:
-            raise HTTPException(400, "В PDF не найдено таблиц. Попробуйте Excel формат.")
+            if not has_text:
+                raise HTTPException(
+                    400,
+                    "Этот PDF — скан (изображение). Текст из него извлечь нельзя. "
+                    "Пожалуйста, сохраните данные в Excel (.xlsx) или Word (.docx) и загрузите повторно."
+                )
+            raise HTTPException(
+                400,
+                "В PDF найден текст, но не удалось распознать таблицу. "
+                "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
+            )
 
     else:
         raise HTTPException(400, "Неподдерживаемый формат файла. Используйте .xlsx, .xls, .docx, .doc или .pdf")

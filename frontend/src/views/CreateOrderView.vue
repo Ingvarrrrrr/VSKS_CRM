@@ -46,25 +46,6 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
         <v-card-text>
           <v-row>
-            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
-              <v-select v-model="form.purchase_method"
-                :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
-                item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
-                hint="Как выбирается поставщик" persistent-hint />
-            </v-col>
-            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
-              <v-select v-model="form.item_type"
-                :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'},{value:'mixed',title:'Поставка товаров и услуг'}]"
-                item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
-                hint="Выберите тип закупки" persistent-hint />
-            </v-col>
-            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
-              <v-select v-model="form.purchase_basis" clearable
-                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
-                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
-                hint="Документ-основание для закупки" persistent-hint />
-            </v-col>
-
             <v-col cols="12" md="3">
               <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
                 label="Субсидия *" variant="outlined" density="compact"
@@ -83,8 +64,10 @@
                 clearable
                 auto-select-first
                 :custom-filter="contractorFilter"
+                :loading="contractorSearchLoading"
                 :menu-props="{ maxWidth: 500 }"
                 hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
+                @update:search="onContractorSearch"
                 @update:model-value="onContractorSelect"
               >
                 <template #item="{ item, props: itemProps }">
@@ -97,7 +80,27 @@
                     </template>
                   </v-list-item>
                 </template>
+                <template #append-inner>
+                  <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                    title="Добавить контрагента" @click.stop="openAddContractor" />
+                </template>
               </v-autocomplete>
+            </v-col>
+            <!-- Contract type choice after selecting contractor -->
+            <v-col v-if="showContractTypeChoice" cols="12">
+              <v-alert type="info" variant="tonal" density="compact" class="mb-0">
+                <div class="text-body-2 font-weight-medium mb-2">У контрагента есть рамочные договоры. Выберите тип:</div>
+                <div class="d-flex flex-wrap gap-2">
+                  <v-btn size="small" variant="tonal" color="grey" prepend-icon="mdi-file-document-outline" @click="selectContractType('single')">
+                    Разовый договор
+                  </v-btn>
+                  <v-btn v-for="fc in contractorFrameworkContracts" :key="fc.id"
+                    size="small" variant="tonal" color="primary" prepend-icon="mdi-file-document-multiple-outline"
+                    @click="selectContractType('framework', fc)">
+                    Рамочный {{ fc.number }} {{ fc.max_amount ? '(' + Number(fc.max_amount).toLocaleString('ru-RU') + ' ₽)' : '' }}
+                  </v-btn>
+                </div>
+              </v-alert>
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="2">
               <v-text-field
@@ -109,6 +112,24 @@
                 hint="Введите ИНН — контрагент подставится автоматически" persistent-hint
                 @update:model-value="onInnInput"
               />
+            </v-col>
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
+              <v-select v-model="form.purchase_method"
+                :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
+                item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
+                hint="Как выбирается поставщик" persistent-hint />
+            </v-col>
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
+              <v-select v-model="form.item_type"
+                :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'},{value:'mixed',title:'Поставка товаров и услуг'}]"
+                item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
+                hint="Выберите тип закупки" persistent-hint />
+            </v-col>
+            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
+              <v-select v-model="form.purchase_basis" clearable
+                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
+                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
+                hint="Документ-основание для закупки" persistent-hint />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
               <v-text-field
@@ -177,6 +198,64 @@
               />
             </v-col>
           </v-row>
+          <!-- Тип договора (перенесён из финансовых показателей) -->
+          <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
+            <v-col cols="12" md="3">
+              <v-select v-model="form.purchase_contract_type" :items="CONTRACT_TYPES"
+                item-title="title" item-value="value" label="Тип договора" variant="outlined" density="compact"
+                @update:model-value="onContractTypeChange" />
+            </v-col>
+            <v-col v-if="isFramework" cols="12" md="9">
+              <div class="d-flex align-center gap-3 pt-1">
+                <div class="flex-grow-1">
+                  <template v-if="selectedFrameworkContract">
+                    <div class="d-flex align-center gap-2 flex-wrap">
+                      <v-chip color="primary" size="small" variant="tonal">{{ selectedFrameworkContract.number }}</v-chip>
+                      <span class="text-body-2 font-weight-medium">{{ selectedFrameworkContract.contractor_name }}</span>
+                      <span v-if="selectedFrameworkContract.contractor_inn" class="text-caption text-medium-emphasis">ИНН: {{ selectedFrameworkContract.contractor_inn }}</span>
+                    </div>
+                    <div v-if="selectedFrameworkContract.subject" class="text-caption text-medium-emphasis mt-1">{{ selectedFrameworkContract.subject }}</div>
+                    <div v-if="selectedFrameworkContract.max_amount" class="text-caption font-weight-medium text-blue-darken-2 mt-1">
+                      Макс. сумма: {{ Number(selectedFrameworkContract.max_amount).toLocaleString('ru-RU') }} ₽
+                      <span v-if="selectedFrameworkContract.remaining != null"> · Остаток: {{ Number(selectedFrameworkContract.remaining).toLocaleString('ru-RU') }} ₽</span>
+                    </div>
+                  </template>
+                  <span v-else class="text-medium-emphasis text-body-2">Рамочный договор не выбран</span>
+                </div>
+                <v-btn variant="outlined" size="small" prepend-icon="mdi-file-document-outline" @click="openFrameworkDialog">{{ selectedFrameworkContract ? 'Изменить' : 'Выбрать договор' }}</v-btn>
+                <v-btn v-if="selectedFrameworkContract" icon="mdi-close" variant="text" size="small" color="error" @click="clearFrameworkContract" />
+              </div>
+            </v-col>
+            <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
+              <v-text-field v-model.number="form.framework_seq" label="Порядковый № в рамочном договоре"
+                variant="outlined" density="compact" type="number" min="1"
+                hint="Номер закупки внутри рамочного договора" persistent-hint />
+            </v-col>
+            <v-col v-if="isFramework && frameworkSiblings.length" cols="12">
+              <div class="framework-siblings-label">
+                <v-icon icon="mdi-link-variant" size="14" class="mr-1" />Закупки в рамках этого договора ({{ frameworkSiblings.length }})
+              </div>
+              <v-table density="compact" class="framework-siblings-table mt-1">
+                <thead><tr><th style="width:50px">№</th><th>Наименование</th><th>Статус</th><th class="text-right">НМЦД</th><th class="text-right">Цена договора</th><th class="text-right">Оплачено</th></tr></thead>
+                <tbody>
+                  <tr v-for="s in frameworkSiblings" :key="s.id" :class="s.id === purchaseId ? 'bg-primary-lighten-5' : ''">
+                    <td><v-chip :color="s.id === purchaseId ? 'primary' : 'default'" size="x-small" variant="tonal">{{ s.framework_seq ?? '—' }}</v-chip></td>
+                    <td class="text-caption">{{ s.item_name || s.subject || '—' }}</td>
+                    <td><v-chip :color="statusColor(s.status)" size="x-small" variant="tonal">{{ statusLabel(s.status) }}</v-chip></td>
+                    <td class="text-right text-caption">{{ s.total_nmck ? formatMoney(Number(s.total_nmck)) : '—' }}</td>
+                    <td class="text-right text-caption">{{ s.contract_price ? formatMoney(Number(s.contract_price)) : '—' }}</td>
+                    <td class="text-right text-caption">{{ s.payment_amount ? formatMoney(Number(s.payment_amount)) : '—' }}</td>
+                  </tr>
+                  <tr class="framework-total-row">
+                    <td colspan="3" class="text-caption font-weight-bold">Итого по договору</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.nmck) }}</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.price) }}</td>
+                    <td class="text-right text-caption font-weight-bold">{{ formatMoney(frameworkTotals.paid) }}</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-col>
+          </v-row>
         </v-card-text>
       </v-card>
 
@@ -191,10 +270,10 @@
               Удалить ({{ selectedItemIdxs.length }})
             </v-btn>
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" title="Зафиксирована при заключении договора">
-              НМЦК (фикс.): {{ formatMoney(savedNmck) }}
+              НМЦД (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
             <v-chip color="primary" variant="tonal" size="small">
-              {{ isContracted ? 'Текущая сумма' : 'НМЦК' }}: {{ formatMoney(displayNmck) }}
+              {{ isContracted ? 'Текущая сумма' : 'НМЦД' }}: {{ formatMoney(displayNmck) }}
             </v-chip>
           </div>
         </v-card-title>
@@ -320,7 +399,7 @@
               @click="openFullProduct(-1)">
               Добавить товар в каталог
             </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" size="small" color="success"
+            <v-btn variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
               @click="closeImportDialog(); itemsImportDialog = true">
               Импорт из файла
             </v-btn>
@@ -403,7 +482,7 @@
             </tbody>
             <tfoot>
               <tr class="tz-table-footer">
-                <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦК:</td>
+                <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦД:</td>
                 <td class="text-right font-weight-bold pa-3 text-primary" style="font-size:13px">{{ formatMoney(displayNmck) }}</td>
               </tr>
             </tfoot>
@@ -417,19 +496,19 @@
         <v-card-text>
           <v-row v-if="isSectionVisible('financial_indicators')">
             <v-col cols="12" md="3">
-              <div class="text-caption text-medium-emphasis mb-1">НМЦК (итого)</div>
+              <div class="text-caption text-medium-emphasis mb-1">НМЦД (итого)</div>
               <v-btn-toggle v-model="nmckMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
                 <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
                 <v-btn value="manual" size="small" style="flex:1;text-transform:none;letter-spacing:0">Вручную</v-btn>
               </v-btn-toggle>
               <v-text-field v-if="nmckMode === 'auto'"
                 :model-value="formatMoney(displayNmck)"
-                label="НМЦК (итого)" variant="outlined" density="compact"
+                label="НМЦД (итого)" variant="outlined" density="compact"
                 readonly bg-color="grey-lighten-4"
                 :hint="nmckHint" persistent-hint />
               <v-text-field v-else
                 v-model.number="nmckManualValue"
-                label="НМЦК (итого, вручную)" variant="outlined" density="compact"
+                label="НМЦД (итого, вручную)" variant="outlined" density="compact"
                 type="number" suffix="₽"
                 hint="Введено вручную. Цена за единицу в ТЗ скрыта." persistent-hint
                 @update:model-value="calcEconomy" />
@@ -440,99 +519,52 @@
                 <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
                 <v-btn value="manual" size="small" style="flex:1;text-transform:none;letter-spacing:0">Вручную</v-btn>
               </v-btn-toggle>
-              <v-text-field v-model.number="form.contract_price" label="Цена договора" variant="outlined"
+              <v-text-field v-model.number="form.contract_price"
+                :label="isFramework ? 'Предельная сумма договора' : 'Цена договора'" variant="outlined"
                 density="compact" type="number" suffix="₽"
-                :readonly="contractPriceMode === 'auto'"
-                :bg-color="contractPriceMode === 'auto' ? 'grey-lighten-4' : undefined"
-                :hint="contractPriceMode === 'manual' ? 'Введено вручную' : contractPriceHint"
+                :readonly="contractPriceMode === 'auto' || (isFramework && !!selectedFrameworkContract)"
+                :bg-color="(contractPriceMode === 'auto' || (isFramework && !!selectedFrameworkContract)) ? 'grey-lighten-4' : undefined"
+                :hint="isFramework && selectedFrameworkContract ? 'Подтянуто из рамочного договора' : contractPriceMode === 'manual' ? 'Введено вручную' : contractPriceHint"
                 persistent-hint
                 :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined"
                 @update:model-value="calcEconomy">
                 <template v-slot:append-inner>
-                  <v-icon v-if="nmckWarningLevel === 'error'" icon="mdi-alert" color="error" size="18" :title="`Превышение НМЦК на ${nmckExcessPct}%`" />
-                  <v-icon v-else-if="nmckWarningLevel === 'warning'" icon="mdi-alert-outline" color="warning" size="18" :title="`Близко к НМЦК (+${nmckExcessPct}%)`" />
+                  <v-icon v-if="nmckWarningLevel === 'error'" icon="mdi-alert" color="error" size="18" :title="`Превышение НМЦД на ${nmckExcessPct}%`" />
+                  <v-icon v-else-if="nmckWarningLevel === 'warning'" icon="mdi-alert-outline" color="warning" size="18" :title="`Близко к НМЦД (+${nmckExcessPct}%)`" />
                 </template>
               </v-text-field>
               <div v-if="nmckWarningLevel" class="text-caption mt-n2 mb-1"
                 :class="nmckWarningLevel === 'error' ? 'text-error' : 'text-warning'">
-                {{ nmckWarningLevel === 'error' ? `Превышение НМЦК на ${nmckExcessPct}%` : `Близко к НМЦК (+${nmckExcessPct}%)` }}
+                {{ nmckWarningLevel === 'error' ? `Превышение НМЦД на ${nmckExcessPct}%` : `Близко к НМЦД (+${nmckExcessPct}%)` }}
               </div>
             </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
+            <v-col cols="12" md="3" class="pt-8">
+              <v-text-field v-if="isFramework && selectedFrameworkContract"
+                :model-value="selectedFrameworkContract.remaining != null ? formatMoney(selectedFrameworkContract.remaining) : '—'"
+                label="Остаток средств на договоре" variant="outlined"
                 density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
-                hint="НМЦК минус Цена договора. Считается автоматически." persistent-hint />
+                hint="Предельная сумма минус сумма всех закупок" persistent-hint />
+              <v-text-field v-else :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
+                density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
+                hint="НМЦД минус Цена договора. Считается автоматически." persistent-hint />
             </v-col>
-            <v-col cols="12" md="3">
+            <v-col cols="12" md="3" class="pt-8">
               <v-text-field v-model.number="form.price_increase" label="Удорожание (доп. соглашения)"
                 variant="outlined" density="compact" type="number" suffix="₽"
                 hint="Указывается при увеличении цены по доп. соглашению к договору" persistent-hint />
             </v-col>
           </v-row>
-          <!-- Тип договора -->
-          <v-row v-if="isSectionVisible('contract_type')" class="mt-0">
-            <v-col cols="12" md="3">
-              <v-select
-                v-model="form.purchase_contract_type"
-                :items="CONTRACT_TYPES"
-                item-title="title" item-value="value"
-                label="Тип договора" variant="outlined" density="compact"
-                @update:model-value="onContractTypeChange"
-              />
-            </v-col>
-            <v-col v-if="isFramework" cols="12" md="9">
-              <div class="d-flex align-center gap-3 pt-1">
-                <div class="flex-grow-1">
-                  <template v-if="selectedFrameworkContract">
-                    <div class="d-flex align-center gap-2 flex-wrap">
-                      <v-chip color="primary" size="small" variant="tonal">{{ selectedFrameworkContract.number }}</v-chip>
-                      <span class="text-body-2 font-weight-medium">{{ selectedFrameworkContract.contractor_name }}</span>
-                      <span v-if="selectedFrameworkContract.contractor_inn" class="text-caption text-medium-emphasis">
-                        ИНН: {{ selectedFrameworkContract.contractor_inn }}
-                      </span>
-                    </div>
-                    <div v-if="selectedFrameworkContract.subject" class="text-caption text-medium-emphasis mt-1">
-                      {{ selectedFrameworkContract.subject }}
-                    </div>
-                    <div v-if="selectedFrameworkContract.max_amount" class="text-caption font-weight-medium text-blue-darken-2 mt-1">
-                      Макс. сумма: {{ Number(selectedFrameworkContract.max_amount).toLocaleString('ru-RU') }} ₽
-                      <span v-if="selectedFrameworkContract.remaining != null">
-                        · Остаток: {{ Number(selectedFrameworkContract.remaining).toLocaleString('ru-RU') }} ₽
-                      </span>
-                    </div>
-                  </template>
-                  <span v-else class="text-medium-emphasis text-body-2">Рамочный договор не выбран</span>
-                </div>
-                <v-btn variant="outlined" size="small" prepend-icon="mdi-file-document-outline"
-                  @click="openFrameworkDialog">
-                  {{ selectedFrameworkContract ? 'Изменить' : 'Выбрать договор' }}
-                </v-btn>
-                <v-btn v-if="selectedFrameworkContract" icon="mdi-close" variant="text" size="small"
-                  color="error" @click="clearFrameworkContract" />
-              </div>
-            </v-col>
-            <!-- Порядковый номер в РД -->
-            <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
-              <v-text-field
-                v-model.number="form.framework_seq"
-                label="Порядковый № в рамочном договоре"
-                variant="outlined" density="compact" type="number" min="1"
-                hint="Номер закупки внутри рамочного договора. Подставляется автоматически." persistent-hint
-              />
-            </v-col>
-            <!-- Таблица других закупок в том же РД -->
-            <v-col v-if="isFramework && frameworkSiblings.length" cols="12">
-              <div class="framework-siblings-label">
-                <v-icon icon="mdi-link-variant" size="14" class="mr-1" />
-                Закупки в рамках этого договора ({{ frameworkSiblings.length }})
-              </div>
+          <!-- Тип договора перенесён в Основную информацию -->
+          <v-row v-if="false" class="mt-0">
+            <v-col><!-- placeholder --></v-col>
+            <v-col v-if="false" cols="12">
               <v-table density="compact" class="framework-siblings-table mt-1">
                 <thead>
                   <tr>
                     <th style="width:50px">№</th>
                     <th>Наименование</th>
                     <th>Статус</th>
-                    <th class="text-right">НМЦК</th>
+                    <th class="text-right">НМЦД</th>
                     <th class="text-right">Цена договора</th>
                     <th class="text-right">Оплачено</th>
                   </tr>
@@ -603,7 +635,7 @@
                 hint="Дата окончания действия договора" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
@@ -612,7 +644,7 @@
             </v-col>
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
-                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
                 :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
                 placeholder="Начните вводить адрес..." />
             </v-col>
@@ -636,7 +668,7 @@
               </v-col>
             </template>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" :rules="executionTermRules" />
             </v-col>
             <v-col cols="12" md="3">
@@ -661,7 +693,7 @@
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
@@ -670,12 +702,12 @@
             </v-col>
             <v-col cols="12" md="6">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
-                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
                 :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
                 placeholder="Начните вводить адрес..." />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
           </v-row>
@@ -700,7 +732,7 @@
                 density="compact" type="date" hint="Дата окончания действия" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
@@ -709,7 +741,7 @@
             </v-col>
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
-                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
                 :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
                 placeholder="Начните вводить адрес..." />
             </v-col>
@@ -733,7 +765,7 @@
               </v-col>
             </template>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
           </v-row>
@@ -785,16 +817,16 @@
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.execution_term" label="Срок исполнения" variant="outlined"
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" variant="outlined"
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
-                label="Адрес доставки" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
                 :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
                 placeholder="Начните вводить адрес..." />
             </v-col>
@@ -867,31 +899,75 @@
 
       <!-- 5. Закрывающие документы (admin+) -->
       <v-card v-if="isSectionVisible('acceptance')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Закрывающие документы</v-card-title>
+        <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
+          Закрывающие документы
+          <v-spacer />
+          <v-btn v-if="isEdit && purchaseId" size="small" variant="tonal" color="blue-grey" prepend-icon="mdi-file-upload-outline"
+            :loading="uploading && pendingSectionUpload === 'closing'" @click="uploadForSection('closing')" class="mr-2">
+            Загрузить файл
+          </v-btn>
+          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить</v-btn>
+        </v-card-title>
         <v-card-text>
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="form.acceptance_doc_name" label="Наименование документа" variant="outlined" density="compact"
-                :hint="needsAcceptance ? 'Обязательно для перехода в статус Поставлено' : ''" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.acceptance_doc_number" label="Номер закрывающего документа" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.acceptance_doc_date" label="Дата закрывающего документа" variant="outlined" density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model.number="form.acceptance_doc_amount" label="Сумма закрывающего документа" variant="outlined"
-                density="compact" type="number" suffix="₽" />
-            </v-col>
-          </v-row>
+          <!-- Прикреплённые файлы закрывающих документов -->
+          <div v-if="closingFiles.length" class="mb-3">
+            <div v-for="f in closingFiles" :key="f.id" class="d-flex align-center gap-2 py-1">
+              <v-icon size="16" color="cyan">mdi-file-document</v-icon>
+              <a class="text-body-2 text-decoration-none" href="#" @click.prevent="downloadFile(f.id, f.filename)">{{ f.filename }}</a>
+              <span class="text-caption text-medium-emphasis">{{ f.size ? Math.round(f.size / 1024) + ' КБ' : '' }}</span>
+              <v-spacer />
+              <v-btn icon="mdi-delete" variant="text" size="x-small" color="error" @click="deleteFile(f.id)" />
+            </div>
+            <v-divider class="mb-2" />
+          </div>
+          <div v-if="!acceptanceDocs.length" class="text-medium-emphasis text-caption pa-2">Нет закрывающих документов</div>
+          <div v-for="(doc, idx) in acceptanceDocs" :key="idx" class="mb-3">
+            <div class="d-flex align-center gap-2 mb-1">
+              <span class="text-caption font-weight-medium">Документ {{ idx + 1 }}</span>
+              <v-spacer />
+              <v-btn icon="mdi-close" variant="text" size="x-small" color="error" @click="acceptanceDocs.splice(idx, 1)" />
+            </div>
+            <v-row dense>
+              <v-col cols="12" md="5">
+                <v-text-field v-model="doc.name" label="Наименование" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-text-field v-model="doc.number" label="Номер" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-text-field v-model="doc.date" label="Дата" variant="outlined" density="compact" type="date" hide-details />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field v-model.number="doc.amount" label="Сумма" variant="outlined" density="compact" type="number" suffix="₽" hide-details />
+              </v-col>
+            </v-row>
+            <v-divider v-if="idx < acceptanceDocs.length - 1" class="mt-3" />
+          </div>
         </v-card-text>
       </v-card>
 
       <!-- 6. Платёж (admin+) -->
       <v-card v-if="isSectionVisible('payment')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Платёж</v-card-title>
+        <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
+          Платёж
+          <v-spacer />
+          <v-btn v-if="isEdit && purchaseId" size="small" variant="tonal" color="blue-grey" prepend-icon="mdi-file-upload-outline"
+            :loading="uploading && pendingSectionUpload === 'payment'" @click="uploadForSection('payment')">
+            Загрузить файл
+          </v-btn>
+        </v-card-title>
         <v-card-text>
+          <!-- Прикреплённые платёжные документы -->
+          <div v-if="paymentFiles.length" class="mb-3">
+            <div v-for="f in paymentFiles" :key="f.id" class="d-flex align-center gap-2 py-1">
+              <v-icon size="16" color="orange">mdi-file-document</v-icon>
+              <a class="text-body-2 text-decoration-none" href="#" @click.prevent="downloadFile(f.id, f.filename)">{{ f.filename }}</a>
+              <span class="text-caption text-medium-emphasis">{{ f.size ? Math.round(f.size / 1024) + ' КБ' : '' }}</span>
+              <v-spacer />
+              <v-btn icon="mdi-delete" variant="text" size="x-small" color="error" @click="deleteFile(f.id)" />
+            </div>
+            <v-divider class="mb-2" />
+          </div>
           <v-row>
             <v-col cols="12" md="4">
               <v-text-field v-model="form.payment_doc_number" label="Номер платёжного поручения" variant="outlined" density="compact"
@@ -1083,6 +1159,8 @@
           </div>
           <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
+          <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+            style="display:none" @change="uploadSectionFile" />
 
           <v-list v-if="uploadedFiles.length" density="compact">
             <v-list-item v-for="f in uploadedFiles" :key="f.id"
@@ -1756,7 +1834,7 @@
     <!-- Full product add dialog -->
     <v-dialog v-model="fullProductDialog" max-width="700" scrollable>
       <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Добавить товар в каталог</v-card-title>
+        <v-card-title class="text-h6 pt-4 px-6">Добавить товар / услугу в каталог</v-card-title>
         <v-card-text class="px-6">
           <v-row dense>
             <v-col cols="12">
@@ -1781,13 +1859,18 @@
                 </template>
               </v-combobox>
             </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="4">
+              <v-select v-model="fullProductForm.item_kind"
+                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
+                label="Товар / Услуга" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="4">
               <v-combobox v-model="fullProductForm.product_type"
                 :items="fullProductTypeOptions"
                 label="Тип товара" variant="outlined" density="compact" clearable
-                hint="Напр.: Ноутбук, Тренажёр, Ткань" persistent-hint />
+                hint="Напр.: Ноутбук, Тренажёр" persistent-hint />
             </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="4">
               <v-combobox v-model="fullProductForm.category"
                 :items="fullProductCategoryOptions"
                 label="Категория" variant="outlined" density="compact" clearable
@@ -1855,6 +1938,73 @@
       </v-card>
     </v-dialog>
 
+    <!-- Add contractor inline dialog -->
+    <v-dialog v-model="addContractorDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-account-plus" class="mr-2" />Новый контрагент
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <!-- Import from file -->
+          <div class="d-flex align-center gap-2 mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+            <v-file-input v-model="addContractorFile" label="Загрузить данные из файла" accept=".xlsx,.xls,.pdf,.docx,.doc"
+              variant="outlined" density="compact" hide-details prepend-icon="mdi-file-upload-outline" style="max-width:340px"
+              hint="Excel (.xlsx), Word (.docx) или PDF" persistent-hint />
+            <v-btn variant="tonal" color="primary" size="small" :loading="addContractorImporting"
+              :disabled="!addContractorFile" @click="importContractorFromFile">Заполнить поля</v-btn>
+          </div>
+          <v-select v-model="addContractorForm.org_type" :items="['Юридическое лицо', 'ИП', 'Самозанятый', 'Физическое лицо']"
+            label="Тип организации" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="addContractorForm.name" label="Наименование организации *" variant="outlined" density="compact" class="mb-3"
+            :rules="[v => !!v || 'Обязательное поле']" />
+          <v-row dense>
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.inn" label="ИНН" variant="outlined" density="compact" hide-details>
+                <template #append-inner>
+                  <v-btn icon="mdi-database-search" size="x-small" variant="text" color="blue" :disabled="!addContractorForm.inn || addContractorForm.inn.length < 10" @click="lookupContractorInn" title="Заполнить из ЕГРЮЛ (nalog.ru)" />
+                </template>
+              </v-text-field>
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.kpp" label="КПП" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-textarea v-model="addContractorForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <div class="text-caption text-medium-emphasis mt-4 mb-1">Подписант</div>
+          <v-text-field v-model="addContractorForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <div class="text-caption text-medium-emphasis mt-3 mb-1">Контакты</div>
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model="addContractorForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="addContractorForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-text-field v-model="addContractorForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mt-3" hide-details />
+          <div class="text-caption text-medium-emphasis mt-4 mb-1">Банковские реквизиты</div>
+          <v-text-field v-model="addContractorForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-text-field v-model="addContractorForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model="addContractorForm.bik" label="БИК" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="addContractorForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="addContractorDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="addContractorSaving" :disabled="!addContractorForm.name.trim()" @click="saveNewContractor">Добавить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Product picker dialog -->
     <v-dialog v-model="productPickerDialog" max-width="720" scrollable>
       <v-card>
@@ -1873,6 +2023,10 @@
           <div v-if="!productPickerResults.length" class="text-center text-medium-emphasis py-8">
             <v-icon icon="mdi-package-variant-closed" size="40" class="mb-2" />
             <div>Ничего не найдено</div>
+            <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
+              @click="createProductFromPicker">
+              Добавить «{{ productPickerSearch }}» в каталог
+            </v-btn>
           </div>
           <v-table v-else density="compact" hover>
             <thead>
@@ -1910,7 +2064,10 @@
           </v-table>
         </v-card-text>
         <v-card-actions class="px-6 pb-3">
-          <span class="text-caption text-medium-emphasis">{{ productPickerResults.length }} позиций</span>
+          <v-btn variant="tonal" color="teal" size="small" prepend-icon="mdi-plus" @click="createProductFromPicker">
+            Новый товар/услуга
+          </v-btn>
+          <span class="text-caption text-medium-emphasis ml-2">{{ productPickerResults.length }} позиций</span>
           <v-spacer />
           <v-btn variant="text" @click="productPickerDialog = false">Отмена</v-btn>
         </v-card-actions>
@@ -1922,7 +2079,7 @@
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-package-variant-plus" class="mr-2" />
-          Импорт товаров из Excel
+          Импорт товаров из файла
           <v-spacer />
           <v-chip v-if="importStep > 1" size="small" color="primary" variant="tonal" class="ml-2">
             Шаг {{ importStep }} / 3
@@ -1937,12 +2094,12 @@
           <!-- Step 1: Upload file -->
           <template v-if="importStep === 1">
             <p class="text-body-2 text-medium-emphasis mb-3">
-              Загрузите любой Excel-файл — на следующем шаге вы укажете, какой столбец чему соответствует.
+              Загрузите Excel, PDF или Word файл — на следующем шаге вы укажете, какой столбец чему соответствует.
             </p>
             <v-file-input
               v-model="itemsImportFile"
-              label="Выберите Excel файл (.xlsx / .xls)"
-              accept=".xlsx,.xls"
+              label="Файл (.xlsx, .xls, .pdf, .docx)"
+              accept=".xlsx,.xls,.pdf,.docx,.doc"
               variant="outlined" density="compact"
               prepend-icon="mdi-file-upload-outline"
               :disabled="itemsImportLoading"
@@ -2545,7 +2702,7 @@ const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
 
-// НМЦК mode: auto (from items) or manual (user enters directly)
+// НМЦД mode: auto (from items) or manual (user enters directly)
 const nmckMode = ref<'auto' | 'manual'>('auto')
 const nmckManualValue = ref<number | null>(null)
 // Цена договора mode
@@ -2607,7 +2764,7 @@ interface FeoCategory { id: number; name: string; parent_id: number | null; leve
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
-interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string }
+interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string; purchase_method?: string; end_date?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
 interface OrderItem {
   product_id: number | null
@@ -2673,6 +2830,7 @@ const form = reactive({
   acceptance_doc_number: '',
   acceptance_doc_date: '',
   acceptance_doc_amount: null as number | null,
+  acceptance_docs: [] as { name: string; number: string; date: string; amount: number | null }[],
   payment_doc_number: '',
   payment_doc_date: '',
   payment_amount: null as number | null,
@@ -2716,6 +2874,12 @@ interface EventItem { id: number; subsidy_id: number; name: string; is_active: b
 const items = ref<OrderItem[]>([])
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
+const acceptanceDocs = ref<{ name: string; number: string; date: string; amount: number | null }[]>([])
+function addAcceptanceDoc() {
+  acceptanceDocs.value.push({ name: '', number: '', date: '', amount: null })
+}
+const addressLabel = computed(() => form.item_type === 'услуга' ? 'Адрес оказания услуг' : 'Адрес доставки')
+
 const allEvents = ref<EventItem[]>([])
 const filteredEvents = computed(() =>
   allEvents.value.filter(e => e.subsidy_id === form.subsidy_id && e.is_active)
@@ -2869,14 +3033,21 @@ async function openDocPicker(type: 'service_note' | 'service_note_delivery' | 's
 }
 
 async function confirmDocDownload() {
+  // Capture values BEFORE closing dialog
+  const type = docPickerType.value
+  const approverIds = [...pickerApproverIds.value]
+  const responsibleName = pickerResponsibleName.value
+  const initiatorId = pickerInitiatorId.value
   docPickerDialog.value = false
-  if (docPickerType.value.startsWith('service_note')) {
-    const params = pickerInitiatorId.value ? `?initiator_id=${pickerInitiatorId.value}` : ''
-    await downloadDoc(docPickerType.value, params)
+
+  if (type.startsWith('service_note')) {
+    const params = initiatorId ? `?initiator_id=${initiatorId}` : ''
+    await downloadDoc(type, params)
   } else {
     const parts: string[] = []
-    if (pickerApproverIds.value.length) parts.push(`approver_ids=${pickerApproverIds.value.join(',')}`)
-    if (pickerResponsibleName.value) parts.push(`responsible_name=${encodeURIComponent(pickerResponsibleName.value)}`)
+    if (approverIds.length) parts.push(`approver_ids=${approverIds.join(',')}`)
+    if (responsibleName) parts.push(`responsible_name=${encodeURIComponent(responsibleName)}`)
+    console.log('[DOC] approval_sheet params:', parts, 'approverIds:', approverIds)
     await downloadDoc('approval_sheet', parts.length ? `?${parts.join('&')}` : '')
   }
 }
@@ -2896,10 +3067,14 @@ const showApprovalSection = computed(() => {
 
 const contractorInn = ref('')
 const fileInputEl = ref<HTMLInputElement | null>(null)
+const sectionFileInputEl = ref<HTMLInputElement | null>(null)
+const pendingSectionUpload = ref<'closing' | 'payment' | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const uploadDialog = ref(false)
 const uploadFileType = ref('other')
 const uploadDocFormat = ref('scan')
+const closingFiles = computed(() => uploadedFiles.value.filter(f => ['act', 'upd'].includes(f.file_type || '')))
+const paymentFiles = computed(() => uploadedFiles.value.filter(f => f.file_type === 'invoice'))
 const fileTypeEditDialog = ref(false)
 const fileTypeEditValue = ref('other')
 const fileDocFormatEditValue = ref('scan')
@@ -3103,7 +3278,7 @@ function initFabrikantDates() {
 function checkPublishReady(): string[] {
   const errors: string[] = []
   if (!form.subject?.trim()) errors.push('Не заполнено наименование закупки')
-  if (!(displayNmck.value > 0)) errors.push('Не указана НМЦК (сумма закупки)')
+  if (!(displayNmck.value > 0)) errors.push('Не указана НМЦД (сумма закупки)')
   if (!items.value.some(i => i.item_name?.trim())) errors.push('Нет позиций в закупке (добавьте хотя бы одну)')
   return errors
 }
@@ -3712,7 +3887,7 @@ const fullProductPhotoFile = ref<File | null>(null)
 const fullProductPhotoFileList = ref<File[]>([])
 const fullProductPhotoPreview = ref<string | null>(null)
 const fullProductForm = reactive({
-  name: '', category: '', product_type: '', price: null as number | null,
+  name: '', category: '', product_type: '', item_kind: 'товар' as string, price: null as number | null,
   description: '', photo_url: '', photo_link: '', is_active: true,
   priceLinks: [] as PriceLink[],
 })
@@ -3757,7 +3932,7 @@ function onFullPhotoFileChange(files: File[]) {
 
 function openFullProduct(idx: number, prefill?: string) {
   fullProductIdx.value = idx
-  Object.assign(fullProductForm, { name: prefill || '', category: '', product_type: '', price: null, description: '', photo_url: '', photo_link: '', is_active: true, priceLinks: [] })
+  Object.assign(fullProductForm, { name: prefill || '', category: '', product_type: '', item_kind: 'товар', price: null, description: '', photo_url: '', photo_link: '', is_active: true, priceLinks: [] })
   fullProductPhotoFile.value = null
   fullProductPhotoFileList.value = []
   fullProductPhotoPreview.value = null
@@ -3770,7 +3945,8 @@ async function saveFullProduct() {
   try {
     const body: any = {
       name: fullProductForm.name, category: fullProductForm.category || null,
-      product_type: fullProductForm.product_type || null, price: fullAvgPrice.value ?? fullProductForm.price ?? null,
+      product_type: fullProductForm.product_type || null, item_kind: fullProductForm.item_kind || 'товар',
+      price: fullAvgPrice.value ?? fullProductForm.price ?? null,
       description: fullProductForm.description || null, photo_link: fullProductForm.photo_link || null,
       is_active: fullProductForm.is_active,
       price_links: fullProductForm.priceLinks.filter(l => l.url),
@@ -3807,14 +3983,14 @@ const isSinglePurchase = computed(() =>
   !form.purchase_contract_type || form.purchase_contract_type === 'single'
 )
 
-// Is purchase in contracted+ status (НМЦК frozen)
+// Is purchase in contracted+ status (НМЦД frozen)
 const CONTRACTED_STATUSES = ['contracted', 'delivered', 'paid']
 const isContracted = computed(() => CONTRACTED_STATUSES.includes(form.status))
 
-// Saved НМЦК from DB (frozen value)
+// Saved НМЦД from DB (frozen value)
 const savedNmck = ref<number | null>(null)
 
-// Display НМЦК: manual override → frozen contracted value → live from items
+// Display НМЦД: manual override → frozen contracted value → live from items
 const displayNmck = computed(() => {
   if (nmckMode.value === 'manual' && nmckManualValue.value != null) return nmckManualValue.value
   if (isContracted.value && savedNmck.value != null) return savedNmck.value
@@ -3944,7 +4120,7 @@ const onSubsidyChange = async () => {
 }
 
 const calcEconomy = () => {
-  // Экономия = НМЦК (зафиксированная) - Цена договора
+  // Экономия = НМЦД (зафиксированная) - Цена договора
   const nmck = displayNmck.value
   form.economy = (nmck > 0 && form.contract_price != null)
     ? Math.round((nmck - form.contract_price) * 100) / 100
@@ -3958,6 +4134,8 @@ const nmckExcessPct = computed(() => {
 })
 
 const nmckWarningLevel = computed((): 'error' | 'warning' | null => {
+  // For framework contracts, don't compare contract_price vs NMCD (they're different things)
+  if (isFramework.value) return null
   const pct = nmckExcessPct.value
   if (pct > 10) return 'error'
   if (pct > 0) return 'warning'
@@ -4472,6 +4650,12 @@ const productPickerIdx = ref(-1)
 
 const productPickerResults = computed(() => productItemsFor(productPickerSearch.value))
 
+function createProductFromPicker() {
+  // Use the search text as product name, open full product dialog
+  productPickerDialog.value = false
+  openFullProduct(productPickerIdx.value, productPickerSearch.value)
+}
+
 function openProductPicker(idx: number) {
   productPickerIdx.value = idx
   productPickerSearch.value = items.value[idx].item_name || ''
@@ -4536,9 +4720,151 @@ const contractorFilter = (value: string, query: string, item?: any): boolean => 
   return name.includes(q) || inn.includes(q)
 }
 
-const onContractorSelect = (id: number | null) => {
+const addContractorDialog = ref(false)
+const addContractorForm = reactive({
+  name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '',
+  contact_person: '', signatory: '', org_type: 'Юридическое лицо',
+  bank_name: '', bik: '', settlement_account: '', correspondent_account: '',
+})
+const addContractorSaving = ref(false)
+const addContractorFile = ref<File | null>(null)
+const addContractorImporting = ref(false)
+
+function openAddContractor() {
+  Object.assign(addContractorForm, { name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '', contact_person: '', signatory: '', org_type: 'Юридическое лицо', bank_name: '', bik: '', settlement_account: '', correspondent_account: '' })
+  addContractorFile.value = null
+  addContractorDialog.value = true
+}
+
+async function saveNewContractor() {
+  if (!addContractorForm.name.trim()) return
+  addContractorSaving.value = true
+  try {
+    const created = await apiFetch<Contractor>('/contractors/', { method: 'POST', body: { ...addContractorForm } })
+    contractors.value.push(created)
+    form.contractor_id = created.id
+    contractorInn.value = created.inn || ''
+    addContractorDialog.value = false
+    showSnack('Контрагент добавлен')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка', 'error')
+  } finally {
+    addContractorSaving.value = false
+  }
+}
+
+async function importContractorFromFile() {
+  if (!addContractorFile.value) return
+  addContractorImporting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', addContractorFile.value)
+    const res = await fetch('/api/contractors/import/preview', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` }, body: fd })
+    if (!res.ok) throw new Error(await res.text())
+    const data = await res.json()
+    // Take first data row and try to fill form
+    const headers = data.headers || []
+    const sample = data.sample?.[0] || []
+    const hints: Record<string, string[]> = {
+      name: ['назван', 'наимен', 'name', 'органи'], inn: ['инн', 'inn'], kpp: ['кпп', 'kpp'],
+      ogrn: ['огрн', 'ogrn'], address: ['адрес', 'address'], phone: ['телефон', 'phone'],
+      email: ['email', 'mail'], contact_person: ['контакт', 'лицо'], signatory: ['подписант', 'директор'],
+      bank_name: ['банк', 'bank'], bik: ['бик', 'bik'], settlement_account: ['расч', 'р/с'],
+      correspondent_account: ['корр', 'к/с'],
+    }
+    for (const [field, kws] of Object.entries(hints)) {
+      for (let i = 0; i < headers.length; i++) {
+        const h = (headers[i] || '').toLowerCase()
+        if (kws.some(k => h.includes(k)) && sample[i]) {
+          (addContractorForm as any)[field] = String(sample[i]).trim()
+          break
+        }
+      }
+    }
+    showSnack('Данные подтянуты из файла', 'info')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка чтения файла', 'error')
+  } finally {
+    addContractorImporting.value = false
+  }
+}
+
+async function lookupContractorInn() {
+  const inn = addContractorForm.inn?.trim()
+  if (!inn || inn.length < 10) return
+  try {
+    const data = await apiFetch<any>(`/contractors/lookup-inn/${inn}`)
+    if (data.name && !addContractorForm.name) addContractorForm.name = data.name
+    if (data.kpp && !addContractorForm.kpp) addContractorForm.kpp = data.kpp
+    if (data.ogrn && !addContractorForm.ogrn) addContractorForm.ogrn = data.ogrn
+    if (data.address && !addContractorForm.address) addContractorForm.address = data.address
+    if (data.signatory && !addContractorForm.signatory) addContractorForm.signatory = data.signatory
+    showSnack('Данные подтянуты из ЕГРЮЛ', 'success')
+  } catch {}
+}
+
+const contractorSearchLoading = ref(false)
+let _contractorSearchTimeout: any = null
+function onContractorSearch(query: string) {
+  clearTimeout(_contractorSearchTimeout)
+  if (!query || query.length < 2) return
+  _contractorSearchTimeout = setTimeout(async () => {
+    contractorSearchLoading.value = true
+    try {
+      const list = await apiFetch<Contractor[]>(`/contractors/?search=${encodeURIComponent(query)}&limit=50`)
+      // Merge with existing (keep selected contractor)
+      const existing = new Set(contractors.value.map(c => c.id))
+      for (const c of list) {
+        if (!existing.has(c.id)) contractors.value.push(c)
+      }
+    } catch {} finally {
+      contractorSearchLoading.value = false
+    }
+  }, 300)
+}
+
+const contractorFrameworkContracts = ref<FrameworkContract[]>([])
+const showContractTypeChoice = ref(false)
+
+const onContractorSelect = async (id: number | null) => {
   const c = contractors.value.find(c => c.id === id)
   contractorInn.value = c?.inn || ''
+  contractorFrameworkContracts.value = []
+  showContractTypeChoice.value = false
+  if (!id) return
+  // Check if contractor has framework contracts
+  try {
+    const allContracts = await apiFetch<FrameworkContract[]>('/contracts/')
+    const cFramework = allContracts.filter(ct =>
+      ct.contractor_id === id && (ct.contract_type === 'framework_cumulative' || ct.contract_type === 'framework_with_amount')
+    )
+    if (cFramework.length > 0) {
+      contractorFrameworkContracts.value = cFramework
+      showContractTypeChoice.value = true
+    }
+  } catch {}
+}
+
+function selectContractType(type: 'single' | 'framework', contract?: FrameworkContract) {
+  showContractTypeChoice.value = false
+  if (type === 'single') {
+    form.purchase_contract_type = 'single'
+    form.contract_id = null
+    form.payment_basis_type = 'contract'
+  } else if (contract) {
+    form.purchase_contract_type = contract.contract_type as string || 'framework_cumulative'
+    form.contract_id = contract.id
+    // Prefill contract data
+    if (contract.number) form.contract_number = contract.number
+    if (contract.date) form.contract_date = contract.date
+    if (contract.max_amount) form.contract_price = contract.max_amount
+    if (contract.subject) form.subject = contract.subject
+    if ((contract as any).purchase_method) form.purchase_method = (contract as any).purchase_method
+    if ((contract as any).item_type) form.item_type = (contract as any).item_type
+    // Switch to "Счёт по рамочному договору" tab
+    form.payment_basis_type = 'framework_invoice'
+    selectedFrameworkContract.value = contract
+  }
 }
 
 const onInnInput = (val: string) => {
@@ -4553,7 +4879,7 @@ const loadPurchase = async () => {
     purchase_basis: data.purchase_basis || '',
     item_type: data.item_type || 'товар',
     subsidy_id: data.subsidy_id ?? null,
-    contractor_id: data.contractor_id ?? null,
+    contractor_id: null, // Set after contractor loaded to avoid showing ID
     registry_number: data.registry_number || '',
     feo_category_id: data.feo_category_id ?? null,
     subject: data.subject || '',
@@ -4572,6 +4898,7 @@ const loadPurchase = async () => {
     acceptance_doc_number: data.acceptance_doc_number || '',
     acceptance_doc_date: data.acceptance_doc_date || '',
     acceptance_doc_amount: data.acceptance_doc_amount ? Number(data.acceptance_doc_amount) : null,
+    acceptance_docs: data.acceptance_docs || [],
     payment_doc_number: data.payment_doc_number || '',
     payment_doc_date: data.payment_doc_date || '',
     payment_amount: data.payment_amount ? Number(data.payment_amount) : null,
@@ -4607,7 +4934,7 @@ const loadPurchase = async () => {
     })),
   })
 
-  // Save frozen НМЦК from DB
+  // Save frozen НМЦД from DB
   savedNmck.value = data.total_nmck ? Number(data.total_nmck) : null
 
   loadResponsiblePersons()
@@ -4666,18 +4993,36 @@ const loadPurchase = async () => {
   // Resolve FEO cascade
   if (data.feo_category_id) resolveFeeLevels(data.feo_category_id)
 
+  // Load acceptance docs
+  acceptanceDocs.value = (data.acceptance_docs || []).map((d: any) => ({
+    name: d.name || '', number: d.number || '', date: d.date || '', amount: d.amount ? Number(d.amount) : null,
+  }))
+  // Migrate legacy single fields if no acceptance_docs
+  if (!acceptanceDocs.value.length && data.acceptance_doc_name) {
+    acceptanceDocs.value = [{ name: data.acceptance_doc_name, number: data.acceptance_doc_number || '', date: data.acceptance_doc_date || '', amount: data.acceptance_doc_amount ? Number(data.acceptance_doc_amount) : null }]
+  }
+
   // Load uploaded files
   uploadedFiles.value = data.files || []
 
-  // Auto-fill INN
+  // Auto-fill INN — ensure contractor is in the list BEFORE setting contractor_id
   if (data.contractor_id) {
-    const c = contractors.value.find(c => c.id === data.contractor_id)
+    let c = contractors.value.find(c => c.id === data.contractor_id)
+    if (!c) {
+      try {
+        const fetched = await apiFetch<Contractor>(`/contractors/${data.contractor_id}`)
+        contractors.value.push(fetched)
+        c = fetched
+      } catch {}
+    }
     contractorInn.value = c?.inn || ''
+    // Re-set contractor_id AFTER contractor is in list (fixes autocomplete showing ID)
+    form.contractor_id = data.contractor_id
   }
 
   calcBudget()
 
-  // Restore manual НМЦК if saved value differs from items total
+  // Restore manual НМЦД if saved value differs from items total
   if (savedNmck.value != null && !isContracted.value) {
     const itemsTotal = items.value.reduce((s, i) => s + (i.total_price || 0), 0)
     if (Math.abs(savedNmck.value - itemsTotal) > 0.01) {
@@ -4702,17 +5047,31 @@ function saveDraft() {
   setTimeout(() => { draftSaved.value = false }, 2000)
 }
 
-function loadDraft() {
+async function loadDraft() {
   if (isEdit.value) return
   try {
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return
     const draft = JSON.parse(raw)
-    // Support both old format (plain form fields) and new format ({form, items, contractorInn})
     const formData = draft.form || draft
+    const savedContractorId = formData.contractor_id
+    formData.contractor_id = null // Don't set until loaded
     Object.assign(form, formData)
     if (draft.items?.length) items.value = draft.items
     if (draft.contractorInn) contractorInn.value = draft.contractorInn
+    // Load contractor by ID if needed
+    if (savedContractorId) {
+      let c = contractors.value.find(c => c.id === savedContractorId)
+      if (!c) {
+        try {
+          const fetched = await apiFetch<Contractor>(`/contractors/${savedContractorId}`)
+          contractors.value.push(fetched)
+          c = fetched
+        } catch {}
+      }
+      form.contractor_id = savedContractorId
+      if (c) contractorInn.value = c.inn || ''
+    }
     showSnack('Черновик восстановлен', 'info')
   } catch {}
 }
@@ -4807,6 +5166,7 @@ const doSave = async (adminOverride: boolean) => {
       service_start_date: form.service_start_date || null,
       service_end_date: form.service_end_date || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
+      acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
       payment_doc_date: form.payment_doc_date || null,
       items: validItems,
       subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),
@@ -4915,6 +5275,47 @@ const uploadFile = async (event: Event) => {
   } finally {
     uploading.value = false
     if (fileInputEl.value) fileInputEl.value.value = ''
+  }
+}
+
+function uploadForSection(section: 'closing' | 'payment') {
+  pendingSectionUpload.value = section
+  sectionFileInputEl.value?.click()
+}
+
+const uploadSectionFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length || !purchaseId.value) return
+  uploading.value = true
+  try {
+    const file = input.files[0]
+    const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
+    const fileType = pendingSectionUpload.value === 'closing' ? 'act' : 'invoice'
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('file_type', fileType)
+    fd.append('doc_format', resolvedFormat)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      let detail = 'Ошибка загрузки'
+      try { const err = await res.json(); detail = err.detail || detail } catch {}
+      showSnack(detail, 'error')
+      return
+    }
+    const uploaded = await res.json()
+    uploadedFiles.value.push(uploaded)
+    showSnack('Файл загружен')
+  } catch {
+    showSnack('Ошибка загрузки файла', 'error')
+  } finally {
+    uploading.value = false
+    pendingSectionUpload.value = null
+    if (sectionFileInputEl.value) sectionFileInputEl.value.value = ''
   }
 }
 

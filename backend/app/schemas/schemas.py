@@ -299,6 +299,7 @@ class PurchaseFileOut(BaseModel):
     size: Optional[int] = None
     file_type: Optional[str] = "other"
     doc_format: Optional[str] = "scan"
+    content_hash: Optional[str] = None
     created_at: Optional[datetime] = None
     uploaded_by_id: Optional[int] = None
     uploaded_by_name: Optional[str] = None

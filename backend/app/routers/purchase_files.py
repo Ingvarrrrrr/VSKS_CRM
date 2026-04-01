@@ -1,8 +1,9 @@
 import os
 import shutil
+import hashlib
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.purchase import Purchase
@@ -105,19 +106,30 @@ async def upload_file(
         else:
             raise HTTPException(400, "Редактируемые документы: допускаются только Word и Excel. JPEG и PDF нельзя загружать как редактируемый файл.")
 
-    dest_dir = os.path.join(UPLOAD_DIR, str(pid))
-    os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, file.filename)
+    # Read file into memory for hashing and size check
+    contents = await file.read()
+    size = len(contents)
 
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    size = os.path.getsize(dest_path)
-
-    # Check file size after saving
     if size > MAX_FILE_SIZE:
-        os.remove(dest_path)
         raise HTTPException(400, f"Файл превышает максимальный размер 50 МБ (загружено {size // (1024*1024)} МБ)")
+
+    # Content-based deduplication
+    content_hash = hashlib.sha256(contents).hexdigest()
+    dup_result = await db.execute(
+        select(PurchaseFile).where(PurchaseFile.content_hash == content_hash).limit(1)
+    )
+    dup = dup_result.scalar_one_or_none()
+
+    if dup and dup.filepath and os.path.exists(dup.filepath):
+        # Reuse existing file on disk
+        dest_path = dup.filepath
+    else:
+        # Write new file to disk
+        dest_dir = os.path.join(UPLOAD_DIR, str(pid))
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, file.filename)
+        with open(dest_path, "wb") as f:
+            f.write(contents)
 
     pf = PurchaseFile(
         purchase_id=pid,
@@ -128,6 +140,7 @@ async def upload_file(
         size=size,
         file_type=file_type,
         doc_format=doc_format,
+        content_hash=content_hash,
         uploaded_by_id=current_user.id,
     )
     db.add(pf)
@@ -230,8 +243,14 @@ async def delete_file(
     pf = result.scalar_one_or_none()
     if not pf:
         raise HTTPException(404, "Файл не найден")
-    if os.path.exists(pf.filepath):
-        os.remove(pf.filepath)
+    # Only delete file from disk if no other records reference it
+    ref_count = (await db.execute(
+        select(func.count(PurchaseFile.id)).where(
+            PurchaseFile.filepath == pf.filepath, PurchaseFile.id != pf.id
+        )
+    )).scalar()
     await db.delete(pf)
     await db.commit()
+    if ref_count == 0 and os.path.exists(pf.filepath):
+        os.remove(pf.filepath)
     return {"ok": True}

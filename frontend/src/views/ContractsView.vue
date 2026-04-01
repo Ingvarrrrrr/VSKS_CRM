@@ -487,10 +487,16 @@ const exportColumns = reactive([
   { key: 'start_date', title: 'Дата начала', selected: true },
   { key: 'end_date', title: 'Дата окончания', selected: true },
   { key: 'notes', title: 'Примечания', selected: false },
-  { key: 'documents', title: 'Документы (ссылки)', selected: true },
+  { key: 'closing_docs', title: 'Закрывающие документы', selected: true },
+  { key: 'payment_docs', title: 'Платёжные документы', selected: true },
+  { key: 'other_docs', title: 'Прочие документы', selected: true },
 ])
 
 const exportLoading = ref(false)
+
+interface CatFiles { closing: { name: string; path: string }[]; payment: { name: string; path: string }[]; other: { name: string; path: string }[] }
+const CLOSING_TYPES = new Set(['act', 'upd'])
+const PAYMENT_TYPES = new Set(['invoice'])
 
 async function doExport() {
   exportLoading.value = true
@@ -500,22 +506,22 @@ async function doExport() {
     const zip = new JSZip()
     const docsFolder = zip.folder('Документы')!
     const selected = exportColumns.filter(c => c.selected)
-    const hasDocCol = selected.some(c => c.key === 'documents')
+    const docKeys = new Set(['closing_docs', 'payment_docs', 'other_docs'])
+    const hasDocCols = selected.some(c => docKeys.has(c.key))
 
-    // Build header row
     const header = selected.map(c => c.title)
     const rows: any[][] = [header]
+    // Parallel array: for each data row, store {colKey -> zipPath} for link generation
+    const rowLinks: Map<string, string>[] = []
 
-    // Track files per contract for ZIP + links
-    const contractFiles: Map<number, { name: string; path: string }[]> = new Map()
-
+    const contractFiles = new Map<number, CatFiles>()
     const token = localStorage.getItem('auth_token')
     const baseUrl = window.location.origin
 
-    // Collect and download all files
-    if (hasDocCol) {
+    // Collect and download all files, categorized
+    if (hasDocCols) {
       for (const contract of filtered.value) {
-        const files: { name: string; path: string }[] = []
+        const cats: CatFiles = { closing: [], payment: [], other: [] }
         const safeNum = (contract.number || contract.id).toString().replace(/[\\/:*?"<>|]/g, '_')
         const folderName = `${safeNum}_${contract.contractor_name || 'без_контрагента'}`.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
         const contractFolder = docsFolder.folder(folderName)!
@@ -528,97 +534,119 @@ async function doExport() {
           } catch { /* skip */ }
         }
 
-        // Files from purchases
         const purchasesForContract = purchasesByContract.value[contract.id] || []
+        const seenHashes = new Set<string>()
+
         for (const p of purchasesForContract) {
           try {
             const filesResp = await apiFetch<any[]>(`/purchases/${p.id}/files`)
-            if (Array.isArray(filesResp)) {
-              for (const f of filesResp) {
-                try {
-                  const resp = await fetch(`${baseUrl}/api/purchases/${p.id}/files/${f.id}/download`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                  })
-                  if (resp.ok) {
-                    const blob = await resp.blob()
-                    const fileName = f.filename || `file_${f.id}`
-                    contractFolder.file(fileName, blob)
-                    files.push({ name: fileName, path: `Документы/${folderName}/${fileName}` })
-                  }
-                } catch (e) { console.warn('File download error:', e) }
-              }
+            if (!Array.isArray(filesResp)) continue
+            for (const f of filesResp) {
+              // Skip duplicates by content_hash within same contract export
+              if (f.content_hash && seenHashes.has(f.content_hash)) continue
+              if (f.content_hash) seenHashes.add(f.content_hash)
+
+              try {
+                const resp = await fetch(`${baseUrl}/api/purchases/${p.id}/files/${f.id}/download`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                })
+                if (!resp.ok) continue
+                const blob = await resp.blob()
+                const fileName = f.filename || `file_${f.id}`
+                contractFolder.file(fileName, blob)
+                const entry = { name: fileName, path: `Документы/${folderName}/${fileName}` }
+
+                const ft = f.file_type || 'other'
+                if (CLOSING_TYPES.has(ft)) cats.closing.push(entry)
+                else if (PAYMENT_TYPES.has(ft)) cats.payment.push(entry)
+                else cats.other.push(entry)
+              } catch { /* skip */ }
             }
-          } catch (e) { console.warn('Files list error:', e) }
+          } catch { /* skip */ }
         }
-        contractFiles.set(contract.id, files)
+        contractFiles.set(contract.id, cats)
       }
     }
 
-    // Build data rows
+    // Build data rows — one row per file (or at least one row per contract)
+    const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = []
+
     for (const contract of filtered.value) {
-      const row: any[] = []
-      for (const col of selected) {
-        if (col.key === 'documents') {
-          const files = contractFiles.get(contract.id) || []
-          row.push(files.map(f => f.path).join('\n') || '')
-        } else if (col.key === 'contract_type') {
-          row.push(contractTypeLabel(contract.contract_type))
-        } else if (col.key === 'purchase_method') {
-          row.push(purchaseMethodLabel(contract.purchase_method))
-        } else if (['max_amount', 'total_ordered', 'total_paid', 'remaining'].includes(col.key)) {
-          const v = (contract as any)[col.key]
-          row.push(v != null ? Number(v) : '')
-        } else if (col.key === 'date' || col.key === 'start_date' || col.key === 'end_date') {
-          row.push(fmtDate((contract as any)[col.key]))
-        } else {
-          row.push((contract as any)[col.key] ?? '')
+      const cats = contractFiles.get(contract.id) || { closing: [], payment: [], other: [] }
+      const maxFiles = Math.max(1, cats.closing.length, cats.payment.length, cats.other.length)
+      const startRow = rows.length
+
+      for (let fi = 0; fi < maxFiles; fi++) {
+        const row: any[] = []
+        const links: Map<string, string> = new Map()
+        for (const col of selected) {
+          if (col.key === 'closing_docs') {
+            row.push(cats.closing[fi]?.name || '')
+            if (cats.closing[fi]) links.set(col.key, cats.closing[fi].path)
+          } else if (col.key === 'payment_docs') {
+            row.push(cats.payment[fi]?.name || '')
+            if (cats.payment[fi]) links.set(col.key, cats.payment[fi].path)
+          } else if (col.key === 'other_docs') {
+            row.push(cats.other[fi]?.name || '')
+            if (cats.other[fi]) links.set(col.key, cats.other[fi].path)
+          } else if (fi === 0) {
+            // Contract data only on first row
+            if (col.key === 'contract_type') row.push(contractTypeLabel(contract.contract_type))
+            else if (col.key === 'purchase_method') row.push(purchaseMethodLabel(contract.purchase_method))
+            else if (['max_amount', 'total_ordered', 'total_paid', 'remaining'].includes(col.key)) {
+              const v = (contract as any)[col.key]; row.push(v != null ? Number(v) : '')
+            } else if (['date', 'start_date', 'end_date'].includes(col.key)) row.push(fmtDate((contract as any)[col.key]))
+            else row.push((contract as any)[col.key] ?? '')
+          } else {
+            row.push('') // empty for subsequent file rows
+          }
+        }
+        rows.push(row)
+        rowLinks.push(links)
+      }
+
+      // Merge contract data cells if multiple file rows
+      if (maxFiles > 1) {
+        for (let ci = 0; ci < selected.length; ci++) {
+          if (!docKeys.has(selected[ci].key)) {
+            merges.push({ s: { r: startRow, c: ci }, e: { r: startRow + maxFiles - 1, c: ci } })
+          }
         }
       }
-      rows.push(row)
     }
 
     const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!merges'] = merges
 
-    // Make document file names clickable (relative links inside ZIP)
-    const docColIdx = selected.findIndex(c => c.key === 'documents')
-    if (docColIdx >= 0) {
-      for (let r = 1; r < rows.length; r++) {
-        const cellRef = XLSX.utils.encode_cell({ r, c: docColIdx })
+    // Add clickable links to document cells
+    for (let r = 1; r < rows.length; r++) {
+      const links = rowLinks[r - 1]
+      if (!links) continue
+      for (const [colKey, zipPath] of links) {
+        const ci = selected.findIndex(c => c.key === colKey)
+        if (ci < 0) continue
+        const cellRef = XLSX.utils.encode_cell({ r, c: ci })
         const cell = ws[cellRef]
         if (cell && cell.v) {
-          const paths = String(cell.v).split('\n').filter(Boolean)
-          if (paths.length === 1) {
-            cell.l = { Target: paths[0], Tooltip: 'Открыть документ' }
-          } else if (paths.length > 1) {
-            // Show count, first link
-            cell.l = { Target: paths[0], Tooltip: `${paths.length} документов` }
-          }
-          // Show file names instead of paths
-          cell.v = paths.map(p => p.split('/').pop()).join(', ')
+          cell.l = { Target: zipPath, Tooltip: 'Открыть документ' }
         }
       }
     }
 
-    // Auto-width columns
+    // Auto-width
     const colWidths = header.map((h: string, i: number) => {
       let max = h.length
-      for (let r = 1; r < rows.length; r++) {
-        const val = String(rows[r][i] ?? '')
-        max = Math.max(max, val.length)
-      }
+      for (let r = 1; r < rows.length; r++) { max = Math.max(max, String(rows[r][i] ?? '').length) }
       return { wch: Math.min(max + 2, 50) }
     })
     ws['!cols'] = colWidths
 
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Реестр договоров')
-
-    // Write Excel into ZIP
     const xlsxData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
     const dateSuffix = new Date().toISOString().slice(0, 10)
     zip.file(`Реестр_договоров_${dateSuffix}.xlsx`, xlsxData)
 
-    // Generate ZIP and download
     const zipBlob = await zip.generateAsync({ type: 'blob' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(zipBlob)

@@ -105,6 +105,8 @@
       class="elevation-1"
       items-per-page="50"
       :items-per-page-options="[25,50,100,-1]"
+      @click:row="(_e: any, { item }: any) => openEdit(item)"
+      style="cursor: pointer"
     >
       <template #item.number="{ item }">
         <span class="font-weight-medium">{{ item.number }}</span>
@@ -162,10 +164,7 @@
         <span v-else class="text-medium-emphasis">—</span>
       </template>
       <template #item.actions="{ item }">
-        <div class="d-flex gap-1">
-          <v-btn icon="mdi-pencil" variant="text" size="small" @click="openEdit(item)" />
-          <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click="confirmDelete(item)" />
-        </div>
+        <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDelete(item)" />
       </template>
       <!-- Expanded: закупки по договору -->
       <template #expanded-row="{ columns, item }">
@@ -718,7 +717,7 @@ const headers = [
   { title: 'Предмет договора', key: 'subject', minWidth: 160 },
   { title: 'Тип', key: 'item_type', width: 90 },
   { title: 'Срок', key: 'end_date', width: 110 },
-  { title: '', key: 'actions', sortable: false, width: 90 },
+  { title: '', key: 'actions', sortable: false, width: 50 },
 ]
 
 // ── Load data (all contracts, no server-side filter) ──────────────────────

@@ -38,7 +38,7 @@
           <!-- Субсидия -->
           <v-autocomplete
             v-model="fSubsidy"
-            :items="subsidies"
+            :items="usedSubsidies"
             item-title="name" item-value="id"
             label="Субсидия" multiple chips closable-chips
             variant="outlined" density="compact" hide-details clearable
@@ -48,7 +48,7 @@
           <!-- Тип документа -->
           <v-autocomplete
             v-model="fType"
-            :items="contractTypeItems"
+            :items="usedContractTypes"
             item-title="label" item-value="value"
             label="Тип документа" multiple chips closable-chips
             variant="outlined" density="compact" hide-details clearable
@@ -58,7 +58,7 @@
           <!-- Способ закупки -->
           <v-autocomplete
             v-model="fMethod"
-            :items="purchaseMethodItems"
+            :items="usedPurchaseMethods"
             item-title="label" item-value="value"
             label="Способ закупки" multiple chips closable-chips
             variant="outlined" density="compact" hide-details clearable
@@ -68,11 +68,21 @@
           <!-- Контрагент -->
           <v-autocomplete
             v-model="fContractor"
-            :items="contractors"
+            :items="usedContractors"
             item-title="name" item-value="id"
             label="Контрагент" multiple chips closable-chips
             variant="outlined" density="compact" hide-details clearable
             style="min-width:200px; max-width:300px"
+          />
+
+          <!-- Поиск по товару -->
+          <v-text-field
+            v-model="fProduct"
+            label="Поиск товара"
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:200px; max-width:280px"
+            placeholder="Название товара..."
           />
 
           <!-- Дата от/до -->
@@ -184,27 +194,26 @@
                     <th>№ закупки</th>
                     <th>Наименование</th>
                     <th class="text-right">Сумма</th>
-                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   <template v-for="p in purchasesByContract[item.id]" :key="p.id">
-                    <tr>
+                    <tr style="cursor:pointer" @click="router.push(`/orders/${p.id}/edit`)">
                       <td>
                         <v-btn v-if="p.items?.length" :icon="expandedPurchases[p.id] ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-                          variant="text" size="x-small" @click="expandedPurchases[p.id] = !expandedPurchases[p.id]" />
+                          variant="text" size="x-small" @click.stop="expandedPurchases[p.id] = !expandedPurchases[p.id]" />
                         {{ p.purchase_number || p.id }}
                       </td>
                       <td class="text-caption">{{ p.subject || p.item_name || '—' }}</td>
                       <td class="text-right">{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
-                      <td><v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" /></td>
                     </tr>
                     <tr v-if="expandedPurchases[p.id] && p.items?.length">
-                      <td colspan="4" class="pa-0 pl-8">
+                      <td colspan="3" class="pa-0 pl-8">
                         <v-table density="compact" class="bg-grey-lighten-4">
                           <thead><tr><th>Наименование</th><th class="text-right">Кол-во</th><th class="text-right">Цена ед.</th><th class="text-right">Сумма</th></tr></thead>
                           <tbody>
-                            <tr v-for="(pi, ii) in p.items" :key="ii">
+                            <tr v-for="(pi, ii) in p.items" :key="ii"
+                              :class="fProduct && pi.item_name?.toLowerCase().includes(fProduct.trim().toLowerCase()) ? 'bg-yellow-lighten-4' : ''">
                               <td class="text-caption">{{ pi.item_name }}</td>
                               <td class="text-right text-caption">{{ pi.quantity }}</td>
                               <td class="text-right text-caption">{{ pi.unit_price ? formatMoney(pi.unit_price) : '—' }}</td>
@@ -414,8 +423,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
+
+const router = useRouter()
 
 const { appSearch, appSearchScope } = useAppSearch()
 
@@ -621,24 +633,79 @@ const fType       = ref<string[]>([])
 const fMethod     = ref<string[]>([])
 const fStatus     = ref<string[]>([])
 const fContractor = ref<number[]>([])
+const fProduct    = ref('')
 const fDateFrom   = ref('')
 const fDateTo     = ref('')
 
 const hasFilters = computed(() =>
   fSubsidy.value.length > 0 || fType.value.length > 0 || fMethod.value.length > 0 ||
-  fStatus.value.length > 0 || fContractor.value.length > 0 || !!fDateFrom.value || !!fDateTo.value
+  fStatus.value.length > 0 || fContractor.value.length > 0 || !!fProduct.value || !!fDateFrom.value || !!fDateTo.value
 )
 
 const clearFilters = () => {
   fSubsidy.value = []; fType.value = []; fMethod.value = []
-  fStatus.value = []; fContractor.value = []; fDateFrom.value = ''; fDateTo.value = ''
+  fStatus.value = []; fContractor.value = []; fProduct.value = ''; fDateFrom.value = ''; fDateTo.value = ''
 }
+
+// ── Dropdown items: only values present in contracts ──────────────────────
+const usedSubsidies = computed(() => {
+  const ids = new Set(contracts.value.map(c => c.subsidy_id).filter(Boolean))
+  return subsidies.value.filter(s => ids.has(s.id))
+})
+const usedContractors = computed(() => {
+  const ids = new Set(contracts.value.map(c => c.contractor_id).filter(Boolean))
+  return contractors.value.filter(c => ids.has(c.id))
+})
+const usedContractTypes = computed(() => {
+  const types = new Set(contracts.value.map(c => c.contract_type))
+  return contractTypeItems.filter(i => types.has(i.value))
+})
+const usedPurchaseMethods = computed(() => {
+  const methods = new Set(contracts.value.map(c => c.purchase_method).filter(Boolean))
+  return purchaseMethodItems.filter(i => methods.has(i.value))
+})
 
 function matchesSearch(c: Contract, q: string): boolean {
   const lq = q.toLowerCase()
   return [c.number, c.contractor_name, c.contractor_inn, c.subsidy_name, c.subject, c.notes]
     .some(v => v?.toLowerCase().includes(lq))
 }
+
+// Product search: contracts whose purchases contain matching items
+const productMatchContractIds = computed(() => {
+  const q = fProduct.value.trim().toLowerCase()
+  if (!q) return null
+  const ids = new Set<number>()
+  for (const [cid, purchases] of Object.entries(purchasesByContract.value)) {
+    for (const p of purchases) {
+      if (p.items?.some(i => i.item_name?.toLowerCase().includes(q)) ||
+          p.subject?.toLowerCase().includes(q) ||
+          p.item_name?.toLowerCase().includes(q)) {
+        ids.add(Number(cid))
+      }
+    }
+  }
+  return ids
+})
+
+// Auto-expand contracts and purchases when product search is active
+watch(productMatchContractIds, (ids) => {
+  if (!ids || ids.size === 0) return
+  // Expand matching contracts
+  const toExpand = [...ids].filter(id => !expanded.value.includes(id))
+  if (toExpand.length) expanded.value = [...expanded.value, ...toExpand]
+  // Expand matching purchases to show items
+  const q = fProduct.value.trim().toLowerCase()
+  if (!q) return
+  for (const [cid, purchases] of Object.entries(purchasesByContract.value)) {
+    if (!ids.has(Number(cid))) continue
+    for (const p of purchases) {
+      if (p.items?.some(i => i.item_name?.toLowerCase().includes(q))) {
+        expandedPurchases[p.id] = true
+      }
+    }
+  }
+})
 
 const filtered = computed(() => {
   const q = appSearch.value.trim()
@@ -654,6 +721,8 @@ const filtered = computed(() => {
   if (fContractor.value.length) list = list.filter(c => c.contractor_id != null && fContractor.value.includes(c.contractor_id))
   if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
+  // Product filter
+  if (productMatchContractIds.value) list = list.filter(c => productMatchContractIds.value!.has(c.id))
   // "По странице" — filter current list by search query
   if (q && appSearchScope.value === 'page') list = list.filter(c => matchesSearch(c, q))
   return list
@@ -742,9 +811,27 @@ const loadPurchasesForContract = async (contractId: number) => {
   purchasesByContract.value = { ...purchasesByContract.value, [contractId]: items }
 }
 
+const loadAllPurchases = async () => {
+  // Load purchases for all contracts (needed for product search)
+  const ids = contracts.value.map(c => c.id)
+  const batchSize = 10
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize)
+    await Promise.all(batch.filter(id => !purchasesByContract.value[id]).map(id => loadPurchasesForContract(id)))
+  }
+}
+
 watch(expanded, (newVal) => {
   for (const id of newVal) {
     if (!purchasesByContract.value[id]) loadPurchasesForContract(id)
+  }
+})
+
+// When product filter starts being typed, load all purchases if not yet loaded
+watch(fProduct, (val) => {
+  if (val && val.trim().length >= 2) {
+    const missingIds = contracts.value.filter(c => !purchasesByContract.value[c.id]).map(c => c.id)
+    if (missingIds.length) loadAllPurchases()
   }
 })
 

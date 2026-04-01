@@ -12,6 +12,9 @@
         <v-btn v-if="isAdmin" variant="outlined" prepend-icon="mdi-database-import" @click="migrateDialog = true">
           Мигрировать из закупок
         </v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-file-upload-outline" color="info" @click="importDialog.show = true">
+          Импорт из файла
+        </v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" @click="checkDuplicates" :loading="dupLoading">
           Проверить дубли
         </v-btn>
@@ -412,6 +415,99 @@
           <v-btn variant="text" @click="migrateDialog = false">Закрыть</v-btn>
           <v-btn v-if="!migrateResult" color="primary" variant="tonal" :loading="migrating" @click="doMigrate">
             Запустить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Import from file dialog -->
+    <v-dialog v-model="importDialog.show" max-width="800" persistent>
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          Импорт договоров из файла
+        </v-card-title>
+        <v-card-text class="px-4">
+          <!-- Step 1: File upload with drag-and-drop -->
+          <div v-if="importDialog.step === 1">
+            <div
+              class="import-dropzone pa-8 text-center rounded-lg mb-3"
+              :class="{ 'import-dropzone--active': importDialog.dragging }"
+              @dragenter.prevent="importDialog.dragging = true"
+              @dragover.prevent="importDialog.dragging = true"
+              @dragleave.prevent="importDialog.dragging = false"
+              @drop.prevent="onImportDrop"
+            >
+              <v-icon size="48" color="grey-lighten-1" class="mb-2">mdi-file-upload-outline</v-icon>
+              <div class="text-body-1 mb-1">Перетащите файл сюда</div>
+              <div class="text-body-2 text-medium-emphasis mb-3">
+                PDF, Excel (.xlsx, .xls), Word (.docx) — таблица с договорами
+              </div>
+              <v-btn variant="outlined" size="small" @click="($refs.importFileInput as HTMLInputElement).click()">
+                Или выберите файл
+              </v-btn>
+              <input ref="importFileInput" type="file" hidden accept=".pdf,.xlsx,.xls,.docx,.doc" @change="onImportFileSelect" />
+            </div>
+            <div v-if="importDialog.file" class="d-flex align-center gap-2 mb-2">
+              <v-icon size="20">mdi-file-document-outline</v-icon>
+              <span class="text-body-2">{{ importDialog.file.name }}</span>
+              <v-btn icon size="x-small" variant="text" @click="importDialog.file = null">
+                <v-icon size="16">mdi-close</v-icon>
+              </v-btn>
+            </div>
+            <v-select v-model="importDialog.subsidyId" :items="subsidyOptions" item-title="name" item-value="id"
+              label="Субсидия (для всех импортируемых)" variant="outlined" density="compact" clearable class="mt-2" />
+          </div>
+
+          <!-- Step 2: Column mapping -->
+          <div v-if="importDialog.step === 2">
+            <p class="text-body-2 mb-3">
+              Найдено <strong>{{ importDialog.totalRows }}</strong> строк.
+              Сопоставьте столбцы файла с полями договора:
+            </p>
+            <v-row dense>
+              <v-col v-for="field in importFields" :key="field.key" cols="12" md="6">
+                <v-select v-model="importDialog.mapping[field.key]" :items="importDialog.headerOptions"
+                  :label="field.label + (field.required ? ' *' : '')" variant="outlined" density="compact" clearable />
+              </v-col>
+            </v-row>
+            <!-- Sample data preview -->
+            <div v-if="importDialog.sample.length" class="mt-3">
+              <div class="text-body-2 font-weight-medium mb-1">Пример данных:</div>
+              <v-table density="compact" class="text-caption">
+                <thead>
+                  <tr><th v-for="h in importDialog.headers" :key="h">{{ h }}</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, ri) in importDialog.sample" :key="ri">
+                    <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </div>
+          </div>
+
+          <!-- Step 3: Result -->
+          <div v-if="importDialog.step === 3">
+            <v-alert type="success" variant="tonal" density="compact" class="mb-2">
+              Создано: <strong>{{ importDialog.result?.created }}</strong>,
+              пропущено (дубли): <strong>{{ importDialog.result?.skipped }}</strong>
+            </v-alert>
+          </div>
+
+          <v-alert v-if="importDialog.error" type="error" variant="tonal" density="compact" class="mt-2">
+            {{ importDialog.error }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" @click="closeImportDialog">{{ importDialog.step === 3 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn v-if="importDialog.step === 1" color="primary" variant="tonal" :loading="importDialog.loading"
+            :disabled="!importDialog.file" @click="doImportPreview">
+            Далее
+          </v-btn>
+          <v-btn v-if="importDialog.step === 2" color="primary" variant="tonal" :loading="importDialog.loading"
+            :disabled="!importDialog.mapping.number" @click="doImportMapped">
+            Импортировать
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1016,5 +1112,157 @@ const doMigrate = async () => {
   }
 }
 
+// ── Import from file ─────────────────────────────────────────────────────
+const importFields = [
+  { key: 'number', label: 'Номер договора', required: true },
+  { key: 'date', label: 'Дата договора', required: false },
+  { key: 'contractor', label: 'Контрагент (название/ИНН)', required: false },
+  { key: 'subject', label: 'Предмет', required: false },
+  { key: 'max_amount', label: 'Сумма', required: false },
+  { key: 'start_date', label: 'Дата начала', required: false },
+  { key: 'end_date', label: 'Дата окончания', required: false },
+  { key: 'contract_type', label: 'Тип договора', required: false },
+  { key: 'purchase_method', label: 'Способ закупки', required: false },
+  { key: 'item_type', label: 'Тип (товар/услуга)', required: false },
+  { key: 'status', label: 'Статус', required: false },
+  { key: 'notes', label: 'Примечания', required: false },
+]
+
+const importDialog = reactive({
+  show: false,
+  step: 1,
+  loading: false,
+  dragging: false,
+  file: null as File | null,
+  subsidyId: null as number | null,
+  headers: [] as string[],
+  headerOptions: [] as { title: string; value: number }[],
+  sample: [] as string[][],
+  totalRows: 0,
+  headerRowOffset: 0,
+  mapping: {} as Record<string, number | null>,
+  result: null as { created: number; skipped: number } | null,
+  error: '',
+})
+
+const subsidyOptions = computed(() => subsidies.value)
+
+function closeImportDialog() {
+  importDialog.show = false
+  importDialog.step = 1
+  importDialog.file = null
+  importDialog.headers = []
+  importDialog.headerOptions = []
+  importDialog.sample = []
+  importDialog.mapping = {}
+  importDialog.result = null
+  importDialog.error = ''
+  importDialog.subsidyId = null
+  if (importDialog.result?.created) loadContracts()
+}
+
+function onImportDrop(e: DragEvent) {
+  importDialog.dragging = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) importDialog.file = file
+}
+
+function onImportFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.[0]) importDialog.file = input.files[0]
+}
+
+async function doImportPreview() {
+  if (!importDialog.file) return
+  importDialog.loading = true
+  importDialog.error = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', importDialog.file)
+    const res = await fetch('/api/contracts/import/preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Ошибка загрузки' }))
+      throw new Error(err.detail || err.message || 'Ошибка')
+    }
+    const data = await res.json()
+    importDialog.headers = data.headers
+    importDialog.headerOptions = data.headers.map((h: string, i: number) => ({ title: h, value: i }))
+    importDialog.sample = data.sample
+    importDialog.totalRows = data.total_rows
+    importDialog.headerRowOffset = data.header_row_offset
+    // Auto-map by header hints
+    importDialog.mapping = {}
+    for (let i = 0; i < data.headers.length; i++) {
+      const h = (data.headers[i] as string).toLowerCase()
+      if (/номер|number|№\s*догов/.test(h) && !importDialog.mapping.number) importDialog.mapping.number = i
+      else if (/дата\s*(догов|заключ)|date/.test(h) && !importDialog.mapping.date) importDialog.mapping.date = i
+      else if (/контрагент|поставщик|исполнитель|contractor/.test(h) && !importDialog.mapping.contractor) importDialog.mapping.contractor = i
+      else if (/предмет|subject/.test(h) && !importDialog.mapping.subject) importDialog.mapping.subject = i
+      else if (/сумм|цена|amount|стоимость/.test(h) && !importDialog.mapping.max_amount) importDialog.mapping.max_amount = i
+      else if (/начал|start/.test(h) && !importDialog.mapping.start_date) importDialog.mapping.start_date = i
+      else if (/оконч|end|заверш/.test(h) && !importDialog.mapping.end_date) importDialog.mapping.end_date = i
+      else if (/тип\s*догов|type/.test(h) && !importDialog.mapping.contract_type) importDialog.mapping.contract_type = i
+      else if (/способ|метод|method/.test(h) && !importDialog.mapping.purchase_method) importDialog.mapping.purchase_method = i
+      else if (/примечан|notes|комментар/.test(h) && !importDialog.mapping.notes) importDialog.mapping.notes = i
+      else if (/статус|status/.test(h) && !importDialog.mapping.status) importDialog.mapping.status = i
+    }
+    importDialog.step = 2
+  } catch (e: any) {
+    importDialog.error = e.message || 'Ошибка'
+  } finally {
+    importDialog.loading = false
+  }
+}
+
+async function doImportMapped() {
+  if (!importDialog.file || importDialog.mapping.number == null) return
+  importDialog.loading = true
+  importDialog.error = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', importDialog.file)
+    const params = new URLSearchParams()
+    params.set('header_row_offset', String(importDialog.headerRowOffset))
+    for (const [key, val] of Object.entries(importDialog.mapping)) {
+      if (val != null) params.set(`col_${key}`, String(val))
+    }
+    if (importDialog.subsidyId) params.set('subsidy_id', String(importDialog.subsidyId))
+    const res = await fetch(`/api/contracts/import/mapped?${params}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Ошибка импорта' }))
+      throw new Error(err.detail || err.message || 'Ошибка')
+    }
+    const data = await res.json()
+    importDialog.result = data
+    importDialog.step = 3
+    if (data.created > 0) await loadContracts()
+  } catch (e: any) {
+    importDialog.error = e.message || 'Ошибка'
+  } finally {
+    importDialog.loading = false
+  }
+}
+
 onMounted(() => { loadContracts(); loadSubsidies(); loadContractors() })
 </script>
+
+<style scoped>
+.import-dropzone {
+  border: 2px dashed rgba(var(--v-border-color), 0.3);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.import-dropzone--active,
+.import-dropzone:hover {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+</style>

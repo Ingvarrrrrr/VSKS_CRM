@@ -37,6 +37,34 @@ try:
 except ImportError:
     _DocxDocument = None
 
+def _ocr_pdf_to_rows(content: bytes) -> list:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines."""
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError:
+        return []
+    try:
+        images = convert_from_bytes(content, dpi=300)
+    except Exception:
+        return []
+    import re
+    all_rows = []
+    for img in images:
+        text = pytesseract.image_to_string(img, lang='rus+eng')
+        if not text:
+            continue
+        for line in text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            cells = re.split(r'\t|  {2,}', line)
+            cells = [c.strip() for c in cells if c.strip()]
+            if cells:
+                all_rows.append(cells)
+    return all_rows
+
+
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 # Status workflow
@@ -1772,16 +1800,20 @@ async def import_items_preview(
                     all_rows.append([p.strip() for p in parts if p.strip()])
             if not all_rows:
                 if not text_lines:
+                    # Scanned PDF — try OCR
+                    all_rows = _ocr_pdf_to_rows(content)
+                    if not all_rows:
+                        raise HTTPException(
+                            400,
+                            "Этот PDF — скан (изображение). OCR не смог распознать таблицу. "
+                            "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
+                        )
+                else:
                     raise HTTPException(
                         400,
-                        "Этот PDF — скан (изображение). Текст из него извлечь нельзя. "
-                        "Пожалуйста, сохраните данные в Excel (.xlsx) или Word (.docx) и загрузите повторно."
+                        "В PDF найден текст, но не удалось распознать таблицу с данными. "
+                        "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
                     )
-                raise HTTPException(
-                    400,
-                    "В PDF найден текст, но не удалось распознать таблицу с данными. "
-                    "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
-                )
             hdr_idx = _detect_hdr(all_rows)
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
             data = all_rows[hdr_idx + 1:]
@@ -2062,12 +2094,18 @@ async def import_items_smart(
 
     if not raw_tables:
         if file_type == "pdf":
-            raise HTTPException(
-                400,
-                "В PDF-файле не найдено таблиц. Возможно, это скан (изображение). "
-                "Сохраните данные в Excel (.xlsx) и загрузите повторно."
-            )
-        raise HTTPException(400, "Таблицы в документе не найдены")
+            # Try OCR for scanned PDFs
+            ocr_rows = _ocr_pdf_to_rows(content)
+            if ocr_rows:
+                raw_tables.append(ocr_rows)
+            else:
+                raise HTTPException(
+                    400,
+                    "В PDF-файле не найдено таблиц. Возможно, это скан (изображение). "
+                    "OCR не смог распознать данные. Сохраните в Excel (.xlsx)."
+                )
+        else:
+            raise HTTPException(400, "Таблицы в документе не найдены")
 
     def _detect_columns(header_row: list[str]) -> dict:
         col: dict = {}

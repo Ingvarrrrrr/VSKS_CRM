@@ -274,6 +274,39 @@ async def migrate_contracts_from_purchases(
     return {"created": created, "skipped": skipped}
 
 
+# ── OCR helper ─────────────────────────────────────────────────────────────────
+
+def _ocr_pdf_to_rows(content: bytes) -> list:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines."""
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError:
+        return []
+
+    try:
+        images = convert_from_bytes(content, dpi=300)
+    except Exception:
+        return []
+
+    all_rows = []
+    for img in images:
+        text = pytesseract.image_to_string(img, lang='rus+eng')
+        if not text:
+            continue
+        for line in text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # Split by tabs or multiple spaces
+            import re
+            cells = re.split(r'\t|  {2,}', line)
+            cells = [c.strip() for c in cells if c.strip()]
+            if cells:
+                all_rows.append(cells)
+    return all_rows
+
+
 # ── File parsing helpers ───────────────────────────────────────────────────────
 
 _CONTRACT_HINTS = (
@@ -362,17 +395,20 @@ def _parse_contract_file(fname: str, content: bytes):
             raise HTTPException(400, f"Не удалось прочитать PDF-файл: {e}")
         if not all_rows:
             if not has_text:
+                # Scanned PDF — try OCR
+                all_rows = _ocr_pdf_to_rows(content)
+                if not all_rows:
+                    raise HTTPException(
+                        400,
+                        "Этот PDF — скан (изображение). OCR не смог распознать таблицу. "
+                        "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
+                    )
+            else:
                 raise HTTPException(
                     400,
-                    "Этот PDF — скан (изображение). Текст из него извлечь нельзя. "
-                    "Пожалуйста, используйте Excel (.xlsx) или Word (.docx), "
-                    "либо PDF с текстовым слоем (не скан)."
+                    "В PDF найден текст, но не удалось распознать таблицу. "
+                    "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
                 )
-            raise HTTPException(
-                400,
-                "В PDF найден текст, но не удалось распознать таблицу. "
-                "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
-            )
     else:
         raise HTTPException(400, "Неподдерживаемый формат. Используйте .xlsx, .xls, .docx, .doc или .pdf")
 

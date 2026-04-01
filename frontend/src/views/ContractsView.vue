@@ -509,7 +509,7 @@ async function doExport() {
     // Track files per contract for ZIP + links
     const contractFiles: Map<number, { name: string; path: string }[]> = new Map()
 
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('auth_token')
     const baseUrl = window.location.origin
 
     // Collect and download all files
@@ -520,11 +520,19 @@ async function doExport() {
         const folderName = `${safeNum}_${contract.contractor_name || 'без_контрагента'}`.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
         const contractFolder = docsFolder.folder(folderName)!
 
+        // Load purchases if not yet loaded
+        if (!purchasesByContract.value[contract.id]) {
+          try {
+            const items = await apiFetch<Purchase[]>(`/purchases/by-contract/${contract.id}`)
+            purchasesByContract.value = { ...purchasesByContract.value, [contract.id]: items }
+          } catch { /* skip */ }
+        }
+
         // Files from purchases
         const purchasesForContract = purchasesByContract.value[contract.id] || []
         for (const p of purchasesForContract) {
           try {
-            const filesResp = await apiFetch(`/purchases/${p.id}/files`)
+            const filesResp = await apiFetch<any[]>(`/purchases/${p.id}/files`)
             if (Array.isArray(filesResp)) {
               for (const f of filesResp) {
                 try {
@@ -537,10 +545,10 @@ async function doExport() {
                     contractFolder.file(fileName, blob)
                     files.push({ name: fileName, path: `Документы/${folderName}/${fileName}` })
                   }
-                } catch { /* skip download error */ }
+                } catch (e) { console.warn('File download error:', e) }
               }
             }
-          } catch { /* skip */ }
+          } catch (e) { console.warn('Files list error:', e) }
         }
         contractFiles.set(contract.id, files)
       }

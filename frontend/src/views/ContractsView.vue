@@ -163,8 +163,8 @@
         </v-chip>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
-      <template #item.actions="{ item }">
-        <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDelete(item)" />
+      <template #item.index="{ index }">
+        <span class="text-medium-emphasis">{{ index + 1 }}</span>
       </template>
       <!-- Expanded: закупки по договору -->
       <template #expanded-row="{ columns, item }">
@@ -361,6 +361,8 @@
           </v-row>
         </v-card-text>
         <v-card-actions class="px-4 pb-3">
+          <v-btn v-if="isAdmin && dialog.id" color="error" variant="text" prepend-icon="mdi-delete"
+            @click="dialog.show = false; confirmDelete(contracts.find(c => c.id === dialog.id)!)">Удалить</v-btn>
           <v-spacer />
           <v-btn variant="text" @click="dialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="tonal" :loading="dialog.saving" @click="saveContract">Сохранить</v-btn>
@@ -704,6 +706,7 @@ const formatMoney = (v: number | string) =>
 // ── Table headers ──────────────────────────────────────────────────────────
 const headers = [
   { title: '', key: 'data-table-expand', width: 40, sortable: false },
+  { title: '№', key: 'index', width: 50, sortable: false },
   { title: '№ документа', key: 'number', minWidth: 120 },
   { title: 'Дата', key: 'date', width: 110 },
   { title: 'Тип', key: 'contract_type', width: 170 },
@@ -717,7 +720,6 @@ const headers = [
   { title: 'Предмет договора', key: 'subject', minWidth: 160 },
   { title: 'Тип', key: 'item_type', width: 90 },
   { title: 'Срок', key: 'end_date', width: 110 },
-  { title: '', key: 'actions', sortable: false, width: 50 },
 ]
 
 // ── Load data (all contracts, no server-side filter) ──────────────────────

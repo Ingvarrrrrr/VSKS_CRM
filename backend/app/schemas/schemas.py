@@ -300,6 +300,7 @@ class PurchaseFileOut(BaseModel):
     file_type: Optional[str] = "other"
     doc_format: Optional[str] = "scan"
     content_hash: Optional[str] = None
+    is_active: Optional[bool] = True
     created_at: Optional[datetime] = None
     uploaded_by_id: Optional[int] = None
     uploaded_by_name: Optional[str] = None

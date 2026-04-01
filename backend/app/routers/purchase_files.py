@@ -71,6 +71,8 @@ def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
         size=pf.size,
         file_type=pf.file_type or "other",
         doc_format=pf.doc_format or "scan",
+        content_hash=pf.content_hash,
+        is_active=pf.is_active if pf.is_active is not None else True,
         created_at=pf.created_at,
         uploaded_by_id=pf.uploaded_by_id,
         uploaded_by_name=uploaded_by_name,
@@ -160,6 +162,7 @@ async def update_file_meta(
     fid: int,
     file_type: Optional[str] = Form(default=None),
     doc_format: Optional[str] = Form(default=None),
+    is_active: Optional[str] = Form(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -177,6 +180,8 @@ async def update_file_meta(
         if doc_format not in DOC_FORMATS:
             raise HTTPException(400, f"Неизвестный формат: {doc_format}")
         pf.doc_format = doc_format
+    if is_active is not None:
+        pf.is_active = is_active.lower() in ('true', '1', 'yes')
     await db.commit()
     await db.refresh(pf)
     return _file_out(pf)

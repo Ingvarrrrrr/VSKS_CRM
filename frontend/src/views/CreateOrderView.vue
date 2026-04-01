@@ -902,25 +902,42 @@
         <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
           Закрывающие документы
           <v-spacer />
-          <v-btn v-if="isEdit && purchaseId" size="small" variant="tonal" color="blue-grey" prepend-icon="mdi-file-upload-outline"
-            :loading="uploading && pendingSectionUpload === 'closing'" @click="uploadForSection('closing')" class="mr-2">
-            Загрузить файл
-          </v-btn>
-          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить</v-btn>
+          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Реквизиты</v-btn>
         </v-card-title>
         <v-card-text>
-          <!-- Прикреплённые файлы закрывающих документов -->
-          <div v-if="closingFiles.length" class="mb-3">
-            <div v-for="f in closingFiles" :key="f.id" class="d-flex align-center gap-2 py-1">
-              <v-icon size="16" color="cyan">mdi-file-document</v-icon>
-              <a class="text-body-2 text-decoration-none" href="#" @click.prevent="downloadFile(f.id, f.filename)">{{ f.filename }}</a>
-              <span class="text-caption text-medium-emphasis">{{ f.size ? Math.round(f.size / 1024) + ' КБ' : '' }}</span>
+          <!-- Загрузка файлов по типам -->
+          <div v-if="isEdit && purchaseId" class="mb-4">
+            <div v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type" class="d-flex align-center gap-2 py-2 border-b">
+              <v-icon size="18" :color="sec.color">{{ sec.icon }}</v-icon>
+              <span class="text-body-2 font-weight-medium" style="min-width:120px">{{ sec.label }}</span>
+              <v-btn size="x-small" variant="tonal" :color="sec.color" prepend-icon="mdi-upload"
+                :loading="uploading && pendingSectionUpload === sec.type" @click="uploadForSection(sec.type)">
+                Загрузить
+              </v-btn>
               <v-spacer />
-              <v-btn icon="mdi-delete" variant="text" size="x-small" color="error" @click="deleteFile(f.id)" />
+              <!-- Файлы этого типа -->
+              <div class="d-flex flex-wrap gap-1">
+                <template v-for="f in filesByType(sec.type)" :key="f.id">
+                  <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
+                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
+                    <v-icon start size="14">mdi-file</v-icon>
+                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
+                    <template #append>
+                      <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
+                        <template #activator="{ props: tp }">
+                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
+                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
+                        </template>
+                      </v-tooltip>
+                    </template>
+                  </v-chip>
+                </template>
+              </div>
             </div>
-            <v-divider class="mb-2" />
           </div>
-          <div v-if="!acceptanceDocs.length" class="text-medium-emphasis text-caption pa-2">Нет закрывающих документов</div>
+
+          <!-- Реквизиты закрывающих документов -->
+          <div v-if="!acceptanceDocs.length && !closingFiles.length" class="text-medium-emphasis text-caption pa-2">Нет закрывающих документов</div>
           <div v-for="(doc, idx) in acceptanceDocs" :key="idx" class="mb-3">
             <div class="d-flex align-center gap-2 mb-1">
               <span class="text-caption font-weight-medium">Документ {{ idx + 1 }}</span>
@@ -950,23 +967,36 @@
       <v-card v-if="isSectionVisible('payment')" variant="outlined" class="mb-4">
         <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
           Платёж
-          <v-spacer />
-          <v-btn v-if="isEdit && purchaseId" size="small" variant="tonal" color="blue-grey" prepend-icon="mdi-file-upload-outline"
-            :loading="uploading && pendingSectionUpload === 'payment'" @click="uploadForSection('payment')">
-            Загрузить файл
-          </v-btn>
         </v-card-title>
         <v-card-text>
-          <!-- Прикреплённые платёжные документы -->
-          <div v-if="paymentFiles.length" class="mb-3">
-            <div v-for="f in paymentFiles" :key="f.id" class="d-flex align-center gap-2 py-1">
-              <v-icon size="16" color="orange">mdi-file-document</v-icon>
-              <a class="text-body-2 text-decoration-none" href="#" @click.prevent="downloadFile(f.id, f.filename)">{{ f.filename }}</a>
-              <span class="text-caption text-medium-emphasis">{{ f.size ? Math.round(f.size / 1024) + ' КБ' : '' }}</span>
+          <!-- Загрузка платёжных документов -->
+          <div v-if="isEdit && purchaseId" class="mb-4">
+            <div class="d-flex align-center gap-2 py-2 border-b">
+              <v-icon size="18" color="orange">mdi-cash-check</v-icon>
+              <span class="text-body-2 font-weight-medium" style="min-width:120px">Платёжка</span>
+              <v-btn size="x-small" variant="tonal" color="orange" prepend-icon="mdi-upload"
+                :loading="uploading && pendingSectionUpload === 'invoice'" @click="uploadForSection('invoice')">
+                Загрузить
+              </v-btn>
               <v-spacer />
-              <v-btn icon="mdi-delete" variant="text" size="x-small" color="error" @click="deleteFile(f.id)" />
+              <div class="d-flex flex-wrap gap-1">
+                <template v-for="f in paymentFiles" :key="f.id">
+                  <v-chip size="small" :color="f.is_active ? 'orange' : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
+                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
+                    <v-icon start size="14">mdi-file</v-icon>
+                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
+                    <template #append>
+                      <v-tooltip :text="f.is_active ? 'Актуальный' : 'Не актуальный'" location="top">
+                        <template #activator="{ props: tp }">
+                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
+                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
+                        </template>
+                      </v-tooltip>
+                    </template>
+                  </v-chip>
+                </template>
+              </div>
             </div>
-            <v-divider class="mb-2" />
           </div>
           <v-row>
             <v-col cols="12" md="4">
@@ -2782,7 +2812,7 @@ interface OrderItem {
   _description?: string
   _description_44fz?: string
 }
-interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; uploaded_by_name?: string | null; created_at?: string | null }
+interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; is_active?: boolean; uploaded_by_name?: string | null; created_at?: string | null }
 
 const FILE_TYPE_LABELS: Record<string, string> = {
   kp:           'КП',
@@ -3068,13 +3098,23 @@ const showApprovalSection = computed(() => {
 const contractorInn = ref('')
 const fileInputEl = ref<HTMLInputElement | null>(null)
 const sectionFileInputEl = ref<HTMLInputElement | null>(null)
-const pendingSectionUpload = ref<'closing' | 'payment' | null>(null)
+const pendingSectionUpload = ref<string | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const uploadDialog = ref(false)
 const uploadFileType = ref('other')
 const uploadDocFormat = ref('scan')
-const closingFiles = computed(() => uploadedFiles.value.filter(f => ['act', 'upd'].includes(f.file_type || '')))
+const closingFiles = computed(() => uploadedFiles.value.filter(f => ['act', 'upd', 'contract'].includes(f.file_type || '')))
 const paymentFiles = computed(() => uploadedFiles.value.filter(f => f.file_type === 'invoice'))
+
+const DOC_UPLOAD_SECTIONS = [
+  { type: 'contract' as const, label: 'Договор', icon: 'mdi-file-sign', color: 'indigo' },
+  { type: 'act' as const, label: 'Акт', icon: 'mdi-file-check', color: 'cyan' },
+  { type: 'upd' as const, label: 'УПД', icon: 'mdi-file-document-check', color: 'green' },
+]
+
+function filesByType(type: string) {
+  return uploadedFiles.value.filter(f => f.file_type === type)
+}
 const fileTypeEditDialog = ref(false)
 const fileTypeEditValue = ref('other')
 const fileDocFormatEditValue = ref('scan')
@@ -5278,9 +5318,24 @@ const uploadFile = async (event: Event) => {
   }
 }
 
-function uploadForSection(section: 'closing' | 'payment') {
-  pendingSectionUpload.value = section
+function uploadForSection(section: string) {
+  pendingSectionUpload.value = section as any
   sectionFileInputEl.value?.click()
+}
+
+async function toggleFileActive(f: UploadedFile) {
+  const newActive = !(f.is_active ?? true)
+  const token = localStorage.getItem('auth_token')
+  const fd = new FormData()
+  fd.append('is_active', String(newActive))
+  try {
+    const res = await fetch(`/api/purchases/${f.purchase_id}/files/${f.id}`, {
+      method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: fd,
+    })
+    if (res.ok) {
+      f.is_active = newActive
+    }
+  } catch { /* skip */ }
 }
 
 const uploadSectionFile = async (event: Event) => {
@@ -5290,7 +5345,7 @@ const uploadSectionFile = async (event: Event) => {
   try {
     const file = input.files[0]
     const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
-    const fileType = pendingSectionUpload.value === 'closing' ? 'act' : 'invoice'
+    const fileType = pendingSectionUpload.value || 'other'
     const fd = new FormData()
     fd.append('file', file)
     fd.append('file_type', fileType)

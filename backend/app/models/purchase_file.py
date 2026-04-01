@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -17,6 +17,7 @@ class PurchaseFile(Base):
     file_type = Column(String(50), default="other")
     doc_format = Column(String(20), default="scan")
     content_hash = Column(String(64), index=True, nullable=True)
+    is_active = Column(Boolean, default=True, server_default="true")
     created_at = Column(DateTime, default=datetime.utcnow)
     uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 

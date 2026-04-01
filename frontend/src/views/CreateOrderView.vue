@@ -5363,6 +5363,9 @@ const uploadSectionFile = async (event: Event) => {
       return
     }
     const uploaded = await res.json()
+    // Deactivate other files of same type (backend already did this)
+    const ft = uploaded.file_type
+    uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
     uploadedFiles.value.push(uploaded)
     showSnack('Файл загружен')
   } catch {

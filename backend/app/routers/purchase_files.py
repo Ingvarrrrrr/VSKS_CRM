@@ -117,6 +117,18 @@ async def upload_file(
 
     # Content-based deduplication
     content_hash = hashlib.sha256(contents).hexdigest()
+
+    # Check if this exact file already exists in THIS purchase
+    same_purchase_dup = await db.execute(
+        select(PurchaseFile).where(
+            PurchaseFile.purchase_id == pid,
+            PurchaseFile.content_hash == content_hash,
+        ).limit(1)
+    )
+    if same_purchase_dup.scalar_one_or_none():
+        raise HTTPException(409, "Этот файл уже загружен в данную закупку (идентичное содержимое)")
+
+    # Check if file with same hash exists anywhere (for disk dedup)
     dup_result = await db.execute(
         select(PurchaseFile).where(PurchaseFile.content_hash == content_hash).limit(1)
     )
@@ -133,6 +145,17 @@ async def upload_file(
         with open(dest_path, "wb") as f:
             f.write(contents)
 
+    # Deactivate other files of same type in this purchase
+    await db.execute(
+        PurchaseFile.__table__.update()
+        .where(
+            PurchaseFile.purchase_id == pid,
+            PurchaseFile.file_type == file_type,
+            PurchaseFile.is_active == True,
+        )
+        .values(is_active=False)
+    )
+
     pf = PurchaseFile(
         purchase_id=pid,
         filename=file.filename,
@@ -143,6 +166,7 @@ async def upload_file(
         file_type=file_type,
         doc_format=doc_format,
         content_hash=content_hash,
+        is_active=True,
         uploaded_by_id=current_user.id,
     )
     db.add(pf)

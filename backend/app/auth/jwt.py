@@ -11,9 +11,9 @@ from app.database import get_db
 from app.models.user import User
 
 # Role constants
-ROLES = ("superadmin", "account_owner", "admin", "manager", "employee")
-ADMIN_ROLES = ("superadmin", "account_owner", "admin")
-MANAGER_ROLES = ("superadmin", "account_owner", "admin", "manager")
+ROLES = ("superadmin", "account_owner", "admin", "org_admin", "manager", "employee")
+ADMIN_ROLES = ("superadmin", "account_owner", "admin", "org_admin")
+MANAGER_ROLES = ("superadmin", "account_owner", "admin", "org_admin", "manager")
 OWNER_ROLES = ("superadmin", "account_owner")
 ALL_ROLES = ROLES
 

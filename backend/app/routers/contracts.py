@@ -83,18 +83,19 @@ async def list_contracts(
 async def create_contract(
     data: ContractCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES)),
+    current_user=Depends(get_current_user),
 ):
-    # Duplicate check: same number + contractor INN + date + amount
+    # Duplicate check: same number + contractor + subsidy (org) + date
     if data.contractor_id and data.number:
         dup_q = select(Contract).where(
             Contract.number == data.number,
             Contract.contractor_id == data.contractor_id,
         )
+        # Same org (subsidy) — different orgs can have same contract number
+        if data.subsidy_id:
+            dup_q = dup_q.where(Contract.subsidy_id == data.subsidy_id)
         if data.date:
             dup_q = dup_q.where(Contract.date == data.date)
-        if data.max_amount is not None:
-            dup_q = dup_q.where(Contract.max_amount == data.max_amount)
         dup = (await db.execute(dup_q)).scalar_one_or_none()
         if dup:
             raise HTTPException(
@@ -124,12 +125,26 @@ async def create_contract(
     return d
 
 @router.put("/{cid}", response_model=ContractOut)
-async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
+async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
     old_number = c.number
+    # Duplicate check on update (exclude self, same org)
+    if data.contractor_id and data.number:
+        dup_q = select(Contract).where(
+            Contract.number == data.number,
+            Contract.contractor_id == data.contractor_id,
+            Contract.id != cid,
+        )
+        if data.subsidy_id:
+            dup_q = dup_q.where(Contract.subsidy_id == data.subsidy_id)
+        if data.date:
+            dup_q = dup_q.where(Contract.date == data.date)
+        dup = (await db.execute(dup_q)).scalar_one_or_none()
+        if dup:
+            raise HTTPException(409, f"Договор с таким номером и контрагентом уже существует (ID {dup.id})")
     extra_ids = data.extra_subsidy_ids or []
     for k, v in data.model_dump(exclude={"extra_subsidy_ids"}).items():
         setattr(c, k, v)
@@ -172,6 +187,26 @@ async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depend
     await db.delete(c)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{cid}/merge/{target_id}")
+async def merge_contracts(cid: int, target_id: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
+    """Merge contract cid INTO target_id: move all purchases, then delete cid."""
+    if cid == target_id:
+        raise HTTPException(400, "Нельзя объединить договор сам с собой")
+    source = (await db.execute(select(Contract).where(Contract.id == cid))).scalar_one_or_none()
+    target = (await db.execute(select(Contract).where(Contract.id == target_id))).scalar_one_or_none()
+    if not source or not target:
+        raise HTTPException(404, "Договор не найден")
+    # Move purchases from source to target
+    linked = (await db.execute(select(Purchase).where(Purchase.contract_id == cid))).scalars().all()
+    for p in linked:
+        p.contract_id = target_id
+        if target.number:
+            p.contract_number = target.number
+    await db.delete(source)
+    await db.commit()
+    return {"ok": True, "moved_purchases": len(linked)}
 
 
 @router.post("/migrate-from-purchases")

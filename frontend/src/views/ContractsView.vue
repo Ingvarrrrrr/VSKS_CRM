@@ -12,6 +12,12 @@
         <v-btn v-if="isAdmin" variant="outlined" prepend-icon="mdi-database-import" @click="migrateDialog = true">
           Мигрировать из закупок
         </v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" @click="checkDuplicates" :loading="dupLoading">
+          Проверить дубли
+        </v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" color="success" @click="exportDialog = true">
+          Скачать реестр
+        </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить</v-btn>
       </div>
     </div>
@@ -57,16 +63,6 @@
             label="Способ закупки" multiple chips closable-chips
             variant="outlined" density="compact" hide-details clearable
             style="min-width:180px; max-width:240px"
-          />
-
-          <!-- Статус -->
-          <v-autocomplete
-            v-model="fStatus"
-            :items="statusItems"
-            item-title="label" item-value="value"
-            label="Статус" multiple chips closable-chips
-            variant="outlined" density="compact" hide-details clearable
-            style="min-width:140px; max-width:200px"
           />
 
           <!-- Контрагент -->
@@ -156,10 +152,14 @@
           <span v-if="!item.subsidy_name && !(item.extra_subsidies?.length)" class="text-medium-emphasis">—</span>
         </div>
       </template>
-      <template #item.status="{ item }">
-        <v-chip size="x-small" :color="item.status === 'active' ? 'success' : 'grey'" variant="tonal">
-          {{ statusLabel(item.status) }}
+      <template #item.subject="{ item }">
+        <span class="text-caption" :title="item.subject">{{ item.subject ? (item.subject.length > 60 ? item.subject.slice(0, 60) + '...' : item.subject) : '—' }}</span>
+      </template>
+      <template #item.item_type="{ item }">
+        <v-chip v-if="item.item_type" size="x-small" :color="item.item_type === 'услуга' ? 'blue' : 'teal'" variant="tonal">
+          {{ item.item_type === 'услуга' ? 'Услуги' : 'Товары' }}
         </v-chip>
+        <span v-else class="text-medium-emphasis">—</span>
       </template>
       <template #item.actions="{ item }">
         <div class="d-flex gap-1">
@@ -182,21 +182,44 @@
               <v-table v-else density="compact">
                 <thead>
                   <tr>
-                    <th>№</th>
-                    <th>Предмет</th>
-                    <th>Цена договора</th>
-                    <th>Статус</th>
+                    <th>№ закупки</th>
+                    <th>Наименование</th>
+                    <th class="text-right">Сумма</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="p in purchasesByContract[item.id]" :key="p.id">
-                    <td>{{ p.purchase_number || p.id }}</td>
-                    <td>{{ p.subject || p.item_name }}</td>
-                    <td>{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
-                    <td><v-chip size="x-small" variant="tonal" :color="PURCHASE_STATUS_COLOR[p.status] || 'grey'">{{ PURCHASE_STATUS_LABEL[p.status] || p.status }}</v-chip></td>
-                    <td><v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" /></td>
-                  </tr>
+                  <template v-for="p in purchasesByContract[item.id]" :key="p.id">
+                    <tr>
+                      <td>
+                        <v-btn v-if="p.items?.length" :icon="expandedPurchases[p.id] ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                          variant="text" size="x-small" @click="expandedPurchases[p.id] = !expandedPurchases[p.id]" />
+                        {{ p.purchase_number || p.id }}
+                      </td>
+                      <td class="text-caption">{{ p.subject || p.item_name || '—' }}</td>
+                      <td class="text-right">{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
+                      <td><v-btn icon="mdi-open-in-new" variant="text" size="x-small" :to="`/orders/${p.id}/edit`" /></td>
+                    </tr>
+                    <tr v-if="expandedPurchases[p.id] && p.items?.length">
+                      <td colspan="4" class="pa-0 pl-8">
+                        <v-table density="compact" class="bg-grey-lighten-4">
+                          <thead><tr><th>Наименование</th><th class="text-right">Кол-во</th><th class="text-right">Цена ед.</th><th class="text-right">Сумма</th></tr></thead>
+                          <tbody>
+                            <tr v-for="(pi, ii) in p.items" :key="ii">
+                              <td class="text-caption">{{ pi.item_name }}</td>
+                              <td class="text-right text-caption">{{ pi.quantity }}</td>
+                              <td class="text-right text-caption">{{ pi.unit_price ? formatMoney(pi.unit_price) : '—' }}</td>
+                              <td class="text-right text-caption">{{ pi.total_price ? formatMoney(pi.total_price) : '—' }}</td>
+                            </tr>
+                            <tr class="font-weight-bold">
+                              <td colspan="3" class="text-right text-caption">Итого:</td>
+                              <td class="text-right text-caption">{{ formatMoney(p.items.reduce((s, i) => s + (Number(i.total_price) || 0), 0)) }}</td>
+                            </tr>
+                          </tbody>
+                        </v-table>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </v-table>
             </div>
@@ -204,6 +227,66 @@
         </tr>
       </template>
     </v-data-table>
+
+    <!-- Export Dialog -->
+    <v-dialog v-model="exportDialog" max-width="480">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-file-excel-outline" color="success" class="mr-2" />Скачать реестр договоров
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <div class="text-body-2 mb-3">Выберите колонки для экспорта:</div>
+          <v-checkbox v-for="col in exportColumns" :key="col.key"
+            v-model="col.selected" :label="col.title" density="compact" hide-details />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-btn variant="text" size="small" @click="exportColumns.forEach(c => c.selected = true)">Выбрать все</v-btn>
+          <v-btn variant="text" size="small" @click="exportColumns.forEach(c => c.selected = false)">Снять все</v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="exportDialog = false">Отмена</v-btn>
+          <v-btn color="success" variant="flat" prepend-icon="mdi-download" @click="doExport">Скачать</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Duplicates Dialog -->
+    <v-dialog v-model="dupDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />
+          Найденные дубли ({{ duplicateGroups.length }} групп)
+        </v-card-title>
+        <v-card-text v-if="!duplicateGroups.length" class="text-center py-8 text-medium-emphasis">
+          Дубликатов не найдено
+        </v-card-text>
+        <v-card-text v-else class="pa-4 pt-0">
+          <div v-for="(group, gi) in duplicateGroups" :key="gi" class="mb-4 pa-3 rounded-lg" style="background:rgba(255,152,0,0.08);border-left:3px solid #ff9800">
+            <div class="text-body-2 font-weight-bold mb-2">{{ group[0].number }} — {{ group[0].contractor_name || '?' }}</div>
+            <v-table density="compact">
+              <thead><tr><th>ID</th><th>Дата</th><th>Сумма</th><th>Закупок</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="c in group" :key="c.id">
+                  <td>{{ c.id }}</td>
+                  <td>{{ c.date || '—' }}</td>
+                  <td>{{ c.max_amount ? Number(c.max_amount).toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
+                  <td>{{ c._purchaseCount ?? '?' }}</td>
+                  <td>
+                    <v-btn v-if="group.length > 1" size="x-small" variant="tonal" color="error"
+                      @click="mergeContract(c.id, group.find(x => x.id !== c.id)!.id)">
+                      Объединить в #{{ group.find(x => x.id !== c.id)?.id }}
+                    </v-btn>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="dupDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Create/Edit Dialog -->
     <v-dialog v-model="dialog.show" max-width="680">
@@ -224,12 +307,17 @@
                 :items="contractTypeItems" item-title="label" item-value="value"
                 label="Тип документа *" variant="outlined" density="compact" />
             </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="4">
               <v-select v-model="dialog.form.purchase_method"
                 :items="purchaseMethodItems" item-title="label" item-value="value"
                 label="Способ закупки" variant="outlined" density="compact" clearable />
             </v-col>
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="4">
+              <v-select v-model="dialog.form.item_type"
+                :items="[{ title: 'Товары', value: 'товар' }, { title: 'Услуги', value: 'услуга' }]"
+                label="Товары / Услуги" variant="outlined" density="compact" clearable />
+            </v-col>
+            <v-col cols="12" md="4">
               <v-autocomplete v-model="dialog.form.contractor_id"
                 :items="contractors" item-title="name" item-value="id"
                 label="Контрагент" variant="outlined" density="compact" clearable />
@@ -359,14 +447,169 @@ interface Contract {
 }
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
-interface Purchase { id: number; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string }
+interface PurchaseItem { item_name: string; quantity?: number; unit_price?: number; total_price?: number }
+interface Purchase { id: number; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; items?: PurchaseItem[] }
 
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
 const loading = ref(false)
 const expanded = ref<number[]>([])
+
+// Export
+const exportDialog = ref(false)
+const exportColumns = reactive([
+  { key: 'number', title: '№ договора', selected: true },
+  { key: 'date', title: 'Дата договора', selected: true },
+  { key: 'contract_type', title: 'Тип договора', selected: true },
+  { key: 'purchase_method', title: 'Способ закупки', selected: true },
+  { key: 'contractor_name', title: 'Контрагент', selected: true },
+  { key: 'contractor_inn', title: 'ИНН контрагента', selected: true },
+  { key: 'subject', title: 'Предмет договора', selected: true },
+  { key: 'subsidy_name', title: 'Субсидия', selected: true },
+  { key: 'max_amount', title: 'Макс. сумма', selected: true },
+  { key: 'total_ordered', title: 'Заказано', selected: true },
+  { key: 'total_paid', title: 'Оплачено', selected: true },
+  { key: 'remaining', title: 'Остаток', selected: true },
+  { key: 'start_date', title: 'Дата начала', selected: true },
+  { key: 'end_date', title: 'Дата окончания', selected: true },
+  { key: 'notes', title: 'Примечания', selected: false },
+  { key: 'documents', title: 'Документы (ссылки)', selected: true },
+])
+
+async function doExport() {
+  const XLSX = await import('xlsx')
+  const selected = exportColumns.filter(c => c.selected)
+
+  // Build header row
+  const header = selected.map(c => c.title)
+  const rows: any[][] = [header]
+
+  const baseUrl = window.location.origin
+
+  for (const contract of filtered.value) {
+    const row: any[] = []
+    for (const col of selected) {
+      if (col.key === 'documents') {
+        // Collect document links from purchases
+        const purchasesForContract = purchasesByContract.value[contract.id] || []
+        const docs: string[] = []
+        for (const p of purchasesForContract) {
+          try {
+            const filesResp = await apiFetch(`/purchases/${p.id}/files`)
+            if (Array.isArray(filesResp)) {
+              for (const f of filesResp) {
+                docs.push(`${baseUrl}/api/purchases/${p.id}/files/${f.id}/download`)
+              }
+            }
+          } catch { /* skip */ }
+        }
+        // Also contract files if endpoint exists
+        try {
+          const cFiles = await apiFetch(`/contracts/${contract.id}/files`)
+          if (Array.isArray(cFiles)) {
+            for (const f of cFiles) {
+              docs.push(`${baseUrl}/api/contracts/${contract.id}/files/${f.id}/download`)
+            }
+          }
+        } catch { /* skip */ }
+        row.push(docs.join('\n'))
+      } else if (col.key === 'contract_type') {
+        const types: Record<string, string> = { framework: 'Рамочный', framework_sum: 'Рамочный с суммой', one_time: 'Разовый' }
+        row.push(types[contract.contract_type] || contract.contract_type || '')
+      } else if (col.key === 'max_amount' || col.key === 'total_ordered' || col.key === 'total_paid' || col.key === 'remaining') {
+        const v = (contract as any)[col.key]
+        row.push(v != null ? Number(v) : '')
+      } else {
+        row.push((contract as any)[col.key] ?? '')
+      }
+    }
+    rows.push(row)
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+
+  // Make document links clickable
+  const docColIdx = selected.findIndex(c => c.key === 'documents')
+  if (docColIdx >= 0) {
+    for (let r = 1; r < rows.length; r++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c: docColIdx })
+      const cell = ws[cellRef]
+      if (cell && cell.v) {
+        const links = String(cell.v).split('\n').filter(Boolean)
+        if (links.length === 1) {
+          cell.l = { Target: links[0], Tooltip: 'Открыть документ' }
+        }
+      }
+    }
+  }
+
+  // Auto-width columns
+  const colWidths = header.map((h: string, i: number) => {
+    let max = h.length
+    for (let r = 1; r < rows.length; r++) {
+      const val = String(rows[r][i] ?? '')
+      max = Math.max(max, val.length)
+    }
+    return { wch: Math.min(max + 2, 50) }
+  })
+  ws['!cols'] = colWidths
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Реестр договоров')
+  XLSX.writeFile(wb, `Реестр_договоров_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  exportDialog.value = false
+}
+
+// Duplicates
+const dupDialog = ref(false)
+const dupLoading = ref(false)
+const duplicateGroups = ref<any[][]>([])
+
+async function checkDuplicates() {
+  dupLoading.value = true
+  try {
+    // Group contracts by number+contractor_id+subsidy_id
+    const groups = new Map<string, any[]>()
+    for (const c of contracts.value) {
+      const key = `${c.number}|${c.contractor_id || ''}|${c.subsidy_id || ''}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(c)
+    }
+    // Filter groups with >1 contract
+    const dups: any[][] = []
+    for (const group of groups.values()) {
+      if (group.length > 1) {
+        // Count purchases per contract
+        for (const c of group) {
+          try {
+            const p = await apiFetch<any[]>(`/purchases/by-contract/${c.id}`)
+            c._purchaseCount = p.length
+          } catch { c._purchaseCount = 0 }
+        }
+        dups.push(group)
+      }
+    }
+    duplicateGroups.value = dups
+    dupDialog.value = true
+  } finally {
+    dupLoading.value = false
+  }
+}
+
+async function mergeContract(sourceId: number, targetId: number) {
+  if (!confirm(`Объединить договор #${sourceId} в #${targetId}? Закупки будут перепривязаны, #${sourceId} удалён.`)) return
+  try {
+    await apiFetch(`/contracts/${sourceId}/merge/${targetId}`, { method: 'POST' })
+    showSnack('Договоры объединены')
+    dupDialog.value = false
+    await loadContracts()
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка объединения', 'error')
+  }
+}
 const purchasesByContract = ref<Record<number, Purchase[]>>({})
+const expandedPurchases = ref<Record<number, boolean>>({})
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
@@ -472,8 +715,9 @@ const headers = [
   { title: 'Заказано', key: 'total_ordered', align: 'end' as const, width: 120 },
   { title: 'Оплачено', key: 'total_paid', align: 'end' as const, width: 120 },
   { title: 'Остаток', key: 'remaining', align: 'end' as const, width: 120 },
+  { title: 'Предмет договора', key: 'subject', minWidth: 160 },
+  { title: 'Тип', key: 'item_type', width: 90 },
   { title: 'Срок', key: 'end_date', width: 110 },
-  { title: 'Статус', key: 'status', width: 100 },
   { title: '', key: 'actions', sortable: false, width: 90 },
 ]
 
@@ -505,7 +749,7 @@ watch(expanded, (newVal) => {
 
 // ── Dialog ─────────────────────────────────────────────────────────────────
 const emptyForm = () => ({
-  number: '', date: '', contract_type: 'single', purchase_method: null as string | null,
+  number: '', date: '', contract_type: 'single', purchase_method: null as string | null, item_type: null as string | null,
   contractor_id: null as number | null, subsidy_id: null as number | null,
   extra_subsidy_ids: [] as number[],
   subject: '', max_amount: null as number | null, planned_monthly: null as number | null,
@@ -515,11 +759,18 @@ const dialog = reactive({ show: false, saving: false, id: 0, form: emptyForm() }
 
 const openCreate = () => { dialog.id = 0; Object.assign(dialog.form, emptyForm()); dialog.show = true }
 
-const openEdit = (c: Contract) => {
+const openEdit = async (c: Contract) => {
   dialog.id = c.id
+  // Ensure contractor is loaded before showing
+  if (c.contractor_id && !contractors.value.find(x => x.id === c.contractor_id)) {
+    try {
+      const fetched = await apiFetch<Contractor>(`/contractors/${c.contractor_id}`)
+      contractors.value.push(fetched)
+    } catch {}
+  }
   Object.assign(dialog.form, {
     number: c.number || '', date: c.date || '', contract_type: c.contract_type || 'single',
-    purchase_method: c.purchase_method || null, contractor_id: c.contractor_id || null,
+    purchase_method: c.purchase_method || null, item_type: (c as any).item_type || null, contractor_id: c.contractor_id || null,
     subsidy_id: c.subsidy_id || null,
     extra_subsidy_ids: (c.extra_subsidies || []).map(es => es.subsidy_id),
     subject: c.subject || '',

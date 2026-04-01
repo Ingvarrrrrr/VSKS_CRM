@@ -251,9 +251,10 @@ class ContractCreate(BaseModel):
     max_amount: Optional[Decimal] = None
     status: str = "active"
     notes: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
+    start_date: Optional[_Date] = None
+    end_date: Optional[_Date] = None
     purchase_method: Optional[str] = None
+    item_type: Optional[str] = None  # товар / услуга
     planned_monthly: Optional[Decimal] = None
     extra_subsidy_ids: List[int] = []
 
@@ -361,6 +362,7 @@ class PurchaseCreate(BaseModel):
     acceptance_doc_date: Optional[date] = None
     acceptance_doc_number: Optional[str] = None
     acceptance_doc_amount: Optional[Decimal] = None
+    acceptance_docs: Optional[list] = None  # [{name, number, date, amount}, ...]
     payment_doc_number: Optional[str] = None
     payment_doc_date: Optional[date] = None
     payment_amount: Optional[Decimal] = None
@@ -426,6 +428,7 @@ class ProductCreate(BaseModel):
     description_44fz: Optional[str] = None
     category: Optional[str] = None
     product_type: Optional[str] = None
+    item_kind: Optional[str] = "товар"  # "товар" или "услуга"
     is_reusable: Optional[bool] = True
     photo_url: Optional[str] = None
     photo_link: Optional[str] = None

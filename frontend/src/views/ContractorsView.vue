@@ -46,6 +46,8 @@
         hide-details
         style="max-width: 320px"
         clearable
+        @input="onSearchInput"
+        @click:clear="search = ''; onSearchInput()"
       />
       <v-autocomplete
         v-model="filterCategory"
@@ -64,7 +66,7 @@
         color="grey"
         @click="clearFilters"
       >Сбросить</v-btn>
-      <span class="search-count">{{ filtered.length }} из {{ contractors.length }}</span>
+      <span class="search-count">{{ filtered.length }} из {{ contractorsTotal }}</span>
     </div>
 
     <!-- ── Bulk actions ── -->
@@ -166,6 +168,12 @@
           </tr>
         </tbody>
       </v-table>
+      <!-- Pagination -->
+      <div v-if="totalPages > 1" class="d-flex justify-center align-center pa-3 gap-2">
+        <v-btn icon="mdi-chevron-left" variant="text" size="small" :disabled="contractorsPage <= 1" @click="goPage(contractorsPage - 1)" />
+        <span class="text-body-2">Стр. {{ contractorsPage }} из {{ totalPages }}</span>
+        <v-btn icon="mdi-chevron-right" variant="text" size="small" :disabled="contractorsPage >= totalPages" @click="goPage(contractorsPage + 1)" />
+      </div>
     </div>
 
     <!-- ── Categories dialog ── -->
@@ -230,10 +238,18 @@
               <v-col cols="4">
                 <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
               </v-col>
-              <v-col cols="4">
+              <v-col cols="3">
                 <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
               </v-col>
+              <v-col cols="1" class="d-flex align-center">
+                <v-btn icon="mdi-database-search" variant="tonal" size="small" color="blue"
+                  :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
+                  title="Заполнить по ИНН из ЕГРЮЛ (nalog.ru)" @click="lookupFns" />
+              </v-col>
             </v-row>
+            <v-alert v-if="fnsMessage" :type="fnsMessageType" variant="tonal" density="compact" class="mt-2 mb-0 text-caption" closable @click:close="fnsMessage = ''">
+              {{ fnsMessage }}
+            </v-alert>
             <v-textarea v-model="form.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
             <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
@@ -452,7 +468,18 @@
           <!-- Step 3: result -->
           <template v-if="contractorImportStep === 3 && contractorImportResult">
             <v-alert type="success" class="mb-3">
-              Добавлено: <strong>{{ contractorImportResult.created }}</strong>, пропущено: {{ contractorImportResult.skipped }}
+              Добавлено: <strong>{{ contractorImportResult.created }}</strong>
+              <template v-if="contractorImportResult.updated">, дополнено: <strong>{{ contractorImportResult.updated }}</strong></template>
+              <template v-if="contractorImportResult.skipped">, пропущено пустых: {{ contractorImportResult.skipped }}</template>
+            </v-alert>
+            <v-alert v-if="contractorImportResult.update_details?.length" type="info" variant="tonal" density="compact" class="mb-3">
+              <div class="text-subtitle-2 mb-1">Дополненные контрагенты:</div>
+              <div v-for="(d, i) in contractorImportResult.update_details.slice(0, 20)" :key="i" class="text-caption">{{ d }}</div>
+              <div v-if="contractorImportResult.update_details.length > 20" class="text-caption text-medium-emphasis">...и ещё {{ contractorImportResult.update_details.length - 20 }}</div>
+            </v-alert>
+            <v-alert v-if="contractorImportResult.errors?.length" type="error" variant="tonal" density="compact" class="mb-3">
+              <div class="text-subtitle-2 mb-1">Ошибки:</div>
+              <div v-for="(e, i) in contractorImportResult.errors.slice(0, 10)" :key="i" class="text-caption">{{ e }}</div>
             </v-alert>
           </template>
         </v-card-text>
@@ -481,7 +508,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 
 interface ContractorWithStats {
@@ -508,26 +535,36 @@ interface ContractorWithStats {
 }
 
 const CONTRACTOR_TARGET_FIELDS = [
-  { value: 'name',                  title: 'Наименование',    required: true },
-  { value: 'inn',                   title: 'ИНН',             required: false },
-  { value: 'kpp',                   title: 'КПП',             required: false },
-  { value: 'ogrn',                  title: 'ОГРН',            required: false },
-  { value: 'address',               title: 'Адрес',           required: false },
-  { value: 'postal_address',        title: 'Почт. адрес',     required: false },
-  { value: 'email',                 title: 'Email',           required: false },
-  { value: 'phone',                 title: 'Телефон',         required: false },
-  { value: 'contact_person',        title: 'Контакт. лицо',   required: false },
-  { value: 'signatory',             title: 'Подписант',       required: false },
-  { value: 'signatory_basis',       title: 'Основание',       required: false },
-  { value: 'settlement_account',    title: 'Расч. счёт',      required: false },
-  { value: 'bank_name',             title: 'Банк',            required: false },
-  { value: 'bik',                   title: 'БИК',             required: false },
-  { value: 'correspondent_account', title: 'Корр. счёт',      required: false },
+  { value: 'name',                       title: 'Наименование',       required: true },
+  { value: 'inn',                        title: 'ИНН',                required: false },
+  { value: 'kpp',                        title: 'КПП',                required: false },
+  { value: 'ogrn',                       title: 'ОГРН',               required: false },
+  { value: 'org_type',                   title: 'Тип организации',    required: false },
+  { value: 'address',                    title: 'Адрес',              required: false },
+  { value: 'postal_address',             title: 'Почт. адрес',        required: false },
+  { value: 'email',                      title: 'Email контакт. лица',    required: false },
+  { value: 'phone',                      title: 'Телефон контакт. лица', required: false },
+  { value: 'org_phone',                  title: 'Телефон организации',   required: false },
+  { value: 'org_email',                  title: 'Email организации',     required: false },
+  { value: 'contact_person',             title: 'Контактное лицо',       required: false },
+  { value: 'signatory',                  title: 'Подписант',          required: false },
+  { value: 'signatory_basis',            title: 'Основание',          required: false },
+  { value: 'settlement_account',         title: 'Расч. счёт',         required: false },
+  { value: 'bank_name',                  title: 'Банк',               required: false },
+  { value: 'bik',                        title: 'БИК',                required: false },
+  { value: 'correspondent_account',      title: 'Корр. счёт',         required: false },
+  { value: 'manual_product_categories',  title: 'Категории товаров',  required: false },
 ]
 
 const contractors = ref<ContractorWithStats[]>([])
+const contractorsTotal = ref(0)
+const contractorsPage = ref(1)
+const contractorsPerPage = 50
 const loading     = ref(false)
 const saving      = ref(false)
+const fnsLoading  = ref(false)
+const fnsMessage  = ref('')
+const fnsMessageType = ref<'success' | 'info' | 'error'>('info')
 const search      = ref('')
 const filterCategory = ref<string | null>(null)
 const dialog      = ref(false)
@@ -559,7 +596,7 @@ const contractorImportPreview = ref<{
 const contractorDragMapping   = ref<Record<string, number | null>>({})
 const contractorIgnoredCols   = ref<number[]>([])
 const contractorDragOverTarget = ref<string | null>(null)
-const contractorImportResult  = ref<{ created: number; skipped: number } | null>(null)
+const contractorImportResult  = ref<{ created: number; updated?: number; skipped: number; skipped_empty?: number; update_details?: string[]; errors?: string[] } | null>(null)
 const contractorImportError   = ref('')
 
 const emptyForm = () => ({
@@ -607,27 +644,73 @@ const allCategoriesToggle = computed({
   },
 })
 
-const filtered = computed(() => {
-  let list = contractors.value
-  const q = search.value?.toLowerCase() ?? ''
-  if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.inn || '').includes(q))
-  if (filterCategory.value) {
-    const cat = filterCategory.value
-    list = list.filter(c => c.product_categories.includes('Все') || c.product_categories.includes(cat))
-  }
-  return list
-})
+// Server-side filtering — all filtering done on server
+const filtered = computed(() => contractors.value)
+
+const totalPages = computed(() => Math.ceil(contractorsTotal.value / contractorsPerPage))
 
 function clearFilters() {
   search.value = ''
   filterCategory.value = null
+  contractorsPage.value = 1
+  loadContractors()
+}
+
+async function lookupFns() {
+  const inn = form.value.inn?.trim()
+  if (!inn || inn.length < 10) return
+  fnsLoading.value = true
+  fnsMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, string | null>>(`/contractors/lookup-inn/${inn}`)
+    const filled: string[] = []
+    if (data.name && !form.value.name) { form.value.name = data.name; filled.push('Наименование') }
+    if (data.kpp && !form.value.kpp) { form.value.kpp = data.kpp; filled.push('КПП') }
+    if (data.ogrn && !form.value.ogrn) { form.value.ogrn = data.ogrn; filled.push('ОГРН') }
+    if (data.address && !form.value.address) { form.value.address = data.address; filled.push('Адрес') }
+    if (data.signatory && !form.value.signatory) { form.value.signatory = data.signatory; filled.push('Подписант') }
+    if (data.org_type && !form.value.org_type) { form.value.org_type = data.org_type; filled.push('Тип') }
+    if (filled.length) {
+      fnsMessage.value = `Заполнено из ЕГРЮЛ: ${filled.join(', ')}`
+      fnsMessageType.value = 'success'
+    } else {
+      fnsMessage.value = `Найден: ${data.name || inn}. Все поля уже заполнены.`
+      fnsMessageType.value = 'info'
+    }
+  } catch (e: any) {
+    fnsMessage.value = e.message || 'Ошибка запроса к ФНС'
+    fnsMessageType.value = 'error'
+  } finally {
+    fnsLoading.value = false
+  }
+}
+
+let _searchTimeout: any = null
+function onSearchInput() {
+  clearTimeout(_searchTimeout)
+  _searchTimeout = setTimeout(() => {
+    contractorsPage.value = 1
+    loadContractors()
+  }, 400)
+}
+
+function goPage(page: number) {
+  contractorsPage.value = page
+  loadContractors()
 }
 
 // ── Load ──────────────────────────────────────────
 async function loadContractors() {
   loading.value = true
   try {
-    contractors.value = await apiFetch<ContractorWithStats[]>('/contractors/with-stats')
+    const params = new URLSearchParams()
+    params.set('offset', String((contractorsPage.value - 1) * contractorsPerPage))
+    params.set('limit', String(contractorsPerPage))
+    if (search.value) params.set('search', search.value)
+    if (filterCategory.value) params.set('category', filterCategory.value)
+    const data = await apiFetch<{ items: ContractorWithStats[]; total: number }>(`/contractors/with-stats?${params}`)
+    contractors.value = data.items
+    contractorsTotal.value = data.total
   } catch (e: any) {
     showSnack(e.message || 'Ошибка загрузки', 'error')
   } finally {
@@ -782,21 +865,25 @@ async function downloadTemplate() {
 
 // ── Contractor import helpers ──────────────────────
 const _FIELD_KEYWORDS: Record<string, string[]> = {
-  name:                  ['назван', 'наимен', 'name', 'органи'],
-  inn:                   ['инн', 'inn', 'идентиф'],
-  kpp:                   ['кпп', 'kpp'],
-  ogrn:                  ['огрн', 'ogrn'],
-  address:               ['адрес', 'address'],
-  postal_address:        ['почтов', 'postal'],
-  email:                 ['email', 'e-mail', 'mail'],
-  phone:                 ['телефон', 'phone', 'тел'],
-  contact_person:        ['контакт', 'contact', 'лицо'],
-  signatory:             ['подписант', 'signatory', 'директор', 'руководит'],
-  signatory_basis:       ['основан', 'basis', 'устав', 'действует'],
-  settlement_account:    ['расч', 'р/с', 'settlement'],
-  bank_name:             ['банк', 'bank'],
-  bik:                   ['бик', 'bik'],
-  correspondent_account: ['корр', 'к/с', 'correspondent'],
+  name:                       ['назван', 'наимен', 'name', 'органи'],
+  inn:                        ['инн', 'inn', 'идентиф'],
+  kpp:                        ['кпп', 'kpp'],
+  ogrn:                       ['огрн', 'ogrn'],
+  org_type:                   ['тип орг', 'org_type', 'юр.лицо', 'форма'],
+  address:                    ['адрес', 'address'],
+  postal_address:             ['почтов', 'postal'],
+  email:                      ['email', 'e-mail', 'mail'],
+  phone:                      ['телефон', 'phone', 'тел'],
+  org_phone:                  ['тел. орг', 'org_phone'],
+  org_email:                  ['email орг', 'org_email'],
+  contact_person:             ['контакт', 'contact', 'лицо'],
+  signatory:                  ['подписант', 'signatory', 'директор', 'руководит'],
+  signatory_basis:            ['основан', 'basis', 'устав', 'действует'],
+  settlement_account:         ['расч', 'р/с', 'settlement'],
+  bank_name:                  ['банк', 'bank'],
+  bik:                        ['бик', 'bik'],
+  correspondent_account:      ['корр', 'к/с', 'correspondent'],
+  manual_product_categories:  ['категор', 'товар', 'product', 'categ'],
 }
 
 function contractorAutoDetect(headers: string[]): Record<string, number | null> {
@@ -932,9 +1019,11 @@ async function doContractorImportMapped() {
     params.set('header_row_offset', String(contractorImportPreview.value.header_row_offset))
     const m = contractorDragMapping.value
     const colFields = [
-      'name', 'inn', 'kpp', 'ogrn', 'address', 'postal_address',
+      'name', 'inn', 'kpp', 'ogrn', 'org_type', 'address', 'postal_address',
       'signatory', 'signatory_basis', 'contact_person', 'phone', 'email',
+      'org_phone', 'org_email',
       'settlement_account', 'bank_name', 'bik', 'correspondent_account', 'bank_details',
+      'manual_product_categories',
     ]
     for (const f of colFields) {
       if (m[f] != null) params.set(`col_${f}`, String(m[f]))
@@ -953,7 +1042,7 @@ async function doContractorImportMapped() {
     const data = await res.json()
     contractorImportResult.value = data
     contractorImportStep.value = 3
-    showSnack(`Импортировано: ${data.created}, пропущено: ${data.skipped}`, 'success')
+    showSnack(`Добавлено: ${data.created}, дополнено: ${data.updated || 0}, пропущено: ${data.skipped}`, 'success')
     await loadContractors()
   } catch (e: any) {
     contractorImportError.value = e.message || 'Ошибка импорта'
@@ -978,6 +1067,7 @@ function showSnack(text: string, color = 'success') {
   snack.value = { show: true, text, color }
 }
 
+watch(filterCategory, () => { contractorsPage.value = 1; loadContractors() })
 onMounted(() => { loadContractors(); loadCategories() })
 </script>
 

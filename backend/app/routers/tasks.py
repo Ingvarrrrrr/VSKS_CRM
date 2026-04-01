@@ -605,7 +605,8 @@ async def create_task(
             raise HTTPException(422, "Срок исполнения не может быть раньше текущей даты")
 
     org_id = get_single_org_id(current_user)
-    can_assign_others = current_user.role in _MR
+    # Consent is determined purely by hierarchy, not by role
+    can_assign_others = False
 
     # Determine effective assignee IDs
     assignee_ids = task.assignee_ids or []
@@ -633,6 +634,7 @@ async def create_task(
 
     # Determine which assignees need consent (no hierarchy authority)
     # Managers/admins never need consent; assigning to self never needs consent
+    # ManagerOrganization: if user manages an org, all members of that org don't need consent
     consent_needed: set[int] = set()
     if not can_assign_others:
         non_self = [uid for uid in assignee_ids if uid != current_user.id]
@@ -644,9 +646,49 @@ async def create_task(
                 )
             )
             subordinate_ids = {r[0] for r in hier_res.all()}
+
+            # Load orgs managed by current user
+            from app.models.manager_organization import ManagerOrganization
+            mo_res = await db.execute(
+                select(ManagerOrganization.org_id).where(
+                    ManagerOrganization.manager_user_id == current_user.id
+                )
+            )
+            managed_org_ids = {r[0] for r in mo_res.all()}
+
+            # Load depts managed by current user
+            from app.models.manager_department import ManagerDepartment
+            from app.models.department import DepartmentMember
+            md_res = await db.execute(
+                select(ManagerDepartment.dept_id).where(
+                    ManagerDepartment.manager_user_id == current_user.id
+                )
+            )
+            managed_dept_ids = {r[0] for r in md_res.all()}
+            # Get all user IDs in managed depts
+            managed_dept_user_ids: set[int] = set()
+            if managed_dept_ids:
+                dm_res = await db.execute(
+                    select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
+                )
+                managed_dept_user_ids = {r[0] for r in dm_res.all()}
+
+            # Load org_id for each assignee
+            assignee_org_map = {}
+            if managed_org_ids:
+                assignee_users = (await db.execute(
+                    select(User.id, User.org_id).where(User.id.in_(non_self))
+                )).all()
+                assignee_org_map = {r[0]: r[1] for r in assignee_users}
+
             for uid in non_self:
-                if uid not in subordinate_ids:
-                    consent_needed.add(uid)
+                if uid in subordinate_ids:
+                    continue  # direct subordinate
+                if assignee_org_map.get(uid) in managed_org_ids:
+                    continue  # manages their org
+                if uid in managed_dept_user_ids:
+                    continue  # manages their dept
+                consent_needed.add(uid)
 
     db_task = Task(
         title=task.title,
@@ -786,8 +828,8 @@ async def update_task(
         from app.auth.jwt import MANAGER_ROLES as _MR
         from app.models.user_hierarchy import UserHierarchy as _UH
 
-        # Detect newly added users and determine consent
-        can_assign_others = current_user.role in _MR
+        # Consent determined purely by hierarchy, not role
+        can_assign_others = False
         newly_added_ids = set(new_assignee_ids) - (old_assignee_ids or set())
         if not can_assign_others and newly_added_ids:
             non_self = [uid for uid in newly_added_ids if uid != current_user.id]
@@ -796,9 +838,22 @@ async def update_task(
                     select(_UH.subordinate_id).where(_UH.manager_id == current_user.id)
                 )
                 subordinate_ids = {r[0] for r in hier_res.all()}
+                # Check ManagerOrganization
+                from app.models.manager_organization import ManagerOrganization as _MO
+                mo_res = await db.execute(
+                    select(_MO.org_id).where(_MO.manager_user_id == current_user.id)
+                )
+                managed_org_ids = {r[0] for r in mo_res.all()}
+                assignee_org_map = {}
+                if managed_org_ids:
+                    au_res = (await db.execute(select(User.id, User.org_id).where(User.id.in_(non_self)))).all()
+                    assignee_org_map = {r[0]: r[1] for r in au_res}
                 for uid in non_self:
-                    if uid not in subordinate_ids:
-                        consent_needed_update.add(uid)
+                    if uid in subordinate_ids:
+                        continue
+                    if assignee_org_map.get(uid) in managed_org_ids:
+                        continue
+                    consent_needed_update.add(uid)
 
         await db.execute(
             sqlalchemy.delete(TaskAssignee).where(TaskAssignee.task_id == task_id)

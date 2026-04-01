@@ -74,13 +74,13 @@
         <div v-for="s in overrunSubsidies" :key="s.id" class="overrun-row">
           <strong>{{ s.name }}</strong>:
           бюджет {{ formatCurrency(s.budget) }},
-          НМЦК {{ formatCurrency(s.planned) }}
+          НМЦД {{ formatCurrency(s.planned) }}
           <span v-if="s.contracted > s.budget">
             · законтрактовано {{ formatCurrency(s.contracted) }}
           </span>
           → <strong>перерасход {{ formatCurrency(Math.max(s.planned, s.contracted) - s.budget) }}</strong>
         </div>
-        <div class="overrun-hint">Уменьшите НМЦК закупок или увеличьте размер субсидии</div>
+        <div class="overrun-hint">Уменьшите НМЦД закупок или увеличьте размер субсидии</div>
       </div>
     </div>
 
@@ -438,7 +438,7 @@
                 <thead>
                   <tr>
                     <th>Субсидия</th>
-                    <th class="text-right">НМЦК (план)</th>
+                    <th class="text-right">НМЦД (план)</th>
                     <th class="text-right">Законтрактовано</th>
                     <th class="text-right">Оплачено</th>
                     <th>Исполнение</th>

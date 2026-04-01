@@ -12,6 +12,9 @@ PASSWORD = os.environ.get("REMOTE_PASS", "gGUW6H@i#s5NrZ")
 
 DEPLOY_SCRIPT = r"""
 set -e
+echo "=== 0. git pull ==="
+cd /opt/vsks-crm && git checkout -f claude && git clean -fd && git pull origin claude 2>&1
+
 echo "=== 1. check_schema ==="
 docker cp /opt/vsks-crm/backend/check_schema.py vsks-crm-backend-1:/app/check_schema.py
 docker exec vsks-crm-backend-1 python /app/check_schema.py --apply 2>&1

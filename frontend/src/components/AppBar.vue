@@ -351,9 +351,9 @@ watch(() => $route.path, () => {
 })
 const vuetifyTheme = useTheme()
 
-const ADMIN_ROLES = ['superadmin', 'org_admin', 'admin']
-const MANAGER_ROLES = ['superadmin', 'org_admin', 'admin', 'manager']
-const ALL_ROLES = ['superadmin', 'org_admin', 'admin', 'manager', 'employee']
+const ADMIN_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin']
+const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager']
+const ALL_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager', 'employee']
 
 const isEmployee = computed(() => userRoleRaw.value === 'employee')
 
@@ -361,7 +361,7 @@ const allNavShortcuts = [
   { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
   { label: 'Задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
-  { label: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
+  { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
   { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
   { label: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: MANAGER_ROLES },
   { label: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', roles: MANAGER_ROLES },
@@ -428,7 +428,7 @@ const menuItems = computed(() => {
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
     { title: 'Мои задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
-    { title: 'Заказы', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
+    { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
     { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
     { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: ALL_ROLES },
     { title: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },

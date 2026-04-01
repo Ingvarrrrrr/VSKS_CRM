@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -46,6 +47,7 @@ class Purchase(Base):
     acceptance_doc_date = Column(Date)
     acceptance_doc_number = Column(String(100))
     acceptance_doc_amount = Column(Numeric(15, 2))
+    acceptance_docs = Column(JSONB, default=list)  # [{name, number, date, amount}, ...]
     payment_doc_number = Column(String(100))
     payment_doc_date = Column(Date)
     payment_amount = Column(Numeric(15, 2))

@@ -107,14 +107,15 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         org_inn = org.inn if org else None
 
     return {
-        "purchase_id":     p.id,
-        "registry_number": p.registry_number,
-        "subject":         p.subject,
-        "nmck":            float(p.total_nmck or p.planned_total_price or 0),
-        "purchase_method": p.purchase_method,
-        "contract_type":   p.purchase_contract_type,
-        "execution_term":  str(p.execution_term) if p.execution_term else None,
-        "org_inn":         org_inn,
+        "purchase_id":       p.id,
+        "registry_number":   p.registry_number,
+        "subject":           p.subject,
+        "nmck":              float(p.total_nmck or p.planned_total_price or 0),
+        "purchase_method":   p.purchase_method,
+        "contract_type":     p.purchase_contract_type,
+        "execution_term":    str(p.execution_term) if p.execution_term else None,
+        "delivery_address":  p.delivery_address or None,
+        "org_inn":           org_inn,
         "contractor": {
             "name": contractor.name if contractor else None,
             "inn":  contractor.inn  if contractor else None,
@@ -322,10 +323,14 @@ def _build_soap_xml(payload: dict) -> str:
         okved2_code = esc(item.get("okved2_code") or "G")
         okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
         # positionPrice (total) comes before positionPricePerUnit per schema
-        price_xml = (
-            f"<pnc:positionPrice><pnc:price>{tp}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPrice>"
-            f"<pnc:positionPricePerUnit><pnc:price>{up}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPricePerUnit>"
-        ) if up > 0 else ""
+        if up > 0:
+            price_xml = (
+                f"<pnc:positionPrice><pnc:price>{tp}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPrice>"
+                f"<pnc:positionPricePerUnit><pnc:price>{up}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPricePerUnit>"
+            )
+        else:
+            # Без НМЦД — цена не указана
+            price_xml = "<pnc:noNmcd>true</pnc:noNmcd>"
         items_xml += (
             f"<pnc:lotItem>"
             f"<pnc:ordinalNumber>{idx}</pnc:ordinalNumber>"
@@ -356,7 +361,7 @@ def _build_soap_xml(payload: dict) -> str:
         f"<pnc:subject>{subject}</pnc:subject>"
         "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
         f"<pnc:initialSumInfo><pnc:initialSum>{nmck}</pnc:initialSum><pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
-        "<pnc:deliveryPlace><pnc:adress>Москва</pnc:adress></pnc:deliveryPlace>"
+        f"<pnc:deliveryPlace><pnc:adress>{esc(payload.get('delivery_address') or 'Москва')}</pnc:adress></pnc:deliveryPlace>"
         "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
         f"{lot_items}"
         f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"

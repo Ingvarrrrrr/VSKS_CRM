@@ -63,7 +63,7 @@
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
-        <span class="stat-label">Итого НМЦК</span>
+        <span class="stat-label">Итого НМЦД</span>
         <span class="stat-val">{{ fmt(totalNmck) }}</span>
       </div>
       <div class="stat-sep" />
@@ -100,7 +100,7 @@
               <th class="th-name">Предмет закупки</th>
               <th class="th-feo">Категория ФЭО</th>
               <th class="th-sub">Субсидия</th>
-              <th class="th-money">НМЦК</th>
+              <th class="th-money">НМЦД</th>
               <th class="th-method">Способ</th>
               <th class="th-contractor">Контрагент</th>
               <th class="th-money">Цена договора</th>
@@ -318,7 +318,7 @@ const exportExcel = () => {
   try {
     const headers = [
       '№ п/п', 'Реестровый №', 'Предмет закупки', 'Категория ФЭО', 'Субсидия',
-      'НМЦК (руб.)', 'Способ закупки', 'Контрагент', '№ договора', 'Дата договора',
+      'НМЦД (руб.)', 'Способ закупки', 'Контрагент', '№ договора', 'Дата договора',
       'Цена договора (руб.)', 'Оплачено (руб.)', 'Экономия (руб.)',
       'Плановая дата закупки', 'Срок исполнения', 'Статус',
     ]

@@ -170,7 +170,7 @@
             <v-table density="compact" hover>
               <thead><tr>
                 <th>Название</th><th>Статус</th><th>Контрагент</th>
-                <th class="text-right">НМЦК</th><th>Срок</th><th>Субсидия</th>
+                <th class="text-right">НМЦД</th><th>Срок</th><th>Субсидия</th>
               </tr></thead>
               <tbody>
                 <tr v-for="item in data.planned" :key="item.id" style="cursor:pointer" @click="openItem(item.id)">

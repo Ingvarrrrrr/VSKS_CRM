@@ -47,6 +47,13 @@
             label="Субсидия" variant="outlined" density="compact" clearable
             style="max-width:260px" hide-details
           />
+          <v-autocomplete
+            v-model="filterDeptUserId"
+            :items="users.map(u => ({ title: u.full_name || u.username, value: u.id }))"
+            item-title="title" item-value="value"
+            label="Сотрудник" variant="outlined" density="compact" clearable
+            style="max-width:220px" hide-details
+          />
           <v-spacer />
           <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadDeptTemplate">
             Шаблон
@@ -74,7 +81,7 @@
                   Нет отделов. Создайте первый или загрузите из Excel.
                 </div>
                 <div v-else>
-                  <div v-for="node in deptTree" :key="node.id">
+                  <div v-for="node in filteredDeptTree" :key="node.id">
                     <dept-node :node="node" :depth="0" :multi-org="organizations.length > 1" @select="selectDept" @edit="openEditDept" @delete="deleteDept" @add-member="onAddMemberInline" @edit-member="onEditMemberInline" @remove-member="onRemoveMemberInline" />
                   </div>
                 </div>
@@ -397,23 +404,7 @@
           <v-text-field v-model="editDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
           <v-select v-model="editDialog.role" :items="roleItems" item-title="label" item-value="value"
             label="Роль" variant="outlined" density="compact" class="mb-3" />
-          <v-select
-            v-model="editDialog.deptId"
-            :items="[{ id: null, name: '— Вне отдела —' }, ...flatDepts(deptTree)]"
-            item-title="name"
-            item-value="id"
-            label="Отдел"
-            variant="outlined"
-            density="compact"
-            clearable
-            class="mb-3"
-            prepend-inner-icon="mdi-office-building-outline"
-            hint="Изменение отдела обновляет членство сотрудника"
-            persistent-hint
-          />
-          <v-combobox v-model="editDialog.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" clearable class="mb-3"
-            hint="Введите новую должность или выберите из списка" persistent-hint
-            no-data-text="Введите название новой должности" prepend-inner-icon="mdi-briefcase-outline" />
+          <!-- Отдел и Должность перенесены вниз в блок "Организации, должности, оклад" -->
           <!-- Avatar picker -->
           <div class="mb-3">
             <div class="text-caption text-medium-emphasis mb-1">Аватарка</div>
@@ -440,7 +431,7 @@
           <v-text-field v-model="editDialog.max_chat_id" label="MAX (VK) Chat ID" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-message-processing" placeholder="123456789"
             hint="Числовой ID для уведомлений через MAX-бот" persistent-hint />
-          <v-text-field v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
+          <v-text-field v-if="canChangePassword" v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
           <!-- Multi-org membership (available if orgs list loaded) -->
           <div v-if="organizations.length > 1" class="mb-3">
             <v-select
@@ -461,26 +452,29 @@
               persistent-hint
             />
             <!-- Position per extra org -->
-            <div v-if="editDialog.extraOrgIds.length" class="mt-2">
+            <div v-if="allOrgEntries.length" class="mt-2">
               <div class="text-caption text-medium-emphasis mb-1 d-flex align-center">
                 <v-icon size="12" class="mr-1">mdi-briefcase-outline</v-icon>
-                Должности в дополнительных организациях:
+                Организации, должности, оклад:
               </div>
-              <div v-for="oid in editDialog.extraOrgIds" :key="oid" class="d-flex align-center mb-2 ga-2">
-                <v-chip size="x-small" color="purple" variant="tonal" style="min-width:80px;flex-shrink:0">
-                  {{ organizations.find(o => o.id === oid)?.name || `Орг #${oid}` }}
-                </v-chip>
-                <v-combobox
-                  :model-value="editDialog.orgPositions[oid] || ''"
-                  @update:model-value="v => editDialog.orgPositions[oid] = v || ''"
-                  :items="knownPositions"
-                  placeholder="Должность в этой орг."
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                  clearable
-                  style="flex:1"
-                />
+              <div v-for="(entry, ei) in allOrgEntries" :key="ei" class="mb-4 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0">
+                <v-chip size="small" color="purple" variant="tonal" class="mb-2">{{ entry.org_name }}</v-chip>
+                <v-row dense>
+                  <v-col cols="12" md="6">
+                    <v-text-field :model-value="entry.dept_name" label="Отдел" variant="outlined" density="compact" hide-details readonly
+                      prepend-inner-icon="mdi-office-building-outline" hint="Отдел меняется через Иерархию" />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-combobox v-model="entry.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" hide-details clearable
+                      prepend-inner-icon="mdi-briefcase-outline" />
+                  </v-col>
+                  <v-col cols="6">
+                    <v-text-field v-model.number="entry.salary_amount" label="Оклад ₽" variant="outlined" density="compact" type="number" hide-details />
+                  </v-col>
+                  <v-col cols="6">
+                    <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
+                  </v-col>
+                </v-row>
               </div>
             </div>
           </div>
@@ -945,6 +939,9 @@ const editDialog = reactive({
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
+  orgSalary: {} as Record<number, number | null>,
+  orgPercent: {} as Record<number, number | null>,
+  orgDepts: {} as Record<number, string>,
   // Dept handled via ID (not text) — single source of truth via DepartmentMember table
   deptId: null as number | null,
   origDeptId: null as number | null,
@@ -957,6 +954,9 @@ const userImportDialog = reactive({
   show: false, file: null as File | null, loading: false,
   result: null as { created: number; skipped: number; errors: { row: number; error: string }[] } | null,
 })
+
+// All org entries from salary API (one per dept membership)
+const allOrgEntries = ref<{ org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; _idx: number }[]>([])
 
 // ── TAB 3: HIERARCHY STATE ──
 const treeLoading = ref(false)
@@ -981,11 +981,22 @@ const allSubsNotDirect = computed(() =>
 // ═══════════════════════════════════════════════════════════════
 const deptLoading = ref(false)
 const deptTree = ref<any[]>([])
+const filteredDeptTree = computed(() => {
+  if (!filterDeptUserId.value) return deptTree.value
+  const uid = filterDeptUserId.value
+  function hasMember(node: any): boolean {
+    if ((node.members || []).some((m: any) => m.user_id === uid)) return true
+    return (node.children || []).some((c: any) => hasMember(c))
+  }
+  return deptTree.value.filter(hasMember)
+})
 const selectedDept = ref<any>(null)
 const deptMembers = ref<any[]>([])
 const delegates = ref<any[]>([])
 const filterSubsidyId = ref<number | null>(null)
 const filterDeptOrgId = ref<number | null>(null)
+const filterDeptUserId = ref<number | null>(null)
+const canChangePassword = computed(() => ['superadmin', 'account_owner'].includes(localStorage.getItem('user_role') || ''))
 const filterUserRole = ref<string | null>(null)
 const filterUserOrgId = ref<number | null>(null)
 
@@ -1243,14 +1254,37 @@ async function openEditUser(item: UserItem) {
   }
   editDialog.extraOrgsLoading = true
   editDialog.orgPositions = {}
+  editDialog.orgSalary = {}
+  editDialog.orgPercent = {}
   try {
-    const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`)
-    editDialog.extraOrgIds = res.extra.map((e: any) => e.id)
+    const [orgRes, salaryRes] = await Promise.all([
+      apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`),
+      apiFetch<any[]>(`/users/${item.id}/salary`).catch(() => []),
+    ])
+    editDialog.extraOrgIds = orgRes.extra.map((e: any) => e.id)
     const pos: Record<number, string> = {}
-    for (const e of res.extra) {
+    for (const e of orgRes.extra) {
       if (e.position) pos[e.id] = e.position
     }
     editDialog.orgPositions = pos
+    // Fill salary
+    const sal: Record<number, number | null> = {}
+    const pct: Record<number, number | null> = {}
+    for (const s of (salaryRes || [])) {
+      sal[s.org_id] = s.salary_amount
+      pct[s.org_id] = s.employment_percent
+    }
+    editDialog.orgSalary = sal
+    editDialog.orgPercent = pct
+    // Fill all org entries for the bottom block
+    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
+      org_id: s.org_id, org_name: s.org_name || '', dept_name: s.dept_name || '',
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+    }))
+    editDialog.orgDepts = {}
+    for (const s of (salaryRes || [])) {
+      if (s.dept_name) editDialog.orgDepts[s.org_id] = s.dept_name
+    }
   } catch { /* ignore */ } finally {
     editDialog.extraOrgsLoading = false
   }
@@ -1320,6 +1354,17 @@ async function saveEditUser() {
     // Note: if only position changed (same dept), PATCH /users above already syncs
     // DepartmentMember.position via _sync_user_department — no extra call needed.
 
+    // Save salary for primary org
+    const primaryOrgId = users.value.find(u => u.id === editDialog.userId)?.org_id
+    if (primaryOrgId && (editDialog.orgSalary[primaryOrgId] != null || editDialog.orgPercent[primaryOrgId] != null || editDialog.orgPositions[primaryOrgId])) {
+      try {
+        await apiFetch(`/users/${editDialog.userId}/organizations/${primaryOrgId}`, {
+          method: 'PATCH',
+          body: { position: editDialog.orgPositions[primaryOrgId] || null, salary_amount: editDialog.orgSalary[primaryOrgId] ?? null, employment_percent: editDialog.orgPercent[primaryOrgId] ?? null },
+        })
+      } catch {}
+    }
+
     // Sync extra org memberships + positions
     try {
       const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
@@ -1327,13 +1372,15 @@ async function saveEditUser() {
       const desiredIds = new Set(editDialog.extraOrgIds)
       for (const oid of desiredIds) {
         const pos = editDialog.orgPositions[oid] || null
+        const sal = editDialog.orgSalary[oid] ?? null
+        const pct = editDialog.orgPercent[oid] ?? null
         if (!currentExtraMap.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
-            method: 'POST', body: { position: pos },
+            method: 'POST', body: { position: pos, salary_amount: sal, employment_percent: pct },
           })
-        } else if (pos !== (currentExtraMap.get(oid)?.position ?? null)) {
+        } else {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
-            method: 'PATCH', body: { position: pos },
+            method: 'PATCH', body: { position: pos, salary_amount: sal, employment_percent: pct },
           })
         }
       }

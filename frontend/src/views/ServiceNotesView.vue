@@ -160,7 +160,7 @@ const headers = [
   { title: '#', key: 'purchase_number', width: 70 },
   { title: 'Наименование', key: 'item_name', minWidth: 240 },
   { title: 'Статус', key: 'status', width: 130 },
-  { title: 'НМЦК', key: 'nmck', width: 130, align: 'end' as const },
+  { title: 'НМЦД', key: 'nmck', width: 130, align: 'end' as const },
   { title: 'Срок поставки', key: 'delivery_date', width: 140 },
   { title: 'Действия', key: 'actions', width: 80, sortable: false },
 ]

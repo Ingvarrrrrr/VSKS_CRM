@@ -2147,7 +2147,10 @@ watch(globalSubsidyId, (id: number | null) => {
   }
 })
 
-function startEdit(s: SubsidyRow) {
+async function startEdit(s: SubsidyRow) {
+  if (s.contractor_id && !contractors.value.find(c => c.id === s.contractor_id)) {
+    try { const f = await apiFetch<any>(`/contractors/${s.contractor_id}`); contractors.value.push(f) } catch {}
+  }
   editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', contractor_id: s.contractor_id || null }
   showEditDialog.value = true
 }

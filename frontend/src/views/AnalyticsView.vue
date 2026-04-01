@@ -126,7 +126,7 @@
               <thead>
                 <tr>
                   <th>Субсидия</th>
-                  <th class="text-right">НМЦК (план)</th>
+                  <th class="text-right">НМЦД (план)</th>
                   <th class="text-right">Законтрактовано</th>
                   <th class="text-right">Оплачено</th>
                   <th>Исполнение</th>

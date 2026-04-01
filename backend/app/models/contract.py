@@ -17,6 +17,7 @@ class Contract(Base):
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     purchase_method = Column(String(50), nullable=True)  # single / competitive
+    item_type = Column(String(20), nullable=True)  # товар / услуга
     planned_monthly = Column(Numeric(15, 2), nullable=True)
     contractor = relationship("Contractor")
     subsidy = relationship("Subsidy")

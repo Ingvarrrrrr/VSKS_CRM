@@ -195,7 +195,7 @@ function goBack() {
 }
 
 // ── Chart config ────────────────────────────────────────────────────────────
-// Бюджет=фиолетовый, НМЦК=индиго, Законтрактовано=оранжевый, Оплачено=зелёный
+// Бюджет=фиолетовый, НМЦД=индиго, Законтрактовано=оранжевый, Оплачено=зелёный
 const SERIES_COLORS = ['#8B5CF6', '#6366F1', '#F59E0B', '#22C55E']
 
 const chartSeries = computed(() => {
@@ -205,7 +205,7 @@ const chartSeries = computed(() => {
   if (hasBudget) {
     series.push({ name: 'Бюджет', data: items.map(i => Math.round(i.budget)) })
   }
-  series.push({ name: 'НМЦК',            data: items.map(i => Math.round(i.planned)) })
+  series.push({ name: 'НМЦД',            data: items.map(i => Math.round(i.planned)) })
   series.push({ name: 'Законтрактовано', data: items.map(i => Math.round(i.contracted)) })
   series.push({ name: 'Оплачено',        data: items.map(i => Math.round(i.paid)) })
   return series
@@ -268,7 +268,7 @@ const summaryCards = computed(() => {
     cards.push({ key: 'budget',     label: 'Бюджет',          value: tBudget,     color: '#8B5CF6' })
   }
   cards.push(
-    { key: 'planned',    label: 'НМЦК',           value: tPlanned,    color: '#6366F1' },
+    { key: 'planned',    label: 'НМЦД',           value: tPlanned,    color: '#6366F1' },
     { key: 'contracted', label: 'Законтрактовано', value: tContracted, color: '#F59E0B' },
     { key: 'paid',       label: 'Оплачено',        value: tPaid,       color: '#22C55E' },
   )

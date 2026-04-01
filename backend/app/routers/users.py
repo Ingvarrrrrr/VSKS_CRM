@@ -112,6 +112,8 @@ async def update_user(
     if "password" in update_data:
         pwd = update_data.pop("password")
         if pwd:
+            if current_user.role not in ("superadmin", "account_owner"):
+                raise HTTPException(403, "Изменение пароля доступно только владельцу аккаунта и выше")
             user.password_hash = hash_password(pwd)
 
     # Normalize department name to Title Case

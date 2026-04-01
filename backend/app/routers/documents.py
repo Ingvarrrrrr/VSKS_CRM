@@ -475,7 +475,11 @@ async def generate_document(
         # Substitute responsible person into rows with empty or placeholder full_name
         if not full_name.strip().strip("_").strip():
             full_name = resolved_responsible
-        note = feo_path if getattr(a, "show_feo_path", False) else ""
+        if getattr(a, "show_feo_path", False) and feo_path:
+            item_type_label = {"товар": "Товары", "услуга": "Услуги"}.get(p.item_type or "", "")
+            note = feo_path + (f" ({item_type_label})" if item_type_label else "")
+        else:
+            note = ""
 
         # Electronic signature
         pa = approval_map.get(a.id)
@@ -670,9 +674,93 @@ async def generate_document(
 
     try:
         tpl.render(context)
-        buf = BytesIO()
-        tpl.save(buf)
-        buf.seek(0)
+
+        # Post-process: fix approvers table if docxtpl loop didn't render all rows
+        if doc_type == "approval_sheet" and len(approvers_list) > 0:
+            from docx import Document as _DocxDoc
+            from docx.shared import Pt
+            from copy import deepcopy
+            from lxml import etree
+
+            _buf = BytesIO()
+            tpl.save(_buf)
+            _buf.seek(0)
+            _doc = _DocxDoc(_buf)
+
+            # Find the approvers table (has header row with "Должность" or "ФИО")
+            target_table = None
+            for _t in _doc.tables:
+                hdr = " ".join(c.text.strip() for c in _t.rows[0].cells)
+                if "Должность" in hdr or "ФИО" in hdr:
+                    target_table = _t
+                    break
+
+            if target_table:
+                # Count current data rows (skip header)
+                current_data_rows = len(target_table.rows) - 1
+                needed = len(approvers_list)
+
+                ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+                def _set_cell_text(cell_el, text):
+                    """Replace all cell content with plain text."""
+                    for p_el in list(cell_el.findall(f'{ns}p')):
+                        cell_el.remove(p_el)
+                    p = etree.SubElement(cell_el, f'{ns}p')
+                    r = etree.SubElement(p, f'{ns}r')
+                    t = etree.SubElement(r, f'{ns}t')
+                    t.text = text or ""
+
+                def _set_cell_two_lines(cell_el, line1, line2):
+                    """Replace cell content with two paragraphs."""
+                    for p_el in list(cell_el.findall(f'{ns}p')):
+                        cell_el.remove(p_el)
+                    p1 = etree.SubElement(cell_el, f'{ns}p')
+                    r1 = etree.SubElement(p1, f'{ns}r')
+                    t1 = etree.SubElement(r1, f'{ns}t')
+                    t1.text = line1 or ""
+                    p2 = etree.SubElement(cell_el, f'{ns}p')
+                    r2 = etree.SubElement(p2, f'{ns}r')
+                    t2 = etree.SubElement(r2, f'{ns}t')
+                    t2.text = line2 or ""
+
+                if current_data_rows < needed:
+                    # Rebuild table: template loop didn't render all rows
+                    template_row_el = target_table.rows[1]._tr
+                    for row in list(target_table.rows[1:]):
+                        target_table._tbl.remove(row._tr)
+                    for a in approvers_list:
+                        new_tr = deepcopy(template_row_el)
+                        cells = new_tr.findall(f'.//{ns}tc')
+                        if len(cells) >= 4:
+                            _set_cell_text(cells[0], str(a.get("num", "")))
+                            _set_cell_two_lines(cells[1], a.get("role_name", ""), a.get("full_name", ""))
+                            _set_cell_text(cells[2], "")
+                            _set_cell_text(cells[3], a.get("note", ""))
+                        target_table._tbl.append(new_tr)
+                else:
+                    # Rows match — patch note/FEO into last column of each data row
+                    for idx, a in enumerate(approvers_list):
+                        row_idx = idx + 1  # skip header
+                        if row_idx >= len(target_table.rows):
+                            break
+                        row_el = target_table.rows[row_idx]._tr
+                        cells = row_el.findall(f'.//{ns}tc')
+                        note_val = a.get("note", "")
+                        if note_val and len(cells) >= 4:
+                            _set_cell_text(cells[-1], note_val)
+
+                buf = BytesIO()
+                _doc.save(buf)
+                buf.seek(0)
+            else:
+                buf = BytesIO()
+                tpl.save(buf)
+                buf.seek(0)
+        else:
+            buf = BytesIO()
+            tpl.save(buf)
+            buf.seek(0)
     except Exception as e:
         logger.exception("Document generation error for purchase %s, doc_type=%s, template=%s", pid, doc_type, template_path)
         raise HTTPException(500, f"Ошибка генерации документа: {e}")

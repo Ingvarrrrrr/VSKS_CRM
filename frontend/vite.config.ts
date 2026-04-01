@@ -41,11 +41,15 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         runtimeCaching: [
           {
+            urlPattern: /^\/api\/purchases\/\d+\/documents\//,
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: /^\/api\//,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
-              networkTimeoutSeconds: 5,
+              networkTimeoutSeconds: 10,
               cacheableResponse: { statuses: [0, 200] },
             },
           },

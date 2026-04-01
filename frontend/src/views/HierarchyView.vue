@@ -113,6 +113,111 @@
       </v-card>
     </v-dialog>
 
+    <Teleport to="body">
+      <v-dialog v-model="colorPickerVisible" max-width="360" :z-index="9999">
+        <v-card>
+          <v-card-title class="pa-4 text-body-1">
+            <v-icon icon="mdi-palette" class="mr-2" />Цвет организации
+          </v-card-title>
+          <v-card-text class="pa-4 pt-0 d-flex flex-wrap gap-2 justify-center">
+            <div
+              v-for="c in ORG_COLORS_HV"
+              :key="c"
+              :style="{ background: c, width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', border: '2px solid #fff', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }"
+              @click="applyOrgColor(c)"
+            />
+          </v-card-text>
+          <v-card-actions class="pa-4 pt-0">
+            <v-spacer />
+            <v-btn variant="text" @click="colorPickerVisible = false">Отмена</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </Teleport>
+
+    <!-- Copy user to dept dialog -->
+    <Teleport to="body">
+      <v-dialog v-model="copyUserDialog.show" max-width="420" :z-index="9999">
+        <v-card>
+          <v-card-title class="pa-4 text-body-1">
+            <v-icon icon="mdi-content-copy" class="mr-2" />Копировать «{{ copyUserDialog.userName }}» в отдел
+          </v-card-title>
+          <v-card-text class="pa-4 pt-0">
+            <v-select
+              v-model="copyTargetDeptId"
+              :items="(_lastGraphData?.departments || []).map(d => ({ title: d.name + ' (' + ((_lastGraphData?.orgs || []).find(o => o.id === d.org_id)?.name || '') + ')', value: d.id }))"
+              item-title="title"
+              item-value="value"
+              label="Целевой отдел"
+              variant="outlined"
+              density="compact"
+            />
+          </v-card-text>
+          <v-card-actions class="pa-4 pt-0">
+            <v-spacer />
+            <v-btn variant="text" @click="copyUserDialog.show = false">Отмена</v-btn>
+            <v-btn color="teal" variant="flat" :disabled="!copyTargetDeptId" @click="confirmCopyUser">Добавить</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </Teleport>
+
+    <!-- User info dialog -->
+    <Teleport to="body">
+      <v-dialog v-model="userInfoDialog.show" max-width="520" :z-index="9999">
+        <v-card>
+          <v-card-title class="pa-4 text-body-1">
+            <v-icon icon="mdi-account-details" class="mr-2" />{{ userInfoDialog.userName }}
+          </v-card-title>
+          <v-card-text class="pa-4 pt-0">
+            <div v-if="!userInfoDialog.orgs.length" class="text-medium-emphasis">Нет данных об организациях</div>
+            <div v-for="o in userInfoDialog.orgs" :key="o.org_id" class="mb-3 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+              <div class="d-flex align-center gap-2 mb-2">
+                <v-chip size="small" :color="o.is_primary ? 'primary' : 'grey'" variant="tonal">{{ o.org_name || `Орг #${o.org_id}` }}</v-chip>
+                <v-chip v-if="o.is_primary" size="x-small" color="blue" variant="flat">основная</v-chip>
+              </div>
+              <v-row dense>
+                <v-col cols="12" md="4">
+                  <v-text-field v-model="o.position" label="Должность" variant="outlined" density="compact" hide-details @blur="saveUserOrgSalary(o.org_id)" />
+                </v-col>
+                <v-col cols="6" md="4">
+                  <v-text-field v-model.number="o.salary_amount" label="Оклад, ₽" variant="outlined" density="compact" type="number" hide-details @blur="saveUserOrgSalary(o.org_id)" />
+                </v-col>
+                <v-col cols="6" md="4">
+                  <v-text-field v-model.number="o.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details @blur="saveUserOrgSalary(o.org_id)" />
+                </v-col>
+              </v-row>
+            </div>
+          </v-card-text>
+          <v-card-actions class="pa-4 pt-0">
+            <v-btn variant="text" color="primary" prepend-icon="mdi-pencil" @click="userInfoDialog.show = false; emit('edit-user', userInfoDialog.userId)">Редактировать</v-btn>
+            <v-spacer />
+            <v-btn variant="text" @click="userInfoDialog.show = false">Закрыть</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </Teleport>
+
+    <!-- Edit org dialog -->
+    <Teleport to="body">
+      <v-dialog v-model="editOrgDialog.show" max-width="420" :z-index="9999">
+        <v-card>
+          <v-card-title class="pa-4 text-body-1">
+            <v-icon icon="mdi-domain" class="mr-2" />Редактировать организацию
+          </v-card-title>
+          <v-card-text class="pa-4 pt-0">
+            <v-text-field v-model="editOrgDialog.name" label="Название" variant="outlined" density="compact" class="mb-3" />
+            <v-text-field v-model="editOrgDialog.inn" label="ИНН" variant="outlined" density="compact" />
+          </v-card-text>
+          <v-card-actions class="pa-4 pt-0">
+            <v-spacer />
+            <v-btn variant="text" @click="editOrgDialog.show = false">Отмена</v-btn>
+            <v-btn color="primary" variant="flat" @click="saveOrg">Сохранить</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </Teleport>
+
     <!-- New dept dialog -->
     <v-dialog v-model="newDeptDialog.show" max-width="420">
       <v-card>
@@ -261,7 +366,7 @@ import { apiFetch } from '@/api'
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 268     // dept container width in px
 const USER_W = 240     // user node width in px
-const USER_H = 88      // user node height in px (name + position + role, allows wrapping)
+const USER_H = 88      // user node height in px (name + position + role + counts)
 const DEPT_HEADER_H = 60
 const USER_GAP = 8
 const DEPT_PAD_Y = 12  // bottom padding
@@ -345,20 +450,35 @@ const OrgNode = markRaw({
         type: 'target', position: Position.Left, id: 'tgt',
         style: 'background:#9c27b0;width:14px;height:14px;border:2px solid white;left:-7px',
       }),
-      h('div', { class: 'hnode-header hnode-header-org' }, [
+      h('div', { class: 'hnode-header hnode-header-org', style: p.data.orgColor ? `background:linear-gradient(135deg,${p.data.orgColor},${p.data.orgColor}aa)` : '' }, [
         h('span', { class: 'mdi mdi-domain hnode-icon' }),
-        h('span', { class: 'hnode-title' }, p.data.label),
+        h('span', { class: 'hnode-title', style: 'flex:1' }, p.data.label),
+        h('span', {
+          class: 'mdi mdi-palette',
+          style: 'font-size:14px;cursor:pointer;opacity:0.7;margin-left:6px',
+          title: 'Выбрать цвет организации',
+          onClick: (e: Event) => { e.stopPropagation(); e.preventDefault(); document.dispatchEvent(new CustomEvent('hv-pick-color', { detail: p.data.orgId })) },
+        }),
       ]),
     ])
   },
 })
 
-const ORG_COLORS_HV = ['#1976d2','#9c27b0','#ff9800','#009688','#3f51b5','#e91e63','#795548']
+const ORG_COLORS_HV = [
+  '#1976d2','#9c27b0','#ff9800','#009688','#3f51b5','#e91e63','#795548',
+  '#d32f2f','#388e3c','#1565c0','#6a1b9a','#ef6c00','#00838f','#c62828',
+  '#2e7d32','#283593','#ad1457','#4e342e','#00695c','#bf360c','#0277bd',
+  '#7b1fa2','#f9a825','#00897b','#5c6bc0','#d81b60','#6d4c41','#00acc1',
+  '#e65100','#1b5e20','#4a148c','#ff6f00','#004d40','#b71c1c','#0d47a1',
+  '#880e4f','#33691e','#311b92','#e64a19','#006064','#827717','#4527a0',
+  '#ff8f00','#1a237e','#c51162','#558b2f','#512da8','#ff6d00','#0097a7',
+  '#9e9d24','#7c4dff',
+]
 const DeptNode = markRaw({
   name: 'DeptNode',
   props: ['data'],
   setup(p: any) {
-    return () => h('div', { class: 'hnode-dept-header-bar' }, [
+    return () => h('div', { class: 'hnode-dept-header-bar', style: p.data.orgColor ? `background:linear-gradient(135deg, ${p.data.orgColor}, ${p.data.orgColor}aa)` : '' }, [
       h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
       h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
       p.data.orgName
@@ -413,7 +533,9 @@ const UserNode = markRaw({
         style: 'background:#2196f3;width:14px;height:14px;border:2px solid white',
       }),
       h('div', { class: 'hnode-user-row' }, [
-        h('div', { class: 'hnode-avatar' }, p.data.initials || '?'),
+        h('div', { class: 'hnode-avatar', style: p.data.orgColor ? `background:linear-gradient(135deg,${p.data.orgColor},${p.data.orgColor}cc)` : '' },
+          p.data.initials || '?',
+        ),
         h('div', { class: 'hnode-user-info' }, [
           h('div', { class: 'hnode-user-name' }, [
             p.data.isHead
@@ -424,18 +546,30 @@ const UserNode = markRaw({
           p.data.position
             ? h('div', { class: 'hnode-user-pos' }, p.data.position)
             : null,
-          h('div', { style: 'display:flex;align-items:center;gap:4px;flex-wrap:wrap' }, [
+          // Compact org/position count
+          h('div', { style: 'display:flex;align-items:center;gap:6px;margin-top:2px' }, [
             h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
               roleLabels[p.data.role] || p.data.role),
-            ...(p.data.extraOrgNames || []).map((name: string) =>
-              h('span', {
-                title: `Также в: ${name}`,
-                style: 'background:#9c27b0;color:white;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600;cursor:default',
-              }, name.slice(0, 6))
-            ),
+            (() => {
+              const orgs = p.data.userOrgs || []
+              const orgCount = new Set(orgs.map((o: any) => o.org)).size
+              const posCount = orgs.filter((o: any) => o.pos).length
+              const tooltip = orgs.map((o: any) => [o.org, o.dept ? `(${o.dept})` : '', o.pos].filter(Boolean).join(' · ')).join('\n')
+              return orgCount > 0 ? h('span', {
+                style: 'font-size:9px;color:#666;cursor:default',
+                title: tooltip,
+              }, `${orgCount} орг. · ${posCount} долж.`) : null
+            })(),
           ]),
         ]),
       ]),
+      // Copy button (to place user in another dept/org)
+      h('span', {
+        class: 'mdi mdi-content-copy',
+        style: 'position:absolute;top:4px;right:4px;font-size:12px;cursor:pointer;opacity:0.4;color:inherit',
+        title: 'Копировать в другой отдел',
+        onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-copy-user', { detail: p.data.userId })) },
+      }),
     ])
   },
 })
@@ -446,10 +580,76 @@ const defaultEdgeOptions = { type: 'smoothstep' }
 // ── VueFlow composable ─────────────────────────────────────────────────────────
 const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick } = useVueFlow()
 
+const editOrgDialog = ref({ show: false, id: 0, name: '', inn: '' })
+
+const userInfoDialog = ref({ show: false, userId: 0, userName: '', orgs: [] as any[], saving: false })
+async function openUserInfo(userId: number) {
+  try {
+    const [orgsResp, salaryData] = await Promise.all([
+      apiFetch<any>(`/users/${userId}/organizations`),
+      apiFetch<any[]>(`/users/${userId}/salary`).catch(() => []),
+    ])
+    // Merge primary + extra into flat list
+    const allOrgs: any[] = []
+    if (orgsResp.primary) {
+      allOrgs.push({ org_id: orgsResp.primary.id, org_name: orgsResp.primary.name, position: orgsResp.primary.position || '', is_primary: true })
+    }
+    for (const e of (orgsResp.extra || [])) {
+      allOrgs.push({ org_id: e.org_id || e.id, org_name: e.org_name || e.name || '', position: e.position || '', is_primary: false })
+    }
+    // Merge salary data
+    const salaryMap = new Map((salaryData || []).map((s: any) => [s.org_id, s]))
+    for (const o of allOrgs) {
+      const s: any = salaryMap.get(o.org_id) || {}
+      o.salary_amount = s.salary_amount ?? null
+      o.employment_percent = s.employment_percent ?? null
+    }
+    const user = _lastGraphData.value?.users.find(u => u.id === userId)
+    userInfoDialog.value = { show: true, userId, userName: user?.full_name || user?.username || '', orgs: allOrgs, saving: false }
+  } catch { emit('edit-user', userId) }
+}
+
+async function saveUserOrgSalary(orgId: number) {
+  const o = userInfoDialog.value.orgs.find((x: any) => x.org_id === orgId)
+  if (!o) return
+  userInfoDialog.value.saving = true
+  try {
+    await apiFetch(`/users/${userInfoDialog.value.userId}/organizations/${orgId}`, {
+      method: 'PATCH',
+      body: { position: o.position, salary_amount: o.salary_amount, employment_percent: o.employment_percent },
+    })
+  } catch {}
+  userInfoDialog.value.saving = false
+}
+
 onNodeDoubleClick(({ node }) => {
-  if (node.type === 'user') emit('edit-user', parseInt(node.id.replace('user-', '')))
+  if (node.type === 'user') {
+    const userId = parseInt(node.id.replace(/user-(\d+).*/, '$1'))
+    emit('edit-user', userId)
+  }
   else if (node.type === 'dept') emit('edit-dept', parseInt(node.id.replace('dept-', '')))
+  else if (node.type === 'org') {
+    const orgId = parseInt(node.id.replace('org-', ''))
+    const org = _lastGraphData.value?.orgs.find(o => o.id === orgId)
+    if (org) {
+      editOrgDialog.value = { show: true, id: orgId, name: (org as any).name || '', inn: (org as any).inn || '' }
+    }
+  }
 })
+
+async function saveOrg() {
+  try {
+    await apiFetch(`/organizations/${editOrgDialog.value.id}`, {
+      method: 'PUT',
+      body: { name: editOrgDialog.value.name, inn: editOrgDialog.value.inn },
+    })
+    editOrgDialog.value.show = false
+    showSnack('Организация обновлена')
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка сохранения', 'error')
+  }
+}
 
 // ── Graph data ─────────────────────────────────────────────────────────────────
 
@@ -474,6 +674,68 @@ function getInitials(name: string | null, username: string): string {
 // ── Position persistence ───────────────────────────────────────────────────────
 const POS_KEY = 'hierarchy_node_positions'
 const ORDER_KEY = 'hierarchy_dept_order'
+const ORG_COLOR_KEY = 'hierarchy_org_colors'
+
+function loadOrgColors(): Record<number, string> {
+  try { return JSON.parse(localStorage.getItem(ORG_COLOR_KEY) || '{}') } catch { return {} }
+}
+function saveOrgColor(orgId: number, color: string) {
+  const colors = loadOrgColors()
+  colors[orgId] = color
+  localStorage.setItem(ORG_COLOR_KEY, JSON.stringify(colors))
+}
+function getOrgColor(orgId: number, fallbackIdx: number): string {
+  const saved = loadOrgColors()[orgId]
+  return saved || ORG_COLORS_HV[fallbackIdx % ORG_COLORS_HV.length]
+}
+
+// Color picker state
+const colorPickerOrgId = ref<number | null>(null)
+const colorPickerVisible = ref(false)
+function pickOrgColor(orgId: number) {
+  colorPickerOrgId.value = orgId
+  colorPickerVisible.value = true
+}
+// Copy user — shows dialog to pick target dept
+const copyUserDialog = ref({ show: false, userId: 0, userName: '' })
+const copyTargetDeptId = ref<number | null>(null)
+
+function startCopyUser(userId: number) {
+  const user = _lastGraphData.value?.users.find(u => u.id === userId)
+  if (!user) return
+  copyUserDialog.value = { show: true, userId, userName: user.full_name || user.username }
+  copyTargetDeptId.value = null
+}
+
+async function confirmCopyUser() {
+  if (!copyTargetDeptId.value) return
+  try {
+    await apiFetch(`/departments/${copyTargetDeptId.value}/members`, { method: 'POST', body: { user_id: copyUserDialog.value.userId } })
+    copyUserDialog.value.show = false
+    showSnack('Сотрудник добавлен в отдел')
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка', 'error')
+  }
+}
+
+// Listen for custom events from render functions
+onMounted(() => {
+  document.addEventListener('hv-pick-color', ((e: CustomEvent) => {
+    pickOrgColor(e.detail)
+  }) as EventListener)
+  document.addEventListener('hv-copy-user', ((e: CustomEvent) => {
+    startCopyUser(e.detail)
+  }) as EventListener)
+})
+function applyOrgColor(color: string) {
+  if (colorPickerOrgId.value != null) {
+    saveOrgColor(colorPickerOrgId.value, color)
+    colorPickerVisible.value = false
+    colorPickerOrgId.value = null
+    rebuildGraph() // instant rebuild with new color, no API call
+  }
+}
 
 function loadPositions(): Record<string, { x: number; y: number }> {
   try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') } catch { return {} }
@@ -495,6 +757,8 @@ function saveDeptOrder(deptId: number, userIds: number[]) {
   localStorage.setItem(ORDER_KEY, JSON.stringify(all))
 }
 
+const _orgNameMap = new Map<number, string>()
+
 // ── Build graph ────────────────────────────────────────────────────────────────
 
 function buildGraph(data: GraphData) {
@@ -509,32 +773,34 @@ function buildGraph(data: GraphData) {
     newDeptDialog.value.orgId = data.orgs[0].id
   }
 
-  // Build org name map for extra org badges
-  const orgNameMap = new Map(data.orgs.map(o => [o.id, o.name]))
+  // Build org name map for extra org badges (module-level for drag handlers)
+  _orgNameMap.clear()
+  data.orgs.forEach(o => _orgNameMap.set(o.id, o.name))
+  const orgNameMap = _orgNameMap
 
   // Build user lookup map for rank sorting
   const userMap = new Map(data.users.map(u => [u.id, u]))
 
-  // Map userId → { deptId, idx } — users sorted by rank (head first, then position rank)
-  const userDeptMap: Record<number, { deptId: number; idx: number }> = {}
+  // Map userId → array of { deptId, idx } — user can be in multiple depts
+  const userDeptMap: Record<number, { deptId: number; idx: number }[]> = {}
   for (const dept of data.departments) {
     const savedOrder = deptOrders[dept.id] || null
     const sorted = sortDeptMembers(dept.member_ids, dept.head_user_id, userMap, savedOrder)
     let idx = 0
     for (const uid of sorted) {
-      if (!(uid in userDeptMap)) {
-        userDeptMap[uid] = { deptId: dept.id, idx: idx++ }
-      }
+      if (!userDeptMap[uid]) userDeptMap[uid] = []
+      userDeptMap[uid].push({ deptId: dept.id, idx: idx++ })
     }
   }
 
   // Org nodes
   data.orgs.forEach((org, oi) => {
     const id = `org-${org.id}`
+    const oColor = getOrgColor(org.id, oi)
     newNodes.push({
       id, type: 'org',
       position: savedPos[id] || { x: 80 + oi * 320, y: 60 },
-      data: { label: org.name },
+      data: { label: org.name, orgColor: oColor, orgId: org.id, onColorPick: pickOrgColor },
       draggable: true,
     })
   })
@@ -546,11 +812,11 @@ function buildGraph(data: GraphData) {
     const mc = dept.member_ids.length
     const orgIdx = orgList.findIndex((o: any) => o.id === dept.org_id)
     const orgName = orgList.length > 1 ? orgList[orgIdx]?.name : null
-    const orgColor = ORG_COLORS_HV[orgIdx >= 0 ? orgIdx % ORG_COLORS_HV.length : 0]
+    const orgColor = getOrgColor(dept.org_id, orgIdx >= 0 ? orgIdx : 0)
     newNodes.push({
       id, type: 'dept',
       position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
-      style: mkDeptStyle(mc),
+      style: { ...mkDeptStyle(mc), background: `${orgColor}0D`, border: `2px dashed ${orgColor}` },
       data: {
         label: dept.name,
         memberCount: mc,
@@ -566,35 +832,46 @@ function buildGraph(data: GraphData) {
     })
   })
 
-  // User nodes
+  // User nodes — create one per dept membership + one for free users
   let freeIdx = 0
   for (const user of data.users) {
-    const id = `user-${user.id}`
-    const di = userDeptMap[user.id]
-    const dept = di ? data.departments.find(d => d.id === di.deptId) : undefined
-    const isHead = !!dept && dept.head_user_id === user.id
-
+    const depts = userDeptMap[user.id] || []
     const extraOrgNames = (user.extra_org_ids || [])
       .filter(oid => oid !== user.org_id)
       .map(oid => orgNameMap.get(oid) || `Орг#${oid}`)
+    const orgCount = 1 + (user.extra_org_ids || []).filter((oid: number) => oid !== user.org_id).length
 
-    if (di) {
-      const defaultRelPos = { x: 10, y: DEPT_HEADER_H + 4 + di.idx * (USER_H + USER_GAP) }
-      newNodes.push({
-        id, type: 'user',
-        parentNode: `dept-${di.deptId}`,
-        position: savedPos[id] || defaultRelPos,
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames },
-        draggable: true,
-        zIndex: 1000,
-      })
+    if (depts.length > 0) {
+      // Create a node for each dept the user belongs to
+      for (let ci = 0; ci < depts.length; ci++) {
+        const di = depts[ci]
+        const dept = data.departments.find(d => d.id === di.deptId)
+        const isHead = !!dept && dept.head_user_id === user.id
+        const uOrgId = dept ? dept.org_id : user.org_id
+        const uOrgIdx = orgList.findIndex((o: any) => o.id === uOrgId)
+        const uOrgColor = getOrgColor(uOrgId, uOrgIdx >= 0 ? uOrgIdx : 0)
+        // Unique id per dept placement (first keeps original id for edge compatibility)
+        const nodeId = ci === 0 ? `user-${user.id}` : `user-${user.id}-d${di.deptId}`
+        const defaultRelPos = { x: 10, y: DEPT_HEADER_H + 4 + di.idx * (USER_H + USER_GAP) }
+        newNodes.push({
+          id: nodeId, type: 'user',
+          parentNode: `dept-${di.deptId}`,
+          position: savedPos[nodeId] || defaultRelPos,
+          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [] },
+          draggable: true,
+          zIndex: 1000,
+        })
+      }
     } else {
       const col = freeIdx % 4
       const row = Math.floor(freeIdx / 4)
+      const freeOrgIdx = orgList.findIndex((o: any) => o.id === user.org_id)
+      const freeOrgColor = getOrgColor(user.org_id, freeOrgIdx >= 0 ? freeOrgIdx : 0)
+      const freeId = `user-${user.id}`
       newNodes.push({
-        id, type: 'user',
-        position: savedPos[id] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames },
+        id: freeId, type: 'user',
+        position: savedPos[freeId] || { x: 80 + col * 240, y: 600 + row * 80 },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [] },
         draggable: true,
       })
       freeIdx++
@@ -652,10 +929,13 @@ function buildGraph(data: GraphData) {
   edges.value = newEdges
 }
 
+const _lastGraphData = ref<GraphData | null>(null)
+
 async function loadGraph() {
   loading.value = true
   try {
     const data = await apiFetch<GraphData>('/hierarchy/graph')
+    _lastGraphData.value = data
     buildGraph(data)
     emit('data-changed')
   } catch {
@@ -663,6 +943,10 @@ async function loadGraph() {
   } finally {
     loading.value = false
   }
+}
+
+function rebuildGraph() {
+  if (_lastGraphData.value) buildGraph(_lastGraphData.value)
 }
 
 // ── Auto-layout ────────────────────────────────────────────────────────────────
@@ -823,6 +1107,15 @@ onNodeDragStop(async ({ node }) => {
       const deptId = parseInt(targetDept.id.replace('dept-', ''))
       try {
         await apiFetch(`/departments/${deptId}/members`, { method: 'POST', body: { user_id: userId } })
+        // Auto-add to org if dropping into different org's dept
+        const tDept = _lastGraphData.value?.departments.find(d => d.id === deptId)
+        if (tDept) {
+          const user = _lastGraphData.value?.users.find(u => u.id === userId)
+          const userOrgIds = new Set([user?.org_id, ...(user?.extra_org_ids || [])])
+          if (!userOrgIds.has(tDept.org_id)) {
+            try { await apiFetch(`/users/${userId}/organizations/${tDept.org_id}`, { method: 'POST', body: {} }) } catch {}
+          }
+        }
         showSnack('Сотрудник добавлен в отдел')
 
         // Update nodes locally — no full reload to avoid flicker
@@ -845,9 +1138,17 @@ onNodeDragStop(async ({ node }) => {
         const relPos = { x: 10, y: DEPT_HEADER_H + 4 + existingCount * (USER_H + USER_GAP) }
         const newCount = existingCount + 1
 
+        // Determine new org color for the target dept
+        const tDeptData = _lastGraphData.value?.departments.find(d => d.id === parseInt(targetDept.id.replace('dept-', '')))
+        const tOrgId = tDeptData?.org_id
+        const tOrgIdx = tOrgId ? (_lastGraphData.value?.orgs || []).findIndex(o => o.id === tOrgId) : -1
+        const newOrgColor = tOrgId ? getOrgColor(tOrgId, tOrgIdx >= 0 ? tOrgIdx : 0) : undefined
+
         nodes.value = nodes.value.map(n => {
           if (n.id === node.id) {
-            return { ...n, parentNode: targetDept.id, position: relPos, zIndex: 1000 }
+            const tOrgName = tOrgId ? (_orgNameMap.get(tOrgId) || '') : (n.data as any).deptOrgName
+            const updatedData = { ...(n.data as object), orgColor: newOrgColor || (n.data as any).orgColor, deptOrgName: tOrgName }
+            return { ...n, parentNode: targetDept.id, position: relPos, zIndex: 1000, data: updatedData }
           }
           if (n.id === targetDept.id) {
             const newH = Math.max(calcDeptHeight(newCount), 80)

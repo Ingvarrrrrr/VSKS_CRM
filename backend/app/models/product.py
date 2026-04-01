@@ -12,6 +12,7 @@ class Product(Base):
     description_44fz = Column(Text, nullable=True)  # Описание для 44-ФЗ (интервалы характеристик)
     category = Column(String(200), nullable=True)  # Категория товара из таблицы
     product_type = Column(String(200), nullable=True)  # Вид
+    item_kind = Column(String(20), default="товар")  # "товар" или "услуга"
     is_reusable = Column(Boolean, default=True)  # Многоразовое или одноразовое
     photo_url = Column(String(1000), nullable=True)
     photo_link = Column(String(1000), nullable=True)  # Ссылка на фото

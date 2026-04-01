@@ -308,17 +308,18 @@ async def add_member(
     dept = await db.get(Department, dept_id)
     if not dept:
         raise HTTPException(404, "Отдел не найден")
-    # Remove from ALL other departments first (exclusive membership)
-    other_memberships = (await db.execute(
-        select(DepartmentMember).where(
+    # Remove from other departments of the SAME organization (one dept per org)
+    from app.models.department import Department as _Dept
+    same_org_depts = (await db.execute(
+        select(DepartmentMember).join(_Dept, DepartmentMember.department_id == _Dept.id).where(
             DepartmentMember.user_id == data.user_id,
+            _Dept.org_id == dept.org_id,
             DepartmentMember.department_id != dept_id,
         )
     )).scalars().all()
-    for old_m in other_memberships:
+    for old_m in same_org_depts:
         await db.delete(old_m)
-    if other_memberships:
-        await db.commit()
+
     existing = (await db.execute(
         select(DepartmentMember).where(
             DepartmentMember.department_id == dept_id,
@@ -340,6 +341,22 @@ async def add_member(
     if user:
         user.department = dept.name
         await db.commit()
+    # Sync UserOrganization: ensure user has org record with dept_id
+    from app.models.user_organization import UserOrganization as _UO
+    uo = (await db.execute(
+        select(_UO).where(_UO.user_id == data.user_id, _UO.org_id == dept.org_id)
+    )).scalar_one_or_none()
+    if uo:
+        uo.dept_id = dept_id
+        if not uo.position and data.position:
+            uo.position = data.position
+    elif user and user.org_id != dept.org_id:
+        # Extra org — create UserOrganization record
+        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=data.position))
+    elif user and user.org_id == dept.org_id:
+        # Primary org — create record to store dept_id
+        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=data.position or user.position))
+    await db.commit()
     # Auto-create hierarchy: new member becomes subordinate of dept head
     if dept.head_user_id and dept.head_user_id != data.user_id:
         from app.models.user_hierarchy import UserHierarchy

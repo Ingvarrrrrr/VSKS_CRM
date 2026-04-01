@@ -53,7 +53,7 @@ const router = createRouter({
       path: '/orders',
       name: 'orders',
       component: OrdersView,
-      meta: { requiresAuth: false, title: 'Заказы' }
+      meta: { requiresAuth: false, title: 'Закупки' }
     },
     {
       path: '/create-order',

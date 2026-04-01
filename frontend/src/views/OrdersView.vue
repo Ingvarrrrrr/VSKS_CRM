@@ -392,7 +392,7 @@
 
             <div v-if="importDialog.format === 'standard'" class="mt-3 text-caption text-medium-emphasis">
               Допустимые заголовки колонок:
-              <span class="fz-11">Наименование, Субсидия, Категория ФЭО, Контрагент, ИНН контрагента, НМЦК, Способ закупки, Реестровый №, № договора, Дата договора, Цена договора, Срок исполнения, ПП №, ПП дата, Оплачено, Статус, Год</span>
+              <span class="fz-11">Наименование, Субсидия, Категория ФЭО, Контрагент, ИНН контрагента, НМЦД, Способ закупки, Реестровый №, № договора, Дата договора, Цена договора, Срок исполнения, ПП №, ПП дата, Оплачено, Статус, Год</span>
             </div>
           </template>
 
@@ -739,16 +739,12 @@ const formatMoney = (v?: number | null) =>
 
 const effectivePrice = (item: Purchase): number | null => {
   switch (item.status) {
-    case 'planned': case 'confirmed': case 'in_progress':
-      return item.total_nmck ?? item.planned_total_price ?? null
     case 'contracted':
-      return item.purchase_method === 'single'
-        ? item.contract_price ?? null
-        : item.delivery_payment_amount ?? null
+      return item.contract_price ?? item.total_nmck ?? item.planned_total_price ?? null
     case 'delivered':
-      return item.acceptance_doc_amount ?? null
+      return item.contract_price ?? item.total_nmck ?? item.planned_total_price ?? null
     case 'paid':
-      return item.payment_amount ?? null
+      return item.payment_amount ?? item.contract_price ?? null
     default:
       return item.total_nmck ?? item.planned_total_price ?? null
   }

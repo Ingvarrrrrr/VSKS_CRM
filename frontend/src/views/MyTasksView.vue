@@ -530,7 +530,7 @@
             <template #item="{ item, props }">
               <v-list-item v-bind="props">
                 <template #append>
-                  <v-chip v-if="item.raw.value !== currentUserId && !subordinateIds.has(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
+                  <v-chip v-if="item.raw.value !== currentUserId && !subordinateIds.has(item.raw.value) && !managedOrgUserIds.has(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
                 </template>
               </v-list-item>
             </template>
@@ -848,6 +848,11 @@ const editingTask = ref<any>(null)
 const taskCategories = ref<string[]>([])
 const userItems = ref<{text:string, value:number}[]>([])
 const subordinateIds = ref<Set<number>>(new Set())
+const managedOrgUserIds = ref<Set<number>>(new Set())
+const canAssignWithoutConsent = computed(() => {
+  const role = localStorage.getItem('user_role') || ''
+  return ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager'].includes(role)
+})
 const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '' })
 
 // Task comments
@@ -865,6 +870,8 @@ const delegateForm = ref({ title: '', description: '', priority: 'medium', due_d
 
 const isTaskReadonly = computed(() => {
   if (!editingTask.value) return false
+  const role = localStorage.getItem('user_role') || ''
+  if (['superadmin', 'org_admin', 'admin'].includes(role)) return false
   const uid = currentUserId
   const t = editingTask.value
   const isAssignee = (t.assignees || []).some((a: any) => a.user_id === uid)
@@ -1549,6 +1556,23 @@ async function load() {
   }).catch(() => {})
   apiFetch<any[]>(`/users/${currentUserId}/subordinates`).then(subs => {
     subordinateIds.value = new Set((subs as any[]).map((u: any) => u.id))
+  }).catch(() => {})
+  // Load users managed via hierarchy (org edges + dept edges)
+  apiFetch<any>(`/hierarchy/graph`).then((graph: any) => {
+    const ids = new Set<number>()
+    // Users in orgs managed by current user
+    const myManagedOrgIds = new Set((graph.user_org_edges || []).filter((e: any) => e.manager_user_id === currentUserId).map((e: any) => e.org_id))
+    for (const u of (graph.users || [])) {
+      if (myManagedOrgIds.has(u.org_id)) ids.add(u.id)
+    }
+    // Users in depts managed by current user
+    const myManagedDeptIds = new Set((graph.user_dept_edges || []).filter((e: any) => e.manager_user_id === currentUserId).map((e: any) => e.dept_id))
+    for (const dept of (graph.departments || [])) {
+      if (myManagedDeptIds.has(dept.id)) {
+        for (const uid of (dept.member_ids || [])) ids.add(uid)
+      }
+    }
+    managedOrgUserIds.value = ids
   }).catch(() => {})
 }
 

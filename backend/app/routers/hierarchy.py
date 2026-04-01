@@ -152,15 +152,25 @@ async def get_hierarchy_graph(
         q_users = q_users.where(User.org_id.in_(org_ids))
     users = (await db.execute(q_users)).scalars().all()
 
-    # Load extra org memberships (user_organizations)
+    # Load extra org memberships (user_organizations) with salary
     user_ids = {u.id for u in users}
     extra_orgs_map: dict[int, list[int]] = {}
+    user_org_details: dict[int, list[dict]] = {}  # user_id -> [{org_id, org_name, position, salary, pct}]
+    org_name_map = {o.id: o.name for o in orgs}
     if user_ids:
         uo_rows = (await db.execute(
             select(UserOrganization).where(UserOrganization.user_id.in_(user_ids))
         )).scalars().all()
+        dept_name_map = {d.id: d.name for d in depts}
         for r in uo_rows:
             extra_orgs_map.setdefault(r.user_id, []).append(r.org_id)
+            user_org_details.setdefault(r.user_id, []).append({
+                "org": org_name_map.get(r.org_id, f"#{r.org_id}"),
+                "dept": dept_name_map.get(r.dept_id, "") if r.dept_id else "",
+                "pos": r.position or "",
+                "salary": float(r.salary_amount) if r.salary_amount else None,
+                "pct": r.employment_percent,
+            })
 
     # Load user-user edges (only within our org)
     uu_edges = []
@@ -215,6 +225,11 @@ async def get_hierarchy_graph(
                 "extra_org_ids": extra_orgs_map.get(u.id, []),
                 "avatar": getattr(u, "avatar", None),
                 "position": user_position_map.get(u.id) or getattr(u, "position", None),
+                "user_orgs": (
+                    [{"org": org_name_map.get(u.org_id, ""), "dept": "", "pos": u.position or "", "salary": None, "pct": None}]
+                    if u.org_id and not any(d.get("org") == org_name_map.get(u.org_id) for d in user_org_details.get(u.id, []))
+                    else []
+                ) + user_org_details.get(u.id, []),
             }
             for u in users
         ],
@@ -399,6 +414,8 @@ async def get_user_organizations(
 
 class OrgMembershipBody(BaseModel):
     position: Optional[str] = None
+    salary_amount: Optional[float] = None
+    employment_percent: Optional[int] = None
 
 
 @router.post("/api/users/{uid}/organizations/{org_id}")
@@ -447,10 +464,77 @@ async def update_user_org_position(
         )
     )).scalar_one_or_none()
     if not row:
-        raise HTTPException(404, "Членство не найдено")
-    row.position = body.position
+        # Auto-create for primary org
+        user = await db.get(User, uid)
+        if user and user.org_id == org_id:
+            row = UserOrganization(user_id=uid, org_id=org_id, position=body.position)
+            db.add(row)
+        else:
+            raise HTTPException(404, "Членство не найдено")
+    if body.position is not None:
+        row.position = body.position
+    if body.salary_amount is not None:
+        row.salary_amount = body.salary_amount
+    if body.employment_percent is not None:
+        row.employment_percent = body.employment_percent
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/api/users/{uid}/salary")
+async def get_user_salary(
+    uid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get salary info for a user across all orgs. Restricted to superadmin, org_admin, chief accountant."""
+    # Access check: superadmin sees all; org_admin/accountant sees own org members
+    can_view = current_user.role in ("superadmin", "account_owner")
+    if not can_view and current_user.role in ("org_admin", "admin"):
+        can_view = True  # org admins can see their org members' salary
+    if not can_view:
+        # Check if current user is chief accountant (by position)
+        pos = (current_user.position or "").lower()
+        if "бухгалтер" in pos and "главн" in pos:
+            can_view = True
+    if not can_view:
+        raise HTTPException(403, "Недостаточно прав для просмотра оклада")
+
+    rows = (await db.execute(
+        select(UserOrganization).where(UserOrganization.user_id == uid)
+    )).scalars().all()
+    # Load dept names for dept_ids
+    dept_ids = [r.dept_id for r in rows if r.dept_id]
+    dept_names = {}
+    if dept_ids:
+        from app.models.department import Department as _D
+        d_rows = (await db.execute(select(_D).where(_D.id.in_(dept_ids)))).scalars().all()
+        dept_names = {d.id: d.name for d in d_rows}
+
+    result = [
+        {
+            "org_id": r.org_id,
+            "org_name": r.organization.name if r.organization else "",
+            "dept_name": dept_names.get(r.dept_id, "") if r.dept_id else "",
+            "position": r.position,
+            "salary_amount": float(r.salary_amount) if r.salary_amount else None,
+            "employment_percent": r.employment_percent,
+        }
+        for r in rows
+    ]
+    # Include primary org only if no records exist for it
+    user = await db.get(User, uid)
+    if user and user.org_id and not any(r["org_id"] == user.org_id for r in result):
+        from app.models.organization import Organization
+        org = await db.get(Organization, user.org_id)
+        result.insert(0, {
+            "org_id": user.org_id,
+            "org_name": org.name if org else "",
+            "position": user.position or "",
+            "salary_amount": None,
+            "employment_percent": None,
+        })
+    return result
 
 
 @router.delete("/api/users/{uid}/organizations/{org_id}")

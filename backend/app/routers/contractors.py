@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, distinct
+from sqlalchemy import select, func, distinct, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.contractor import Contractor
@@ -152,8 +152,12 @@ async def list_all_product_categories(
 async def list_contractors_with_stats(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    search: str = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    category: str = Query(None),
 ):
-    """Contractors with product categories derived from purchase_items → products."""
+    """Contractors with product categories, server-side pagination + search."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
@@ -161,57 +165,181 @@ async def list_contractors_with_stats(
     q = select(Contractor).order_by(Contractor.name)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
-        q = q.where(Contractor.org_id.in_(org_ids))
-    contractors = (await db.execute(q)).scalars().all()
+        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
+    if search:
+        term = f"%{search}%"
+        q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
+    if category:
+        # Filter by manual_product_categories JSONB contains, or "Все"
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import cast, literal
+        q = q.where(or_(
+            Contractor.manual_product_categories.op('?')(category),
+            Contractor.manual_product_categories.op('?')('Все'),
+        ))
 
-    # Product categories per contractor: purchase → purchase_items → product.category
-    prod_stmt = (
-        select(
-            Purchase.contractor_id,
-            func.array_agg(distinct(Product.category)).label("product_categories"),
+    # Total count for pagination
+    from sqlalchemy import func as safunc
+    count_q = select(safunc.count()).select_from(q.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    contractors = (await db.execute(q.offset(offset).limit(limit))).scalars().all()
+    c_ids = [c.id for c in contractors]
+
+    # Product categories per contractor (only for current page)
+    prod_cat_map = {}
+    if c_ids:
+        prod_stmt = (
+            select(
+                Purchase.contractor_id,
+                func.array_agg(distinct(Product.category)).label("product_categories"),
+            )
+            .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
+            .join(Product, Product.id == PurchaseItem.product_id)
+            .where(Purchase.contractor_id.in_(c_ids))
+            .where(Product.category.isnot(None))
+            .where(Product.category != '')
+            .group_by(Purchase.contractor_id)
         )
-        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
-        .join(Product, Product.id == PurchaseItem.product_id)
-        .where(Purchase.contractor_id.isnot(None))
-        .where(Product.category.isnot(None))
-        .where(Product.category != '')
-        .group_by(Purchase.contractor_id)
-    )
-    prod_rows = (await db.execute(prod_stmt)).all()
-    prod_cat_map = {
-        row.contractor_id: [x for x in (row.product_categories or []) if x]
-        for row in prod_rows
-    }
+        prod_rows = (await db.execute(prod_stmt)).all()
+        prod_cat_map = {
+            row.contractor_id: [x for x in (row.product_categories or []) if x]
+            for row in prod_rows
+        }
 
     result = []
     for c in contractors:
         c_dict = ContractorOut.model_validate(c).model_dump()
         manual = c.manual_product_categories or []
         auto = prod_cat_map.get(c.id, [])
-        # "Все" = special marker meaning all categories
         if "Все" in manual:
             c_dict["product_categories"] = ["Все"]
         else:
-            merged = list(dict.fromkeys(manual + auto))  # deduplicate, keep order
+            merged = list(dict.fromkeys(manual + auto))
             c_dict["product_categories"] = merged
         result.append(c_dict)
-    return result
+    return {"items": result, "total": total}
+
+
+@router.get("/lookup-inn/{inn}")
+async def lookup_inn(
+    inn: str,
+    _=Depends(get_current_user),
+):
+    """Lookup company data by INN from FNS (nalog.ru) EGRUL/EGRIP API."""
+    import httpx
+    import logging
+    logger = logging.getLogger(__name__)
+
+    inn = inn.strip()
+    if not inn or len(inn) not in (10, 12):
+        raise HTTPException(400, "ИНН должен быть 10 (юр.лицо) или 12 (ИП) цифр")
+
+    # FNS public API (no auth required)
+    url = f"https://egrul.nalog.ru/search-result/{inn}"
+    search_url = "https://egrul.nalog.ru/"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=False) as client:
+            # Step 1: initiate search
+            resp1 = await client.post(search_url, json={"query": inn, "region": "", "page": ""})
+            token = resp1.json().get("t")
+            if not token:
+                raise HTTPException(502, "ФНС не вернула токен поиска")
+
+            # Step 2: get results (may need retry)
+            import asyncio
+            for attempt in range(5):
+                await asyncio.sleep(1)
+                resp2 = await client.get(f"https://egrul.nalog.ru/search-result/{token}")
+                data = resp2.json()
+                rows = data.get("rows", [])
+                if rows:
+                    break
+
+            if not rows:
+                raise HTTPException(404, f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП")
+
+            row = rows[0]  # first match
+            result = {
+                "name": row.get("n") or row.get("c"),  # n=full name, c=short name
+                "inn": row.get("i"),
+                "ogrn": row.get("o"),
+                "kpp": row.get("p"),
+                "address": row.get("a"),
+                "org_type": "ИП" if len(inn) == 12 else "Юридическое лицо",
+                "signatory": row.get("g"),  # director/head name
+                "status": row.get("s"),  # status text
+                "registration_date": row.get("r"),
+            }
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("FNS lookup error for INN %s: %s", inn, e)
+        raise HTTPException(502, f"Ошибка запроса к ФНС: {str(e)[:200]}")
+
+
+@router.post("/enrich-from-fns/{contractor_id}")
+async def enrich_contractor_from_fns(
+    contractor_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES, *MANAGER_ROLES)),
+):
+    """Fetch data from FNS by contractor's INN and fill empty fields."""
+    res = await db.execute(select(Contractor).where(Contractor.id == contractor_id))
+    c = res.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Контрагент не найден")
+    if not c.inn:
+        raise HTTPException(400, "У контрагента не заполнен ИНН")
+
+    # Reuse lookup
+    fns_data = await lookup_inn(c.inn, _)
+
+    updated_fields = []
+    field_map = {
+        'name': 'name', 'kpp': 'kpp', 'ogrn': 'ogrn',
+        'address': 'address', 'org_type': 'org_type', 'signatory': 'signatory',
+    }
+    for fns_field, model_field in field_map.items():
+        fns_val = fns_data.get(fns_field)
+        if fns_val and not getattr(c, model_field, None):
+            setattr(c, model_field, fns_val)
+            updated_fields.append(model_field)
+
+    await db.commit()
+    await db.refresh(c)
+    return {"updated_fields": updated_fields, "contractor": ContractorOut.model_validate(c)}
 
 
 @router.get("/", response_model=List[ContractorOut])
 async def list_contractors(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    search: str = None,
+    search: str = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
 ):
     q = select(Contractor).order_by(Contractor.name)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
-        q = q.where(Contractor.org_id.in_(org_ids))
+        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
     if search:
         q = q.where(Contractor.name.ilike(f"%{search}%") | Contractor.inn.ilike(f"%{search}%"))
-    result = await db.execute(q)
+    result = await db.execute(q.limit(limit))
     return result.scalars().all()
+
+
+@router.get("/{cid}", response_model=ContractorOut)
+async def get_contractor(
+    cid: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    c = await db.get(Contractor, cid)
+    if not c:
+        raise HTTPException(404, "Контрагент не найден")
+    return c
 
 
 @router.post("/", response_model=ContractorOut)
@@ -458,6 +586,9 @@ async def import_contractors_excel(
         s = str(v).strip()
         if not s or s.lower() in ('none', 'null', '-', '—'):
             return None
+        # Clean ".0" suffix from numeric fields (Excel float issue)
+        if field in ('inn', 'kpp', 'ogrn', 'bik') and s.endswith('.0'):
+            s = s[:-2]
         limit = _limits.get(field)
         return s[:limit] if limit else s
 
@@ -553,7 +684,7 @@ async def contractors_import_preview(
 async def contractors_import_mapped(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES)),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
     col_name: Optional[int] = Query(None),
     col_inn: Optional[int] = Query(None),
     col_kpp: Optional[int] = Query(None),
@@ -565,11 +696,15 @@ async def contractors_import_mapped(
     col_contact_person: Optional[int] = Query(None),
     col_phone: Optional[int] = Query(None),
     col_email: Optional[int] = Query(None),
+    col_org_phone: Optional[int] = Query(None),
+    col_org_email: Optional[int] = Query(None),
     col_settlement_account: Optional[int] = Query(None),
     col_bank_name: Optional[int] = Query(None),
     col_bik: Optional[int] = Query(None),
     col_correspondent_account: Optional[int] = Query(None),
     col_bank_details: Optional[int] = Query(None),
+    col_org_type: Optional[int] = Query(None),
+    col_manual_product_categories: Optional[int] = Query(None),
     header_row_offset: int = Query(0),
 ):
     """Import contractors using user-specified column mapping."""
@@ -609,11 +744,15 @@ async def contractors_import_mapped(
         'contact_person': col_contact_person,
         'phone': col_phone,
         'email': col_email,
+        'org_phone': col_org_phone,
+        'org_email': col_org_email,
         'settlement_account': col_settlement_account,
         'bank_name': col_bank_name,
         'bik': col_bik,
         'correspondent_account': col_correspondent_account,
         'bank_details': col_bank_details,
+        'org_type': col_org_type,
+        'manual_product_categories': col_manual_product_categories,
     }
 
     def _get(row, field):
@@ -626,27 +765,69 @@ async def contractors_import_mapped(
         s = str(v).strip()
         if not s or s.lower() in ('none', 'null', '-', '—'):
             return None
+        # Clean ".0" suffix from numeric fields (Excel float issue)
+        if field in ('inn', 'kpp', 'ogrn', 'bik') and s.endswith('.0'):
+            s = s[:-2]
         limit = _limits.get(field)
         return s[:limit] if limit else s
 
-    # Collect existing INNs for dedup
-    inn_result = await db.execute(select(Contractor.inn).where(Contractor.inn.isnot(None)))
-    existing_inns = {r[0] for r in inn_result}
+    # Collect existing contractors by INN for merge
+    inn_result = await db.execute(
+        select(Contractor).where(Contractor.inn.isnot(None))
+    )
+    existing_by_inn: dict[str, Contractor] = {c.inn: c for c in inn_result.scalars().all() if c.inn}
+
+    _updatable_fields = [
+        'kpp', 'ogrn', 'address', 'postal_address', 'signatory', 'signatory_basis',
+        'contact_person', 'phone', 'email', 'org_phone', 'org_email',
+        'settlement_account', 'bank_name', 'bik', 'correspondent_account',
+        'bank_details', 'org_type',
+    ]
 
     created = 0
-    skipped = 0
+    updated = 0
+    skipped_empty = 0
     errors_list = []
+    update_details = []
 
-    for row in data_rows:
+    for row_num, row in enumerate(data_rows, start=2):
         try:
             name = _get(row, 'name')
             if not name:
-                skipped += 1
+                skipped_empty += 1
                 continue
 
             inn = _get(row, 'inn')
-            if inn and inn in existing_inns:
-                skipped += 1
+
+            # Parse categories: comma/semicolon separated string → JSON array
+            cats_raw = _get(row, 'manual_product_categories')
+            cats = None
+            if cats_raw:
+                cats = [c.strip() for c in cats_raw.replace(';', ',').split(',') if c.strip()]
+
+            # If contractor with this INN exists — merge new data into it
+            if inn and inn in existing_by_inn:
+                existing = existing_by_inn[inn]
+                changed_fields = []
+                for field in _updatable_fields:
+                    new_val = _get(row, field)
+                    if new_val and not getattr(existing, field, None):
+                        setattr(existing, field, new_val)
+                        changed_fields.append(field)
+                # Merge categories
+                if cats:
+                    old_cats = existing.manual_product_categories or []
+                    merged = list(set(old_cats + cats))
+                    if merged != old_cats:
+                        existing.manual_product_categories = merged
+                        changed_fields.append('categories')
+                # Update name if existing is shorter/empty
+                if name and (not existing.name or len(name) > len(existing.name)):
+                    existing.name = name
+                    changed_fields.append('name')
+                if changed_fields:
+                    updated += 1
+                    update_details.append(f"ИНН {inn}: дополнены {', '.join(changed_fields)}")
                 continue
 
             c = Contractor(
@@ -661,18 +842,30 @@ async def contractors_import_mapped(
                 contact_person=_get(row, 'contact_person'),
                 phone=_get(row, 'phone'),
                 email=_get(row, 'email'),
+                org_phone=_get(row, 'org_phone'),
+                org_email=_get(row, 'org_email'),
                 settlement_account=_get(row, 'settlement_account'),
                 bank_name=_get(row, 'bank_name'),
                 bik=_get(row, 'bik'),
                 correspondent_account=_get(row, 'correspondent_account'),
                 bank_details=_get(row, 'bank_details'),
+                org_type=_get(row, 'org_type'),
+                org_id=get_single_org_id(current_user) or current_user.org_id,
+                manual_product_categories=cats,
             )
             db.add(c)
             if inn:
-                existing_inns.add(inn)
+                existing_by_inn[inn] = c
             created += 1
         except Exception as e:
-            errors_list.append(str(e))
+            errors_list.append(f"Строка {row_num}: {str(e)}")
 
     await db.commit()
-    return {"created": created, "skipped": skipped, "errors": errors_list}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped_empty,
+        "skipped_empty": skipped_empty,
+        "update_details": update_details[:50],
+        "errors": errors_list,
+    }

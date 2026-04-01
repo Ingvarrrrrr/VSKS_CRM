@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .routers import (
@@ -182,6 +183,47 @@ async def add_correlation_id(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Correlation-ID"] = correlation_id
     return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert pydantic 422 errors into human-readable Russian messages."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    field_labels = {
+        "subsidy_id": "Субсидия", "contractor_id": "Контрагент", "item_type": "Тип",
+        "item_name": "Наименование", "status": "Статус", "date": "Дата",
+        "contract_date": "Дата договора", "delivery_date": "Дата поставки",
+        "execution_term": "Срок исполнения", "nmck": "НМЦК", "contract_price": "Цена договора",
+        "planned_total_price": "Плановая сумма", "payment_amount": "Сумма оплаты",
+        "number": "Номер", "subject": "Предмет", "max_amount": "Максимальная сумма",
+    }
+    errors = []
+    for err in exc.errors():
+        loc = [str(l) for l in err.get("loc", []) if l != "body"]
+        field = loc[-1] if loc else "?"
+        label = field_labels.get(field, field)
+        msg = err.get("msg", "")
+        # Translate common pydantic messages
+        if "required" in msg.lower():
+            errors.append(f"Поле «{label}» обязательно для заполнения")
+        elif "valid" in msg.lower() and "date" in msg.lower():
+            errors.append(f"Поле «{label}»: неверный формат даты")
+        elif "valid" in msg.lower() and ("decimal" in msg.lower() or "number" in msg.lower()):
+            errors.append(f"Поле «{label}»: ожидается число")
+        elif "valid" in msg.lower() and "integer" in msg.lower():
+            errors.append(f"Поле «{label}»: ожидается целое число")
+        else:
+            errors.append(f"Поле «{label}»: {msg}")
+    message = "; ".join(errors) if errors else "Ошибка валидации данных"
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": "VALIDATION_ERROR",
+            "message": message,
+            "details": str(exc.errors()),
+            "correlation_id": correlation_id,
+        },
+    )
 
 
 @app.exception_handler(HTTPException)

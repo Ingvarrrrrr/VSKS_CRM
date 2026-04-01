@@ -29,9 +29,17 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     const text = await res.text()
     let parsed: any = null
     try { parsed = JSON.parse(text) } catch {}
+    // FastAPI 422 returns detail as array of validation errors
+    let detailMsg = parsed?.message || parsed?.detail || text || 'Ошибка запроса'
+    if (Array.isArray(detailMsg)) {
+      detailMsg = detailMsg.map((e: any) => {
+        const field = (e.loc || []).filter((l: any) => l !== 'body').join(' → ')
+        return field ? `${field}: ${e.msg}` : e.msg
+      }).join('; ')
+    }
     const payload = {
       code: parsed?.code || `HTTP_${res.status}`,
-      message: parsed?.message || parsed?.detail || text || 'Ошибка запроса',
+      message: detailMsg,
       details: parsed?.details || text || '',
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }

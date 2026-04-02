@@ -76,7 +76,7 @@
       >
         <template #item.status="{ item }">
           <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
-            {{ statusLabel(item.status) }}
+            {{ statusLabel(item.status, item) }}
           </v-chip>
         </template>
 
@@ -124,7 +124,9 @@ interface Purchase {
   planned_total_price?: number
   delivery_date?: string
   purchase_method?: string
+  purchase_contract_type?: string
 }
+const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 
 interface Subsidy { id: number; name: string }
 
@@ -151,7 +153,10 @@ const statusItems = Object.entries(STATUS_LABEL).map(([value, label]) => ({
   value, label, color: STATUS_COLOR[value],
 }))
 
-const statusLabel = (s: string) => STATUS_LABEL[s] || s
+const statusLabel = (s: string, item?: Purchase) => {
+  if (s === 'contracted' && item && FRAMEWORK_TYPES.has(item.purchase_contract_type || '')) return 'Заказ'
+  return STATUS_LABEL[s] || s
+}
 const statusColor = (s: string) => STATUS_COLOR[s] || 'grey'
 const formatMoney = (v?: number | null) => v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
 

@@ -134,7 +134,7 @@
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
               <v-text-field
                 v-model="form.subject"
-                :label="formMode === 'advance_report' ? 'Предмет авансового' : 'Предмет договора'"
+                :label="formMode === 'advance_report' ? 'Предмет авансового' : `Предмет ${contractWordGen}`"
                 variant="outlined"
                 density="compact"
                 placeholder="Поставка оборудования..."
@@ -217,7 +217,7 @@
                     <div v-if="selectedFrameworkContract.subject" class="text-caption text-medium-emphasis mt-1">{{ selectedFrameworkContract.subject }}</div>
                     <div v-if="selectedFrameworkContract.max_amount" class="text-caption font-weight-medium text-blue-darken-2 mt-1">
                       Макс. сумма: {{ Number(selectedFrameworkContract.max_amount).toLocaleString('ru-RU') }} ₽
-                      <span v-if="selectedFrameworkContract.remaining != null"> · Остаток: {{ Number(selectedFrameworkContract.remaining).toLocaleString('ru-RU') }} ₽</span>
+                      <span v-if="selectedFrameworkContract.remaining_ordered != null"> · Остаток: {{ Number(selectedFrameworkContract.remaining_ordered).toLocaleString('ru-RU') }} ₽</span>
                     </div>
                   </template>
                   <span v-else class="text-medium-emphasis text-body-2">Рамочный договор не выбран</span>
@@ -227,9 +227,15 @@
               </div>
             </v-col>
             <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
-              <v-text-field v-model.number="form.framework_seq" label="Порядковый № в рамочном договоре"
+              <v-text-field :model-value="form.framework_seq" label="Порядковый № в рамочном договоре"
                 variant="outlined" density="compact" type="number" min="1"
-                hint="Номер закупки внутри рамочного договора" persistent-hint />
+                readonly bg-color="grey-lighten-4"
+                :hint="isNew ? 'Присвоится автоматически после сохранения' : 'Номер закупки внутри рамочного договора'"
+                persistent-hint>
+                <template v-if="isAdminLevel && !isNew" #append-inner>
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editFrameworkSeq" title="Изменить вручную" />
+                </template>
+              </v-text-field>
             </v-col>
             <v-col v-if="isFramework && frameworkSiblings.length" cols="12">
               <div class="framework-siblings-label">
@@ -269,7 +275,7 @@
               @click="removeSelectedItems">
               Удалить ({{ selectedItemIdxs.length }})
             </v-btn>
-            <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" title="Зафиксирована при заключении договора">
+            <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" :title="`Зафиксирована при заключении ${contractWordGen}`">
               НМЦД (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
             <v-chip color="primary" variant="tonal" size="small">
@@ -540,10 +546,10 @@
             </v-col>
             <v-col cols="12" md="3" class="pt-8">
               <v-text-field v-if="isFramework && selectedFrameworkContract"
-                :model-value="selectedFrameworkContract.remaining != null ? formatMoney(selectedFrameworkContract.remaining) : '—'"
+                :model-value="selectedFrameworkContract.remaining_ordered != null ? formatMoney(selectedFrameworkContract.remaining_ordered) : '—'"
                 label="Остаток средств на договоре" variant="outlined"
                 density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
-                hint="Предельная сумма минус сумма всех закупок" persistent-hint />
+                hint="Предельная сумма минус сумма заказанного" persistent-hint />
               <v-text-field v-else :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
                 density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
                 hint="НМЦД минус Цена договора. Считается автоматически." persistent-hint />
@@ -618,13 +624,13 @@
           <v-window-item value="contract">
           <v-row class="mt-1">
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.contract_number" label="Номер договора" variant="outlined" density="compact"
+              <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                 :placeholder="isNew ? 'Назначается автоматически' : ''"
-                :hint="needsContract ? 'Обязательно для перехода в статус Договор' : isNew ? 'Будет присвоен после сохранения' : ''"
+                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен после сохранения' : ''"
                 persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.contract_date" label="Дата договора" variant="outlined"
+              <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
                 density="compact" type="date" :rules="contractDateRules" />
             </v-col>
             <v-col cols="12" md="3">
@@ -801,7 +807,7 @@
                     <template #subtitle>
                       <span v-if="item.raw.max_amount" class="text-caption">
                         Макс: {{ Number(item.raw.max_amount).toLocaleString('ru-RU') }} ₽
-                        <span v-if="item.raw.remaining != null"> · Остаток: {{ Number(item.raw.remaining).toLocaleString('ru-RU') }} ₽</span>
+                        <span v-if="item.raw.remaining_ordered != null"> · Остаток: {{ Number(item.raw.remaining_ordered).toLocaleString('ru-RU') }} ₽</span>
                       </span>
                     </template>
                   </v-list-item>
@@ -839,7 +845,7 @@
 
       <!-- 4а. Параметры для генерации договора (admin+) -->
       <v-card v-if="isSectionVisible('contract_params')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры договора (для документа)</v-card-title>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры {{ contractWordGen }} (для документа)</v-card-title>
         <v-card-text>
           <v-row>
             <v-col cols="12" md="3">
@@ -1409,7 +1415,7 @@
               :loading="docLoading === 'contract'"
               @click="downloadDoc('contract')"
             >
-              Договор
+              {{ contractWord }}
             </v-btn>
             <v-btn v-if="isManagerLevel && isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-edit-outline"
@@ -1419,7 +1425,7 @@
               :loading="docLoading === 'contract_fadm'"
               @click="downloadDoc('contract_fadm')"
             >
-              Договор ФАДМ
+              {{ contractWord }} ФАДМ
             </v-btn>
             <v-btn v-if="isManagerLevel"
               prepend-icon="mdi-file-word-outline"
@@ -2284,8 +2290,8 @@
                 <td class="text-caption">{{ c.contractor_inn || '—' }}</td>
                 <td style="max-width:220px;white-space:normal;font-size:12px">{{ c.subject || '—' }}</td>
                 <td class="text-right">{{ c.max_amount ? Number(c.max_amount).toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
-                <td class="text-right" :class="c.remaining != null && c.remaining < 0 ? 'text-error' : 'text-success'">
-                  {{ c.remaining != null ? Number(c.remaining).toLocaleString('ru-RU') + ' ₽' : '—' }}
+                <td class="text-right" :class="c.remaining_ordered != null && c.remaining_ordered < 0 ? 'text-error' : 'text-success'">
+                  {{ c.remaining_ordered != null ? Number(c.remaining_ordered).toLocaleString('ru-RU') + ' ₽' : '—' }}
                 </td>
                 <td>
                   <v-btn variant="tonal" color="primary" size="x-small"
@@ -2770,11 +2776,15 @@ const backRoute = computed(() => {
 })
 
 const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
-const STATUS_LABEL: Record<string, string> = {
+const STATUS_LABEL_BASE: Record<string, string> = {
   wishes: 'Желания сотрудников', plan_schedule: 'План-график',
   confirmed: 'Подтверждено руководством', work_in_progress: 'Ведётся работа',
   contracted: 'Заключён договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
+const STATUS_LABEL = computed<Record<string, string>>(() => ({
+  ...STATUS_LABEL_BASE,
+  contracted: isFramework.value ? 'Заключён заказ' : 'Заключён договор',
+}))
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
   confirmed: 'blue', work_in_progress: 'teal',
@@ -2791,7 +2801,7 @@ interface FeoCategory { id: number; name: string; parent_id: number | null; leve
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
-interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; status?: string; purchase_method?: string; end_date?: string }
+interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; remaining_ordered?: number; remaining_delivered?: number; remaining_paid?: number; status?: string; purchase_method?: string; end_date?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
 interface OrderItem {
   product_id: number | null
@@ -2811,7 +2821,7 @@ interface OrderItem {
 }
 interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; is_active?: boolean; uploaded_by_name?: string | null; created_at?: string | null }
 
-const FILE_TYPE_LABELS: Record<string, string> = {
+const FILE_TYPE_LABELS_BASE: Record<string, string> = {
   kp:           'КП',
   service_note: 'Служебная записка',
   protocol:     'Протокол закупки',
@@ -2822,7 +2832,11 @@ const FILE_TYPE_LABELS: Record<string, string> = {
   act:          'Закрывающий документ',
   other:        'Прочее',
 }
-const FILE_TYPE_OPTIONS = Object.entries(FILE_TYPE_LABELS).map(([value, title]) => ({ value, title }))
+const FILE_TYPE_LABELS = computed<Record<string, string>>(() => ({
+  ...FILE_TYPE_LABELS_BASE,
+  contract: contractWord.value,
+}))
+const FILE_TYPE_OPTIONS = computed(() => Object.entries(FILE_TYPE_LABELS.value).map(([value, title]) => ({ value, title })))
 
 function fileTypeColor(t?: string): string {
   const map: Record<string, string> = {
@@ -3103,11 +3117,11 @@ const uploadDocFormat = ref('scan')
 const closingFiles = computed(() => uploadedFiles.value.filter(f => ['act', 'upd', 'contract'].includes(f.file_type || '')))
 const paymentFiles = computed(() => uploadedFiles.value.filter(f => f.file_type === 'invoice'))
 
-const DOC_UPLOAD_SECTIONS = [
-  { type: 'contract' as const, label: 'Договор', icon: 'mdi-file-sign', color: 'indigo' },
+const DOC_UPLOAD_SECTIONS = computed(() => [
+  { type: 'contract' as const, label: contractWord.value, icon: 'mdi-file-sign', color: 'indigo' },
   { type: 'act' as const, label: 'Акт', icon: 'mdi-file-check', color: 'cyan' },
   { type: 'upd' as const, label: 'УПД', icon: 'mdi-file-document-check', color: 'green' },
-]
+])
 
 function filesByType(type: string) {
   return uploadedFiles.value.filter(f => f.file_type === type)
@@ -3757,6 +3771,9 @@ const newFrameworkForm = reactive({
 })
 
 const isFramework = computed(() => form.purchase_contract_type === 'framework_cumulative' || form.purchase_contract_type === 'framework_with_amount')
+const contractWord = computed(() => isFramework.value ? 'Заказ' : 'Договор')
+const contractWordLower = computed(() => isFramework.value ? 'заказ' : 'договор')
+const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'договора')
 
 // ── Framework sibling purchases ───────────────────────────────────────────────
 interface FrameworkSibling {
@@ -3871,6 +3888,24 @@ function clearFrameworkContract() {
   form.contract_id = null
 }
 
+function editFrameworkSeq() {
+  const current = form.framework_seq
+  const input = prompt(`Изменить порядковый номер в рамочном договоре?\nТекущий: ${current ?? '—'}\n\nВведите новый номер (или оставьте пустым для автоназначения):`)
+  if (input === null) return // отмена
+  if (input.trim() === '') {
+    if (confirm('Номер будет назначен автоматически при сохранении. Продолжить?')) {
+      form.framework_seq = null
+    }
+  } else {
+    const num = parseInt(input, 10)
+    if (isNaN(num) || num < 1) {
+      showSnack('Номер должен быть целым числом больше 0', 'warning')
+      return
+    }
+    form.framework_seq = num
+  }
+}
+
 function onContractTypeChange() {
   if (!isFramework.value) {
     clearFrameworkContract()
@@ -3907,7 +3942,7 @@ async function saveNewFrameworkContract() {
   } catch (err: any) {
     const msg = err?.body?.message || err?.message || ''
     if (msg.includes('уже существует') || err?.status === 409) {
-      showSnack('Договор с таким номером, контрагентом и датой уже существует', 'warning')
+      showSnack(`${contractWord.value} с таким номером, контрагентом и датой уже существует`, 'warning')
     } else {
       showSnack('Ошибка создания договора', 'error')
     }
@@ -4036,9 +4071,9 @@ const displayNmck = computed(() => {
 
 const nmckHint = computed(() => {
   if (isContracted.value && savedNmck.value != null) {
-    return 'Зафиксирована при заключении договора. Не пересчитывается.'
+    return `Зафиксирована при заключении ${contractWordGen.value}. Не пересчитывается.`
   }
-  return 'Сумма всех позиций. Пересчитывается автоматически. Фиксируется при заключении договора.'
+  return `Сумма всех позиций. Пересчитывается автоматически. Фиксируется при заключении ${contractWordGen.value}.`
 })
 
 const contractPriceHint = computed(() => {
@@ -4717,7 +4752,7 @@ const hasProducts = computed(() => items.value.some(i => i.item_name?.trim()))
 // Date validation rules
 const contractDateRules = computed(() => [
   (v: string) => !v || !form.execution_term || v <= form.execution_term
-    || 'Дата договора не может быть позже срока исполнения',
+    || `Дата ${contractWordGen.value} не может быть позже срока исполнения`,
 ])
 const executionTermRules = computed(() => [
   (v: string) => !v || !form.execution_term_changed || v <= form.execution_term_changed
@@ -5193,6 +5228,7 @@ const doSave = async (adminOverride: boolean) => {
       ...form,
       planned_total_price: displayNmck.value || null,
       total_nmck: displayNmck.value || null,
+      framework_seq: form.framework_seq || null,
       contract_date: form.contract_date || null,
       contract_end_date: form.contract_end_date || null,
       delivery_date: form.delivery_date || null,
@@ -5237,7 +5273,7 @@ const doTransition = async () => {
       { method: 'POST' }
     )
     form.status = updated.status
-    showSnack(`Статус → ${STATUS_LABEL[updated.status]}`)
+    showSnack(`Статус → ${STATUS_LABEL.value[updated.status]}`)
   } catch (e: any) {
     showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {

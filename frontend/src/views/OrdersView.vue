@@ -178,7 +178,7 @@
         <template #item.status="{ item }">
           <div class="d-flex align-center ga-1 flex-wrap">
             <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="small" variant="tonal">
-              {{ STATUS_LABEL[item.status] || item.status }}
+              {{ statusLabelFor(item) }}
             </v-chip>
             <v-chip v-if="item.substatus" size="x-small" variant="outlined" color="teal">
               {{ SUBSTATUS_LABEL[item.substatus] || item.substatus }}
@@ -218,12 +218,12 @@
               :loading="transitioning === item.id"
               @click.stop="doTransition(item)"
             >
-              → {{ STATUS_LABEL[nextStatus(item.status)!] }}
+              → {{ statusLabelFor(item, nextStatus(item.status)!) }}
             </v-btn>
             <v-menu v-if="isAdmin">
               <template #activator="{ props: menuProps }">
                 <v-btn v-bind="menuProps" size="x-small" :color="STATUS_COLOR[item.status]" variant="tonal" :loading="transitioning === item.id" append-icon="mdi-chevron-down">
-                  {{ STATUS_LABEL[item.status] || item.status }}
+                  {{ statusLabelFor(item) }}
                 </v-btn>
               </template>
               <v-list density="compact">
@@ -321,7 +321,7 @@
         <v-card-title class="text-h6 pt-4 px-6">Не заполнены обязательные поля</v-card-title>
         <v-card-text class="px-6">
           <p class="mb-3 text-body-2 text-medium-emphasis">
-            Для перехода в статус «{{ STATUS_LABEL[guardDialog.targetStatus] }}» заполните:
+            Для перехода в статус «{{ guardDialog.targetStatus === 'contracted' && guardDialog.isFramework ? 'Заказ' : STATUS_LABEL[guardDialog.targetStatus] }}» заполните:
           </p>
           <v-list density="compact">
             <v-list-item
@@ -588,13 +588,22 @@ interface Purchase {
   items?: PurchaseItem[]
   approval_status?: string
   execution_term?: string
+  purchase_contract_type?: string
 }
+
+const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
+function isItemFramework(item: Purchase) { return FRAMEWORK_TYPES.has(item.purchase_contract_type || '') }
 
 const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
   confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
+}
+function statusLabelFor(item: Purchase, status?: string): string {
+  const s = status || item.status
+  if (s === 'contracted' && isItemFramework(item)) return 'Заказ'
+  return STATUS_LABEL[s] || s
 }
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
@@ -614,10 +623,12 @@ const APPROVAL_STATUS_LABEL: Record<string, string> = {
 }
 const statusItems = STATUS_ORDER.map(v => ({ value: v, label: STATUS_LABEL[v], color: STATUS_COLOR[v] }))
 
-const TRANSITION_REQUIRED: Record<string, { field: keyof Purchase; label: string }[]> = {
+function transitionRequired(item: Purchase): Record<string, { field: keyof Purchase; label: string }[]> {
+  const fw = isItemFramework(item)
+  return {
   contracted: [
-    { field: 'contract_number', label: 'Номер договора' },
-    { field: 'contract_date', label: 'Дата договора' },
+    { field: 'contract_number', label: fw ? 'Номер заказа' : 'Номер договора' },
+    { field: 'contract_date', label: fw ? 'Дата заказа' : 'Дата договора' },
   ],
   delivered: [
     { field: 'acceptance_doc_name', label: 'Наименование закрывающего документа' },
@@ -630,7 +641,7 @@ const TRANSITION_REQUIRED: Record<string, { field: keyof Purchase; label: string
     { field: 'payment_doc_date', label: 'Дата платёжного поручения' },
     { field: 'payment_amount', label: 'Сумма платежа' },
   ],
-}
+}}
 
 const headers = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false },
@@ -722,7 +733,7 @@ function removeFilterPreset(name: string) {
 }
 
 const guardDialog = reactive({
-  show: false, purchaseId: 0, targetStatus: '', missing: [] as string[],
+  show: false, purchaseId: 0, targetStatus: '', missing: [] as string[], isFramework: false,
 })
 const deleteDialog = reactive({
   show: false, single: null as Purchase | null, bulk: false, deleting: false,
@@ -853,13 +864,14 @@ watch(globalSubsidyId, (id: number | null) => { filterSubsidyId.value = id })
 const doTransition = async (item: Purchase) => {
   const target = nextStatus(item.status)
   if (!target) return
-  const required = TRANSITION_REQUIRED[target]
+  const required = transitionRequired(item)[target]
   if (required) {
     const missing = required.filter(r => !item[r.field]).map(r => r.label)
     if (missing.length) {
       guardDialog.purchaseId = item.id
       guardDialog.targetStatus = target
       guardDialog.missing = missing
+      guardDialog.isFramework = isItemFramework(item)
       guardDialog.show = true
       return
     }
@@ -867,7 +879,7 @@ const doTransition = async (item: Purchase) => {
   transitioning.value = item.id
   try {
     await apiFetch(`/purchases/${item.id}/transition?status=${target}`, { method: 'POST' })
-    showSnack(`Статус изменён → ${STATUS_LABEL[target]}`)
+    showSnack(`Статус изменён → ${statusLabelFor(item, target)}`)
     await loadOrders()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка перехода', 'error')
@@ -881,7 +893,7 @@ const doForceStatus = async (item: Purchase, status: string) => {
   transitioning.value = item.id
   try {
     await apiFetch(`/purchases/${item.id}/transition?status=${status}`, { method: 'POST' })
-    showSnack(`Статус изменён → ${STATUS_LABEL[status]}`)
+    showSnack(`Статус изменён → ${statusLabelFor(item, status)}`)
     await loadOrders()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка изменения статуса', 'error')

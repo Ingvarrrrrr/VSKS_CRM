@@ -246,7 +246,7 @@
             <td>
               <div class="d-flex align-center ga-1 flex-wrap">
                 <v-chip :color="statusColor(task.status)" size="x-small" variant="flat">
-                  {{ STATUS_LABELS[task.status] || task.status }}
+                  {{ purchaseStatusLabel(task) }}
                 </v-chip>
                 <v-chip v-if="task.substatus" size="x-small" variant="outlined" color="teal">
                   {{ SUBSTATUS_LABEL[task.substatus] || task.substatus }}
@@ -1447,6 +1447,11 @@ const STATUS_LABELS: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
   confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
+}
+const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
+function purchaseStatusLabel(task: any): string {
+  if (task.status === 'contracted' && FRAMEWORK_TYPES.has(task.purchase_contract_type || '')) return 'Заказ'
+  return STATUS_LABELS[task.status] || task.status
 }
 const SUBSTATUS_LABEL: Record<string, string> = {
   tz_forming: 'Формируется ТЗ', kp_collecting: 'Сбор КП', on_platform: 'На площадке',

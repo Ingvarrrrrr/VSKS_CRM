@@ -368,7 +368,7 @@
                       @update:model-value="calcItemTotal(idx)" />
                   </td>
                   <td>
-                    <v-text-field v-model="item.unit" density="compact" variant="outlined"
+                    <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
                       hide-details class="my-1" />
                   </td>
                   <td>
@@ -2805,6 +2805,7 @@ const SUBSTATUS_OPTIONS = [
   { value: 'on_platform', title: 'Выставлено на площадку' },
 ]
 const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
+const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
 
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
 interface Contractor { id: number; name: string; inn?: string }
@@ -4247,7 +4248,8 @@ watch(contractPriceMode, () => { syncContractPriceIfSingle() })
 // Items
 const addItem = () => {
   const defaultType = form.item_type === 'mixed' ? '' : (form.item_type === 'услуга' ? 'услуга' : 'товар')
-  items.value.push({ product_id: null, item_name: '', item_type: defaultType, quantity: null, unit: 'шт.', unit_price: null, total_price: null, final_unit_price: null, final_total: null, country_origin: '', _selectedProduct: null, _photo_url: undefined, _description: undefined })
+  const defaultUnit = defaultType === 'услуга' ? 'усл.' : 'шт.'
+  items.value.push({ product_id: null, item_name: '', item_type: defaultType, quantity: null, unit: defaultUnit, unit_price: null, total_price: null, final_unit_price: null, final_total: null, country_origin: '', _selectedProduct: null, _photo_url: undefined, _description: undefined })
 }
 
 const removeItem = (idx: number) => {

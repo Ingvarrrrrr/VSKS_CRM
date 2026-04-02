@@ -5437,8 +5437,8 @@ const uploadFile = async (event: Event) => {
     const uploaded = await res.json()
     uploadedFiles.value.push(uploaded)
     showSnack('Файл загружен')
-  } catch {
-    showSnack('Ошибка загрузки файла', 'error')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
   } finally {
     uploading.value = false
     if (fileInputEl.value) fileInputEl.value.value = ''
@@ -5471,8 +5471,8 @@ async function onDocFilesDropped(files: File[]) {
       uploadedFiles.value.push(uploaded)
     }
     showSnack(`Загружено файлов: ${files.length}`)
-  } catch {
-    showSnack('Ошибка загрузки файлов', 'error')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки файлов', 'error')
   } finally {
     uploading.value = false
   }
@@ -5528,8 +5528,8 @@ const uploadSectionFile = async (event: Event) => {
     uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
     uploadedFiles.value.push(uploaded)
     showSnack('Файл загружен')
-  } catch {
-    showSnack('Ошибка загрузки файла', 'error')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
   } finally {
     uploading.value = false
     pendingSectionUpload.value = null

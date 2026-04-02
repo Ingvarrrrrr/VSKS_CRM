@@ -1263,7 +1263,7 @@
             <template #default="{ dragging, open }">
               <div class="d-flex align-center justify-center gap-3 pa-4" style="min-height:60px">
                 <v-icon :color="dragging ? 'primary' : 'grey'" size="24">mdi-upload</v-icon>
-                <span class="text-body-2">Перетащите файлы сюда или</span>
+                <span class="text-body-2">Перетащите файлы сюда (тип: Прочее) или</span>
                 <v-btn variant="tonal" size="small" :loading="uploading" @click.stop="open()">Выбрать файл</v-btn>
               </div>
             </template>
@@ -3194,6 +3194,12 @@ const DOC_UPLOAD_SECTIONS = computed(() => [
   { type: 'contract' as const, label: contractWord.value, icon: 'mdi-file-sign', color: 'indigo' },
   { type: 'act' as const, label: 'Акт', icon: 'mdi-file-check', color: 'cyan' },
   { type: 'upd' as const, label: 'УПД', icon: 'mdi-file-document-check', color: 'green' },
+  { type: 'invoice' as const, label: 'Счёт', icon: 'mdi-receipt-text', color: 'orange' },
+  { type: 'kp' as const, label: 'КП', icon: 'mdi-file-compare', color: 'teal' },
+  { type: 'service_note' as const, label: 'Служебная записка', icon: 'mdi-file-document-edit', color: 'blue' },
+  { type: 'protocol' as const, label: 'Протокол закупки', icon: 'mdi-file-certificate', color: 'deep-purple' },
+  { type: 'order' as const, label: 'Приказ', icon: 'mdi-file-star', color: 'brown' },
+  { type: 'other' as const, label: 'Прочее', icon: 'mdi-file-outline', color: 'grey' },
 ])
 
 function filesByType(type: string) {

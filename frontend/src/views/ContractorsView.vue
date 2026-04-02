@@ -29,6 +29,10 @@
         >
           Импорт из файла
         </v-btn>
+        <v-btn v-if="isOwnerPlus" variant="tonal" color="blue" prepend-icon="mdi-database-refresh"
+          class="mr-2" :loading="enrichAllLoading" @click="enrichAllFromFns">
+          Обновить из ЕГРЮЛ
+        </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openAdd">
           Добавить контрагента
         </v-btn>
@@ -68,6 +72,12 @@
       >Сбросить</v-btn>
       <span class="search-count">{{ filtered.length }} из {{ contractorsTotal }}</span>
     </div>
+
+    <v-alert v-if="enrichAllResult" type="info" variant="tonal" density="compact" class="mb-4" closable @click:close="enrichAllResult = null">
+      Обновлено: {{ enrichAllResult.updated }} из {{ enrichAllResult.total }}.
+      Пропущено (уже заполнены): {{ enrichAllResult.skipped }}.
+      <span v-if="enrichAllResult.errors.length"> Ошибок: {{ enrichAllResult.errors.length }}.</span>
+    </v-alert>
 
     <!-- ── Bulk actions ── -->
     <div v-if="selectedIds.size > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
@@ -233,7 +243,8 @@
             />
             <v-row dense>
               <v-col cols="4">
-                <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details />
+                <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details
+                  @update:model-value="onInnChange" />
               </v-col>
               <v-col cols="4">
                 <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
@@ -564,6 +575,10 @@ const fnsMessage  = ref('')
 const fnsMessageType = ref<'success' | 'info' | 'error'>('info')
 const search      = ref('')
 const filterCategory = ref<string | null>(null)
+const userRole = localStorage.getItem('user_role') || ''
+const isOwnerPlus = ['superadmin', 'account_owner'].includes(userRole)
+const enrichAllLoading = ref(false)
+const enrichAllResult = ref<{ total: number; updated: number; skipped: number; errors: any[] } | null>(null)
 const dialog      = ref(false)
 const deleteDialog     = ref(false)
 const bulkDeleteDialog = ref(false)
@@ -653,6 +668,15 @@ function clearFilters() {
   loadContractors()
 }
 
+let _innTimeout: any = null
+function onInnChange(val: string) {
+  clearTimeout(_innTimeout)
+  const inn = (val || '').replace(/\D/g, '')
+  if (inn.length === 10 || inn.length === 12) {
+    _innTimeout = setTimeout(() => lookupFns(), 400)
+  }
+}
+
 async function lookupFns() {
   const inn = form.value.inn?.trim()
   if (!inn || inn.length < 10) return
@@ -679,6 +703,20 @@ async function lookupFns() {
     fnsMessageType.value = 'error'
   } finally {
     fnsLoading.value = false
+  }
+}
+
+async function enrichAllFromFns() {
+  enrichAllLoading.value = true
+  enrichAllResult.value = null
+  try {
+    const data = await apiFetch<{ total: number; updated: number; skipped: number; errors: any[] }>('/contractors/enrich-all-fns', { method: 'POST' })
+    enrichAllResult.value = data
+    if (data.updated > 0) loadContractors()
+  } catch (e: any) {
+    enrichAllResult.value = { total: 0, updated: 0, skipped: 0, errors: [{ error: e.message }] }
+  } finally {
+    enrichAllLoading.value = false
   }
 }
 

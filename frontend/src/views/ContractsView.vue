@@ -160,12 +160,25 @@
           {{ item.total_ordered ? formatMoney(item.total_ordered) : '—' }}
         </span>
       </template>
+      <template #item.total_delivered="{ item }">
+        <span>{{ item.total_delivered ? formatMoney(item.total_delivered) : '—' }}</span>
+      </template>
       <template #item.total_paid="{ item }">
         <span style="color:var(--color-profit)">{{ item.total_paid ? formatMoney(item.total_paid) : '—' }}</span>
       </template>
-      <template #item.remaining="{ item }">
-        <span :style="Number(item.remaining) < 0 ? 'color:var(--color-loss);font-weight:700' : 'color:var(--color-profit)'">
-          {{ item.remaining != null ? formatMoney(item.remaining) : '—' }}
+      <template #item.remaining_ordered="{ item }">
+        <span :style="Number(item.remaining_ordered) < 0 ? 'color:var(--color-loss);font-weight:700' : ''">
+          {{ item.remaining_ordered != null ? formatMoney(item.remaining_ordered) : '—' }}
+        </span>
+      </template>
+      <template #item.remaining_delivered="{ item }">
+        <span :style="Number(item.remaining_delivered) < 0 ? 'color:var(--color-loss);font-weight:700' : 'color:var(--color-profit)'">
+          {{ item.remaining_delivered != null ? formatMoney(item.remaining_delivered) : '—' }}
+        </span>
+      </template>
+      <template #item.remaining_paid="{ item }">
+        <span :style="Number(item.remaining_paid) < 0 ? 'color:var(--color-loss);font-weight:700' : 'color:var(--color-profit)'">
+          {{ item.remaining_paid != null ? formatMoney(item.remaining_paid) : '—' }}
         </span>
       </template>
       <template #item.subsidy_name="{ item }">
@@ -585,8 +598,11 @@ const exportColumns = reactive([
   { key: 'subsidy_name', title: 'Субсидия', selected: true },
   { key: 'max_amount', title: 'Макс. сумма', selected: true },
   { key: 'total_ordered', title: 'Заказано', selected: true },
+  { key: 'total_delivered', title: 'Поставлено', selected: true },
   { key: 'total_paid', title: 'Оплачено', selected: true },
-  { key: 'remaining', title: 'Остаток', selected: true },
+  { key: 'remaining_ordered', title: 'Ост. (заказ)', selected: true },
+  { key: 'remaining_delivered', title: 'Не поставлено', selected: true },
+  { key: 'remaining_paid', title: 'Не оплачено', selected: true },
   { key: 'start_date', title: 'Дата начала', selected: true },
   { key: 'end_date', title: 'Дата окончания', selected: true },
   { key: 'notes', title: 'Примечания', selected: false },
@@ -696,7 +712,7 @@ async function doExport() {
             // Contract data only on first row
             if (col.key === 'contract_type') row.push(contractTypeLabel(contract.contract_type))
             else if (col.key === 'purchase_method') row.push(purchaseMethodLabel(contract.purchase_method))
-            else if (['max_amount', 'total_ordered', 'total_paid', 'remaining'].includes(col.key)) {
+            else if (['max_amount', 'total_ordered', 'total_delivered', 'total_paid', 'remaining_ordered', 'remaining_delivered', 'remaining_paid'].includes(col.key)) {
               const v = (contract as any)[col.key]; row.push(v != null ? Number(v) : '')
             } else if (['date', 'start_date', 'end_date'].includes(col.key)) row.push(fmtDate((contract as any)[col.key]))
             else row.push((contract as any)[col.key] ?? '')
@@ -976,8 +992,11 @@ const headers = [
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 120 },
   { title: 'Предельная сумма', key: 'max_amount', align: 'end' as const, width: 140 },
   { title: 'Заказано', key: 'total_ordered', align: 'end' as const, width: 120 },
+  { title: 'Поставлено', key: 'total_delivered', align: 'end' as const, width: 120 },
   { title: 'Оплачено', key: 'total_paid', align: 'end' as const, width: 120 },
-  { title: 'Остаток', key: 'remaining', align: 'end' as const, width: 120 },
+  { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end' as const, width: 130 },
+  { title: 'Не поставлено', key: 'remaining_delivered', align: 'end' as const, width: 140 },
+  { title: 'Не оплачено', key: 'remaining_paid', align: 'end' as const, width: 130 },
   { title: 'Предмет договора', key: 'subject', minWidth: 160 },
   { title: 'Тип', key: 'item_type', width: 90 },
   { title: 'Срок', key: 'end_date', width: 110 },

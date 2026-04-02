@@ -115,8 +115,9 @@
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
-                :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
+                :items="formMode === 'advance_report' ? [{value:'advance',title:'Авансовый отчёт'}] : [{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
+                :readonly="formMode === 'advance_report'"
                 hint="Как выбирается поставщик" persistent-hint />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
@@ -127,7 +128,7 @@
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_basis" clearable
-                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'}]"
+                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
                 item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
                 hint="Документ-основание для закупки" persistent-hint />
             </v-col>
@@ -2012,7 +2013,8 @@
             :rules="[v => !!v || 'Обязательное поле']" />
           <v-row dense>
             <v-col cols="4">
-              <v-text-field v-model="addContractorForm.inn" label="ИНН" variant="outlined" density="compact" hide-details>
+              <v-text-field v-model="addContractorForm.inn" label="ИНН" variant="outlined" density="compact" hide-details
+                @update:model-value="onAddContractorInnChange">
                 <template #append-inner>
                   <v-btn icon="mdi-database-search" size="x-small" variant="text" color="blue" :disabled="!addContractorForm.inn || addContractorForm.inn.length < 10" @click="lookupContractorInn" title="Заполнить из ЕГРЮЛ (nalog.ru)" />
                 </template>
@@ -4898,6 +4900,15 @@ async function lookupContractorInn() {
   } catch {}
 }
 
+let _addContractorInnTimeout: any = null
+function onAddContractorInnChange(val: string) {
+  clearTimeout(_addContractorInnTimeout)
+  const inn = (val || '').replace(/\D/g, '')
+  if (inn.length === 10 || inn.length === 12) {
+    _addContractorInnTimeout = setTimeout(() => lookupContractorInn(), 400)
+  }
+}
+
 const contractorSearchLoading = ref(false)
 let _contractorSearchTimeout: any = null
 function onContractorSearch(query: string) {
@@ -5199,8 +5210,8 @@ onMounted(async () => {
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
   } else {
-    loadDraft()
-    // Auto-fill based on route formMode
+    await loadDraft()
+    // formMode overrides — these are always enforced regardless of draft
     if (formMode.value === 'service_note_delivery') {
       form.purchase_basis = 'service_note'
       form.purchase_method = 'single'

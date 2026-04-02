@@ -180,10 +180,10 @@
                 @update:model-value="onFeo3Change" />
             </v-col>
             <v-col cols="12" md="4">
-              <v-text-field v-model="form.registry_number" label="Реестровый номер"
-                variant="outlined" density="compact" :readonly="!isEdit"
-                :bg-color="!isEdit ? 'grey-lighten-4' : undefined"
-                hint="Генерируется автоматически" persistent-hint />
+              <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
+                variant="outlined" density="compact" readonly
+                bg-color="grey-lighten-4"
+                :hint="isNew ? 'Присвоится после сохранения' : 'Генерируется автоматически'" persistent-hint />
             </v-col>
             <!-- Мероприятие (после выбора субсидии, или всегда для служебных записок) -->
             <v-col v-if="(form.subsidy_id && filteredEvents.length) || formMode === 'service_note_delivery'" cols="12" md="4">
@@ -521,11 +521,20 @@
             </v-col>
             <v-col cols="12" md="3">
               <div class="text-caption text-medium-emphasis mb-1">Цена договора</div>
-              <v-btn-toggle v-model="contractPriceMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
+              <v-btn-toggle v-if="!isFrameworkCumulative" v-model="contractPriceMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
                 <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
                 <v-btn value="manual" size="small" style="flex:1;text-transform:none;letter-spacing:0">Вручную</v-btn>
               </v-btn-toggle>
-              <v-text-field v-model.number="form.contract_price"
+              <!-- Рамочный накопительный: показываем сумму заказов -->
+              <v-text-field v-if="isFrameworkCumulative && selectedFrameworkContract"
+                :model-value="selectedFrameworkContract.total_ordered ? formatMoney(Number(selectedFrameworkContract.total_ordered)) : ''"
+                label="Сумма заказов по договору" variant="outlined"
+                density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
+                :placeholder="!selectedFrameworkContract.total_ordered ? 'Ещё ничего не заказывали' : ''"
+                :hint="selectedFrameworkContract.total_ordered ? 'Сумма всех заказов по рамочному договору' : ''"
+                persistent-hint persistent-placeholder />
+              <!-- Остальные типы: стандартное поле цены -->
+              <v-text-field v-else v-model.number="form.contract_price"
                 :label="isFramework ? 'Предельная сумма договора' : 'Цена договора'" variant="outlined"
                 density="compact" type="number" suffix="₽"
                 :readonly="contractPriceMode === 'auto' || (isFramework && !!selectedFrameworkContract)"
@@ -2801,7 +2810,7 @@ interface FeoCategory { id: number; name: string; parent_id: number | null; leve
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
-interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; remaining_ordered?: number; remaining_delivered?: number; remaining_paid?: number; status?: string; purchase_method?: string; end_date?: string }
+interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; remaining_ordered?: number; remaining_delivered?: number; remaining_paid?: number; total_ordered?: number; status?: string; purchase_method?: string; end_date?: string }
 interface PriceLink { url: string; price: number | null; collected_at?: string }
 interface OrderItem {
   product_id: number | null
@@ -3771,6 +3780,7 @@ const newFrameworkForm = reactive({
 })
 
 const isFramework = computed(() => form.purchase_contract_type === 'framework_cumulative' || form.purchase_contract_type === 'framework_with_amount')
+const isFrameworkCumulative = computed(() => form.purchase_contract_type === 'framework_cumulative')
 const contractWord = computed(() => isFramework.value ? 'Заказ' : 'Договор')
 const contractWordLower = computed(() => isFramework.value ? 'заказ' : 'договор')
 const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'договора')
@@ -5249,7 +5259,9 @@ const doSave = async (adminOverride: boolean) => {
 
     const qs = adminOverride ? '?admin_override=true' : ''
     if (isEdit.value) {
-      await apiFetch(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
+      const updated = await apiFetch<any>(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
+      if (updated.registry_number) form.registry_number = updated.registry_number
+      if (updated.framework_seq != null) form.framework_seq = updated.framework_seq
       showSnack('Сохранено')
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })

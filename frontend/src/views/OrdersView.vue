@@ -589,6 +589,7 @@ interface Purchase {
   approval_status?: string
   execution_term?: string
   purchase_contract_type?: string
+  registry_number?: string
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -646,6 +647,7 @@ function transitionRequired(item: Purchase): Record<string, { field: keyof Purch
 const headers = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false },
   { title: '№', key: 'purchase_number', width: 60 },
+  { title: 'Реестр. №', key: 'registry_number', width: 120 },
   { title: 'Предмет договора', key: 'subject', minWidth: 180 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
   { title: 'Субсидия', key: 'subsidy_name', minWidth: 150 },

@@ -309,6 +309,11 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
             filename=f.filename,
             mime_type=f.mime_type,
             size=f.size,
+            file_type=f.file_type,
+            doc_format=f.doc_format,
+            is_active=f.is_active if f.is_active is not None else True,
+            content_hash=f.content_hash,
+            uploaded_by_id=f.uploaded_by_id,
             created_at=str(f.created_at) if f.created_at else None,
         )
         for f in (p.files or [])

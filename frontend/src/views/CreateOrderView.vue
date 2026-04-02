@@ -5429,8 +5429,8 @@ const uploadFile = async (event: Event) => {
       body: fd,
     })
     if (!res.ok) {
-      let detail = 'Ошибка загрузки'
-      try { const err = await res.json(); detail = err.detail || detail } catch {}
+      let detail = `Ошибка загрузки (${res.status})`
+      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
       showSnack(detail, 'error')
       return
     }
@@ -5462,8 +5462,8 @@ async function onDocFilesDropped(files: File[]) {
         body: fd,
       })
       if (!res.ok) {
-        let detail = 'Ошибка загрузки'
-        try { const err = await res.json(); detail = err.detail || detail } catch {}
+        let detail = `Ошибка загрузки (${res.status})`
+        try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
         showSnack(`${file.name}: ${detail}`, 'error')
         continue
       }
@@ -5517,8 +5517,8 @@ const uploadSectionFile = async (event: Event) => {
       body: fd,
     })
     if (!res.ok) {
-      let detail = 'Ошибка загрузки'
-      try { const err = await res.json(); detail = err.detail || detail } catch {}
+      let detail = `Ошибка загрузки (${res.status})`
+      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
       showSnack(detail, 'error')
       return
     }

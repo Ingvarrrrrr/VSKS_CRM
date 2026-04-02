@@ -270,8 +270,12 @@ class ContractCreate(BaseModel):
 class ContractOut(ContractCreate):
     id: int
     total_payment: Optional[Decimal] = None
-    remaining: Optional[Decimal] = None
+    remaining: Optional[Decimal] = None  # legacy: same as remaining_ordered
+    remaining_ordered: Optional[Decimal] = None  # max_amount - SUM(contract_price)
+    remaining_delivered: Optional[Decimal] = None  # SUM(contract_price) - SUM(delivery_payment_amount)
+    remaining_paid: Optional[Decimal] = None  # SUM(delivery_payment_amount) - SUM(payment_amount)
     total_ordered: Optional[Decimal] = None
+    total_delivered: Optional[Decimal] = None  # SUM(delivery_payment_amount)
     total_paid: Optional[Decimal] = None
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None

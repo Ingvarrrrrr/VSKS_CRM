@@ -366,6 +366,60 @@ async def enrich_contractor_from_fns(
     return {"updated_fields": updated_fields, "contractor": ContractorOut.model_validate(c)}
 
 
+@router.post("/enrich-all-fns")
+async def enrich_all_contractors_from_fns(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role("superadmin", "account_owner")),
+):
+    """Bulk-enrich all contractors that have a Russian INN (10 or 12 digits) from FNS."""
+    import asyncio
+    import re
+    import logging
+    logger = logging.getLogger(__name__)
+
+    result = await db.execute(select(Contractor).where(Contractor.inn.isnot(None), Contractor.inn != ""))
+    contractors = result.scalars().all()
+
+    russian_inn_re = re.compile(r"^\d{10}(\d{2})?$")
+    candidates = [c for c in contractors if russian_inn_re.match((c.inn or "").strip())]
+
+    updated_count = 0
+    skipped_count = 0
+    errors = []
+
+    field_map = {
+        'name': 'name', 'kpp': 'kpp', 'ogrn': 'ogrn',
+        'address': 'address', 'org_type': 'org_type', 'signatory': 'signatory',
+    }
+
+    for c in candidates:
+        try:
+            fns_data = await lookup_inn(c.inn.strip(), current_user)
+            changed = False
+            for fns_field, model_field in field_map.items():
+                fns_val = fns_data.get(fns_field)
+                if fns_val and not getattr(c, model_field, None):
+                    setattr(c, model_field, fns_val)
+                    changed = True
+            if changed:
+                updated_count += 1
+            else:
+                skipped_count += 1
+        except HTTPException:
+            skipped_count += 1
+        except Exception as e:
+            errors.append({"inn": c.inn, "error": str(e)[:100]})
+            logger.warning("FNS enrich error for INN %s: %s", c.inn, e)
+
+    await db.commit()
+    return {
+        "total": len(candidates),
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "errors": errors,
+    }
+
+
 @router.get("/", response_model=List[ContractorOut])
 async def list_contractors(
     db: AsyncSession = Depends(get_db),

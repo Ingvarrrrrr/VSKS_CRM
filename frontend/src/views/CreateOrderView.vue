@@ -627,6 +627,8 @@
           <v-tab value="invoice">Счёт</v-tab>
           <v-tab value="invoice_contract">Счёт-договор</v-tab>
           <v-tab value="framework_invoice">Счёт по рамочному договору</v-tab>
+          <v-tab value="work_order">Заказ-наряд</v-tab>
+          <v-tab value="receipt">Чек</v-tab>
         </v-tabs>
         <v-divider />
         <v-card-text>
@@ -846,6 +848,60 @@
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="5">
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
+            </v-col>
+          </v-row>
+          </v-window-item>
+
+          <!-- ── Заказ-наряд ── -->
+          <v-window-item value="work_order">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
+            Заказ-наряд — документ на выполнение работ/услуг. Используется для ремонтных, сервисных и подрядных работ.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_number" label="Номер заказ-наряда" variant="outlined" density="compact"
+                hint="Номер документа" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_date" label="Дата заказ-наряда" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
+                :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
+                :custom-filter="() => true" @update:search="onDeliveryAddressSearch"
+                placeholder="Начните вводить адрес..." />
+            </v-col>
+          </v-row>
+          </v-window-item>
+
+          <!-- ── Чек ── -->
+          <v-window-item value="receipt">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
+            Чек — кассовый или товарный чек. Используется для мелких закупок за наличный расчёт или по карте.
+          </v-alert>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_number" label="Номер чека" variant="outlined" density="compact"
+                hint="Номер фискального документа" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.contract_date" label="Дата чека" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="6">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
                 :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
                 :custom-filter="() => true" @update:search="onDeliveryAddressSearch"

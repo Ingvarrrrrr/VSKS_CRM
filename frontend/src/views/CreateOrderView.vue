@@ -181,9 +181,11 @@
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
-                variant="outlined" density="compact" readonly
+                variant="outlined" density="compact"
+                :readonly="!isAdminLevel || isNew"
                 bg-color="grey-lighten-4"
-                :hint="isNew ? 'Присвоится после сохранения' : 'Генерируется автоматически'" persistent-hint />
+                :hint="isNew ? 'Присвоится после сохранения' : 'Генерируется автоматически'" persistent-hint
+                @update:model-value="onAutoFieldChange('registry_number', 'Реестровый номер', $event)" />
             </v-col>
             <!-- Мероприятие (после выбора субсидии, или всегда для служебных записок) -->
             <v-col v-if="(form.subsidy_id && filteredEvents.length) || formMode === 'service_note_delivery'" cols="12" md="4">
@@ -633,10 +635,13 @@
           <v-window-item value="contract">
           <v-row class="mt-1">
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
+              <v-text-field :model-value="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                 :placeholder="isNew ? 'Назначается автоматически' : ''"
                 :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен после сохранения' : ''"
-                persistent-hint />
+                persistent-hint
+                :readonly="isEdit && !isAdminLevel"
+                :bg-color="isEdit && !isAdminLevel ? 'grey-lighten-4' : undefined"
+                @update:model-value="onAutoFieldChange('contract_number', `Номер ${contractWordGen}`, $event)" />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
@@ -3899,6 +3904,12 @@ function clearFrameworkContract() {
   form.contract_id = null
 }
 
+function onAutoFieldChange(field: string, label: string, value: any) {
+  if (!isAdminLevel.value) return
+  if (!confirm(`Вы уверены, что хотите изменить ${label}? Это поле генерируется автоматически.`)) return
+  ;(form as any)[field] = value
+}
+
 function editFrameworkSeq() {
   const current = form.framework_seq
   const input = prompt(`Изменить порядковый номер в рамочном договоре?\nТекущий: ${current ?? '—'}\n\nВведите новый номер (или оставьте пустым для автоназначения):`)
@@ -5263,6 +5274,8 @@ const doSave = async (adminOverride: boolean) => {
     if (isEdit.value) {
       const updated = await apiFetch<any>(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
       if (updated.registry_number) form.registry_number = updated.registry_number
+      if (updated.contract_number) form.contract_number = updated.contract_number
+      if (updated.purchase_number) form.purchase_number = updated.purchase_number
       if (updated.framework_seq != null) form.framework_seq = updated.framework_seq
       showSnack('Сохранено')
     } else {

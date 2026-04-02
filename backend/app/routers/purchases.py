@@ -37,21 +37,27 @@ try:
 except ImportError:
     _DocxDocument = None
 
-def _ocr_pdf_to_rows(content: bytes) -> list:
-    """Fallback: convert scanned PDF pages to images, run OCR, parse lines."""
+def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
+    Returns (rows, error_message). error_message is None on success."""
     try:
         from pdf2image import convert_from_bytes
         import pytesseract
     except ImportError:
-        return []
+        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
     try:
         images = convert_from_bytes(content, dpi=300)
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
+    if not images:
+        return [], "PDF не содержит страниц для распознавания."
     import re
     all_rows = []
     for img in images:
-        text = pytesseract.image_to_string(img, lang='rus+eng')
+        try:
+            text = pytesseract.image_to_string(img, lang='rus+eng')
+        except Exception as e:
+            return [], f"Ошибка OCR-распознавания: {e}"
         if not text:
             continue
         for line in text.strip().split('\n'):
@@ -62,7 +68,9 @@ def _ocr_pdf_to_rows(content: bytes) -> list:
             cells = [c.strip() for c in cells if c.strip()]
             if cells:
                 all_rows.append(cells)
-    return all_rows
+    if not all_rows:
+        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
+    return all_rows, None
 
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
@@ -1801,11 +1809,12 @@ async def import_items_preview(
             if not all_rows:
                 if not text_lines:
                     # Scanned PDF — try OCR
-                    all_rows = _ocr_pdf_to_rows(content)
+                    all_rows, ocr_error = _ocr_pdf_to_rows(content)
                     if not all_rows:
+                        detail = ocr_error or "OCR не смог распознать таблицу."
                         raise HTTPException(
                             400,
-                            "Этот PDF — скан (изображение). OCR не смог распознать таблицу. "
+                            f"Этот PDF — скан (изображение). {detail} "
                             "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
                         )
                 else:
@@ -1887,7 +1896,7 @@ async def import_items_preview(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+        raise HTTPException(400, f"Не удалось прочитать файл ({file.filename}): {e}")
 
     if not sheets:
         raise HTTPException(400, "Файл не содержит листов с данными")
@@ -1944,7 +1953,7 @@ async def import_items_mapped(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+        raise HTTPException(400, f"Не удалось прочитать файл ({file.filename}): {e}")
 
     def _cell(row, idx):
         if idx < 0 or idx >= len(row):
@@ -2095,14 +2104,15 @@ async def import_items_smart(
     if not raw_tables:
         if file_type == "pdf":
             # Try OCR for scanned PDFs
-            ocr_rows = _ocr_pdf_to_rows(content)
+            ocr_rows, ocr_error = _ocr_pdf_to_rows(content)
             if ocr_rows:
                 raw_tables.append(ocr_rows)
             else:
+                detail = ocr_error or "OCR не смог распознать таблицу."
                 raise HTTPException(
                     400,
-                    "В PDF-файле не найдено таблиц. Возможно, это скан (изображение). "
-                    "OCR не смог распознать данные. Сохраните в Excel (.xlsx)."
+                    f"Этот PDF — скан (изображение). {detail} "
+                    "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
                 )
         else:
             raise HTTPException(400, "Таблицы в документе не найдены")

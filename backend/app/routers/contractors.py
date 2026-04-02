@@ -21,21 +21,27 @@ except ImportError:
     _pdfplumber = None
 
 
-def _ocr_pdf_to_rows(content: bytes) -> list:
-    """Fallback: convert scanned PDF pages to images, run OCR, parse lines."""
+def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
+    Returns (rows, error_message). error_message is None on success."""
     try:
         from pdf2image import convert_from_bytes
         import pytesseract
     except ImportError:
-        return []
+        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
     try:
         images = convert_from_bytes(content, dpi=300)
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
+    if not images:
+        return [], "PDF не содержит страниц для распознавания."
     import re
     all_rows = []
     for img in images:
-        text = pytesseract.image_to_string(img, lang='rus+eng')
+        try:
+            text = pytesseract.image_to_string(img, lang='rus+eng')
+        except Exception as e:
+            return [], f"Ошибка OCR-распознавания: {e}"
         if not text:
             continue
         for line in text.strip().split('\n'):
@@ -46,7 +52,9 @@ def _ocr_pdf_to_rows(content: bytes) -> list:
             cells = [c.strip() for c in cells if c.strip()]
             if cells:
                 all_rows.append(cells)
-    return all_rows
+    if not all_rows:
+        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
+    return all_rows, None
 
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
@@ -143,11 +151,12 @@ def _parse_file_to_rows(fname: str, content: bytes):
         if not all_rows:
             if not has_text:
                 # Scanned PDF — try OCR
-                all_rows = _ocr_pdf_to_rows(content)
+                all_rows, ocr_error = _ocr_pdf_to_rows(content)
                 if not all_rows:
+                    detail = ocr_error or "OCR не смог распознать таблицу."
                     raise HTTPException(
                         400,
-                        "Этот PDF — скан (изображение). OCR не смог распознать таблицу. "
+                        f"Этот PDF — скан (изображение). {detail} "
                         "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
                     )
             else:

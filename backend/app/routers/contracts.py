@@ -59,26 +59,35 @@ async def list_contracts(
     contracts = result.scalars().all()
     out = []
     for c in contracts:
-        pay_result = await db.execute(
-            select(func.coalesce(func.sum(Purchase.delivery_payment_amount), 0))
-            .where(Purchase.contract_id == c.id)
-        )
-        total_payment = pay_result.scalar() or Decimal("0")
+        # SUM(contract_price) — total ordered
         ordered_result = await db.execute(
             select(func.coalesce(func.sum(Purchase.contract_price), 0))
             .where(Purchase.contract_id == c.id)
         )
         total_ordered = ordered_result.scalar() or Decimal("0")
+        # SUM(delivery_payment_amount) — total delivered
+        delivered_result = await db.execute(
+            select(func.coalesce(func.sum(Purchase.delivery_payment_amount), 0))
+            .where(Purchase.contract_id == c.id)
+        )
+        total_delivered = delivered_result.scalar() or Decimal("0")
+        # SUM(payment_amount) — total paid (only for paid-status purchases)
         paid_result = await db.execute(
             select(func.coalesce(func.sum(Purchase.payment_amount), 0))
             .where(Purchase.contract_id == c.id, Purchase.status == "paid")
         )
         total_paid = paid_result.scalar() or Decimal("0")
+
+        max_amt = c.max_amount or Decimal("0")
         d = ContractOut.model_validate(c)
-        d.total_payment = total_payment
-        d.remaining = (c.max_amount or Decimal("0")) - total_payment
         d.total_ordered = total_ordered
+        d.total_delivered = total_delivered
         d.total_paid = total_paid
+        d.total_payment = total_delivered  # legacy compat
+        d.remaining_ordered = max_amt - total_ordered                  # сколько ещё можно заказать
+        d.remaining_delivered = total_ordered - total_delivered         # заказано, но не поставлено
+        d.remaining_paid = total_delivered - total_paid                 # поставлено, но не оплачено
+        d.remaining = d.remaining_ordered  # legacy: now shows ordered remaining
         if c.contractor:
             d.contractor_name = c.contractor.name
             d.contractor_inn = c.contractor.inn
@@ -276,22 +285,30 @@ async def migrate_contracts_from_purchases(
 
 # ── OCR helper ─────────────────────────────────────────────────────────────────
 
-def _ocr_pdf_to_rows(content: bytes) -> list:
-    """Fallback: convert scanned PDF pages to images, run OCR, parse lines."""
+def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
+    Returns (rows, error_message). error_message is None on success."""
     try:
         from pdf2image import convert_from_bytes
         import pytesseract
     except ImportError:
-        return []
+        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
 
     try:
         images = convert_from_bytes(content, dpi=300)
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
 
+    if not images:
+        return [], "PDF не содержит страниц для распознавания."
+
+    import re
     all_rows = []
     for img in images:
-        text = pytesseract.image_to_string(img, lang='rus+eng')
+        try:
+            text = pytesseract.image_to_string(img, lang='rus+eng')
+        except Exception as e:
+            return [], f"Ошибка OCR-распознавания: {e}"
         if not text:
             continue
         for line in text.strip().split('\n'):
@@ -299,12 +316,13 @@ def _ocr_pdf_to_rows(content: bytes) -> list:
             if not line:
                 continue
             # Split by tabs or multiple spaces
-            import re
             cells = re.split(r'\t|  {2,}', line)
             cells = [c.strip() for c in cells if c.strip()]
             if cells:
                 all_rows.append(cells)
-    return all_rows
+    if not all_rows:
+        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
+    return all_rows, None
 
 
 # ── File parsing helpers ───────────────────────────────────────────────────────
@@ -396,11 +414,12 @@ def _parse_contract_file(fname: str, content: bytes):
         if not all_rows:
             if not has_text:
                 # Scanned PDF — try OCR
-                all_rows = _ocr_pdf_to_rows(content)
+                all_rows, ocr_error = _ocr_pdf_to_rows(content)
                 if not all_rows:
+                    detail = ocr_error or "OCR не смог распознать таблицу."
                     raise HTTPException(
                         400,
-                        "Этот PDF — скан (изображение). OCR не смог распознать таблицу. "
+                        f"Этот PDF — скан (изображение). {detail} "
                         "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
                     )
             else:

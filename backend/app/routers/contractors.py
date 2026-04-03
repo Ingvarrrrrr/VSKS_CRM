@@ -82,6 +82,174 @@ def _detect_hdr(rows):
     return best_idx
 
 
+def _map_kv_key(key: str) -> str | None:
+    """Map a key-value card label to a contractor field name.
+    Returns the field name string or None if the key is not recognised."""
+    k = key.strip().lower()
+    if not k:
+        return None
+    # Order matters — more specific checks first
+    if 'инн' in k or 'inn' in k:
+        return 'инн'
+    if 'кпп' in k or 'kpp' in k:
+        return 'кпп'
+    if 'огрн' in k:
+        return 'огрн'
+    if 'бик' in k or 'bik' in k:
+        return 'бик'
+    if 'расч' in k or 'р/с' in k:
+        return 'расчётный счёт'
+    if 'корр' in k or 'к/с' in k:
+        return 'корр. счёт'
+    if 'банк' in k and 'реквиз' not in k:
+        return 'банк'
+    if 'назван' in k or 'наимен' in k or 'учредит' in k:
+        return 'наименование'
+    if 'юридич' in k and 'адрес' in k:
+        return 'адрес'
+    if 'почтов' in k:
+        return 'почтовый адрес'
+    if 'телефон' in k or (k.startswith('тел') and len(k) < 10):
+        return 'телефон'
+    if 'email' in k or 'e-mail' in k:
+        return 'email'
+    if 'подписант' in k or 'уполномоч' in k or 'представит' in k:
+        return 'подписант'
+    if 'должност' in k:
+        return 'должность'
+    return None
+
+
+# Mapping from Russian card labels to ContractorCreate field names
+_KV_LABEL_TO_FIELD: dict[str, str] = {
+    'инн': 'inn',
+    'кпп': 'kpp',
+    'огрн': 'ogrn',
+    'бик': 'bik',
+    'расчётный счёт': 'settlement_account',
+    'корр. счёт': 'correspondent_account',
+    'банк': 'bank_name',
+    'наименование': 'name',
+    'адрес': 'address',
+    'почтовый адрес': 'postal_address',
+    'телефон': 'phone',
+    'email': 'email',
+    'подписант': 'signatory',
+    'должность': '_signatory_position',  # internal: prepend to signatory
+}
+
+# Human-readable column header for each field used in preview response
+_FIELD_TO_HEADER: dict[str, str] = {
+    'inn': 'ИНН',
+    'kpp': 'КПП',
+    'ogrn': 'ОГРН',
+    'bik': 'БИК',
+    'settlement_account': 'Расчётный счёт',
+    'correspondent_account': 'Корр. счёт',
+    'bank_name': 'Банк',
+    'name': 'Наименование',
+    'address': 'Адрес',
+    'postal_address': 'Почтовый адрес',
+    'phone': 'Телефон',
+    'email': 'Email',
+    'signatory': 'Подписант',
+}
+
+
+def _try_parse_kv_docx(doc) -> tuple[list, int] | None:
+    """Try to parse a DOCX document as a key-value requisites card.
+
+    Returns (all_rows, hdr_idx) where all_rows = [header_row, value_row]
+    with hdr_idx = 0, ready to be returned from _parse_file_to_rows.
+
+    Returns None if the document does not look like a key-value card
+    (e.g. it is a proper table with data in multiple data rows).
+    """
+    # Collect all key→value pairs from every table in the document
+    kv_pairs: list[tuple[str, str]] = []
+    two_col_count = 0
+    total_rows = 0
+
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            cells = [c.text.strip() for c in row.cells]
+            # Remove duplicate adjacent cells (merged cells repeat in python-docx)
+            deduped = []
+            for c in cells:
+                if not deduped or c != deduped[-1]:
+                    deduped.append(c)
+            non_empty = [c for c in deduped if c]
+            total_rows += 1
+            if len(non_empty) == 2:
+                two_col_count += 1
+                kv_pairs.append((non_empty[0], non_empty[1]))
+            elif len(non_empty) == 1:
+                # Single-cell rows are OK (section headers) — do not disqualify
+                pass
+            # Rows with 3+ distinct non-empty cells suggest a real data table
+            elif len(non_empty) >= 3:
+                return None  # Looks like a multi-column table — not a card
+
+    if total_rows == 0:
+        return None
+
+    # If fewer than half the rows are 2-column key-value rows, it's not a card
+    if two_col_count < max(2, total_rows * 0.4):
+        return None
+
+    # Also check that the keys look like field labels (not values)
+    recognised = sum(1 for k, _ in kv_pairs if _map_kv_key(k) is not None)
+    if recognised < 2:
+        return None  # Too few recognisable field labels — not a requisites card
+
+    # Build a synthetic header row + single data row
+    # Use only the first match for each field to avoid duplicates
+    headers: list[str] = []
+    values: list[str] = []
+    seen_fields: set[str] = set()
+    signatory_pos: str | None = None
+
+    for raw_key, raw_val in kv_pairs:
+        label = _map_kv_key(raw_key)
+        if label is None:
+            continue
+        field = _KV_LABEL_TO_FIELD.get(label)
+        if field is None:
+            continue
+        if field == '_signatory_position':
+            signatory_pos = raw_val
+            continue
+        if field in seen_fields:
+            continue  # Take first match only
+        seen_fields.add(field)
+        headers.append(_FIELD_TO_HEADER.get(field, field))
+        values.append(raw_val)
+
+    # Enrich signatory with position if both present
+    if signatory_pos and 'signatory' in seen_fields:
+        idx = next((i for i, h in enumerate(headers) if h == _FIELD_TO_HEADER.get('signatory', 'Подписант')), None)
+        if idx is not None and values[idx]:
+            values[idx] = f"{signatory_pos} {values[idx]}"
+    elif signatory_pos and 'signatory' not in seen_fields:
+        headers.append(_FIELD_TO_HEADER.get('signatory', 'Подписант'))
+        values.append(signatory_pos)
+
+    # Fallback: if name not found, scan paragraphs
+    if 'name' not in seen_fields:
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if len(text) > 5:
+                headers.insert(0, _FIELD_TO_HEADER['name'])
+                values.insert(0, text)
+                break
+
+    if not headers:
+        return None
+
+    all_rows = [headers, values]
+    return all_rows, 0  # hdr_idx = 0
+
+
 def _parse_file_to_rows(fname: str, content: bytes):
     """Parse xlsx/xls/docx/doc/pdf and return (all_rows, hdr_idx)."""
     fname = fname.lower()
@@ -120,6 +288,14 @@ def _parse_file_to_rows(fname: str, content: bytes):
             raise HTTPException(400, f"Не удалось прочитать .docx файл: {e}")
         if not doc.tables:
             raise HTTPException(400, "В документе .docx не найдено таблиц")
+
+        # Try key-value card format first (карточка реквизитов):
+        # All tables scanned; rows with 2 non-empty cells are treated as key→value pairs.
+        kv_result = _try_parse_kv_docx(doc)
+        if kv_result is not None:
+            # kv_result is already (all_rows, hdr_idx) ready for return
+            return kv_result
+
         tbl = doc.tables[0]
         all_rows = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]
 

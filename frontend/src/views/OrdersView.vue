@@ -159,7 +159,7 @@
             :icon="isExpanded(internalItem) ? 'mdi-chevron-up' : 'mdi-chevron-down'"
             variant="text"
             size="small"
-            @click="toggleExpand(internalItem)"
+            @click.stop="toggleExpand(internalItem)"
           />
         </template>
 

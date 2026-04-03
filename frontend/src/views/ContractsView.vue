@@ -1011,7 +1011,27 @@ const headers = [
 const loadContracts = async () => {
   loading.value = true
   try {
-    contracts.value = await apiFetch<Contract[]>('/contracts/')
+    const [contractsData, advanceReports] = await Promise.all([
+      apiFetch<Contract[]>('/contracts/'),
+      apiFetch<any[]>('/purchases/?purchase_method=advance').catch(() => [])
+    ])
+    const arAsContracts = advanceReports.map((p: any) => ({
+      id: p.id,
+      number: p.registry_number || `АО-${p.id}`,
+      date: p.created_at,
+      contract_type: 'advance_report',
+      contractor_name: p.contractor_name,
+      contractor_inn: p.contractor_inn,
+      subsidy_name: p.subsidy_name,
+      subject: p.subject || p.item_name,
+      max_amount: p.planned_total_price,
+      total_ordered: p.planned_total_price,
+      total_paid: null,
+      status: p.status,
+      _is_advance_report: true,
+      _purchase_id: p.id,
+    }))
+    contracts.value = [...contractsData, ...arAsContracts]
   } catch {
     showSnack('Ошибка загрузки', 'error')
   } finally {
@@ -1064,6 +1084,10 @@ const dialog = reactive({ show: false, saving: false, id: 0, form: emptyForm() }
 const openCreate = () => { dialog.id = 0; Object.assign(dialog.form, emptyForm()); dialog.show = true }
 
 const openEdit = async (c: Contract) => {
+  if ((c as any)._is_advance_report) {
+    router.push(`/advance-reports/${(c as any)._purchase_id}/edit`)
+    return
+  }
   dialog.id = c.id
   // Ensure contractor is loaded before showing
   if (c.contractor_id && !contractors.value.find(x => x.id === c.contractor_id)) {

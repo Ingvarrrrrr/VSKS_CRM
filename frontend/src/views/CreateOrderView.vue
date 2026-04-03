@@ -180,6 +180,16 @@
                 :error-messages="feoSaveAttempted && !selectedFeo3 ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
             </v-col>
+            <v-col v-if="formMode === 'advance_report'" cols="12" md="4">
+              <v-text-field
+                v-model="form.advance_report_number"
+                label="Номер авансового отчёта"
+                variant="outlined"
+                density="compact"
+                placeholder="Введите номер вручную"
+                prepend-inner-icon="mdi-file-document-outline"
+              />
+            </v-col>
             <v-col cols="12" md="4">
               <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
                 variant="outlined" density="compact"
@@ -2927,6 +2937,7 @@ const form = reactive({
   subsidy_id: null as number | null,
   contractor_id: null as number | null,
   registry_number: '',
+  advance_report_number: '',
   feo_category_id: null as number | null,
   subject: '',
   contract_price: null as number | null,

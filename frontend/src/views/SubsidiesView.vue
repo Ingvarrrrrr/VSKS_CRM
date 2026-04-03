@@ -1344,55 +1344,79 @@
     <!-- Quick contractor create dialog -->
     <v-dialog v-model="quickContractorDialog" max-width="560" persistent scrollable>
       <v-card>
-        <v-card-title class="text-subtitle-1 pt-4 px-4">
-          <v-icon class="mr-1" size="20" color="primary">mdi-account-plus</v-icon>
-          Новый контрагент
+        <v-card-title class="d-flex align-center justify-space-between pt-4 px-4">
+          <span class="text-subtitle-1">
+            <v-icon class="mr-1" size="20" color="primary">mdi-account-plus</v-icon>
+            Новый контрагент
+          </span>
+          <v-btn-toggle v-model="qcMode" mandatory density="compact" color="primary" size="small">
+            <v-btn value="manual" prepend-icon="mdi-pencil" size="small">Вручную</v-btn>
+            <v-btn value="file" prepend-icon="mdi-file-upload-outline" size="small">Из файла</v-btn>
+          </v-btn-toggle>
         </v-card-title>
         <v-card-text style="max-height:75vh">
-          <div class="section-label">Основные данные</div>
-          <v-text-field v-model="qcForm.name" label="Наименование *" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-select
-            v-model="qcForm.org_type"
-            :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
-            label="Тип организации" variant="outlined" density="compact" class="mb-3" hide-details clearable
-          />
-          <v-row dense class="mb-3">
-            <v-col cols="4"><v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="4"><v-text-field v-model="qcForm.kpp" label="КПП" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="4"><v-text-field v-model="qcForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details /></v-col>
-          </v-row>
-          <v-textarea v-model="qcForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
-          <v-textarea v-model="qcForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
+          <div v-if="qcMode === 'manual'">
+            <div class="section-label">Основные данные</div>
+            <v-text-field v-model="qcForm.name" label="Наименование *" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-select
+              v-model="qcForm.org_type"
+              :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
+              label="Тип организации" variant="outlined" density="compact" class="mb-3" hide-details clearable
+            />
+            <v-row dense class="mb-3">
+              <v-col cols="4"><v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details /></v-col>
+              <v-col cols="4"><v-text-field v-model="qcForm.kpp" label="КПП" variant="outlined" density="compact" hide-details /></v-col>
+              <v-col cols="4"><v-text-field v-model="qcForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details /></v-col>
+            </v-row>
+            <v-textarea v-model="qcForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
+            <v-textarea v-model="qcForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
 
-          <div class="section-label mt-4">Подписант</div>
-          <v-text-field v-model="qcForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-text-field v-model="qcForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" class="mb-3" hide-details placeholder="Устава, доверенности №..." />
+            <div class="section-label mt-4">Подписант</div>
+            <v-text-field v-model="qcForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-text-field v-model="qcForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" class="mb-3" hide-details placeholder="Устава, доверенности №..." />
 
-          <div class="section-label mt-4">Контакты</div>
-          <v-row dense class="mb-3">
-            <v-col cols="6"><v-text-field v-model="qcForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6"><v-text-field v-model="qcForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details /></v-col>
-          </v-row>
-          <v-text-field v-model="qcForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row dense class="mb-3">
-            <v-col cols="6"><v-text-field v-model="qcForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6"><v-text-field v-model="qcForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details /></v-col>
-          </v-row>
+            <div class="section-label mt-4">Контакты</div>
+            <v-row dense class="mb-3">
+              <v-col cols="6"><v-text-field v-model="qcForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details /></v-col>
+              <v-col cols="6"><v-text-field v-model="qcForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details /></v-col>
+            </v-row>
+            <v-text-field v-model="qcForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-row dense class="mb-3">
+              <v-col cols="6"><v-text-field v-model="qcForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details /></v-col>
+              <v-col cols="6"><v-text-field v-model="qcForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details /></v-col>
+            </v-row>
 
-          <div class="section-label mt-4">Банковские реквизиты</div>
-          <v-text-field v-model="qcForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
-          <v-text-field v-model="qcForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details placeholder="в ПАО «Сбербанк»..." />
-          <v-row dense class="mb-3">
-            <v-col cols="6"><v-text-field v-model="qcForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" /></v-col>
-            <v-col cols="6"><v-text-field v-model="qcForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" /></v-col>
-          </v-row>
-          <v-textarea v-model="qcForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" hide-details />
+            <div class="section-label mt-4">Банковские реквизиты</div>
+            <v-text-field v-model="qcForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
+            <v-text-field v-model="qcForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details placeholder="в ПАО «Сбербанк»..." />
+            <v-row dense class="mb-3">
+              <v-col cols="6"><v-text-field v-model="qcForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" /></v-col>
+              <v-col cols="6"><v-text-field v-model="qcForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" /></v-col>
+            </v-row>
+            <v-textarea v-model="qcForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" hide-details />
+          </div>
+          <div v-else>
+            <p class="text-body-2 text-medium-emphasis mb-3">Загрузите Excel файл с контрагентами. Формат: ИНН, Наименование, КПП, Адрес.</p>
+            <v-file-input
+              v-model="qcImportFile"
+              label="Выберите файл Excel (.xlsx)"
+              accept=".xlsx,.xls"
+              variant="outlined"
+              density="compact"
+              prepend-icon="mdi-microsoft-excel"
+              hide-details
+            />
+            <v-alert v-if="qcImportError" type="error" density="compact" class="mt-2">{{ qcImportError }}</v-alert>
+            <v-alert v-if="qcImportSuccess" type="success" density="compact" class="mt-2">{{ qcImportSuccess }}</v-alert>
+          </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="quickContractorDialog = false">Отмена</v-btn>
-          <v-btn color="primary" variant="tonal" :loading="qcSaving" :disabled="!qcForm.name.trim()"
+          <v-btn variant="text" @click="quickContractorDialog = false; qcMode = 'manual'; qcImportFile = null; qcImportError = ''">Отмена</v-btn>
+          <v-btn v-if="qcMode === 'manual'" color="primary" variant="tonal" :loading="qcSaving" :disabled="!qcForm.name.trim()"
             @click="saveQuickContractor">Создать</v-btn>
+          <v-btn v-else color="success" variant="tonal" :loading="qcImportLoading" :disabled="!qcImportFile"
+            @click="importContractorsFromFile">Загрузить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1754,6 +1778,11 @@ const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 // Quick contractor creation
 const quickContractorDialog = ref(false)
 const qcSaving = ref(false)
+const qcMode = ref<'manual' | 'file'>('manual')
+const qcImportFile = ref<File | null>(null)
+const qcImportError = ref('')
+const qcImportSuccess = ref('')
+const qcImportLoading = ref(false)
 const qcFormDefault = () => ({
   name: '', org_type: '', inn: '', kpp: '', ogrn: '',
   address: '', postal_address: '',
@@ -1776,10 +1805,39 @@ async function saveQuickContractor() {
     editForm.value.contractor_id = created.id
     quickContractorDialog.value = false
     qcForm.value = qcFormDefault()
+    qcMode.value = 'manual'
+    qcImportFile.value = null
+    qcImportError.value = ''
     snack.value = { show: true, text: `Контрагент "${created.name}" создан`, color: 'success' }
   } catch (e: any) {
     snack.value = { show: true, text: e?.detail || 'Ошибка создания', color: 'error' }
   } finally { qcSaving.value = false }
+}
+
+async function importContractorsFromFile() {
+  if (!qcImportFile.value) return
+  qcImportLoading.value = true
+  qcImportError.value = ''
+  qcImportSuccess.value = ''
+  try {
+    const formData = new FormData()
+    formData.append('file', qcImportFile.value)
+    const res = await apiFetch<any>('/contractors/import/excel', {
+      method: 'POST',
+      body: formData,
+    })
+    qcImportSuccess.value = `Добавлено: ${res.created}, обновлено: ${res.updated || 0}`
+    qcImportFile.value = null
+    setTimeout(() => {
+      quickContractorDialog.value = false
+      qcImportSuccess.value = ''
+      qcMode.value = 'manual'
+    }, 2000)
+  } catch (e: any) {
+    qcImportError.value = e?.detail || 'Ошибка импорта'
+  } finally {
+    qcImportLoading.value = false
+  }
 }
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })

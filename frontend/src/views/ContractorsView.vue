@@ -265,12 +265,20 @@
             />
             <v-text-field
               v-model="form.name"
-              label="Наименование организации *"
+              label="Краткое наименование *"
               variant="outlined"
               density="compact"
               :rules="[v => !!v || 'Обязательное поле']"
-              class="mb-3"
+              class="mb-2"
               hide-details="auto"
+            />
+            <v-text-field
+              v-model="form.full_name"
+              label="Полное наименование"
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+              hide-details
             />
             <v-textarea v-model="form.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
             <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
@@ -568,6 +576,7 @@ import FileDropZone from '@/components/FileDropZone.vue'
 interface ContractorWithStats {
   id: number
   name: string
+  full_name?: string
   inn?: string
   kpp?: string
   address?: string
@@ -629,11 +638,12 @@ const egrulDiffPending = ref<Record<string, string>>({})
 
 // Fields that come from EGRUL (overwrite always) vs fields we never touch from EGRUL
 const EGRUL_FIELDS: { key: string; label: string }[] = [
-  { key: 'name',     label: 'Наименование' },
-  { key: 'kpp',      label: 'КПП' },
-  { key: 'ogrn',     label: 'ОГРН' },
-  { key: 'address',  label: 'Адрес' },
-  { key: 'org_type', label: 'Форма организации' },
+  { key: 'name',      label: 'Краткое наименование' },
+  { key: 'full_name', label: 'Полное наименование' },
+  { key: 'kpp',       label: 'КПП' },
+  { key: 'ogrn',      label: 'ОГРН' },
+  { key: 'address',   label: 'Адрес' },
+  { key: 'org_type',  label: 'Форма организации' },
   { key: 'signatory', label: 'Подписант' },
 ]
 const contractorCardFile = ref<File | null>(null)
@@ -677,7 +687,7 @@ const contractorImportResult  = ref<{ created: number; updated?: number; skipped
 const contractorImportError   = ref('')
 
 const emptyForm = () => ({
-  name: '', inn: '', kpp: '', address: '',
+  name: '', full_name: '', inn: '', kpp: '', address: '',
   contact_person: '', phone: '', email: '', org_phone: '', org_email: '', bank_details: '',
   signatory: '', signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
@@ -891,6 +901,7 @@ function openEdit(c: ContractorWithStats) {
   editId.value = c.id
   form.value = {
     name:                 c.name,
+    full_name:            c.full_name            || '',
     inn:                  c.inn                  || '',
     kpp:                  c.kpp                  || '',
     address:              c.address              || '',

@@ -218,6 +218,7 @@ class FeoCategoryTree(FeoCategoryOut):
 # Contractor
 class ContractorCreate(BaseModel):
     name: str
+    full_name: Optional[str] = None
     inn: Optional[str] = None
     kpp: Optional[str] = None
     address: Optional[str] = None

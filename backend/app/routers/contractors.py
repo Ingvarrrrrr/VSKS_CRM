@@ -525,7 +525,8 @@ async def lookup_inn(
 
             row = rows[0]  # first match
             result = {
-                "name": row.get("n") or row.get("c"),  # n=full name, c=short name
+                "name": row.get("c") or row.get("n"),  # c=short name, n=full name
+                "full_name": row.get("n"),              # n=full legal name
                 "inn": row.get("i"),
                 "ogrn": row.get("o"),
                 "kpp": row.get("p"),

@@ -151,6 +151,11 @@
       <template #item.contractor_name="{ item }">
         <div>{{ item.contractor_name || '—' }}</div>
         <div v-if="item.contractor_inn" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
+        <div v-if="!item.contractor_name || !item.signing_date || !item.max_amount" class="d-flex flex-wrap ga-1 mt-1">
+          <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
+          <v-chip v-if="!item.signing_date" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Дата</v-chip>
+          <v-chip v-if="!item.max_amount" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub">Сумма</v-chip>
+        </div>
       </template>
       <template #item.max_amount="{ item }">
         {{ item.max_amount ? formatMoney(item.max_amount) : '—' }}

@@ -156,8 +156,8 @@
           <div class="osc-body">
             <div class="osc-name">{{ org.org_name }}</div>
             <div class="osc-stats">
-              <span><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }}</span>
-              <span><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }}</span>
+              <span><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
+              <span><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
             </div>
           </div>
           <div v-if="org.unseen_count > 0" class="osc-badge">{{ org.unseen_count }}</div>
@@ -1969,14 +1969,14 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 10px;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 12px;
   border: 1.5px solid rgba(0,0,0,0.12);
   background: #fff;
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-  min-height: 72px;
+  min-height: 88px;
 }
 .org-sel-card:hover {
   transform: translateY(-2px);
@@ -2017,10 +2017,14 @@ onUnmounted(() => {
 }
 .osc-stats {
   display: flex;
-  gap: 10px;
-  margin-top: 4px;
-  font-size: 11px;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
   color: #64748b;
+}
+.osc-stat-label {
+  font-size: 10px;
+  opacity: 0.75;
 }
 .osc-badge {
   position: absolute;

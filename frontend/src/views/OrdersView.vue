@@ -165,9 +165,13 @@
 
         <!-- Предмет договора -->
         <template #item.subject="{ item }">
-          <span class="text-body-2 text-truncate" style="max-width:180px;display:inline-block">
-            {{ item.subject || '—' }}
-          </span>
+          <div>{{ item.subject || item.item_name || '—' }}</div>
+          <div v-if="!item.contractor_name || !item.feo_category_id || !item.execution_term || !(item.planned_total_price)" class="d-flex flex-wrap ga-1 mt-1">
+            <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
+            <v-chip v-if="!item.feo_category_id" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-tag-off">ФЭО</v-chip>
+            <v-chip v-if="!item.execution_term" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Срок</v-chip>
+            <v-chip v-if="!item.planned_total_price" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub">Сумма</v-chip>
+          </div>
         </template>
 
         <!-- Display name (first item or legacy item_name) -->

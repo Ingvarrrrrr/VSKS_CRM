@@ -73,7 +73,13 @@
         hover
         items-per-page="25"
         :items-per-page-options="[25, 50, 100, -1]"
+        @click:row="(_e: any, { item }: any) => $router.push(`/advance-reports/${item.id}/edit`)"
+        style="cursor:pointer"
       >
+        <template #item.index="{ index }">
+          <span class="text-medium-emphasis text-caption">{{ index + 1 }}</span>
+        </template>
+
         <template #item.status="{ item }">
           <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
             {{ statusLabel(item.status, item) }}
@@ -86,11 +92,6 @@
 
         <template #item.delivery_date="{ item }">
           {{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}
-        </template>
-
-        <template #item.actions="{ item }">
-          <v-btn icon="mdi-pencil" variant="text" size="small"
-            :to="`/advance-reports/${item.id}/edit`" />
         </template>
 
         <template #no-data>
@@ -161,12 +162,11 @@ const statusColor = (s: string) => STATUS_COLOR[s] || 'grey'
 const formatMoney = (v?: number | null) => v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
 
 const headers = [
-  { title: '#', key: 'purchase_number', width: 70 },
+  { title: '№', key: 'index', width: 55, sortable: false },
   { title: 'Наименование', key: 'item_name', minWidth: 240 },
   { title: 'Статус', key: 'status', width: 130 },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end' as const },
   { title: 'Дата', key: 'delivery_date', width: 140 },
-  { title: 'Действия', key: 'actions', width: 80, sortable: false },
 ]
 
 const filteredItems = computed(() => {

@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -19,11 +19,12 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/login", response_model=Token)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    # Try email first, then username (backward compatibility for admin)
-    result = await db.execute(select(User).where(User.email == req.username))
+    # Try email first (case-insensitive), then username
+    login_lower = req.username.lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == login_lower))
     user = result.scalar_one_or_none()
     if not user:
-        result = await db.execute(select(User).where(User.username == req.username))
+        result = await db.execute(select(User).where(func.lower(User.username) == login_lower))
         user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный email или пароль")

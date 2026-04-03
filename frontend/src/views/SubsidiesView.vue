@@ -659,6 +659,7 @@
               variant="outlined" density="compact" clearable hide-details
               no-data-text="Нет контрагентов"
               style="flex:1"
+              @update:search="onContractorSearch"
             >
               <template v-slot:item="{ item, props }">
                 <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
@@ -707,6 +708,7 @@
               variant="outlined" density="compact" clearable hide-details
               no-data-text="Нет контрагентов"
               style="flex:1"
+              @update:search="onContractorSearch"
             >
               <template v-slot:item="{ item, props }">
                 <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
@@ -2007,6 +2009,22 @@ async function onDropToRoot(e: DragEvent) {
 }
 
 function onDragEnd() { dragNodeId.value = null; dragOverId.value = null }
+
+// ── Contractor server-side search ─────────────────
+let _contractorSearchTimeout: any = null
+function onContractorSearch(query: string) {
+  clearTimeout(_contractorSearchTimeout)
+  if (!query || query.length < 2) return
+  _contractorSearchTimeout = setTimeout(async () => {
+    try {
+      const list = await apiFetch<any[]>(`/contractors/?search=${encodeURIComponent(query)}&limit=50`)
+      const existing = new Set(contractors.value.map((c: any) => c.id))
+      for (const c of list) {
+        if (!existing.has(c.id)) contractors.value.push(c)
+      }
+    } catch {}
+  }, 400)
+}
 
 // ── Data load ─────────────────────────────────────
 async function loadAll() {

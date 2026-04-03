@@ -121,6 +121,13 @@
 - `GET /api/subsidies/{id}/history` paginated endpoint: unverified
 - Budget history timeline/modal in subsidy detail view: not confirmed built
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — BudgetHistory model + write hooks in update_purchase / create_purchase / update_subsidy
+- [ ] 06-02-PLAN.md — BudgetHistoryItemOut schema + GET /api/subsidies/{id}/history paginated endpoint
+- [ ] 06-03-PLAN.md — BudgetHistoryDialog.vue component + wire into SubsidiesView.vue
+
 **Success Criteria:**
 1. Every save of a purchase that changes `planned_total_price` writes a row to `budget_history` with correct `old_value`, `new_value`, `changed_by`, `changed_at`.
 2. Every change to a subsidy's `limit` also writes to `budget_history`.
@@ -171,6 +178,23 @@ Plans:
 - [x] 08-04-PLAN.md — E2E: 12-publications.spec.ts (4 теста с mock callback)
 
 **Note:** Post-completion, n8n was removed in favour of direct API calls to Фабрикант / Росэлторг (commit 265c68e).
+
+---
+
+### Phase 9: Внутренний чат с уведомлениями ○ PLANNED
+
+**Goal:** Реализовать встроенный мессенджер в CRM — аналог Telegram. Личные сообщения, групповые чаты, уведомления в реальном времени. Общение только между пользователями, занесёнными в персонал системы.
+
+**Requirements:** CHAT-01, CHAT-02, CHAT-03, CHAT-04, CHAT-05, CHAT-06, CHAT-07, CHAT-08, CHAT-09, CHAT-10
+
+**Dependencies:** Phase 7 (user/role system must exist; only staff users can participate)
+
+**Success Criteria:**
+1. Пользователь может открыть чат, выбрать другого сотрудника из списка персонала и отправить сообщение — оно появляется у получателя в реальном времени без перезагрузки страницы.
+2. Групповой чат: пользователь создаёт беседу, добавляет нескольких участников (только из персонала), отправляет сообщение — все участники видят его.
+3. Непрочитанные сообщения отображаются счётчиком в навигационной панели; после открытия чата счётчик сбрасывается.
+4. Список чатов показывает последнее сообщение, время и количество непрочитанных — аналогично Telegram.
+5. Медиафайлы: пользователь отправляет изображение или файл — оно отображается в чате, скачивается по клику.
 
 ---
 

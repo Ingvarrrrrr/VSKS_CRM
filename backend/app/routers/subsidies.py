@@ -202,7 +202,7 @@ async def delete_subsidy(
 ):
     from app.auth.jwt import OWNER_ROLES
     if current_user.role not in OWNER_ROLES:
-        raise HTTPException(status_code=403, detail="Недостаточно прав: удаление субсидий доступно только хозяину аккаунта или суперадмину")
+        raise HTTPException(status_code=403, detail="Недостаточно прав: удаление субсидий доступно только хозяину аккаунта")
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:

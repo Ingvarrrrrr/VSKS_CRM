@@ -61,19 +61,37 @@
     </v-card>
 
     <!-- Edit org dialog -->
-    <v-dialog v-model="editOrgDialog" max-width="420">
+    <v-dialog v-model="editOrgDialog" max-width="480">
       <v-card>
         <v-card-title class="pa-4">Реквизиты организации</v-card-title>
         <v-card-text class="pa-4 pt-0">
           <v-text-field v-model="editOrgItem.name" label="Название" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field
-            v-model="editOrgItem.inn"
-            label="ИНН"
-            variant="outlined"
-            density="compact"
-            hint="10 цифр (юр. лицо) или 12 цифр (ИП)"
-            persistent-hint
-          />
+          <div class="d-flex gap-2 align-start mb-1">
+            <v-text-field
+              v-model="editOrgItem.inn"
+              label="ИНН"
+              variant="outlined"
+              density="compact"
+              hint="10 цифр (юр. лицо) или 12 цифр (ИП)"
+              persistent-hint
+              style="flex:1"
+            />
+            <v-btn
+              color="primary"
+              variant="tonal"
+              size="small"
+              :loading="egrulLoading"
+              :disabled="!editOrgItem.inn || editOrgItem.inn.length < 10"
+              prepend-icon="mdi-cloud-download-outline"
+              style="margin-top:4px;white-space:nowrap"
+              @click="enrichFromEgrul"
+            >
+              Обновить из ЕГРЮЛ
+            </v-btn>
+          </div>
+          <v-alert v-if="egrulMessage" :type="egrulMessageType" density="compact" variant="tonal" class="mt-2 mb-2 text-caption" closable @click:close="egrulMessage = ''">
+            {{ egrulMessage }}
+          </v-alert>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -133,6 +151,31 @@ const deleteDialog = reactive({ show: false, item: null as Org | null, deleting:
 const editOrgDialog = ref(false)
 const editOrgSaving = ref(false)
 const editOrgItem = ref({ id: 0, name: '', inn: '' })
+const egrulLoading = ref(false)
+const egrulMessage = ref('')
+const egrulMessageType = ref<'success' | 'info' | 'error'>('info')
+
+async function enrichFromEgrul() {
+  const inn = editOrgItem.value.inn?.trim()
+  if (!inn || inn.length < 10) return
+  egrulLoading.value = true
+  egrulMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}`)
+    const source = data._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
+    const filled: string[] = []
+    if (data.name) { editOrgItem.value.name = data.name; filled.push('Название') }
+    egrulMessage.value = filled.length
+      ? `Заполнено из ${source}: ${filled.join(', ')}`
+      : `Найден: ${data.name || inn} (${source})`
+    egrulMessageType.value = 'success'
+  } catch (e: any) {
+    egrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
+    egrulMessageType.value = 'error'
+  } finally {
+    egrulLoading.value = false
+  }
+}
 
 function openEditOrg(org: Org) {
   editOrgItem.value = { id: org.id, name: org.name, inn: org.inn || '' }

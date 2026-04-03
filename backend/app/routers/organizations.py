@@ -177,12 +177,15 @@ async def update_organization(
     if not org:
         raise HTTPException(404, "Организация не найдена")
     org.name = data.name
-    if data.inn is not None:
-        org.inn = data.inn
+    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'signatory'):
+        val = getattr(data, field, None)
+        if val is not None:
+            setattr(org, field, val or None)
     await db.commit()
     count_q = await db.execute(select(func.count()).where(User.org_id == org.id))
     return OrganizationOut(
-        id=org.id, name=org.name, inn=org.inn,
+        id=org.id, name=org.name, full_name=org.full_name, inn=org.inn,
+        kpp=org.kpp, ogrn=org.ogrn, address=org.address, signatory=org.signatory,
         is_active=org.is_active, created_at=org.created_at,
         user_count=count_q.scalar() or 0,
     )

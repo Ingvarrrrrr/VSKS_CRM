@@ -9,8 +9,12 @@ class Organization(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    full_name = Column(String(1000), nullable=True)
     inn = Column(String(20), nullable=True)
+    kpp = Column(String(20), nullable=True)
+    ogrn = Column(String(20), nullable=True)
     address = Column(String(500), nullable=True)
+    signatory = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # Multi-org / contour support

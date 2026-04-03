@@ -82,13 +82,22 @@ class UserOut(BaseModel):
 # Organization
 class OrganizationCreate(BaseModel):
     name: str
+    full_name: Optional[str] = None
     inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    address: Optional[str] = None
+    signatory: Optional[str] = None
 
 class OrganizationOut(BaseModel):
     id: int
     name: str
+    full_name: Optional[str] = None
     inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
     address: Optional[str] = None
+    signatory: Optional[str] = None
     is_active: bool
     created_at: datetime
     user_count: int = 0

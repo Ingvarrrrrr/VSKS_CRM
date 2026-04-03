@@ -241,15 +241,15 @@
               <v-col cols="3">
                 <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
               </v-col>
-              <v-col cols="1" class="d-flex align-center">
-                <v-btn icon="mdi-database-search" variant="tonal" size="small" color="blue"
-                  :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
-                  title="Заполнить по ИНН из ЕГРЮЛ (nalog.ru)" @click="lookupFns" />
-              </v-col>
             </v-row>
-            <div class="text-caption text-medium-emphasis mt-1 mb-2">
-              Введите ИНН — данные организации подтянутся автоматически из ЕГРЮЛ
-            </div>
+            <v-btn
+              variant="tonal" color="primary" size="small" class="mt-2 mb-2"
+              prepend-icon="mdi-database-search-outline"
+              :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
+              @click="lookupFns"
+            >
+              Заполнить на основании ИНН из ЕГРЮЛ
+            </v-btn>
             <v-alert v-if="fnsMessage" :type="fnsMessageType" variant="tonal" density="compact" class="mb-2 text-caption" closable @click:close="fnsMessage = ''">
               {{ fnsMessage }}
             </v-alert>
@@ -344,6 +344,41 @@
           <v-spacer />
           <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
           <v-btn color="primary" :loading="saving" @click="save">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── EGRUL diff confirm ── -->
+    <v-dialog v-model="egrulDiffDialog" max-width="520" persistent>
+      <v-card>
+        <v-card-title class="pa-4 text-subtitle-1 font-weight-bold">
+          <v-icon color="primary" class="mr-2">mdi-database-sync-outline</v-icon>
+          Данные из ЕГРЮЛ отличаются
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <p class="text-body-2 text-medium-emphasis mb-3">Следующие поля изменились. Обновить?</p>
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th>Поле</th>
+                <th>Сейчас</th>
+                <th>Из ЕГРЮЛ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in egrulDiffItems" :key="d.label">
+                <td class="text-caption font-weight-medium">{{ d.label }}</td>
+                <td class="text-caption text-medium-emphasis">{{ d.old }}</td>
+                <td class="text-caption text-success">{{ d.new }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <p class="text-caption text-medium-emphasis mt-3">Поля не из ЕГРЮЛ (контактное лицо, основание, реквизиты) останутся без изменений.</p>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="egrulDiffDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" @click="applyEgrulDiff">Обновить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -584,6 +619,21 @@ const saving      = ref(false)
 const fnsLoading  = ref(false)
 const fnsMessage  = ref('')
 const fnsMessageType = ref<'success' | 'info' | 'error' | 'warning'>('info')
+
+// Confirmation dialog for EGRUL diff
+const egrulDiffDialog = ref(false)
+const egrulDiffItems = ref<{ label: string; old: string; new: string }[]>([])
+const egrulDiffPending = ref<Record<string, string>>({})
+
+// Fields that come from EGRUL (overwrite always) vs fields we never touch from EGRUL
+const EGRUL_FIELDS: { key: string; label: string }[] = [
+  { key: 'name',     label: 'Наименование' },
+  { key: 'kpp',      label: 'КПП' },
+  { key: 'ogrn',     label: 'ОГРН' },
+  { key: 'address',  label: 'Адрес' },
+  { key: 'org_type', label: 'Форма организации' },
+  { key: 'signatory', label: 'Подписант' },
+]
 const contractorCardFile = ref<File | null>(null)
 const contractorCardImporting = ref(false)
 const search      = ref('')
@@ -698,41 +748,46 @@ async function lookupFns() {
   try {
     const data = await apiFetch<Record<string, string | null>>(`/contractors/lookup-inn/${inn}`)
     const source = (data as any)._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
-    const filled: string[] = []
-    // Only fill empty fields (don't overwrite manually entered data)
-    const fillField = (key: keyof typeof form.value, label: string) => {
-      if (data[key] && !form.value[key]) { (form.value as any)[key] = data[key]; filled.push(label) }
+
+    // Build diff: compare EGRUL fields with current form values
+    const diffs: { label: string; old: string; new: string }[] = []
+    const pending: Record<string, string> = {}
+    for (const { key, label } of EGRUL_FIELDS) {
+      const incoming = (data[key] || '').toString().trim()
+      const current = ((form.value as any)[key] || '').toString().trim()
+      if (incoming && incoming !== current) {
+        diffs.push({ label, old: current || '(пусто)', new: incoming })
+        pending[key] = incoming
+      }
     }
-    fillField('name', 'Наименование')
-    fillField('kpp', 'КПП')
-    fillField('ogrn', 'ОГРН')
-    fillField('address', 'Адрес')
-    fillField('signatory', 'Подписант')
-    fillField('org_type', 'Тип')
-    fillField('postal_address', 'Почт. адрес')
-    fillField('signatory_basis', 'Основание')
-    fillField('contact_person', 'Контакт')
-    fillField('phone', 'Телефон')
-    fillField('email', 'Email')
-    fillField('org_phone', 'Тел. орг.')
-    fillField('org_email', 'Email орг.')
-    fillField('settlement_account', 'Р/С')
-    fillField('bank_name', 'Банк')
-    fillField('bik', 'БИК')
-    fillField('correspondent_account', 'К/С')
-    if (filled.length) {
-      fnsMessage.value = `Заполнено из ${source}: ${filled.join(', ')}`
-      fnsMessageType.value = 'success'
-    } else {
-      fnsMessage.value = `Найден: ${data.name || inn} (${source}). Поля уже заполнены.`
+
+    if (diffs.length === 0) {
+      fnsMessage.value = `Данные из ${source} совпадают с текущими — изменений нет`
       fnsMessageType.value = 'info'
+      return
     }
+
+    // Show confirmation dialog
+    egrulDiffItems.value = diffs
+    egrulDiffPending.value = pending
+    egrulDiffDialog.value = true
+    fnsMessage.value = `Получены данные из ${source}. Подтвердите обновление.`
+    fnsMessageType.value = 'info'
   } catch (e: any) {
     fnsMessage.value = e.message || 'Ошибка запроса к ФНС'
     fnsMessageType.value = 'error'
   } finally {
     fnsLoading.value = false
   }
+}
+
+function applyEgrulDiff() {
+  for (const [key, val] of Object.entries(egrulDiffPending.value)) {
+    ;(form.value as any)[key] = val
+  }
+  fnsMessage.value = `Обновлено: ${egrulDiffItems.value.map(d => d.label).join(', ')}`
+  fnsMessageType.value = 'success'
+  egrulDiffDialog.value = false
 }
 
 async function importFromCardFile() {

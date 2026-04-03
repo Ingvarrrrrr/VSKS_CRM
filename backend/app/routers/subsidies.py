@@ -163,8 +163,12 @@ async def create_subsidy(
 async def update_subsidy(
     subsidy_id: int,
     subsidy: SubsidyCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    from app.auth.jwt import ADMIN_ROLES
+    if current_user.role not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Недостаточно прав: требуется роль администратора или выше")
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
@@ -193,8 +197,12 @@ async def update_subsidy(
 @router.delete("/{subsidy_id}")
 async def delete_subsidy(
     subsidy_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    from app.auth.jwt import OWNER_ROLES
+    if current_user.role not in OWNER_ROLES:
+        raise HTTPException(status_code=403, detail="Недостаточно прав: удаление субсидий доступно только хозяину аккаунта или суперадмину")
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
@@ -210,10 +218,6 @@ async def delete_subsidy(
             status_code=409,
             detail="Нельзя удалить субсидию: есть связанные закупки. Сначала удалите или перенесите их."
         )
-
-    # Delete linked wishes
-    from sqlalchemy import text
-    await db.execute(text("DELETE FROM wishes WHERE subsidy_id = :sid"), {"sid": subsidy_id})
 
     # Cascade delete FEO categories (all levels, bottom-up by level desc)
     cats = (await db.execute(

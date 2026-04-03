@@ -181,13 +181,22 @@ Plans:
 
 ---
 
-### Phase 9: Внутренний чат с уведомлениями ○ PLANNED
+### Phase 9: Внутренний чат с уведомлениями ○ IN PROGRESS
 
 **Goal:** Реализовать встроенный мессенджер в CRM — аналог Telegram. Личные сообщения, групповые чаты, уведомления в реальном времени. Общение только между пользователями, занесёнными в персонал системы.
 
 **Requirements:** CHAT-01, CHAT-02, CHAT-03, CHAT-04, CHAT-05, CHAT-06, CHAT-07, CHAT-08, CHAT-09, CHAT-10
 
 **Dependencies:** Phase 7 (user/role system must exist; only staff users can participate)
+
+**Plans:** 5 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — DB models: ChatRoom, ChatParticipant, ChatMessage, MessageRead
+- [ ] 09-02-PLAN.md — ConnectionManager + nginx WebSocket proxy config
+- [ ] 09-03-PLAN.md — Backend REST + WS API (chat.py router) + /tasks/badges extension
+- [ ] 09-04-PLAN.md — Frontend: ChatView.vue + useChat.ts composable + Vue router entry
+- [ ] 09-05-PLAN.md — AppBar: chat nav item + badge + WS/polling integration
 
 **Success Criteria:**
 1. Пользователь может открыть чат, выбрать другого сотрудника из списка персонала и отправить сообщение — оно появляется у получателя в реальном времени без перезагрузки страницы.

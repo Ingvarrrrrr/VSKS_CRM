@@ -573,7 +573,9 @@ interface ContractorWithStats {
   address?: string
   contact_person?: string
   phone?: string
+  org_phone?: string
   email?: string
+  org_email?: string
   bank_details?: string
   signatory?: string
   signatory_basis?: string
@@ -894,7 +896,9 @@ function openEdit(c: ContractorWithStats) {
     address:              c.address              || '',
     contact_person:       c.contact_person       || '',
     phone:                c.phone                || '',
+    org_phone:            c.org_phone            || '',
     email:                c.email                || '',
+    org_email:            c.org_email            || '',
     bank_details:         c.bank_details         || '',
     signatory:            c.signatory            || '',
     signatory_basis:      c.signatory_basis      || '',

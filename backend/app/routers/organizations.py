@@ -149,7 +149,11 @@ async def list_organizations(
     q = select(Organization)
     if search:
         like = f"%{search}%"
-        q = q.where(Organization.name.ilike(like) | Organization.inn.ilike(like))
+        q = q.where(
+            Organization.name.ilike(like) |
+            Organization.full_name.ilike(like) |
+            Organization.inn.ilike(like)
+        )
     if active_only:
         q = q.where(Organization.is_active == True)
     q = q.order_by(Organization.name)

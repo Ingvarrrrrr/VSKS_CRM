@@ -123,7 +123,7 @@ const router = createRouter({
       path: '/my-tasks',
       name: 'my-tasks',
       component: MyTasksView,
-      meta: { requiresAuth: false, title: 'Мои задачи' }
+      meta: { requiresAuth: false, title: 'Мои задачи и закупки' }
     },
     {
       path: '/reports',

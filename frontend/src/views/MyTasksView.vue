@@ -3,7 +3,7 @@
     <!-- Header -->
     <div class="d-flex align-center mb-4 flex-wrap" style="gap:12px">
       <div>
-        <h1 class="text-h5 font-weight-bold">Мои задачи</h1>
+        <h1 class="text-h5 font-weight-bold">Мои задачи и закупки</h1>
         <span class="text-body-2 text-medium-emphasis">{{ TAB_SUBTITLES[activeTab] }}</span>
       </div>
       <v-spacer />
@@ -138,6 +138,49 @@
         </v-row>
       </div>
     </v-expand-transition>
+
+    <!-- Organization cards -->
+    <div v-if="selectedOrgId === null && orgSummary.length > 1" class="mb-6">
+      <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
+      <v-row>
+        <v-col v-for="org in orgSummary" :key="org.org_id ?? 'all'" cols="12" sm="6" md="4" lg="3">
+          <v-card
+            variant="outlined"
+            :color="org.org_id === null ? 'primary' : undefined"
+            class="cursor-pointer org-card"
+            hover
+            @click="selectOrg(org.org_id)"
+          >
+            <v-card-title class="text-subtitle-1 font-weight-bold pb-1">
+              {{ org.org_name }}
+            </v-card-title>
+            <v-card-text class="pt-1">
+              <div class="d-flex align-center gap-3 mb-1">
+                <div class="d-flex align-center gap-1">
+                  <v-icon size="16" color="blue">mdi-clipboard-check</v-icon>
+                  <span class="text-body-2">{{ org.task_count }} задач</span>
+                </div>
+                <div class="d-flex align-center gap-1">
+                  <v-icon size="16" color="green">mdi-cart</v-icon>
+                  <span class="text-body-2">{{ org.purchase_count }} закупок</span>
+                </div>
+              </div>
+              <v-chip v-if="org.unseen_count > 0" size="small" color="orange" variant="tonal" prepend-icon="mdi-bell-ring">
+                {{ org.unseen_count }} непросмотренных
+              </v-chip>
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+    </div>
+
+    <!-- Back to org selection -->
+    <v-btn v-if="orgSummary.length > 1 && selectedOrgId !== null" variant="text" size="small" color="primary"
+      prepend-icon="mdi-arrow-left" class="mb-3" @click="selectedOrgId = null">
+      К выбору организации
+    </v-btn>
+
+    <div v-show="selectedOrgId !== null || orgSummary.length <= 1">
 
     <!-- ═══ PURCHASES TAB ═══ -->
     <template v-if="activeTab === 'purchases'">
@@ -495,6 +538,8 @@
       </template>
     </template>
 
+    </div><!-- end v-show org content -->
+
     <!-- General Task Dialog (create/edit) -->
     <v-dialog v-model="showTaskDialog" max-width="680">
       <v-card>
@@ -777,6 +822,9 @@ import { apiFetch } from '@/api'
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
+const selectedOrgId = ref<number | null>(null)
+const orgSummary = ref<{org_id: number | null, org_name: string, task_count: number, purchase_count: number, unseen_count: number}[]>([])
+const orgLoading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
 const currentUserRole = localStorage.getItem('user_role') || 'employee'
 const isEmployee = currentUserRole === 'employee'
@@ -1528,6 +1576,22 @@ async function saveComment() {
   commentDialog.value = false
 }
 
+async function loadOrgSummary() {
+  orgLoading.value = true
+  try {
+    orgSummary.value = await apiFetch<any[]>('/tasks/org-summary')
+  } catch (e) {
+    console.error('Failed to load org summary:', e)
+    orgSummary.value = []
+  } finally {
+    orgLoading.value = false
+  }
+}
+
+function selectOrg(orgId: number | null) {
+  selectedOrgId.value = orgId
+}
+
 async function load() {
   loading.value = true
   try {
@@ -1597,6 +1661,7 @@ async function pollTasks() {
 
 let _pollInterval: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
+  loadOrgSummary()
   await load()
   _pollInterval = setInterval(pollTasks, 30_000)
 
@@ -1877,5 +1942,13 @@ onUnmounted(() => {
 }
 .field-changed:hover {
   outline-color: #D97706;
+}
+
+.org-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.org-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
 }
 </style>

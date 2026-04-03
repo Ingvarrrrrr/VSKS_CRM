@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_, func, and_
+from sqlalchemy import select, or_, func, and_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
@@ -246,6 +246,79 @@ async def list_tasks(
     q = q.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
     tasks = (await db.execute(q)).scalars().all()
     return await _enrich_tasks(tasks, db)
+
+
+@router.get("/org-summary")
+async def org_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Per-organization summary: task count, purchase count, unseen changes count."""
+    from app.models.organization import Organization
+    from app.models.purchase import Purchase
+    from app.models.subsidy import Subsidy
+
+    user_id = current_user.id
+    org_ids = get_org_filter(current_user)
+
+    if org_ids is None:
+        orgs_result = await db.execute(select(Organization).where(Organization.is_active == True))
+    else:
+        orgs_result = await db.execute(select(Organization).where(Organization.id.in_(org_ids)))
+    orgs = orgs_result.scalars().all()
+
+    result = []
+    total_tasks = 0
+    total_purchases = 0
+    total_unseen = 0
+
+    for org in orgs:
+        task_q = select(func.count(Task.id)).where(
+            Task.org_id == org.id,
+            or_(
+                Task.created_by_id == user_id,
+                Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id == user_id)),
+                Task.id.in_(select(TaskComment.task_id).where(TaskComment.user_id == user_id).distinct()),
+            )
+        )
+        task_count = (await db.execute(task_q)).scalar() or 0
+
+        purchase_q = select(func.count(Purchase.id)).join(
+            Subsidy, Purchase.subsidy_id == Subsidy.id
+        ).where(Subsidy.org_id == org.id)
+        purchase_count = (await db.execute(purchase_q)).scalar() or 0
+
+        unseen_q = select(func.count(func.distinct(TaskChange.task_id))).join(
+            Task, TaskChange.task_id == Task.id
+        ).where(
+            Task.org_id == org.id,
+            TaskChange.changed_by_id != user_id,
+            ~exists(
+                select(TaskFieldSeen.id).where(
+                    TaskFieldSeen.task_id == TaskChange.task_id,
+                    TaskFieldSeen.user_id == user_id,
+                    TaskFieldSeen.field_name == TaskChange.field_name,
+                    TaskFieldSeen.dismissed_at >= TaskChange.changed_at,
+                )
+            )
+        )
+        unseen_count = (await db.execute(unseen_q)).scalar() or 0
+
+        result.append({
+            "org_id": org.id, "org_name": org.name,
+            "task_count": task_count, "purchase_count": purchase_count,
+            "unseen_count": unseen_count,
+        })
+        total_tasks += task_count
+        total_purchases += purchase_count
+        total_unseen += unseen_count
+
+    result.insert(0, {
+        "org_id": None, "org_name": "Все организации",
+        "task_count": total_tasks, "purchase_count": total_purchases,
+        "unseen_count": total_unseen,
+    })
+    return result
 
 
 @router.get("/init")

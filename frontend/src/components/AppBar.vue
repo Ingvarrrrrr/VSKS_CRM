@@ -359,7 +359,7 @@ const isEmployee = computed(() => userRoleRaw.value === 'employee')
 
 const allNavShortcuts = [
   { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
-  { label: 'Задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+  { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
   { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
   { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
@@ -426,7 +426,7 @@ const menuItems = computed(() => {
   const role = userRoleRaw.value
   const items = [
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
-    { title: 'Мои задачи', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+    { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
     { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
     { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },

@@ -453,9 +453,10 @@ async def list_contractors_with_stats(
 @router.get("/lookup-inn/{inn}")
 async def lookup_inn(
     inn: str,
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Lookup company data by INN from FNS (nalog.ru) EGRUL/EGRIP API."""
+    """Lookup company data by INN: first local DB, then FNS EGRUL/EGRIP API."""
     import httpx
     import logging
     logger = logging.getLogger(__name__)
@@ -463,6 +464,35 @@ async def lookup_inn(
     inn = inn.strip()
     if not inn or len(inn) not in (10, 12):
         raise HTTPException(400, "ИНН должен быть 10 (юр.лицо) или 12 (ИП) цифр")
+
+    # Step 0: check local DB first
+    local = await db.execute(
+        select(Contractor).where(Contractor.inn == inn).limit(1)
+    )
+    local_contractor = local.scalar_one_or_none()
+    if local_contractor:
+        return {
+            "name": local_contractor.name,
+            "inn": local_contractor.inn,
+            "kpp": local_contractor.kpp,
+            "ogrn": local_contractor.ogrn,
+            "address": local_contractor.address,
+            "postal_address": local_contractor.postal_address,
+            "org_type": local_contractor.org_type,
+            "signatory": local_contractor.signatory,
+            "signatory_basis": local_contractor.signatory_basis,
+            "contact_person": local_contractor.contact_person,
+            "phone": local_contractor.phone,
+            "email": local_contractor.email,
+            "org_phone": local_contractor.org_phone,
+            "org_email": local_contractor.org_email,
+            "settlement_account": local_contractor.settlement_account,
+            "bank_name": local_contractor.bank_name,
+            "bik": local_contractor.bik,
+            "correspondent_account": local_contractor.correspondent_account,
+            "bank_details": local_contractor.bank_details,
+            "_source": "local",
+        }
 
     # FNS public API (no auth required)
     url = f"https://egrul.nalog.ru/search-result/{inn}"

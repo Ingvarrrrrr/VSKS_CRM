@@ -1363,11 +1363,16 @@
               :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
               label="Тип организации" variant="outlined" density="compact" class="mb-3" hide-details clearable
             />
-            <v-row dense class="mb-3">
-              <v-col cols="4"><v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details /></v-col>
+            <v-row dense class="mb-1">
+              <v-col cols="4">
+                <v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details
+                  :loading="qcInnLoading"
+                  @update:model-value="onQcInnChange" />
+              </v-col>
               <v-col cols="4"><v-text-field v-model="qcForm.kpp" label="КПП" variant="outlined" density="compact" hide-details /></v-col>
               <v-col cols="4"><v-text-field v-model="qcForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details /></v-col>
             </v-row>
+            <v-alert v-if="qcInnMessage" :type="qcInnMessageType" density="compact" variant="tonal" class="mb-2 text-caption" closable @click:close="qcInnMessage = ''">{{ qcInnMessage }}</v-alert>
             <v-textarea v-model="qcForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
             <v-textarea v-model="qcForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
 
@@ -1779,6 +1784,60 @@ const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 const quickContractorDialog = ref(false)
 const qcSaving = ref(false)
 const qcMode = ref<'manual' | 'file'>('manual')
+const qcInnLoading = ref(false)
+const qcInnMessage = ref('')
+const qcInnMessageType = ref<'success' | 'info' | 'error'>('info')
+
+let _qcInnTimeout: any = null
+function onQcInnChange(val: string) {
+  clearTimeout(_qcInnTimeout)
+  const inn = (val || '').replace(/\D/g, '')
+  if (inn.length === 10 || inn.length === 12) {
+    _qcInnTimeout = setTimeout(() => lookupQcInn(inn), 400)
+  }
+}
+
+async function lookupQcInn(inn: string) {
+  qcInnLoading.value = true
+  qcInnMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}`)
+    const source = data._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
+    const filled: string[] = []
+    const fill = (key: string, label: string) => {
+      if (data[key] && !(qcForm.value as any)[key]) {
+        ;(qcForm.value as any)[key] = data[key]
+        filled.push(label)
+      }
+    }
+    fill('name', 'Наименование')
+    fill('kpp', 'КПП')
+    fill('ogrn', 'ОГРН')
+    fill('address', 'Адрес')
+    fill('postal_address', 'Почт. адрес')
+    fill('org_type', 'Тип')
+    fill('signatory', 'Подписант')
+    fill('signatory_basis', 'Основание')
+    fill('contact_person', 'Контакт')
+    fill('phone', 'Телефон')
+    fill('email', 'Email')
+    fill('org_phone', 'Тел. орг.')
+    fill('org_email', 'Email орг.')
+    fill('settlement_account', 'Р/С')
+    fill('bank_name', 'Банк')
+    fill('bik', 'БИК')
+    fill('correspondent_account', 'К/С')
+    qcInnMessage.value = filled.length
+      ? `Заполнено из ${source}: ${filled.join(', ')}`
+      : `Найден: ${data.name || inn} (${source}). Поля уже заполнены.`
+    qcInnMessageType.value = filled.length ? 'success' : 'info'
+  } catch (e: any) {
+    qcInnMessage.value = e?.detail || 'ИНН не найден'
+    qcInnMessageType.value = 'error'
+  } finally {
+    qcInnLoading.value = false
+  }
+}
 const qcImportFile = ref<File | null>(null)
 const qcImportError = ref('')
 const qcImportSuccess = ref('')

@@ -697,18 +697,34 @@ async function lookupFns() {
   fnsMessage.value = ''
   try {
     const data = await apiFetch<Record<string, string | null>>(`/contractors/lookup-inn/${inn}`)
+    const source = (data as any)._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
     const filled: string[] = []
-    if (data.name) { form.value.name = data.name; filled.push('Наименование') }
-    if (data.kpp) { form.value.kpp = data.kpp; filled.push('КПП') }
-    if (data.ogrn) { form.value.ogrn = data.ogrn; filled.push('ОГРН') }
-    if (data.address) { form.value.address = data.address; filled.push('Адрес') }
-    if (data.signatory) { form.value.signatory = data.signatory; filled.push('Подписант') }
-    if (data.org_type) { form.value.org_type = data.org_type; filled.push('Тип') }
+    // Only fill empty fields (don't overwrite manually entered data)
+    const fillField = (key: keyof typeof form.value, label: string) => {
+      if (data[key] && !form.value[key]) { (form.value as any)[key] = data[key]; filled.push(label) }
+    }
+    fillField('name', 'Наименование')
+    fillField('kpp', 'КПП')
+    fillField('ogrn', 'ОГРН')
+    fillField('address', 'Адрес')
+    fillField('signatory', 'Подписант')
+    fillField('org_type', 'Тип')
+    fillField('postal_address', 'Почт. адрес')
+    fillField('signatory_basis', 'Основание')
+    fillField('contact_person', 'Контакт')
+    fillField('phone', 'Телефон')
+    fillField('email', 'Email')
+    fillField('org_phone', 'Тел. орг.')
+    fillField('org_email', 'Email орг.')
+    fillField('settlement_account', 'Р/С')
+    fillField('bank_name', 'Банк')
+    fillField('bik', 'БИК')
+    fillField('correspondent_account', 'К/С')
     if (filled.length) {
-      fnsMessage.value = `Заполнено из ЕГРЮЛ: ${filled.join(', ')}`
+      fnsMessage.value = `Заполнено из ${source}: ${filled.join(', ')}`
       fnsMessageType.value = 'success'
     } else {
-      fnsMessage.value = `Найден: ${data.name || inn}. Данные не получены.`
+      fnsMessage.value = `Найден: ${data.name || inn} (${source}). Поля уже заполнены.`
       fnsMessageType.value = 'info'
     }
   } catch (e: any) {

@@ -596,6 +596,66 @@ async def enrich_all_contractors_from_fns(
     }
 
 
+@router.post("/parse-file")
+async def parse_contractor_file(
+    file: UploadFile = File(...),
+    _=Depends(get_current_user),
+):
+    """Parse a contractor card file (xlsx, docx, pdf) and return extracted fields."""
+    fname = (file.filename or '').lower()
+    content = await file.read()
+    try:
+        all_rows, hdr_idx = _parse_file_to_rows(fname, content)
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Ошибка чтения файла: {e}")
+
+    if not all_rows or len(all_rows) <= hdr_idx:
+        raise HTTPException(400, "Файл не содержит данных")
+
+    # If it's a kv-card (2 rows: header + values), extract directly
+    headers = all_rows[hdr_idx] if len(all_rows) > hdr_idx else []
+    values = all_rows[hdr_idx + 1] if len(all_rows) > hdr_idx + 1 else []
+
+    result = {}
+    field_hints = {
+        'name': ('назван', 'наимен', 'name', 'органи', 'учредит'),
+        'inn': ('инн', 'inn'),
+        'kpp': ('кпп', 'kpp'),
+        'ogrn': ('огрн', 'ogrn'),
+        'address': ('юридич', 'адрес', 'address'),
+        'postal_address': ('почтов', 'postal'),
+        'phone': ('телефон', 'phone', 'тел'),
+        'email': ('email', 'e-mail'),
+        'signatory': ('подписант', 'signatory', 'директор', 'руководит', 'уполномоч'),
+        'bik': ('бик', 'bik'),
+        'settlement_account': ('расч', 'р/с', 'settlement'),
+        'correspondent_account': ('корр', 'к/с', 'correspondent'),
+        'bank_name': ('банк', 'bank'),
+        'org_type': ('тип', 'форма', 'org_type'),
+    }
+
+    for j, h in enumerate(headers):
+        h_str = str(h).strip().lower() if h else ''
+        if not h_str or j >= len(values):
+            continue
+        val = str(values[j]).strip() if values[j] is not None else ''
+        if not val or val.lower() in ('none', 'null', '-', '—', ''):
+            continue
+        for field, hints in field_hints.items():
+            if field not in result and any(x in h_str for x in hints):
+                # INN/KPP length limits
+                if field == 'inn' and len(val.replace(' ', '')) > 12:
+                    continue
+                if field == 'kpp' and len(val.replace(' ', '')) > 9:
+                    continue
+                result[field] = val
+                break
+
+    return result
+
+
 @router.get("/", response_model=List[ContractorOut])
 async def list_contractors(
     db: AsyncSession = Depends(get_db),

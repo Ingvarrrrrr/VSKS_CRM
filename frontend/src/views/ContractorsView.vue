@@ -221,7 +221,38 @@
         <v-divider />
         <v-card-text class="pt-4" style="max-height:75vh">
           <v-form ref="formRef">
+            <div class="section-label">Загрузить из файла</div>
+            <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+              <FileDropZone v-model="contractorCardFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
+                hint="Excel, Word, PDF — карточка реквизитов" class="mb-2" />
+              <v-btn v-if="contractorCardFile" variant="tonal" color="primary" size="small" :loading="contractorCardImporting"
+                @click="importFromCardFile">Заполнить поля из файла</v-btn>
+            </div>
+
             <div class="section-label">Основные данные</div>
+            <v-row dense class="mb-0">
+              <v-col cols="4">
+                <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details
+                  @update:model-value="onInnChange" />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="3">
+                <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="1" class="d-flex align-center">
+                <v-btn icon="mdi-database-search" variant="tonal" size="small" color="blue"
+                  :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
+                  title="Заполнить по ИНН из ЕГРЮЛ (nalog.ru)" @click="lookupFns" />
+              </v-col>
+            </v-row>
+            <div class="text-caption text-medium-emphasis mt-1 mb-2">
+              Введите ИНН — данные организации подтянутся автоматически из ЕГРЮЛ
+            </div>
+            <v-alert v-if="fnsMessage" :type="fnsMessageType" variant="tonal" density="compact" class="mb-2 text-caption" closable @click:close="fnsMessage = ''">
+              {{ fnsMessage }}
+            </v-alert>
             <v-select
               v-model="form.org_type"
               :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
@@ -241,26 +272,6 @@
               class="mb-3"
               hide-details="auto"
             />
-            <v-row dense>
-              <v-col cols="4">
-                <v-text-field v-model="form.inn" label="ИНН" variant="outlined" density="compact" hide-details
-                  @update:model-value="onInnChange" />
-              </v-col>
-              <v-col cols="4">
-                <v-text-field v-model="form.kpp" label="КПП" variant="outlined" density="compact" hide-details />
-              </v-col>
-              <v-col cols="3">
-                <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
-              </v-col>
-              <v-col cols="1" class="d-flex align-center">
-                <v-btn icon="mdi-database-search" variant="tonal" size="small" color="blue"
-                  :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
-                  title="Заполнить по ИНН из ЕГРЮЛ (nalog.ru)" @click="lookupFns" />
-              </v-col>
-            </v-row>
-            <v-alert v-if="fnsMessage" :type="fnsMessageType" variant="tonal" density="compact" class="mt-2 mb-0 text-caption" closable @click:close="fnsMessage = ''">
-              {{ fnsMessage }}
-            </v-alert>
             <v-textarea v-model="form.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
             <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
@@ -572,7 +583,9 @@ const loading     = ref(false)
 const saving      = ref(false)
 const fnsLoading  = ref(false)
 const fnsMessage  = ref('')
-const fnsMessageType = ref<'success' | 'info' | 'error'>('info')
+const fnsMessageType = ref<'success' | 'info' | 'error' | 'warning'>('info')
+const contractorCardFile = ref<File | null>(null)
+const contractorCardImporting = ref(false)
 const search      = ref('')
 const filterCategory = ref<string | null>(null)
 const userRole = localStorage.getItem('user_role') || ''
@@ -685,17 +698,17 @@ async function lookupFns() {
   try {
     const data = await apiFetch<Record<string, string | null>>(`/contractors/lookup-inn/${inn}`)
     const filled: string[] = []
-    if (data.name && !form.value.name) { form.value.name = data.name; filled.push('Наименование') }
-    if (data.kpp && !form.value.kpp) { form.value.kpp = data.kpp; filled.push('КПП') }
-    if (data.ogrn && !form.value.ogrn) { form.value.ogrn = data.ogrn; filled.push('ОГРН') }
-    if (data.address && !form.value.address) { form.value.address = data.address; filled.push('Адрес') }
-    if (data.signatory && !form.value.signatory) { form.value.signatory = data.signatory; filled.push('Подписант') }
-    if (data.org_type && !form.value.org_type) { form.value.org_type = data.org_type; filled.push('Тип') }
+    if (data.name) { form.value.name = data.name; filled.push('Наименование') }
+    if (data.kpp) { form.value.kpp = data.kpp; filled.push('КПП') }
+    if (data.ogrn) { form.value.ogrn = data.ogrn; filled.push('ОГРН') }
+    if (data.address) { form.value.address = data.address; filled.push('Адрес') }
+    if (data.signatory) { form.value.signatory = data.signatory; filled.push('Подписант') }
+    if (data.org_type) { form.value.org_type = data.org_type; filled.push('Тип') }
     if (filled.length) {
       fnsMessage.value = `Заполнено из ЕГРЮЛ: ${filled.join(', ')}`
       fnsMessageType.value = 'success'
     } else {
-      fnsMessage.value = `Найден: ${data.name || inn}. Все поля уже заполнены.`
+      fnsMessage.value = `Найден: ${data.name || inn}. Данные не получены.`
       fnsMessageType.value = 'info'
     }
   } catch (e: any) {
@@ -703,6 +716,37 @@ async function lookupFns() {
     fnsMessageType.value = 'error'
   } finally {
     fnsLoading.value = false
+  }
+}
+
+async function importFromCardFile() {
+  if (!contractorCardFile.value) return
+  contractorCardImporting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', contractorCardFile.value)
+    const data = await apiFetch<any>('/contractors/parse-file', { method: 'POST', body: fd })
+    const fieldLabels: Record<string, string> = {
+      name: 'Наименование', inn: 'ИНН', kpp: 'КПП', ogrn: 'ОГРН',
+      address: 'Адрес', phone: 'Телефон', email: 'Email',
+      signatory: 'Подписант', bik: 'БИК', settlement_account: 'Р/С',
+      correspondent_account: 'К/С', bank_name: 'Банк', org_type: 'Тип',
+    }
+    const filled: string[] = []
+    for (const [field, label] of Object.entries(fieldLabels)) {
+      if (data[field]) {
+        (form.value as any)[field] = data[field]
+        filled.push(label)
+      }
+    }
+    fnsMessage.value = filled.length ? `Заполнено из файла: ${filled.join(', ')}` : 'Файл прочитан, но данные не распознаны'
+    fnsMessageType.value = filled.length ? 'success' : 'warning'
+    contractorCardFile.value = null
+  } catch (e: any) {
+    fnsMessage.value = e.message || 'Ошибка чтения файла'
+    fnsMessageType.value = 'error'
+  } finally {
+    contractorCardImporting.value = false
   }
 }
 
@@ -764,6 +808,8 @@ function openCategoriesDialog(c: ContractorWithStats) {
 function openAdd() {
   editId.value = null
   form.value = emptyForm()
+  fnsMessage.value = ''
+  contractorCardFile.value = null
   dialog.value = true
 }
 

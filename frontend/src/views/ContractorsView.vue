@@ -246,7 +246,7 @@
               variant="tonal" color="primary" size="small" class="mt-2 mb-2"
               prepend-icon="mdi-database-search-outline"
               :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
-              @click="lookupFns"
+              @click="lookupFns(true)"
             >
               Заполнить на основании ИНН из ЕГРЮЛ
             </v-btn>
@@ -740,13 +740,14 @@ function onInnChange(val: string) {
   }
 }
 
-async function lookupFns() {
+async function lookupFns(forceEgrul = false) {
   const inn = form.value.inn?.trim()
   if (!inn || inn.length < 10) return
   fnsLoading.value = true
   fnsMessage.value = ''
   try {
-    const data = await apiFetch<Record<string, string | null>>(`/contractors/lookup-inn/${inn}`)
+    const url = forceEgrul ? `/contractors/lookup-inn/${inn}?force_egrul=1` : `/contractors/lookup-inn/${inn}`
+    const data = await apiFetch<Record<string, string | null>>(url)
     const source = (data as any)._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
 
     // Build diff: compare EGRUL fields with current form values

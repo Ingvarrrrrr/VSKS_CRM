@@ -453,10 +453,11 @@ async def list_contractors_with_stats(
 @router.get("/lookup-inn/{inn}")
 async def lookup_inn(
     inn: str,
+    force_egrul: bool = Query(False),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Lookup company data by INN: first local DB, then FNS EGRUL/EGRIP API."""
+    """Lookup company data by INN: first local DB (unless force_egrul=1), then FNS EGRUL/EGRIP API."""
     import httpx
     import logging
     logger = logging.getLogger(__name__)
@@ -465,11 +466,14 @@ async def lookup_inn(
     if not inn or len(inn) not in (10, 12):
         raise HTTPException(400, "ИНН должен быть 10 (юр.лицо) или 12 (ИП) цифр")
 
-    # Step 0: check local DB first
-    local = await db.execute(
-        select(Contractor).where(Contractor.inn == inn).limit(1)
-    )
-    local_contractor = local.scalar_one_or_none()
+    # Step 0: check local DB first (skip if force_egrul requested)
+    if not force_egrul:
+        local = await db.execute(
+            select(Contractor).where(Contractor.inn == inn).limit(1)
+        )
+        local_contractor = local.scalar_one_or_none()
+    else:
+        local_contractor = None
     if local_contractor:
         return {
             "name": local_contractor.name,

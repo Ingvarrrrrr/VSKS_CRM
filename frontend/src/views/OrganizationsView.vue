@@ -205,7 +205,7 @@ async function enrichFromEgrul() {
   egrulLoading.value = true
   egrulMessage.value = ''
   try {
-    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}`)
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
     const mapped: Record<string, string> = {
       name: data.name || '',
       full_name: data.full_name || '',

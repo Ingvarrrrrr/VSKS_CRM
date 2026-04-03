@@ -142,36 +142,27 @@
     <!-- Organization cards -->
     <div v-if="selectedOrgId === null && orgSummary.length > 1" class="mb-6">
       <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
-      <v-row>
-        <v-col v-for="org in orgSummary" :key="org.org_id ?? 'all'" cols="12" sm="6" md="4" lg="3">
-          <v-card
-            variant="outlined"
-            :color="org.org_id === null ? 'primary' : undefined"
-            class="cursor-pointer org-card"
-            hover
-            @click="selectOrg(org.org_id)"
-          >
-            <v-card-title class="text-subtitle-1 font-weight-bold pb-1">
-              {{ org.org_name }}
-            </v-card-title>
-            <v-card-text class="pt-1">
-              <div class="d-flex align-center gap-3 mb-1">
-                <div class="d-flex align-center gap-1">
-                  <v-icon size="16" color="blue">mdi-clipboard-check</v-icon>
-                  <span class="text-body-2">{{ org.task_count }} задач</span>
-                </div>
-                <div class="d-flex align-center gap-1">
-                  <v-icon size="16" color="green">mdi-cart</v-icon>
-                  <span class="text-body-2">{{ org.purchase_count }} закупок</span>
-                </div>
-              </div>
-              <v-chip v-if="org.unseen_count > 0" size="small" color="orange" variant="tonal" prepend-icon="mdi-bell-ring">
-                {{ org.unseen_count }} непросмотренных
-              </v-chip>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
+      <div class="org-cards-grid">
+        <div
+          v-for="org in orgSummary"
+          :key="org.org_id ?? 'all'"
+          class="org-sel-card"
+          :class="{ 'org-sel-card--all': org.org_id === null }"
+          @click="selectOrg(org.org_id)"
+        >
+          <div class="osc-icon-box">
+            <v-icon :icon="org.org_id === null ? 'mdi-domain-plus' : 'mdi-domain'" size="22" />
+          </div>
+          <div class="osc-body">
+            <div class="osc-name">{{ org.org_name }}</div>
+            <div class="osc-stats">
+              <span><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }}</span>
+              <span><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }}</span>
+            </div>
+          </div>
+          <div v-if="org.unseen_count > 0" class="osc-badge">{{ org.unseen_count }}</div>
+        </div>
+      </div>
     </div>
 
     <!-- Back to org selection -->
@@ -255,6 +246,18 @@
                 :color="deadlineColor(task.execution_term)" size="x-small" variant="tonal"
               >{{ formatDate(task.execution_term) }}</v-chip>
               <v-icon v-if="task.is_monthly_payment" size="14" color="blue" title="Ежемесячный платёж" class="ml-1">mdi-calendar-sync</v-icon>
+            </div>
+            <!-- Missing fields indicators -->
+            <div v-if="!task.contractor_name || !task.execution_term || !(task.contract_price || task.planned_total_price)" class="d-flex flex-wrap ga-1 mt-1">
+              <v-chip v-if="!task.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off" title="Не выбран контрагент">Контрагент</v-chip>
+              <v-chip v-if="!task.execution_term" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert" title="Не указан срок исполнения">Срок</v-chip>
+              <v-chip v-if="!(task.contract_price || task.planned_total_price)" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub" title="Не указана сумма">Сумма</v-chip>
+            </div>
+            <!-- Unseen changes -->
+            <div v-if="task.unseen_changes_count" class="d-flex align-center mt-1">
+              <v-chip size="x-small" variant="flat" color="warning" :title="`${task.unseen_changes_count} новых изменений`">
+                <v-icon icon="mdi-bell-ring" size="10" class="mr-1" />{{ task.unseen_changes_count }}
+              </v-chip>
             </div>
             <div v-if="task.delivery_date && task.status === 'contracted'" class="kanban-card-meta">
               <v-icon icon="mdi-truck-delivery" size="12" class="mr-1" />Доставка: {{ formatDate(task.delivery_date) }}
@@ -569,6 +572,18 @@
           </div>
           <div :class="isFieldUnseen('due_date') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('due_date')">
             <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          </div>
+          <div class="mb-2">
+            <v-select
+              v-model="taskForm.org_id"
+              :items="orgSummary.filter(o => o.org_id !== null).map(o => ({ title: o.org_name, value: o.org_id }))"
+              label="Организация"
+              variant="outlined"
+              density="compact"
+              clearable
+              prepend-inner-icon="mdi-domain"
+              :disabled="isTaskReadonly"
+            />
           </div>
           <div :class="isFieldUnseen('assignees') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('assignees')">
           <v-autocomplete v-if="!editingTask || !isTaskReadonly" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2">
@@ -901,7 +916,7 @@ const canAssignWithoutConsent = computed(() => {
   const role = localStorage.getItem('user_role') || ''
   return ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager'].includes(role)
 })
-const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '' })
+const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '', org_id: null as number | null })
 
 // Task comments
 const taskComments = ref<any[]>([])
@@ -996,7 +1011,7 @@ async function rejectTaskDone(taskId: number) {
 
 function openNewTask() {
   editingTask.value = null
-  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [], category: '' }
+  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [], category: '', org_id: selectedOrgId.value }
   taskComments.value = []
   newCommentText.value = ''
   showTaskDialog.value = true
@@ -1031,6 +1046,7 @@ function editGeneralTask(t: any) {
     due_date: t.due_date ? t.due_date.split('T')[0] : '',
     assignee_ids: (t.assignees || []).map((a: any) => a.user_id),
     category: t.category || '',
+    org_id: t.org_id ?? null,
   }
   taskSubtasks.value = []
   newCommentText.value = ''
@@ -1944,11 +1960,82 @@ onUnmounted(() => {
   outline-color: #D97706;
 }
 
-.org-card {
-  transition: transform 0.15s, box-shadow 0.15s;
+.org-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
 }
-.org-card:hover {
+.org-sel-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(0,0,0,0.12);
+  background: #fff;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  min-height: 72px;
+}
+.org-sel-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  border-color: #2563EB;
+}
+.org-sel-card--all {
+  border-color: #2563EB;
+  background: #EFF6FF;
+}
+.osc-icon-box {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #EFF6FF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563EB;
+}
+.org-sel-card--all .osc-icon-box {
+  background: #2563EB;
+  color: #fff;
+}
+.osc-body {
+  flex: 1;
+  min-width: 0;
+}
+.osc-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #1e293b;
+}
+.osc-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+.osc-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #F59E0B;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

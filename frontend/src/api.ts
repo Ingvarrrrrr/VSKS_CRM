@@ -43,7 +43,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       details: parsed?.details || text || '',
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }
-    window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+    // 409 Conflict = expected business logic error; handled locally by callers, no global dialog
+    if (res.status !== 409) {
+      window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+    }
     const err: any = new Error(payload.message)
     err.status = res.status
     err.detail = payload.message

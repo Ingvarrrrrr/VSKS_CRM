@@ -189,7 +189,7 @@ Plans:
 
 **Dependencies:** Phase 7 (user/role system must exist; only staff users can participate)
 
-**Plans:** 4/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 - [x] 09-01-PLAN.md — DB models: ChatRoom, ChatParticipant, ChatMessage, MessageRead

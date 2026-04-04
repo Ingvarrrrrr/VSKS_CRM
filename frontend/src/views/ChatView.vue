@@ -845,6 +845,7 @@ onUnmounted(() => {
 .chat-layout {
   display: flex !important;
   height: calc(100vh - 64px) !important;
+  height: calc(100dvh - 64px) !important;
   overflow: hidden !important;
   width: 100%;
   position: relative;
@@ -1004,14 +1005,14 @@ onUnmounted(() => {
 .chat-input {
   background: rgb(var(--v-theme-surface));
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  flex-shrink: 0;
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
 }
 
 .chat-toolbar {
-  position: sticky;
-  top: 0;
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
   z-index: 2;
-  flex-shrink: 0;
 }
 
 .chat-sidebar {

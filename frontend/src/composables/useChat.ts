@@ -29,8 +29,15 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let pingTimer: ReturnType<typeof setInterval> | null = null
 
 function connect() {
+  // Don't create duplicate connections
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
+
   const token = localStorage.getItem('auth_token')
-  if (!token) return
+  if (!token) {
+    // Token not yet available — retry in 2s (login may be in progress)
+    reconnectTimer = setTimeout(connect, 2000)
+    return
+  }
 
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(`${protocol}://${location.host}/api/ws/chat?token=${token}`)

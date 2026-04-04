@@ -5,11 +5,14 @@ WS endpoint is registered at /api/ws/chat (separate ws_router without prefix).
 """
 from __future__ import annotations
 
+import io
 import os
 import uuid
 import logging
 from datetime import datetime
 from typing import Optional, List
+
+from PIL import Image
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -428,6 +431,23 @@ async def send_message(
         data = await file.read()
         if len(data) > MAX_FILE_SIZE:
             raise HTTPException(status_code=413, detail="Файл превышает максимальный размер 50 МБ")
+
+        # Compress images to max 1280px dimension
+        if file.content_type and file.content_type.startswith('image/'):
+            try:
+                img = Image.open(io.BytesIO(data))
+                max_dim = 1280
+                if img.width > max_dim or img.height > max_dim:
+                    img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                # Re-encode
+                buf = io.BytesIO()
+                fmt = 'JPEG' if file.content_type in ('image/jpeg', 'image/jpg') else 'PNG'
+                save_kwargs = {'quality': 85, 'optimize': True} if fmt == 'JPEG' else {}
+                img.save(buf, format=fmt, **save_kwargs)
+                data = buf.getvalue()
+                file_size = len(data)  # update size after compression
+            except Exception:
+                pass  # if Pillow fails, save original
 
         # Save to disk
         room_dir = os.path.join(CHAT_UPLOAD_DIR, str(room_id))

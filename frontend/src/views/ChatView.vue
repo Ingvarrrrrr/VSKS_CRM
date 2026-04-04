@@ -27,10 +27,24 @@
 
       <v-divider />
 
+      <!-- Search field -->
+      <div class="px-3 pt-2 pb-1">
+        <v-text-field
+          v-model="searchQuery"
+          :placeholder="selectedRoom ? 'Поиск в чате...' : 'Поиск по чатам...'"
+          prepend-inner-icon="mdi-magnify"
+          variant="outlined"
+          density="compact"
+          hide-details
+          clearable
+          @click:clear="searchQuery = ''"
+        />
+      </div>
+
       <!-- Room list -->
-      <v-list v-if="rooms.length > 0" lines="two" nav class="pa-1">
+      <v-list v-if="filteredRooms.length > 0" lines="two" nav class="pa-1">
         <v-list-item
-          v-for="room in rooms"
+          v-for="room in filteredRooms"
           :key="room.id"
           :class="{ 'bg-primary-lighten-4': selectedRoom?.id === room.id }"
           :active="selectedRoom?.id === room.id"
@@ -130,7 +144,7 @@
 
           <!-- Messages -->
           <div
-            v-for="msg in messages"
+            v-for="msg in filteredMessages"
             :key="msg.id"
             class="d-flex mb-2"
             :class="msg.sender_id === currentUserId ? 'justify-end' : 'justify-start'"
@@ -163,9 +177,9 @@
               </div>
 
               <!-- Text content -->
-              <p v-if="msg.content" class="message-text mb-0" style="white-space: pre-wrap; word-break: break-word;">
-                {{ msg.content }}
-              </p>
+              <p v-if="msg.content" class="message-text mb-0" style="white-space: pre-wrap; word-break: break-word;"
+                v-html="highlightSearch(msg.content || '')"
+              />
 
               <!-- File attachment -->
               <v-chip
@@ -196,7 +210,7 @@
           </div>
 
           <!-- Empty state -->
-          <div v-if="messages.length === 0 && !loadingMessages" class="text-center mt-8 text-medium-emphasis">
+          <div v-if="filteredMessages.length === 0 && !loadingMessages" class="text-center mt-8 text-medium-emphasis">
             <v-icon icon="mdi-message-outline" size="48" class="mb-2 opacity-30" />
             <p class="text-body-2">Нет сообщений. Начните переписку!</p>
           </div>
@@ -336,10 +350,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
-import { wsConnected, onChatEvent } from '@/composables/useChat'
+import { wsConnected, onChatEvent, connect } from '@/composables/useChat'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -423,6 +437,9 @@ const currentUserId = ref<number | null>(null)
 // Mobile: show sidebar or messages
 const showingSidebar = ref(true)
 
+// Search
+const searchQuery = ref('')
+
 // ─── Computed ─────────────────────────────────────────────────────────────────
 
 const showSidebar = computed(() => {
@@ -439,6 +456,27 @@ const filteredStaff = computed(() => {
     (p.position || '').toLowerCase().includes(q)
   )
 })
+
+const filteredRooms = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return rooms.value
+  return rooms.value.filter(r =>
+    roomDisplayName(r).toLowerCase().includes(q) ||
+    (r.last_message?.content || '').toLowerCase().includes(q)
+  )
+})
+
+const filteredMessages = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q || !selectedRoom.value) return messages.value
+  return messages.value.filter(m =>
+    (m.content || '').toLowerCase().includes(q) ||
+    (m.sender_name || '').toLowerCase().includes(q)
+  )
+})
+
+// Clear search on room switch
+watch(selectedRoom, () => { searchQuery.value = '' })
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
@@ -487,6 +525,13 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+}
+
+function highlightSearch(text: string): string {
+  const q = searchQuery.value.trim()
+  if (!q || !selectedRoom.value) return text
+  const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  return text.replace(regex, '<mark>$1</mark>')
 }
 
 // ─── API methods ──────────────────────────────────────────────────────────────
@@ -604,6 +649,11 @@ function onFileSelected(e: Event) {
 let removeChatListener: (() => void) | null = null
 
 function handleChatEvent(event: any) {
+  if (event.type === 'connected') {
+    loadRooms()
+    if (selectedRoom.value) loadMessages()
+  }
+
   if (event.type === 'message') {
     const msg: Message = event.message
     if (event.room_id === selectedRoom.value?.id) {
@@ -714,6 +764,10 @@ onMounted(async () => {
   const userIdStr = localStorage.getItem('user_id')
   currentUserId.value = userIdStr ? parseInt(userIdStr, 10) : null
 
+  // Ensure WS is connected (AppBar may have tried before token was available)
+  if (!wsConnected.value) {
+    connect()
+  }
   await loadRooms()
   removeChatListener = onChatEvent(handleChatEvent)
 })

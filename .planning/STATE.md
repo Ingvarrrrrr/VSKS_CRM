@@ -3,10 +3,10 @@
 ## Current State
 
 - **Phase:** 09-vnutrenniy-chat
-- **Current Plan:** 09-03 COMPLETE
-- **Status:** Phase 09 Plan 03 executed — chat REST API + WS endpoint created and registered
-- **Last Updated:** 2026-04-03
-- **Stopped At:** Completed 09-03-PLAN.md
+- **Current Plan:** 09-04 COMPLETE
+- **Status:** Phase 09 Plan 04 executed — chat frontend (useChat.ts composable + ChatView.vue + /chat route)
+- **Last Updated:** 2026-04-04
+- **Stopped At:** Completed 09-04-PLAN.md
 
 ---
 
@@ -181,6 +181,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 
 ## Key Decisions
 
+- [09-04] Module-level refs (`totalUnread`, `wsConnected`) allow global badge display in AppBar without prop drilling
+- [09-04] `onChatEvent` registry pattern: ChatView registers/unregisters on mount/unmount — clean separation from WS lifecycle
+- [09-04] Employee role allowed `/chat` — chat is universal communication, not admin-only
 - [09-03] `ws_router` uses separate `APIRouter()` without prefix so WS path resolves to `/api/ws/chat` as frontend expects
 - [09-03] `chat_unread` in `/api/tasks/badges` wrapped in `try/except` — graceful degradation before DB migration runs
 - [09-03] `pg_insert` with `on_conflict_do_update` used for UPSERT on `message_reads` (constraint `uq_message_read`)

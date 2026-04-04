@@ -189,13 +189,13 @@ Plans:
 
 **Dependencies:** Phase 7 (user/role system must exist; only staff users can participate)
 
-**Plans:** 1/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
-- [ ] 09-01-PLAN.md — DB models: ChatRoom, ChatParticipant, ChatMessage, MessageRead
-- [ ] 09-02-PLAN.md — ConnectionManager + nginx WebSocket proxy config
-- [ ] 09-03-PLAN.md — Backend REST + WS API (chat.py router) + /tasks/badges extension
-- [ ] 09-04-PLAN.md — Frontend: ChatView.vue + useChat.ts composable + Vue router entry
+- [x] 09-01-PLAN.md — DB models: ChatRoom, ChatParticipant, ChatMessage, MessageRead
+- [x] 09-02-PLAN.md — ConnectionManager + nginx WebSocket proxy config
+- [x] 09-03-PLAN.md — Backend REST + WS API (chat.py router) + /tasks/badges extension
+- [x] 09-04-PLAN.md — Frontend: ChatView.vue + useChat.ts composable + Vue router entry
 - [ ] 09-05-PLAN.md — AppBar: chat nav item + badge + WS/polling integration
 
 **Success Criteria:**

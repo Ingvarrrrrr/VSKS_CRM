@@ -153,6 +153,14 @@ Plans:
 - Wishes lifecycle (submit → approve → convert): NOT done
 - "Мои заявки" / "Заявки сотрудников" views: NOT done
 
+**Plans:** 4 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
+- [ ] 07-02-PLAN.md — Wishes API full CRUD + transitions + employee purchase filter (D-13)
+- [ ] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
+- [ ] 07-04-PLAN.md — Chat notification hooks + executor reassignment hierarchy validation
+
 **Success Criteria:**
 1. Logging in as a Viewer shows only "Мои заявки" in the sidebar; direct navigation to `/subsidies` redirects to the Viewer's default page.
 2. A Manager's session cannot reach `/api/wishes/{id}/reject` — returns HTTP 403 is NOT the expected result; Manager CAN approve/reject. A Viewer hitting `DELETE /api/purchases/{id}/files/{file_id}` returns HTTP 403.

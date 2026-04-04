@@ -33,3 +33,5 @@ from app.models.manager_organization import ManagerOrganization
 from app.models.user_organization import UserOrganization
 from app.models.task_change import TaskChange, TaskFieldSeen
 from app.models.budget_history import BudgetHistory
+from app.models.chat_room import ChatRoom, ChatParticipant  # noqa: F401
+from app.models.chat_message import ChatMessage, MessageRead  # noqa: F401

@@ -102,7 +102,7 @@
 
       <template v-else>
         <!-- Toolbar -->
-        <v-toolbar density="compact" elevation="1" class="flex-shrink-0">
+        <v-toolbar density="compact" elevation="1" class="flex-shrink-0 chat-toolbar">
           <!-- Back button on mobile -->
           <v-btn
             v-if="!smAndUp"
@@ -811,6 +811,13 @@ onUnmounted(() => {
 .chat-input {
   background: rgb(var(--v-theme-surface));
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.chat-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex-shrink: 0;
 }
 
 .chat-sidebar {

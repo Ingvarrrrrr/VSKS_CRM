@@ -214,6 +214,16 @@ Plans:
 4. Список чатов показывает последнее сообщение, время и количество непрочитанных — аналогично Telegram.
 5. Медиафайлы: пользователь отправляет изображение или файл — оно отображается в чате, скачивается по клику.
 
+### Phase 10: Chat Telegram-style UI
+
+**Goal:** Telegram-like chat UX: fix real-time message delivery (WS still requires refresh), sticky chat header, dual-mode search (in-chat + across chats), overall UI polish.
+**Requirements**: CHAT-UI-01 (real-time delivery), CHAT-UI-02 (sticky header), CHAT-UI-03 (dual-mode search), CHAT-UI-04 (Telegram-like polish)
+**Depends on:** Phase 9
+**Plans:** 1/4 plans executed
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 10 to break down)
+
 ---
 
 ### Post-Phase 8: Untracked Additional Work ✅ DELIVERED

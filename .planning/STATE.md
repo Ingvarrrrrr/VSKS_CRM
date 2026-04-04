@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: planning
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-04-04T07:37:37.179Z"
+current_plan: 1
+status: executing
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-04-04T18:27:50.859Z"
 progress:
-  total_phases: 3
+  total_phases: 10
   completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 21
+  completed_plans: 13
 ---
 
 # STATE.md — VSKS_CRM
@@ -18,16 +18,17 @@ progress:
 ## Current State
 
 - **Phase:** 06-analytics-budget-history
-- **Current Plan:** Not started
-- **Status:** Ready to plan
+- **Current Plan:** 1
+- **Status:** Executing Phase 10
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 09-01-PLAN.md
+- **Stopped At:** Completed 10-01-PLAN.md
 
 ---
 
 ## Completed Phases
 
 ### Phase 1: Purchase Form + Status Workflow ✅
+
 Completed before GSD tracking started.
 
 - Purchase model extended to 40+ columns (18+ new fields added)
@@ -40,6 +41,7 @@ Completed before GSD tracking started.
 ---
 
 ### Phase 2: Cascading FEO + Budget Validation ✅
+
 Completed before GSD tracking started.
 
 - 3-level cascading FEO selectors (selecting L1 clears L2+L3, etc.)
@@ -51,6 +53,7 @@ Completed before GSD tracking started.
 ---
 
 ### Phase 3: File Attachments ✅
+
 Completed before GSD tracking started; enhanced in later commits.
 
 - `purchase_items` table created
@@ -64,6 +67,7 @@ Completed before GSD tracking started; enhanced in later commits.
 ---
 
 ### Phase 4: Contract Registry ✅
+
 Completed before GSD tracking started; heavily enhanced afterward.
 
 - `docxtpl`-based document template engine; `routers/documents.py`
@@ -77,6 +81,7 @@ Completed before GSD tracking started; heavily enhanced afterward.
 ---
 
 ### Phase 5: Export / Import Excel ✅
+
 Completed before GSD tracking started; enhanced afterward.
 
 - SubsidiesView FEO tree
@@ -89,9 +94,11 @@ Completed before GSD tracking started; enhanced afterward.
 ---
 
 ### Phase 6: Analytics + Budget History ✅
+
 Fully implemented.
 
 **Done:**
+
 - Dashboard KPIs + charts loaded and functional
 - BudgetDrillDownDialog exists and displays FEO drill-down data (all 3 levels confirmed)
 - budget_history table created (plan 06-01); hooks write rows on purchase price and subsidy limit changes
@@ -101,9 +108,11 @@ Fully implemented.
 ---
 
 ### Phase 7: Roles + Wishes Workflow — PARTIAL ⚠️
+
 Role enforcement and delegation done; Wishes lifecycle not implemented.
 
 **Done:**
+
 - Hierarchy editor (HierarchyView)
 - Departments management (DepartmentsView)
 - Task delegation — task assignment by role
@@ -113,6 +122,7 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 - Review status on tasks
 
 **Not done:**
+
 - Wishes lifecycle (Viewer submits → Manager approves → Admin converts to purchase)
 - `GET /api/wishes`, `POST /api/wishes`, transition endpoints
 - "Мои заявки" view for Viewers
@@ -121,6 +131,7 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 ---
 
 ### Phase 8: Торговые площадки + КП email + E2E ✅
+
 Fully tracked in GSD. Completed 2026-03-20.
 
 - `roseltorg_publish.json` (n8n, production URL + token check + `procedure_type` mapping) — активен на сервере
@@ -161,6 +172,7 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 ## Active Phase
 
 **None currently active.** Next logical work:
+
 1. Complete Phase 6 (budget history write-on-change + history API + UI timeline)
 2. Complete Phase 7 (Wishes lifecycle)
 3. Multi-tenancy org-isolation audit (see Additional Work below)
@@ -179,8 +191,10 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 ## Accumulated Context
 
 ### Roadmap Evolution
+
 - Phase 8 added: Торговые площадки + КП email + E2E (n8n Росэлторг, Фабрикант test mode, SMTP КП, Playwright)
 - Post-Phase-8 work above supersedes some Phase 8 decisions (n8n removed in favour of direct API calls)
+- Phase 10 added: Chat Telegram-style UI — real-time delivery fix, sticky header, dual-mode search, Telegram-like polish
 
 ---
 

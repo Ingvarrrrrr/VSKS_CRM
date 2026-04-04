@@ -543,14 +543,22 @@ async function sendMessage() {
     if (inputText.value.trim()) form.append('content', inputText.value.trim())
     if (fileInput.value) form.append('file', fileInput.value)
 
-    await apiFetch<Message>(`/chat/rooms/${roomId}/messages`, {
+    const sent = await apiFetch<Message>(`/chat/rooms/${roomId}/messages`, {
       method: 'POST',
       body: form,
     })
 
     inputText.value = ''
     fileInput.value = null
-    // Server will push WS message event — handled in onChatEvent
+
+    // Optimistic update — show message immediately without waiting for WS
+    if (roomId === selectedRoom.value?.id) {
+      const exists = messages.value.some(m => m.id === sent.id)
+      if (!exists) {
+        messages.value.push(sent)
+        await nextTick(scrollToBottom)
+      }
+    }
   } catch (e) {
     // errors handled globally
   } finally {
@@ -599,9 +607,12 @@ function handleChatEvent(event: any) {
   if (event.type === 'message') {
     const msg: Message = event.message
     if (event.room_id === selectedRoom.value?.id) {
-      messages.value.push(msg)
-      nextTick(scrollToBottom)
-      markAsRead()
+      const exists = messages.value.some(m => m.id === msg.id)
+      if (!exists) {
+        messages.value.push(msg)
+        nextTick(scrollToBottom)
+        markAsRead()
+      }
     }
     // Update last_message in room list and sort
     const room = rooms.value.find(r => r.id === event.room_id)

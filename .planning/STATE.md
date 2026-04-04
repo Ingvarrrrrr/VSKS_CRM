@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: Not started
 status: planning
-stopped_at: Completed 06-03-PLAN.md
-last_updated: "2026-04-04T07:34:27.947Z"
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-04-04T07:37:37.179Z"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 12
 ---
 
 # STATE.md — VSKS_CRM
@@ -21,7 +21,7 @@ progress:
 - **Current Plan:** Not started
 - **Status:** Ready to plan
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 06-03-PLAN.md
+- **Stopped At:** Completed 09-01-PLAN.md
 
 ---
 
@@ -206,6 +206,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [09-04] Module-level refs (`totalUnread`, `wsConnected`) allow global badge display in AppBar without prop drilling
 - [09-04] `onChatEvent` registry pattern: ChatView registers/unregisters on mount/unmount — clean separation from WS lifecycle
 - [09-04] Employee role allowed `/chat` — chat is universal communication, not admin-only
+- [09-02] In-memory Dict[int, List[WebSocket]] keyed by user_id chosen over Redis — single Docker instance makes external state store unnecessary
+- [09-02] `send_to_user` catches all exceptions silently — callers must not be interrupted by stale/offline connections
+- [09-02] proxy_read_timeout/proxy_send_timeout set to 86400s — nginx default 60s would disconnect idle WebSocket connections
 - [09-03] `ws_router` uses separate `APIRouter()` without prefix so WS path resolves to `/api/ws/chat` as frontend expects
 - [09-03] `chat_unread` in `/api/tasks/badges` wrapped in `try/except` — graceful degradation before DB migration runs
 - [09-03] `pg_insert` with `on_conflict_do_update` used for UPSERT on `message_reads` (constraint `uq_message_read`)

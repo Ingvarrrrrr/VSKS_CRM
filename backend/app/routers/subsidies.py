@@ -2,7 +2,7 @@ import os
 import re
 import shutil
 import logging
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
@@ -536,3 +536,44 @@ async def upload_global_template(
 
     repairs = _repair_docx_template(dest)
     return {"ok": True, "doc_type": doc_type, "repairs": repairs}
+
+
+@router.get("/{subsidy_id}/history")
+async def get_budget_history(
+    subsidy_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.budget_history import BudgetHistory as BudgetHistoryModel
+    from sqlalchemy import func as safunc
+
+    base_q = (
+        select(BudgetHistoryModel)
+        .where(BudgetHistoryModel.subsidy_id == subsidy_id)
+        .order_by(BudgetHistoryModel.changed_at.desc())
+    )
+
+    total = (
+        await db.execute(select(safunc.count()).select_from(base_q.subquery()))
+    ).scalar() or 0
+
+    rows = (await db.execute(base_q.offset(offset).limit(limit))).scalars().all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": r.id,
+                "entity_type": r.entity_type,
+                "purchase_id": r.purchase_id,
+                "old_value": float(r.old_value) if r.old_value is not None else None,
+                "new_value": float(r.new_value) if r.new_value is not None else None,
+                "changed_by_name": r.changed_by_name,
+                "reason": r.reason,
+                "changed_at": r.changed_at.isoformat() if r.changed_at else None,
+            }
+            for r in rows
+        ],
+    }

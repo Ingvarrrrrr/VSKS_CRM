@@ -58,6 +58,7 @@
                   @click.stop="openTemplateDialog(s)"
                 />
                 <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
+                <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="openHistoryDialog(s)" />
                 <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(s)" />
                 <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(s)" />
               </div>
@@ -1426,6 +1427,8 @@
       </v-card>
     </v-dialog>
 
+    <BudgetHistoryDialog ref="historyDialogRef" />
+
   </div>
 </template>
 
@@ -1435,6 +1438,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
+import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -1519,6 +1523,9 @@ const showDeleteDialog   = ref(false)
 const showAddFeoDialog   = ref(false)
 const showEditFeoDialog  = ref(false)
 const showDeleteFeoDialog = ref(false)
+
+// Budget history dialog ref
+const historyDialogRef = ref<InstanceType<typeof BudgetHistoryDialog> | null>(null)
 
 // Approvers state
 const showApproversDialog    = ref(false)
@@ -2473,6 +2480,11 @@ async function deleteFeoCategory() {
   } finally {
     savingFeo.value = false
   }
+}
+
+// ── Budget history ────────────────────────────────
+function openHistoryDialog(s: any) {
+  historyDialogRef.value?.open(s.id, s.name)
 }
 
 // ── Approvers CRUD ────────────────────────────────

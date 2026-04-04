@@ -38,7 +38,7 @@
 - [ ] **BUDGET-06**: Framework-limited contracts (see CONTRACT-03) must also be checked: the system must warn when purchases assigned to such a contract would exceed `contract.max_amount`, blocking save for Manager/Viewer.
 - [x] **BUDGET-07**: The budget history table `budget_history` (already in DB) must be connected: every change to a subsidy's limit or a purchase's `planned_total_price` must write a record to `budget_history` with `changed_at`, `changed_by`, `old_value`, `new_value`, `reason`.
 - [x] **BUDGET-08**: API endpoint `GET /api/subsidies/{id}/history` must return paginated records from `budget_history` for the given subsidy.
-- [ ] **BUDGET-09**: The subsidy detail view must include a timeline/modal showing budget history from BUDGET-07/08.
+- [x] **BUDGET-09**: The subsidy detail view must include a timeline/modal showing budget history from BUDGET-07/08.
 
 ### Contract Registry (CONTRACT)
 

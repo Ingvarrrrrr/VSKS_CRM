@@ -106,7 +106,7 @@
 
 ---
 
-### Phase 6: Analytics + Budget History ⚠️ PARTIAL
+### Phase 6: Analytics + Budget History ✅ COMPLETED
 
 **Goal:** Surface budget change history from the existing `budget_history` table and add FEO drill-down analytics.
 
@@ -116,17 +116,17 @@
 
 **Status:**
 - Dashboard KPIs + charts: done
-- BudgetDrillDownDialog FEO drill-down: done
-- `budget_history` write-on-change (purchase + subsidy): unverified
-- `GET /api/subsidies/{id}/history` paginated endpoint: unverified
-- Budget history timeline/modal in subsidy detail view: not confirmed built
+- BudgetDrillDownDialog FEO drill-down: done (all 3 levels verified)
+- `budget_history` write-on-change (purchase + subsidy): done (plan 06-01)
+- `GET /api/subsidies/{id}/history` paginated endpoint: done (plan 06-02)
+- Budget history timeline/modal in subsidy detail view: done (plan 06-03)
 
-**Plans:** 3 plans
+**Plans:** 3 plans (3/3 complete)
 
 Plans:
-- [ ] 06-01-PLAN.md — BudgetHistory model + write hooks in update_purchase / create_purchase / update_subsidy
-- [ ] 06-02-PLAN.md — BudgetHistoryItemOut schema + GET /api/subsidies/{id}/history paginated endpoint
-- [ ] 06-03-PLAN.md — BudgetHistoryDialog.vue component + wire into SubsidiesView.vue
+- [x] 06-01-PLAN.md — BudgetHistory model + write hooks in update_purchase / create_purchase / update_subsidy
+- [x] 06-02-PLAN.md — BudgetHistoryItemOut schema + GET /api/subsidies/{id}/history paginated endpoint
+- [x] 06-03-PLAN.md — BudgetHistoryDialog.vue component + wire into SubsidiesView.vue
 
 **Success Criteria:**
 1. Every save of a purchase that changes `planned_total_price` writes a row to `budget_history` with correct `old_value`, `new_value`, `changed_by`, `changed_at`.

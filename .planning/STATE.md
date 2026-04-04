@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 06-02 COMPLETE
-status: Phase 06 Plan 02 executed — BudgetHistoryItemOut schema + GET /api/subsidies/{id}/history endpoint
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-04-04T07:27:00.000Z"
+current_plan: 06-03 COMPLETE
+status: Phase 06 Plan 03 executed — BudgetHistoryDialog.vue timeline component + SubsidiesView.vue wiring
+stopped_at: Completed 06-03-PLAN.md
+last_updated: "2026-04-04T07:29:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 1
@@ -18,10 +18,10 @@ progress:
 ## Current State
 
 - **Phase:** 06-analytics-budget-history
-- **Current Plan:** 06-02 COMPLETE
-- **Status:** Phase 06 Plan 02 executed — BudgetHistoryItemOut schema + GET /api/subsidies/{id}/history endpoint
+- **Current Plan:** 06-03 COMPLETE
+- **Status:** Phase 06 Plan 03 executed — BudgetHistoryDialog.vue timeline component + SubsidiesView.vue wiring
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 06-02-PLAN.md
+- **Stopped At:** Completed 06-03-PLAN.md
 
 ---
 
@@ -88,18 +88,15 @@ Completed before GSD tracking started; enhanced afterward.
 
 ---
 
-### Phase 6: Analytics + Budget History — PARTIAL ⚠️
-Partially implemented; budget history log unverified.
+### Phase 6: Analytics + Budget History ✅
+Fully implemented.
 
 **Done:**
 - Dashboard KPIs + charts loaded and functional
-- BudgetDrillDownDialog exists and displays FEO drill-down data
-
-**Not verified / incomplete:**
-- Every `planned_total_price` change should write to `budget_history` (not confirmed)
-- Every subsidy `limit` change should write to `budget_history` (not confirmed)
-- `GET /api/subsidies/{id}/history` paginated endpoint — existence unverified
-- Budget history timeline / modal in subsidy detail view — not confirmed built
+- BudgetDrillDownDialog exists and displays FEO drill-down data (all 3 levels confirmed)
+- budget_history table created (plan 06-01); hooks write rows on purchase price and subsidy limit changes
+- `GET /api/subsidies/{id}/history` paginated endpoint implemented (plan 06-02)
+- BudgetHistoryDialog.vue timeline component created; wired into SubsidiesView.vue (plan 06-03)
 
 ---
 
@@ -201,6 +198,8 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [06-01] create_purchase hook uses existing db.flush() at line 628 so p.id is populated before writing history row
 - [06-02] old_value/new_value typed as Optional[float] in BudgetHistoryItemOut (not Decimal) for clean JSON serialisation
 - [06-02] `/{subsidy_id}/history` route appended after all existing routes to avoid FastAPI path conflict with `/{subsidy_id}` integer route
+- [06-03] open() expose pattern chosen over v-model for BudgetHistoryDialog — simpler imperative trigger from parent without extra boolean ref
+- [06-03] History button placed between approvers (mdi-account-multiple) and edit (mdi-pencil) buttons in subsidy card action row
 - [09-05] `watch(totalUnread)` in AppBar syncs WS-driven badge without coupling to composable internals — single source of truth
 - [09-05] `initChat()` called from AppBar (always-mounted component) as the WS lifecycle owner; polling fallback every 60s
 - [09-05] `_badgeInterval` now cleared in `onUnmounted` (was previously not cleaned up — memory leak fixed)

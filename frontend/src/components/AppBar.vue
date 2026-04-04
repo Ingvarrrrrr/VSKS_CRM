@@ -242,6 +242,8 @@
               class="sidebar-badge sidebar-badge--new" :title="`${badgeNewPurchases} новых закупок`">{{ badgeNewPurchases }}</span>
             <span v-if="item.route === '/orders' && badgePurchaseChanges > 0"
               class="sidebar-badge sidebar-badge--changes" :title="`${badgePurchaseChanges} изменений`">{{ badgePurchaseChanges }}</span>
+            <span v-if="item.route === '/chat' && badgeChatUnread > 0"
+              class="sidebar-badge sidebar-badge--new" :title="`${badgeChatUnread} непрочитанных`">{{ badgeChatUnread }}</span>
             <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
           </div>
         </template>
@@ -335,6 +337,7 @@ import ProfilePhotoUpload from './ProfilePhotoUpload.vue'
 import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch } from '@/api'
+import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -374,6 +377,7 @@ const badgeNewTasks = ref(0)
 const badgeTaskChanges = ref(0)
 const badgeNewPurchases = ref(0)
 const badgePurchaseChanges = ref(0)
+const badgeChatUnread = ref(0)
 let _badgeInterval: ReturnType<typeof setInterval> | null = null
 
 async function loadBadges() {
@@ -383,6 +387,7 @@ async function loadBadges() {
     badgeTaskChanges.value = data.task_changes || 0
     badgeNewPurchases.value = data.new_purchases || 0
     badgePurchaseChanges.value = data.purchase_changes || 0
+    badgeChatUnread.value = data.chat_unread || 0
   } catch {}
 }
 
@@ -445,6 +450,7 @@ const menuItems = computed(() => {
     { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
     { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: MANAGER_ROLES },
     { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
+    { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', roles: ALL_ROLES },
   ]
   return items.filter(i => i.roles.includes(role))
 })
@@ -732,6 +738,7 @@ onMounted(async () => {
   loadMyPhoto()
   loadBadges()
   _badgeInterval = setInterval(loadBadges, 60_000)  // refresh every 60s
+  initChat()  // start WS connection for chat badge updates
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {
@@ -742,6 +749,14 @@ onMounted(async () => {
     pendingOrgIds.value = [...selectedOrgIds.value]
   }
 })
+
+onUnmounted(() => {
+  if (_badgeInterval) { clearInterval(_badgeInterval); _badgeInterval = null }
+  destroyChat()
+})
+
+// Keep badgeChatUnread in sync with totalUnread from WS events (real-time)
+watch(totalUnread, (val) => { badgeChatUnread.value = val })
 </script>
 
 <style scoped>

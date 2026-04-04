@@ -846,6 +846,7 @@ onUnmounted(() => {
   display: flex;
   height: calc(100vh - 64px);
   overflow: hidden;
+  width: 100%;
 }
 
 .chat-main {
@@ -854,10 +855,13 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .chat-messages {
   background: rgb(var(--v-theme-background));
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Message rows */

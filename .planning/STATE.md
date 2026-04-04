@@ -199,6 +199,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [06-01] Old budget_history table (mismatched schema: old_budget/new_budget/user_id columns, 1 orphaned test row) dropped and recreated — plan explicitly allowed this
 - [06-01] Inline import `from app.models.budget_history import BudgetHistory as _BH` inside route functions avoids circular import risk
 - [06-01] create_purchase hook uses existing db.flush() at line 628 so p.id is populated before writing history row
+- [09-05] `watch(totalUnread)` in AppBar syncs WS-driven badge without coupling to composable internals — single source of truth
+- [09-05] `initChat()` called from AppBar (always-mounted component) as the WS lifecycle owner; polling fallback every 60s
+- [09-05] `_badgeInterval` now cleared in `onUnmounted` (was previously not cleaned up — memory leak fixed)
 - [09-04] Module-level refs (`totalUnread`, `wsConnected`) allow global badge display in AppBar without prop drilling
 - [09-04] `onChatEvent` registry pattern: ChatView registers/unregisters on mount/unmount — clean separation from WS lifecycle
 - [09-04] Employee role allowed `/chat` — chat is universal communication, not admin-only

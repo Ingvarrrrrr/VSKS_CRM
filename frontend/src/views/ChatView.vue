@@ -1,5 +1,5 @@
 <template>
-  <v-container fluid class="pa-0 fill-height chat-layout">
+  <div class="chat-layout">
     <!-- Sidebar: Chat list -->
     <v-navigation-drawer
       v-if="showSidebar"
@@ -364,7 +364,7 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -843,25 +843,29 @@ onUnmounted(() => {
 
 <style scoped>
 .chat-layout {
-  display: flex;
-  height: calc(100vh - 64px);
-  overflow: hidden;
+  display: flex !important;
+  height: calc(100vh - 64px) !important;
+  overflow: hidden !important;
   width: 100%;
+  position: relative;
 }
 
 .chat-main {
   min-width: 0;
-  height: 100%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0 !important;
 }
 
 .chat-messages {
   background: rgb(var(--v-theme-background));
-  min-height: 0;
-  overflow-y: auto;
+  min-height: 0 !important;
+  flex: 1 1 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden;
 }
 
 /* Message rows */

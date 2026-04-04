@@ -143,71 +143,73 @@
           </div>
 
           <!-- Messages -->
-          <div
-            v-for="msg in filteredMessages"
-            :key="msg.id"
-            class="d-flex mb-2"
-            :class="msg.sender_id === currentUserId ? 'justify-end' : 'justify-start'"
-          >
-            <!-- Incoming message avatar -->
-            <v-avatar
-              v-if="msg.sender_id !== currentUserId"
-              :color="senderColor(msg.sender_id)"
-              size="32"
-              class="me-2 mt-1 flex-shrink-0"
-            >
-              <span class="text-caption text-white">
-                {{ msg.sender_name?.charAt(0)?.toUpperCase() || '?' }}
-              </span>
-            </v-avatar>
+          <template v-for="(item, idx) in messagesWithSeparators" :key="'type' in item ? 'sep-' + item.date + idx : item.id">
+            <!-- Date separator -->
+            <div v-if="'type' in item" class="date-separator">
+              <span>{{ item.date }}</span>
+            </div>
 
             <!-- Message bubble -->
             <div
-              class="message-bubble pa-3 rounded-lg"
-              :class="msg.sender_id === currentUserId ? 'bubble-self' : 'bubble-other'"
-              style="max-width: 70%"
+              v-else
+              class="message-row"
+              :class="item.sender_id === currentUserId ? 'message-row-self' : 'message-row-other'"
             >
-              <!-- Sender name for group chats (incoming only) -->
+              <!-- Avatar (only if showAvatar) -->
+              <v-avatar
+                v-if="item.sender_id !== currentUserId && item.showAvatar"
+                :color="stringToColor(item.sender_name || '')"
+                size="32"
+                class="message-avatar"
+              >
+                <span class="text-caption text-white">{{ (item.sender_name || '?')[0] }}</span>
+              </v-avatar>
+              <div v-else-if="item.sender_id !== currentUserId" class="message-avatar-spacer" />
+
               <div
-                v-if="selectedRoom.is_group && msg.sender_id !== currentUserId"
-                class="text-caption font-weight-medium mb-1"
-                :style="`color: ${senderColor(msg.sender_id)}`"
+                class="message-bubble"
+                :class="item.sender_id === currentUserId ? 'bubble-self' : 'bubble-other'"
               >
-                {{ msg.sender_name || 'Неизвестный' }}
-              </div>
+                <!-- Sender name (only if showAvatar and not self) -->
+                <div v-if="item.showAvatar && item.sender_id !== currentUserId" class="message-sender">
+                  {{ item.sender_name }}
+                </div>
 
-              <!-- Text content -->
-              <p v-if="msg.content" class="message-text mb-0" style="white-space: pre-wrap; word-break: break-word;"
-                v-html="highlightSearch(msg.content || '')"
-              />
+                <!-- Text content -->
+                <div v-if="item.content" class="message-text" v-html="highlightSearch(item.content || '')"></div>
 
-              <!-- File attachment -->
-              <v-chip
-                v-if="msg.has_file && msg.file_name"
-                :href="`/api/chat/rooms/${selectedRoom.id}/files/${msg.id}`"
-                target="_blank"
-                prepend-icon="mdi-paperclip"
-                size="small"
-                variant="tonal"
-                class="mt-1 text-decoration-none"
-                :class="msg.sender_id === currentUserId ? 'bg-white text-primary' : 'bg-primary-lighten-5'"
-                style="cursor: pointer;"
-              >
-                {{ msg.file_name }}
-                <span v-if="msg.file_size" class="ms-1 text-caption opacity-70">
-                  ({{ formatSize(msg.file_size) }})
-                </span>
-              </v-chip>
+                <!-- File attachment -->
+                <div v-if="item.has_file && item.file_name" class="message-file">
+                  <v-chip
+                    :href="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                    target="_blank"
+                    prepend-icon="mdi-paperclip"
+                    size="small"
+                    variant="tonal"
+                    class="mt-1 text-decoration-none"
+                    :class="item.sender_id === currentUserId ? 'bg-white text-primary' : 'bg-primary-lighten-5'"
+                    style="cursor: pointer;"
+                  >
+                    {{ item.file_name }}
+                    <span v-if="item.file_size" class="ms-1 text-caption opacity-70">
+                      ({{ formatSize(item.file_size) }})
+                    </span>
+                  </v-chip>
+                </div>
 
-              <!-- Timestamp -->
-              <div
-                class="text-caption mt-1 opacity-60"
-                :class="msg.sender_id === currentUserId ? 'text-end' : ''"
-              >
-                {{ formatDateTime(msg.created_at) }}
+                <!-- Timestamp -->
+                <div class="message-time">
+                  {{ formatDateTime(item.created_at) }}
+                  <v-icon
+                    v-if="item.sender_id === currentUserId"
+                    size="14"
+                    class="ms-1"
+                    :color="selectedRoom?.unread_count === 0 ? 'blue' : 'grey'"
+                  >mdi-check-all</v-icon>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
 
           <!-- Empty state -->
           <div v-if="filteredMessages.length === 0 && !loadingMessages" class="text-center mt-8 text-medium-emphasis">
@@ -478,6 +480,38 @@ const filteredMessages = computed(() => {
 // Clear search on room switch
 watch(selectedRoom, () => { searchQuery.value = '' })
 
+// ─── Telegram-style types & computed ─────────────────────────────────────────
+
+interface DateSeparator { type: 'separator'; date: string }
+type MessageOrSeparator = (Message & { showAvatar?: boolean }) | DateSeparator
+
+const messagesWithSeparators = computed((): MessageOrSeparator[] => {
+  const source = filteredMessages.value
+  const result: MessageOrSeparator[] = []
+  let lastDate = ''
+  let lastSenderId: number | null = null
+  let lastTime: number | null = null
+
+  for (const msg of source) {
+    const d = new Date(msg.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+    if (d !== lastDate) {
+      result.push({ type: 'separator', date: d })
+      lastDate = d
+      lastSenderId = null
+      lastTime = null
+    }
+
+    const msgTime = new Date(msg.created_at).getTime()
+    const showAvatar = msg.sender_id !== lastSenderId ||
+      (lastTime !== null && msgTime - lastTime > 2 * 60 * 1000)
+
+    result.push({ ...msg, showAvatar })
+    lastSenderId = msg.sender_id
+    lastTime = msgTime
+  }
+  return result
+})
+
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
 const COLORS = ['blue', 'teal', 'deep-purple', 'indigo', 'cyan', 'green', 'orange', 'pink']
@@ -492,6 +526,15 @@ function roomColor(room: Room): string {
 
 function senderColor(senderId: number | null): string {
   return colorFromId(senderId ?? 0)
+}
+
+function stringToColor(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const colors = ['#E57373', '#81C784', '#64B5F6', '#FFD54F', '#BA68C8', '#4DB6AC', '#FF8A65', '#A1887F']
+  return colors[Math.abs(hash) % colors.length]
 }
 
 // ─── Display helpers ─────────────────────────────────────────────────────────
@@ -792,7 +835,40 @@ onUnmounted(() => {
   background: rgb(var(--v-theme-background));
 }
 
+/* Message rows */
+.message-row {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 2px;
+  padding: 0 16px;
+}
+.message-row-self {
+  justify-content: flex-end;
+}
+.message-row-other {
+  justify-content: flex-start;
+}
+
+/* Avatar */
+.message-avatar {
+  margin-right: 8px;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+.message-avatar-spacer {
+  width: 32px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+/* Message bubbles */
 .message-bubble {
+  position: relative;
+  max-width: 65%;
+  padding: 8px 12px 4px;
+  border-radius: 12px;
+  word-break: break-word;
   line-height: 1.4;
 }
 
@@ -806,6 +882,90 @@ onUnmounted(() => {
   background: rgb(var(--v-theme-surface-variant));
   color: rgb(var(--v-theme-on-surface-variant));
   border-bottom-left-radius: 4px !important;
+}
+
+/* Bubble tails */
+.bubble-self::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: -6px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid rgb(var(--v-theme-primary));
+  border-top: 6px solid transparent;
+}
+.bubble-other::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: -6px;
+  width: 0;
+  height: 0;
+  border-right: 6px solid rgb(var(--v-theme-surface-variant));
+  border-top: 6px solid transparent;
+}
+
+/* Sender name */
+.message-sender {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(var(--v-theme-primary));
+  margin-bottom: 2px;
+}
+.bubble-self .message-sender {
+  color: rgba(255,255,255,0.8);
+}
+
+/* Message text */
+.message-text {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.message-text :deep(mark) {
+  background: rgba(255,235,59,0.5);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Time */
+.message-time {
+  font-size: 0.68rem;
+  text-align: right;
+  opacity: 0.6;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Date separator */
+.date-separator {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 8px;
+}
+.date-separator span {
+  background: rgba(var(--v-theme-surface-variant), 0.7);
+  padding: 4px 16px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Message file chip */
+.message-file {
+  margin-top: 4px;
+}
+
+/* Active room in sidebar */
+.chat-sidebar .v-list-item--active {
+  background: rgb(var(--v-theme-primary)) !important;
+  color: white !important;
+}
+.chat-sidebar .v-list-item--active .v-list-item-subtitle {
+  color: rgba(255,255,255,0.7) !important;
 }
 
 .chat-input {

@@ -37,6 +37,7 @@ function connect() {
 
   ws.onopen = () => {
     wsConnected.value = true
+    listeners.forEach(cb => cb({ type: 'connected' }))
     // Ping every 30s to keep WS alive
     pingTimer = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) ws.send('ping')
@@ -99,3 +100,5 @@ export function initChat() {
 export function destroyChat() {
   disconnect()
 }
+
+export { connect }

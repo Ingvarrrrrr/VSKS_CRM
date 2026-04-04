@@ -2,10 +2,11 @@
 
 ## Current State
 
-- **Phase:** Post-Phase 8 (additional untracked work)
-- **Current Plan:** N/A (no active GSD plan)
-- **Status:** Phases 1–8 complete; several post-Phase-8 features delivered outside GSD tracking
-- **Last Updated:** 2026-04-01
+- **Phase:** 09-vnutrenniy-chat
+- **Current Plan:** 09-03 COMPLETE
+- **Status:** Phase 09 Plan 03 executed — chat REST API + WS endpoint created and registered
+- **Last Updated:** 2026-04-03
+- **Stopped At:** Completed 09-03-PLAN.md
 
 ---
 
@@ -180,6 +181,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 
 ## Key Decisions
 
+- [09-03] `ws_router` uses separate `APIRouter()` without prefix so WS path resolves to `/api/ws/chat` as frontend expects
+- [09-03] `chat_unread` in `/api/tasks/badges` wrapped in `try/except` — graceful degradation before DB migration runs
+- [09-03] `pg_insert` with `on_conflict_do_update` used for UPSERT on `message_reads` (constraint `uq_message_read`)
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

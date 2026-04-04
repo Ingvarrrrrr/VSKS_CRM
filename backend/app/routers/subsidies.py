@@ -173,11 +173,27 @@ async def update_subsidy(
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
+    old_budget = db_subsidy.budget  # capture BEFORE setattr loop
     for key, value in subsidy.dict().items():
         setattr(db_subsidy, key, value)
 
     calc = await calculate_budget_from_categories(db, subsidy_id)
     db_subsidy.calculated_budget = calc
+
+    # Budget history write hook — track subsidy limit changes only (NOT calculated_budget)
+    if old_budget != db_subsidy.budget:
+        from app.models.budget_history import BudgetHistory as _BH
+        db.add(_BH(
+            subsidy_id=subsidy_id,
+            purchase_id=None,
+            entity_type="subsidy",
+            old_value=float(old_budget) if old_budget is not None else None,
+            new_value=float(db_subsidy.budget) if db_subsidy.budget is not None else None,
+            changed_by_id=current_user.id,
+            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+            reason=None,
+        ))
+
     await db.commit()
     await db.refresh(db_subsidy)
 

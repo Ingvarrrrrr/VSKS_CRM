@@ -666,6 +666,20 @@ async def create_purchase(
                 amount=alloc.amount,
             ))
 
+    # Budget history write hook — record initial planned_total_price
+    if p.subsidy_id and p.planned_total_price:
+        from app.models.budget_history import BudgetHistory as _BH
+        db.add(_BH(
+            subsidy_id=p.subsidy_id,
+            purchase_id=p.id,
+            entity_type="purchase",
+            old_value=None,
+            new_value=float(p.planned_total_price),
+            changed_by_id=current_user.id,
+            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+            reason=None,
+        ))
+
     await db.commit()
     await db.refresh(p)
     return p
@@ -683,6 +697,7 @@ async def update_purchase(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Not found")
+    old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
     # Employees can save any purchase they have access to (org-level access checked at list level)
     if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
         raise HTTPException(403, "Insufficient permissions")
@@ -769,6 +784,23 @@ async def update_purchase(
 
     # Auto-create/link contract record when contract_number is set
     await ensure_contract_linked(p, db)
+
+    # Budget history write hook
+    if p.subsidy_id:
+        _old = float(old_planned_total_price or 0)
+        _new = float(p.planned_total_price or 0)
+        if _old != _new:
+            from app.models.budget_history import BudgetHistory as _BH
+            db.add(_BH(
+                subsidy_id=p.subsidy_id,
+                purchase_id=p.id,
+                entity_type="purchase",
+                old_value=_old,
+                new_value=_new,
+                changed_by_id=current_user.id,
+                changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                reason=None,
+            ))
 
     await db.commit()
     await db.refresh(p)

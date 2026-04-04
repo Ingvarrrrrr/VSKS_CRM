@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-04-04T18:27:50.859Z"
+stopped_at: Completed 10-03-PLAN.md
+last_updated: "2026-04-04T18:29:07.598Z"
 progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 21
-  completed_plans: 13
+  completed_plans: 15
 ---
 
 # STATE.md — VSKS_CRM
@@ -21,7 +21,7 @@ progress:
 - **Current Plan:** 1
 - **Status:** Executing Phase 10
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 10-01-PLAN.md
+- **Stopped At:** Completed 10-02-PLAN.md
 
 ---
 
@@ -226,6 +226,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [09-03] `ws_router` uses separate `APIRouter()` without prefix so WS path resolves to `/api/ws/chat` as frontend expects
 - [09-03] `chat_unread` in `/api/tasks/badges` wrapped in `try/except` — graceful degradation before DB migration runs
 - [09-03] `pg_insert` with `on_conflict_do_update` used for UPSERT on `message_reads` (constraint `uq_message_read`)
+- [10-03] `v-html` with `highlightSearch()` used for message highlight — XSS safe because user input is regex-escaped before use in replace
+- [10-03] `min_length=2` FastAPI Query guard on `/chat/search` prevents expensive single-char DB full-table scans
+- [10-03] Dual-mode search: single `searchQuery` ref drives `filteredRooms` or `filteredMessages` based on `selectedRoom` presence
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

@@ -557,6 +557,53 @@ async def get_staff(
     ]
 
 
+@router.get("/search")
+async def search_messages(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(20, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Full-text search across all rooms the user participates in."""
+    # Get user's room ids
+    room_ids_q = select(ChatParticipant.room_id).where(
+        ChatParticipant.user_id == current_user.id
+    )
+    # Search messages
+    result = await db.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.room_id.in_(room_ids_q),
+            ChatMessage.content.ilike(f"%{q}%"),
+        )
+        .order_by(ChatMessage.id.desc())
+        .limit(limit)
+    )
+    msgs = result.scalars().all()
+
+    # Get sender names
+    sender_ids = list(set(m.sender_id for m in msgs if m.sender_id is not None))
+    if sender_ids:
+        users_result = await db.execute(
+            select(User).where(User.id.in_(sender_ids))
+        )
+        users_map = {u.id: u.full_name for u in users_result.scalars().all()}
+    else:
+        users_map = {}
+
+    return [
+        {
+            "id": m.id,
+            "room_id": m.room_id,
+            "sender_id": m.sender_id,
+            "sender_name": users_map.get(m.sender_id, "Unknown") if m.sender_id else None,
+            "content": m.content,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in msgs
+    ]
+
+
 @router.get("/rooms/{room_id}/files/{msg_id}")
 async def download_file(
     room_id: int,

@@ -20,6 +20,7 @@ from .routers import org_config
 from .routers import feo_planned_items
 from .routers import telegram_webhook
 from .routers import settings as settings_router
+from .routers import chat as chat_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -309,3 +310,5 @@ app.include_router(org_config.router)
 app.include_router(hierarchy.router)
 app.include_router(billing.router)
 app.include_router(telegram_webhook.router)
+app.include_router(chat_router.router)    # REST: /api/chat/...
+app.include_router(chat_router.ws_router)  # WS: /api/ws/chat

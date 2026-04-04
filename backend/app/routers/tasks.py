@@ -631,11 +631,37 @@ async def get_badges(
     except Exception:
         pass
 
+    # Chat unread count
+    chat_unread = 0
+    try:
+        from app.models.chat_message import ChatMessage, MessageRead
+        from app.models.chat_room import ChatParticipant as CP
+        chat_unread_q = (
+            select(func.count(func.distinct(CP.room_id)))
+            .join(ChatMessage, ChatMessage.room_id == CP.room_id)
+            .outerjoin(
+                MessageRead,
+                (MessageRead.room_id == CP.room_id) & (MessageRead.user_id == CP.user_id),
+            )
+            .where(
+                CP.user_id == current_user.id,
+                or_(
+                    MessageRead.last_read_message_id.is_(None),
+                    ChatMessage.id > MessageRead.last_read_message_id,
+                ),
+                ChatMessage.sender_id != current_user.id,
+            )
+        )
+        chat_unread = (await db.execute(chat_unread_q)).scalar() or 0
+    except Exception:
+        pass
+
     return {
         "new_tasks": new_tasks,
         "task_changes": task_changes,
         "new_purchases": new_purchases,
         "purchase_changes": purchase_changes,
+        "chat_unread": chat_unread,
     }
 
 

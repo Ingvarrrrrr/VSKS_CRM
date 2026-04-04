@@ -239,6 +239,13 @@ const router = createRouter({
       component: OrgSettingsView,
       meta: { requiresAuth: false, title: 'Настройки организации' }
     },
+    // Internal chat
+    {
+      path: '/chat',
+      name: 'chat',
+      component: () => import('../views/ChatView.vue'),
+      meta: { requiresAuth: true, title: 'Чат' }
+    },
   ]
 })
 
@@ -269,6 +276,7 @@ router.beforeEach((to, _, next) => {
       || path === '/contractors'
       || path === '/orders'
       || path === '/create-order'
+      || path === '/chat'
       || path.startsWith('/orders/')
       || path.startsWith('/service-notes')
       || path.startsWith('/advance-reports')

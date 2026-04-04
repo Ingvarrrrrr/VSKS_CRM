@@ -92,7 +92,7 @@
     </v-navigation-drawer>
 
     <!-- Main message area -->
-    <div class="chat-main d-flex flex-column flex-grow-1 fill-height">
+    <div class="chat-main flex-grow-1">
       <!-- No room selected placeholder -->
       <div v-if="!selectedRoom" class="d-flex flex-column align-center justify-center fill-height text-medium-emphasis">
         <v-icon icon="mdi-chat-outline" size="80" class="mb-4 opacity-30" />
@@ -180,7 +180,23 @@
 
                 <!-- File attachment -->
                 <div v-if="item.has_file && item.file_name" class="message-file">
+                  <!-- Inline image preview -->
+                  <a
+                    v-if="isImage(item)"
+                    :href="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                    target="_blank"
+                    class="message-image-link"
+                  >
+                    <img
+                      :src="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                      :alt="item.file_name"
+                      class="message-image"
+                      loading="lazy"
+                    />
+                  </a>
+                  <!-- Non-image file chip -->
                   <v-chip
+                    v-else
                     :href="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
                     target="_blank"
                     prepend-icon="mdi-paperclip"
@@ -570,6 +586,11 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
 }
 
+function isImage(msg: Message): boolean {
+  if (!msg.file_mime) return false
+  return msg.file_mime.startsWith('image/')
+}
+
 function highlightSearch(text: string): string {
   const q = searchQuery.value.trim()
   if (!q || !selectedRoom.value) return text
@@ -829,6 +850,10 @@ onUnmounted(() => {
 
 .chat-main {
   min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .chat-messages {
@@ -971,6 +996,7 @@ onUnmounted(() => {
 .chat-input {
   background: rgb(var(--v-theme-surface));
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  flex-shrink: 0;
 }
 
 .chat-toolbar {
@@ -982,5 +1008,18 @@ onUnmounted(() => {
 
 .chat-sidebar {
   border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+/* Inline image messages */
+.message-image {
+  max-width: 280px;
+  max-height: 300px;
+  border-radius: 8px;
+  display: block;
+  margin-top: 4px;
+  object-fit: cover;
+}
+.message-image-link {
+  display: block;
 }
 </style>

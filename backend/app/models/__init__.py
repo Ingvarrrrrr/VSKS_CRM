@@ -32,3 +32,4 @@ from app.models.system_setting import SystemSetting
 from app.models.manager_organization import ManagerOrganization
 from app.models.user_organization import UserOrganization
 from app.models.task_change import TaskChange, TaskFieldSeen
+from app.models.budget_history import BudgetHistory

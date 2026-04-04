@@ -1,12 +1,27 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_plan: 09-05 COMPLETE
+status: Phase 09 Plan 05 executed — chat badge + nav item + WS integration in AppBar
+stopped_at: Completed 09-05-PLAN.md
+last_updated: "2026-04-04T07:21:00.000Z"
+progress:
+  total_phases: 3
+  completed_phases: 1
+  total_plans: 12
+  completed_plans: 9
+---
+
 # STATE.md — VSKS_CRM
 
 ## Current State
 
 - **Phase:** 09-vnutrenniy-chat
-- **Current Plan:** 09-04 COMPLETE
-- **Status:** Phase 09 Plan 04 executed — chat frontend (useChat.ts composable + ChatView.vue + /chat route)
+- **Current Plan:** 09-05 COMPLETE
+- **Status:** Phase 09 Plan 05 executed — chat badge + nav item + WS integration in AppBar
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 09-04-PLAN.md
+- **Stopped At:** Completed 09-05-PLAN.md
 
 ---
 
@@ -181,6 +196,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 
 ## Key Decisions
 
+- [06-01] Old budget_history table (mismatched schema: old_budget/new_budget/user_id columns, 1 orphaned test row) dropped and recreated — plan explicitly allowed this
+- [06-01] Inline import `from app.models.budget_history import BudgetHistory as _BH` inside route functions avoids circular import risk
+- [06-01] create_purchase hook uses existing db.flush() at line 628 so p.id is populated before writing history row
 - [09-04] Module-level refs (`totalUnread`, `wsConnected`) allow global badge display in AppBar without prop drilling
 - [09-04] `onChatEvent` registry pattern: ChatView registers/unregisters on mount/unmount — clean separation from WS lifecycle
 - [09-04] Employee role allowed `/chat` — chat is universal communication, not admin-only

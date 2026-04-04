@@ -805,3 +805,17 @@ class FeoActualItemOut(BaseModel):
 class FeoComparisonOut(BaseModel):
     planned: list[FeoPlannedItemOut]
     actual: list[FeoActualItemOut]
+
+
+# Budget History
+class BudgetHistoryItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_type: str
+    purchase_id: Optional[int] = None
+    old_value: Optional[float] = None
+    new_value: Optional[float] = None
+    changed_by_name: Optional[str] = None
+    reason: Optional[str] = None
+    changed_at: Optional[datetime] = None

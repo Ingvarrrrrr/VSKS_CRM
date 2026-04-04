@@ -1,0 +1,1249 @@
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select, func, distinct, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+from app.models.contractor import Contractor
+from app.schemas.schemas import ContractorCreate, ContractorOut
+from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.models.user import User
+from typing import List, Optional
+from io import BytesIO
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
+
+try:
+    import pdfplumber as _pdfplumber
+except ImportError:
+    _pdfplumber = None
+
+
+def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
+    """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
+    Returns (rows, error_message). error_message is None on success."""
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError:
+        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
+    try:
+        images = convert_from_bytes(content, dpi=300)
+    except Exception as e:
+        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
+    if not images:
+        return [], "PDF не содержит страниц для распознавания."
+    import re
+    all_rows = []
+    for img in images:
+        try:
+            text = pytesseract.image_to_string(img, lang='rus+eng')
+        except Exception as e:
+            return [], f"Ошибка OCR-распознавания: {e}"
+        if not text:
+            continue
+        for line in text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            cells = re.split(r'\t|  {2,}', line)
+            cells = [c.strip() for c in cells if c.strip()]
+            if cells:
+                all_rows.append(cells)
+    if not all_rows:
+        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
+    return all_rows, None
+
+
+router = APIRouter(prefix="/api/contractors", tags=["contractors"])
+
+
+# ---------------------------------------------------------------------------
+# Shared file parsing helpers
+# ---------------------------------------------------------------------------
+
+_CONTRACTOR_HINTS = (
+    'назван', 'наимен', 'инн', 'inn', 'кпп', 'огрн', 'адрес',
+    'email', 'телефон', 'банк', 'бик', 'контакт', 'подписант',
+)
+
+
+def _detect_hdr(rows):
+    """Return index of the row most likely to be a header row."""
+    best_score, best_idx = 0, 0
+    for ri, row in enumerate(rows):
+        norm = [str(h).strip().lower() if h is not None else "" for h in row]
+        score = sum(1 for h in norm if h and any(x in h for x in _CONTRACTOR_HINTS))
+        if score > best_score:
+            best_score = score
+            best_idx = ri
+    return best_idx
+
+
+def _map_kv_key(key: str) -> str | None:
+    """Map a key-value card label to a contractor field name.
+    Returns the field name string or None if the key is not recognised."""
+    k = key.strip().lower()
+    if not k:
+        return None
+    # Order matters — more specific checks first
+    if 'инн' in k or 'inn' in k:
+        return 'инн'
+    if 'кпп' in k or 'kpp' in k:
+        return 'кпп'
+    if 'огрн' in k:
+        return 'огрн'
+    if 'бик' in k or 'bik' in k:
+        return 'бик'
+    if 'расч' in k or 'р/с' in k:
+        return 'расчётный счёт'
+    if 'корр' in k or 'к/с' in k:
+        return 'корр. счёт'
+    if 'банк' in k and 'реквиз' not in k:
+        return 'банк'
+    if 'назван' in k or 'наимен' in k or 'учредит' in k:
+        return 'наименование'
+    if 'юридич' in k and 'адрес' in k:
+        return 'адрес'
+    if 'почтов' in k:
+        return 'почтовый адрес'
+    if 'телефон' in k or (k.startswith('тел') and len(k) < 10):
+        return 'телефон'
+    if 'email' in k or 'e-mail' in k:
+        return 'email'
+    if 'подписант' in k or 'уполномоч' in k or 'представит' in k:
+        return 'подписант'
+    if 'должност' in k:
+        return 'должность'
+    return None
+
+
+# Mapping from Russian card labels to ContractorCreate field names
+_KV_LABEL_TO_FIELD: dict[str, str] = {
+    'инн': 'inn',
+    'кпп': 'kpp',
+    'огрн': 'ogrn',
+    'бик': 'bik',
+    'расчётный счёт': 'settlement_account',
+    'корр. счёт': 'correspondent_account',
+    'банк': 'bank_name',
+    'наименование': 'name',
+    'адрес': 'address',
+    'почтовый адрес': 'postal_address',
+    'телефон': 'phone',
+    'email': 'email',
+    'подписант': 'signatory',
+    'должность': '_signatory_position',  # internal: prepend to signatory
+}
+
+# Human-readable column header for each field used in preview response
+_FIELD_TO_HEADER: dict[str, str] = {
+    'inn': 'ИНН',
+    'kpp': 'КПП',
+    'ogrn': 'ОГРН',
+    'bik': 'БИК',
+    'settlement_account': 'Расчётный счёт',
+    'correspondent_account': 'Корр. счёт',
+    'bank_name': 'Банк',
+    'name': 'Наименование',
+    'address': 'Адрес',
+    'postal_address': 'Почтовый адрес',
+    'phone': 'Телефон',
+    'email': 'Email',
+    'signatory': 'Подписант',
+}
+
+
+def _try_parse_kv_docx(doc) -> tuple[list, int] | None:
+    """Try to parse a DOCX document as a key-value requisites card.
+
+    Returns (all_rows, hdr_idx) where all_rows = [header_row, value_row]
+    with hdr_idx = 0, ready to be returned from _parse_file_to_rows.
+
+    Returns None if the document does not look like a key-value card
+    (e.g. it is a proper table with data in multiple data rows).
+    """
+    # Collect all key→value pairs from every table in the document
+    kv_pairs: list[tuple[str, str]] = []
+    two_col_count = 0
+    total_rows = 0
+
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            cells = [c.text.strip() for c in row.cells]
+            # Remove duplicate adjacent cells (merged cells repeat in python-docx)
+            deduped = []
+            for c in cells:
+                if not deduped or c != deduped[-1]:
+                    deduped.append(c)
+            non_empty = [c for c in deduped if c]
+            total_rows += 1
+            if len(non_empty) == 2:
+                two_col_count += 1
+                kv_pairs.append((non_empty[0], non_empty[1]))
+            elif len(non_empty) == 1:
+                # Single-cell rows are OK (section headers) — do not disqualify
+                pass
+            # Rows with 3+ distinct non-empty cells suggest a real data table
+            elif len(non_empty) >= 3:
+                return None  # Looks like a multi-column table — not a card
+
+    if total_rows == 0:
+        return None
+
+    # If fewer than half the rows are 2-column key-value rows, it's not a card
+    if two_col_count < max(2, total_rows * 0.4):
+        return None
+
+    # Also check that the keys look like field labels (not values)
+    recognised = sum(1 for k, _ in kv_pairs if _map_kv_key(k) is not None)
+    if recognised < 2:
+        return None  # Too few recognisable field labels — not a requisites card
+
+    # Build a synthetic header row + single data row
+    # Use only the first match for each field to avoid duplicates
+    headers: list[str] = []
+    values: list[str] = []
+    seen_fields: set[str] = set()
+    signatory_pos: str | None = None
+
+    for raw_key, raw_val in kv_pairs:
+        label = _map_kv_key(raw_key)
+        if label is None:
+            continue
+        field = _KV_LABEL_TO_FIELD.get(label)
+        if field is None:
+            continue
+        if field == '_signatory_position':
+            signatory_pos = raw_val
+            continue
+        if field in seen_fields:
+            continue  # Take first match only
+        seen_fields.add(field)
+        headers.append(_FIELD_TO_HEADER.get(field, field))
+        values.append(raw_val)
+
+    # Enrich signatory with position if both present
+    if signatory_pos and 'signatory' in seen_fields:
+        idx = next((i for i, h in enumerate(headers) if h == _FIELD_TO_HEADER.get('signatory', 'Подписант')), None)
+        if idx is not None and values[idx]:
+            values[idx] = f"{signatory_pos} {values[idx]}"
+    elif signatory_pos and 'signatory' not in seen_fields:
+        headers.append(_FIELD_TO_HEADER.get('signatory', 'Подписант'))
+        values.append(signatory_pos)
+
+    # Fallback: if name not found, scan paragraphs
+    if 'name' not in seen_fields:
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if len(text) > 5:
+                headers.insert(0, _FIELD_TO_HEADER['name'])
+                values.insert(0, text)
+                break
+
+    if not headers:
+        return None
+
+    all_rows = [headers, values]
+    return all_rows, 0  # hdr_idx = 0
+
+
+def _parse_file_to_rows(fname: str, content: bytes):
+    """Parse xlsx/xls/docx/doc/pdf and return (all_rows, hdr_idx)."""
+    fname = fname.lower()
+
+    if fname.endswith('.xls') and not fname.endswith('.xlsx'):
+        try:
+            import xlrd as _xlrd_mod
+        except ImportError:
+            raise HTTPException(500, "xlrd не установлен")
+        try:
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .xls файл: {e}")
+        ws_xls = wb_xls.sheet_by_index(0)
+        all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+
+    elif fname.endswith('.xlsx'):
+        if not load_workbook:
+            raise HTTPException(500, "openpyxl не установлен")
+        try:
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .xlsx файл: {e}")
+        ws = wb.active
+        all_rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+
+    elif fname.endswith(('.docx', '.doc')):
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(500, "python-docx не установлен")
+        try:
+            doc = Document(BytesIO(content))
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать .docx файл: {e}")
+        if not doc.tables:
+            raise HTTPException(400, "В документе .docx не найдено таблиц")
+
+        # Try key-value card format first (карточка реквизитов):
+        # All tables scanned; rows with 2 non-empty cells are treated as key→value pairs.
+        kv_result = _try_parse_kv_docx(doc)
+        if kv_result is not None:
+            # kv_result is already (all_rows, hdr_idx) ready for return
+            return kv_result
+
+        tbl = doc.tables[0]
+        all_rows = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]
+
+    elif fname.endswith('.pdf'):
+        if not _pdfplumber:
+            raise HTTPException(500, "pdfplumber не установлен")
+        has_text = False
+        try:
+            with _pdfplumber.open(BytesIO(content)) as pdf:
+                all_rows = []
+                for page in pdf.pages:
+                    tables = page.extract_tables()
+                    if tables:
+                        for tbl in tables:
+                            all_rows.extend([r for r in tbl if r])
+                if not all_rows:
+                    for page in _pdfplumber.open(BytesIO(content)).pages:
+                        text = page.extract_text()
+                        if text:
+                            has_text = True
+                            for line in text.strip().split('\n'):
+                                cells = [c.strip() for c in line.split('\t')]
+                                if len(cells) < 2:
+                                    cells = [c.strip() for c in line.split('  ') if c.strip()]
+                                if cells:
+                                    all_rows.append(cells)
+        except Exception as e:
+            raise HTTPException(400, f"Не удалось прочитать PDF-файл: {e}")
+        if not all_rows:
+            if not has_text:
+                # Scanned PDF — try OCR
+                all_rows, ocr_error = _ocr_pdf_to_rows(content)
+                if not all_rows:
+                    detail = ocr_error or "OCR не смог распознать таблицу."
+                    raise HTTPException(
+                        400,
+                        f"Этот PDF — скан (изображение). {detail} "
+                        "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
+                    )
+            else:
+                raise HTTPException(
+                    400,
+                    "В PDF найден текст, но не удалось распознать таблицу. "
+                    "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
+                )
+
+    else:
+        raise HTTPException(400, "Неподдерживаемый формат файла. Используйте .xlsx, .xls, .docx, .doc или .pdf")
+
+    if not all_rows:
+        raise HTTPException(400, "Файл пустой или не содержит данных")
+
+    hdr_idx = _detect_hdr(all_rows)
+    return all_rows, hdr_idx
+
+
+@router.get("/product-categories")
+async def list_all_product_categories(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """All unique product categories from products + manual contractor categories."""
+    from app.models.product import Product
+    # From products table
+    prod_res = await db.execute(
+        select(distinct(Product.category))
+        .where(Product.category.isnot(None), Product.category != '')
+    )
+    cats = {r[0] for r in prod_res}
+    # From manual contractor categories
+    ctr_res = await db.execute(
+        select(Contractor.manual_product_categories)
+        .where(Contractor.manual_product_categories.isnot(None))
+    )
+    for row in ctr_res:
+        for c in (row[0] or []):
+            if c and c != 'Все':
+                cats.add(c)
+    return sorted(cats)
+
+
+@router.get("/with-stats")
+async def list_contractors_with_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    search: str = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    category: str = Query(None),
+):
+    """Contractors with product categories, server-side pagination + search."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+
+    q = select(Contractor).order_by(Contractor.name)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
+    if search:
+        term = f"%{search}%"
+        q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
+    if category:
+        # Filter by manual_product_categories JSONB contains, or "Все"
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import cast, literal
+        q = q.where(or_(
+            Contractor.manual_product_categories.op('?')(category),
+            Contractor.manual_product_categories.op('?')('Все'),
+        ))
+
+    # Total count for pagination
+    from sqlalchemy import func as safunc
+    count_q = select(safunc.count()).select_from(q.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    contractors = (await db.execute(q.offset(offset).limit(limit))).scalars().all()
+    c_ids = [c.id for c in contractors]
+
+    # Product categories per contractor (only for current page)
+    prod_cat_map = {}
+    if c_ids:
+        prod_stmt = (
+            select(
+                Purchase.contractor_id,
+                func.array_agg(distinct(Product.category)).label("product_categories"),
+            )
+            .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
+            .join(Product, Product.id == PurchaseItem.product_id)
+            .where(Purchase.contractor_id.in_(c_ids))
+            .where(Product.category.isnot(None))
+            .where(Product.category != '')
+            .group_by(Purchase.contractor_id)
+        )
+        prod_rows = (await db.execute(prod_stmt)).all()
+        prod_cat_map = {
+            row.contractor_id: [x for x in (row.product_categories or []) if x]
+            for row in prod_rows
+        }
+
+    result = []
+    for c in contractors:
+        c_dict = ContractorOut.model_validate(c).model_dump()
+        manual = c.manual_product_categories or []
+        auto = prod_cat_map.get(c.id, [])
+        if "Все" in manual:
+            c_dict["product_categories"] = ["Все"]
+        else:
+            merged = list(dict.fromkeys(manual + auto))
+            c_dict["product_categories"] = merged
+        result.append(c_dict)
+    return {"items": result, "total": total}
+
+
+@router.get("/lookup-inn/{inn}")
+async def lookup_inn(
+    inn: str,
+    force_egrul: bool = Query(False),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lookup company data by INN: first local DB (unless force_egrul=1), then FNS EGRUL/EGRIP API."""
+    import httpx
+    import logging
+    logger = logging.getLogger(__name__)
+
+    inn = inn.strip()
+    if not inn or len(inn) not in (10, 12):
+        raise HTTPException(400, "ИНН должен быть 10 (юр.лицо) или 12 (ИП) цифр")
+
+    # Step 0: check local DB first (skip if force_egrul requested)
+    if not force_egrul:
+        local = await db.execute(
+            select(Contractor).where(Contractor.inn == inn).limit(1)
+        )
+        local_contractor = local.scalar_one_or_none()
+    else:
+        local_contractor = None
+    if local_contractor:
+        return {
+            "name": local_contractor.name,
+            "inn": local_contractor.inn,
+            "kpp": local_contractor.kpp,
+            "ogrn": local_contractor.ogrn,
+            "address": local_contractor.address,
+            "postal_address": local_contractor.postal_address,
+            "org_type": local_contractor.org_type,
+            "signatory": local_contractor.signatory,
+            "signatory_basis": local_contractor.signatory_basis,
+            "contact_person": local_contractor.contact_person,
+            "phone": local_contractor.phone,
+            "email": local_contractor.email,
+            "org_phone": local_contractor.org_phone,
+            "org_email": local_contractor.org_email,
+            "settlement_account": local_contractor.settlement_account,
+            "bank_name": local_contractor.bank_name,
+            "bik": local_contractor.bik,
+            "correspondent_account": local_contractor.correspondent_account,
+            "bank_details": local_contractor.bank_details,
+            "_source": "local",
+        }
+
+    # FNS public API (no auth required)
+    url = f"https://egrul.nalog.ru/search-result/{inn}"
+    search_url = "https://egrul.nalog.ru/"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=False) as client:
+            # Step 1: initiate search
+            resp1 = await client.post(search_url, json={"query": inn, "region": "", "page": ""})
+            token = resp1.json().get("t")
+            if not token:
+                raise HTTPException(502, "ФНС не вернула токен поиска")
+
+            # Step 2: get results (may need retry)
+            import asyncio
+            for attempt in range(5):
+                await asyncio.sleep(1)
+                resp2 = await client.get(f"https://egrul.nalog.ru/search-result/{token}")
+                data = resp2.json()
+                rows = data.get("rows", [])
+                if rows:
+                    break
+
+            if not rows:
+                raise HTTPException(404, f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП")
+
+            row = rows[0]  # first match
+            result = {
+                "name": row.get("c") or row.get("n"),  # c=short name, n=full name
+                "full_name": row.get("n"),              # n=full legal name
+                "inn": row.get("i"),
+                "ogrn": row.get("o"),
+                "kpp": row.get("p"),
+                "address": row.get("a"),
+                "org_type": "ИП" if len(inn) == 12 else "Юридическое лицо",
+                "signatory": row.get("g"),  # director/head name
+                "status": row.get("s"),  # status text
+                "registration_date": row.get("r"),
+            }
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("FNS lookup error for INN %s: %s", inn, e)
+        raise HTTPException(502, f"Ошибка запроса к ФНС: {str(e)[:200]}")
+
+
+@router.post("/enrich-from-fns/{contractor_id}")
+async def enrich_contractor_from_fns(
+    contractor_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES, *MANAGER_ROLES)),
+):
+    """Fetch data from FNS by contractor's INN and fill empty fields."""
+    res = await db.execute(select(Contractor).where(Contractor.id == contractor_id))
+    c = res.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Контрагент не найден")
+    if not c.inn:
+        raise HTTPException(400, "У контрагента не заполнен ИНН")
+
+    # Reuse lookup
+    fns_data = await lookup_inn(c.inn, _)
+
+    updated_fields = []
+    field_map = {
+        'name': 'name', 'kpp': 'kpp', 'ogrn': 'ogrn',
+        'address': 'address', 'org_type': 'org_type', 'signatory': 'signatory',
+    }
+    for fns_field, model_field in field_map.items():
+        fns_val = fns_data.get(fns_field)
+        if fns_val and not getattr(c, model_field, None):
+            setattr(c, model_field, fns_val)
+            updated_fields.append(model_field)
+
+    await db.commit()
+    await db.refresh(c)
+    return {"updated_fields": updated_fields, "contractor": ContractorOut.model_validate(c)}
+
+
+@router.post("/enrich-all-fns")
+async def enrich_all_contractors_from_fns(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role("superadmin", "account_owner")),
+):
+    """Bulk-enrich all contractors that have a Russian INN (10 or 12 digits) from FNS."""
+    import asyncio
+    import re
+    import logging
+    logger = logging.getLogger(__name__)
+
+    result = await db.execute(select(Contractor).where(Contractor.inn.isnot(None), Contractor.inn != ""))
+    contractors = result.scalars().all()
+
+    russian_inn_re = re.compile(r"^\d{10}(\d{2})?$")
+    candidates = [c for c in contractors if russian_inn_re.match((c.inn or "").strip())]
+
+    updated_count = 0
+    skipped_count = 0
+    errors = []
+
+    field_map = {
+        'name': 'name', 'kpp': 'kpp', 'ogrn': 'ogrn',
+        'address': 'address', 'org_type': 'org_type', 'signatory': 'signatory',
+    }
+
+    for c in candidates:
+        try:
+            fns_data = await lookup_inn(c.inn.strip(), current_user)
+            changed = False
+            for fns_field, model_field in field_map.items():
+                fns_val = fns_data.get(fns_field)
+                if fns_val and not getattr(c, model_field, None):
+                    setattr(c, model_field, fns_val)
+                    changed = True
+            if changed:
+                updated_count += 1
+            else:
+                skipped_count += 1
+        except HTTPException:
+            skipped_count += 1
+        except Exception as e:
+            errors.append({"inn": c.inn, "error": str(e)[:100]})
+            logger.warning("FNS enrich error for INN %s: %s", c.inn, e)
+
+    await db.commit()
+    return {
+        "total": len(candidates),
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "errors": errors,
+    }
+
+
+@router.post("/parse-file")
+async def parse_contractor_file(
+    file: UploadFile = File(...),
+    _=Depends(get_current_user),
+):
+    """Parse a contractor card file (xlsx, docx, pdf) and return extracted fields."""
+    fname = (file.filename or '').lower()
+    content = await file.read()
+    try:
+        all_rows, hdr_idx = _parse_file_to_rows(fname, content)
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Ошибка чтения файла: {e}")
+
+    if not all_rows or len(all_rows) <= hdr_idx:
+        raise HTTPException(400, "Файл не содержит данных")
+
+    # If it's a kv-card (2 rows: header + values), extract directly
+    headers = all_rows[hdr_idx] if len(all_rows) > hdr_idx else []
+    values = all_rows[hdr_idx + 1] if len(all_rows) > hdr_idx + 1 else []
+
+    result = {}
+    field_hints = {
+        'name': ('назван', 'наимен', 'name', 'органи', 'учредит'),
+        'inn': ('инн', 'inn'),
+        'kpp': ('кпп', 'kpp'),
+        'ogrn': ('огрн', 'ogrn'),
+        'address': ('юридич', 'адрес', 'address'),
+        'postal_address': ('почтов', 'postal'),
+        'phone': ('телефон', 'phone', 'тел'),
+        'email': ('email', 'e-mail'),
+        'signatory': ('подписант', 'signatory', 'директор', 'руководит', 'уполномоч'),
+        'bik': ('бик', 'bik'),
+        'settlement_account': ('расч', 'р/с', 'settlement'),
+        'correspondent_account': ('корр', 'к/с', 'correspondent'),
+        'bank_name': ('банк', 'bank'),
+        'org_type': ('тип', 'форма', 'org_type'),
+    }
+
+    for j, h in enumerate(headers):
+        h_str = str(h).strip().lower() if h else ''
+        if not h_str or j >= len(values):
+            continue
+        val = str(values[j]).strip() if values[j] is not None else ''
+        if not val or val.lower() in ('none', 'null', '-', '—', ''):
+            continue
+        for field, hints in field_hints.items():
+            if field not in result and any(x in h_str for x in hints):
+                # INN/KPP length limits
+                if field == 'inn' and len(val.replace(' ', '')) > 12:
+                    continue
+                if field == 'kpp' and len(val.replace(' ', '')) > 9:
+                    continue
+                result[field] = val
+                break
+
+    return result
+
+
+@router.get("/", response_model=List[ContractorOut])
+async def list_contractors(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    search: str = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    q = select(Contractor).order_by(Contractor.name)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
+    if search:
+        q = q.where(Contractor.name.ilike(f"%{search}%") | Contractor.inn.ilike(f"%{search}%"))
+    result = await db.execute(q.limit(limit))
+    return result.scalars().all()
+
+
+@router.get("/{cid}", response_model=ContractorOut)
+async def get_contractor(
+    cid: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    c = await db.get(Contractor, cid)
+    if not c:
+        raise HTTPException(404, "Контрагент не найден")
+    return c
+
+
+@router.post("/", response_model=ContractorOut)
+async def create_contractor(
+    data: ContractorCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
+):
+    d = data.model_dump()
+    d['org_id'] = get_single_org_id(current_user) or current_user.org_id
+    c = Contractor(**d)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.patch("/{cid}/email", response_model=ContractorOut)
+async def patch_contractor_email(
+    cid: int,
+    email: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ALL_ROLES)),
+):
+    c = (await db.execute(select(Contractor).where(Contractor.id == cid))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Not found")
+    c.email = email
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.put("/{cid}", response_model=ContractorOut)
+async def update_contractor(
+    cid: int,
+    data: ContractorCreate,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ALL_ROLES))
+):
+    result = await db.execute(select(Contractor).where(Contractor.id == cid))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Not found")
+    for k, v in data.model_dump().items():
+        setattr(c, k, v)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.delete("/bulk")
+async def bulk_delete_contractors(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES))
+):
+    from app.models.purchase import Purchase
+    ids = payload.get("ids", [])
+    if not ids:
+        return {"deleted": 0, "skipped_linked": 0, "skipped_not_found": 0}
+
+    # IDs referenced in purchases — cannot delete
+    linked_result = await db.execute(
+        select(Purchase.contractor_id).where(Purchase.contractor_id.in_(ids)).distinct()
+    )
+    linked_ids = {r[0] for r in linked_result}
+
+    safe_ids = [i for i in ids if i not in linked_ids]
+
+    result = await db.execute(select(Contractor).where(Contractor.id.in_(safe_ids)))
+    contractors_found = result.scalars().all()
+    for c in contractors_found:
+        await db.delete(c)
+    await db.commit()
+
+    return {
+        "deleted": len(contractors_found),
+        "skipped_linked": len(linked_ids),
+        "skipped_not_found": len(safe_ids) - len(contractors_found),
+    }
+
+
+@router.delete("/{cid}")
+async def delete_contractor(
+    cid: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES))
+):
+    result = await db.execute(select(Contractor).where(Contractor.id == cid))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Not found")
+    await db.delete(c)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/import/template")
+async def contractors_import_template(_=Depends(require_role(*MANAGER_ROLES))):
+    """Download xlsx template for bulk contractor import."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Контрагенты"
+
+    headers = [
+        "Наименование", "ИНН", "КПП", "ОГРН",
+        "Адрес местонахождения", "Почтовый адрес",
+        "Подписант", "Основание",
+        "Контактное лицо", "Телефон", "Email",
+        "Расчётный счёт", "Банк", "БИК", "Корр. счёт",
+        "Банковские реквизиты",
+    ]
+    required = {"Наименование", "ИНН"}
+
+    header_fill = PatternFill("solid", fgColor="1E40AF")
+    req_fill    = PatternFill("solid", fgColor="1D4ED8")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font = header_font
+        cell.fill = req_fill if h in required else header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Example row
+    example = [
+        "ООО Пример", "1234567890", "123456789", "1234567890123",
+        "г. Москва, ул. Примерная, д. 1", "г. Москва, ул. Почтовая, д. 2",
+        "Иванов Иван Иванович, Генеральный директор", "Устава",
+        "Петров Пётр Петрович", "+7 (999) 000-00-00", "example@mail.ru",
+        "40702810000000000000", "ПАО Сбербанк", "044525225", "30101810400000000225",
+        "",
+    ]
+    for ci, val in enumerate(example, 1):
+        ws.cell(row=2, column=ci, value=val)
+
+    col_widths = [35, 14, 12, 16, 40, 40, 45, 20, 30, 20, 25, 24, 30, 12, 24, 35]
+    for ci, w in enumerate(col_widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=contractors_template.xlsx"},
+    )
+
+
+@router.post("/import/excel")
+async def import_contractors_excel(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ALL_ROLES))
+):
+    """Bulk import contractors from Excel. First row must be headers."""
+    if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):
+        raise HTTPException(400, "Поддерживаются только файлы .xlsx / .xls")
+
+    if not load_workbook:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    content = await file.read()
+    try:
+        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    ws = wb.active
+
+    # Detect header row
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    if not header_row:
+        raise HTTPException(400, "Файл пустой")
+
+    def _norm(v) -> str:
+        return str(v).strip().lower() if v else ''
+
+    col: dict[str, int] = {}
+    for i, h in enumerate(header_row):
+        h_str = _norm(h)
+        if any(x in h_str for x in ('назван', 'наимен', 'name', 'органи')):
+            col.setdefault('name', i)
+        elif any(x in h_str for x in ('инн', 'inn', 'идентиф')):
+            col.setdefault('inn', i)
+        elif any(x in h_str for x in ('кпп', 'kpp')):
+            col.setdefault('kpp', i)
+        elif any(x in h_str for x in ('огрн', 'ogrn')):
+            col.setdefault('ogrn', i)
+        elif any(x in h_str for x in ('почтов', 'postal')):
+            col.setdefault('postal_address', i)
+        elif any(x in h_str for x in ('адрес', 'address')):
+            col.setdefault('address', i)
+        elif any(x in h_str for x in ('основан', 'basis', 'устав', 'действует')):
+            col.setdefault('signatory_basis', i)
+        elif any(x in h_str for x in ('подписант', 'signatory', 'директор', 'руководит')):
+            col.setdefault('signatory', i)
+        elif any(x in h_str for x in ('контакт', 'contact', 'лицо')):
+            col.setdefault('contact_person', i)
+        elif any(x in h_str for x in ('телефон', 'phone', 'тел.')):
+            col.setdefault('phone', i)
+        elif 'email' in h_str or 'e-mail' in h_str or 'mail' in h_str:
+            col.setdefault('email', i)
+        elif any(x in h_str for x in ('расч', 'р/с', 'р/с', 'settlement')):
+            col.setdefault('settlement_account', i)
+        elif any(x in h_str for x in ('корр', 'к/с', 'correspondent')):
+            col.setdefault('correspondent_account', i)
+        elif any(x in h_str for x in ('бик', 'bik')):
+            col.setdefault('bik', i)
+        elif any(x in h_str for x in ('банк', 'bank')):
+            col.setdefault('bank_name', i)
+        elif any(x in h_str for x in ('реквизит',)):
+            col.setdefault('bank_details', i)
+
+    if 'name' not in col:
+        raise HTTPException(
+            400,
+            "Не найдена колонка с наименованием. "
+            "Убедитесь что первая строка — заголовки с колонкой «Наименование» или «name»."
+        )
+
+    _limits = {
+        'inn': 12, 'kpp': 9, 'ogrn': 20, 'bik': 20,
+        'settlement_account': 100, 'correspondent_account': 100,
+        'phone': 50, 'email': 255, 'contact_person': 255,
+        'signatory': 255, 'signatory_basis': 500, 'bank_name': 500,
+    }
+
+    def _cell(row, field):
+        idx = col.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ('none', 'null', '-', '—'):
+            return None
+        # Clean ".0" suffix from numeric fields (Excel float issue)
+        if field in ('inn', 'kpp', 'ogrn', 'bik') and s.endswith('.0'):
+            s = s[:-2]
+        limit = _limits.get(field)
+        return s[:limit] if limit else s
+
+    created = 0
+    skipped = 0
+    errors_list = []
+
+    # Collect existing INNs for dedup
+    inn_result = await db.execute(select(Contractor.inn).where(Contractor.inn.isnot(None)))
+    existing_inns = {r[0] for r in inn_result}
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        name = _cell(row, 'name')
+        if not name:
+            skipped += 1
+            continue
+
+        inn = _cell(row, 'inn')
+        if inn and inn in existing_inns:
+            skipped += 1
+            continue
+
+        c = Contractor(
+            name=name,
+            inn=inn,
+            kpp=_cell(row, 'kpp'),
+            ogrn=_cell(row, 'ogrn'),
+            address=_cell(row, 'address'),
+            postal_address=_cell(row, 'postal_address'),
+            signatory=_cell(row, 'signatory'),
+            signatory_basis=_cell(row, 'signatory_basis'),
+            contact_person=_cell(row, 'contact_person'),
+            phone=_cell(row, 'phone'),
+            email=_cell(row, 'email'),
+            settlement_account=_cell(row, 'settlement_account'),
+            bank_name=_cell(row, 'bank_name'),
+            bik=_cell(row, 'bik'),
+            correspondent_account=_cell(row, 'correspondent_account'),
+            bank_details=_cell(row, 'bank_details'),
+        )
+        db.add(c)
+        if inn:
+            existing_inns.add(inn)
+        created += 1
+
+    await db.commit()
+    return {"created": created, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# New multi-format import endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/import/preview")
+async def contractors_import_preview(
+    file: UploadFile = File(...),
+    _=Depends(require_role(*ALL_ROLES)),
+):
+    """Parse uploaded file and return headers + sample rows for column mapping UI."""
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        all_rows, hdr_idx = _parse_file_to_rows(fname, content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    hdr_rows = all_rows[hdr_idx:]
+    if not hdr_rows:
+        raise HTTPException(400, "Файл пустой или не содержит данных после заголовка")
+
+    headers = [
+        str(c).strip() if c else f"Столбец {j + 1}"
+        for j, c in enumerate(hdr_rows[0])
+    ]
+    sample = [
+        [str(c).strip() if c is not None else "" for c in row]
+        for row in hdr_rows[1:min(4, len(hdr_rows))]
+    ]
+    total_rows = len(all_rows) - hdr_idx - 1
+
+    return {
+        "headers": headers,
+        "sample": sample,
+        "total_rows": max(total_rows, 0),
+        "header_row_offset": hdr_idx,
+    }
+
+
+@router.post("/import/mapped")
+async def contractors_import_mapped(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
+    col_name: Optional[int] = Query(None),
+    col_inn: Optional[int] = Query(None),
+    col_kpp: Optional[int] = Query(None),
+    col_ogrn: Optional[int] = Query(None),
+    col_address: Optional[int] = Query(None),
+    col_postal_address: Optional[int] = Query(None),
+    col_signatory: Optional[int] = Query(None),
+    col_signatory_basis: Optional[int] = Query(None),
+    col_contact_person: Optional[int] = Query(None),
+    col_phone: Optional[int] = Query(None),
+    col_email: Optional[int] = Query(None),
+    col_org_phone: Optional[int] = Query(None),
+    col_org_email: Optional[int] = Query(None),
+    col_settlement_account: Optional[int] = Query(None),
+    col_bank_name: Optional[int] = Query(None),
+    col_bik: Optional[int] = Query(None),
+    col_correspondent_account: Optional[int] = Query(None),
+    col_bank_details: Optional[int] = Query(None),
+    col_org_type: Optional[int] = Query(None),
+    col_manual_product_categories: Optional[int] = Query(None),
+    header_row_offset: int = Query(0),
+):
+    """Import contractors using user-specified column mapping."""
+    if col_name is None:
+        raise HTTPException(400, "Не указан столбец «Наименование»")
+
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        all_rows, _ = _parse_file_to_rows(fname, content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+
+    # Skip header row
+    skip = header_row_offset + 1
+    data_rows = all_rows[skip:]
+
+    _limits = {
+        'inn': 12, 'kpp': 9, 'ogrn': 20, 'bik': 20,
+        'settlement_account': 100, 'correspondent_account': 100,
+        'phone': 50, 'email': 255, 'contact_person': 255,
+        'signatory': 255, 'signatory_basis': 500, 'bank_name': 500,
+    }
+
+    col_map = {
+        'name': col_name,
+        'inn': col_inn,
+        'kpp': col_kpp,
+        'ogrn': col_ogrn,
+        'address': col_address,
+        'postal_address': col_postal_address,
+        'signatory': col_signatory,
+        'signatory_basis': col_signatory_basis,
+        'contact_person': col_contact_person,
+        'phone': col_phone,
+        'email': col_email,
+        'org_phone': col_org_phone,
+        'org_email': col_org_email,
+        'settlement_account': col_settlement_account,
+        'bank_name': col_bank_name,
+        'bik': col_bik,
+        'correspondent_account': col_correspondent_account,
+        'bank_details': col_bank_details,
+        'org_type': col_org_type,
+        'manual_product_categories': col_manual_product_categories,
+    }
+
+    def _get(row, field):
+        idx = col_map.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ('none', 'null', '-', '—'):
+            return None
+        # Clean ".0" suffix from numeric fields (Excel float issue)
+        if field in ('inn', 'kpp', 'ogrn', 'bik') and s.endswith('.0'):
+            s = s[:-2]
+        limit = _limits.get(field)
+        return s[:limit] if limit else s
+
+    # Collect existing contractors by INN for merge
+    inn_result = await db.execute(
+        select(Contractor).where(Contractor.inn.isnot(None))
+    )
+    existing_by_inn: dict[str, Contractor] = {c.inn: c for c in inn_result.scalars().all() if c.inn}
+
+    _updatable_fields = [
+        'kpp', 'ogrn', 'address', 'postal_address', 'signatory', 'signatory_basis',
+        'contact_person', 'phone', 'email', 'org_phone', 'org_email',
+        'settlement_account', 'bank_name', 'bik', 'correspondent_account',
+        'bank_details', 'org_type',
+    ]
+
+    created = 0
+    updated = 0
+    skipped_empty = 0
+    errors_list = []
+    update_details = []
+
+    for row_num, row in enumerate(data_rows, start=2):
+        try:
+            name = _get(row, 'name')
+            if not name:
+                skipped_empty += 1
+                continue
+
+            inn = _get(row, 'inn')
+
+            # Parse categories: comma/semicolon separated string → JSON array
+            cats_raw = _get(row, 'manual_product_categories')
+            cats = None
+            if cats_raw:
+                cats = [c.strip() for c in cats_raw.replace(';', ',').split(',') if c.strip()]
+
+            # If contractor with this INN exists — merge new data into it
+            if inn and inn in existing_by_inn:
+                existing = existing_by_inn[inn]
+                changed_fields = []
+                for field in _updatable_fields:
+                    new_val = _get(row, field)
+                    if new_val and not getattr(existing, field, None):
+                        setattr(existing, field, new_val)
+                        changed_fields.append(field)
+                # Merge categories
+                if cats:
+                    old_cats = existing.manual_product_categories or []
+                    merged = list(set(old_cats + cats))
+                    if merged != old_cats:
+                        existing.manual_product_categories = merged
+                        changed_fields.append('categories')
+                # Update name if existing is shorter/empty
+                if name and (not existing.name or len(name) > len(existing.name)):
+                    existing.name = name
+                    changed_fields.append('name')
+                if changed_fields:
+                    updated += 1
+                    update_details.append(f"ИНН {inn}: дополнены {', '.join(changed_fields)}")
+                continue
+
+            c = Contractor(
+                name=name,
+                inn=inn,
+                kpp=_get(row, 'kpp'),
+                ogrn=_get(row, 'ogrn'),
+                address=_get(row, 'address'),
+                postal_address=_get(row, 'postal_address'),
+                signatory=_get(row, 'signatory'),
+                signatory_basis=_get(row, 'signatory_basis'),
+                contact_person=_get(row, 'contact_person'),
+                phone=_get(row, 'phone'),
+                email=_get(row, 'email'),
+                org_phone=_get(row, 'org_phone'),
+                org_email=_get(row, 'org_email'),
+                settlement_account=_get(row, 'settlement_account'),
+                bank_name=_get(row, 'bank_name'),
+                bik=_get(row, 'bik'),
+                correspondent_account=_get(row, 'correspondent_account'),
+                bank_details=_get(row, 'bank_details'),
+                org_type=_get(row, 'org_type'),
+                org_id=get_single_org_id(current_user) or current_user.org_id,
+                manual_product_categories=cats,
+            )
+            db.add(c)
+            if inn:
+                existing_by_inn[inn] = c
+            created += 1
+        except Exception as e:
+            errors_list.append(f"Строка {row_num}: {str(e)}")
+
+    await db.commit()
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped_empty,
+        "skipped_empty": skipped_empty,
+        "update_details": update_details[:50],
+        "errors": errors_list,
+    }

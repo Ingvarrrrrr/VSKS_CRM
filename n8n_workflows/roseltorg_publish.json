@@ -1,0 +1,210 @@
+{
+  "name": "Росэлторг — Публикация закупки",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "roseltorg-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "rt-webhook-trigger",
+      "name": "Webhook Росэлторг",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "roseltorg-publish"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\nconst token = $env.ROSELTORG_TOKEN || '';\nconst procedureType = data.procedure_type || 'request_quotations';\n\nconst TEMPLATE_IDS = {\n  'request_quotations': 'QUOTATION_REQUEST',\n  'request_proposals':  'PROPOSAL_REQUEST',\n  'competition':        'OPEN_COMPETITION',\n  'auction':            'OPEN_AUCTION',\n};\nconst templateId = TEMPLATE_IDS[procedureType] || 'QUOTATION_REQUEST';\n\nreturn [{\n  json: {\n    publicationId: data.publication_id,\n    hasToken: token !== '',\n    token,\n    templateId,\n    procedureType,\n    roseltorgPayload: {\n      templateId,\n      lotName: data.subject || ('Закупка #' + data.purchase_id),\n      startPrice: data.nmck || 0,\n      currency: 'RUB',\n      items: (data.items || []).map(function(i) {\n        return { name: i.item_name, quantity: i.quantity, unit: i.unit, unitPrice: i.unit_price };\n      }),\n    },\n  }\n}];"
+      },
+      "id": "rt-prepare-data",
+      "name": "Подготовка данных",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "token-check",
+              "leftValue": "={{ $json.hasToken }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "rt-has-token",
+      "name": "Есть токен?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rb.roseltorg.ru/api/v1/lots",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.token }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "templateId", "value": "={{ $json.roseltorgPayload.templateId }}" },
+            { "name": "lotName", "value": "={{ $json.roseltorgPayload.lotName }}" },
+            { "name": "startPrice", "value": "={{ $json.roseltorgPayload.startPrice }}" },
+            { "name": "currency", "value": "={{ $json.roseltorgPayload.currency }}" }
+          ]
+        },
+        "options": { "response": { "response": { "fullResponse": false } } }
+      },
+      "id": "rt-api-call",
+      "name": "Вызов Росэлторг API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 180],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.id !== undefined || $json.success === true }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "rt-check-success",
+      "name": "Успешно?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { publicationId } = $input.first().json;\nreturn [{ json: {\n  publicationId,\n  callbackBody: {\n    status: 'error',\n    error_text: 'Требуется Bearer Token Росэлторг — настройте в параметрах n8n (переменная ROSELTORG_TOKEN)',\n  }\n}}];"
+      },
+      "id": "rt-error-no-token",
+      "name": "Ошибка: нет токена",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: {\n  publicationId: prev.publicationId,\n  callbackBody: {\n    status: 'published',\n    external_id: String(prev.id || prev.lotId || 'ROSELTORG-' + Date.now()),\n    external_url: 'https://rb.roseltorg.ru/lot/' + (prev.id || ''),\n  }\n}}];"
+      },
+      "id": "rt-success-data",
+      "name": "Данные успеха",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: {\n  publicationId: prev.publicationId,\n  callbackBody: {\n    status: 'error',\n    error_text: 'Ошибка API Росэлторг: ' + JSON.stringify(prev.message || prev.error || prev),\n  }\n}}];"
+      },
+      "id": "rt-error-api",
+      "name": "Ошибка API Росэлторг",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "rt-callback-success",
+      "name": "Callback успех в CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 120]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "rt-callback-error",
+      "name": "Callback ошибка в CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 360]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }"
+      },
+      "id": "rt-respond",
+      "name": "Ответ 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1920, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Росэлторг": {
+      "main": [[{ "node": "Подготовка данных", "type": "main", "index": 0 }]]
+    },
+    "Подготовка данных": {
+      "main": [[{ "node": "Есть токен?", "type": "main", "index": 0 }]]
+    },
+    "Есть токен?": {
+      "main": [
+        [{ "node": "Вызов Росэлторг API", "type": "main", "index": 0 }],
+        [{ "node": "Ошибка: нет токена", "type": "main", "index": 0 }]
+      ]
+    },
+    "Вызов Росэлторг API": {
+      "main": [[{ "node": "Успешно?", "type": "main", "index": 0 }]]
+    },
+    "Успешно?": {
+      "main": [
+        [{ "node": "Данные успеха", "type": "main", "index": 0 }],
+        [{ "node": "Ошибка API Росэлторг", "type": "main", "index": 0 }]
+      ]
+    },
+    "Ошибка: нет токена": {
+      "main": [[{ "node": "Callback ошибка в CRM", "type": "main", "index": 0 }]]
+    },
+    "Данные успеха": {
+      "main": [[{ "node": "Callback успех в CRM", "type": "main", "index": 0 }]]
+    },
+    "Ошибка API Росэлторг": {
+      "main": [[{ "node": "Callback ошибка в CRM", "type": "main", "index": 0 }]]
+    },
+    "Callback успех в CRM": {
+      "main": [[{ "node": "Ответ 200", "type": "main", "index": 0 }]]
+    },
+    "Callback ошибка в CRM": {
+      "main": [[{ "node": "Ответ 200", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "tags": []
+}

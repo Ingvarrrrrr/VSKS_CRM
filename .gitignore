@@ -1,4 +1,5 @@
-# Python
+# Dependencies
+node_modules/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,11 +20,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual Environment
-venv/
-ENV/
-env/
+MANIFEST
 
 # IDE
 .vscode/
@@ -32,24 +29,117 @@ env/
 *.swo
 *~
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Excel files (опционально - можно раскомментировать если не хотите коммитить Excel)
-# *.xlsx
-# *.xlsm
-# *.xltx
-# *.xltm
-
 # OS
 .DS_Store
 Thumbs.db
 
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+uvicorn.log
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+
+# Frontend
+dist/
+.ssr-dist/
+*.local
+
+# Backend
+venv/
+env/
+.venv/
+.env
+.vscode/
+__pycache__/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+vsks.db
+
+# Backend
+alembic/versions/*.py
+!alembic/versions/__init__.py
 
 # Temporary files
-*.tmp
-*.temp
+/tmp/
+/temp/
+
+# Ignore all files in backend/venv
+backend/venv/
+
+# Ignore frontend dist
+frontend/dist/
+
+# Ignore backend logs
+backend/*.log
+
+# Ignore uploaded files
+uploads/
+media/
+
+# Ignore system files
+.DS_Store
+
+# Temp Word files
+~$*
+nul
+
+# Screenshots / local docs
+screenshot*.png
+*.doc
+improvements.md
+patch_pixel_agents.py
+
+# Template source documents (keep only backend/templates/)
+approval_sheet_TEMPLATE.docx
+contract_tz_TEMPLATE.docx
+service_note_TEMPLATE.docx
+типовые документы/
+Корректировки.txt
+Переменные шаблона.xlsx
+Служебная записка образец.doc
+
+# Claude / planning
+.claude/
+.planning/
+.agents/
+skills/
+skills-lock.json
+
+# E2E test output
+e2e-report/
+test-results/
+
+# Local deploy/utility scripts
+deploy_*.py
+apply_rsi_patches.py
+check_trading.py
+cleanup_server.py
+
+# Local template work files
+backend/templates/*.zip
+backend/templates/*_RENDERED.docx
+backend/templates/*_fixed.docx
+backend/templates/*_marked.docx
+backend/templates/aproval_sheet_RESULT2.docx
+backend/templates/make_reference.py
+backend/test_topic.py

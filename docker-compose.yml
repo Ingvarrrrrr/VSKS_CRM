@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: vsks_crm
+      POSTGRES_USER: vsks
+      POSTGRES_PASSWORD: vsks_secret_2024
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vsks -d vsks_crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vsks:vsks_secret_2024@db:5432/vsks_crm
+      SECRET_KEY: vsks-jwt-secret-key-change-in-production
+      SUBSIDY_LIMIT: "26128070"
+      SMTP_HOST: smtp.yandex.ru
+      SMTP_PORT: "587"
+      SMTP_USER: z@vsks.ru
+      SMTP_PASSWORD: szbgaktpqomcwdou
+      SMTP_FROM: z@vsks.ru
+      BASE_URL: http://localhost:80
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+      - ./backend/app:/app/app
+      - ./backend/templates:/app/templates
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Moscow
+      - N8N_DEFAULT_USER_EMAIL=admin@vsks.local
+      - N8N_DEFAULT_USER_PASSWORD=admin123
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  pgdata:
+  n8n_data:
+  uploads:

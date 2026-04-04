@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Заказ форменной одежды ВСКС</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; min-height: 100vh; padding: 20px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { text-align: center; color: #1a1a2e; margin-bottom: 8px; font-size: 24px; }
+  .subtitle { text-align: center; color: #666; margin-bottom: 24px; font-size: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 16px; }
+  .info-block { background: #e8f4fd; border-left: 4px solid #2196F3; padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 20px; font-size: 14px; color: #1565C0; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; color: #333; font-size: 13px; }
+  input, select { width: 100%; padding: 9px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; transition: border-color 0.2s; }
+  input:focus, select:focus { outline: none; border-color: #2196F3; box-shadow: 0 0 0 3px rgba(33,150,243,0.1); }
+  .field-group { margin-bottom: 16px; }
+  .top-fields { display: flex; flex-wrap: wrap; gap: 16px; }
+  .top-fields > div { flex: 1; min-width: 220px; }
+  .section-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #1a1a2e; }
+  .row-entry { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px; margin-bottom: 12px; position: relative; }
+  .row-entry .grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  .row-entry .grid > div { min-width: 130px; flex: 1; }
+  .row-entry .grid > div.col-item { min-width: 200px; flex: 2; }
+  .row-entry .grid > div.col-size { min-width: 100px; flex: 0.7; }
+  .row-entry .grid > div.col-height { min-width: 100px; flex: 0.7; }
+  .row-entry .grid > div.col-qty { min-width: 90px; flex: 0.5; }
+  .row-number { position: absolute; top: -10px; left: 12px; background: #2196F3; color: #fff; font-size: 12px; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+  .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+  .btn-add { background: #e8f5e9; color: #2e7d32; margin-right: 8px; }
+  .btn-add:hover { background: #c8e6c9; }
+  .btn-remove { background: #ffebee; color: #c62828; position: absolute; top: 8px; right: 8px; padding: 4px 10px; font-size: 12px; }
+  .btn-remove:hover { background: #ffcdd2; }
+  .btn-submit { background: #1976D2; color: #fff; width: 100%; padding: 14px; font-size: 16px; }
+  .btn-submit:hover { background: #1565C0; }
+  .btn-submit:disabled { background: #bbb; cursor: not-allowed; }
+  .actions { display: flex; align-items: center; margin-top: 8px; }
+  .toast { position: fixed; top: 20px; right: 20px; padding: 16px 24px; border-radius: 10px; color: #fff; font-weight: 600; z-index: 1000; transform: translateX(120%); transition: transform 0.3s; max-width: 400px; }
+  .toast.show { transform: translateX(0); }
+  .toast.success { background: #43a047; }
+  .toast.error { background: #e53935; }
+  .preview { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-top: 16px; font-size: 12px; overflow-x: auto; }
+  .preview table { width: 100%; border-collapse: collapse; }
+  .preview th, .preview td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; }
+  .preview th { background: #e3f2fd; white-space: nowrap; }
+  .hidden { display: none !important; }
+  .divider { border: none; border-top: 2px solid #e0e0e0; margin: 20px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Заказ форменной одежды ВСКС</h1>
+  <p class="subtitle">Заполните данные о необходимом количестве форменной одежды</p>
+
+  <div class="card">
+    <div class="info-block">
+      Сначала заполните ваши данные (регион, ФИО, адрес СДЭК, телефон).<br>
+      Затем добавьте позиции заказа. Для петлиц и нашивок размер и рост не требуются.
+    </div>
+
+    <div class="section-title">Данные получателя</div>
+    <div class="top-fields">
+      <div>
+        <label>Регион</label>
+        <select id="region">
+          <option value="">— Выберите регион —</option>
+        </select>
+      </div>
+      <div>
+        <label>Фамилия получающего</label>
+        <input type="text" id="lastName" placeholder="Иванов">
+      </div>
+      <div>
+        <label>Имя получающего</label>
+        <input type="text" id="firstName" placeholder="Иван">
+      </div>
+      <div>
+        <label>Отчество получающего</label>
+        <input type="text" id="middleName" placeholder="Иванович">
+      </div>
+      <div>
+        <label>Адрес пункта выдачи СДЭК с городом</label>
+        <input type="text" id="address" placeholder="г. Москва, ул. Примерная, 1">
+      </div>
+      <div>
+        <label>Телефон получающего</label>
+        <input type="tel" id="phone" placeholder="+7 (999) 123-45-67">
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="section-title">Позиции заказа</div>
+    <div id="rows-container"></div>
+
+    <div class="actions">
+      <button class="btn btn-add" onclick="addRow()">+ Добавить позицию</button>
+    </div>
+
+    <div id="preview"></div>
+
+    <div style="margin-top: 20px;">
+      <button class="btn btn-submit" id="submitBtn" onclick="submitForm()">Отправить заявку</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const REGIONS = [
+  "Республика Адыгея","Республика Алтай","Республика Башкортостан","Республика Бурятия",
+  "Республика Дагестан","Республика Ингушетия","Кабардино-Балкарская Республика",
+  "Республика Калмыкия","Карачаево-Черкесская Республика","Республика Карелия",
+  "Республика Коми","Республика Крым","Республика Марий Эл","Республика Мордовия",
+  "Республика Саха (Якутия)","Республика Северная Осетия — Алания","Республика Татарстан",
+  "Республика Тыва","Удмуртская Республика","Республика Хакасия","Чеченская Республика",
+  "Чувашская Республика","Алтайский край","Забайкальский край","Камчатский край",
+  "Краснодарский край","Красноярский край","Пермский край","Приморский край",
+  "Ставропольский край","Хабаровский край","Амурская область","Архангельская область",
+  "Астраханская область","Белгородская область","Брянская область","Владимирская область",
+  "Волгоградская область","Вологодская область","Воронежская область","Ивановская область",
+  "Иркутская область","Калининградская область","Калужская область","Кемеровская область — Кузбасс",
+  "Кировская область","Костромская область","Курганская область","Курская область",
+  "Ленинградская область","Липецкая область","Магаданская область","Московская область",
+  "Мурманская область","Нижегородская область","Новгородская область","Новосибирская область",
+  "Омская область","Оренбургская область","Орловская область","Пензенская область",
+  "Псковская область","Ростовская область","Рязанская область","Самарская область",
+  "Саратовская область","Сахалинская область","Свердловская область","Смоленская область",
+  "Тамбовская область","Тверская область","Томская область","Тульская область",
+  "Тюменская область","Ульяновская область","Челябинская область","Ярославская область",
+  "Москва","Санкт-Петербург","Севастополь",
+  "Еврейская автономная область",
+  "Ненецкий автономный округ","Ханты-Мансийский автономный округ — Югра",
+  "Чукотский автономный округ","Ямало-Ненецкий автономный округ",
+  "Донецкая Народная Республика","Луганская Народная Республика",
+  "Запорожская область","Херсонская область"
+];
+
+const ITEMS = [
+  "Габардин ВСКС",
+  "Комбинезон",
+  "Петлица (1штука)",
+  "Нашивка-Доброволец ЧС",
+  "Нашивка-ВСКС"
+];
+
+const NO_SIZE_ITEMS = ["Петлица (1штука)", "Нашивка-Доброволец ЧС", "Нашивка-ВСКС"];
+
+const SIZES = ["34","36","38","40","42","44","46","48","50","52","54","56","58","60","62"];
+const HEIGHTS = ["146","152","158","164","170","176","182","188","194"];
+
+const QTY = [];
+for (let i = 0; i <= 20; i++) QTY.push(String(i));
+
+// Fill regions dropdown
+const regionSel = document.getElementById('region');
+REGIONS.forEach(r => {
+  const o = document.createElement('option');
+  o.value = r; o.textContent = r;
+  regionSel.appendChild(o);
+});
+
+let rowCount = 0;
+
+function makeOptions(arr, placeholder) {
+  let html = `<option value="">${placeholder}</option>`;
+  arr.forEach(v => html += `<option value="${v}">${v}</option>`);
+  return html;
+}
+
+function onItemChange(entry) {
+  const sel = entry.querySelector('.f-item');
+  const sizeCol = entry.querySelector('.col-size');
+  const heightCol = entry.querySelector('.col-height');
+  const noSize = NO_SIZE_ITEMS.includes(sel.value);
+  if (noSize) {
+    sizeCol.classList.add('hidden');
+    heightCol.classList.add('hidden');
+    entry.querySelector('.f-size').value = '-';
+    entry.querySelector('.f-height').value = '-';
+  } else {
+    sizeCol.classList.remove('hidden');
+    heightCol.classList.remove('hidden');
+    if (entry.querySelector('.f-size').value === '-') entry.querySelector('.f-size').value = '';
+    if (entry.querySelector('.f-height').value === '-') entry.querySelector('.f-height').value = '';
+  }
+  updatePreview();
+}
+
+function addRow() {
+  rowCount++;
+  const div = document.createElement('div');
+  div.className = 'row-entry';
+  div.id = `row-${rowCount}`;
+  div.innerHTML = `
+    <span class="row-number">${rowCount}</span>
+    ${rowCount > 1 ? `<button class="btn btn-remove" onclick="removeRow('row-${rowCount}')">Удалить</button>` : ''}
+    <div class="grid">
+      <div class="col-item">
+        <label>Наименование</label>
+        <select class="f-item" onchange="onItemChange(this.closest('.row-entry'))">${makeOptions(ITEMS, '— Выберите —')}</select>
+      </div>
+      <div class="col-size">
+        <label>Размер</label>
+        <select class="f-size" onchange="updatePreview()">${makeOptions(SIZES, '—')}</select>
+      </div>
+      <div class="col-height">
+        <label>Рост</label>
+        <select class="f-height" onchange="updatePreview()">${makeOptions(HEIGHTS, '—')}</select>
+      </div>
+      <div class="col-qty">
+        <label>Количество</label>
+        <select class="f-qty" onchange="updatePreview()">${makeOptions(QTY, '—')}</select>
+      </div>
+    </div>
+  `;
+  document.getElementById('rows-container').appendChild(div);
+  updatePreview();
+}
+
+function removeRow(id) {
+  document.getElementById(id).remove();
+  document.querySelectorAll('.row-entry').forEach((el, i) => {
+    el.querySelector('.row-number').textContent = i + 1;
+  });
+  updatePreview();
+}
+
+function getRows() {
+  const entries = [];
+  document.querySelectorAll('.row-entry').forEach(el => {
+    const item = el.querySelector('.f-item').value;
+    const noSize = NO_SIZE_ITEMS.includes(item);
+    entries.push({
+      item: item,
+      size: noSize ? '-' : el.querySelector('.f-size').value,
+      height: noSize ? '-' : el.querySelector('.f-height').value,
+      qty: el.querySelector('.f-qty').value
+    });
+  });
+  return entries;
+}
+
+function updatePreview() {
+  const rows = getRows();
+  const region = document.getElementById('region').value;
+  const lastName = document.getElementById('lastName').value.trim();
+  const firstName = document.getElementById('firstName').value.trim();
+  const middleName = document.getElementById('middleName').value.trim();
+  const fio = [lastName, firstName, middleName].filter(Boolean).join(' ');
+  const address = document.getElementById('address').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  if (!rows.length) { document.getElementById('preview').innerHTML = ''; return; }
+  let html = '<div class="preview"><strong>Предпросмотр:</strong><table><tr><th>Регион</th><th>Наименование</th><th>Размер</th><th>Рост</th><th>Кол-во</th><th>Фамилия</th><th>Имя</th><th>Отчество</th><th>Адрес СДЭК</th><th>Телефон</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${region||'—'}</td><td>${r.item||'—'}</td><td>${r.size||'—'}</td><td>${r.height||'—'}</td><td>${r.qty||'—'}</td><td>${lastName||'—'}</td><td>${firstName||'—'}</td><td>${middleName||'—'}</td><td>${address||'—'}</td><td>${phone||'—'}</td></tr>`;
+  });
+  html += '</table></div>';
+  document.getElementById('preview').innerHTML = html;
+}
+
+// Update preview when top fields change
+['region','lastName','firstName','middleName','address','phone'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updatePreview);
+  document.getElementById(id).addEventListener('change', updatePreview);
+});
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast ${type} show`;
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+async function submitForm() {
+  const region = document.getElementById('region').value;
+  const lastName = document.getElementById('lastName').value.trim();
+  const firstName = document.getElementById('firstName').value.trim();
+  const middleName = document.getElementById('middleName').value.trim();
+  const fio = [lastName, firstName, middleName].filter(Boolean).join(' ');
+  const address = document.getElementById('address').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+
+  if (!region) { showToast('Выберите регион', 'error'); return; }
+  if (!lastName) { showToast('Укажите фамилию получающего', 'error'); return; }
+  if (!firstName) { showToast('Укажите имя получающего', 'error'); return; }
+  if (!phone) { showToast('Укажите телефон получающего', 'error'); return; }
+
+  const rows = getRows();
+  if (!rows.length) { showToast('Добавьте хотя бы одну позицию', 'error'); return; }
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const noSize = NO_SIZE_ITEMS.includes(r.item);
+    if (!r.item || r.qty === '') {
+      showToast(`Позиция ${i+1}: выберите наименование и количество`, 'error');
+      return;
+    }
+    if (!noSize && (!r.size || !r.height)) {
+      showToast(`Позиция ${i+1}: выберите размер и рост`, 'error');
+      return;
+    }
+  }
+
+  const payload = {
+    region, fio, address, phone,
+    rows: rows.map(r => ({
+      region, item: r.item, size: r.size, height: r.height, qty: r.qty,
+      fio, address, phone
+    }))
+  };
+
+  document.getElementById('submitBtn').disabled = true;
+  try {
+    const resp = await fetch('/uniform-api/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) throw new Error('Server error');
+    const data = await resp.json();
+    showToast(`Заявка #${data.id} отправлена! Спасибо.`, 'success');
+    document.getElementById('rows-container').innerHTML = '';
+    rowCount = 0;
+    addRow();
+    document.getElementById('preview').innerHTML = '';
+  } catch (e) {
+    showToast('Ошибка отправки. Попробуйте ещё раз.', 'error');
+  }
+  document.getElementById('submitBtn').disabled = false;
+}
+
+addRow();
+</script>
+</body>
+</html>

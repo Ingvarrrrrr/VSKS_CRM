@@ -1,0 +1,821 @@
+from pydantic import BaseModel, ConfigDict, model_validator
+from typing import Optional, List, Any
+from datetime import date, datetime
+from decimal import Decimal
+
+# Alias to avoid Pydantic v2 field-name-shadows-type bug for 'date: Optional[date]'
+_Date = date
+
+# Auth
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    full_name: Optional[str] = None
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    user_id: Optional[int] = None
+
+# User
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    username: Optional[str] = None
+    role: str = "employee"
+    full_name: Optional[str] = None
+    city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
+    avatar: Optional[str] = None
+    org_id: Optional[int] = None
+    inn: Optional[str] = None
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    avatar: Optional[str] = None
+    inn: Optional[str] = None
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    full_name: Optional[str] = None
+    city: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    telegram_id: Optional[str] = None
+    max_chat_id: Optional[str] = None
+    email: Optional[str] = None
+    avatar: Optional[str] = None
+    photo_url: Optional[str] = None
+    org_id: Optional[int] = None
+    is_email_confirmed: bool = True
+    has_signature: bool = False
+    inn: Optional[str] = None
+
+    @classmethod
+    def from_orm_with_signature(cls, user):
+        d = cls.model_validate(user)
+        d.has_signature = bool(user.signature_image)
+        d.photo_url = user.profile_photo or None
+        return d
+
+    model_config = {"from_attributes": True}
+
+# Organization
+class OrganizationCreate(BaseModel):
+    name: str
+    full_name: Optional[str] = None
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    address: Optional[str] = None
+    signatory: Optional[str] = None
+
+class OrganizationOut(BaseModel):
+    id: int
+    name: str
+    full_name: Optional[str] = None
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    address: Optional[str] = None
+    signatory: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    user_count: int = 0
+    root_org_id: Optional[int] = None
+    owner_user_id: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+class RegisterRequest(BaseModel):
+    org_name: str
+    org_inn: Optional[str] = None
+    username: Optional[str] = None
+    password: str
+    full_name: Optional[str] = None
+    email: str
+
+# Subsidy
+class SubsidyCreate(BaseModel):
+    name: str
+    year: int
+    budget: float
+    description: Optional[str] = None
+    contractor_id: Optional[int] = None
+
+class SubsidyOut(BaseModel):
+    id: int
+    name: str
+    year: int
+    budget: float
+    calculated_budget: Optional[float] = None
+    description: Optional[str] = None
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    contractor_inn: Optional[str] = None
+    org_id: Optional[int] = None
+    org_inn: Optional[str] = None
+    feo_filled: bool = False
+    feo_budget_total: float = 0.0
+    model_config = {"from_attributes": True}
+
+
+class SubsidyContractorOverrideCreate(BaseModel):
+    org_type: Optional[str] = None
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    ogrn: Optional[str] = None
+    signatory: Optional[str] = None
+    signatory_basis: Optional[str] = None
+    address: Optional[str] = None
+    postal_address: Optional[str] = None
+    bank_details: Optional[str] = None
+    settlement_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bik: Optional[str] = None
+    correspondent_account: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    org_phone: Optional[str] = None
+    org_email: Optional[str] = None
+
+class SubsidyContractorOverrideOut(SubsidyContractorOverrideCreate):
+    id: int
+    subsidy_id: int
+    contractor_id: int
+    model_config = {"from_attributes": True}
+
+# ResponsiblePerson
+class ResponsiblePersonCreate(BaseModel):
+    full_name: str
+    position: Optional[str] = None
+
+class ResponsiblePersonOut(ResponsiblePersonCreate):
+    id: int
+    subsidy_id: Optional[int] = None
+    is_active: bool = True
+    model_config = {"from_attributes": True}
+
+# SubsidyApprover
+class SubsidyApproverCreate(BaseModel):
+    role_name: str
+    full_name: str
+    order_num: int = 0
+    is_default: bool = True
+    can_initiate: bool = False
+    show_feo_path: bool = False
+    user_id: Optional[int] = None
+
+class SubsidyApproverOut(SubsidyApproverCreate):
+    id: int
+    subsidy_id: int
+    model_config = {"from_attributes": True}
+
+# FeoCategory
+class FeoCategoryCreate(BaseModel):
+    parent_id: Optional[int] = None
+    subsidy_id: int
+    name: str
+    code: Optional[str] = None
+    appendix: Optional[str] = None
+    is_active: bool = True
+    budget: Optional[float] = None
+
+class FeoCategoryOut(BaseModel):
+    id: int
+    parent_id: Optional[int] = None
+    subsidy_id: int
+    level: int
+    name: str
+    code: Optional[str] = None
+    appendix: Optional[str] = None
+    is_active: bool = True
+    budget: Optional[float] = None
+    model_config = {"from_attributes": True}
+
+class FeoCategoryTree(FeoCategoryOut):
+    children: List["FeoCategoryTree"] = []
+
+# Contractor
+class ContractorCreate(BaseModel):
+    name: str
+    full_name: Optional[str] = None
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    address: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    org_phone: Optional[str] = None
+    org_email: Optional[str] = None
+    bank_details: Optional[str] = None
+    # Contract document fields
+    signatory: Optional[str] = None
+    signatory_basis: Optional[str] = None
+    postal_address: Optional[str] = None
+    ogrn: Optional[str] = None
+    settlement_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bik: Optional[str] = None
+    correspondent_account: Optional[str] = None
+    org_type: Optional[str] = None
+    manual_product_categories: Optional[List[str]] = None
+
+class ContractorOut(ContractorCreate):
+    id: int
+    model_config = {"from_attributes": True}
+
+# Contract
+class ContractSubsidyOut(BaseModel):
+    id: int
+    subsidy_id: int
+    subsidy_name: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class ContractCreate(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def empty_strings_to_none(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value == '' or value == '':
+                    data[key] = None
+        return data
+
+    number: str
+    date: Optional[_Date] = None
+    contract_type: str  # single / framework_cumulative / framework_with_amount
+    contractor_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
+    subject: Optional[str] = None
+    max_amount: Optional[Decimal] = None
+    status: str = "active"
+    notes: Optional[str] = None
+    start_date: Optional[_Date] = None
+    end_date: Optional[_Date] = None
+    purchase_method: Optional[str] = None
+    item_type: Optional[str] = None  # товар / услуга
+    planned_monthly: Optional[Decimal] = None
+    extra_subsidy_ids: List[int] = []
+
+class ContractOut(ContractCreate):
+    id: int
+    total_payment: Optional[Decimal] = None
+    remaining: Optional[Decimal] = None  # legacy: same as remaining_ordered
+    remaining_ordered: Optional[Decimal] = None  # max_amount - SUM(contract_price)
+    remaining_delivered: Optional[Decimal] = None  # SUM(contract_price) - SUM(delivery_payment_amount)
+    remaining_paid: Optional[Decimal] = None  # SUM(delivery_payment_amount) - SUM(payment_amount)
+    total_ordered: Optional[Decimal] = None
+    total_delivered: Optional[Decimal] = None  # SUM(delivery_payment_amount)
+    total_paid: Optional[Decimal] = None
+    contractor_name: Optional[str] = None
+    contractor_inn: Optional[str] = None
+    subsidy_name: Optional[str] = None
+    extra_subsidies: List[ContractSubsidyOut] = []
+    model_config = {"from_attributes": True}
+
+# PurchaseItem
+class PurchaseItemCreate(BaseModel):
+    product_id: Optional[int] = None
+    item_name: str
+    item_type: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+    final_unit_price: Optional[Decimal] = None
+    final_total: Optional[Decimal] = None
+    country_origin: Optional[str] = None
+
+class PurchaseItemOut(PurchaseItemCreate):
+    id: int
+    product_name: Optional[str] = None
+    product_photo_url: Optional[str] = None
+    product_description: Optional[str] = None
+    product_description_44fz: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+class PurchaseFileOut(BaseModel):
+    id: int
+    purchase_id: int
+    filename: str
+    mime_type: Optional[str] = None
+    size: Optional[int] = None
+    file_type: Optional[str] = "other"
+    doc_format: Optional[str] = "scan"
+    content_hash: Optional[str] = None
+    is_active: Optional[bool] = True
+    created_at: Optional[datetime] = None
+    uploaded_by_id: Optional[int] = None
+    uploaded_by_name: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+# SubsidyAllocation
+class SubsidyAllocationIn(BaseModel):
+    subsidy_id: int
+    amount: Optional[Decimal] = None
+
+class SubsidyAllocationOut(BaseModel):
+    id: int
+    subsidy_id: int
+    subsidy_name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    model_config = ConfigDict(from_attributes=True)
+
+# Purchase
+class PurchaseCreate(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def empty_strings_to_none(cls, data: Any) -> Any:
+        """Convert empty strings to None for Optional fields to avoid validation errors."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value == '' or value == '':
+                    data[key] = None
+        return data
+
+    row_number: Optional[int] = None
+    purchase_number: Optional[int] = None
+    order_number: Optional[str] = None
+    feo_category_id: Optional[int] = None
+    item_type: Optional[str] = None
+    item_name: Optional[str] = None
+    contractor_id: Optional[int] = None
+    planned_quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    planned_unit_price: Optional[Decimal] = None
+    planned_total_price: Optional[Decimal] = None
+    confirmed: Optional[bool] = False
+    final_unit_price: Optional[Decimal] = None
+    final_total_amount: Optional[Decimal] = None
+    delivery_payment_amount: Optional[Decimal] = None
+    contract_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
+    status: str = "wishes"
+    substatus: Optional[str] = None
+    is_monthly_payment: Optional[bool] = False
+    monthly_payment_count: Optional[int] = None
+    monthly_payment_amount: Optional[Decimal] = None
+    # Phase 1: extended fields
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+    registry_number: Optional[str] = None
+    purchase_method: Optional[str] = None  # 'single' | 'competitive'
+    purchase_basis: Optional[str] = None   # 'plan_schedule' | 'service_note'
+    responsible_person: Optional[str] = None
+    nmck: Optional[Decimal] = None
+    contract_price: Optional[Decimal] = None
+    economy: Optional[Decimal] = None
+    price_increase: Optional[Decimal] = None
+    execution_term: Optional[date] = None
+    execution_term_changed: Optional[date] = None
+    delivery_date: Optional[date] = None
+    delivery_address: Optional[str] = None
+    procurement_planned_date: Optional[date] = None
+    country_origin: Optional[str] = None
+    subject: Optional[str] = None
+    acceptance_doc_name: Optional[str] = None
+    acceptance_doc_date: Optional[date] = None
+    acceptance_doc_number: Optional[str] = None
+    acceptance_doc_amount: Optional[Decimal] = None
+    acceptance_docs: Optional[list] = None  # [{name, number, date, amount}, ...]
+    payment_doc_number: Optional[str] = None
+    payment_doc_date: Optional[date] = None
+    payment_amount: Optional[Decimal] = None
+    payment_federal: Optional[Decimal] = None
+    total_nmck: Optional[Decimal] = None
+    purchase_contract_type: Optional[str] = None
+    framework_seq: Optional[int] = None          # порядковый номер в рамочном договоре
+    # Contract document generation fields
+    vat_applicable: Optional[bool] = False
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
+    third_party_involved: Optional[bool] = False
+    contract_end_date: Optional[date] = None
+    service_period_type: Optional[str] = None
+    service_start_date: Optional[date] = None
+    service_end_date: Optional[date] = None
+    description_mode: Optional[str] = "exact"
+    event_id: Optional[int] = None
+    approval_status: Optional[str] = None
+    approval_mode: Optional[str] = None
+    approval_sign_type: Optional[str] = None
+    treasury_code: Optional[str] = None
+    has_pretension: Optional[bool] = False
+    payment_basis_type: Optional[str] = "contract"
+    items: List[PurchaseItemCreate] = []
+    subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
+
+class PurchaseOut(PurchaseCreate):
+    id: int
+    items: List[PurchaseItemOut] = []
+    files: List[PurchaseFileOut] = []
+    subsidy_allocations: Optional[List[SubsidyAllocationOut]] = None
+    model_config = {"from_attributes": True}
+
+class PurchaseOutFull(PurchaseOut):
+    contractor_name: Optional[str] = None
+    feo_category_name: Optional[str] = None
+    subsidy_name: Optional[str] = None
+    event_name: Optional[str] = None
+
+# Payment
+class PaymentCreate(BaseModel):
+    contract_id: Optional[int] = None
+    purchase_id: Optional[int] = None
+    document_number: Optional[str] = None
+    payment_purpose: Optional[str] = None
+    payment_date: Optional[date] = None
+    amount: Optional[Decimal] = None
+
+class PaymentOut(PaymentCreate):
+    id: int
+    model_config = {"from_attributes": True}
+
+# Product
+class PriceLink(BaseModel):
+    url: str
+    price: Optional[float] = None
+
+class ProductCreate(BaseModel):
+    feo_category_id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+    description_44fz: Optional[str] = None
+    category: Optional[str] = None
+    product_type: Optional[str] = None
+    item_kind: Optional[str] = "товар"  # "товар" или "услуга"
+    is_reusable: Optional[bool] = True
+    photo_url: Optional[str] = None
+    photo_link: Optional[str] = None
+    clarification_link: Optional[str] = None
+    is_active: bool = True
+    price: Optional[Decimal] = None
+    price_links: List[PriceLink] = []
+    country_origin: Optional[str] = "Россия"
+
+class ProductOut(ProductCreate):
+    id: int
+    contract_price: Optional[Decimal] = None
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+    contract_org_id: Optional[int] = None
+    price_shared: bool = False
+    tz_verified_at: Optional[datetime] = None
+    tz_verified_by: Optional[str] = None
+    tz_44fz_verified_at: Optional[datetime] = None
+    tz_44fz_verified_by: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+# Product Summary (сводная по продукции)
+class ProductSummaryItem(BaseModel):
+    purchase_id: int
+    subsidy_name: str
+    org_name: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+    status: Optional[str] = None
+    delivery_date: Optional[date] = None
+    delivery_address: Optional[str] = None
+    procurement_planned_date: Optional[date] = None
+    purchase_method: Optional[str] = None
+
+class ProductSummaryGroup(BaseModel):
+    product_id: int
+    product_name: str
+    category: Optional[str] = None
+    product_type: Optional[str] = None
+    total_quantity: Decimal
+    total_amount: Decimal
+    purchase_count: int
+    items: List[ProductSummaryItem]
+
+# Dashboard
+class DashboardCategory(BaseModel):
+    id: int
+    name: str
+    level: int
+    total_planned: Decimal = Decimal("0")
+    total_confirmed: Decimal = Decimal("0")
+    total_payment: Decimal = Decimal("0")
+    children: List["DashboardCategory"] = []
+
+class DashboardSummary(BaseModel):
+    subsidy_limit: Decimal
+    total_obligations: Decimal
+    total_payments: Decimal
+    remaining: Decimal
+    categories: List[DashboardCategory]
+
+
+# Platform publications
+class PublishRequest(BaseModel):
+    platform: str  # fabrikant / roseltorg_rb
+    procedure_type: Optional[str] = None  # только для roseltorg_rb: request_quotations / request_proposals / competition / auction
+    proposal_start: Optional[str] = None       # ISO datetime, Фабрикант: начало приёма предложений
+    proposal_end: Optional[str] = None         # ISO datetime, Фабрикант: конец приёма предложений
+    determination_date: Optional[str] = None   # ISO datetime, Фабрикант: определение победителя
+    summing_up_date: Optional[str] = None      # ISO datetime, Фабрикант: подведение итогов
+    okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
+
+class PublicationStatusUpdate(BaseModel):
+    status: str             # published / error
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error_text: Optional[str] = None
+
+class PublicationOut(BaseModel):
+    id: int
+    purchase_id: int
+    platform: str
+    status: str
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error_text: Optional[str] = None
+    published_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ── Commercial Requests ────────────────────────────────────────────────────────
+
+class CommercialRequestRecipientOut(BaseModel):
+    id: int
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    email: Optional[str] = None
+    status: str
+
+class FreeRecipient(BaseModel):
+    name: Optional[str] = None
+    email: str
+
+class CommercialRequestCreate(BaseModel):
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    recipient_ids: Optional[List[int]] = None
+    free_recipients: Optional[List[FreeRecipient]] = None
+
+class CommercialRequestUpdate(BaseModel):
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+
+class CommercialRequestStatusUpdate(BaseModel):
+    status: str
+
+class CommercialRequestRecipientStatusUpdate(BaseModel):
+    status: str
+
+class CommercialRequestOut(BaseModel):
+    id: int
+    purchase_id: int
+    subject: Optional[str] = None
+    intro_text: Optional[str] = None
+    delivery_date: Optional[str] = None
+    status: str
+    created_by: Optional[int] = None
+    created_at: Optional[datetime] = None
+    recipients: List[CommercialRequestRecipientOut] = []
+
+
+# ── Suppliers ──────────────────────────────────────────────────────────────────
+
+class SupplierProductOut(BaseModel):
+    id: int
+    supplier_id: int
+    product_id: Optional[int] = None
+    price_notes: Optional[str] = None
+    source: Optional[str] = None
+
+class SupplierCreate(BaseModel):
+    name: str
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+
+class SupplierOut(BaseModel):
+    id: int
+    name: str
+    inn: Optional[str] = None
+    kpp: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+    products: List[SupplierProductOut] = []
+
+class SupplierProductCreate(BaseModel):
+    product_id: Optional[int] = None
+    price_notes: Optional[str] = None
+    source: Optional[str] = None
+
+
+# ── Events (Мероприятия) ──────────────────────────────────────────────────────
+
+class EventCreate(BaseModel):
+    subsidy_id: int
+    name: str
+    is_active: bool = True
+    region: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    order_decree: Optional[str] = None
+    planned_indicators: Optional[str] = None
+    actual_indicators: Optional[str] = None
+    media_link_1: Optional[str] = None
+    media_link_2: Optional[str] = None
+    media_link_3: Optional[str] = None
+
+class EventOut(EventCreate):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+# ── Purchase Approvals (электронное согласование) ─────────────────────────────
+
+class PurchaseApprovalOut(BaseModel):
+    id: int
+    purchase_id: int
+    subsidy_approver_id: Optional[int] = None
+    order_num: int
+    role_name: str
+    approver_full_name: str
+    user_id: Optional[int] = None
+    status: str
+    comment: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decided_by_user_id: Optional[int] = None
+    decided_by_username: Optional[str] = None
+    created_at: Optional[datetime] = None
+    has_signature: bool = False
+    signature_algorithm: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+class ApprovalDecisionRequest(BaseModel):
+    action: str  # "approve" | "reject"
+    comment: Optional[str] = None
+    sign_electronically: bool = False
+
+# Task (общие задачи, не связанные с закупками)
+class TaskAssigneeOut(BaseModel):
+    user_id: int
+    user_name: Optional[str] = None
+    consent_pending: bool = False
+    model_config = {"from_attributes": True}
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    priority: str = "medium"
+    due_date: Optional[datetime] = None
+    assignee_ids: List[int] = []
+    category: Optional[str] = None
+    parent_task_id: Optional[int] = None
+    purchase_id: Optional[int] = None
+    import_to_parent: bool = False
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[datetime] = None
+    assignee_ids: Optional[List[int]] = None
+    category: Optional[str] = None
+    purchase_id: Optional[int] = None
+    import_to_parent: Optional[bool] = None
+
+class ReviewCompleteRequest(BaseModel):
+    confirm: bool
+
+class TaskOut(BaseModel):
+    id: int
+    task_number: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    due_date: Optional[datetime] = None
+    assignees: List[TaskAssigneeOut] = []
+    # legacy single-assignee fields (for backward compat in frontend)
+    assigned_user_id: Optional[int] = None
+    assigned_user_name: Optional[str] = None
+    created_by_id: int
+    created_by_name: Optional[str] = None
+    org_id: Optional[int] = None
+    category: Optional[str] = None
+    parent_task_id: Optional[int] = None
+    purchase_id: Optional[int] = None
+    purchase_subject: Optional[str] = None
+    purchase_number: Optional[int] = None
+    purchase_status: Optional[str] = None
+    import_to_parent: bool = False
+    subtask_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_comment: Optional[str] = None
+    last_comment_user: Optional[str] = None
+    last_comment_at: Optional[datetime] = None
+    comment_count: int = 0
+    needs_my_consent: bool = False
+    unseen_changes_count: int = 0
+    unseen_fields: List[str] = []
+    model_config = {"from_attributes": True}
+
+
+class DismissFieldRequest(BaseModel):
+    field_name: str
+
+# Task Comments
+class TaskCommentCreate(BaseModel):
+    text: str
+
+class TaskCommentOut(BaseModel):
+    id: int
+    task_id: int
+    user_id: int
+    user_name: Optional[str] = None
+    text: str
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
+
+# ── FeoPlannedItem ──────────────────────────────────────────────────────────
+
+class FeoPlannedItemCreate(BaseModel):
+    feo_category_id: int
+    name: str
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+class FeoPlannedItemOut(FeoPlannedItemCreate):
+    id: int
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
+
+class FeoActualItemOut(BaseModel):
+    """Фактическая позиция — purchase_item, связанный с feo_category через purchase."""
+    purchase_item_id: int
+    item_name: str
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+    feo_planned_item_id: Optional[int] = None  # если сопоставлено
+    purchase_id: int
+    purchase_status: Optional[str] = None
+    contract_number: Optional[str] = None
+    contractor_name: Optional[str] = None
+    model_config = {"from_attributes": True}
+
+
+class FeoComparisonOut(BaseModel):
+    planned: list[FeoPlannedItemOut]
+    actual: list[FeoActualItemOut]
+
+
+# Budget History
+class BudgetHistoryItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_type: str
+    purchase_id: Optional[int] = None
+    old_value: Optional[float] = None
+    new_value: Optional[float] = None
+    changed_by_name: Optional[str] = None
+    reason: Optional[str] = None
+    changed_at: Optional[datetime] = None

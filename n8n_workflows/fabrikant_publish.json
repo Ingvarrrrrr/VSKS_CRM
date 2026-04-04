@@ -1,0 +1,235 @@
+{
+  "name": "Fabrikant — Публикация закупки",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fabrikant-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "fab-webhook",
+      "name": "Webhook Фабрикант",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\nconst login = $env.FABRIKANT_LOGIN || '';\nconst password = $env.FABRIKANT_PASSWORD || '';\n\nif (!login || !password) {\n  return [{ json: {\n    publicationId: data.publication_id,\n    hasCredentials: false,\n    error: 'Не настроены учётные данные Фабрикант — задайте переменные FABRIKANT_LOGIN и FABRIKANT_PASSWORD в docker-compose',\n  }}];\n}\n\nfunction escXml(s) {\n  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');\n}\n\nfunction fmtDT(d) {\n  const pad = n => String(n).padStart(2,'0');\n  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}+03:00`;\n}\n\nconst now = new Date();\nconst startDT = new Date(now.getTime() + 60 * 60 * 1000);\nconst endDT = data.execution_term\n  ? new Date(data.execution_term)\n  : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);\nconst determinationDT = new Date(endDT.getTime() + 24 * 60 * 60 * 1000);\nconst summingDT = new Date(endDT.getTime() + 2 * 24 * 60 * 60 * 1000);\n\nconst purchaseId = escXml(data.registry_number || String(data.purchase_id));\nconst subject = escXml(data.subject || ('Закупка ' + purchaseId));\nconst nmck = Number(data.nmck) || 0;\n\nconst items = (data.items || []).filter(i => i.item_name);\nconst lotItemsXml = items.map((item, idx) => {\n  const name = escXml(item.item_name);\n  const unit = escXml(item.unit || 'шт');\n  const qty = Number(item.quantity) || 1;\n  const unitPrice = Number(item.unit_price) || 0;\n  const totalPrice = Number(item.total_price) || (unitPrice * qty);\n  return `<lotItem><ordinalNumber>${idx+1}</ordinalNumber><positionName>${name}</positionName><okei><code>796</code><name>${unit}</name></okei><qty>${qty}</qty>${unitPrice > 0 ? `<positionPricePerUnit><price>${unitPrice}</price><ndsType>not_payer_nds</ndsType></positionPricePerUnit><positionPrice><price>${totalPrice}</price><ndsType>not_payer_nds</ndsType></positionPrice>` : ''}</lotItem>`;\n}).join('');\n\nconst deliveryAddress = escXml(data.delivery_address || 'Москва');\n\nconst soapXml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><purchaseNoticeZPCommercial xmlns=\"http://commercial_trade.multiintegration.common.api.fabrikant.ru/\"><body><item><purchaseNoticeZPCommercialData><purchaseId>${purchaseId}</purchaseId><purchaseCategoryCustom>Запрос предложений</purchaseCategoryCustom><name>${subject}</name><notDishonest>false</notDishonest><lots><lot><lotId>${purchaseId}</lotId><subject>${subject}</subject><currency><code>RUB</code></currency><initialSumInfo><initialSum>${nmck}</initialSum><ndsType>not_payer_nds</ndsType></initialSumInfo><deliveryPlace><state>Москва</state><address>${deliveryAddress}</address></deliveryPlace><applicationSupplyNeeded>false</applicationSupplyNeeded>${lotItemsXml ? `<lotItems>${lotItemsXml}</lotItems>` : ''}<proposalStartDateTime>${fmtDT(startDT)}</proposalStartDateTime><proposalEndDateTime>${fmtDT(endDT)}</proposalEndDateTime><proposalDeterminationDateTime>${fmtDT(determinationDT)}</proposalDeterminationDateTime><summingUpDateTime>${fmtDT(summingDT)}</summingUpDateTime><lotFramework>false</lotFramework></lot></lots></purchaseNoticeZPCommercialData></item></body></purchaseNoticeZPCommercial></soap:Body></soap:Envelope>`;\n\nconst auth = Buffer.from(`${login}:${password}`).toString('base64');\n\nreturn [{ json: {\n  publicationId: data.publication_id,\n  hasCredentials: true,\n  soapXml,\n  authHeader: `Basic ${auth}`,\n}}];"
+      },
+      "id": "fab-prepare",
+      "name": "Подготовка данных",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "cred-check",
+              "leftValue": "={{ $json.hasCredentials }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "fab-has-creds",
+      "name": "Есть credentials?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fabrikant.ru/multiintegration/common/commercial_trade",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "text/xml; charset=utf-8" },
+            { "name": "Authorization", "value": "={{ $json.authHeader }}" },
+            { "name": "SOAPAction", "value": "\"\"" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/xml",
+        "body": "={{ $json.soapXml }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "fab-api-call",
+      "name": "Вызов Фабрикант SOAP API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 180],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prev = $input.first().json;\nconst pubId = prev.publicationId;\nconst responseText = String(prev.data || prev.body || prev || '');\n\n// Check for successful requestId\nconst reqIdMatch = responseText.match(/<requestId>([^<]+)<\\/requestId>/);\nif (reqIdMatch) {\n  return [{ json: { publicationId: pubId, success: true, requestId: reqIdMatch[1] }}];\n}\n\n// Check for SOAP Fault\nconst faultMatch = responseText.match(/<faultstring[^>]*>([^<]+)<\\/faultstring>/);\nconst errorText = faultMatch ? faultMatch[1] : ('Неизвестная ошибка Фабрикант. Ответ: ' + responseText.substring(0, 200));\n\nreturn [{ json: { publicationId: pubId, success: false, error: errorText }}];"
+      },
+      "id": "fab-parse-response",
+      "name": "Разбор ответа",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "fab-check-success",
+      "name": "Успешно?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1440, 180]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: {\n  publicationId: prev.publicationId,\n  callbackBody: {\n    status: 'published',\n    external_id: prev.requestId,\n    external_url: 'https://www.fabrikant.ru/trades/commercial/?id=' + prev.requestId,\n  }\n}}];"
+      },
+      "id": "fab-success-data",
+      "name": "Данные успеха",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: {\n  publicationId: prev.publicationId,\n  callbackBody: {\n    status: 'error',\n    error_text: 'Ошибка Фабрикант API: ' + (prev.error || 'Неизвестная ошибка'),\n  }\n}}];"
+      },
+      "id": "fab-error-api-data",
+      "name": "Данные ошибки API",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 280]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: {\n  publicationId: prev.publicationId,\n  callbackBody: {\n    status: 'error',\n    error_text: prev.error || 'Не настроены учётные данные Фабрикант — задайте FABRIKANT_LOGIN и FABRIKANT_PASSWORD в docker-compose',\n  }\n}}];"
+      },
+      "id": "fab-error-no-creds",
+      "name": "Ошибка: нет credentials",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 420]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "fab-callback-success",
+      "name": "Callback успех в CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 100]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/publications/{{ $json.publicationId }}/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "fab-callback-error",
+      "name": "Callback ошибка в CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 360]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }"
+      },
+      "id": "fab-respond",
+      "name": "Ответ 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2160, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Фабрикант": {
+      "main": [[{ "node": "Подготовка данных", "type": "main", "index": 0 }]]
+    },
+    "Подготовка данных": {
+      "main": [[{ "node": "Есть credentials?", "type": "main", "index": 0 }]]
+    },
+    "Есть credentials?": {
+      "main": [
+        [{ "node": "Вызов Фабрикант SOAP API", "type": "main", "index": 0 }],
+        [{ "node": "Ошибка: нет credentials", "type": "main", "index": 0 }]
+      ]
+    },
+    "Вызов Фабрикант SOAP API": {
+      "main": [[{ "node": "Разбор ответа", "type": "main", "index": 0 }]]
+    },
+    "Разбор ответа": {
+      "main": [[{ "node": "Успешно?", "type": "main", "index": 0 }]]
+    },
+    "Успешно?": {
+      "main": [
+        [{ "node": "Данные успеха", "type": "main", "index": 0 }],
+        [{ "node": "Данные ошибки API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Данные успеха": {
+      "main": [[{ "node": "Callback успех в CRM", "type": "main", "index": 0 }]]
+    },
+    "Данные ошибки API": {
+      "main": [[{ "node": "Callback ошибка в CRM", "type": "main", "index": 0 }]]
+    },
+    "Ошибка: нет credentials": {
+      "main": [[{ "node": "Callback ошибка в CRM", "type": "main", "index": 0 }]]
+    },
+    "Callback успех в CRM": {
+      "main": [[{ "node": "Ответ 200", "type": "main", "index": 0 }]]
+    },
+    "Callback ошибка в CRM": {
+      "main": [[{ "node": "Ответ 200", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "tags": []
+}

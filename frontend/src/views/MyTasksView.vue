@@ -144,7 +144,7 @@
       <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
       <div class="org-cards-grid">
         <div
-          v-for="org in orgSummary"
+          v-for="org in visibleOrgSummary"
           :key="org.org_id ?? 'all'"
           class="org-sel-card"
           :class="{ 'org-sel-card--all': org.org_id === null }"
@@ -346,7 +346,7 @@
       <v-card v-else-if="taskViewMode === 'list'" variant="outlined">
         <v-data-table
           :headers="taskListHeaders"
-          :items="generalTasks"
+          :items="filteredGeneralTasks"
           density="compact"
           hover
           items-per-page="25"
@@ -856,6 +856,15 @@ const dueDateRule = (v: string) => {
 
 // ── General tasks ──
 const generalTasks = ref<any[]>([])
+
+const filteredGeneralTasks = computed(() => {
+  if (selectedOrgId.value === null) return generalTasks.value
+  return generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
+})
+
+const visibleOrgSummary = computed(() =>
+  orgSummary.value.filter(o => o.org_id === null || o.task_count > 0)
+)
 const pendingConsentTasks = ref<any[]>([])
 const consentLoading = ref<string | null>(null)
 const consentDeclines = ref<any[]>([])
@@ -917,7 +926,7 @@ const priorityItems = [
   { title:'Высокий', value:'high' }, { title:'Срочно', value:'urgent' },
 ]
 
-const generalByStatus = (status: string) => generalTasks.value.filter(t => t.status === status)
+const generalByStatus = (status: string) => filteredGeneralTasks.value.filter(t => t.status === status)
 
 // ── Deadline urgency for card background ──
 function gtCardStyle(gt: any): Record<string, string> {
@@ -1562,6 +1571,11 @@ async function loadOrgSummary() {
 
 function selectOrg(orgId: number | null) {
   selectedOrgId.value = orgId
+  if (orgId !== null) {
+    localStorage.setItem('active_org_id', String(orgId))
+  } else {
+    localStorage.removeItem('active_org_id')
+  }
 }
 
 async function load() {

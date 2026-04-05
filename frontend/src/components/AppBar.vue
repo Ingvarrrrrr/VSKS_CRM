@@ -383,7 +383,9 @@ let _badgeInterval: ReturnType<typeof setInterval> | null = null
 
 async function loadBadges() {
   try {
-    const data = await apiFetch<any>('/tasks/badges')
+    const activeOrgId = localStorage.getItem('active_org_id')
+    const url = activeOrgId ? `/tasks/badges?org_id=${activeOrgId}` : '/tasks/badges'
+    const data = await apiFetch<any>(url)
     badgeNewTasks.value = data.new_tasks || 0
     badgeTaskChanges.value = data.task_changes || 0
     badgeNewPurchases.value = data.new_purchases || 0

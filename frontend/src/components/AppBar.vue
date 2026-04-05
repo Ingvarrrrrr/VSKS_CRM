@@ -363,6 +363,7 @@ const isEmployee = computed(() => userRoleRaw.value === 'employee')
 const allNavShortcuts = [
   { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
   { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+  { label: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
   { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
   { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
@@ -432,6 +433,7 @@ const menuItems = computed(() => {
   const items = [
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
     { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+    { title: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
     { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
     { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
@@ -448,7 +450,7 @@ const menuItems = computed(() => {
     { title: 'Организации', icon: 'mdi-domain', route: '/organizations', roles: ['superadmin'] },
     { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', roles: ['superadmin', 'org_admin'] },
     { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
-    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: MANAGER_ROLES },
+    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: ALL_ROLES },
     { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
     { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', roles: ALL_ROLES },
   ]

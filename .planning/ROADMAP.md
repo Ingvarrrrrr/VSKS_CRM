@@ -153,12 +153,12 @@ Plans:
 - Wishes lifecycle (submit → approve → convert): NOT done
 - "Мои заявки" / "Заявки сотрудников" views: NOT done
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 - [x] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
 - [x] 07-02-PLAN.md — Wishes API full CRUD + transitions + employee purchase filter (D-13)
-- [ ] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
+- [x] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
 - [ ] 07-04-PLAN.md — Chat notification hooks + ChatRoom creation + executor reassignment hierarchy validation
 - [x] 07-05-PLAN.md — Backend role gating: require_role on subsidies/contracts/payments/feo/users (ROLES-03)
 

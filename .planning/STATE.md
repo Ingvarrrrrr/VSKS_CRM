@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 07-05-PLAN.md
-last_updated: "2026-04-05T20:36:15.275Z"
+stopped_at: Completed 07-03-PLAN.md
+last_updated: "2026-04-05T20:41:07.556Z"
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 21
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # STATE.md — VSKS_CRM
@@ -21,7 +21,7 @@ progress:
 - **Current Plan:** 1
 - **Status:** Executing Phase 07
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 07-05-PLAN.md
+- **Stopped At:** Completed 07-03-PLAN.md
 
 ---
 
@@ -138,10 +138,11 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 - DELETE /api/wishes/{id} (draft only, creator only, 204)
 - Employee purchase list strictly filtered to assigned_user_id = current_user.id (D-13)
 
-**Not done:**
+**Done (07-03):**
 
-- "Мои заявки" view for Viewers
-- "Заявки сотрудников" view for Managers
+- WishesView.vue with role-based tabs: employee sees own wishes, manager/admin see all wishes
+- /wishes route with lazy import, employee guard updated
+- AppBar nav entry for all roles, advance reports fixed to ALL_ROLES
 
 ---
 
@@ -254,6 +255,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [07-02] Employee purchase filter uses q.where(Purchase.assigned_user_id == current_user.id) with no NULL fallback — D-13 strict compliance
 - [07-02] convert_wish creates Purchase inline via db.flush() pattern (not HTTP call to create_purchase) — avoids budget check side-effects on wish-origin purchases
 - [07-02] selectinload() used explicitly in _load_wish() helper rather than relying on model-level lazy="joined" — explicit async session behavior
+- [07-03] Employee tab shows unconditionally (no v-tabs bar), manager/admin get two tabs — simpler UX for employees
+- [07-03] Manager filter defaults to "submitted" to show immediately actionable wishes
+- [07-03] Advance reports changed from MANAGER_ROLES to ALL_ROLES per D-09 requirement
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

@@ -628,10 +628,26 @@ async def search_messages(
 async def download_file(
     room_id: int,
     msg_id: int,
+    token: str = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     """Download a file attachment from a chat message."""
+    # Authenticate via query param token (needed for browser img/download links
+    # that cannot send Authorization headers).
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        result = await db.execute(select(User).where(User.username == username))
+        current_user = result.scalar_one_or_none()
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     await _check_room_participant(room_id, current_user.id, db)
 
     msg = await db.get(ChatMessage, msg_id)

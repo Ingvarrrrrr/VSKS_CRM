@@ -183,12 +183,12 @@
                   <!-- Inline image preview -->
                   <a
                     v-if="isImage(item)"
-                    :href="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                    :href="fileUrl(item.id)"
                     target="_blank"
                     class="message-image-link"
                   >
                     <img
-                      :src="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                      :src="fileUrl(item.id)"
                       :alt="item.file_name"
                       class="message-image"
                       loading="lazy"
@@ -197,7 +197,7 @@
                   <!-- Non-image file chip -->
                   <v-chip
                     v-else
-                    :href="`/api/chat/rooms/${selectedRoom.id}/files/${item.id}`"
+                    :href="fileUrl(item.id)"
                     target="_blank"
                     prepend-icon="mdi-paperclip"
                     size="small"
@@ -589,6 +589,11 @@ function formatSize(bytes: number): string {
 function isImage(msg: Message): boolean {
   if (!msg.file_mime) return false
   return msg.file_mime.startsWith('image/')
+}
+
+function fileUrl(msgId: number): string {
+  const token = localStorage.getItem('auth_token') ?? ''
+  return `/api/chat/rooms/${selectedRoom.value?.id}/files/${msgId}?token=${encodeURIComponent(token)}`
 }
 
 function highlightSearch(text: string): string {

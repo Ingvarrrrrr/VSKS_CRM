@@ -226,13 +226,13 @@ Plans:
 
 ### Phase 11: Fix task display per-user org filtering — badges, org selector, task scoping
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Fix badge counters, org selector, and task list scoping for per-user multi-org context
+**Requirements**: TASK-FILTER-01, TASK-FILTER-02, TASK-FILTER-03
 **Depends on:** Phase 10
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 11 to break down)
+- [ ] 11-01-PLAN.md — Backend org_id filter on /badges + frontend filteredGeneralTasks, zero-task org hide, localStorage badge sync
 
 ---
 

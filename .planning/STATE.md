@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-04-05T20:34:44.120Z"
+stopped_at: Completed 07-05-PLAN.md
+last_updated: "2026-04-05T20:36:15.275Z"
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 21
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # STATE.md — VSKS_CRM
@@ -21,7 +21,7 @@ progress:
 - **Current Plan:** 1
 - **Status:** Executing Phase 07
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 07-02-PLAN.md
+- **Stopped At:** Completed 07-05-PLAN.md
 
 ---
 
@@ -248,6 +248,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [07-01] Old wishes table (subsidy_id/user_id/name schema, 0 rows) dropped and recreated with D-02 schema — no data loss
 - [07-01] alembic/env.py updated to use DATABASE_URL env var for Docker db-host connectivity (was hardcoded to localhost)
 - [07-01] WishOut creator_name/approver_name are computed in router (not DB columns) via lazy="joined" relationships
+- [07-05] update_subsidy/delete_subsidy inline role checks replaced with require_role dependency — consistent pattern, no behavior change
+- [07-05] 7 feo_categories endpoints that had zero authentication (create, update, delete, move, import, export, purchase-totals) now gated with require_role(*ADMIN_ROLES) — critical security fix
+- [07-05] contracts import endpoints (preview, mapped) upgraded from get_current_user to require_role(*MANAGER_ROLES)
 - [07-02] Employee purchase filter uses q.where(Purchase.assigned_user_id == current_user.id) with no NULL fallback — D-13 strict compliance
 - [07-02] convert_wish creates Purchase inline via db.flush() pattern (not HTTP call to create_purchase) — avoids budget check side-effects on wish-origin purchases
 - [07-02] selectinload() used explicitly in _load_wish() helper rather than relying on model-level lazy="joined" — explicit async session behavior

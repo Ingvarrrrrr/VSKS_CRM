@@ -15,8 +15,40 @@ from app.schemas.schemas import (
 from app.auth.jwt import get_current_user, get_org_filter
 from typing import List, Optional
 from datetime import date, datetime, timezone, timedelta
+from app.chat_manager import manager as chat_manager
+from app.models.chat_room import ChatRoom, ChatParticipant
+from app.models.chat_message import ChatMessage
 
 logger = logging.getLogger(__name__)
+
+
+async def _create_task_chat_room(
+    db: AsyncSession,
+    assignor_id: int,
+    assignee_id: int,
+    org_id: int,
+    room_name: str,
+) -> int:
+    """Create or find a ChatRoom for this task assignment. Returns room_id."""
+    existing_q = select(ChatRoom.id).where(ChatRoom.name == room_name, ChatRoom.org_id == org_id)
+    existing = await db.execute(existing_q)
+    room_id = existing.scalar_one_or_none()
+    if room_id:
+        return room_id
+
+    room = ChatRoom(name=room_name, is_group=False, org_id=org_id, created_by=assignor_id)
+    db.add(room)
+    await db.flush()
+    db.add(ChatParticipant(room_id=room.id, user_id=assignor_id))
+    db.add(ChatParticipant(room_id=room.id, user_id=assignee_id))
+    sys_msg = ChatMessage(
+        room_id=room.id,
+        sender_id=assignor_id,
+        content=f"[СИСТЕМА] Чат создан для обсуждения: {room_name}",
+    )
+    db.add(sys_msg)
+    await db.flush()
+    return room.id
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -478,6 +510,28 @@ async def respond_task_consent(
                     )
             except Exception:
                 pass
+
+            # D-18: Create chat room on consent acceptance + WS notification to assignee
+            try:
+                task_title = db_task_obj.title or f"Задача #{task_id}"
+                creator_id = db_task_obj.created_by_id
+                task_org_id = current_user.org_id or 1
+                room_id = await _create_task_chat_room(
+                    db, creator_id, current_user.id, task_org_id,
+                    f"Задача: {task_title}",
+                )
+                await db.commit()
+                await chat_manager.send_to_user(current_user.id, {
+                    "type": "system_notification",
+                    "subtype": "task_assigned",
+                    "task_id": task_id,
+                    "room_id": room_id,
+                    "message": f"[СИСТЕМА] Вам назначена задача: «{task_title}»",
+                    "link": "/my-tasks",
+                })
+            except Exception as exc:
+                logger.error("Chat room/WS error on task consent accept (task_id=%s): %s", task_id, exc)
+
         await db.commit()
         db_task = await db.get(Task, task_id)
         result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
@@ -835,6 +889,35 @@ async def create_task(
                     await notify_task_assigned(db_task, assignee_user, assigner_name)
     except Exception as exc:
         logger.error("Notification error on task create (task_id=%s): %s", db_task.id, exc, exc_info=True)
+
+    # D-17/D-18: Create chat rooms + send WS system_notification for each assignee
+    task_title = db_task.title or f"Задача #{db_task.id}"
+    task_org_id = org_id or current_user.org_id or 1
+    for uid in assignee_ids:
+        if uid == current_user.id:
+            continue
+        try:
+            room_id = await _create_task_chat_room(
+                db, current_user.id, uid, task_org_id,
+                f"Задача: {task_title}",
+            )
+            await db.commit()
+            subtype = "consent_request" if uid in consent_needed else "task_assigned"
+            msg_text = (
+                f"[СИСТЕМА] Запрос на назначение на задачу: «{task_title}»"
+                if uid in consent_needed
+                else f"[СИСТЕМА] Вам назначена задача: «{task_title}»"
+            )
+            await chat_manager.send_to_user(uid, {
+                "type": "system_notification",
+                "subtype": subtype,
+                "task_id": db_task.id,
+                "room_id": room_id,
+                "message": msg_text,
+                "link": "/my-tasks",
+            })
+        except Exception as exc:
+            logger.error("Chat room/WS error on task assign (task_id=%s, uid=%s): %s", db_task.id, uid, exc)
 
     result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
     return result[0]

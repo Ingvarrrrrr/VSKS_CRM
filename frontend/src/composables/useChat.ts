@@ -77,6 +77,31 @@ function connect() {
     try {
       const event = JSON.parse(e.data)
       if (event.type === 'unread_count') totalUnread.value = event.total_unread ?? 0
+
+      // D-19/D-20: Handle system notifications (assignment, consent requests)
+      if (event.type === 'system_notification') {
+        // Log to console for debugging
+        console.log('[СИСТЕМА]', event.message)
+
+        // Browser notification if permitted
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && event.message) {
+          new Notification('VSKS CRM', { body: event.message })
+        }
+
+        // Play notification sound
+        playNotificationSound()
+
+        // Forward to listeners (ChatView can refresh room list and highlight new room)
+        listeners.forEach(cb => cb({
+          type: 'new_room',
+          room_id: event.room_id,
+          message: event.message,
+          link: event.link,
+        }))
+
+        return
+      }
+
       listeners.forEach(cb => cb(event))
 
       // Sound notification for mentions or 2-person rooms

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import uuid
 import logging
 from datetime import datetime
@@ -65,8 +66,17 @@ class RoomOut(BaseModel):
     last_message: Optional[dict] = None
     unread_count: int = 0
     participants: List[dict] = []
+    entity_type: Optional[str] = None
+    entity_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ForEntityBody(BaseModel):
+    entity_type: str   # "purchase" | "task"
+    entity_id: int
+    name: str
+    participant_ids: List[int] = []
 
 
 class MessageOut(BaseModel):
@@ -87,8 +97,13 @@ class MessageOut(BaseModel):
 # ────────────────────────────── Helpers ────────────────────────────────────
 
 async def _get_room_unread(room_id: int, user_id: int, db: AsyncSession) -> int:
-    """Count unread messages in a room for a user (not sent by that user)."""
-    q = (
+    """Count unread messages for user. In group rooms (>2 participants): only @mentions count."""
+    # Get participant count
+    count_q = select(func.count(ChatParticipant.id)).where(ChatParticipant.room_id == room_id)
+    participant_count = (await db.execute(count_q)).scalar() or 0
+
+    # Base unread query (not sent by user, after last read)
+    base_q = (
         select(func.count(ChatMessage.id))
         .outerjoin(
             MessageRead,
@@ -106,7 +121,18 @@ async def _get_room_unread(room_id: int, user_id: int, db: AsyncSession) -> int:
             ),
         )
     )
-    result = await db.execute(q)
+
+    if participant_count > 2:
+        # Group room: only count messages where this user is @mentioned
+        # mention_ids is a JSONB array — check if user_id is contained
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+        mention_filter = ChatMessage.mention_ids.op('@>')(
+            cast([user_id], PG_JSONB)
+        )
+        base_q = base_q.where(mention_filter)
+
+    result = await db.execute(base_q)
     return result.scalar() or 0
 
 
@@ -116,6 +142,26 @@ async def _get_participant_ids(room_id: int, db: AsyncSession) -> List[int]:
         select(ChatParticipant.user_id).where(ChatParticipant.room_id == room_id)
     )
     return [row[0] for row in result.all()]
+
+
+async def _parse_mention_ids(content: Optional[str], db: AsyncSession) -> list:
+    """Parse @Имя Фамилия mentions from message content and return list of user_ids."""
+    if not content:
+        return []
+    # Match @Word (one or two word names)
+    mentions = re.findall(r'@([\w\u0400-\u04FF][\w\u0400-\u04FF ]*?)(?=[^\w\u0400-\u04FF]|$)', content)
+    if not mentions:
+        return []
+    ids = []
+    for name in mentions:
+        name = name.strip()
+        if not name:
+            continue
+        result = await db.execute(select(User).where(User.full_name == name))
+        user = result.scalar_one_or_none()
+        if user:
+            ids.append(user.id)
+    return ids
 
 
 async def _compute_unread_total(user_id: int, db: AsyncSession) -> int:
@@ -199,6 +245,8 @@ async def _build_room_out(room: ChatRoom, user_id: int, db: AsyncSession) -> dic
         "last_message": last_message,
         "unread_count": unread_count,
         "participants": participants,
+        "entity_type": room.entity_type,
+        "entity_id": room.entity_id,
     }
 
 
@@ -358,6 +406,62 @@ async def create_group(
     return data
 
 
+@router.post("/rooms/for-entity", response_model=RoomOut)
+async def get_or_create_entity_room(
+    body: ForEntityBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get existing linked chat room for an entity (purchase/task) or create one."""
+    # Find existing room for this entity
+    existing_q = select(ChatRoom).where(
+        ChatRoom.entity_type == body.entity_type,
+        ChatRoom.entity_id == body.entity_id,
+        ChatRoom.org_id == current_user.org_id,
+    )
+    result = await db.execute(existing_q)
+    room = result.scalar_one_or_none()
+
+    if room:
+        # Ensure current user is a participant
+        participant_check = await db.execute(
+            select(ChatParticipant).where(
+                ChatParticipant.room_id == room.id,
+                ChatParticipant.user_id == current_user.id,
+            )
+        )
+        if not participant_check.scalar_one_or_none():
+            db.add(ChatParticipant(room_id=room.id, user_id=current_user.id))
+            await db.commit()
+        data = await _build_room_out(room, current_user.id, db)
+        return data
+
+    # Create new room linked to entity
+    new_room = ChatRoom(
+        is_group=True,
+        name=body.name,
+        org_id=current_user.org_id,
+        created_by=current_user.id,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+    )
+    db.add(new_room)
+    await db.flush()
+
+    # Add creator + participants (deduplicated, validate org)
+    all_ids = list({current_user.id} | set(body.participant_ids))
+    for uid in all_ids:
+        u = await db.get(User, uid)
+        if u and u.org_id == current_user.org_id:
+            db.add(ChatParticipant(room_id=new_room.id, user_id=uid))
+
+    await db.commit()
+    await db.refresh(new_room)
+
+    data = await _build_room_out(new_room, current_user.id, db)
+    return data
+
+
 @router.get("/rooms/{room_id}/messages", response_model=List[MessageOut])
 async def get_messages(
     room_id: int,
@@ -472,6 +576,11 @@ async def send_message(
         file_size=file_size,
     )
     db.add(msg)
+
+    # Parse mentions and store
+    mention_ids = await _parse_mention_ids(content, db)
+    msg.mention_ids = mention_ids if mention_ids else None
+
     await db.commit()
     await db.refresh(msg)
 
@@ -483,7 +592,7 @@ async def send_message(
     await manager.send_to_users(participant_ids, {
         "type": "message",
         "room_id": room_id,
-        "message": msg_dict,
+        "message": {**msg_dict, "mention_ids": mention_ids, "participant_count": len(participant_ids)},
     })
 
     # Push unread_count update to each participant (except sender)

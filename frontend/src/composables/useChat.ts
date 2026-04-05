@@ -4,6 +4,9 @@ import { ref, onMounted, onUnmounted } from 'vue'
 export const totalUnread = ref(0)
 export const wsConnected = ref(false)
 
+// Cache of room participant counts (populated by ChatView/ChatEmbed on room load)
+export const roomParticipantCounts = ref<Record<number, number>>({})
+
 // Callbacks registered by ChatView to receive events
 type MessageCallback = (event: {
   type: string
@@ -27,6 +30,24 @@ export function onChatEvent(cb: MessageCallback) {
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let pingTimer: ReturnType<typeof setInterval> | null = null
+
+function playNotificationSound() {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = 'sine'
+    osc.frequency.value = 880
+    gain.gain.setValueAtTime(0.25, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.35)
+  } catch {
+    // AudioContext may be blocked if no user gesture yet — silently ignore
+  }
+}
 
 function connect() {
   // Don't create duplicate connections
@@ -57,6 +78,21 @@ function connect() {
       const event = JSON.parse(e.data)
       if (event.type === 'unread_count') totalUnread.value = event.total_unread ?? 0
       listeners.forEach(cb => cb(event))
+
+      // Sound notification for mentions or 2-person rooms
+      if (event.type === 'message') {
+        const myId = Number(localStorage.getItem('user_id') ?? '0')
+        const senderId = event.message?.sender_id
+        if (senderId && senderId !== myId) {
+          const mentionIds: number[] = event.message?.mention_ids ?? []
+          const participantCount: number = event.message?.participant_count ??
+            (roomParticipantCounts.value[event.room_id] ?? 3)
+          const shouldNotify = participantCount <= 2 || mentionIds.includes(myId)
+          if (shouldNotify) {
+            playNotificationSound()
+          }
+        }
+      }
     } catch {
       // ignore malformed messages
     }

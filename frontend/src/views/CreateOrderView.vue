@@ -1113,116 +1113,18 @@
         </v-card-text>
       </v-card>
 
-      <!-- 7b. Участники и лента событий (только в режиме редактирования) -->
-      <!-- Чат по закупке -->
+      <!-- Обсуждение — linked chat room -->
       <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
           <v-icon icon="mdi-chat-outline" class="mr-2" color="blue" />
           Обсуждение
-          <v-chip v-if="purchaseComments.length" size="x-small" color="blue-grey" class="ml-2" variant="tonal">{{ purchaseComments.length }}</v-chip>
         </v-card-title>
-        <v-card-text>
-          <!-- Участники -->
-          <div class="d-flex align-center flex-wrap ga-1 mb-3">
-            <span class="text-caption text-medium-emphasis mr-1">Участники:</span>
-            <v-chip v-for="m in purchaseMembers" :key="m.user_id" size="small"
-              :variant="m.consent_pending ? 'outlined' : 'tonal'"
-              :color="m.consent_pending ? 'warning' : 'primary'"
-              closable @click:close="removePurchaseMember(m.user_id)"
-              :title="m.consent_pending ? 'Ожидает подтверждения' : ''">
-              <v-icon v-if="m.consent_pending" icon="mdi-clock-outline" size="12" class="mr-1" />
-              {{ m.full_name || m.username || `#${m.user_id}` }}
-            </v-chip>
-            <v-menu v-model="memberMenuOpen" :close-on-content-click="false">
-              <template #activator="{ props: menuProps }">
-                <v-btn v-bind="menuProps" icon="mdi-account-plus" size="x-small" variant="tonal" color="primary" title="Добавить участника" />
-              </template>
-              <v-card min-width="300">
-                <v-card-text class="pa-2 pb-1">
-                  <v-autocomplete
-                    v-model="newMemberUserId"
-                    :items="memberSortedUsers"
-                    item-title="text"
-                    item-value="value"
-                    label="Выберите сотрудника"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    autofocus
-                  >
-                    <template #item="{ item, props: iProps }">
-                      <v-list-item
-                        v-bind="iProps"
-                        :subtitle="isMemberOfGroup(item.raw.value) ? 'Уже в обсуждении' : memberNeedsConsent(item.raw.value) ? 'Потребуется согласие сотрудника' : undefined"
-                      >
-                        <template #append>
-                          <v-chip v-if="isMemberOfGroup(item.raw.value)" size="x-small" color="primary" variant="tonal">в группе</v-chip>
-                          <v-chip v-else-if="memberNeedsConsent(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                </v-card-text>
-                <v-card-actions class="pt-0 px-2 pb-2">
-                  <v-spacer />
-                  <v-btn variant="text" size="small" @click="memberMenuOpen = false">Отмена</v-btn>
-                  <v-btn color="primary" size="small" variant="flat" :disabled="!newMemberUserId" :loading="memberAdding" @click="addPurchaseMemberAndClose">Добавить</v-btn>
-                </v-card-actions>
-              </v-card>
-            </v-menu>
-          </div>
-          <div ref="purchaseChatContainer" class="purchase-chat-container mb-2">
-            <div v-for="c in purchaseComments" :key="c.id"
-              class="pchat-msg" :class="c.user_id === currentUserId ? 'pchat-msg--mine' : 'pchat-msg--other'">
-              <div class="pchat-msg-header">
-                <v-icon icon="mdi-account-circle" size="14" :color="c.user_id === currentUserId ? 'white' : 'primary'" class="mr-1" />
-                <span class="pchat-msg-author">{{ c.user_name }}</span>
-                <span class="pchat-msg-time">{{ c.created_at ? new Date(c.created_at).toLocaleString('ru') : '' }}</span>
-                <v-btn v-if="c.user_id === currentUserId" icon="mdi-delete-outline" size="x-small" variant="text" density="compact"
-                  :color="c.user_id === currentUserId ? 'white' : 'grey'" class="pchat-msg-delete"
-                  @click.stop="deletePurchaseComment(c.id)" />
-              </div>
-              <div class="pchat-msg-text" v-html="renderPurchaseMentions(c.text)"></div>
-            </div>
-            <div v-if="purchaseComments.length === 0" class="text-caption text-medium-emphasis text-center pa-4">Начните обсуждение</div>
-          </div>
-          <!-- Mention dropdown -->
-          <div v-if="pMentionOpen" class="purchase-mention-dropdown">
-            <div v-for="u in pFilteredMentionUsers" :key="u.value"
-              class="mention-item" @mousedown.prevent="pInsertMention(u)">
-              <v-icon icon="mdi-account" size="14" class="mr-1" />{{ u.text }}
-            </div>
-            <div v-if="pFilteredMentionUsers.length === 0" class="mention-item text-medium-emphasis">Нет совпадений</div>
-          </div>
-          <div class="d-flex ga-2 align-end">
-            <v-textarea
-              ref="purchaseCommentInput"
-              v-model="pCommentText"
-              :placeholder="pEnterToSend ? 'Сообщение... (Enter — отправить)' : 'Сообщение... (Ctrl+Enter — отправить)'"
-              variant="outlined" density="compact" rows="5" hide-details auto-grow
-              style="flex:1"
-              @keydown="onPurchaseCommentKeydown"
-              @input="onPurchaseCommentInput"
-            />
-            <div class="d-flex flex-column ga-1" style="min-width:36px">
-              <v-btn color="primary" icon size="small" :disabled="!pCommentText.trim()" :loading="pCommentSaving" @click="addPurchaseComment" title="Отправить">
-                <v-icon icon="mdi-send" size="18" />
-              </v-btn>
-              <v-btn icon size="small" variant="tonal" color="deep-purple" @click="pOpenMentionPicker" title="Упомянуть">
-                <v-icon icon="mdi-at" size="18" />
-              </v-btn>
-              <v-btn v-if="isManagerLevel" icon size="small" variant="tonal" color="orange" @click="openPurchaseBroadcast" title="Рассылка">
-                <v-icon icon="mdi-bullhorn" size="18" />
-              </v-btn>
-            </div>
-          </div>
-          <div class="d-flex align-center mt-1" style="font-size:11px;color:#888;user-select:none">
-            <span style="white-space:nowrap">{{ pEnterToSend ? 'Enter — отправка' : 'Enter — новая строка' }}</span>
-            <v-switch v-model="pEnterToSend" density="compact" hide-details color="primary"
-              style="flex:0 0 auto; margin: 0 16px"
-              @update:model-value="(v: any) => localStorage.setItem('pchat_enter_to_send', String(v))" />
-            <span style="white-space:nowrap">{{ pEnterToSend ? 'Ctrl+Enter — новая строка' : 'Ctrl+Enter — отправка' }}</span>
-          </div>
+        <v-card-text class="pa-2">
+          <ChatEmbed
+            :entity-type="'purchase'"
+            :entity-id="purchaseId"
+            :title="form.subject ? `Закупка: ${form.subject}` : `Закупка #${purchaseId}`"
+          />
         </v-card-text>
       </v-card>
 
@@ -2803,6 +2705,7 @@ import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
+import ChatEmbed from '@/components/ChatEmbed.vue'
 
 const route = useRoute()
 const router = useRouter()

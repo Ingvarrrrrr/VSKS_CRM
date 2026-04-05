@@ -422,6 +422,9 @@ class PurchaseCreate(BaseModel):
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = False
     payment_basis_type: Optional[str] = "contract"
+    service_note_text: Optional[str] = None
+    service_note_by: Optional[int] = None
+    service_note_at: Optional[datetime] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 

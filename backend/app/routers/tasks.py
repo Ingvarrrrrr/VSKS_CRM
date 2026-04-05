@@ -617,6 +617,7 @@ async def acknowledge_decline(
 
 @router.get("/badges")
 async def get_badges(
+    org_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -632,21 +633,24 @@ async def get_badges(
     my_task_ids = select(TaskAssignee.task_id).where(
         TaskAssignee.user_id == current_user.id,
     ).scalar_subquery()
-    new_tasks = (await db.execute(
-        select(func.count(Task.id)).where(
-            Task.id.in_(my_task_ids),
-            Task.created_at > cutoff,
-        )
-    )).scalar() or 0
+
+    new_tasks_q = select(func.count(Task.id)).where(
+        Task.id.in_(my_task_ids),
+        Task.created_at > cutoff,
+    )
+    if org_id is not None:
+        new_tasks_q = new_tasks_q.where(Task.org_id == org_id)
+    new_tasks = (await db.execute(new_tasks_q)).scalar() or 0
 
     # Task status changes in last 24h (tasks I'm involved in)
-    task_changes = (await db.execute(
-        select(func.count(Task.id)).where(
-            Task.id.in_(my_task_ids),
-            Task.updated_at > cutoff,
-            Task.created_at < cutoff,  # exclude newly created
-        )
-    )).scalar() or 0
+    task_changes_q = select(func.count(Task.id)).where(
+        Task.id.in_(my_task_ids),
+        Task.updated_at > cutoff,
+        Task.created_at < cutoff,  # exclude newly created
+    )
+    if org_id is not None:
+        task_changes_q = task_changes_q.where(Task.org_id == org_id)
+    task_changes = (await db.execute(task_changes_q)).scalar() or 0
 
     # Purchases: I'm assigned or member
     my_member_pids = select(PurchaseMember.purchase_id).where(

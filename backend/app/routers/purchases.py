@@ -20,6 +20,10 @@ from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
 from datetime import datetime, date
+from app.models.user_hierarchy import UserHierarchy
+from app.chat_manager import manager as chat_manager
+from app.models.chat_room import ChatRoom, ChatParticipant
+from app.models.chat_message import ChatMessage
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -74,6 +78,45 @@ def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
 
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
+
+
+async def _create_assignment_chat_room(
+    db: AsyncSession,
+    assignor_id: int,
+    assignee_id: int,
+    org_id: int,
+    room_name: str,
+) -> int:
+    """Create or find a ChatRoom for this assignment context. Returns room_id."""
+    existing_q = select(ChatRoom.id).where(ChatRoom.name == room_name, ChatRoom.org_id == org_id)
+    existing = await db.execute(existing_q)
+    room_id = existing.scalar_one_or_none()
+    if room_id:
+        return room_id
+
+    room = ChatRoom(
+        name=room_name,
+        is_group=False,
+        org_id=org_id,
+        created_by=assignor_id,
+    )
+    db.add(room)
+    await db.flush()
+
+    db.add(ChatParticipant(room_id=room.id, user_id=assignor_id))
+    db.add(ChatParticipant(room_id=room.id, user_id=assignee_id))
+    await db.flush()
+
+    sys_msg = ChatMessage(
+        room_id=room.id,
+        sender_id=assignor_id,
+        content=f"[СИСТЕМА] Чат создан для обсуждения: {room_name}",
+    )
+    db.add(sys_msg)
+    await db.flush()
+
+    return room.id
+
 
 # Status workflow
 STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "delivered", "paid"]
@@ -1109,18 +1152,144 @@ async def assign_purchase(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Assign a purchase to a user (or unassign if user_id is None)."""
+    """Assign a purchase to a user (or unassign if user_id is None).
+
+    Hierarchy validation (D-14/D-15):
+    - Subordinate: direct assignment + ChatRoom + notification
+    - Non-subordinate: consent flow (consent_pending=True) + ChatRoom + request notification
+    """
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
-    if user_id is not None:
-        user_check = await db.execute(select(User).where(User.id == user_id))
-        if not user_check.scalar_one_or_none():
-            raise HTTPException(404, "Пользователь не найден")
-    p.assigned_user_id = user_id
+
+    # Unassign case
+    if user_id is None:
+        p.assigned_user_id = None
+        await db.commit()
+        return {"ok": True, "assigned_user_id": None}
+
+    # Validate user exists
+    user_check = await db.execute(select(User).where(User.id == user_id))
+    target_user = user_check.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+
+    # Skip hierarchy check if assigning to self
+    if user_id == current_user.id:
+        p.assigned_user_id = user_id
+        await db.commit()
+        return {"ok": True, "assigned_user_id": user_id}
+
+    # Hierarchy check: is target a direct subordinate?
+    sub_res = await db.execute(
+        select(UserHierarchy.subordinate_id).where(
+            UserHierarchy.manager_id == current_user.id
+        )
+    )
+    subordinate_ids = [r[0] for r in sub_res.all()]
+    is_subordinate = user_id in subordinate_ids
+
+    purchase_title = p.subject or p.item_name or f"Закупка #{p.id}"
+    org_id = current_user.org_id or 1  # fallback
+
+    if not is_subordinate:
+        # D-15: Non-subordinate requires consent flow
+        from app.models.purchase_event import PurchaseMember
+        existing_member = await db.execute(
+            select(PurchaseMember).where(
+                PurchaseMember.purchase_id == p.id,
+                PurchaseMember.user_id == user_id,
+            )
+        )
+        member = existing_member.scalar_one_or_none()
+        if not member:
+            member = PurchaseMember(
+                purchase_id=p.id,
+                user_id=user_id,
+                role="executor",
+                added_by_id=current_user.id,
+                consent_pending=True,
+            )
+            db.add(member)
+        else:
+            member.consent_pending = True
+
+        # D-18: Create chat room for this purchase assignment context
+        room_id = await _create_assignment_chat_room(
+            db, current_user.id, user_id, org_id,
+            f"Закупка: {purchase_title}",
+        )
+
+        await db.commit()
+
+        # D-16: Send consent request notification via WS, include room_id
+        try:
+            await chat_manager.send_to_user(user_id, {
+                "type": "system_notification",
+                "subtype": "consent_request",
+                "purchase_id": p.id,
+                "room_id": room_id,
+                "message": f"[СИСТЕМА] Запрос на назначение исполнителем закупки: «{purchase_title}»",
+                "link": f"/orders/{p.id}/edit",
+            })
+        except Exception:
+            pass  # WS notification is best-effort
+
+        return {"ok": True, "consent_pending": True, "assigned_user_id": None, "room_id": room_id}
+    else:
+        # Subordinate: assign directly (D-14)
+        p.assigned_user_id = user_id
+
+        # D-18: Create chat room for this purchase assignment context
+        room_id = await _create_assignment_chat_room(
+            db, current_user.id, user_id, org_id,
+            f"Закупка: {purchase_title}",
+        )
+
+        await db.commit()
+
+        # D-16: Send assignment notification via WS, include room_id
+        try:
+            await chat_manager.send_to_user(user_id, {
+                "type": "system_notification",
+                "subtype": "executor_assigned",
+                "purchase_id": p.id,
+                "room_id": room_id,
+                "message": f"[СИСТЕМА] Вы назначены исполнителем закупки: «{purchase_title}»",
+                "link": f"/orders/{p.id}/edit",
+            })
+        except Exception:
+            pass  # WS notification is best-effort
+
+        return {"ok": True, "assigned_user_id": user_id, "room_id": room_id}
+
+
+@router.post("/{pid}/consent")
+async def accept_purchase_consent(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accept consent to be executor on a purchase (D-15)."""
+    from app.models.purchase_event import PurchaseMember
+    member_res = await db.execute(
+        select(PurchaseMember).where(
+            PurchaseMember.purchase_id == pid,
+            PurchaseMember.user_id == current_user.id,
+            PurchaseMember.consent_pending == True,  # noqa: E712
+        )
+    )
+    pm = member_res.scalar_one_or_none()
+    if not pm:
+        raise HTTPException(404, "Нет ожидающего запроса согласия")
+    pm.consent_pending = False
+    # Set as executor on the purchase
+    purchase = await db.get(Purchase, pid)
+    if purchase:
+        purchase.assigned_user_id = current_user.id
     await db.commit()
-    return {"ok": True, "assigned_user_id": user_id}
+    return {"status": "accepted", "purchase_id": pid}
 
 
 @router.get("/{pid}/tasks")

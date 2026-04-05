@@ -35,7 +35,7 @@ async def list_contracts(
     status: Optional[str] = Query(None),
     contractor_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     q = select(Contract).options(
         selectinload(Contract.contractor),
@@ -104,7 +104,7 @@ async def list_contracts(
 async def create_contract(
     data: ContractCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     # Duplicate check: same number + contractor + subsidy (org) + date
     if data.contractor_id and data.number:
@@ -146,7 +146,7 @@ async def create_contract(
     return d
 
 @router.put("/{cid}", response_model=ContractOut)
-async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(require_role(*MANAGER_ROLES))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
@@ -473,7 +473,7 @@ def _parse_amount(val) -> Optional[Decimal]:
 @router.post("/import/preview")
 async def contracts_import_preview(
     file: UploadFile = File(...),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     """Parse uploaded file and return headers + sample rows for column mapping UI."""
     fname = (file.filename or '').lower()
@@ -503,7 +503,7 @@ async def contracts_import_preview(
 async def contracts_import_mapped(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
     col_number: Optional[int] = Query(None),
     col_date: Optional[int] = Query(None),
     col_contractor: Optional[int] = Query(None),

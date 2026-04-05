@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
-from app.auth.jwt import get_current_user, get_org_filter
+from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 @router.get("/purchase-totals")
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     """Sum of planned_total_price per feo_category_id for a given subsidy."""
     from app.models.purchase import Purchase
@@ -47,7 +48,7 @@ async def list_categories(
     appendix: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*ADMIN_ROLES)),
 ):
     from app.models.subsidy import Subsidy
     q = select(FeoCategory)
@@ -72,7 +73,7 @@ async def list_categories(
 async def category_tree(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*ADMIN_ROLES)),
 ):
     from app.models.subsidy import Subsidy
     q = select(FeoCategory)
@@ -101,7 +102,8 @@ async def category_tree(
 @router.post("/", response_model=FeoCategoryOut)
 async def create_category(
     category_data: FeoCategoryCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     if category_data.parent_id:
         parent_result = await db.execute(
@@ -211,6 +213,7 @@ async def download_feo_template():
 async def import_feo_from_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     """Импорт категорий ФЭО из Excel.
     Формат: Субсидия | Уровень 2 | Уровень 3 | Уровень 4 | Код | Приложение | Финансирование | Активна
@@ -408,6 +411,7 @@ async def import_feo_from_excel(
 async def export_feo_to_excel(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     """Экспорт дерева категорий ФЭО в Excel."""
     if Workbook is None:
@@ -525,7 +529,8 @@ async def export_feo_to_excel(
 async def update_category(
     cat_id: int,
     category_data: FeoCategoryCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     result = await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))
     cat = result.scalar_one_or_none()
@@ -565,7 +570,8 @@ async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession
 @router.delete("/{cat_id}")
 async def delete_category(
     cat_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
@@ -599,7 +605,8 @@ async def delete_category(
 async def move_category(
     cat_id: int,
     data: dict,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
 ):
     """Move category to a new parent. Set parent_id=null to make root."""
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()

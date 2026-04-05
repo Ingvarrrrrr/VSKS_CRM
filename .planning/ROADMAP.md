@@ -153,10 +153,10 @@ Plans:
 - Wishes lifecycle (submit → approve → convert): NOT done
 - "Мои заявки" / "Заявки сотрудников" views: NOT done
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
-- [ ] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
+- [x] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
 - [ ] 07-02-PLAN.md — Wishes API full CRUD + transitions + employee purchase filter (D-13)
 - [ ] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
 - [ ] 07-04-PLAN.md — Chat notification hooks + ChatRoom creation + executor reassignment hierarchy validation
@@ -223,6 +223,16 @@ Plans:
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 10 to break down)
+
+### Phase 11: Fix task display per-user org filtering — badges, org selector, task scoping
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 10
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 11 to break down)
 
 ---
 

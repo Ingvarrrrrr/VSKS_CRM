@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 10-03-PLAN.md
-last_updated: "2026-04-04T18:29:07.598Z"
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-04-05T20:30:12.365Z"
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 3
   total_plans: 21
-  completed_plans: 15
+  completed_plans: 16
 ---
 
 # STATE.md — VSKS_CRM
@@ -19,9 +19,9 @@ progress:
 
 - **Phase:** 06-analytics-budget-history
 - **Current Plan:** 1
-- **Status:** Executing Phase 10
+- **Status:** Executing Phase 07
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 10-02-PLAN.md
+- **Stopped At:** Completed 07-01-PLAN.md
 
 ---
 
@@ -121,10 +121,15 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 - BFF endpoint for tasks (`/api/tasks/my`)
 - Review status on tasks
 
+**Done (07-01):**
+
+- Wish SQLAlchemy model (D-02 columns), schemas (WishCreate/Update/Reject/Convert/Out), migration applied
+- GET /api/wishes endpoint with org isolation + employee filter — router registered
+- service_note_text/by/at columns added to purchases table
+
 **Not done:**
 
-- Wishes lifecycle (Viewer submits → Manager approves → Admin converts to purchase)
-- `GET /api/wishes`, `POST /api/wishes`, transition endpoints
+- Wishes CRUD (POST, PUT, submit, approve, reject, convert) — planned for 07-02
 - "Мои заявки" view for Viewers
 - "Заявки сотрудников" view for Managers
 
@@ -195,6 +200,7 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - Phase 8 added: Торговые площадки + КП email + E2E (n8n Росэлторг, Фабрикант test mode, SMTP КП, Playwright)
 - Post-Phase-8 work above supersedes some Phase 8 decisions (n8n removed in favour of direct API calls)
 - Phase 10 added: Chat Telegram-style UI — real-time delivery fix, sticky header, dual-mode search, Telegram-like polish
+- Phase 11 added: Fix task display per-user org filtering — badges show wrong org, org selector shows orgs with no tasks, task scoping broken
 
 ---
 
@@ -229,6 +235,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [10-03] `v-html` with `highlightSearch()` used for message highlight — XSS safe because user input is regex-escaped before use in replace
 - [10-03] `min_length=2` FastAPI Query guard on `/chat/search` prevents expensive single-char DB full-table scans
 - [10-03] Dual-mode search: single `searchQuery` ref drives `filteredRooms` or `filteredMessages` based on `selectedRoom` presence
+- [07-01] Old wishes table (subsidy_id/user_id/name schema, 0 rows) dropped and recreated with D-02 schema — no data loss
+- [07-01] alembic/env.py updated to use DATABASE_URL env var for Docker db-host connectivity (was hardcoded to localhost)
+- [07-01] WishOut creator_name/approver_name are computed in router (not DB columns) via lazy="joined" relationships
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

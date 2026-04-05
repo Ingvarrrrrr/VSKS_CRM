@@ -76,11 +76,11 @@
 - [ ] **ROLES-03**: Viewer (employee) role must see only the "Мои заявки" (Wishes) section in navigation. All other sections must be inaccessible (return HTTP 403 from API if accessed directly).
 - [ ] **ROLES-04**: Navigation sidebar must render only the links permitted for the current user's role; forbidden links must not appear at all (not just disabled).
 - [ ] **ROLES-05**: The Vue Router must enforce role-based route guards: navigating to a forbidden route must redirect to the user's default landing page.
-- [ ] **ROLES-06**: All API endpoints must enforce role checks server-side using JWT claims; role enforcement must not rely solely on frontend guards.
+- [x] **ROLES-06**: All API endpoints must enforce role checks server-side using JWT claims; role enforcement must not rely solely on frontend guards.
 
 ### Wishes Workflow (WISHES)
 
-- [ ] **WISHES-01**: The `wishes` table (already in DB) must be connected to a backend model `Wish` with fields: `id`, `title`, `description`, `requested_by` (user_id), `status` (`draft → submitted → approved → rejected → converted`), `created_at`, `updated_at`, `purchase_id` (nullable, set when converted).
+- [x] **WISHES-01**: The `wishes` table (already in DB) must be connected to a backend model `Wish` with fields: `id`, `title`, `description`, `requested_by` (user_id), `status` (`draft → submitted → approved → rejected → converted`), `created_at`, `updated_at`, `purchase_id` (nullable, set when converted).
 - [ ] **WISHES-02**: Viewer role must be able to create a new Wish via a form with fields: `title` (required), `description` (optional). Initial status is `draft`.
 - [ ] **WISHES-03**: Viewer must be able to submit a draft Wish (transition `draft → submitted`); only the creator may submit their own wish.
 - [ ] **WISHES-04**: Manager or Admin may approve a submitted Wish (`submitted → approved`) or reject it (`submitted → rejected`) with an optional rejection reason.

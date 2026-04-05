@@ -686,6 +686,10 @@
               :entity-type="'task'"
               :entity-id="editingTask.id"
               :title="editingTask.title"
+              :participant-ids="[
+                editingTask.created_by_id,
+                ...(editingTask.assignees || []).map((a: any) => a.user_id)
+              ].filter((id: any) => id != null)"
             />
           </template>
         </v-card-text>

@@ -115,13 +115,21 @@
               {{ roomInitial(selectedRoom) }}
             </span>
           </v-avatar>
-          <v-toolbar-title class="ms-3">
+          <v-toolbar-title class="ms-3" style="cursor:pointer" @click="showParticipantsDialog = true">
             <div class="font-weight-medium">{{ roomDisplayName(selectedRoom) }}</div>
             <div class="text-caption text-medium-emphasis">
               {{ selectedRoom.is_group ? `${selectedRoom.participants.length} участников` : 'Личный чат' }}
             </div>
           </v-toolbar-title>
           <template #append>
+            <v-btn
+              icon="mdi-account-group"
+              variant="text"
+              size="small"
+              class="me-1"
+              title="Участники"
+              @click="showParticipantsDialog = true"
+            />
             <v-icon
               :icon="wsConnected ? 'mdi-wifi' : 'mdi-wifi-off'"
               :color="wsConnected ? 'success' : 'error'"
@@ -247,6 +255,21 @@
             {{ fileInput.name }}
           </v-chip>
 
+          <!-- Mention dropdown -->
+          <div v-if="mentionOpen && mentionCandidates.length" class="mention-dropdown-chat">
+            <div
+              v-for="p in mentionCandidates"
+              :key="p.id"
+              class="mention-dropdown-chat__item"
+              @mousedown.prevent="insertMention(p)"
+            >
+              <v-avatar :color="stringToColor(p.full_name)" size="22" class="me-2">
+                <span class="text-caption text-white" style="font-size:10px">{{ p.full_name[0] }}</span>
+              </v-avatar>
+              {{ p.full_name }}
+            </div>
+          </div>
+
           <div class="d-flex align-end gap-2">
             <!-- Hidden file input -->
             <input
@@ -265,6 +288,27 @@
               @click="fileInputEl?.click()"
             />
 
+            <!-- @ mention button -->
+            <v-btn
+              icon="mdi-at"
+              variant="text"
+              size="small"
+              :disabled="sending"
+              title="Упомянуть"
+              @click="insertAtSymbol"
+            />
+
+            <!-- Рупор: mention all -->
+            <v-btn
+              v-if="selectedRoom?.is_group && selectedRoom.participants.length > 2"
+              icon="mdi-bullhorn-outline"
+              variant="text"
+              size="small"
+              :disabled="sending"
+              title="Упомянуть всех"
+              @click="mentionAll"
+            />
+
             <!-- Text field -->
             <v-text-field
               v-model="inputText"
@@ -274,6 +318,8 @@
               hide-details
               class="flex-grow-1"
               :disabled="sending"
+              @input="onInputChange"
+              @keydown="onInputKeydown"
               @keydown.enter.exact.prevent="sendMessage"
               @keydown.enter.shift.exact="inputText += '\n'"
             />
@@ -364,6 +410,38 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+  <!-- Participants Dialog -->
+  <v-dialog v-model="showParticipantsDialog" max-width="400" scrollable>
+    <v-card v-if="selectedRoom">
+      <v-card-title class="d-flex align-center pa-4">
+        <v-icon icon="mdi-account-group" class="me-2" />
+        {{ roomDisplayName(selectedRoom) }}
+        <v-spacer />
+        <v-btn icon="mdi-close" variant="text" size="small" @click="showParticipantsDialog = false" />
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="pa-2" style="max-height: 400px; overflow-y: auto">
+        <v-list density="compact">
+          <v-list-item
+            v-for="p in selectedRoom.participants"
+            :key="p.id"
+            :title="p.full_name"
+            :subtitle="p.position || p.department || ''"
+          >
+            <template #prepend>
+              <v-avatar :color="stringToColor(p.full_name)" size="36">
+                <span class="text-body-2 font-weight-bold text-white">{{ p.full_name[0] }}</span>
+              </v-avatar>
+            </template>
+            <template #append>
+              <v-chip v-if="p.id === currentUserId" size="x-small" color="primary" variant="tonal">Вы</v-chip>
+            </template>
+          </v-list-item>
+        </v-list>
+      </v-card-text>
+    </v-card>
+  </v-dialog>
   </div>
 </template>
 
@@ -441,6 +519,14 @@ const messagesContainer = ref<HTMLElement | null>(null)
 const loadingMessages = ref(false)
 const sending = ref(false)
 
+// Mention dropdown
+const mentionOpen = ref(false)
+const mentionFilter = ref('')
+const mentionCursorPos = ref(0)
+
+// Participants dialog
+const showParticipantsDialog = ref(false)
+
 // New chat dialog
 const showNewChatDialog = ref(false)
 const staff = ref<StaffMember[]>([])
@@ -495,6 +581,17 @@ const filteredMessages = computed(() => {
 
 // Clear search on room switch
 watch(selectedRoom, () => { searchQuery.value = '' })
+
+const mentionCandidates = computed(() => {
+  if (!selectedRoom.value) return []
+  const myId = currentUserId.value
+  return selectedRoom.value.participants
+    .filter(p => p.id !== myId)
+    .filter(p => {
+      if (!mentionFilter.value) return true
+      return p.full_name.toLowerCase().includes(mentionFilter.value.toLowerCase())
+    })
+})
 
 // ─── Telegram-style types & computed ─────────────────────────────────────────
 
@@ -678,6 +775,51 @@ async function sendMessage() {
   } finally {
     sending.value = false
   }
+}
+
+function onInputKeydown(e: KeyboardEvent) {
+  if (mentionOpen.value) {
+    if (e.key === 'Escape') { mentionOpen.value = false; e.preventDefault() }
+    return
+  }
+}
+
+function onInputChange() {
+  const val = inputText.value
+  const pos = (document.activeElement as HTMLInputElement)?.selectionStart ?? val.length
+  const beforeCursor = val.slice(0, pos)
+  const match = beforeCursor.match(/@([\w\u0400-\u04FF ]*)$/)
+  if (match) {
+    mentionFilter.value = match[1]
+    mentionOpen.value = true
+    mentionCursorPos.value = pos - match[0].length
+  } else {
+    mentionOpen.value = false
+  }
+}
+
+function insertMention(participant: Participant) {
+  const before = inputText.value.slice(0, mentionCursorPos.value)
+  const after = inputText.value.slice(
+    (document.activeElement as HTMLInputElement)?.selectionStart ?? inputText.value.length
+  )
+  inputText.value = before + '@' + participant.full_name + ' ' + after
+  mentionOpen.value = false
+}
+
+function insertAtSymbol() {
+  inputText.value += '@'
+  mentionFilter.value = ''
+  mentionOpen.value = true
+  mentionCursorPos.value = inputText.value.length - 1
+}
+
+function mentionAll() {
+  if (!selectedRoom.value) return
+  const myId = currentUserId.value
+  const others = selectedRoom.value.participants.filter(p => p.id !== myId)
+  const mentions = others.map(p => '@' + p.full_name).join(' ')
+  inputText.value = mentions + ' ' + inputText.value
 }
 
 async function markAsRead() {
@@ -1012,6 +1154,34 @@ onUnmounted(() => {
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   flex-shrink: 0 !important;
   flex-grow: 0 !important;
+  position: relative;
+}
+
+/* Mention dropdown in main chat */
+.mention-dropdown-chat {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid var(--crm-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--crm-shadow);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  margin-bottom: 4px;
+}
+.mention-dropdown-chat__item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.mention-dropdown-chat__item:hover {
+  background: var(--crm-surface-hover);
 }
 
 .chat-toolbar {

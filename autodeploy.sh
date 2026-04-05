@@ -19,6 +19,7 @@ if [ ! -d /opt/nemakh ]; then
         cd /opt/nemakh
         git clone "https://${GH_TOKEN}@github.com/Ingvarrrrrr/nemakh-deploy.git" .
         git clone "https://${GH_TOKEN}@github.com/Ingvarrrrrr/nemakh-web.git"
+        git clone "https://${GH_TOKEN}@github.com/Ingvarrrrrr/nemakh-server.git"
         # Build web client
         if [ -d nemakh-web ]; then
             cd nemakh-web && npm install && npm run build:prod && cd ..

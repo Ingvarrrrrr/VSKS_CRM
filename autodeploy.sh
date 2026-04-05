@@ -8,7 +8,9 @@ docker compose build frontend 2>&1 | tail -5
 docker compose up -d frontend
 echo "Deploy complete: $(date)" >> /var/log/vsks-deploy.log
 
-# --- NEMAKH bootstrap (one-time) ---
+# --- One-time NEMAKH bootstrap ---
+# Clones nemakh-deploy and starts its own independent webhook on port 9001.
+# After this runs once, NEMAKH manages itself via its own autodeploy.sh.
 if [ ! -d /opt/nemakh ]; then
     echo "=== Bootstrapping NEMAKH: $(date) ===" >> /var/log/vsks-deploy.log
     GH_TOKEN=$(git -C /opt/vsks-crm remote get-url origin | sed -n 's|https://\([^@]*\)@.*|\1|p')
@@ -29,17 +31,12 @@ if [ ! -d /opt/nemakh ]; then
         docker exec nemakh-minio mc mb local/nemakh-media --ignore-existing || true
         docker exec nemakh-minio mc anonymous set download local/nemakh-media || true
         # Restart without RESET_DB
-        docker compose down
-        docker compose up -d
+        docker compose down && docker compose up -d
+        # Start NEMAKH's own webhook listener (port 9001, independent of CRM)
+        nohup python3 /opt/nemakh/webhook.py >> /var/log/nemakh-webhook.log 2>&1 &
         echo "=== NEMAKH bootstrap complete: $(date) ===" >> /var/log/vsks-deploy.log
+        cd /opt/vsks-crm
     else
-        echo "=== NEMAKH bootstrap FAILED: no GH_TOKEN found ===" >> /var/log/vsks-deploy.log
+        echo "=== NEMAKH bootstrap FAILED: no GH_TOKEN ===" >> /var/log/vsks-deploy.log
     fi
-    cd /opt/vsks-crm
 fi
-
-# --- Restart webhook to pick up new routes ---
-pkill -f "python.*webhook.py" 2>/dev/null || true
-sleep 1
-nohup python3 /opt/vsks-crm/webhook.py >> /var/log/webhook.log 2>&1 &
-echo "Webhook restarted: $(date)" >> /var/log/vsks-deploy.log

@@ -229,10 +229,10 @@ Plans:
 **Goal:** Fix badge counters, org selector, and task list scoping for per-user multi-org context
 **Requirements**: TASK-FILTER-01, TASK-FILTER-02, TASK-FILTER-03
 **Depends on:** Phase 10
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 11-01-PLAN.md — Backend org_id filter on /badges + frontend filteredGeneralTasks, zero-task org hide, localStorage badge sync
+- [x] 11-01-PLAN.md — Backend org_id filter on /badges + frontend filteredGeneralTasks, zero-task org hide, localStorage badge sync
 
 ---
 

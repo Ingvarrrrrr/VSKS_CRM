@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 07-04-PLAN.md
-last_updated: "2026-04-05T20:42:18.292Z"
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-04-06T00:15:00.000Z"
 progress:
   total_phases: 11
-  completed_phases: 4
-  total_plans: 21
-  completed_plans: 20
+  completed_phases: 5
+  total_plans: 22
+  completed_plans: 21
 ---
 
 # STATE.md — VSKS_CRM
@@ -258,6 +258,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [07-03] Employee tab shows unconditionally (no v-tabs bar), manager/admin get two tabs — simpler UX for employees
 - [07-03] Manager filter defaults to "submitted" to show immediately actionable wishes
 - [07-03] Advance reports changed from MANAGER_ROLES to ALL_ROLES per D-09 requirement
+- [11-01] localStorage bridge for AppBar<->MyTasksView org_id sync: zero dependencies, backward compatible, 2-line AppBar change
+- [11-01] Client-side filteredGeneralTasks computed avoids refetch on org switch — all tasks already in memory from /tasks/init
+- [11-01] Optional org_id=None default on /badges preserves full backward compatibility for global badge calls
 - [07-04] _create_assignment_chat_room uses name+org_id uniqueness to avoid duplicate rooms on reassignment
 - [07-04] system_notification WS event forwarded as new_room to listeners so ChatView can auto-refresh room list
 - [07-04] accept_purchase_consent sets assigned_user_id after clearing consent_pending — consent flow complete; purchase org_id falls back to current_user.org_id

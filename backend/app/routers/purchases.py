@@ -381,9 +381,13 @@ async def list_purchases(
         q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     # Visibility by hierarchy position:
     # - superadmin/account_owner/admin/org_admin: see all in org (already filtered above)
-    # - manager/employee with subordinates: see own + subordinates' purchases
-    # - plain employee: see only purchases they participate in
-    if current_user.role in ('employee', 'manager'):
+    # - manager: sees own + subordinates' + managed dept/org purchases
+    # - employee: D-13 — sees ONLY purchases where they are the assigned executor
+    if current_user.role == 'employee':
+        # D-13: employee sees ONLY purchases where they are the executor
+        q = q.where(Purchase.assigned_user_id == current_user.id)
+    elif current_user.role == 'manager':
+        # Existing manager logic: subordinates + dept members + managed orgs + purchase members
         from app.models.user_hierarchy import UserHierarchy
         from app.models.manager_organization import ManagerOrganization
         from app.models.manager_department import ManagerDepartment
@@ -418,7 +422,7 @@ async def list_purchases(
             org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
             visible_user_ids.update(r[0] for r in org_users.all())
 
-        # Filter: assigned to visible user OR no assigned user (shared)
+        # Filter: assigned to visible user OR no assigned user (shared) OR purchase member
         from app.models.purchase_event import PurchaseMember
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
         q = q.where(

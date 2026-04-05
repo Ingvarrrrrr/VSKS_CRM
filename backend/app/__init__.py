@@ -15,6 +15,7 @@ from .routers import (
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
     tasks, departments, delivery_addresses, hierarchy, billing,
+    wishes,
 )
 from .routers import org_config
 from .routers import feo_planned_items
@@ -312,3 +313,4 @@ app.include_router(billing.router)
 app.include_router(telegram_webhook.router)
 app.include_router(chat_router.router)    # REST: /api/chat/...
 app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
+app.include_router(wishes.router)

@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-04-05T20:30:12.365Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-04-05T20:34:44.120Z"
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 21
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # STATE.md — VSKS_CRM
@@ -21,7 +21,7 @@ progress:
 - **Current Plan:** 1
 - **Status:** Executing Phase 07
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 07-01-PLAN.md
+- **Stopped At:** Completed 07-02-PLAN.md
 
 ---
 
@@ -127,9 +127,19 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 - GET /api/wishes endpoint with org isolation + employee filter — router registered
 - service_note_text/by/at columns added to purchases table
 
+**Done (07-02):**
+
+- POST /api/wishes (create, draft, org isolation)
+- PUT /api/wishes/{id} (update draft, creator only)
+- POST /api/wishes/{id}/submit (draft -> submitted, creator only)
+- POST /api/wishes/{id}/approve (submitted -> approved, MANAGER_ROLES)
+- POST /api/wishes/{id}/reject (submitted -> rejected + reason, MANAGER_ROLES, D-08)
+- POST /api/wishes/{id}/convert (approved -> converted + inline Purchase, ADMIN_ROLES, D-23)
+- DELETE /api/wishes/{id} (draft only, creator only, 204)
+- Employee purchase list strictly filtered to assigned_user_id = current_user.id (D-13)
+
 **Not done:**
 
-- Wishes CRUD (POST, PUT, submit, approve, reject, convert) — planned for 07-02
 - "Мои заявки" view for Viewers
 - "Заявки сотрудников" view for Managers
 
@@ -238,6 +248,9 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [07-01] Old wishes table (subsidy_id/user_id/name schema, 0 rows) dropped and recreated with D-02 schema — no data loss
 - [07-01] alembic/env.py updated to use DATABASE_URL env var for Docker db-host connectivity (was hardcoded to localhost)
 - [07-01] WishOut creator_name/approver_name are computed in router (not DB columns) via lazy="joined" relationships
+- [07-02] Employee purchase filter uses q.where(Purchase.assigned_user_id == current_user.id) with no NULL fallback — D-13 strict compliance
+- [07-02] convert_wish creates Purchase inline via db.flush() pattern (not HTTP call to create_purchase) — avoids budget check side-effects on wish-origin purchases
+- [07-02] selectinload() used explicitly in _load_wish() helper rather than relying on model-level lazy="joined" — explicit async session behavior
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

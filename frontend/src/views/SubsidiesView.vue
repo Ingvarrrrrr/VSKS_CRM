@@ -42,10 +42,16 @@
         <!-- ── Cards grid ── -->
         <div class="subsidies-grid">
           <div
-            v-for="s in filteredSubsidies" :key="s.id"
+            v-for="(s, idx) in filteredSubsidies" :key="s.id"
             class="subsidy-card"
-            :class="{ 'subsidy-card--active': selectedId === s.id }"
+            :class="{ 'subsidy-card--active': selectedId === s.id, 'subsidy-card--drag-over': cardDragOverIdx === idx, 'subsidy-card--dragging': cardDragIdx === idx }"
+            draggable="true"
             @click="toggleSelect(s.id)"
+            @dragstart="onCardDragStart($event, idx)"
+            @dragover.prevent="onCardDragOver(idx)"
+            @dragleave="cardDragOverIdx = -1"
+            @drop.prevent="onCardDrop(idx)"
+            @dragend="cardDragIdx = -1; cardDragOverIdx = -1"
           >
             <div class="sc-header">
               <div class="sc-name">{{ s.name }}</div>
@@ -1916,9 +1922,40 @@ const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
 
-const filteredSubsidies = computed(() =>
-  allSubsidies.value.filter(s => s.year === selectedYear.value)
-)
+const CARD_ORDER_KEY = 'subsidies_card_order'
+const cardDragIdx = ref(-1)
+const cardDragOverIdx = ref(-1)
+const subsidyOrder = ref<number[]>(JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '[]'))
+
+function onCardDragStart(e: DragEvent, idx: number) {
+  cardDragIdx.value = idx
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onCardDragOver(idx: number) {
+  cardDragOverIdx.value = idx
+}
+function onCardDrop(targetIdx: number) {
+  const srcIdx = cardDragIdx.value
+  if (srcIdx < 0 || srcIdx === targetIdx) return
+  const ids = filteredSubsidies.value.map(s => s.id)
+  const [moved] = ids.splice(srcIdx, 1)
+  ids.splice(targetIdx, 0, moved)
+  subsidyOrder.value = ids
+  localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(ids))
+  cardDragOverIdx.value = -1
+  cardDragIdx.value = -1
+}
+
+const filteredSubsidies = computed(() => {
+  const yearFiltered = allSubsidies.value.filter(s => s.year === selectedYear.value)
+  if (subsidyOrder.value.length === 0) return yearFiltered
+  const orderMap = new Map(subsidyOrder.value.map((id, i) => [id, i]))
+  return [...yearFiltered].sort((a, b) => {
+    const ai = orderMap.get(a.id) ?? 9999
+    const bi = orderMap.get(b.id) ?? 9999
+    return ai - bi
+  })
+})
 
 const selectedSubsidy = computed(() =>
   allSubsidies.value.find(s => s.id === selectedId.value) ?? null
@@ -2931,9 +2968,19 @@ onMounted(loadAll)
   border: 2px solid var(--crm-border);
   box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 18px 20px;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  cursor: grab;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
   position: relative;
+}
+.subsidy-card:active {
+  cursor: grabbing;
+}
+.subsidy-card--dragging {
+  opacity: 0.4;
+}
+.subsidy-card--drag-over {
+  outline: 2px dashed rgb(var(--v-theme-primary));
+  outline-offset: -2px;
 }
 .subsidy-card::after {
   content: 'Нажмите для подробностей';

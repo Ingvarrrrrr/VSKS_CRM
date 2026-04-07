@@ -544,16 +544,23 @@ async def remove_user_from_organization(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
-    """Remove user from an extra organization."""
+    """Remove user from an organization (extra or primary)."""
+    user = await db.get(User, uid)
+    is_primary = user and user.org_id == org_id
+
     row = (await db.execute(
         select(UserOrganization).where(
             UserOrganization.user_id == uid,
             UserOrganization.org_id == org_id,
         )
     )).scalar_one_or_none()
-    if not row:
+
+    if not row and not is_primary:
         raise HTTPException(404, "Членство не найдено")
-    await db.delete(row)
+    if row:
+        await db.delete(row)
+    if is_primary:
+        user.org_id = None
     await db.commit()
     return {"ok": True}
 

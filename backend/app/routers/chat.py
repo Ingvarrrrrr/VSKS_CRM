@@ -5,7 +5,9 @@ WS endpoint is registered at /api/ws/chat (separate ws_router without prefix).
 """
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 import os
 import re
 import uuid
@@ -32,6 +34,63 @@ from app.models.chat_room import ChatParticipant, ChatRoom
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_push_notifications(
+    participant_ids: list,
+    title: str,
+    body: str,
+    db: AsyncSession,
+) -> None:
+    """Send Web Push to all subscriptions of given users (fire-and-forget)."""
+    try:
+        from pywebpush import webpush, WebPushException  # type: ignore
+    except ImportError:
+        return
+
+    vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
+    vapid_public = os.environ.get("VAPID_PUBLIC_KEY", "")
+    if not vapid_private or not vapid_public:
+        return
+
+    from app.models.push_subscription import PushSubscription
+    from sqlalchemy import delete
+
+    result = await db.execute(
+        select(PushSubscription).where(PushSubscription.user_id.in_(participant_ids))
+    )
+    subs = result.scalars().all()
+
+    payload = json.dumps({
+        "title": title,
+        "body": body,
+        "badge": "/pwa-192x192.png",
+        "icon": "/pwa-192x192.png",
+    })
+
+    expired_ids: list[int] = []
+    for sub in subs:
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                data=payload,
+                vapid_private_key=vapid_private,
+                vapid_claims={"sub": "mailto:z@vsks.ru"},
+            )
+        except Exception:
+            # Subscription expired or invalid — mark for deletion
+            expired_ids.append(sub.id)
+
+    if expired_ids:
+        await db.execute(
+            delete(PushSubscription).where(PushSubscription.id.in_(expired_ids))
+        )
+        await db.commit()
+
 
 # ────────────────────────────── Constants ──────────────────────────────────
 
@@ -600,6 +659,14 @@ async def send_message(
         if uid != current_user.id:
             total = await _compute_unread_total(uid, db)
             await manager.send_to_user(uid, {"type": "unread_count", "total_unread": total})
+
+    # Send Web Push to offline participants
+    asyncio.create_task(_send_push_notifications(
+        participant_ids=[uid for uid in participant_ids if uid != current_user.id],
+        title=sender_name or "Новое сообщение",
+        body=content[:100] if content else "Файл",
+        db=db,
+    ))
 
     return MessageOut(
         id=msg.id,

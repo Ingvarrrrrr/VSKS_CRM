@@ -59,6 +59,59 @@ async function pollBadgeCount() {
   } catch {}
 }
 
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
+}
+
+async function sendSubToBackend(sub: globalThis.PushSubscription) {
+  const token = localStorage.getItem('auth_token') ?? ''
+  const json = sub.toJSON()
+  await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+  }).catch(() => {})
+}
+
+async function subscribeToPush() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    const reg = await navigator.serviceWorker.ready
+    // Check if already subscribed
+    let sub = await reg.pushManager.getSubscription()
+    if (sub) {
+      // Already subscribed — send to backend in case token changed
+      await sendSubToBackend(sub)
+      return
+    }
+    // Request notification permission first
+    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+      const perm = await Notification.requestPermission()
+      if (perm !== 'granted') return
+    }
+    // Get VAPID public key from backend
+    const token = localStorage.getItem('auth_token') ?? ''
+    const res = await fetch('/api/push/vapid-key', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return
+    const { key } = await res.json()
+    if (!key) return
+    // Convert VAPID key and subscribe
+    const vapidKey = urlBase64ToUint8Array(key)
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: vapidKey,
+    })
+    await sendSubToBackend(sub)
+  } catch (e) {
+    console.warn('Push subscription failed:', e)
+  }
+}
+
 function playNotificationSound() {
   try {
     const ctx = new AudioContext()
@@ -98,10 +151,8 @@ function connect() {
     pingTimer = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) ws.send('ping')
     }, 30000)
-    // Request notification permission (one-time, non-blocking)
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {})
-    }
+    // Subscribe to Web Push for offline notifications (handles permission internally)
+    subscribeToPush()
   }
 
   ws.onmessage = (e) => {

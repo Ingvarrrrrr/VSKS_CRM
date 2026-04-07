@@ -76,7 +76,16 @@ function connect() {
     if (e.data === 'pong') return
     try {
       const event = JSON.parse(e.data)
-      if (event.type === 'unread_count') totalUnread.value = event.total_unread ?? 0
+      if (event.type === 'unread_count') {
+        totalUnread.value = event.total_unread ?? 0
+        // PWA app icon badge (mobile home screen)
+        try {
+          if ('setAppBadge' in navigator) {
+            if (totalUnread.value > 0) (navigator as any).setAppBadge(totalUnread.value)
+            else (navigator as any).clearAppBadge()
+          }
+        } catch {}
+      }
 
       // D-19/D-20: Handle system notifications (assignment, consent requests)
       if (event.type === 'system_notification') {

@@ -30,6 +30,34 @@ export function onChatEvent(cb: MessageCallback) {
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let pingTimer: ReturnType<typeof setInterval> | null = null
+let badgePollTimer: ReturnType<typeof setInterval> | null = null
+
+function updateAppBadge(count: number) {
+  try {
+    if ('setAppBadge' in navigator) {
+      if (count > 0) (navigator as any).setAppBadge(count)
+      else (navigator as any).clearAppBadge()
+    }
+  } catch {}
+}
+
+async function pollBadgeCount() {
+  // Fallback: fetch unread count via REST when WS is down
+  if (wsConnected.value) return
+  const token = localStorage.getItem('auth_token')
+  if (!token) return
+  try {
+    const res = await fetch('/api/tasks/badges', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const count = data.chat_unread ?? 0
+      totalUnread.value = count
+      updateAppBadge(count)
+    }
+  } catch {}
+}
 
 function playNotificationSound() {
   try {
@@ -70,6 +98,10 @@ function connect() {
     pingTimer = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) ws.send('ping')
     }, 30000)
+    // Request notification permission (one-time, non-blocking)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
   }
 
   ws.onmessage = (e) => {
@@ -78,13 +110,7 @@ function connect() {
       const event = JSON.parse(e.data)
       if (event.type === 'unread_count') {
         totalUnread.value = event.total_unread ?? 0
-        // PWA app icon badge (mobile home screen)
-        try {
-          if ('setAppBadge' in navigator) {
-            if (totalUnread.value > 0) (navigator as any).setAppBadge(totalUnread.value)
-            else (navigator as any).clearAppBadge()
-          }
-        } catch {}
+        updateAppBadge(totalUnread.value)
       }
 
       // D-19/D-20: Handle system notifications (assignment, consent requests)
@@ -172,10 +198,20 @@ export function useChat() {
 // initChat — call once at app startup (from App.vue) without lifecycle binding
 export function initChat() {
   connect()
+  // Polling fallback: check badge count every 60s when WS is down
+  if (!badgePollTimer) {
+    badgePollTimer = setInterval(pollBadgeCount, 60000)
+    // Also fetch immediately on init
+    pollBadgeCount()
+  }
 }
 
 export function destroyChat() {
   disconnect()
+  if (badgePollTimer) {
+    clearInterval(badgePollTimer)
+    badgePollTimer = null
+  }
 }
 
 export { connect }

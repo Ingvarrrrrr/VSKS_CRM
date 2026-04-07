@@ -371,7 +371,7 @@
                 </v-avatar>
               </template>
               <v-list-item-title>{{ person.full_name }}</v-list-item-title>
-              <v-list-item-subtitle>{{ person.department || person.position || person.username }}</v-list-item-subtitle>
+              <v-list-item-subtitle>{{ person.username }}</v-list-item-subtitle>
               <template #append>
                 <v-checkbox-btn :model-value="selectedStaffIds.includes(person.id)" readonly />
               </template>
@@ -427,7 +427,6 @@
             v-for="p in selectedRoom.participants"
             :key="p.id"
             :title="p.full_name"
-            :subtitle="p.position || p.department || ''"
           >
             <template #prepend>
               <v-avatar :color="stringToColor(p.full_name)" size="36">

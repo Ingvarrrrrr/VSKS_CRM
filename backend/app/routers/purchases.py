@@ -2142,7 +2142,40 @@ async def import_items_mapped(
     content = await file.read()
 
     try:
-        if fname.endswith('.xls'):
+        if fname.endswith(('.docx', '.doc')):
+            # Word document — extract table rows
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows_doc = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows_doc.append(tuple(cell.text.strip() for cell in row.cells))
+            if not all_rows_doc:
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        all_rows_doc.append((text,))
+            skip = header_row_offset + 1
+            data_iter = all_rows_doc[skip:] if len(all_rows_doc) > skip else []
+        elif fname.endswith('.pdf'):
+            # PDF — extract table rows
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows_pdf = []
+            for page in pdf.pages:
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows_pdf.extend([tuple(str(c).strip() if c else "" for c in row) for row in t])
+            pdf.close()
+            skip = header_row_offset + 1
+            data_iter = all_rows_pdf[skip:] if len(all_rows_pdf) > skip else []
+        elif fname.endswith('.xls'):
             try:
                 import xlrd as _xlrd_mod
             except ImportError:
@@ -2150,7 +2183,7 @@ async def import_items_mapped(
             wb_xls = _xlrd_mod.open_workbook(file_contents=content)
             ws_xls = wb_xls.sheet_by_name(sheet_name) if sheet_name else wb_xls.sheet_by_index(0)
             all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
-            skip = header_row_offset + 1  # skip empty rows + header row itself
+            skip = header_row_offset + 1
             data_iter = all_rows[skip:] if len(all_rows) > skip else []
         else:
             if not load_workbook:

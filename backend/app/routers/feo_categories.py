@@ -211,6 +211,273 @@ async def download_feo_template():
         headers={"Content-Disposition": "attachment; filename=feo_categories_template.xlsx"})
 
 
+@router.post("/import-preview")
+async def feo_import_preview(
+    file: UploadFile = File(...),
+    _=Depends(require_role(*ADMIN_ROLES)),
+):
+    """Read Excel/DOCX file and return headers + sample rows for column mapping."""
+    fname = (file.filename or "").lower()
+    if not fname.endswith((".xlsx", ".xls", ".docx", ".doc")):
+        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx")
+
+    content = await file.read()
+
+    _FEO_HINTS = (
+        "субсидия", "наименован", "направлен", "расходов", "уровень",
+        "код", "финансирован", "количеств", "ед. изм", "ед.изм",
+        "активн", "приложен", "бюджет", "плановый", "тип расх",
+    )
+
+    def _detect_hdr(rows):
+        best_score, best_idx = 0, 0
+        for ri, row in enumerate(rows[:20]):
+            norm = [str(h).strip().lower() if h is not None else "" for h in row]
+            score = sum(1 for h in norm if h and any(x in h for x in _FEO_HINTS))
+            if score > best_score:
+                best_score = score
+                best_idx = ri
+        return best_idx
+
+    try:
+        # ── DOCX ──
+        if fname.endswith((".docx", ".doc")):
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows.append([cell.text.strip() for cell in row.cells])
+            if not all_rows:
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        all_rows.append([text])
+            if not all_rows:
+                raise HTTPException(400, "Не удалось извлечь данные из документа")
+            hdr_idx = _detect_hdr(all_rows)
+            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
+            data = all_rows[hdr_idx + 1:]
+            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+            return {"sheets": [{"name": "Document", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+
+        # ── XLS ──
+        if fname.endswith(".xls"):
+            try:
+                import xlrd as _xlrd_mod
+            except ImportError:
+                raise HTTPException(500, "xlrd не установлен")
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+            sheets = []
+            for sheet_name in wb_xls.sheet_names():
+                ws_xls = wb_xls.sheet_by_name(sheet_name)
+                all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+                if not all_rows:
+                    continue
+                hdr_idx = _detect_hdr(all_rows)
+                hdr_rows = all_rows[hdr_idx:]
+                if not hdr_rows:
+                    continue
+                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
+                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
+                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
+                               "total_rows": ws_xls.nrows - hdr_idx - 1, "header_row_offset": hdr_idx})
+
+        # ── XLSX ──
+        else:
+            if load_workbook is None:
+                raise HTTPException(500, "openpyxl не установлен")
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+            sheets = []
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                all_rows = list(ws.iter_rows(values_only=True))
+                if not all_rows:
+                    continue
+                hdr_idx = _detect_hdr(all_rows)
+                hdr_rows = all_rows[hdr_idx:]
+                if not hdr_rows:
+                    continue
+                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
+                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
+                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
+                               "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx})
+            wb.close()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл ({file.filename}): {e}")
+
+    if not sheets:
+        raise HTTPException(400, "Файл не содержит листов с данными")
+
+    return {"sheets": sheets}
+
+
+async def _do_feo_import(
+    rows: list,
+    c_subsidy: int | None,
+    c_lvl2: int | None,
+    c_lvl3: int | None,
+    c_lvl4: int | None,
+    c_lvl5: int | None,
+    c_qty: int | None,
+    c_unit: int | None,
+    c_item_amt: int | None,
+    c_code: int | None,
+    c_appendix: int | None,
+    c_budget: int | None,
+    c_active: int | None,
+    db: AsyncSession,
+) -> dict:
+    """Core import logic shared by /import and /import-mapped endpoints."""
+
+    if c_subsidy is None or c_lvl2 is None:
+        raise HTTPException(400, "Не найдены обязательные столбцы: 'Субсидия' и 'Уровень 2 (Направление расходов)'")
+
+    def get_cell(row: tuple, col: int | None) -> str | None:
+        if col is None or col < 0 or col >= len(row): return None
+        v = row[col]
+        return str(v).strip() if v is not None else None
+
+    def to_bool(v: str | None) -> bool:
+        if v is None: return True
+        return v.lower() in ("да", "yes", "true", "1", "+")
+
+    def to_dec(v: str | None):
+        if not v: return None
+        try: return Decimal(v.replace(" ", "").replace(",", ".").replace("\xa0", ""))
+        except: return None
+
+    from app.models.subsidy import Subsidy
+    sub_rows = (await db.execute(select(Subsidy))).scalars().all()
+    sub_by_name = {s.name.lower().strip(): s.id for s in sub_rows}
+
+    existing_cats = (await db.execute(select(FeoCategory))).scalars().all()
+    cat_cache: dict[tuple, FeoCategory] = {}
+    for c in existing_cats:
+        cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
+
+    created = 0; updated = 0; skipped = 0; errors: list[dict] = []
+
+    async def find_or_create(subsidy_id: int, parent_id, name: str, level: int) -> FeoCategory:
+        key = (subsidy_id, parent_id, name.lower().strip())
+        if key in cat_cache:
+            return cat_cache[key]
+        cat = FeoCategory(
+            name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
+            is_active=True,
+        )
+        db.add(cat)
+        await db.flush()
+        cat_cache[key] = cat
+        return cat
+
+    for row_num, row in enumerate(rows, start=2):
+        sub_name = get_cell(row, c_subsidy)
+        if not sub_name or sub_name.startswith("←"):
+            skipped += 1
+            continue
+
+        lvl2_name = get_cell(row, c_lvl2)
+        if not lvl2_name or lvl2_name.startswith("←"):
+            skipped += 1
+            continue
+
+        subsidy_id = sub_by_name.get(sub_name.lower().strip())
+        if not subsidy_id:
+            errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
+            continue
+
+        lvl3_name = get_cell(row, c_lvl3)
+        lvl4_name = get_cell(row, c_lvl4)
+        lvl5_name = get_cell(row, c_lvl5)
+
+        code      = get_cell(row, c_code)
+        appendix  = get_cell(row, c_appendix)
+        budget    = to_dec(get_cell(row, c_budget))
+        is_active = to_bool(get_cell(row, c_active))
+
+        item_qty    = to_dec(get_cell(row, c_qty))
+        item_unit   = get_cell(row, c_unit)
+        item_amount = to_dec(get_cell(row, c_item_amt))
+
+        try:
+            cat_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
+            if cat_l1.id and (subsidy_id, None, lvl2_name.lower().strip()) not in {k for k in cat_cache if cat_cache[k] is cat_l1 and cat_cache[k].id == cat_l1.id}:
+                created += 1
+            leaf = cat_l1
+
+            if lvl3_name:
+                is_new_l2 = (subsidy_id, cat_l1.id, lvl3_name.lower().strip()) not in cat_cache
+                cat_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
+                if is_new_l2 and cat_l2.id:
+                    created += 1
+                leaf = cat_l2
+
+                if lvl4_name:
+                    is_new_l3 = (subsidy_id, cat_l2.id, lvl4_name.lower().strip()) not in cat_cache
+                    cat_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
+                    if is_new_l3 and cat_l3.id:
+                        created += 1
+                    leaf = cat_l3
+
+            changed = False
+            if code is not None and leaf.code != code:
+                leaf.code = code; changed = True
+            if appendix is not None and leaf.appendix != appendix:
+                leaf.appendix = appendix; changed = True
+            if budget is not None and leaf.budget != budget:
+                leaf.budget = budget; changed = True
+            if leaf.is_active != is_active:
+                leaf.is_active = is_active; changed = True
+            if changed:
+                updated += 1
+
+            if lvl5_name and lvl5_name not in ("←", ""):
+                from app.models.feo_planned_item import FeoPlannedItem
+                existing_item = (await db.execute(
+                    select(FeoPlannedItem).where(
+                        FeoPlannedItem.feo_category_id == leaf.id,
+                        FeoPlannedItem.name == lvl5_name,
+                    )
+                )).scalar_one_or_none()
+                if not existing_item:
+                    pi = FeoPlannedItem(
+                        feo_category_id=leaf.id,
+                        name=lvl5_name,
+                        quantity=item_qty,
+                        unit=item_unit,
+                        amount=item_amount,
+                        is_active=is_active,
+                    )
+                    db.add(pi)
+                    await db.flush()
+                    created += 1
+                else:
+                    ch2 = False
+                    if item_qty is not None and existing_item.quantity != item_qty:
+                        existing_item.quantity = item_qty; ch2 = True
+                    if item_unit is not None and existing_item.unit != item_unit:
+                        existing_item.unit = item_unit; ch2 = True
+                    if item_amount is not None and existing_item.amount != item_amount:
+                        existing_item.amount = item_amount; ch2 = True
+                    if ch2:
+                        updated += 1
+                    else:
+                        skipped += 1
+
+        except Exception as e:
+            errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
+
+    await db.commit()
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
+
+
 @router.post("/import")
 async def import_feo_from_excel(
     file: UploadFile = File(...),
@@ -257,156 +524,98 @@ async def import_feo_from_excel(
     c_budget   = find_col(["финансирование", "бюджет", "budget"])
     c_active   = find_col(["активна", "активен", "active"])
 
-    if c_subsidy is None or c_lvl2 is None:
-        raise HTTPException(400, "Не найдены обязательные столбцы: 'Субсидия' и 'Уровень 2 (Направление расходов)'")
+    return await _do_feo_import(
+        rows=rows[1:],
+        c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4,
+        c_lvl5=c_lvl5, c_qty=c_qty, c_unit=c_unit, c_item_amt=c_item_amt,
+        c_code=c_code, c_appendix=c_appendix, c_budget=c_budget, c_active=c_active,
+        db=db,
+    )
 
-    def get_cell(row: tuple, col: int | None) -> str | None:
-        if col is None or col >= len(row): return None
-        v = row[col]
-        return str(v).strip() if v is not None else None
 
-    def to_bool(v: str | None) -> bool:
-        if v is None: return True
-        return v.lower() in ("да", "yes", "true", "1", "+")
+@router.post("/import-mapped")
+async def import_feo_mapped(
+    file: UploadFile = File(...),
+    sheet_name: str = Query(""),
+    header_row_offset: int = Query(0),
+    col_subsidy: int = Query(-1),
+    col_lvl2: int = Query(-1),
+    col_lvl3: int = Query(-1),
+    col_lvl4: int = Query(-1),
+    col_lvl5: int = Query(-1),
+    col_code: int = Query(-1),
+    col_appendix: int = Query(-1),
+    col_budget: int = Query(-1),
+    col_quantity: int = Query(-1),
+    col_unit: int = Query(-1),
+    col_item_amt: int = Query(-1),
+    col_active: int = Query(-1),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(*ADMIN_ROLES)),
+):
+    """Импорт категорий ФЭО с пользовательским маппингом столбцов."""
+    if col_subsidy < 0 or col_lvl2 < 0:
+        raise HTTPException(400, "Не указаны обязательные столбцы: Субсидия и Уровень 2")
 
-    def to_dec(v: str | None):
-        if not v: return None
-        try: return Decimal(v.replace(" ", "").replace(",", ".").replace("\xa0", ""))
-        except: return None
+    fname = (file.filename or "").lower()
+    content = await file.read()
 
-    from app.models.subsidy import Subsidy
-    sub_rows = (await db.execute(select(Subsidy))).scalars().all()
-    sub_by_name = {s.name.lower().strip(): s.id for s in sub_rows}
+    try:
+        if fname.endswith(".xls"):
+            try:
+                import xlrd as _xlrd_mod
+            except ImportError:
+                raise HTTPException(500, "xlrd не установлен")
+            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
+            ws_names = wb_xls.sheet_names()
+            target_sheet = sheet_name if sheet_name in ws_names else ws_names[0]
+            ws_xls = wb_xls.sheet_by_name(target_sheet)
+            all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+        elif fname.endswith((".docx", ".doc")):
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows.append([cell.text.strip() for cell in row.cells])
+        else:
+            if load_workbook is None:
+                raise HTTPException(500, "openpyxl не установлен")
+            wb = load_workbook(BytesIO(content), data_only=True)
+            ws_names = wb.sheetnames
+            target_sheet = sheet_name if sheet_name in ws_names else ws_names[0]
+            ws = wb[target_sheet]
+            all_rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл: {e}")
 
-    # Кэш: (subsidy_id, parent_id_or_None, name_lower) → FeoCategory
-    existing_cats = (await db.execute(select(FeoCategory))).scalars().all()
-    cat_cache: dict[tuple, FeoCategory] = {}
-    for c in existing_cats:
-        cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
+    if len(all_rows) <= header_row_offset + 1:
+        raise HTTPException(400, "Файл пустой или не содержит данных после строки заголовка")
 
-    created = 0; updated = 0; skipped = 0; errors: list[dict] = []
+    data_rows = all_rows[header_row_offset + 1:]
 
-    async def find_or_create(subsidy_id: int, parent_id, name: str, level: int) -> FeoCategory:
-        key = (subsidy_id, parent_id, name.lower().strip())
-        if key in cat_cache:
-            return cat_cache[key]
-        cat = FeoCategory(
-            name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
-            is_active=True,
-        )
-        db.add(cat)
-        await db.flush()
-        cat_cache[key] = cat
-        return cat
-
-    for row_num, row in enumerate(rows[1:], start=2):
-        # Пропускаем строки-комментарии (строка 6 в шаблоне — подсказка)
-        sub_name = get_cell(row, c_subsidy)
-        if not sub_name or sub_name.startswith("←"):
-            skipped += 1
-            continue
-
-        lvl2_name = get_cell(row, c_lvl2)
-        if not lvl2_name or lvl2_name.startswith("←"):
-            skipped += 1
-            continue
-
-        subsidy_id = sub_by_name.get(sub_name.lower().strip())
-        if not subsidy_id:
-            errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
-            continue
-
-        lvl3_name = get_cell(row, c_lvl3) if c_lvl3 is not None else None
-        lvl4_name = get_cell(row, c_lvl4) if c_lvl4 is not None else None
-        lvl5_name = get_cell(row, c_lvl5) if c_lvl5 is not None else None
-
-        code      = get_cell(row, c_code)
-        appendix  = get_cell(row, c_appendix)
-        budget    = to_dec(get_cell(row, c_budget))
-        is_active = to_bool(get_cell(row, c_active))
-
-        # Уровень 5 (плановый товар)
-        item_qty    = to_dec(get_cell(row, c_qty)) if c_qty is not None else None
-        item_unit   = get_cell(row, c_unit) if c_unit is not None else None
-        item_amount = to_dec(get_cell(row, c_item_amt)) if c_item_amt is not None else None
-
-        try:
-            # Уровень 2 → FeoCategory.level=1
-            cat_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
-            if cat_l1.id and (subsidy_id, None, lvl2_name.lower().strip()) not in {k for k in cat_cache if cat_cache[k] is cat_l1 and cat_cache[k].id == cat_l1.id}:
-                created += 1
-            leaf = cat_l1
-
-            if lvl3_name:
-                # Уровень 3 → FeoCategory.level=2, родитель = l1
-                is_new_l2 = (subsidy_id, cat_l1.id, lvl3_name.lower().strip()) not in cat_cache
-                cat_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
-                if is_new_l2 and cat_l2.id:
-                    created += 1
-                leaf = cat_l2
-
-                if lvl4_name:
-                    # Уровень 4 → FeoCategory.level=3, родитель = l2
-                    is_new_l3 = (subsidy_id, cat_l2.id, lvl4_name.lower().strip()) not in cat_cache
-                    cat_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
-                    if is_new_l3 and cat_l3.id:
-                        created += 1
-                    leaf = cat_l3
-
-            # Применяем атрибуты к листовому узлу (уровень 4 или выше)
-            changed = False
-            if code is not None and leaf.code != code:
-                leaf.code = code; changed = True
-            if appendix is not None and leaf.appendix != appendix:
-                leaf.appendix = appendix; changed = True
-            if budget is not None and leaf.budget != budget:
-                leaf.budget = budget; changed = True
-            if leaf.is_active != is_active:
-                leaf.is_active = is_active; changed = True
-            if changed:
-                updated += 1
-
-            # Уровень 5 → FeoPlannedItem (если заполнено)
-            if lvl5_name and lvl5_name not in ("←", ""):
-                from app.models.feo_planned_item import FeoPlannedItem
-                # Проверяем дубликат: (feo_category_id, name)
-                existing_item = (await db.execute(
-                    select(FeoPlannedItem).where(
-                        FeoPlannedItem.feo_category_id == leaf.id,
-                        FeoPlannedItem.name == lvl5_name,
-                    )
-                )).scalar_one_or_none()
-                if not existing_item:
-                    pi = FeoPlannedItem(
-                        feo_category_id=leaf.id,
-                        name=lvl5_name,
-                        quantity=item_qty,
-                        unit=item_unit,
-                        amount=item_amount,
-                        is_active=is_active,
-                    )
-                    db.add(pi)
-                    await db.flush()
-                    created += 1
-                else:
-                    # Обновляем если изменились
-                    ch2 = False
-                    if item_qty is not None and existing_item.quantity != item_qty:
-                        existing_item.quantity = item_qty; ch2 = True
-                    if item_unit is not None and existing_item.unit != item_unit:
-                        existing_item.unit = item_unit; ch2 = True
-                    if item_amount is not None and existing_item.amount != item_amount:
-                        existing_item.amount = item_amount; ch2 = True
-                    if ch2:
-                        updated += 1
-                    else:
-                        skipped += 1
-
-        except Exception as e:
-            errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
-
-    await db.commit()
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
+    return await _do_feo_import(
+        rows=data_rows,
+        c_subsidy=col_subsidy,
+        c_lvl2=col_lvl2,
+        c_lvl3=col_lvl3 if col_lvl3 >= 0 else None,
+        c_lvl4=col_lvl4 if col_lvl4 >= 0 else None,
+        c_lvl5=col_lvl5 if col_lvl5 >= 0 else None,
+        c_qty=col_quantity if col_quantity >= 0 else None,
+        c_unit=col_unit if col_unit >= 0 else None,
+        c_item_amt=col_item_amt if col_item_amt >= 0 else None,
+        c_code=col_code if col_code >= 0 else None,
+        c_appendix=col_appendix if col_appendix >= 0 else None,
+        c_budget=col_budget if col_budget >= 0 else None,
+        c_active=col_active if col_active >= 0 else None,
+        db=db,
+    )
 
 
 @router.get("/export")

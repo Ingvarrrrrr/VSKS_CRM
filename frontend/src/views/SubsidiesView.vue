@@ -1207,7 +1207,7 @@
     </v-dialog>
 
     <!-- ── Import FEO dialog ── -->
-    <v-dialog v-model="feoImport.show" max-width="540" persistent>
+    <v-dialog v-model="feoImport.show" max-width="780" persistent>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-upload" color="primary" class="mr-2" />
@@ -1216,15 +1216,15 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
+
+          <!-- Step 1: File upload -->
           <template v-if="feoImport.step === 1">
             <p class="text-body-2 text-medium-emphasis mb-4">
-              Загрузите файл .xlsx с колонками:<br>
-              <strong>Наименование</strong> (обяз.), <strong>Субсидия</strong> (обяз.),
-              Родительская категория, Код, Приложение, Финансирование, Активна (да/нет).
+              Загрузите файл .xlsx/.xls с данными. На следующем шаге вы укажете, какой столбец соответствует какому полю.
             </p>
             <v-file-input
               v-model="feoImport.fileList"
-              label="Файл Excel (.xlsx)"
+              label="Файл Excel (.xlsx / .xls)"
               accept=".xlsx,.xls"
               variant="outlined" density="compact"
               prepend-icon="mdi-file-excel"
@@ -1232,9 +1232,78 @@
               @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
             />
           </template>
-          <template v-else>
+
+          <!-- Step 2: Column mapping -->
+          <template v-if="feoImport.step === 2 && feoImport.previewData">
+            <v-select
+              v-if="feoImport.previewData.sheets.length > 1"
+              v-model="feoImport.selectedSheet"
+              :items="feoImport.previewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
+              label="Выберите лист" variant="outlined" density="compact" class="mb-3"
+              @update:model-value="feoAutoMap(feoCurrentSheet?.headers || [])"
+            />
+
+            <div class="feo-imap-grid">
+              <div v-for="target in FEO_TARGET_FIELDS" :key="target.value"
+                class="feo-imap-col"
+                :class="{
+                  'feo-imap-col--over': feoDragOverTarget === target.value,
+                  'feo-imap-col--filled': feoIsTargetFilled(target.value),
+                  'feo-imap-col--required': target.required && !feoIsTargetFilled(target.value),
+                }"
+                @dragover.prevent="feoDragOverTarget = target.value"
+                @dragleave="feoDragOverTarget = null"
+                @drop.prevent="feoOnDropToTarget(target.value, $event)">
+                <div class="feo-imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
+                <div class="feo-imap-col-body">
+                  <div v-if="feoIsTargetFilled(target.value)"
+                    class="feo-imap-card"
+                    draggable="true"
+                    @dragstart="feoOnDragStart(feoDragMapping[target.value] as number, $event)">
+                    <div class="feo-imap-card-row">
+                      <span class="feo-imap-card-name">{{ feoGetColumnLabel(feoDragMapping[target.value] as number) }}</span>
+                      <button class="feo-imap-card-x" @click.stop="feoUnmapTarget(target.value)">×</button>
+                    </div>
+                    <div class="feo-imap-card-samples">{{ feoGetSamples(feoDragMapping[target.value] as number).join(', ') || '—' }}</div>
+                  </div>
+                  <div v-else class="feo-imap-col-empty">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="feo-imap-unresolved mt-3"
+              :class="{ 'feo-imap-unresolved--over': feoDragOverTarget === '_unresolved' }"
+              @dragover.prevent="feoDragOverTarget = '_unresolved'"
+              @dragleave="feoDragOverTarget = null"
+              @drop.prevent="feoOnDropToUnresolved($event)">
+              <span class="feo-imap-unresolved-label">Не определилось</span>
+              <div class="d-flex gap-2 flex-wrap mt-1">
+                <template v-for="(_, idx) in feoCurrentHeaders" :key="idx">
+                  <div v-if="!feoIsMapped(idx) && !feoIsIgnored(idx)"
+                    class="feo-imap-card feo-imap-card--free"
+                    draggable="true"
+                    @dragstart="feoOnDragStart(idx, $event)">
+                    <div class="feo-imap-card-row">
+                      <span class="feo-imap-card-name">{{ feoGetColumnLabel(idx) }}</span>
+                      <button class="feo-imap-card-x feo-imap-card-x--grey" title="Убрать" @click.stop="feoIgnoreColumn(idx)">×</button>
+                    </div>
+                    <div class="feo-imap-card-samples">{{ feoGetSamples(idx).join(', ') || '—' }}</div>
+                  </div>
+                </template>
+                <span v-if="feoUnmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
+              </div>
+            </div>
+
+            <v-alert v-if="!feoMappingValid" type="warning" density="compact" icon="mdi-alert" class="mt-3">
+              Укажите столбцы «Субсидия» и «Уровень 2 / Направление»
+            </v-alert>
+          </template>
+
+          <!-- Step 3: Result -->
+          <template v-if="feoImport.step === 3">
             <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
               Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
+              Обновлено: <strong>{{ feoImport.result.updated ?? 0 }}</strong> &nbsp;
               Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
             </v-alert>
             <div v-if="feoImport.result?.errors?.length" class="mt-2">
@@ -1245,12 +1314,21 @@
               </v-list>
             </div>
           </template>
+
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
+          <v-btn v-if="feoImport.step === 2" variant="text" @click="feoImport.step = 1">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 3 ? 'Закрыть' : 'Отмена' }}</v-btn>
           <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
-            :disabled="!feoImport.file" @click="doFeoImport">Загрузить</v-btn>
+            :disabled="!feoImport.file" @click="doFeoImport">Далее</v-btn>
+          <v-btn v-if="feoImport.step === 2" color="success" variant="flat"
+            :loading="feoImport.loading" :disabled="!feoMappingValid"
+            @click="doFeoMappedImport">Импортировать</v-btn>
+          <v-btn v-if="feoImport.step === 3" color="primary" variant="flat"
+            @click="closeFeoImport">Готово</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1605,8 +1683,119 @@ const dragOverId = ref<number | null>(null)
 // FEO Import
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
-  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  loading: false,
+  result: null as { created: number; updated?: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  previewData: null as any,
+  selectedSheet: '',
 })
+
+// FEO column mapping
+const FEO_TARGET_FIELDS = [
+  { value: 'subsidy',  title: 'Субсидия',              required: true },
+  { value: 'lvl2',     title: 'Уровень 2 / Направление', required: true },
+  { value: 'lvl3',     title: 'Уровень 3 / Тип расходов', required: false },
+  { value: 'lvl4',     title: 'Уровень 4 / Конкретизир.', required: false },
+  { value: 'lvl5',     title: 'Уровень 5 / Плановый товар', required: false },
+  { value: 'code',     title: 'Код',                   required: false },
+  { value: 'appendix', title: 'Приложение',            required: false },
+  { value: 'budget',   title: 'Финансирование',        required: false },
+  { value: 'quantity', title: 'Количество',            required: false },
+  { value: 'unit',     title: 'Ед. изм.',              required: false },
+  { value: 'item_amt', title: 'Сумма плановая',        required: false },
+  { value: 'active',   title: 'Активна',               required: false },
+]
+const feoDragMapping = ref<Record<string, number | null>>({})
+const feoIgnoredCols = ref<number[]>([])
+const feoDragOverTarget = ref<string | null>(null)
+
+const feoCurrentSheet = computed(() => {
+  if (!feoImport.previewData) return null
+  const sheets = feoImport.previewData.sheets
+  return sheets.find((s: any) => s.name === feoImport.selectedSheet) || sheets[0]
+})
+const feoCurrentHeaders = computed(() => feoCurrentSheet.value?.headers || [])
+const feoMappingValid = computed(() =>
+  feoDragMapping.value['subsidy'] != null && feoDragMapping.value['lvl2'] != null
+)
+const feoUnmappedCount = computed(() =>
+  feoCurrentHeaders.value.filter((_: any, i: number) => !feoIsMapped(i) && !feoIsIgnored(i)).length
+)
+
+function feoIsMapped(idx: number): boolean {
+  return Object.values(feoDragMapping.value).includes(idx)
+}
+function feoIsIgnored(idx: number): boolean {
+  return feoIgnoredCols.value.includes(idx)
+}
+function feoIsTargetFilled(field: string): boolean {
+  return feoDragMapping.value[field] != null
+}
+function feoGetColumnLabel(idx: number): string {
+  return (feoCurrentHeaders.value[idx] as string) || `Столбец ${idx + 1}`
+}
+function feoGetSamples(idx: number): string[] {
+  const sample = feoCurrentSheet.value?.sample || []
+  return (sample as any[][]).slice(0, 1)
+    .map((row: any[]) => String(row[idx] ?? '').trim())
+    .filter(Boolean)
+}
+function feoOnDragStart(idx: number, e: DragEvent) {
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(idx))
+}
+function feoOnDropToTarget(field: string, e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  feoDragMapping.value[field] = idx
+  feoDragOverTarget.value = null
+}
+function feoOnDropToUnresolved(e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  feoDragOverTarget.value = null
+}
+function feoUnmapTarget(field: string) {
+  feoDragMapping.value[field] = null
+}
+function feoIgnoreColumn(idx: number) {
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  if (!feoIgnoredCols.value.includes(idx)) feoIgnoredCols.value.push(idx)
+}
+
+function feoAutoMap(headers: string[]) {
+  const mapping: Record<string, number | null> = {}
+  for (const f of FEO_TARGET_FIELDS) mapping[f.value] = null
+  const KEYWORDS: Record<string, string[]> = {
+    subsidy:  ['субсидия'],
+    lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
+    lvl3:     ['уровень 3', 'тип расходов', 'level 3'],
+    lvl4:     ['уровень 4', 'конкретизир', 'level 4'],
+    lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
+    code:     ['код'],
+    appendix: ['приложение'],
+    budget:   ['финансирование', 'бюджет'],
+    quantity: ['количество', 'кол-во'],
+    unit:     ['ед. изм', 'ед.изм', 'единица'],
+    item_amt: ['сумма плановая', 'сумма (ур.5)', 'сумма ур'],
+    active:   ['активна', 'активен'],
+  }
+  for (const [field, kws] of Object.entries(KEYWORDS)) {
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i].toLowerCase()
+      if (kws.some(kw => h.includes(kw))) {
+        mapping[field] = i
+        break
+      }
+    }
+  }
+  feoDragMapping.value = mapping
+}
 
 // ── FEO Level 5: Плановые позиции vs Фактические ──
 interface FeoPlannedItem {
@@ -2331,7 +2520,54 @@ async function doFeoImport() {
     const fd = new FormData()
     fd.append('file', feoImport.file)
     const token = localStorage.getItem('auth_token')
-    const res = await fetch('/api/feo-categories/import', {
+    const res = await fetch('/api/feo-categories/import-preview', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      showSnack(err.detail || 'Ошибка чтения файла', 'error'); return
+    }
+    const data = await res.json()
+    feoImport.previewData = data
+    feoImport.selectedSheet = data.sheets[0]?.name || ''
+    feoIgnoredCols.value = []
+    feoAutoMap(data.sheets[0]?.headers || [])
+    feoImport.step = 2
+  } catch {
+    showSnack('Ошибка чтения файла', 'error')
+  } finally {
+    feoImport.loading = false
+  }
+}
+
+async function doFeoMappedImport() {
+  if (!feoImport.file) return
+  feoImport.loading = true
+  try {
+    const m = feoDragMapping.value
+    const sheet = feoCurrentSheet.value
+    const params = new URLSearchParams({
+      sheet_name: feoImport.selectedSheet,
+      header_row_offset: String(sheet?.header_row_offset ?? 0),
+      col_subsidy:  String(m['subsidy']  ?? -1),
+      col_lvl2:     String(m['lvl2']     ?? -1),
+      col_lvl3:     String(m['lvl3']     ?? -1),
+      col_lvl4:     String(m['lvl4']     ?? -1),
+      col_lvl5:     String(m['lvl5']     ?? -1),
+      col_code:     String(m['code']     ?? -1),
+      col_appendix: String(m['appendix'] ?? -1),
+      col_budget:   String(m['budget']   ?? -1),
+      col_quantity: String(m['quantity'] ?? -1),
+      col_unit:     String(m['unit']     ?? -1),
+      col_item_amt: String(m['item_amt'] ?? -1),
+      col_active:   String(m['active']   ?? -1),
+    })
+    const fd = new FormData()
+    fd.append('file', feoImport.file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/feo-categories/import-mapped?${params}`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: fd,
@@ -2341,7 +2577,7 @@ async function doFeoImport() {
       showSnack(err.detail || 'Ошибка импорта', 'error'); return
     }
     feoImport.result = await res.json()
-    feoImport.step = 2
+    feoImport.step = 3
     showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
   } catch {
     showSnack('Ошибка импорта', 'error')
@@ -2354,6 +2590,8 @@ function closeFeoImport() {
   const wasCreated = (feoImport.result?.created ?? 0) > 0
   feoImport.show = false; feoImport.step = 1
   feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  feoImport.previewData = null; feoImport.selectedSheet = ''
+  feoDragMapping.value = {}; feoIgnoredCols.value = []
   if (wasCreated && selectedId.value) { loadFeo(selectedId.value); syncFeoFilled() }
 }
 
@@ -3293,5 +3531,126 @@ onMounted(loadAll)
   bottom: 5%;
   width: 3px;
   background: rgb(59, 130, 246);
+}
+
+/* ── FEO Column Mapping ── */
+.feo-imap-grid {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.feo-imap-col {
+  flex: 1;
+  min-width: 100px;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  transition: border-color 0.15s, background 0.15s;
+}
+.feo-imap-col--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.feo-imap-col--filled {
+  border-style: solid;
+  border-color: #43A047;
+  background: #f6fff6;
+}
+.feo-imap-col--required {
+  border-color: #ef9a9a;
+  background: #fff8f8;
+}
+.feo-imap-col-hdr {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #555;
+  padding: 5px 7px 3px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feo-imap-col-body {
+  padding: 5px;
+  min-height: 58px;
+}
+.feo-imap-col-empty {
+  font-size: 10px;
+  color: #ccc;
+  text-align: center;
+  margin-top: 10px;
+  font-style: italic;
+}
+.feo-imap-card {
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  padding: 4px 6px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.feo-imap-card:hover {
+  border-color: #1976D2;
+  box-shadow: 0 1px 5px rgba(25, 118, 210, 0.15);
+}
+.feo-imap-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.feo-imap-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.feo-imap-card-x {
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.feo-imap-card-x:hover { color: #e53935; }
+.feo-imap-card-x--grey { color: #bbb; }
+.feo-imap-card-samples {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+.feo-imap-card--free {
+  background: #fafafa;
+}
+.feo-imap-unresolved {
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 44px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.feo-imap-unresolved--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.feo-imap-unresolved-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #aaa;
+  letter-spacing: 0.3px;
 }
 </style>

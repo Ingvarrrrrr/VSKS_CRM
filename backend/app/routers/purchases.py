@@ -2240,10 +2240,37 @@ async def import_items_mapped(
     new_in_catalog = 0
     errors_list = []
 
+    # Keywords that indicate non-product rows (totals, footers, signatures)
+    _SKIP_KEYWORDS = {
+        'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
+        'поставщик', 'покупатель', 'заказчик', 'исполнитель',
+        'генеральный директор', 'директор', 'бухгалтер', 'подпись',
+        'м.п.', 'м.п', 'печать', 'ооо', 'оао', 'зао', 'ип ',
+        'инн', 'кпп', 'огрн', 'р/с', 'к/с', 'бик',
+        'адрес', 'телефон', 'email', 'банк',
+        'примечание', 'основание', 'договор №', 'счёт №', 'счет №',
+    }
+
+    def _is_junk_row(name_val: str) -> bool:
+        """Check if this looks like a footer/total/signature row, not a product."""
+        low = name_val.lower().strip()
+        # Direct match with skip keywords
+        for kw in _SKIP_KEYWORDS:
+            if low.startswith(kw) or low == kw:
+                return True
+        # Row starts with "итого" variants like "Итого с НДС:", "Итого:"
+        if low.startswith('итого'):
+            return True
+        return False
+
     for row_idx, row in enumerate(data_iter):
         try:
             item_name = _cell(row, col_item_name)
             if not item_name:
+                continue
+
+            # Skip junk rows (totals, footers, signatures)
+            if _is_junk_row(item_name):
                 continue
 
             description = _cell(row, col_description) if col_description >= 0 else None

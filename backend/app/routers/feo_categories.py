@@ -218,8 +218,8 @@ async def feo_import_preview(
 ):
     """Read Excel/DOCX file and return headers + sample rows for column mapping."""
     fname = (file.filename or "").lower()
-    if not fname.endswith((".xlsx", ".xls", ".docx", ".doc")):
-        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx")
+    if not fname.endswith((".xlsx", ".xls", ".docx", ".doc", ".pdf")):
+        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx, .pdf")
 
     content = await file.read()
 
@@ -240,6 +240,27 @@ async def feo_import_preview(
         return best_idx
 
     try:
+        # ── PDF ──
+        if fname.endswith(".pdf"):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows = []
+            for page in pdf.pages:
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows.extend([[str(c).strip() if c else "" for c in row] for row in t])
+            pdf.close()
+            if not all_rows:
+                raise HTTPException(400, "Не удалось извлечь таблицы из PDF")
+            hdr_idx = _detect_hdr(all_rows)
+            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
+            data = all_rows[hdr_idx + 1:]
+            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+            return {"sheets": [{"name": "PDF", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+
         # ── DOCX ──
         if fname.endswith((".docx", ".doc")):
             try:
@@ -571,6 +592,18 @@ async def import_feo_mapped(
             target_sheet = sheet_name if sheet_name in ws_names else ws_names[0]
             ws_xls = wb_xls.sheet_by_name(target_sheet)
             all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+        elif fname.endswith(".pdf"):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows = []
+            for page in pdf.pages:
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows.extend([[str(c).strip() if c else "" for c in row] for row in t])
+            pdf.close()
         elif fname.endswith((".docx", ".doc")):
             try:
                 from docx import Document as _DDoc

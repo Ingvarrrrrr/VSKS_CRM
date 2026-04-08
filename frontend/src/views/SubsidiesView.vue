@@ -1224,10 +1224,10 @@
             </p>
             <v-file-input
               v-model="feoImport.fileList"
-              label="Файл Excel (.xlsx / .xls)"
-              accept=".xlsx,.xls"
+              label="Файл (Excel, PDF, Word)"
+              accept=".xlsx,.xls,.pdf,.docx,.doc"
               variant="outlined" density="compact"
-              prepend-icon="mdi-file-excel"
+              prepend-icon="mdi-file-upload"
               show-size
               @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
             />

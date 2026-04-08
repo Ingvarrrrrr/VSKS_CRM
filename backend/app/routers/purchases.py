@@ -2213,7 +2213,13 @@ async def import_items_mapped(
         if v is None:
             return None
         try:
-            return Decimal(str(v).replace(',', '.').replace(' ', '').replace('\xa0', ''))
+            s = str(v).replace(',', '.').replace(' ', '').replace('\xa0', '')
+            # Strip non-numeric suffix (e.g. "руб.", "шт.", "р.")
+            import re
+            m = re.match(r'^([0-9]+\.?[0-9]*)', s)
+            if not m:
+                return None
+            return Decimal(m.group(1))
         except Exception:
             return None
 
@@ -2234,59 +2240,66 @@ async def import_items_mapped(
     new_in_catalog = 0
     errors_list = []
 
-    for row in data_iter:
-        item_name = _cell(row, col_item_name)
-        if not item_name:
+    for row_idx, row in enumerate(data_iter):
+        try:
+            item_name = _cell(row, col_item_name)
+            if not item_name:
+                continue
+
+            description = _cell(row, col_description) if col_description >= 0 else None
+            quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
+            if not quantity:
+                quantity = Decimal('1')
+            unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
+            total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+            unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+
+            # Calculate missing values
+            if not total_price and unit_price:
+                total_price = quantity * unit_price
+            elif not unit_price and total_price and quantity:
+                unit_price = total_price / quantity
+
+            # VAT info → append to description
+            vat_str = _cell(row, col_vat) if col_vat >= 0 else None
+            if vat_str and description:
+                description = f"{description} (НДС: {vat_str})"
+            elif vat_str:
+                description = f"НДС: {vat_str}"
+
+            # Auto-match or create in catalog
+            matched_product = product_by_name.get(item_name.lower().strip())
+            if matched_product:
+                product_id = matched_product.id
+                matched_catalog += 1
+                if not unit_price and matched_product.price:
+                    unit_price = matched_product.price
+                    total_price = quantity * unit_price
+            else:
+                product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
+                product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+                new_in_catalog += 1
+
+            item = PurchaseItem(
+                purchase_id=pid,
+                product_id=product_id,
+                item_name=item_name,
+                item_type='товар',
+                quantity=quantity,
+                unit=unit,
+                unit_price=unit_price,
+                total_price=total_price,
+            )
+            db.add(item)
+            added += 1
+        except Exception as e:
+            errors_list.append(f"Строка {row_idx + 1}: {e}")
             continue
 
-        description = _cell(row, col_description) if col_description >= 0 else None
-        quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
-        if not quantity:
-            quantity = Decimal('1')
-        unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
-        total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
-        unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
-
-        # Calculate missing values
-        if not total_price and unit_price:
-            total_price = quantity * unit_price
-        elif not unit_price and total_price and quantity:
-            unit_price = total_price / quantity
-
-        # VAT info → append to description
-        vat_str = _cell(row, col_vat) if col_vat >= 0 else None
-        if vat_str and description:
-            description = f"{description} (НДС: {vat_str})"
-        elif vat_str:
-            description = f"НДС: {vat_str}"
-
-        # Auto-match or create in catalog
-        matched_product = product_by_name.get(item_name.lower().strip())
-        if matched_product:
-            product_id = matched_product.id
-            matched_catalog += 1
-            if not unit_price and matched_product.price:
-                unit_price = matched_product.price
-                total_price = quantity * unit_price
-        else:
-            product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
-            product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
-            new_in_catalog += 1
-
-        item = PurchaseItem(
-            purchase_id=pid,
-            product_id=product_id,
-            item_name=item_name,
-            item_type='товар',
-            quantity=quantity,
-            unit=unit,
-            unit_price=unit_price,
-            total_price=total_price,
-        )
-        db.add(item)
-        added += 1
-
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка сохранения: {e}")
     return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
 
 

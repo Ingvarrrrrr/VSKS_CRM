@@ -199,6 +199,7 @@ class FeoCategoryCreate(BaseModel):
     appendix: Optional[str] = None
     is_active: bool = True
     budget: Optional[float] = None
+    planned_quantity: Optional[float] = None
 
 class FeoCategoryOut(BaseModel):
     id: int
@@ -210,6 +211,7 @@ class FeoCategoryOut(BaseModel):
     appendix: Optional[str] = None
     is_active: bool = True
     budget: Optional[float] = None
+    planned_quantity: Optional[float] = None
     model_config = {"from_attributes": True}
 
 class FeoCategoryTree(FeoCategoryOut):

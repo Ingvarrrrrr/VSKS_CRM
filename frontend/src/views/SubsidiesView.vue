@@ -220,6 +220,7 @@
                       Финансирование по ФЭО
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
+                    <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактически запланировано
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
@@ -296,6 +297,31 @@
                         </div>
                       </td>
 
+                      <!-- Плановое количество -->
+                      <td class="feo-td feo-td-num">
+                        <div v-if="isAutoQtyNode(node)" class="d-flex align-center justify-end">
+                          <span class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}</span>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                            title="Количество автоматически считается из дочерних"
+                          >авто</v-chip>
+                        </div>
+                        <div v-else-if="inlineQtyId === node.id" class="d-flex align-center justify-end">
+                          <input
+                            ref="inlineQtyInputEl"
+                            v-model="inlineQtyVal"
+                            type="number"
+                            class="inline-input"
+                            @blur="saveInlineQty(node)"
+                            @keydown.enter="saveInlineQty(node)"
+                            @keydown.esc="inlineQtyId = null"
+                          />
+                        </div>
+                        <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
+                          <span v-if="feoQtyFor(node) > 0" class="feo-amount">{{ feoQtyFor(node) }}</span>
+                          <span v-else class="feo-set-hint">—</span>
+                        </div>
+                      </td>
+
                       <!-- Фактически запланировано -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
@@ -328,7 +354,7 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="4" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
+                      <td colspan="5" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
@@ -503,7 +529,7 @@
                     @dragleave="dragOverId = null"
                     @drop.prevent="onDropToRoot"
                   >
-                    <td colspan="4" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <td colspan="5" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
                       <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
                       Переместить на верхний уровень (корень)
                     </td>
@@ -514,6 +540,9 @@
                     <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
                     <td class="feo-td" />
@@ -1470,7 +1499,7 @@ interface SubsidyRow {
 interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
   level: number; name: string; code: string | null; appendix: string | null
-  is_active: boolean; budget: number | null
+  is_active: boolean; budget: number | null; planned_quantity: number | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -1563,6 +1592,11 @@ const feoSearch = ref('')
 const inlineBudgetId = ref<number | null>(null)
 const inlineBudgetVal = ref('')
 const inlineInputEl = ref<HTMLInputElement | null>(null)
+
+// FEO inline planned_quantity edit
+const inlineQtyId = ref<number | null>(null)
+const inlineQtyVal = ref('')
+const inlineQtyInputEl = ref<HTMLInputElement | null>(null)
 
 // FEO Drag & Drop
 const dragNodeId = ref<number | null>(null)
@@ -2112,6 +2146,41 @@ async function saveInlineBudget(node: FeoNode) {
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+}
+
+// ── Planned quantity helpers ─────────────────────
+function feoQtyFor(node: FeoNode): number {
+  if (!node.hasChildren) return node.planned_quantity != null ? Number(node.planned_quantity) : 0
+  if (node.planned_quantity != null) return Number(node.planned_quantity)
+  return node.children.reduce((acc, child) => acc + feoQtyFor(child), 0)
+}
+
+function isAutoQtyNode(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  return node.planned_quantity == null
+}
+
+async function startInlineQty(node: FeoNode) {
+  inlineQtyId.value = node.id
+  inlineQtyVal.value = node.planned_quantity != null ? String(node.planned_quantity) : ''
+  await nextTick()
+  inlineQtyInputEl.value?.focus()
+}
+
+async function saveInlineQty(node: FeoNode) {
+  if (inlineQtyId.value !== node.id) return
+  inlineQtyId.value = null
+  const val = inlineQtyVal.value.trim() === '' ? null : parseFloat(inlineQtyVal.value)
+  try {
+    await apiFetch(`/feo-categories/${node.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
+        is_active: node.is_active, budget: node.budget, subsidy_id: node.subsidy_id, planned_quantity: val }),
+    })
+    const cat = feoCategories.value.find(c => c.id === node.id)
+    if (cat) cat.planned_quantity = val
+    feoCategories.value = [...feoCategories.value]
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения количества', 'error') }
 }
 
 // ── Drag & Drop ──────────────────────────────────

@@ -13,5 +13,6 @@ class FeoCategory(Base):
     appendix = Column(String(100), nullable=True)  # Номер приложения (например, "Прил. 2")
     is_active = Column(Boolean, default=True)
     budget = Column(Numeric(15, 2), nullable=True)  # Финансирование по ФЭО (ручное или NULL = авто из детей)
+    planned_quantity = Column(Numeric(15, 2), nullable=True)  # NULL = авто из детей; значение = ручной
     parent = relationship("FeoCategory", remote_side=[id], backref="children")
     subsidy = relationship("Subsidy", back_populates="feo_categories")

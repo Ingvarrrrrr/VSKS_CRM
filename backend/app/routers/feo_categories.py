@@ -88,6 +88,7 @@ async def category_tree(
                     "level": c.level, "name": c.name, "code": c.code,
                     "appendix": c.appendix, "is_active": c.is_active,
                     "budget": float(c.budget) if c.budget is not None else None,
+                    "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
                     "children": []} for c in all_cats}
     roots = []
     for c in all_cats:
@@ -125,6 +126,7 @@ async def create_category(
         appendix=category_data.appendix,
         is_active=category_data.is_active,
         budget=category_data.budget,
+        planned_quantity=category_data.planned_quantity,
     )
     db.add(new_category)
     await db.commit()
@@ -541,6 +543,7 @@ async def update_category(
     cat.appendix = category_data.appendix
     cat.is_active = category_data.is_active
     cat.budget = category_data.budget
+    cat.planned_quantity = category_data.planned_quantity
     await db.commit()
     await db.refresh(cat)
     return cat

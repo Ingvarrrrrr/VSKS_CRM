@@ -4565,8 +4565,11 @@ async function doMappedImport() {
       body: fd,
     })
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      throw new Error(err.detail || `Ошибка ${resp.status}`)
+      const errText = await resp.text().catch(() => '')
+      console.error('import-mapped error:', resp.status, errText)
+      let detail = `Ошибка ${resp.status}`
+      try { detail = JSON.parse(errText).detail || detail } catch {}
+      throw new Error(detail)
     }
     const data = await resp.json()
     itemsImportResult.value = data

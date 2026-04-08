@@ -868,6 +868,12 @@ async def delete_category(
             detail=f"Нельзя удалить: {linked_count} закупок привязано к этой категории или дочерним."
         )
 
+    # Nullify FK references in products before deleting
+    from app.models.product import Product
+    await db.execute(
+        Product.__table__.update().where(Product.feo_category_id.in_(all_ids)).values(feo_category_id=None)
+    )
+
     # Cascade delete (children first)
     for cid in reversed(all_ids):
         obj = await db.get(FeoCategory, cid)

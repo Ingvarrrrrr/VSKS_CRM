@@ -136,7 +136,7 @@ async def create_category(
 
 @router.get("/import/template")
 async def download_feo_template():
-    """Шаблон Excel для импорта категорий ФЭО (5 уровней: A-D иерархия, E-H плановые позиции, I-L атрибуты)."""
+    """Шаблон Excel для импорта категорий ФЭО (5 уровней: A-G иерархия+кол-во, H-K плановые позиции, L-O атрибуты)."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     wb = Workbook()
@@ -145,29 +145,32 @@ async def download_feo_template():
     headers = [
         "Субсидия",                                      # A
         "Уровень 2 (Направление расходов по ФЭО)",       # B
-        "Уровень 3 (Тип расходов по ФЭО)",               # C
-        "Уровень 4 (Конкретизированный)",                # D
-        "Уровень 5 (Плановый товар/услуга)",             # E
-        "Количество (Ур.5)",                             # F
-        "Ед. измерения (Ур.5)",                          # G
-        "Сумма плановая (Ур.5)",                         # H
-        "Код",                                           # I
-        "Приложение",                                    # J
-        "Финансирование (Ур.4)",                         # K
-        "Активна",                                       # L
+        "Кол-во (Ур.2)",                                 # C
+        "Уровень 3 (Тип расходов по ФЭО)",               # D
+        "Кол-во (Ур.3)",                                 # E
+        "Уровень 4 (Конкретизированный)",                # F
+        "Кол-во (Ур.4)",                                 # G
+        "Уровень 5 (Плановый товар/услуга)",             # H
+        "Количество (Ур.5)",                             # I
+        "Ед. измерения (Ур.5)",                          # J
+        "Сумма плановая (Ур.5)",                         # K
+        "Код",                                           # L
+        "Приложение",                                    # M
+        "Финансирование",                                # N
+        "Активна",                                       # O
     ]
     ws.append(headers)
 
     # Цветовое кодирование заголовков
-    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории
-    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — позиции
+    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + их кол-во
+    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — позиции уровня 5
     fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")  # фиолетовый — атрибуты
     font_w = Font(color="FFFFFF", bold=True, size=10)
 
     for i, cell in enumerate(ws[1], start=1):
-        if i <= 4:
+        if i <= 7:
             cell.fill = fill_cat
-        elif i <= 8:
+        elif i <= 11:
             cell.fill = fill_item
         else:
             cell.fill = fill_attr
@@ -175,34 +178,37 @@ async def download_feo_template():
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = 52
 
-    # Пример: категории без плановых позиций (старый формат — совместимо)
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
+    # Пример: Ур.2 с общим количеством 500, Ур.4 с кол-вом 6
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "Техническое оснащение штаба", "", "Закупка компьютеров", "6", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
     # Пример: категория + плановые позиции уровня 5
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "Техническое оснащение штаба", "Закупка компьютеров", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "Слёт студентов-спасателей", "Услуги по организации", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "Слёт студентов-спасателей", "Услуги по организации", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "Техническое оснащение штаба", "", "Закупка компьютеров", "6", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "Техническое оснащение штаба", "", "Закупка компьютеров", "6", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "Слёт студентов-спасателей", "102", "Услуги по организации", "", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "Слёт студентов-спасателей", "102", "Услуги по организации", "", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
 
     # Комментарий в строке 7
     hints = [
         "← Точное название как в системе",
         "← Направление расходов (создаётся если нет)",
-        "← Тип расходов (если пусто — атрибуты к Ур.3)",
+        "← Кол-во для Ур.2 (необязательно)",
+        "← Тип расходов (если пусто — атрибуты к Ур.2)",
+        "← Кол-во для Ур.3 (необязательно)",
         "← Конкретизированный (если пусто — к Ур.3)",
+        "← Кол-во для Ур.4 (необязательно)",
         "← Плановый товар/услуга (необязательно)",
-        "← Кол-во (необязательно)",
+        "← Кол-во Ур.5 (необязательно)",
         "← Ед. изм. (шт, кг, услуга...)",
         "← Плановая сумма позиции",
         "← Код категории",
         "← Номер приложения",
-        "← Бюджет категории Ур.4",
+        "← Бюджет категории",
         "← да/нет",
     ]
     for col, hint in enumerate(hints, start=1):
         ws.cell(7, col).value = hint
         ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    for i, w in enumerate([18, 42, 42, 45, 45, 12, 14, 18, 10, 12, 18, 10], 1):
+    for i, w in enumerate([18, 42, 12, 42, 12, 45, 12, 45, 12, 14, 18, 10, 12, 18, 10], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -354,6 +360,9 @@ async def _do_feo_import(
     c_budget: int | None,
     c_active: int | None,
     db: AsyncSession,
+    c_qty_lvl2: int | None = None,
+    c_qty_lvl3: int | None = None,
+    c_qty_lvl4: int | None = None,
 ) -> dict:
     """Core import logic shared by /import and /import-mapped endpoints."""
 
@@ -427,10 +436,16 @@ async def _do_feo_import(
         item_unit   = get_cell(row, c_unit)
         item_amount = to_dec(get_cell(row, c_item_amt))
 
+        qty_lvl2 = to_dec(get_cell(row, c_qty_lvl2)) if c_qty_lvl2 is not None else None
+        qty_lvl3 = to_dec(get_cell(row, c_qty_lvl3)) if c_qty_lvl3 is not None else None
+        qty_lvl4 = to_dec(get_cell(row, c_qty_lvl4)) if c_qty_lvl4 is not None else None
+
         try:
             cat_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
             if cat_l1.id and (subsidy_id, None, lvl2_name.lower().strip()) not in {k for k in cat_cache if cat_cache[k] is cat_l1 and cat_cache[k].id == cat_l1.id}:
                 created += 1
+            if qty_lvl2 is not None and cat_l1.planned_quantity != qty_lvl2:
+                cat_l1.planned_quantity = qty_lvl2
             leaf = cat_l1
 
             if lvl3_name:
@@ -438,6 +453,8 @@ async def _do_feo_import(
                 cat_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
                 if is_new_l2 and cat_l2.id:
                     created += 1
+                if qty_lvl3 is not None and cat_l2.planned_quantity != qty_lvl3:
+                    cat_l2.planned_quantity = qty_lvl3
                 leaf = cat_l2
 
                 if lvl4_name:
@@ -445,6 +462,8 @@ async def _do_feo_import(
                     cat_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
                     if is_new_l3 and cat_l3.id:
                         created += 1
+                    if qty_lvl4 is not None and cat_l3.planned_quantity != qty_lvl4:
+                        cat_l3.planned_quantity = qty_lvl4
                     leaf = cat_l3
 
             changed = False
@@ -537,7 +556,13 @@ async def import_feo_from_excel(
     c_lvl3     = find_col(["уровень 3", "тип расходов", "level 3"])
     c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
     c_lvl5     = find_col(["уровень 5", "плановый товар", "level 5"])
-    c_qty      = find_col(["количество", "кол-во", "qty"])
+    c_qty      = find_col(["количество (ур.5)", "количество ур.5", "кол-во (ур.5)", "кол-во ур.5"])
+    c_qty_lvl2 = find_col(["кол-во (ур.2)", "кол-во ур.2", "количество (ур.2)"])
+    c_qty_lvl3 = find_col(["кол-во (ур.3)", "кол-во ур.3", "количество (ур.3)"])
+    c_qty_lvl4 = find_col(["кол-во (ур.4)", "кол-во ур.4", "количество (ур.4)"])
+    # Fallback: generic qty column if no specific level columns present
+    if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None:
+        c_qty = find_col(["количество", "кол-во", "qty"])
     c_unit     = find_col(["ед. изм", "единица изм", "ед.изм"])
     c_item_amt = find_col(["сумма плановая", "сумма (ур.5)", "сумма ур"])
     c_code     = find_col(["код"])
@@ -550,6 +575,7 @@ async def import_feo_from_excel(
         c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4,
         c_lvl5=c_lvl5, c_qty=c_qty, c_unit=c_unit, c_item_amt=c_item_amt,
         c_code=c_code, c_appendix=c_appendix, c_budget=c_budget, c_active=c_active,
+        c_qty_lvl2=c_qty_lvl2, c_qty_lvl3=c_qty_lvl3, c_qty_lvl4=c_qty_lvl4,
         db=db,
     )
 
@@ -571,6 +597,9 @@ async def import_feo_mapped(
     col_unit: int = Query(-1),
     col_item_amt: int = Query(-1),
     col_active: int = Query(-1),
+    col_qty_lvl2: int = Query(-1),
+    col_qty_lvl3: int = Query(-1),
+    col_qty_lvl4: int = Query(-1),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_role(*ADMIN_ROLES)),
 ):
@@ -647,6 +676,9 @@ async def import_feo_mapped(
         c_appendix=col_appendix if col_appendix >= 0 else None,
         c_budget=col_budget if col_budget >= 0 else None,
         c_active=col_active if col_active >= 0 else None,
+        c_qty_lvl2=col_qty_lvl2 if col_qty_lvl2 >= 0 else None,
+        c_qty_lvl3=col_qty_lvl3 if col_qty_lvl3 >= 0 else None,
+        c_qty_lvl4=col_qty_lvl4 if col_qty_lvl4 >= 0 else None,
         db=db,
     )
 

@@ -37,4 +37,8 @@ class Product(Base):
     tz_44fz_verified_at = Column(DateTime, nullable=True)
     tz_44fz_verified_by = Column(String(200), nullable=True)
 
+    # Кто и когда редактировал
+    updated_at = Column(DateTime, nullable=True)
+    updated_by = Column(String(200), nullable=True)  # full_name пользователя
+
     feo_category = relationship("FeoCategory", backref="products")

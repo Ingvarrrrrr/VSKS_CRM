@@ -489,6 +489,8 @@ class ProductOut(ProductCreate):
     tz_verified_by: Optional[str] = None
     tz_44fz_verified_at: Optional[datetime] = None
     tz_44fz_verified_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Product Summary (сводная по продукции)

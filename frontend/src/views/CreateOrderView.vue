@@ -1279,48 +1279,90 @@
         </v-card>
       </v-dialog>
 
-      <!-- Диалог быстрого редактирования товара (цена + ссылки) -->
-      <v-dialog v-model="quickProductEditDialog" max-width="520">
+      <!-- Диалог быстрого редактирования товара (полная карточка) -->
+      <v-dialog v-model="quickProductEditDialog" max-width="700" scrollable>
         <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">
-            Обновить товар
-            <div class="text-caption text-medium-emphasis font-weight-regular">{{ quickProductEditName }}</div>
+          <v-card-title class="text-h6 pt-4 px-6">
+            {{ quickProductEditProductId ? 'Редактировать товар' : 'Обновить товар' }}
+            <div v-if="quickProductEditMeta.updated_by" class="text-caption text-medium-emphasis mt-1">
+              Изменено: {{ quickProductEditMeta.updated_by }} — {{ formatQuickProductDate(quickProductEditMeta.updated_at) }}
+            </div>
           </v-card-title>
-          <v-card-text>
-            <div class="d-flex gap-2 align-center mb-3">
-              <v-text-field v-model.number="quickProductEditPrice" label="Цена, ₽" type="number"
-                variant="outlined" density="compact" prefix="₽" hide-details class="flex-grow-1" />
-              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-calculator"
-                @click="recalcQuickProductPrice">Пересчитать</v-btn>
-            </div>
-            <template v-if="quickProductEditProductId">
-              <div class="text-body-2 mb-2 font-weight-medium">Ссылки на товар</div>
-              <div v-for="(link, i) in quickProductEditLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-                <v-text-field v-model="link.url" label="URL" variant="outlined" density="compact"
-                  hide-details class="flex-grow-1" />
-                <v-text-field v-model.number="link.price" label="Цена" type="number" variant="outlined"
-                  density="compact" hide-details style="max-width:90px" />
-                <v-text-field v-model="link.collected_at" label="Дата" type="date" variant="outlined"
-                  density="compact" hide-details style="max-width:130px" />
-                <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
-                  @click="quickProductEditLinks.splice(i, 1)" />
-              </div>
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mt-1"
-                @click="quickProductEditLinks.push({ url: '', price: null, collected_at: new Date().toISOString().slice(0,10) })">
-                Добавить ссылку
-              </v-btn>
-              <div class="text-caption text-medium-emphasis mt-3">
-                Цена и ссылки сохранятся в каталоге. Для полного редактирования — вкладка «Товары»
-              </div>
-            </template>
-            <div v-else class="text-caption text-medium-emphasis mt-1">
-              Товар не привязан к каталогу — обновится только цена в этой закупке
-            </div>
+          <v-card-text class="px-6">
+            <v-row dense>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.name" label="Наименование *"
+                  variant="outlined" density="compact"
+                  :rules="[v => !!v || 'Обязательное поле']" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-combobox v-model="quickProductForm.product_type"
+                  :items="['товар', 'услуга', 'работа']"
+                  label="Тип товара" variant="outlined" density="compact" clearable />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="quickProductForm.category"
+                  label="Категория" variant="outlined" density="compact" clearable />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="quickProductForm.country_origin"
+                  label="Страна производства" variant="outlined" density="compact" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="d-flex gap-2 align-center">
+                  <v-text-field v-model.number="quickProductForm.price" label="Цена, ₽" type="number"
+                    variant="outlined" density="compact" prefix="₽" hide-details class="flex-grow-1" />
+                  <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-calculator"
+                    @click="recalcQuickProductPrice">Пересчитать</v-btn>
+                </div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-switch v-model="quickProductForm.is_active" label="Активен" color="success" density="compact" hide-details />
+              </v-col>
+              <v-col cols="12">
+                <v-textarea v-model="quickProductForm.description" label="Точное описание"
+                  variant="outlined" density="compact" rows="3" auto-grow />
+              </v-col>
+              <v-col cols="12">
+                <v-textarea v-model="quickProductForm.description_44fz" label="Описание для 44-ФЗ"
+                  hint="Допустимые интервалы характеристик для публикации закупки"
+                  variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
+              </v-col>
+              <v-col cols="12" v-if="quickProductForm.photo_url || quickProductForm.photo_link">
+                <img :src="quickProductForm.photo_url || quickProductForm.photo_link"
+                  style="max-width:100%;max-height:150px;object-fit:contain;border-radius:4px;border:1px solid #e0e0e0" />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.photo_url" label="Ссылка на фото"
+                  variant="outlined" density="compact" prepend-inner-icon="mdi-image-outline" />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.clarification_link" label="Уточняющая ссылка"
+                  variant="outlined" density="compact" prepend-inner-icon="mdi-link" />
+              </v-col>
+              <v-col cols="12" v-if="quickProductEditProductId">
+                <div class="text-body-2 mb-2 font-weight-medium">Ссылки для сравнения цен</div>
+                <div v-for="(link, i) in quickProductEditLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
+                  <v-text-field v-model="link.url" label="URL" variant="outlined" density="compact"
+                    hide-details class="flex-grow-1" />
+                  <v-text-field v-model.number="link.price" label="Цена" type="number" variant="outlined"
+                    density="compact" hide-details style="max-width:90px" />
+                  <v-text-field v-model="link.collected_at" label="Дата" type="date" variant="outlined"
+                    density="compact" hide-details style="max-width:130px" />
+                  <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
+                    @click="quickProductEditLinks.splice(i, 1)" />
+                </div>
+                <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mt-1"
+                  @click="quickProductEditLinks.push({ url: '', price: null, collected_at: new Date().toISOString().slice(0,10) })">
+                  Добавить ссылку
+                </v-btn>
+              </v-col>
+            </v-row>
           </v-card-text>
-          <v-card-actions>
+          <v-card-actions class="px-6 pb-4">
             <v-spacer />
             <v-btn variant="text" @click="quickProductEditDialog = false">Отмена</v-btn>
-            <v-btn color="primary" variant="tonal" :loading="savingQuickProduct" @click="saveQuickProduct">
+            <v-btn color="primary" :loading="savingQuickProduct" @click="saveQuickProduct">
               Сохранить
             </v-btn>
           </v-card-actions>
@@ -3184,16 +3226,41 @@ async function saveFileType() {
 const quickProductEditDialog = ref(false)
 const quickProductEditProductId = ref<number | null>(null)
 const quickProductEditItemIdx = ref<number>(-1)
-const quickProductEditName = ref('')
-const quickProductEditPrice = ref<number | null>(null)
 const quickProductEditLinks = ref<PriceLink[]>([])
 const savingQuickProduct = ref(false)
+const quickProductEditMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null })
+const quickProductForm = reactive({
+  name: '',
+  product_type: '' as string | null,
+  category: '' as string | null,
+  country_origin: 'Россия',
+  price: null as number | null,
+  is_active: true,
+  description: '',
+  description_44fz: '',
+  photo_url: '',
+  photo_link: '',
+  clarification_link: '',
+})
 
 async function openQuickProductEdit(item: OrderItem) {
   quickProductEditItemIdx.value = items.value.indexOf(item)
-  quickProductEditName.value = item.item_name
-  quickProductEditPrice.value = item.unit_price ?? null
   quickProductEditLinks.value = []
+  Object.assign(quickProductForm, {
+    name: item.item_name || '',
+    product_type: null,
+    category: null,
+    country_origin: 'Россия',
+    price: item.unit_price ?? null,
+    is_active: true,
+    description: '',
+    description_44fz: '',
+    photo_url: '',
+    photo_link: '',
+    clarification_link: '',
+  })
+  quickProductEditMeta.updated_at = null
+  quickProductEditMeta.updated_by = null
 
   // Resolve product_id: use existing or find by name in catalog
   let productId = item.product_id
@@ -3201,7 +3268,7 @@ async function openQuickProductEdit(item: OrderItem) {
     const match = products.value.find(p => p.name.trim().toLowerCase() === item.item_name.trim().toLowerCase())
     if (match) {
       productId = match.id
-      item.product_id = match.id  // backfill for future saves
+      item.product_id = match.id
     }
   }
   quickProductEditProductId.value = productId
@@ -3209,8 +3276,22 @@ async function openQuickProductEdit(item: OrderItem) {
   if (productId) {
     try {
       const prod = await apiFetch<any>(`/products/${productId}`)
-      quickProductEditPrice.value = prod.price ?? item.unit_price ?? null
+      Object.assign(quickProductForm, {
+        name: prod.name || item.item_name || '',
+        product_type: prod.product_type || null,
+        category: prod.category || null,
+        country_origin: prod.country_origin || 'Россия',
+        price: prod.price ?? item.unit_price ?? null,
+        is_active: prod.is_active ?? true,
+        description: prod.description || '',
+        description_44fz: prod.description_44fz || '',
+        photo_url: prod.photo_url || '',
+        photo_link: prod.photo_link || '',
+        clarification_link: prod.clarification_link || '',
+      })
       quickProductEditLinks.value = (prod.price_links || []).map((l: any) => ({ url: l.url, price: l.price ?? null, collected_at: l.collected_at ?? null }))
+      quickProductEditMeta.updated_at = prod.updated_at || null
+      quickProductEditMeta.updated_by = prod.updated_by || null
     } catch {}
   }
   quickProductEditDialog.value = true
@@ -3223,30 +3304,35 @@ function recalcQuickProductPrice() {
   const dates = [...new Set(links.map(l => l.collected_at!).filter(Boolean))].sort().reverse().slice(0, 3)
   const relevant = links.filter(l => dates.includes(l.collected_at!))
   const avg = relevant.reduce((s, l) => s + (l.price ?? 0), 0) / relevant.length
-  quickProductEditPrice.value = Math.round(avg * 100) / 100
+  quickProductForm.price = Math.round(avg * 100) / 100
 }
 
 async function saveQuickProduct() {
+  if (!quickProductForm.name.trim()) { showSnack('Укажите наименование', 'error'); return }
   savingQuickProduct.value = true
   try {
-    let finalPrice = quickProductEditPrice.value
+    let finalPrice = quickProductForm.price
     if (quickProductEditProductId.value) {
-      // Save to catalog, use returned price (recalculated from links)
+      // Full update to catalog via PUT
       const updated = await apiFetch<any>(`/products/${quickProductEditProductId.value}`, {
-        method: 'PATCH',
+        method: 'PUT',
         body: {
-          price: quickProductEditPrice.value,
+          ...quickProductForm,
+          price: quickProductForm.price || null,
           price_links: quickProductEditLinks.value.filter(l => l.url),
         },
       })
-      finalPrice = updated?.price ?? quickProductEditPrice.value
+      finalPrice = updated?.price ?? quickProductForm.price
     }
-    // Always update the order row price
-    if (quickProductEditItemIdx.value >= 0 && finalPrice != null) {
+    // Always update the order row
+    if (quickProductEditItemIdx.value >= 0) {
       const item = items.value[quickProductEditItemIdx.value]
       if (item) {
-        item.unit_price = finalPrice
-        calcItemTotal(quickProductEditItemIdx.value)
+        item.item_name = quickProductForm.name
+        if (finalPrice != null) {
+          item.unit_price = finalPrice
+          calcItemTotal(quickProductEditItemIdx.value)
+        }
       }
     }
     quickProductEditDialog.value = false
@@ -3256,6 +3342,12 @@ async function saveQuickProduct() {
   } finally {
     savingQuickProduct.value = false
   }
+}
+
+function formatQuickProductDate(d: string | null) {
+  if (!d) return ''
+  const dt = new Date(d)
+  return dt.toLocaleDateString('ru-RU') + ' ' + dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
 // ── Publications ──────────────────────────────────────────────────

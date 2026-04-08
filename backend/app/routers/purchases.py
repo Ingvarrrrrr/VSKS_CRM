@@ -1790,23 +1790,14 @@ async def items_import_template(_=Depends(require_role(*MANAGER_ROLES))):
 
 async def _upsert_product_to_catalog(db, item_name: str, item_type: str, unit_price, description: str = "") -> int:
     """Find or create a product in the global catalog. Returns product.id."""
-    name_clean = item_name.strip()
-    # Truncate name to 500 chars, move overflow to description
-    if len(name_clean) > 500:
-        overflow = name_clean[500:]
-        name_clean = name_clean[:500]
-        if description:
-            description = f"{overflow}\n{description}"
-        else:
-            description = overflow
-    norm = name_clean.lower()
+    norm = item_name.strip().lower()
     existing = (await db.execute(
         select(Product).where(func.lower(Product.name) == norm)
     )).scalar_one_or_none()
     if existing:
         return existing.id
     p = Product(
-        name=name_clean,
+        name=item_name.strip(),
         description=description or "",
         product_type=item_type or "товар",
         price=Decimal(str(unit_price)) if unit_price else Decimal("0"),
@@ -2292,7 +2283,7 @@ async def import_items_mapped(
             item = PurchaseItem(
                 purchase_id=pid,
                 product_id=product_id,
-                item_name=item_name[:500],
+                item_name=item_name,
                 item_type='товар',
                 quantity=quantity,
                 unit=unit,

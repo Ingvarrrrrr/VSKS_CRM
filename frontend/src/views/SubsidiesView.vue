@@ -938,8 +938,8 @@
             {{ feoDeleteError }}
             <div class="mt-2">
               <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-right"
-                @click="showDeleteFeoDialog = false; router.push(`/orders?subsidy_id=${feoDeleteTarget?.subsidy_id}`)">
-                Перейти к закупкам
+                @click="showDeleteFeoDialog = false; router.push(`/orders?feo_category_id=${feoDeleteTarget?.id}`)">
+                Перейти к закупкам этой категории
               </v-btn>
             </div>
           </v-alert>
@@ -1662,6 +1662,7 @@ const deleteErrorLinked  = ref(false)
 const feoEditTarget      = ref<FeoCategory | null>(null)
 const feoDeleteTarget    = ref<FeoCategory | null>(null)
 const feoDeleteError     = ref('')
+const feoDeleteLinkedIds = ref<number[]>([])
 
 // FEO search
 const feoSearch = ref('')
@@ -2829,7 +2830,14 @@ async function deleteFeoCategory() {
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
   } catch (e: any) {
-    feoDeleteError.value = e?.detail || 'Ошибка удаления'
+    const detail = e?.detail
+    if (detail && typeof detail === 'object' && detail.message) {
+      feoDeleteError.value = detail.message
+      feoDeleteLinkedIds.value = detail.feo_category_ids || []
+    } else {
+      feoDeleteError.value = typeof detail === 'string' ? detail : 'Ошибка удаления'
+      feoDeleteLinkedIds.value = []
+    }
   } finally {
     savingFeo.value = false
   }

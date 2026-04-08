@@ -857,6 +857,22 @@ async def delete_category(
     # Collect entire subtree
     all_ids = await _collect_subtree_ids(cat_id, db)
 
+    # Block deletion if purchases are linked — return their IDs for navigation
+    from app.models.purchase import Purchase
+    linked_purchases = (await db.execute(
+        select(Purchase.id, Purchase.subject).where(Purchase.feo_category_id.in_(all_ids))
+    )).all()
+    if linked_purchases:
+        purchase_ids = [p.id for p in linked_purchases]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"Нельзя удалить: {len(linked_purchases)} закупок привязано к этой категории.",
+                "purchase_ids": purchase_ids,
+                "feo_category_ids": all_ids,
+            }
+        )
+
     # Nullify FK references in products before deleting
     from app.models.product import Product
     await db.execute(
@@ -879,12 +895,6 @@ async def delete_category(
     # Delete planned items explicitly (in case DB lacks CASCADE)
     await db.execute(
         FeoPlannedItem.__table__.delete().where(FeoPlannedItem.feo_category_id.in_(all_ids))
-    )
-
-    # Nullify purchases FK (allow delete even if purchases exist — just unlink)
-    from app.models.purchase import Purchase as _P
-    await db.execute(
-        _P.__table__.update().where(_P.feo_category_id.in_(all_ids)).values(feo_category_id=None)
     )
 
     # Cascade delete (children first)

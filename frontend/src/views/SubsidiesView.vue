@@ -1691,21 +1691,21 @@ const feoImport = reactive({
 
 // FEO column mapping
 const FEO_TARGET_FIELDS = [
-  { value: 'subsidy',  title: 'Субсидия',              required: true },
-  { value: 'lvl2',     title: 'Уровень 2 / Направление', required: true },
-  { value: 'qty_lvl2', title: 'Кол-во (Ур.2)',         required: false },
-  { value: 'lvl3',     title: 'Уровень 3 / Тип расходов', required: false },
-  { value: 'qty_lvl3', title: 'Кол-во (Ур.3)',         required: false },
-  { value: 'lvl4',     title: 'Уровень 4 / Конкретизир.', required: false },
-  { value: 'qty_lvl4', title: 'Кол-во (Ур.4)',         required: false },
-  { value: 'lvl5',     title: 'Уровень 5 / Плановый товар', required: false },
-  { value: 'code',     title: 'Код',                   required: false },
-  { value: 'appendix', title: 'Приложение',            required: false },
-  { value: 'budget',   title: 'Финансирование',        required: false },
-  { value: 'quantity', title: 'Количество (Ур.5)',     required: false },
-  { value: 'unit',     title: 'Ед. изм.',              required: false },
-  { value: 'item_amt', title: 'Сумма плановая',        required: false },
-  { value: 'active',   title: 'Активна',               required: false },
+  { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
+  { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
+  { value: 'qty_lvl2', title: 'Количество для Уровня 2 (Направление)',       required: false },
+  { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
+  { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
+  { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
+  { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
+  { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
+  { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
+  { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
+  { value: 'item_amt', title: 'Сумма плановая (Ур.5: стоимость позиции)',    required: false },
+  { value: 'code',     title: 'Код категории ФЭО',                          required: false },
+  { value: 'appendix', title: 'Номер приложения (Прил. 1, Прил. 2...)',     required: false },
+  { value: 'budget',   title: 'Финансирование по ФЭО (бюджет категории)',    required: false },
+  { value: 'active',   title: 'Активна (да / нет)',                          required: false },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})
 const feoIgnoredCols = ref<number[]>([])

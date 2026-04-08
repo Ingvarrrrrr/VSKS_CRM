@@ -2110,8 +2110,8 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pa-4">
-          <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
-            Для добавления в закупку сначала сохраните заказ
+          <v-alert v-if="!purchaseId" type="info" class="mb-3" density="compact" icon="mdi-information-outline">
+            Заказ будет автоматически сохранён при импорте
           </v-alert>
 
           <!-- Step 1: Upload file -->
@@ -4490,11 +4490,51 @@ watch(importSelectedSheet, (newSheet) => {
 })
 
 async function doMappedImport() {
-  if (!itemsImportFile.value || !purchaseId.value) return
+  if (!itemsImportFile.value) return
   itemsImportLoading.value = true
   itemsImportResult.value = null
   importError.value = ''
   try {
+    // Auto-save new purchase if not yet saved
+    let pid = purchaseId.value
+    if (!pid) {
+      const validItems = items.value
+        .filter(i => i.item_name?.trim())
+        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+          ...rest,
+          unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
+          quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
+        }))
+      const payload = {
+        ...form,
+        planned_total_price: displayNmck.value || null,
+        total_nmck: displayNmck.value || null,
+        framework_seq: form.framework_seq || null,
+        contract_date: form.contract_date || null,
+        contract_end_date: form.contract_end_date || null,
+        delivery_date: form.delivery_date || null,
+        delivery_address: form.delivery_address || null,
+        procurement_planned_date: form.procurement_planned_date || null,
+        execution_term: form.execution_term || null,
+        execution_term_changed: form.execution_term_changed || null,
+        service_start_date: form.service_start_date || null,
+        service_end_date: form.service_end_date || null,
+        acceptance_doc_date: form.acceptance_doc_date || null,
+        acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
+        payment_doc_date: form.payment_doc_date || null,
+        items: validItems,
+        subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),
+      }
+      try {
+        const created = await apiFetch<any>('/purchases/', { method: 'POST', body: payload })
+        pid = created.id
+        clearDraft()
+        router.replace(`/orders/${created.id}/edit`)
+      } catch (e: any) {
+        throw new Error('Не удалось сохранить заказ: ' + (e?.detail || e?.message || 'заполните обязательные поля'))
+      }
+    }
+
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', itemsImportFile.value)
@@ -4519,7 +4559,7 @@ async function doMappedImport() {
       }
     }
 
-    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import-mapped?${params}`, {
+    const resp = await fetch(`/api/purchases/${pid}/items/import-mapped?${params}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,

@@ -470,8 +470,10 @@
 
           <!-- Step 2: Column mapping -->
           <div v-if="importDialog.step === 2">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ importDialog.sheetName || 'Первый лист' }} ({{ importDialog.totalRows }} строк данных)
+            </v-alert>
             <p class="text-body-2 mb-3">
-              Найдено <strong>{{ importDialog.totalRows }}</strong> строк.
               Сопоставьте столбцы файла с полями договора:
             </p>
             <v-row dense>
@@ -1202,6 +1204,7 @@ const importDialog = reactive({
   sample: [] as string[][],
   totalRows: 0,
   headerRowOffset: 0,
+  sheetName: '',
   mapping: {} as Record<string, number | null>,
   result: null as { created: number; skipped: number } | null,
   error: '',
@@ -1245,6 +1248,7 @@ async function doImportPreview() {
     importDialog.sample = data.sample
     importDialog.totalRows = data.total_rows
     importDialog.headerRowOffset = data.header_row_offset
+    importDialog.sheetName = data.sheet_name || ''
     // Auto-map by header hints
     importDialog.mapping = {}
     for (let i = 0; i < data.headers.length; i++) {

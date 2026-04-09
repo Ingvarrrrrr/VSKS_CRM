@@ -1244,11 +1244,14 @@
 
           <!-- Step 2: Column mapping -->
           <template v-if="feoImport.step === 2 && feoImport.previewData">
+            <v-alert v-if="feoCurrentSheet" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ feoCurrentSheet.name }} ({{ feoCurrentSheet.total_rows }} строк данных)
+            </v-alert>
             <v-select
               v-if="feoImport.previewData.sheets.length > 1"
               v-model="feoImport.selectedSheet"
               :items="feoImport.previewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-              label="Выберите лист" variant="outlined" density="compact" class="mb-3"
+              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
               @update:model-value="feoAutoMap(feoCurrentSheet?.headers || [])"
             />
 

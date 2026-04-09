@@ -2181,11 +2181,14 @@
 
           <!-- Step 2: Column mapping (table-style drag-and-drop) -->
           <template v-if="importStep === 2 && importPreviewData">
+            <v-alert v-if="currentSheetData" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ currentSheetData.name }} ({{ currentSheetData.total_rows }} строк данных)
+            </v-alert>
             <v-select
               v-if="importPreviewData.sheets.length > 1"
               v-model="importSelectedSheet"
               :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-              label="Выберите лист" variant="outlined" density="compact" class="mb-3"
+              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
             />
 
             <!-- COLUMN TABLE: headers on top, cards below -->

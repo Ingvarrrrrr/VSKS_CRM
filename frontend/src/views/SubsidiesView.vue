@@ -300,7 +300,7 @@
                       <!-- Плановое количество -->
                       <td class="feo-td feo-td-num">
                         <div v-if="isAutoQtyNode(node)" class="d-flex align-center justify-end">
-                          <span class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}</span>
+                          <span class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
                           <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
                             title="Количество автоматически считается из дочерних"
                           >авто</v-chip>
@@ -317,7 +317,7 @@
                           />
                         </div>
                         <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
-                          <span v-if="feoQtyFor(node) > 0" class="feo-amount">{{ feoQtyFor(node) }}</span>
+                          <span v-if="feoQtyFor(node) > 0" class="feo-amount">{{ feoQtyFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
                           <span v-else class="feo-set-hint">—</span>
                         </div>
                       </td>
@@ -1577,7 +1577,7 @@ interface SubsidyRow {
 interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
   level: number; name: string; code: string | null; appendix: string | null
-  is_active: boolean; budget: number | null; planned_quantity: number | null
+  is_active: boolean; budget: number | null; planned_quantity: number | null; unit: string | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -1694,11 +1694,14 @@ const feoImport = reactive({
 const FEO_TARGET_FIELDS = [
   { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
-  { value: 'qty_lvl2', title: 'Количество для Уровня 2 (Направление)',       required: false },
+  { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
+  { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
   { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
   { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
+  { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
   { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
   { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
+  { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
   { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
@@ -1778,11 +1781,14 @@ function feoAutoMap(headers: string[]) {
   const KEYWORDS: Record<string, string[]> = {
     subsidy:  ['субсидия'],
     lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
-    qty_lvl2: ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
-    lvl3:     ['уровень 3', 'тип расходов', 'level 3'],
-    qty_lvl3: ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
-    lvl4:     ['уровень 4', 'конкретизир', 'level 4'],
-    qty_lvl4: ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
+    qty_lvl2:  ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
+    unit_lvl2: ['ед. изм. (ур.2)', 'ед.изм. ур.2', 'единица ур.2'],
+    lvl3:      ['уровень 3', 'тип расходов', 'level 3'],
+    qty_lvl3:  ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
+    unit_lvl3: ['ед. изм. (ур.3)', 'ед.изм. ур.3', 'единица ур.3'],
+    lvl4:      ['уровень 4', 'конкретизир', 'level 4'],
+    qty_lvl4:  ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
+    unit_lvl4: ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
     lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
     code:     ['код'],
     appendix: ['приложение'],
@@ -2567,12 +2573,15 @@ async function doFeoMappedImport() {
       col_appendix: String(m['appendix'] ?? -1),
       col_budget:   String(m['budget']   ?? -1),
       col_quantity: String(m['quantity'] ?? -1),
-      col_unit:     String(m['unit']     ?? -1),
-      col_item_amt: String(m['item_amt'] ?? -1),
-      col_active:   String(m['active']   ?? -1),
-      col_qty_lvl2: String(m['qty_lvl2'] ?? -1),
-      col_qty_lvl3: String(m['qty_lvl3'] ?? -1),
-      col_qty_lvl4: String(m['qty_lvl4'] ?? -1),
+      col_unit:      String(m['unit']      ?? -1),
+      col_item_amt:  String(m['item_amt']  ?? -1),
+      col_active:    String(m['active']    ?? -1),
+      col_qty_lvl2:  String(m['qty_lvl2']  ?? -1),
+      col_qty_lvl3:  String(m['qty_lvl3']  ?? -1),
+      col_qty_lvl4:  String(m['qty_lvl4']  ?? -1),
+      col_unit_lvl2: String(m['unit_lvl2'] ?? -1),
+      col_unit_lvl3: String(m['unit_lvl3'] ?? -1),
+      col_unit_lvl4: String(m['unit_lvl4'] ?? -1),
     })
     const fd = new FormData()
     fd.append('file', feoImport.file)
@@ -2589,6 +2598,8 @@ async function doFeoMappedImport() {
     feoImport.result = await res.json()
     feoImport.step = 3
     showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
+    // Reload FEO tree immediately
+    if (selectedId.value) { await loadFeo(selectedId.value); syncFeoFilled() }
   } catch {
     showSnack('Ошибка импорта', 'error')
   } finally {

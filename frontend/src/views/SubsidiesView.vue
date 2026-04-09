@@ -2501,7 +2501,8 @@ async function saveInlineBudget(node: FeoNode) {
     await apiFetch(`/feo-categories/${node.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: val, subsidy_id: node.subsidy_id }),
+        is_active: node.is_active, budget: val, planned_quantity: node.planned_quantity,
+        planned_amount: node.planned_amount, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
     const cat = feoCategories.value.find(c => c.id === node.id)
     if (cat) cat.budget = val
@@ -2562,8 +2563,8 @@ async function saveInlineAmt(node: FeoNode) {
     await apiFetch(`/feo-categories/${node.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget, subsidy_id: node.subsidy_id,
-        planned_quantity: node.planned_quantity, planned_amount: val ?? null }),
+        is_active: node.is_active, budget: node.budget, planned_quantity: node.planned_quantity,
+        planned_amount: val ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
     const cat = feoCategories.value.find(c => c.id === node.id)
     if (cat) cat.planned_amount = val ?? null
@@ -2586,7 +2587,8 @@ async function saveInlineQty(node: FeoNode) {
     await apiFetch(`/feo-categories/${node.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget, subsidy_id: node.subsidy_id, planned_quantity: val }),
+        is_active: node.is_active, budget: node.budget, planned_quantity: val,
+        planned_amount: node.planned_amount, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
     const cat = feoCategories.value.find(c => c.id === node.id)
     if (cat) cat.planned_quantity = val

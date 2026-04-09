@@ -49,11 +49,13 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     def _calc_node(cat) -> float:
         kids = children_map.get(cat.id, [])
         if not kids:
-            return float(cat.budget) if cat.budget is not None and cat.budget > 0 else 0.0
-        child_sum = sum(_calc_node(k) for k in kids)
-        if child_sum > 0:
-            return child_sum
-        return float(cat.budget) if cat.budget is not None and cat.budget > 0 else 0.0
+            # Leaf node: use its budget
+            return float(cat.budget) if cat.budget is not None else 0.0
+        # Parent node: if budget is set manually (not null) → use it
+        if cat.budget is not None:
+            return float(cat.budget)
+        # Auto mode (budget is null) → sum of children
+        return sum(_calc_node(k) for k in kids)
 
     roots = [c for c in all_categories if c.level == 1]
     return sum(_calc_node(r) for r in roots)

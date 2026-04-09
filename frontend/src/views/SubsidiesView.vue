@@ -223,7 +223,7 @@
                     <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
                     <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
-                      Фактически запланировано
+                      Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
                     <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
@@ -348,7 +348,7 @@
                         </div>
                       </td>
 
-                      <!-- Фактически запланировано -->
+                      <!-- Фактическая сумма -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
                           :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"

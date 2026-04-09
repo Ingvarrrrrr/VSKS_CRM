@@ -221,6 +221,7 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
+                    <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактически запланировано
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
@@ -322,6 +323,31 @@
                         </div>
                       </td>
 
+                      <!-- Плановая сумма -->
+                      <td class="feo-td feo-td-num">
+                        <div v-if="isAutoAmtNode(node)" class="d-flex align-center justify-end">
+                          <span class="feo-amount">{{ feoAmtFor(node) > 0 ? formatCurrency(feoAmtFor(node)) : '—' }}</span>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                            title="Сумма автоматически считается из дочерних"
+                          >авто</v-chip>
+                        </div>
+                        <div v-else-if="inlineAmtId === node.id" class="d-flex align-center justify-end">
+                          <input
+                            ref="inlineAmtInputEl"
+                            v-model="inlineAmtVal"
+                            type="number"
+                            class="inline-input"
+                            @blur="saveInlineAmt(node)"
+                            @keydown.enter="saveInlineAmt(node)"
+                            @keydown.esc="inlineAmtId = null"
+                          />
+                        </div>
+                        <div v-else class="feo-amount-cell" @click="startInlineAmt(node)">
+                          <span v-if="feoAmtFor(node) > 0" class="feo-amount">{{ formatCurrency(feoAmtFor(node)) }}</span>
+                          <span v-else class="feo-set-hint">—</span>
+                        </div>
+                      </td>
+
                       <!-- Фактически запланировано -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
@@ -354,7 +380,7 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="5" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
+                      <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
@@ -529,7 +555,7 @@
                     @dragleave="dragOverId = null"
                     @drop.prevent="onDropToRoot"
                   >
-                    <td colspan="5" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <td colspan="6" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
                       <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
                       Переместить на верхний уровень (корень)
                     </td>
@@ -543,6 +569,9 @@
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
                     <td class="feo-td" />
@@ -874,6 +903,27 @@
               />
             </v-col>
           </v-row>
+          <v-divider class="my-3" />
+          <!-- Плановая сумма -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановая сумма</span>
+            <v-btn-toggle
+              v-model="feoForm.amtAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-text-field
+            v-if="!feoForm.amtAuto"
+            v-model.number="feoForm.planned_amount"
+            label="Плановая сумма, ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -983,6 +1033,34 @@
             type="info" variant="tonal" density="compact" class="mt-2 text-caption"
           >
             Количество рассчитывается автоматически из дочерних направлений
+          </v-alert>
+          <v-divider class="my-3" />
+          <!-- Плановая сумма -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановая сумма</span>
+            <v-btn-toggle
+              v-if="feoEditForm.hasChildren"
+              v-model="feoEditForm.amtAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-text-field
+            v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
+            v-model.number="feoEditForm.planned_amount"
+            label="Плановая сумма, ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
+          <v-alert
+            v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
+            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
+          >
+            Сумма рассчитывается автоматически из дочерних направлений
           </v-alert>
           <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
         </v-card-text>
@@ -1666,7 +1744,7 @@ interface SubsidyRow {
 interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
   level: number; name: string; code: string | null; appendix: string | null
-  is_active: boolean; budget: number | null; planned_quantity: number | null; unit: string | null
+  is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -1766,6 +1844,11 @@ const inlineQtyId = ref<number | null>(null)
 const inlineQtyVal = ref('')
 const inlineQtyInputEl = ref<HTMLInputElement | null>(null)
 
+// FEO inline planned_amount edit
+const inlineAmtId = ref<number | null>(null)
+const inlineAmtVal = ref('')
+const inlineAmtInputEl = ref<HTMLInputElement | null>(null)
+
 // FEO Drag & Drop
 const dragNodeId = ref<number | null>(null)
 const dragOverId = ref<number | null>(null)
@@ -1785,12 +1868,15 @@ const FEO_TARGET_FIELDS = [
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
   { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
   { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
+  { value: 'amt_lvl2', title: 'Плановая сумма для Уровня 2 (Направление)',   required: false },
   { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
   { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
   { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
+  { value: 'amt_lvl3', title: 'Плановая сумма для Уровня 3 (Тип расходов)', required: false },
   { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
   { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
   { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
+  { value: 'amt_lvl4', title: 'Плановая сумма для Уровня 4 (Конкретизир.)', required: false },
   { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
@@ -1872,12 +1958,15 @@ function feoAutoMap(headers: string[]) {
     lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
     qty_lvl2:  ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
     unit_lvl2: ['ед. изм. (ур.2)', 'ед.изм. ур.2', 'единица ур.2'],
+    amt_lvl2:  ['плановая сумма (ур.2)', 'сумма ур.2', 'план.сумма ур.2'],
     lvl3:      ['уровень 3', 'тип расходов', 'level 3'],
     qty_lvl3:  ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
     unit_lvl3: ['ед. изм. (ур.3)', 'ед.изм. ур.3', 'единица ур.3'],
+    amt_lvl3:  ['плановая сумма (ур.3)', 'сумма ур.3'],
     lvl4:      ['уровень 4', 'конкретизир', 'level 4'],
     qty_lvl4:  ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
     unit_lvl4: ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
+    amt_lvl4:  ['плановая сумма (ур.4)', 'сумма ур.4'],
     lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
     code:     ['код'],
     appendix: ['приложение'],
@@ -2239,8 +2328,8 @@ async function importContractorsFromFile() {
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, unit: '' as string })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -2451,6 +2540,42 @@ function feoQtyFor(node: FeoNode): number {
 function isAutoQtyNode(node: FeoNode): boolean {
   if (!node.hasChildren) return false
   return node.planned_quantity == null
+}
+
+// ── Planned amount helpers ───────────────────────
+function feoAmtFor(node: FeoNode): number {
+  if (!node.hasChildren) return node.planned_amount != null ? Number(node.planned_amount) : 0
+  if (node.planned_amount != null) return Number(node.planned_amount)
+  return node.children.reduce((acc, child) => acc + feoAmtFor(child), 0)
+}
+
+function isAutoAmtNode(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  return node.planned_amount == null
+}
+
+async function startInlineAmt(node: FeoNode) {
+  inlineAmtId.value = node.id
+  inlineAmtVal.value = node.planned_amount != null ? String(node.planned_amount) : ''
+  await nextTick()
+  inlineAmtInputEl.value?.focus()
+}
+
+async function saveInlineAmt(node: FeoNode) {
+  if (inlineAmtId.value !== node.id) return
+  inlineAmtId.value = null
+  const val = inlineAmtVal.value.trim() === '' ? null : parseFloat(inlineAmtVal.value)
+  try {
+    await apiFetch(`/feo-categories/${node.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
+        is_active: node.is_active, budget: node.budget, subsidy_id: node.subsidy_id,
+        planned_quantity: node.planned_quantity, planned_amount: val ?? null }),
+    })
+    const cat = feoCategories.value.find(c => c.id === node.id)
+    if (cat) cat.planned_amount = val ?? null
+    feoCategories.value = [...feoCategories.value]
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения плановой суммы', 'error') }
 }
 
 async function startInlineQty(node: FeoNode) {
@@ -2673,6 +2798,9 @@ async function doFeoMappedImport() {
       col_unit_lvl2: String(m['unit_lvl2'] ?? -1),
       col_unit_lvl3: String(m['unit_lvl3'] ?? -1),
       col_unit_lvl4: String(m['unit_lvl4'] ?? -1),
+      col_amt_lvl2:  String(m['amt_lvl2']  ?? -1),
+      col_amt_lvl3:  String(m['amt_lvl3']  ?? -1),
+      col_amt_lvl4:  String(m['amt_lvl4']  ?? -1),
     })
     const fd = new FormData()
     fd.append('file', feoImport.file)
@@ -2835,12 +2963,13 @@ async function addFeoCategory() {
         is_active: true,
         budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget ?? null),
         planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity ?? null),
+        planned_amount: feoForm.value.amtAuto ? null : (feoForm.value.planned_amount ?? null),
         unit: feoForm.value.unit || null,
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, unit: '' }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '' }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
@@ -2868,6 +2997,7 @@ function startFeoEdit(node: FeoNode) {
   feoEditTarget.value = node
   const autoMode = node.hasChildren && node.budget === null
   const qtyAutoMode = node.hasChildren && node.planned_quantity === null
+  const amtAutoMode = node.hasChildren && node.planned_amount === null
   feoEditForm.value = {
     name: node.name,
     code: node.code || '',
@@ -2876,6 +3006,8 @@ function startFeoEdit(node: FeoNode) {
     budgetAuto: autoMode,
     planned_quantity: node.planned_quantity ?? null,
     qtyAuto: qtyAutoMode,
+    planned_amount: node.planned_amount ?? null,
+    amtAuto: amtAutoMode,
     unit: node.unit || '',
     is_active: node.is_active,
     hasChildren: node.hasChildren,
@@ -2909,6 +3041,7 @@ async function updateFeoCategory() {
         is_active: feoEditForm.value.is_active,
         budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget ?? null),
         planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity ?? null),
+        planned_amount: feoEditForm.value.amtAuto ? null : (feoEditForm.value.planned_amount ?? null),
         unit: feoEditForm.value.unit || null,
       })
     })

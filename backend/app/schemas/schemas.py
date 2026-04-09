@@ -200,6 +200,7 @@ class FeoCategoryCreate(BaseModel):
     is_active: bool = True
     budget: Optional[float] = None
     planned_quantity: Optional[float] = None
+    planned_amount: Optional[float] = None
     unit: Optional[str] = None
 
 class FeoCategoryOut(BaseModel):
@@ -213,6 +214,7 @@ class FeoCategoryOut(BaseModel):
     is_active: bool = True
     budget: Optional[float] = None
     planned_quantity: Optional[float] = None
+    planned_amount: Optional[float] = None
     unit: Optional[str] = None
     model_config = {"from_attributes": True}
 

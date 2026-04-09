@@ -885,9 +885,9 @@
             </v-col>
           </v-row>
           <v-divider class="my-3" />
-          <!-- Стоимость за единицу -->
+          <!-- Плановая стоимость за ед. -->
           <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Стоимость за единицу</span>
+            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
             <v-btn-toggle
               v-model="feoForm.amtAuto"
               mandatory
@@ -902,7 +902,7 @@
           <v-text-field
             v-if="!feoForm.amtAuto"
             v-model.number="feoForm.planned_amount"
-            label="Стоимость за единицу, ₽"
+            label="Плановая стоимость за ед., ₽"
             variant="outlined" density="compact" type="number" hide-details
           />
         </v-card-text>
@@ -1016,9 +1016,9 @@
             Количество рассчитывается автоматически из дочерних направлений
           </v-alert>
           <v-divider class="my-3" />
-          <!-- Стоимость за единицу -->
+          <!-- Плановая стоимость за ед. -->
           <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Стоимость за единицу</span>
+            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
             <v-btn-toggle
               v-if="feoEditForm.hasChildren"
               v-model="feoEditForm.amtAuto"
@@ -1034,7 +1034,7 @@
           <v-text-field
             v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
             v-model.number="feoEditForm.planned_amount"
-            label="Стоимость за единицу, ₽"
+            label="Плановая стоимость за ед., ₽"
             variant="outlined" density="compact" type="number" hide-details
           />
           <v-alert
@@ -1849,19 +1849,19 @@ const FEO_TARGET_FIELDS = [
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
   { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
   { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
-  { value: 'amt_lvl2', title: 'Стоимость за единицу для Уровня 2 (Направление)',   required: false },
+  { value: 'amt_lvl2', title: 'Плановая стоимость за ед. для Уровня 2 (Направление)',   required: false },
   { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
   { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
   { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
-  { value: 'amt_lvl3', title: 'Стоимость за единицу для Уровня 3 (Тип расходов)', required: false },
+  { value: 'amt_lvl3', title: 'Плановая стоимость за ед. для Уровня 3 (Тип расходов)', required: false },
   { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
   { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
   { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
-  { value: 'amt_lvl4', title: 'Стоимость за единицу для Уровня 4 (Конкретизир.)', required: false },
+  { value: 'amt_lvl4', title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
   { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
-  { value: 'item_amt', title: 'Стоимость за единицу Ур.5 (товар/услуга)', required: false },
+  { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование Ур.2–4 (бюджет категории ФЭО)', required: false },
@@ -2494,20 +2494,22 @@ async function startInlineBudget(node: FeoNode) {
 }
 
 async function saveInlineBudget(node: FeoNode) {
-  if (inlineBudgetId.value !== node.id) return
+  const nodeId = inlineBudgetId.value
+  if (nodeId !== node.id) return
   inlineBudgetId.value = null
   const val = inlineBudgetVal.value.trim() === '' ? null : parseFloat(inlineBudgetVal.value)
   try {
-    await apiFetch(`/feo-categories/${node.id}`, {
+    await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: val, planned_quantity: node.planned_quantity,
-        planned_amount: node.planned_amount, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
+        is_active: node.is_active, budget: val, planned_quantity: node.planned_quantity ?? null,
+        planned_amount: node.planned_amount ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
-    const cat = feoCategories.value.find(c => c.id === node.id)
+    // Update local data immediately
+    const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.budget = val
+    node.budget = val
     feoCategories.value = [...feoCategories.value]
-    if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
@@ -2532,14 +2534,16 @@ function feoAmtFor(node: FeoNode): number {
 }
 
 // ── Computed planned total: кол-во × стоимость за ед. ───
+// Parent = sum of children's planned totals (never qty × unitPrice of parent)
+// Leaf = own planned_quantity × own planned_amount
 function feoPlannedTotalFor(node: FeoNode): number {
-  const qty = feoQtyFor(node)
-  const unitPrice = feoAmtFor(node)
-  if (qty > 0 && unitPrice > 0) return qty * unitPrice
-  // If no qty or unitPrice on this node, sum from children
   if (node.hasChildren) {
     return node.children.reduce((acc, child) => acc + feoPlannedTotalFor(child), 0)
   }
+  // Leaf: qty × unit_price (both must be set on THIS node, not inherited)
+  const qty = node.planned_quantity != null ? Number(node.planned_quantity) : 0
+  const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : 0
+  if (qty > 0 && unitPrice > 0) return qty * unitPrice
   return 0
 }
 
@@ -2556,20 +2560,22 @@ async function startInlineAmt(node: FeoNode) {
 }
 
 async function saveInlineAmt(node: FeoNode) {
-  if (inlineAmtId.value !== node.id) return
+  const nodeId = inlineAmtId.value
+  if (nodeId !== node.id) return
   inlineAmtId.value = null
   const val = inlineAmtVal.value.trim() === '' ? null : parseFloat(inlineAmtVal.value)
   try {
-    await apiFetch(`/feo-categories/${node.id}`, {
+    await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget, planned_quantity: node.planned_quantity,
+        is_active: node.is_active, budget: node.budget ?? null, planned_quantity: node.planned_quantity ?? null,
         planned_amount: val ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
-    const cat = feoCategories.value.find(c => c.id === node.id)
+    const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.planned_amount = val ?? null
+    node.planned_amount = val ?? null
     feoCategories.value = [...feoCategories.value]
-  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения плановой суммы', 'error') }
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
 
 async function startInlineQty(node: FeoNode) {
@@ -2580,20 +2586,22 @@ async function startInlineQty(node: FeoNode) {
 }
 
 async function saveInlineQty(node: FeoNode) {
-  if (inlineQtyId.value !== node.id) return
+  const nodeId = inlineQtyId.value
+  if (nodeId !== node.id) return
   inlineQtyId.value = null
   const val = inlineQtyVal.value.trim() === '' ? null : parseFloat(inlineQtyVal.value)
   try {
-    await apiFetch(`/feo-categories/${node.id}`, {
+    await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
       body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget, planned_quantity: val,
-        planned_amount: node.planned_amount, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
+        is_active: node.is_active, budget: node.budget ?? null, planned_quantity: val,
+        planned_amount: node.planned_amount ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
     })
-    const cat = feoCategories.value.find(c => c.id === node.id)
+    const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.planned_quantity = val
+    node.planned_quantity = val
     feoCategories.value = [...feoCategories.value]
-  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения количества', 'error') }
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
 
 // ── Drag & Drop ──────────────────────────────────

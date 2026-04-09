@@ -221,7 +221,6 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
-                    <th class="feo-th feo-th-num">СТОИМОСТЬ<br>ЗА ЕД.</th>
                     <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактическая сумма
@@ -324,31 +323,6 @@
                         </div>
                       </td>
 
-                      <!-- Стоимость за единицу -->
-                      <td class="feo-td feo-td-num">
-                        <div v-if="isAutoAmtNode(node)" class="d-flex align-center justify-end">
-                          <span class="feo-amount">{{ feoAmtFor(node) > 0 ? formatCurrency(feoAmtFor(node)) : '—' }}</span>
-                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
-                            title="Сумма автоматически считается из дочерних"
-                          >авто</v-chip>
-                        </div>
-                        <div v-else-if="inlineAmtId === node.id" class="d-flex align-center justify-end">
-                          <input
-                            ref="inlineAmtInputEl"
-                            v-model="inlineAmtVal"
-                            type="number"
-                            class="inline-input"
-                            @blur="saveInlineAmt(node)"
-                            @keydown.enter="saveInlineAmt(node)"
-                            @keydown.esc="inlineAmtId = null"
-                          />
-                        </div>
-                        <div v-else class="feo-amount-cell" @click="startInlineAmt(node)">
-                          <span v-if="feoAmtFor(node) > 0" class="feo-amount">{{ formatCurrency(feoAmtFor(node)) }}</span>
-                          <span v-else class="feo-set-hint">—</span>
-                        </div>
-                      </td>
-
                       <!-- Плановая сумма (кол-во × стоимость за ед.) -->
                       <td class="feo-td feo-td-num">
                         <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount">{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
@@ -387,7 +361,7 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="7" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
+                      <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
@@ -562,7 +536,7 @@
                     @dragleave="dragOverId = null"
                     @drop.prevent="onDropToRoot"
                   >
-                    <td colspan="7" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <td colspan="6" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
                       <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
                       Переместить на верхний уровень (корень)
                     </td>
@@ -576,9 +550,6 @@
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
-                    </td>
-                    <td class="feo-td feo-td-num font-weight-bold">
-                      {{ feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0)) : '—' }}

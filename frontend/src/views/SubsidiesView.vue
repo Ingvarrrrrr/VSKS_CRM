@@ -70,8 +70,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.calculated_budget || s.budget) }}</div>
-            <div class="sc-budget-label">{{ (s.calculated_budget || 0) > 0 ? 'Рассчитанный бюджет' : 'Бюджет' }}</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
+            <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini">
@@ -89,8 +89,8 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.calculated_budget || s.budget)"
-              :color="progressColor(pct(s.planned, s.calculated_budget || s.budget))"
+              :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
+              :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
               height="6" rounded class="mt-3"
             />
             <div v-if="s.contractor_name" class="sc-contractor">
@@ -98,7 +98,7 @@
               <span>{{ s.contractor_name }}</span>
             </div>
             <div class="sc-footer">
-              <div class="sc-pct">{{ pct(s.planned, s.calculated_budget || s.budget) }}% запланировано</div>
+              <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
               <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
                 <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
                 ФЭО
@@ -2288,13 +2288,13 @@ const selectedSubsidy = computed(() =>
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
-  // Use totalFeoBudget (sum from FEO table) if FEO is loaded, otherwise fallback
+  // Use totalFeoBudget from local FEO tree if loaded, otherwise feo_budget_total from API
   if (totalFeoBudget.value !== null && totalFeoBudget.value > 0) return totalFeoBudget.value
-  return selectedSubsidy.value.calculated_budget || selectedSubsidy.value.budget
+  return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget
 })
 
 const totals = computed(() => ({
-  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || x.budget), 0),
+  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget), 0),
   planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
   plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
   ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
@@ -2833,8 +2833,8 @@ async function addFeoCategory() {
         code: feoForm.value.code || null,
         appendix: feoForm.value.appendix || null,
         is_active: true,
-        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget || null),
-        planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity || null),
+        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget ?? null),
+        planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity ?? null),
         unit: feoForm.value.unit || null,
       })
     })
@@ -2907,8 +2907,8 @@ async function updateFeoCategory() {
         code: feoEditForm.value.code || null,
         appendix: feoEditForm.value.appendix || null,
         is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget || null),
-        planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity || null),
+        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget ?? null),
+        planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity ?? null),
         unit: feoEditForm.value.unit || null,
       })
     })

@@ -2012,6 +2012,12 @@
         <v-card-text class="pa-4 pt-0">
           <!-- Import from file -->
           <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Данные:</strong> система автоматически извлечёт реквизиты из карточки контрагента
+              </div>
+            </v-alert>
             <FileDropZone v-model="addContractorFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
               hint="Excel, Word, PDF — перетащите или нажмите" class="mb-2" />
             <v-btn v-if="addContractorFile" variant="tonal" color="primary" size="small" :loading="addContractorImporting"

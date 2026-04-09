@@ -491,6 +491,13 @@
         <v-card-text class="px-6">
           <!-- Step 1: upload -->
           <template v-if="importDialog.step === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls)<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
             <p class="text-body-2 text-medium-emphasis mb-4">
               Загрузите файл .xlsx. Обязательная колонка:<br>
               <strong>Наименование</strong> (или «Название», «Товар»).<br>

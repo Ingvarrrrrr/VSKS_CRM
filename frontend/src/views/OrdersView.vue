@@ -375,6 +375,19 @@
               variant="outlined" density="compact" class="mb-3"
             />
 
+            <!-- Standard: format hint -->
+            <v-alert
+              v-if="importDialog.format === 'standard'"
+              type="info" variant="tonal" density="compact" class="mb-3"
+              icon="mdi-information-outline"
+            >
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls)<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
+
             <!-- FEO: info banner -->
             <v-alert
               v-else

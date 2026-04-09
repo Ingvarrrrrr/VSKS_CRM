@@ -223,6 +223,12 @@
           <v-form ref="formRef">
             <div class="section-label">Загрузить из файла</div>
             <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+              <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+                <div class="text-body-2">
+                  <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                  <strong>Данные:</strong> система автоматически извлечёт реквизиты из карточки контрагента
+                </div>
+              </v-alert>
               <FileDropZone v-model="contractorCardFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
                 hint="Excel, Word, PDF — карточка реквизитов" class="mb-2" />
               <v-btn v-if="contractorCardFile" variant="tonal" color="primary" size="small" :loading="contractorCardImporting"
@@ -461,6 +467,13 @@
 
           <!-- Step 1 -->
           <template v-if="contractorImportStep === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
             <FileDropZone v-model="contractorImportFile"
               accept=".xlsx,.xls,.docx,.doc,.pdf"
               hint=".xlsx, .xls, .docx, .doc, .pdf — перетащите или нажмите"

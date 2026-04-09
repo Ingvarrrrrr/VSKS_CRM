@@ -455,6 +455,13 @@
         <v-card-text class="px-4">
           <!-- Step 1: File upload with drag-and-drop -->
           <div v-if="importDialog.step === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
             <FileDropZone v-model="importDialog.file" accept=".pdf,.xlsx,.xls,.docx,.doc"
               hint="PDF, Excel (.xlsx, .xls), Word (.docx) — таблица с договорами" class="mb-3" />
             <v-select v-model="importDialog.subsidyId" :items="subsidyOptions" item-title="name" item-value="id"

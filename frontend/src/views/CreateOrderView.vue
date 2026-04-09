@@ -2158,6 +2158,15 @@
 
           <!-- Step 1: Upload file -->
           <template v-if="importStep === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
+                <strong>Заголовки столбцов:</strong> определяются автоматически по ключевым словам
+                (наименование, количество, цена, сумма и т.д.). Могут быть в любой строке.<br>
+                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и укажете соответствие полей.
+              </div>
+            </v-alert>
             <FileDropZone v-model="itemsImportFile"
               accept=".xlsx,.xls,.pdf,.docx,.doc"
               hint="Excel, PDF, Word — перетащите или нажмите"

@@ -1219,16 +1219,25 @@
 
           <!-- Step 1: File upload -->
           <template v-if="feoImport.step === 1">
-            <p class="text-body-2 text-medium-emphasis mb-4">
-              Загрузите файл .xlsx/.xls с данными. На следующем шаге вы укажете, какой столбец соответствует какому полю.
-            </p>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
+                <strong>Заголовки столбцов:</strong> система автоматически найдёт строку с заголовками по ключевым словам
+                (субсидия, направление, уровень, количество и т.д.). Заголовки могут быть в любой строке — не обязательно в первой.<br>
+                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и сможете вручную указать,
+                какой столбец соответствует какому полю.
+              </div>
+            </v-alert>
             <v-file-input
               v-model="feoImport.fileList"
-              label="Файл (Excel, PDF, Word)"
+              label="Выберите файл (Excel, PDF или Word)"
               accept=".xlsx,.xls,.pdf,.docx,.doc"
               variant="outlined" density="compact"
               prepend-icon="mdi-file-upload"
               show-size
+              hint="Перетащите файл сюда или нажмите для выбора"
+              persistent-hint
               @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
             />
           </template>

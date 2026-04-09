@@ -1705,10 +1705,10 @@ const FEO_TARGET_FIELDS = [
   { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
-  { value: 'item_amt', title: 'Сумма плановая (Ур.5: стоимость позиции)',    required: false },
-  { value: 'code',     title: 'Код категории ФЭО',                          required: false },
-  { value: 'appendix', title: 'Номер приложения (Прил. 1, Прил. 2...)',     required: false },
-  { value: 'budget',   title: 'Финансирование по ФЭО (бюджет категории)',    required: false },
+  { value: 'item_amt', title: 'Сумма плановая Ур.5 (стоимость позиции товара/услуги)', required: false },
+  { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
+  { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
+  { value: 'budget',   title: 'Финансирование Ур.2–4 (бюджет категории ФЭО)', required: false },
   { value: 'active',   title: 'Активна (да / нет)',                          required: false },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})

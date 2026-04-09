@@ -2211,6 +2211,8 @@ const selectedSubsidy = computed(() =>
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
+  // Use totalFeoBudget (sum from FEO table) if FEO is loaded, otherwise fallback
+  if (totalFeoBudget.value !== null && totalFeoBudget.value > 0) return totalFeoBudget.value
   return selectedSubsidy.value.calculated_budget || selectedSubsidy.value.budget
 })
 

@@ -401,8 +401,21 @@ async def _do_feo_import(
 
     def to_dec(v: str | None):
         if not v: return None
-        try: return Decimal(v.replace(" ", "").replace(",", ".").replace("\xa0", ""))
-        except: return None
+        s = str(v).strip()
+        if not s or s in ('-', '—', '–', 'None', 'null', 'н/д', 'N/A'):
+            return None
+        # Remove currency symbols, spaces, non-breaking spaces
+        s = s.replace(" ", "").replace("\xa0", "").replace("\u202f", "")
+        s = s.replace("₽", "").replace("руб", "").replace("р.", "").replace("р", "")
+        s = s.replace(",", ".")
+        # Remove trailing dots
+        s = s.rstrip(".")
+        if not s:
+            return None
+        try:
+            return Decimal(s)
+        except Exception:
+            return None
 
     from app.models.subsidy import Subsidy
     sub_rows = (await db.execute(select(Subsidy))).scalars().all()

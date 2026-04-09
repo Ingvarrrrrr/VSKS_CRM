@@ -2807,7 +2807,10 @@ async function doFeoMappedImport() {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      showSnack(err.detail || 'Ошибка импорта', 'error'); return
+      const msg = err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
+      showSnack(msg, 'error')
+      console.error('FEO import error:', err)
+      return
     }
     feoImport.result = await res.json()
     feoImport.step = 3

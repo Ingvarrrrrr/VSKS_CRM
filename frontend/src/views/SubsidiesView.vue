@@ -1207,7 +1207,7 @@
     </v-dialog>
 
     <!-- ── Import FEO dialog ── -->
-    <v-dialog v-model="feoImport.show" max-width="780" persistent>
+    <v-dialog v-model="feoImport.show" max-width="1400" persistent>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-upload" color="primary" class="mr-2" />
@@ -3553,13 +3553,13 @@ onMounted(loadAll)
 /* ── FEO Column Mapping ── */
 .feo-imap-grid {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 .feo-imap-col {
   flex: 1;
-  min-width: 100px;
+  min-width: 130px;
   border: 1px dashed #ccc;
   border-radius: 6px;
   background: #fafafa;
@@ -3579,16 +3579,15 @@ onMounted(loadAll)
   background: #fff8f8;
 }
 .feo-imap-col-hdr {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   color: #555;
   padding: 5px 7px 3px;
   border-bottom: 1px solid #e8e8e8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 .feo-imap-col-body {
   padding: 5px;
@@ -3623,9 +3622,8 @@ onMounted(loadAll)
 .feo-imap-card-name {
   font-size: 11px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   flex: 1;
 }
 .feo-imap-card-x {

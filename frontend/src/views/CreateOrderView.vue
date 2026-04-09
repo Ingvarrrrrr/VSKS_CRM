@@ -2140,7 +2140,7 @@
     </v-dialog>
 
     <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="980" scrollable>
+    <v-dialog v-model="itemsImportDialog" max-width="1400" scrollable>
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-package-variant-plus" class="mr-2" />
@@ -5965,13 +5965,13 @@ async function downloadKpXlsx() {
 /* ── Import column-mapping table (imap) ─────────────────── */
 .imap-grid {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 .imap-col {
   flex: 1;
-  min-width: 110px;
+  min-width: 130px;
   border: 1px dashed #ccc;
   border-radius: 6px;
   background: #fafafa;
@@ -5991,16 +5991,15 @@ async function downloadKpXlsx() {
   background: #fff8f8;
 }
 .imap-col-hdr {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   color: #555;
   padding: 5px 7px 3px;
   border-bottom: 1px solid #e8e8e8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 .imap-col-body {
   padding: 5px;
@@ -6035,9 +6034,8 @@ async function downloadKpXlsx() {
 .imap-card-name {
   font-size: 11px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   flex: 1;
 }
 .imap-card-x {

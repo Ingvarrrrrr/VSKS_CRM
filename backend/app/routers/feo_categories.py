@@ -847,6 +847,7 @@ async def update_category(
     cat.is_active = category_data.is_active
     cat.budget = category_data.budget
     cat.planned_quantity = category_data.planned_quantity
+    cat.unit = category_data.unit
     await db.commit()
     await db.refresh(cat)
     return cat

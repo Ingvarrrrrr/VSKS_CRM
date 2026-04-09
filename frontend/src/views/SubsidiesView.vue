@@ -221,6 +221,7 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
+                    <th class="feo-th feo-th-num">СТОИМОСТЬ<br>ЗА ЕД.</th>
                     <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактическая сумма
@@ -323,7 +324,7 @@
                         </div>
                       </td>
 
-                      <!-- Плановая сумма -->
+                      <!-- Стоимость за единицу -->
                       <td class="feo-td feo-td-num">
                         <div v-if="isAutoAmtNode(node)" class="d-flex align-center justify-end">
                           <span class="feo-amount">{{ feoAmtFor(node) > 0 ? formatCurrency(feoAmtFor(node)) : '—' }}</span>
@@ -346,6 +347,12 @@
                           <span v-if="feoAmtFor(node) > 0" class="feo-amount">{{ formatCurrency(feoAmtFor(node)) }}</span>
                           <span v-else class="feo-set-hint">—</span>
                         </div>
+                      </td>
+
+                      <!-- Плановая сумма (кол-во × стоимость за ед.) -->
+                      <td class="feo-td feo-td-num">
+                        <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount">{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
+                        <span v-else class="feo-amount-empty">—</span>
                       </td>
 
                       <!-- Фактическая сумма -->
@@ -380,7 +387,7 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
+                      <td colspan="7" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
@@ -555,7 +562,7 @@
                     @dragleave="dragOverId = null"
                     @drop.prevent="onDropToRoot"
                   >
-                    <td colspan="6" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <td colspan="7" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
                       <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
                       Переместить на верхний уровень (корень)
                     </td>
@@ -572,6 +579,9 @@
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoAmtFor(r), 0)) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
                     <td class="feo-td" />
@@ -904,9 +914,9 @@
             </v-col>
           </v-row>
           <v-divider class="my-3" />
-          <!-- Плановая сумма -->
+          <!-- Стоимость за единицу -->
           <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановая сумма</span>
+            <span class="text-body-2 font-weight-medium">Стоимость за единицу</span>
             <v-btn-toggle
               v-model="feoForm.amtAuto"
               mandatory
@@ -921,7 +931,7 @@
           <v-text-field
             v-if="!feoForm.amtAuto"
             v-model.number="feoForm.planned_amount"
-            label="Плановая сумма, ₽"
+            label="Стоимость за единицу, ₽"
             variant="outlined" density="compact" type="number" hide-details
           />
         </v-card-text>
@@ -1035,9 +1045,9 @@
             Количество рассчитывается автоматически из дочерних направлений
           </v-alert>
           <v-divider class="my-3" />
-          <!-- Плановая сумма -->
+          <!-- Стоимость за единицу -->
           <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановая сумма</span>
+            <span class="text-body-2 font-weight-medium">Стоимость за единицу</span>
             <v-btn-toggle
               v-if="feoEditForm.hasChildren"
               v-model="feoEditForm.amtAuto"
@@ -1053,7 +1063,7 @@
           <v-text-field
             v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
             v-model.number="feoEditForm.planned_amount"
-            label="Плановая сумма, ₽"
+            label="Стоимость за единицу, ₽"
             variant="outlined" density="compact" type="number" hide-details
           />
           <v-alert
@@ -1868,19 +1878,19 @@ const FEO_TARGET_FIELDS = [
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
   { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
   { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
-  { value: 'amt_lvl2', title: 'Плановая сумма для Уровня 2 (Направление)',   required: false },
+  { value: 'amt_lvl2', title: 'Стоимость за единицу для Уровня 2 (Направление)',   required: false },
   { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
   { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
   { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
-  { value: 'amt_lvl3', title: 'Плановая сумма для Уровня 3 (Тип расходов)', required: false },
+  { value: 'amt_lvl3', title: 'Стоимость за единицу для Уровня 3 (Тип расходов)', required: false },
   { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
   { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
   { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
-  { value: 'amt_lvl4', title: 'Плановая сумма для Уровня 4 (Конкретизир.)', required: false },
+  { value: 'amt_lvl4', title: 'Стоимость за единицу для Уровня 4 (Конкретизир.)', required: false },
   { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
-  { value: 'item_amt', title: 'Сумма плановая Ур.5 (стоимость позиции товара/услуги)', required: false },
+  { value: 'item_amt', title: 'Стоимость за единицу Ур.5 (товар/услуга)', required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование Ур.2–4 (бюджет категории ФЭО)', required: false },
@@ -2547,6 +2557,18 @@ function feoAmtFor(node: FeoNode): number {
   if (!node.hasChildren) return node.planned_amount != null ? Number(node.planned_amount) : 0
   if (node.planned_amount != null) return Number(node.planned_amount)
   return node.children.reduce((acc, child) => acc + feoAmtFor(child), 0)
+}
+
+// ── Computed planned total: кол-во × стоимость за ед. ───
+function feoPlannedTotalFor(node: FeoNode): number {
+  const qty = feoQtyFor(node)
+  const unitPrice = feoAmtFor(node)
+  if (qty > 0 && unitPrice > 0) return qty * unitPrice
+  // If no qty or unitPrice on this node, sum from children
+  if (node.hasChildren) {
+    return node.children.reduce((acc, child) => acc + feoPlannedTotalFor(child), 0)
+  }
+  return 0
 }
 
 function isAutoAmtNode(node: FeoNode): boolean {

@@ -662,6 +662,9 @@ watch(globalSubsidyId, (id: number | null) => {
   else selectedSubsidyIds.value = []
 }, { immediate: true })
 
+// Clear selection when year changes to avoid stale IDs from other year
+watch(selectedYear, () => { selectedSubsidyIds.value = [] })
+
 // Sync: local → global (only single selection)
 watch(selectedSubsidyIds, (ids: number[]) => {
   if (ids.length === 1) globalSubsidyId.value = ids[0]

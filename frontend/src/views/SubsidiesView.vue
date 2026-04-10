@@ -325,14 +325,16 @@
 
                       <!-- Плановая сумма (кол-во × стоимость за ед.) -->
                       <td class="feo-td feo-td-num">
-                        <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount">{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
+                        <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount"
+                          :style="feoBudgetFor(node) > 0 && feoPlannedTotalFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                        >{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
                       </td>
 
                       <!-- Фактическая сумма -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="(feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node)) || (feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) > feoPlannedTotalFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
                           @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
@@ -352,6 +354,9 @@
                         />
                         <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                           title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
+                        <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
+                          title="Показать закупки по этой категории"
+                          @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
                         <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
                           title="Редактировать" @click="startFeoEdit(node)" />
                         <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"

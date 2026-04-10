@@ -161,11 +161,14 @@
             <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
               <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на сегмент для списка закупок
             </div>
-            <apexchart
-              :key="statusPieKey"
-              type="pie" height="260"
-              :options="statusPieOptions"
-              :series="statusPieSeries"
+            <StatusPieWithWishes
+              :status-entries="statusPieForComponent"
+              :wishes-amount="wishesAmountForPie"
+              :total-budget="totalBudget"
+              :text-color="chartText"
+              :muted-color="chartMuted"
+              :center-fill="isDark ? '#1e1e2e' : '#ffffff'"
+              @slice-click="onPieSliceClick"
             />
           </div>
           <div v-else class="chart-empty">
@@ -608,6 +611,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
+import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 
@@ -954,6 +958,23 @@ const statusPieSeries = computed(() => statusPieEntries.value.map(([, v]) => v))
 const statusPieLabels = computed(() => statusPieEntries.value.map(([k]) => STATUS_LABELS[k] || k))
 const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATUS_COLORS[k] || '#94A3B8'))
 const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
+
+// For custom StatusPieWithWishes component
+const statusPieForComponent = computed(() =>
+  statusPieEntries.value
+    .filter(([k]) => k !== 'wishes')
+    .map(([k, v]) => ({
+      status: k,
+      count: v,
+      color: STATUS_COLORS[k] || '#94A3B8',
+      label: STATUS_LABELS[k] || k,
+    }))
+)
+const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
+function onPieSliceClick(status: string) {
+  statusDrillStatus.value = status
+  statusDrillDialog.value = true
+}
 
 const statusPieOptions = computed(() => ({
   chart: {

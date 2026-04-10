@@ -134,14 +134,14 @@
         </div>
       </v-col>
 
-      <!-- Radial Gauge -->
-      <v-col cols="12" md="4">
-        <div class="chart-card">
+      <!-- Radial Gauge (compact) -->
+      <v-col cols="12" md="2">
+        <div class="chart-card chart-card--compact">
           <div class="chart-card-header">
             <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
-            <span class="chart-card-title">Освоение бюджета</span>
+            <span class="chart-card-title">Освоение</span>
           </div>
-          <apexchart type="radialBar" height="270" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
+          <apexchart type="radialBar" height="180" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
           <div class="radial-footer">
             <span class="text-caption text-medium-emphasis">
               {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
@@ -150,26 +150,43 @@
         </div>
       </v-col>
 
-      <!-- Status Pie -->
-      <v-col cols="12" md="4">
-        <div class="chart-card">
+      <!-- Pipeline: Закупки по этапам -->
+      <v-col cols="12" md="6">
+        <div class="chart-card" style="height:100%">
           <div class="chart-card-header">
-            <v-icon icon="mdi-chart-pie" size="18" color="#F59E0B" class="mr-2" />
-            <span class="chart-card-title">Закупки по статусам</span>
+            <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
+            <span class="chart-card-title">Закупки по этапам</span>
+            <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
           </div>
-          <div v-if="statusPieReady">
-            <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
-              <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на сегмент для списка закупок
+          <div v-if="pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
+            <div
+              v-for="stage in pipelineStages" :key="stage.status"
+              class="pipeline-row"
+              @click="onPipelineClick(stage.status)"
+            >
+              <div class="pipeline-label">
+                <span class="pipeline-dot" :style="{ background: stage.color }" />
+                {{ stage.label }}
+              </div>
+              <div class="pipeline-bar-track">
+                <div
+                  class="pipeline-bar-fill"
+                  :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
+                />
+              </div>
+              <div class="pipeline-meta">
+                <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
+                <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
+                  {{ stage.pct }}%
+                </span>
+              </div>
             </div>
-            <StatusPieWithWishes
-              :status-entries="statusPieForComponent"
-              :wishes-amount="wishesAmountForPie"
-              :total-budget="totalBudget"
-              :text-color="chartText"
-              :muted-color="chartMuted"
-              :center-fill="isDark ? '#1e1e2e' : '#ffffff'"
-              @slice-click="onPieSliceClick"
-            />
+            <!-- Wishes ring hint -->
+            <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
+              <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
+              Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
+              ({{ Math.round(wishesAmountForPie / (totalBudget || 1) * 100) }}% бюджета)
+            </div>
           </div>
           <div v-else class="chart-empty">
             <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
@@ -979,6 +996,28 @@ function onPieSliceClick(status: string) {
   statusDrillDialog.value = true
 }
 
+// Pipeline stages (purchase lifecycle funnel)
+const PIPELINE_ORDER = ['plan_schedule', 'planned', 'confirmed', 'in_progress', 'work_in_progress', 'contracted', 'delivered', 'paid']
+const pipelineStages = computed(() => {
+  const budget = totalBudget.value || 1
+  return PIPELINE_ORDER
+    .map(status => {
+      const amount = filteredStatusAmounts.value[status] || 0
+      return {
+        status,
+        label: STATUS_LABELS[status] || status,
+        color: STATUS_COLORS[status] || '#94A3B8',
+        amount,
+        pct: Math.round(amount / budget * 100),
+      }
+    })
+    .filter(s => s.amount > 0)
+})
+function onPipelineClick(status: string) {
+  statusDrillStatus.value = status
+  statusDrillDialog.value = true
+}
+
 const statusPieOptions = computed(() => ({
   chart: {
     type: 'pie', background: 'transparent', toolbar: { show: false },
@@ -1488,6 +1527,49 @@ onMounted(() => {
   margin-top: -8px;
   padding-bottom: 4px;
 }
+
+/* ── Pipeline Chart ── */
+.pipeline-wrap { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.pipeline-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 110px;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 2px;
+  transition: background 0.15s;
+}
+.pipeline-row:hover { background: var(--crm-surface-alt); }
+.pipeline-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--crm-text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.pipeline-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; flex-shrink: 0; margin-right: 6px;
+}
+.pipeline-bar-track {
+  height: 10px; background: var(--crm-border); border-radius: 5px; overflow: hidden;
+}
+.pipeline-bar-fill {
+  height: 100%; border-radius: 5px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+.pipeline-meta {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+}
+.pipeline-amount { font-size: 11px; font-weight: 600; color: var(--crm-text); }
+.pipeline-pct { font-size: 11px; color: var(--crm-text-muted); min-width: 36px; text-align: right; }
+.pipeline-wishes-hint {
+  display: flex; align-items: center;
+  font-size: 11px; color: #F59E0B;
+  border-top: 1px solid var(--crm-border);
+  padding-top: 8px; margin-top: 4px;
+}
+.chart-card--compact { min-height: unset; }
 
 /* ── Recent Purchases ── */
 .purchase-list { margin-top: 4px; }

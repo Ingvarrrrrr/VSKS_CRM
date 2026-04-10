@@ -119,7 +119,7 @@ async def _create_assignment_chat_room(
 
 
 # Status workflow
-STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "delivered", "paid"]
+STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
 VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
 
 # ---------------------------------------------------------------------------
@@ -760,7 +760,7 @@ async def update_purchase(
         p.purchase_number = max_result.scalar() + 1
 
     # НМЦК logic: frozen after "contracted" status
-    CONTRACTED_STATUSES = ("contracted", "delivered", "paid")
+    CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
     is_contracted = p.status in CONTRACTED_STATUSES
 
     if is_contracted:
@@ -1321,7 +1321,7 @@ async def kanban_status_change(
     STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule"}
     target_status = STATUS_ALIASES.get(target_status, target_status)
     if target_status not in STATUS_ORDER:
-        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Поставлено", "Оплачено"]))
+        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
         allowed = ", ".join(f"{k} ({v})" for k, v in STATUS_LABELS_RU.items())
         raise HTTPException(422, f"Недопустимый статус: «{target_status}». Допустимые: {allowed}")
     result = await db.execute(select(Purchase).where(Purchase.id == pid))

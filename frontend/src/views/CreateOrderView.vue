@@ -2820,11 +2820,11 @@ const backRoute = computed(() => {
   return '/orders'
 })
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const STATUS_LABEL_BASE: Record<string, string> = {
   wishes: 'Желания сотрудников', plan_schedule: 'План-график',
   confirmed: 'Подтверждено руководством', work_in_progress: 'Ведётся работа',
-  contracted: 'Заключён договор', delivered: 'Поставлено', paid: 'Оплачено',
+  contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_LABEL = computed<Record<string, string>>(() => ({
   ...STATUS_LABEL_BASE,
@@ -2833,7 +2833,7 @@ const STATUS_LABEL = computed<Record<string, string>>(() => ({
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
   confirmed: 'blue', work_in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  contracted: 'indigo', ordered: 'light-blue', delivered: 'deep-purple', paid: 'green',
 }
 const SUBSTATUS_OPTIONS = [
   { value: 'tz_forming', title: 'Формируется ТЗ' },

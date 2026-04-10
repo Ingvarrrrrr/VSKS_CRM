@@ -1024,9 +1024,10 @@ const barOptions = computed(() => ({
   },
   dataLabels: {
     enabled: true,
-    style: { fontSize: '10px', colors: ['#FFFFFF'] },
-    formatter: (val: number) => val > 0 ? formatCurrency(val) : '',
-    offsetX: 5
+    style: { fontSize: '10px', fontWeight: '600', colors: ['#1F2937'] },
+    formatter: (val: number) => val > 0 ? formatCurrencyShort(val) : '',
+    offsetX: 6,
+    background: { enabled: false }
   },
   xaxis: {
     categories: filteredSubsidyStats.value.map(s => truncate(s.name, 28)),

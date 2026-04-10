@@ -3531,6 +3531,8 @@ onMounted(loadAll)
 .subsidies-page {
   padding: 20px 24px;
   max-width: 1600px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* ── Header ── */

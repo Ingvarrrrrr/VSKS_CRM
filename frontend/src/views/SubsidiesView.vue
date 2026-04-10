@@ -3731,6 +3731,7 @@ onMounted(loadAll)
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
 .feo-td-actions { text-align: right; white-space: nowrap; min-width: 170px; }
+.feo-td-actions .v-btn { background: transparent !important; }
 .feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }

@@ -2494,26 +2494,31 @@ const feoDeleteChildrenCount = computed(() => {
 async function startInlineBudget(node: FeoNode) {
   inlineBudgetId.value = node.id
   inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
+  _pendingBudgetSave = { nodeId: node.id, node }
   await nextTick()
   inlineInputEl.value?.focus()
 }
 
+let _pendingBudgetSave: { nodeId: number; node: FeoNode } | null = null
+
 async function saveInlineBudget(node: FeoNode) {
-  const nodeId = inlineBudgetId.value
-  if (nodeId !== node.id) return
+  // Save nodeId before clearing — blur may fire after re-render
+  const nodeId = _pendingBudgetSave?.nodeId ?? inlineBudgetId.value
+  if (!nodeId) return
+  const savedNode = _pendingBudgetSave?.node ?? node
+  _pendingBudgetSave = null
   inlineBudgetId.value = null
   const val = inlineBudgetVal.value.trim() === '' ? null : parseFloat(inlineBudgetVal.value)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: val, planned_quantity: node.planned_quantity ?? null,
-        planned_amount: node.planned_amount ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: val, planned_quantity: savedNode.planned_quantity ?? null,
+        planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
     })
-    // Update local data immediately
     const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.budget = val
-    node.budget = val
+    savedNode.budget = val
     feoCategories.value = [...feoCategories.value]
     syncFeoFilled()
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
@@ -2557,54 +2562,64 @@ function isAutoAmtNode(node: FeoNode): boolean {
   return node.planned_amount == null
 }
 
+let _pendingAmtSave: { nodeId: number; node: FeoNode } | null = null
+
 async function startInlineAmt(node: FeoNode) {
   inlineAmtId.value = node.id
   inlineAmtVal.value = node.planned_amount != null ? String(node.planned_amount) : ''
+  _pendingAmtSave = { nodeId: node.id, node }
   await nextTick()
   inlineAmtInputEl.value?.focus()
 }
 
 async function saveInlineAmt(node: FeoNode) {
-  const nodeId = inlineAmtId.value
-  if (nodeId !== node.id) return
+  const nodeId = _pendingAmtSave?.nodeId ?? inlineAmtId.value
+  if (!nodeId) return
+  const savedNode = _pendingAmtSave?.node ?? node
+  _pendingAmtSave = null
   inlineAmtId.value = null
   const val = inlineAmtVal.value.trim() === '' ? null : parseFloat(inlineAmtVal.value)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget ?? null, planned_quantity: node.planned_quantity ?? null,
-        planned_amount: val ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: savedNode.planned_quantity ?? null,
+        planned_amount: val ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
     })
     const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.planned_amount = val ?? null
-    node.planned_amount = val ?? null
+    savedNode.planned_amount = val ?? null
     feoCategories.value = [...feoCategories.value]
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
 
+let _pendingQtySave: { nodeId: number; node: FeoNode } | null = null
+
 async function startInlineQty(node: FeoNode) {
   inlineQtyId.value = node.id
   inlineQtyVal.value = node.planned_quantity != null ? String(node.planned_quantity) : ''
+  _pendingQtySave = { nodeId: node.id, node }
   await nextTick()
   inlineQtyInputEl.value?.focus()
 }
 
 async function saveInlineQty(node: FeoNode) {
-  const nodeId = inlineQtyId.value
-  if (nodeId !== node.id) return
+  const nodeId = _pendingQtySave?.nodeId ?? inlineQtyId.value
+  if (!nodeId) return
+  const savedNode = _pendingQtySave?.node ?? node
+  _pendingQtySave = null
   inlineQtyId.value = null
   const val = inlineQtyVal.value.trim() === '' ? null : parseFloat(inlineQtyVal.value)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: node.budget ?? null, planned_quantity: val,
-        planned_amount: node.planned_amount ?? null, unit: node.unit ?? null, subsidy_id: node.subsidy_id }),
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: val,
+        planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
     })
     const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.planned_quantity = val
-    node.planned_quantity = val
+    savedNode.planned_quantity = val
     feoCategories.value = [...feoCategories.value]
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }

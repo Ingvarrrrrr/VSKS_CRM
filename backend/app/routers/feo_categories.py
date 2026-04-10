@@ -390,10 +390,17 @@ async def _do_feo_import(
     if c_subsidy is None or c_lvl2 is None:
         raise HTTPException(400, "Не найдены обязательные столбцы: 'Субсидия' и 'Уровень 2 (Направление расходов)'")
 
-    def get_cell(row: tuple, col: int | None) -> str | None:
-        if col is None or col < 0 or col >= len(row): return None
+    def get_cell(row, col: int | None) -> str | None:
+        if col is None or col < 0: return None
+        # Some rows may be shorter than header row — treat missing cells as None
+        if col >= len(row): return None
         v = row[col]
-        return str(v).strip() if v is not None else None
+        if v is None: return None
+        s = str(v).strip()
+        # Treat "0", "0.0" etc. as valid values (not None)
+        if not s or s.lower() in ('none', 'null'):
+            return None
+        return s
 
     def to_bool(v: str | None) -> bool:
         if v is None: return True
@@ -615,9 +622,9 @@ async def import_feo_from_excel(
     c_unit_lvl2 = find_col(["ед. изм. (ур.2)", "ед.изм. ур.2", "единица ур.2"])
     c_unit_lvl3 = find_col(["ед. изм. (ур.3)", "ед.изм. ур.3", "единица ур.3"])
     c_unit_lvl4 = find_col(["ед. изм. (ур.4)", "ед.изм. ур.4", "единица ур.4"])
-    c_amt_lvl2 = find_col(["плановая сумма (ур.2)", "сумма ур.2", "план.сумма ур.2"])
-    c_amt_lvl3 = find_col(["плановая сумма (ур.3)", "сумма ур.3"])
-    c_amt_lvl4 = find_col(["плановая сумма (ур.4)", "сумма ур.4"])
+    c_amt_lvl2 = find_col(["плановая стоимость за ед. (ур.2)", "плановая стоимость (ур.2)", "стоимость за ед. (ур.2)", "стоимость ур.2", "плановая сумма (ур.2)", "сумма ур.2"])
+    c_amt_lvl3 = find_col(["плановая стоимость за ед. (ур.3)", "плановая стоимость (ур.3)", "стоимость за ед. (ур.3)", "стоимость ур.3", "плановая сумма (ур.3)", "сумма ур.3"])
+    c_amt_lvl4 = find_col(["плановая стоимость за ед. (ур.4)", "плановая стоимость (ур.4)", "стоимость за ед. (ур.4)", "стоимость ур.4", "плановая сумма (ур.4)", "сумма ур.4"])
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])

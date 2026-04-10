@@ -275,11 +275,11 @@
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="isAutoNode(node)" class="text-right">
-                          <div class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</div>
-                          <div><v-chip size="x-small" color="blue-grey" variant="tonal"
+                        <div v-if="isAutoNode(node)" class="d-flex align-center justify-end">
+                          <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
                             title="Сумма автоматически считается из дочерних направлений"
-                          >авто</v-chip></div>
+                          >авто</v-chip>
                         </div>
                         <div v-else-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                           <input
@@ -300,13 +300,11 @@
 
                       <!-- Плановое количество -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="isAutoQtyNode(node)" class="text-right">
+                        <div v-if="isAutoQtyNode(node)" class="d-flex align-center justify-end">
                           <span class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
-                          <div>
-                            <v-chip size="x-small" color="blue-grey" variant="tonal"
-                              title="Количество автоматически считается из дочерних"
-                            >авто</v-chip>
-                          </div>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                            title="Количество автоматически считается из дочерних"
+                          >авто</v-chip>
                         </div>
                         <div v-else-if="inlineQtyId === node.id" class="d-flex align-center justify-end">
                           <input
@@ -346,16 +344,14 @@
 
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
-                        <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
-                        <span class="action-slot">
-                          <v-btn v-if="node.level === 3"
-                            :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
-                            variant="text" size="x-small"
-                            :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
-                            title="Показать плановые / фактические позиции"
-                            @click="toggleItemPanel(node)"
-                          />
-                        </span>
+                        <!-- Level 3: кнопка раскрытия позиций -->
+                        <v-btn v-if="node.level === 3"
+                          :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
+                          variant="text" size="x-small"
+                          :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
+                          title="Показать плановые / фактические позиции"
+                          @click="toggleItemPanel(node)"
+                        />
                         <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                           title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
                         <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
@@ -3712,7 +3708,7 @@ onMounted(loadAll)
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  min-width: 1000px;
+  min-width: 700px;
 }
 .feo-th {
   font-size: 11px; font-weight: 600; color: var(--crm-text-muted);
@@ -3724,7 +3720,7 @@ onMounted(loadAll)
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }
-.feo-th-actions { min-width: 160px; }
+.feo-th-actions { }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
@@ -3732,8 +3728,7 @@ onMounted(loadAll)
 .feo-td-name { min-width: 0; }
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
-.feo-td-actions { text-align: right; white-space: nowrap; min-width: 168px; }
-.action-slot { display: inline-flex; width: 28px; justify-content: center; align-items: center; }
+.feo-td-actions { text-align: right; white-space: nowrap; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }

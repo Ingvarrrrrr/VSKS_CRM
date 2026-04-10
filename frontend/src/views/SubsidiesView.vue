@@ -2496,7 +2496,8 @@ async function startInlineBudget(node: FeoNode) {
   inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
   _pendingBudgetSave = { nodeId: node.id, node }
   await nextTick()
-  inlineInputEl.value?.focus()
+  const el = Array.isArray(inlineInputEl.value) ? inlineInputEl.value[0] : inlineInputEl.value
+  el?.focus?.()
 }
 
 let _pendingBudgetSave: { nodeId: number; node: FeoNode } | null = null
@@ -2508,7 +2509,8 @@ async function saveInlineBudget(node: FeoNode) {
   const savedNode = _pendingBudgetSave?.node ?? node
   _pendingBudgetSave = null
   inlineBudgetId.value = null
-  const val = inlineBudgetVal.value.trim() === '' ? null : parseFloat(inlineBudgetVal.value)
+  const raw = String(inlineBudgetVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
@@ -2569,7 +2571,8 @@ async function startInlineAmt(node: FeoNode) {
   inlineAmtVal.value = node.planned_amount != null ? String(node.planned_amount) : ''
   _pendingAmtSave = { nodeId: node.id, node }
   await nextTick()
-  inlineAmtInputEl.value?.focus()
+  const elA = Array.isArray(inlineAmtInputEl.value) ? inlineAmtInputEl.value[0] : inlineAmtInputEl.value
+  elA?.focus?.()
 }
 
 async function saveInlineAmt(node: FeoNode) {
@@ -2578,7 +2581,8 @@ async function saveInlineAmt(node: FeoNode) {
   const savedNode = _pendingAmtSave?.node ?? node
   _pendingAmtSave = null
   inlineAmtId.value = null
-  const val = inlineAmtVal.value.trim() === '' ? null : parseFloat(inlineAmtVal.value)
+  const raw = String(inlineAmtVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
@@ -2600,7 +2604,8 @@ async function startInlineQty(node: FeoNode) {
   inlineQtyVal.value = node.planned_quantity != null ? String(node.planned_quantity) : ''
   _pendingQtySave = { nodeId: node.id, node }
   await nextTick()
-  inlineQtyInputEl.value?.focus()
+  const elQ = Array.isArray(inlineQtyInputEl.value) ? inlineQtyInputEl.value[0] : inlineQtyInputEl.value
+  elQ?.focus?.()
 }
 
 async function saveInlineQty(node: FeoNode) {
@@ -2609,7 +2614,8 @@ async function saveInlineQty(node: FeoNode) {
   const savedNode = _pendingQtySave?.node ?? node
   _pendingQtySave = null
   inlineQtyId.value = null
-  const val = inlineQtyVal.value.trim() === '' ? null : parseFloat(inlineQtyVal.value)
+  const raw = String(inlineQtyVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
   try {
     await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',

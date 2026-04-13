@@ -16,25 +16,34 @@
           {{ p.full_name.split(' ')[0] }}
         </v-chip>
         <v-spacer />
-        <v-menu v-model="addParticipantMenu" :close-on-content-click="false" location="bottom end" max-width="280" @update:model-value="v => v && loadStaff()">
+        <v-menu v-model="addParticipantMenu" :close-on-content-click="false" location="bottom end" max-width="400" @update:model-value="v => v && loadStaff()">
           <template #activator="{ props: menuProps }">
             <v-btn v-bind="menuProps" icon="mdi-account-plus" variant="text" size="x-small" title="Добавить участника" />
           </template>
-          <v-card density="compact">
-            <v-card-text class="pa-2">
+          <v-card min-width="360">
+            <v-card-title class="text-subtitle-2 pa-3 pb-1">Добавить участника</v-card-title>
+            <v-card-text class="pa-3 pt-1">
               <v-autocomplete
                 v-model="addParticipantId"
-                :items="availableStaff"
+                :items="groupedStaff"
                 item-title="full_name"
                 item-value="id"
-                label="Сотрудник"
+                label="Поиск сотрудника"
                 variant="outlined"
                 density="compact"
                 hide-no-data
                 hide-details
                 autofocus
                 @update:model-value="doAddParticipant"
-              />
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-subheader v-if="item.raw._header" :key="item.raw._header">{{ item.raw._header }}</v-list-subheader>
+                  <v-list-item v-else v-bind="itemProps">
+                    <template #title>{{ item.raw.full_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
             </v-card-text>
           </v-card>
         </v-menu>
@@ -163,13 +172,30 @@ const mentionCursorPos = ref(0)
 const roomParticipants = ref<{id: number, full_name: string}[]>([])
 const addParticipantMenu = ref(false)
 const addParticipantId = ref<number | null>(null)
-const availableStaff = ref<{id: number, full_name: string}[]>([])
+const availableStaff = ref<{id: number, full_name: string, department?: string, position?: string}[]>([])
+
+const groupedStaff = computed(() => {
+  const byDept: Record<string, typeof availableStaff.value> = {}
+  for (const s of availableStaff.value) {
+    const dept = s.department || 'Без отдела'
+    if (!byDept[dept]) byDept[dept] = []
+    byDept[dept].push(s)
+  }
+  const result: any[] = []
+  for (const [dept, members] of Object.entries(byDept).sort(([a], [b]) => a.localeCompare(b))) {
+    result.push({ _header: dept, id: `hdr_${dept}`, full_name: dept })
+    result.push(...members)
+  }
+  return result
+})
 
 async function loadStaff() {
   try {
     const staff = await apiFetch<any[]>('/chat/staff')
     const participantIds = new Set(roomParticipants.value.map(p => p.id))
-    availableStaff.value = staff.filter(s => !participantIds.has(s.id))
+    availableStaff.value = staff
+      .filter(s => !participantIds.has(s.id))
+      .map(s => ({ id: s.id, full_name: s.full_name, department: s.department, position: s.position }))
   } catch { availableStaff.value = [] }
 }
 

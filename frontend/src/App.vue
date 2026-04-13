@@ -2,7 +2,11 @@
   <v-app>
     <app-bar v-if="showAppBar" />
     <v-main>
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <transition name="page" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
     </v-main>
     <api-error-dialog />
     <!-- Global chat FAB -->
@@ -25,6 +29,7 @@
       </v-badge>
       <v-icon v-else icon="mdi-chat" />
     </v-btn>
+    <toast-container />
   </v-app>
 </template>
 
@@ -36,6 +41,7 @@ import AppBar from './components/AppBar.vue'
 import ApiErrorDialog from './components/ApiErrorDialog.vue'
 import { initTableResize } from './composables/useTableResize'
 import { totalUnread } from './composables/useChat'
+import ToastContainer from './components/ToastContainer.vue'
 
 const route = useRoute()
 const theme = useTheme()
@@ -213,5 +219,21 @@ onMounted(async () => {
   bottom: 5%;
   width: 3px;
   background: rgb(59, 130, 246);
+}
+
+/* ── Page transitions ── */
+.page-enter-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.page-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 </style>

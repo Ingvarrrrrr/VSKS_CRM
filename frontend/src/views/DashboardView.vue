@@ -6,7 +6,7 @@
       <div class="dash-header-left">
         <v-icon icon="mdi-view-dashboard-outline" size="34" color="#3B82F6" class="mr-3" />
         <div>
-          <div class="dash-title">Дашборд</div>
+          <div class="dash-title gradient-text">Дашборд</div>
           <div class="dash-subtitle">ВСКС · Управление субсидиями · {{ selectedYear }}</div>
         </div>
       </div>
@@ -85,7 +85,12 @@
     </div>
 
     <!-- ── KPI Cards ── -->
-    <v-row class="kpi-row">
+    <v-row v-if="loading" class="kpi-row">
+      <v-col cols="6" lg="3" v-for="n in 4" :key="'skel-'+n">
+        <v-skeleton-loader type="card" height="88" class="rounded-lg" />
+      </v-col>
+    </v-row>
+    <v-row v-else class="kpi-row">
       <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
         <div class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
           <div class="kpi-icon-box">
@@ -396,6 +401,7 @@
               <v-progress-linear
                 :model-value="pct(s.paid, s.budget)" height="18"
                 :color="progressColor(pct(s.paid, s.budget))" rounded
+                class="gradient-progress"
               >
                 <template #default>
                   <span class="text-caption font-weight-bold">{{ pct(s.paid, s.budget) }}%</span>
@@ -421,6 +427,7 @@
               <v-progress-linear
                 :model-value="totalUsagePct" height="18"
                 :color="progressColor(totalUsagePct)" rounded
+                class="gradient-progress"
               >
                 <template #default>
                   <span class="text-caption font-weight-bold">{{ totalUsagePct }}%</span>
@@ -715,6 +722,7 @@ import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -807,6 +815,12 @@ const totalOrdered      = computed(() => filteredSubsidies.value.reduce((s, x) =
 const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
+// Animated KPI values
+const animBudget       = useAnimatedNumber(totalBudget)
+const animPlanSchedule = useAnimatedNumber(totalPlanSchedule)
+const animOrdered      = useAnimatedNumber(totalOrdered)
+const animPaid         = useAnimatedNumber(totalPaid)
+
 const overrunSubsidies = computed(() =>
   filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
 )
@@ -814,22 +828,22 @@ const overrunSubsidies = computed(() =>
 // ── KPI Cards ─────────────────────────────────────
 const kpiCards = computed(() => [
   {
-    key: 'budget', label: 'Общий бюджет', value: totalBudget.value,
+    key: 'budget', label: 'Общий бюджет', value: animBudget.value,
     icon: 'mdi-bank-outline',
     badge: `${filteredSubsidies.value.length} субс.`
   },
   {
-    key: 'plan_schedule', label: 'Запланировано', value: totalPlanSchedule.value,
+    key: 'plan_schedule', label: 'Запланировано', value: animPlanSchedule.value,
     icon: 'mdi-calendar-clock',
     badge: `${pct(totalPlanSchedule.value, totalBudget.value)}%`
   },
   {
-    key: 'ordered', label: 'Заказано', value: totalOrdered.value,
+    key: 'ordered', label: 'Заказано', value: animOrdered.value,
     icon: 'mdi-cart-check',
     badge: `${pct(totalOrdered.value, totalBudget.value)}%`
   },
   {
-    key: 'paid', label: 'Оплачено', value: totalPaid.value,
+    key: 'paid', label: 'Оплачено', value: animPaid.value,
     icon: 'mdi-cash-check',
     badge: `${pct(totalPaid.value, totalBudget.value)}%`
   },
@@ -1601,6 +1615,11 @@ onMounted(() => {
 .subsidy-chip {
   font-size: 12px;
   letter-spacing: 0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.subsidy-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px var(--crm-shadow);
 }
 
 /* ── KPI Cards ── */
@@ -1613,7 +1632,9 @@ onMounted(() => {
   align-items: center;
   gap: 14px;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.25s ease;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--crm-border);
@@ -1621,9 +1642,32 @@ onMounted(() => {
   box-shadow: 0 1px 4px var(--crm-shadow);
 }
 .kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px var(--crm-shadow-hover);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px var(--crm-shadow-hover);
+  border-color: var(--crm-border-strong);
 }
+.kpi-card:active {
+  transform: translateY(-1px) scale(0.985);
+  transition-duration: 0.1s;
+}
+
+/* ── Glassmorphism + Glow (Wiza-inspired) ── */
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  z-index: -1;
+}
+.kpi-card:hover::before {
+  opacity: 1;
+}
+.kpi-budget::before        { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-plan_schedule::before { box-shadow: 0 0 30px rgba(245,158,11,0.15); }
+.kpi-ordered::before       { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-paid::before          { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 
 .kpi-icon-box {
   width: 48px;
@@ -1633,6 +1677,10 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kpi-card:hover .kpi-icon-box {
+  transform: scale(1.12) rotate(-3deg);
 }
 
 .kpi-budget .kpi-icon-box        { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
@@ -1669,6 +1717,11 @@ onMounted(() => {
   padding: 2px 8px;
   border-radius: 20px;
   white-space: nowrap;
+  transition: all 0.25s ease;
+}
+.kpi-card:hover .kpi-badge {
+  background: var(--crm-border-strong);
+  color: var(--crm-text);
 }
 
 /* ── Chart Cards ── */
@@ -1858,4 +1911,92 @@ onMounted(() => {
 .chart-fade-enter-active, .chart-fade-leave-active { transition: opacity 0.25s, transform 0.25s; }
 .chart-fade-enter-from { opacity: 0; transform: translateX(12px); }
 .chart-fade-leave-to  { opacity: 0; transform: translateX(-12px); }
+
+/* ── Gradient progress bars ── */
+.gradient-progress :deep(.v-progress-linear__determinate) {
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+.gradient-progress :deep(.v-progress-linear__background) {
+  opacity: 0.15 !important;
+}
+
+/* ── Chart card hover (glassmorphism) ── */
+.chart-card {
+  transition: box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.3s ease;
+}
+.chart-card:hover {
+  box-shadow: 0 12px 32px var(--crm-shadow-hover);
+  transform: translateY(-3px);
+  border-color: var(--crm-border-strong);
+}
+
+/* ── Smooth skeleton transition ── */
+.kpi-row {
+  transition: opacity 0.3s ease;
+}
+
+/* ── Animated gradient text (Wiza-inspired) ── */
+.gradient-text {
+  background: linear-gradient(
+    90deg,
+    #3B82F6 0%,
+    #8B5CF6 25%,
+    #EC4899 50%,
+    #F59E0B 75%,
+    #3B82F6 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient-shift 4s linear infinite;
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+/* ── Dot grid background (First Internet inspired) ── */
+.crm-dashboard {
+  position: relative;
+}
+.crm-dashboard::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--crm-border-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+.crm-dashboard > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Staggered entrance animation ── */
+@keyframes card-entrance {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.kpi-row .v-col:nth-child(1) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both; }
+.kpi-row .v-col:nth-child(2) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both; }
+.kpi-row .v-col:nth-child(3) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.19s both; }
+.kpi-row .v-col:nth-child(4) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.26s both; }
+
+/* Charts entrance */
+.chart-row .v-col:nth-child(1) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both; }
+.chart-row .v-col:nth-child(2) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.38s both; }
+.chart-row .v-col:nth-child(3) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.46s both; }
 </style>

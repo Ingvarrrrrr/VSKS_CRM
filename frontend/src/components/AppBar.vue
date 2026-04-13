@@ -823,6 +823,8 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
   opacity: 0.8;
   text-transform: none;
   letter-spacing: 0;
+  position: relative;
+  transition: all 0.2s ease;
 }
 .nav-icon-btn:hover {
   opacity: 1;
@@ -831,6 +833,24 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
 .nav-icon-btn--active {
   opacity: 1;
   background: rgba(255,255,255,0.2) !important;
+}
+
+/* ── Active nav glow (Wiza-inspired) ── */
+.nav-icon-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #8B5CF6, #EC4899, #F59E0B);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nav-icon-btn--active::after,
+.nav-icon-btn:hover::after {
+  width: 70%;
 }
 .nav-icon-label {
   font-size: 10px;
@@ -874,5 +894,19 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
 }
 .sidebar-badge--changes {
   background: #FF9800;
+}
+
+/* ── AppBar glass effect ── */
+:deep(.v-app-bar) {
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+}
+
+/* ── Logo title hover ── */
+:deep(.v-app-bar-title) {
+  transition: opacity 0.2s ease;
+}
+:deep(.v-app-bar-title:hover) {
+  opacity: 0.85;
 }
 </style>

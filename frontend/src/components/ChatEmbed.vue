@@ -10,6 +10,35 @@
 
     <!-- Chat UI -->
     <template v-else-if="roomId">
+      <!-- Add participant toolbar -->
+      <div class="d-flex align-center px-2 pt-1 gap-1" style="flex-shrink:0">
+        <v-chip v-for="p in roomParticipants" :key="p.id" size="x-small" variant="tonal" class="mr-1">
+          {{ p.full_name.split(' ')[0] }}
+        </v-chip>
+        <v-spacer />
+        <v-menu v-model="addParticipantMenu" :close-on-content-click="false" location="bottom end" max-width="280" @update:model-value="v => v && loadStaff()">
+          <template #activator="{ props: menuProps }">
+            <v-btn v-bind="menuProps" icon="mdi-account-plus" variant="text" size="x-small" title="Добавить участника" />
+          </template>
+          <v-card density="compact">
+            <v-card-text class="pa-2">
+              <v-autocomplete
+                v-model="addParticipantId"
+                :items="availableStaff"
+                item-title="full_name"
+                item-value="id"
+                label="Сотрудник"
+                variant="outlined"
+                density="compact"
+                hide-no-data
+                hide-details
+                autofocus
+                @update:model-value="doAddParticipant"
+              />
+            </v-card-text>
+          </v-card>
+        </v-menu>
+      </div>
       <!-- Messages -->
       <div ref="messagesEl" class="chat-embed__messages" @scroll.passive="onScroll">
         <div v-if="loadingMore" class="d-flex justify-center py-2">
@@ -132,6 +161,34 @@ const mentionOpen = ref(false)
 const mentionFilter = ref('')
 const mentionCursorPos = ref(0)
 const roomParticipants = ref<{id: number, full_name: string}[]>([])
+const addParticipantMenu = ref(false)
+const addParticipantId = ref<number | null>(null)
+const availableStaff = ref<{id: number, full_name: string}[]>([])
+
+async function loadStaff() {
+  try {
+    const staff = await apiFetch<any[]>('/chat/staff')
+    const participantIds = new Set(roomParticipants.value.map(p => p.id))
+    availableStaff.value = staff.filter(s => !participantIds.has(s.id))
+  } catch { availableStaff.value = [] }
+}
+
+async function doAddParticipant(userId: number | null) {
+  if (!userId || !roomId.value) return
+  try {
+    await apiFetch(`/chat/rooms/${roomId.value}/participants`, {
+      method: 'POST',
+      body: { user_id: userId },
+    })
+    const user = availableStaff.value.find(s => s.id === userId)
+    if (user) {
+      roomParticipants.value.push(user)
+      availableStaff.value = availableStaff.value.filter(s => s.id !== userId)
+    }
+    addParticipantId.value = null
+    addParticipantMenu.value = false
+  } catch {}
+}
 
 function formatTime(dt: string) {
   return new Date(dt).toLocaleString('ru', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })

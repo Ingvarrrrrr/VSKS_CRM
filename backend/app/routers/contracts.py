@@ -35,7 +35,7 @@ async def list_contracts(
     status: Optional[str] = Query(None),
     contractor_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_role(*ALL_ROLES)),
 ):
     q = select(Contract).options(
         selectinload(Contract.contractor),

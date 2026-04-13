@@ -17,7 +17,7 @@ from app.schemas.schemas import (
     SubsidyCreate, SubsidyOut,
     SubsidyContractorOverrideCreate, SubsidyContractorOverrideOut,
 )
-from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES
+from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES, ALL_ROLES
 from app.models.user import User
 from typing import List
 
@@ -64,7 +64,7 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
 @router.get("/", response_model=List[SubsidyOut])
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
 ):
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
     org_ids = get_org_filter(current_user)

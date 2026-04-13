@@ -109,9 +109,13 @@
                 variant="outlined"
                 density="compact"
                 maxlength="12"
-                hint="Введите ИНН — контрагент подставится автоматически" persistent-hint
+                hint="Введите ИНН — если контрагент найден, он подставится. Если нет — добавьте нового." persistent-hint
                 @update:model-value="onInnInput"
-              />
+              >
+                <template #prepend-inner>
+                  <v-icon size="18" color="grey">mdi-domain</v-icon>
+                </template>
+              </v-text-field>
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
@@ -146,7 +150,7 @@
               <v-autocomplete
                 v-model="form.responsible_person"
                 :items="orgUsersList"
-                item-title="full_name"
+                item-title="short_name"
                 item-value="full_name"
                 label="Ответственный исполнитель"
                 variant="outlined"
@@ -156,7 +160,14 @@
                 hint="Необязательное поле"
                 persistent-hint
                 autocomplete="off"
-              />
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps">
+                    <template #title>{{ item.raw.short_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
             </v-col>
             <!-- FEO level 1 — появляется после выбора субсидии -->
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
@@ -1021,6 +1032,8 @@
                 </template>
               </div>
             </div>
+            <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+              style="display:none" @change="uploadSectionFile" />
           </div>
 
           <!-- Реквизиты закрывающих документов -->
@@ -1182,8 +1195,6 @@
           </FileDropZone>
           <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
-          <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            style="display:none" @change="uploadSectionFile" />
 
           <v-list v-if="uploadedFiles.length" density="compact">
             <v-list-item v-for="f in uploadedFiles" :key="f.id"
@@ -1871,8 +1882,11 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3500" location="bottom right">
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
+      <template #actions>
+        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
+      </template>
     </v-snackbar>
 
     <!-- File preview dialog -->
@@ -2934,11 +2948,11 @@ const form = reactive({
   framework_seq: null as number | null,
   responsible_person: '' as string,
   // Поля для генерации договора
-  vat_applicable: false as boolean,
-  vat_rate: null as number | null,
+  vat_applicable: true as boolean,
+  vat_rate: 22 as number | null,
   vat_exemption_article: '' as string,
   third_party_involved: false as boolean,
-  service_period_type: 'period' as string,
+  service_period_type: 'date' as string,
   service_start_date: '' as string,
   service_end_date: '' as string,
   description_mode: 'exact' as string,
@@ -2995,22 +3009,54 @@ const pickerInitiatorId    = ref<number | null>(null)
 const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
 
 // ── Org users list for executor dropdown ──
-interface OrgUser { id: number; full_name: string; position?: string | null }
+function toShortName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/)
+  if (parts.length >= 3) return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`
+  if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`
+  return fullName
+}
+interface OrgUser { id: number; full_name: string; short_name: string; position?: string | null }
 const orgUsersList = ref<OrgUser[]>([])
 async function loadOrgUsers() {
   try {
     const users = await apiFetch<any[]>('/users/')
     orgUsersList.value = users
       .filter(u => u.full_name)
-      .map(u => ({ id: u.id, full_name: u.full_name, position: u.position }))
+      .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
   } catch { orgUsersList.value = [] }
 }
 
 // ── Delivery address autocomplete ──
 const deliveryAddressSuggestions = ref<string[]>([])
 let _deliverySearchTimer: ReturnType<typeof setTimeout> | null = null
+async function loadDeliveryAddressHistory() {
+  try {
+    const orgId = currentSubsidyOrgId.value
+    if (!orgId) return
+    const results = await apiFetch<{ id: number; address: string }[]>(
+      `/delivery-addresses/?org_id=${orgId}&q=`
+    )
+    const addresses = results.map(r => r.address)
+    // Добавим адрес организации первым если его нет в истории
+    const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
+    if (subsidy?.org_id) {
+      try {
+        const orgs = await apiFetch<any[]>('/auth/my-orgs')
+        const org = orgs.find((o: any) => o.id === subsidy.org_id)
+        if (org?.address && !addresses.includes(org.address)) {
+          addresses.unshift(org.address)
+        }
+      } catch { /* silent */ }
+    }
+    deliveryAddressSuggestions.value = [...new Set(addresses)]
+  } catch { deliveryAddressSuggestions.value = [] }
+}
 async function onDeliveryAddressSearch(q: string) {
-  if (!q || q.length < 2) { deliveryAddressSuggestions.value = []; return }
+  if (!q || q.length < 2) {
+    // При пустом поле показать историю
+    if (!deliveryAddressSuggestions.value.length) loadDeliveryAddressHistory()
+    return
+  }
   if (_deliverySearchTimer) clearTimeout(_deliverySearchTimer)
   _deliverySearchTimer = setTimeout(async () => {
     try {
@@ -4288,7 +4334,8 @@ const onSubsidyChange = async () => {
   feoSaveAttempted.value = false
   calcBudget()
   loadResponsiblePersons()
-  // Pre-fill delivery address from org if empty
+  // Pre-fill delivery address from org if empty & load address history
+  loadDeliveryAddressHistory()
   if (!form.delivery_address && form.subsidy_id) {
     try {
       const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
@@ -5152,7 +5199,7 @@ const loadPurchase = async () => {
     vat_rate: data.vat_rate ?? null,
     vat_exemption_article: data.vat_exemption_article || '',
     third_party_involved: !!data.third_party_involved,
-    service_period_type: data.service_period_type || 'period',
+    service_period_type: data.service_period_type || 'date',
     service_start_date: data.service_start_date || '',
     service_end_date: data.service_end_date || '',
     description_mode: data.description_mode || 'exact',
@@ -5205,7 +5252,7 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
         _selectedProduct: prod ?? (i.item_name || null),
-        _photo_url: prod?.photo_url || undefined,
+        _photo_url: prod?.photo_url || prod?.photo_link || undefined,
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }

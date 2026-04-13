@@ -727,6 +727,60 @@ async def mark_read(
     return {"ok": True}
 
 
+@router.post("/rooms/{room_id}/participants")
+async def add_participant(
+    room_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a participant to a chat room."""
+    await _check_room_participant(room_id, current_user.id, db)
+    user_id = body.get("user_id")
+    if not user_id:
+        raise HTTPException(400, "user_id is required")
+    # Check user exists
+    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(404, "User not found")
+    # Check not already participant
+    existing = (await db.execute(
+        select(ChatParticipant).where(
+            ChatParticipant.room_id == room_id,
+            ChatParticipant.user_id == user_id,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        return {"ok": True, "already_member": True}
+    db.add(ChatParticipant(room_id=room_id, user_id=user_id))
+    await db.commit()
+    # Notify room participants about new member
+    participant_ids = await _get_participant_ids(room_id, db)
+    await manager.send_to_users(participant_ids, {
+        "type": "participant_added",
+        "room_id": room_id,
+        "user_id": user_id,
+        "user_name": target.full_name,
+    })
+    return {"ok": True, "already_member": False}
+
+
+@router.get("/rooms/{room_id}/participants")
+async def list_participants(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List participants of a chat room."""
+    await _check_room_participant(room_id, current_user.id, db)
+    rows = (await db.execute(
+        select(ChatParticipant.user_id, User.full_name)
+        .join(User, ChatParticipant.user_id == User.id)
+        .where(ChatParticipant.room_id == room_id)
+    )).all()
+    return [{"id": r.user_id, "full_name": r.full_name} for r in rows]
+
+
 @router.get("/staff")
 async def get_staff(
     db: AsyncSession = Depends(get_db),

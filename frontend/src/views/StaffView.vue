@@ -433,13 +433,13 @@
             hint="Числовой ID для уведомлений через MAX-бот" persistent-hint />
           <v-text-field v-if="canChangePassword" v-model="editDialog.password" label="Новый пароль (оставьте пустым чтобы не менять)" variant="outlined" density="compact" type="password" />
           <!-- Multi-org membership (available if orgs list loaded) -->
-          <div v-if="organizations.length > 1" class="mb-3">
+          <div v-if="organizations.length > 0" class="mb-3">
             <v-select
               v-model="editDialog.extraOrgIds"
-              :items="organizations.filter(o => o.id !== currentOrgId)"
+              :items="organizations"
               item-title="name"
               item-value="id"
-              label="Также в организациях"
+              label="В организациях"
               variant="outlined"
               density="compact"
               multiple
@@ -448,7 +448,7 @@
               clearable
               prepend-inner-icon="mdi-domain-plus"
               :loading="editDialog.extraOrgsLoading"
-              hint="Пользователь будет виден и доступен в этих организациях"
+              hint="Пользователь будет виден и доступен в этих организациях. Удаление организации уберёт сотрудника из неё."
               persistent-hint
             />
             <!-- Position per extra org -->
@@ -1261,7 +1261,10 @@ async function openEditUser(item: UserItem) {
       apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`),
       apiFetch<any[]>(`/users/${item.id}/salary`).catch(() => []),
     ])
-    editDialog.extraOrgIds = orgRes.extra.map((e: any) => e.id)
+    editDialog.extraOrgIds = [
+      ...(orgRes.primary?.id ? [orgRes.primary.id] : []),
+      ...orgRes.extra.map((e: any) => e.id),
+    ]
     const pos: Record<number, string> = {}
     for (const e of orgRes.extra) {
       if (e.position) pos[e.id] = e.position
@@ -1354,27 +1357,21 @@ async function saveEditUser() {
     // Note: if only position changed (same dept), PATCH /users above already syncs
     // DepartmentMember.position via _sync_user_department — no extra call needed.
 
-    // Save salary for primary org
-    const primaryOrgId = users.value.find(u => u.id === editDialog.userId)?.org_id
-    if (primaryOrgId && (editDialog.orgSalary[primaryOrgId] != null || editDialog.orgPercent[primaryOrgId] != null || editDialog.orgPositions[primaryOrgId])) {
-      try {
-        await apiFetch(`/users/${editDialog.userId}/organizations/${primaryOrgId}`, {
-          method: 'PATCH',
-          body: { position: editDialog.orgPositions[primaryOrgId] || null, salary_amount: editDialog.orgSalary[primaryOrgId] ?? null, employment_percent: editDialog.orgPercent[primaryOrgId] ?? null },
-        })
-      } catch {}
-    }
-
-    // Sync extra org memberships + positions
+    // Sync ALL org memberships (primary + extra unified)
     try {
       const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
-      const currentExtraMap = new Map(res.extra.map((e: any) => [e.id, e]))
+      const currentOrgMap = new Map<number, any>()
+      if (res.primary?.id) currentOrgMap.set(res.primary.id, res.primary)
+      for (const e of res.extra) currentOrgMap.set(e.id, e)
+
       const desiredIds = new Set(editDialog.extraOrgIds)
+
+      // Add or update desired orgs
       for (const oid of desiredIds) {
         const pos = editDialog.orgPositions[oid] || null
         const sal = editDialog.orgSalary[oid] ?? null
         const pct = editDialog.orgPercent[oid] ?? null
-        if (!currentExtraMap.has(oid)) {
+        if (!currentOrgMap.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
             method: 'POST', body: { position: pos, salary_amount: sal, employment_percent: pct },
           })
@@ -1384,7 +1381,9 @@ async function saveEditUser() {
           })
         }
       }
-      for (const oid of currentExtraMap.keys()) {
+
+      // Remove orgs no longer selected (including former primary)
+      for (const oid of currentOrgMap.keys()) {
         if (!desiredIds.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
         }

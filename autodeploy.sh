@@ -6,4 +6,5 @@ docker exec vsks-crm-backend-1 python /app/check_schema.py --apply 2>&1 || true
 docker restart vsks-crm-backend-1 && sleep 8
 docker compose build frontend 2>&1 | tail -5
 docker compose up -d frontend
+docker image prune -f >> /var/log/vsks-deploy.log 2>&1
 echo "Deploy complete: $(date)" >> /var/log/vsks-deploy.log

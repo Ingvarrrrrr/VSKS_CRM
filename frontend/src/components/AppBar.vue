@@ -293,13 +293,23 @@
 
     <v-list v-if="!isEmployee" nav density="compact">
       <v-list-item
-        v-for="subsidy in quickSubsidies"
+        v-for="(subsidy, idx) in quickSubsidies"
         :key="subsidy.id"
         :title="subsidy.name"
         :subtitle="formatCurrency(subsidy.calculated_budget || subsidy.budget || 0)"
-        prepend-icon="mdi-cash"
+        draggable="true"
+        :class="{ 'sidebar-drag-over': subDragOverIdx === idx, 'sidebar-dragging': subDragIdx === idx }"
+        @dragstart="onSubDragStart($event, idx)"
+        @dragover.prevent="onSubDragOver(idx)"
+        @dragleave="subDragOverIdx = -1"
+        @drop.prevent="onSubDrop(idx)"
+        @dragend="subDragOverIdx = -1; subDragIdx = -1"
         @click="goToSubsidy(subsidy.id)"
       >
+        <template v-slot:prepend>
+          <v-icon icon="mdi-drag-horizontal-variant" size="14" class="me-1 cursor-grab" style="opacity:0.4" />
+          <v-icon icon="mdi-cash" size="18" />
+        </template>
         <template v-slot:append>
           <v-btn
             icon="mdi-close"
@@ -363,6 +373,7 @@ const isEmployee = computed(() => userRoleRaw.value === 'employee')
 const allNavShortcuts = [
   { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
   { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+  { label: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
   { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
   { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
@@ -382,7 +393,9 @@ let _badgeInterval: ReturnType<typeof setInterval> | null = null
 
 async function loadBadges() {
   try {
-    const data = await apiFetch<any>('/tasks/badges')
+    const activeOrgId = localStorage.getItem('active_org_id')
+    const url = activeOrgId ? `/tasks/badges?org_id=${activeOrgId}` : '/tasks/badges'
+    const data = await apiFetch<any>(url)
     badgeNewTasks.value = data.new_tasks || 0
     badgeTaskChanges.value = data.task_changes || 0
     badgeNewPurchases.value = data.new_purchases || 0
@@ -432,6 +445,7 @@ const menuItems = computed(() => {
   const items = [
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
     { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
+    { title: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
     { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
     { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
@@ -448,7 +462,7 @@ const menuItems = computed(() => {
     { title: 'Организации', icon: 'mdi-domain', route: '/organizations', roles: ['superadmin'] },
     { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', roles: ['superadmin', 'org_admin'] },
     { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
-    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: MANAGER_ROLES },
+    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: ALL_ROLES },
     { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
     { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', roles: ALL_ROLES },
   ]
@@ -505,6 +519,31 @@ function onSidebarDrop(targetIdx: number) {
 function onSidebarDragEnd() {
   dragIdx.value = null
   dragOverIdx.value = null
+}
+
+// ── Subsidy drag-and-drop reorder ──
+const subDragIdx = ref(-1)
+const subDragOverIdx = ref(-1)
+
+function onSubDragStart(e: DragEvent, idx: number) {
+  subDragIdx.value = idx
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+
+function onSubDragOver(idx: number) {
+  subDragOverIdx.value = idx
+}
+
+function onSubDrop(targetIdx: number) {
+  const srcIdx = subDragIdx.value
+  if (srcIdx < 0 || srcIdx === targetIdx) return
+  const arr = [...pinnedIds.value]
+  const [moved] = arr.splice(srcIdx, 1)
+  arr.splice(targetIdx, 0, moved)
+  pinnedIds.value = arr
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr))
+  subDragOverIdx.value = -1
+  subDragIdx.value = -1
 }
 
 const formatCurrency = (amount: number) =>

@@ -36,9 +36,6 @@
                 label="Описание товара"
                 variant="outlined"
                 rows="3"
-                counter
-                maxlength="500"
-                :rules="[v => !v || v.length <= 500 || 'Максимум 500 символов']"
               />
             </v-col>
             

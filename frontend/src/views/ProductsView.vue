@@ -261,6 +261,9 @@
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">
           {{ editingId ? 'Редактировать товар' : 'Добавить товар' }}
+          <div v-if="editingId && editMeta.updated_by" class="text-caption text-medium-emphasis mt-1">
+            Изменено: {{ editMeta.updated_by }} — {{ formatDate(editMeta.updated_at) }}
+          </div>
         </v-card-title>
         <v-card-text class="px-6">
           <v-row dense>
@@ -488,6 +491,13 @@
         <v-card-text class="px-6">
           <!-- Step 1: upload -->
           <template v-if="importDialog.step === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls)<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
             <p class="text-body-2 text-medium-emphasis mb-4">
               Загрузите файл .xlsx. Обязательная колонка:<br>
               <strong>Наименование</strong> (или «Название», «Товар»).<br>
@@ -734,6 +744,7 @@ const emptyForm = () => ({
   country_origin: 'Россия' as string,
 })
 const form = reactive(emptyForm())
+const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null })
 
 // Name autocomplete + duplicate detection
 const nameSearch = ref('')
@@ -887,6 +898,12 @@ function resetPhotoState() {
   photoPreview.value = null
 }
 
+function formatDate(d: string | null) {
+  if (!d) return ''
+  const dt = new Date(d)
+  return dt.toLocaleDateString('ru-RU') + ' ' + dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
 function openCreate() {
   Object.assign(form, emptyForm())
   resetPhotoState()
@@ -911,6 +928,8 @@ function openEdit(p: Product) {
   })
   resetPhotoState()
   editingId.value = p.id
+  editMeta.updated_at = (p as any).updated_at || null
+  editMeta.updated_by = (p as any).updated_by || null
   dialog.value = true
 }
 

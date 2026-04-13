@@ -343,6 +343,13 @@
         <v-card-title class="text-h6 pt-4 px-6">Импорт категорий ФЭО из Excel</v-card-title>
         <v-card-text class="px-6">
           <template v-if="feoImport.step === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls)<br>
+                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
+                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
+              </div>
+            </v-alert>
             <p class="text-body-2 text-medium-emphasis mb-4">
               Загрузите файл .xlsx с колонками:<br>
               <strong>Наименование</strong> (обяз.), <strong>Субсидия</strong> (обяз.),

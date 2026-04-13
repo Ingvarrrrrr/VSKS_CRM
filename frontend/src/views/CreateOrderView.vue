@@ -109,9 +109,13 @@
                 variant="outlined"
                 density="compact"
                 maxlength="12"
-                hint="Введите ИНН — контрагент подставится автоматически" persistent-hint
+                hint="Введите ИНН — если контрагент найден, он подставится. Если нет — добавьте нового." persistent-hint
                 @update:model-value="onInnInput"
-              />
+              >
+                <template #prepend-inner>
+                  <v-icon size="18" color="grey">mdi-domain</v-icon>
+                </template>
+              </v-text-field>
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
@@ -146,7 +150,7 @@
               <v-autocomplete
                 v-model="form.responsible_person"
                 :items="orgUsersList"
-                item-title="full_name"
+                item-title="short_name"
                 item-value="full_name"
                 label="Ответственный исполнитель"
                 variant="outlined"
@@ -156,7 +160,14 @@
                 hint="Необязательное поле"
                 persistent-hint
                 autocomplete="off"
-              />
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps">
+                    <template #title>{{ item.raw.short_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
             </v-col>
             <!-- FEO level 1 — появляется после выбора субсидии -->
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
@@ -1021,6 +1032,8 @@
                 </template>
               </div>
             </div>
+            <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+              style="display:none" @change="uploadSectionFile" />
           </div>
 
           <!-- Реквизиты закрывающих документов -->
@@ -1113,116 +1126,18 @@
         </v-card-text>
       </v-card>
 
-      <!-- 7b. Участники и лента событий (только в режиме редактирования) -->
-      <!-- Чат по закупке -->
+      <!-- Обсуждение — linked chat room -->
       <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
           <v-icon icon="mdi-chat-outline" class="mr-2" color="blue" />
           Обсуждение
-          <v-chip v-if="purchaseComments.length" size="x-small" color="blue-grey" class="ml-2" variant="tonal">{{ purchaseComments.length }}</v-chip>
         </v-card-title>
-        <v-card-text>
-          <!-- Участники -->
-          <div class="d-flex align-center flex-wrap ga-1 mb-3">
-            <span class="text-caption text-medium-emphasis mr-1">Участники:</span>
-            <v-chip v-for="m in purchaseMembers" :key="m.user_id" size="small"
-              :variant="m.consent_pending ? 'outlined' : 'tonal'"
-              :color="m.consent_pending ? 'warning' : 'primary'"
-              closable @click:close="removePurchaseMember(m.user_id)"
-              :title="m.consent_pending ? 'Ожидает подтверждения' : ''">
-              <v-icon v-if="m.consent_pending" icon="mdi-clock-outline" size="12" class="mr-1" />
-              {{ m.full_name || m.username || `#${m.user_id}` }}
-            </v-chip>
-            <v-menu v-model="memberMenuOpen" :close-on-content-click="false">
-              <template #activator="{ props: menuProps }">
-                <v-btn v-bind="menuProps" icon="mdi-account-plus" size="x-small" variant="tonal" color="primary" title="Добавить участника" />
-              </template>
-              <v-card min-width="300">
-                <v-card-text class="pa-2 pb-1">
-                  <v-autocomplete
-                    v-model="newMemberUserId"
-                    :items="memberSortedUsers"
-                    item-title="text"
-                    item-value="value"
-                    label="Выберите сотрудника"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    autofocus
-                  >
-                    <template #item="{ item, props: iProps }">
-                      <v-list-item
-                        v-bind="iProps"
-                        :subtitle="isMemberOfGroup(item.raw.value) ? 'Уже в обсуждении' : memberNeedsConsent(item.raw.value) ? 'Потребуется согласие сотрудника' : undefined"
-                      >
-                        <template #append>
-                          <v-chip v-if="isMemberOfGroup(item.raw.value)" size="x-small" color="primary" variant="tonal">в группе</v-chip>
-                          <v-chip v-else-if="memberNeedsConsent(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                </v-card-text>
-                <v-card-actions class="pt-0 px-2 pb-2">
-                  <v-spacer />
-                  <v-btn variant="text" size="small" @click="memberMenuOpen = false">Отмена</v-btn>
-                  <v-btn color="primary" size="small" variant="flat" :disabled="!newMemberUserId" :loading="memberAdding" @click="addPurchaseMemberAndClose">Добавить</v-btn>
-                </v-card-actions>
-              </v-card>
-            </v-menu>
-          </div>
-          <div ref="purchaseChatContainer" class="purchase-chat-container mb-2">
-            <div v-for="c in purchaseComments" :key="c.id"
-              class="pchat-msg" :class="c.user_id === currentUserId ? 'pchat-msg--mine' : 'pchat-msg--other'">
-              <div class="pchat-msg-header">
-                <v-icon icon="mdi-account-circle" size="14" :color="c.user_id === currentUserId ? 'white' : 'primary'" class="mr-1" />
-                <span class="pchat-msg-author">{{ c.user_name }}</span>
-                <span class="pchat-msg-time">{{ c.created_at ? new Date(c.created_at).toLocaleString('ru') : '' }}</span>
-                <v-btn v-if="c.user_id === currentUserId" icon="mdi-delete-outline" size="x-small" variant="text" density="compact"
-                  :color="c.user_id === currentUserId ? 'white' : 'grey'" class="pchat-msg-delete"
-                  @click.stop="deletePurchaseComment(c.id)" />
-              </div>
-              <div class="pchat-msg-text" v-html="renderPurchaseMentions(c.text)"></div>
-            </div>
-            <div v-if="purchaseComments.length === 0" class="text-caption text-medium-emphasis text-center pa-4">Начните обсуждение</div>
-          </div>
-          <!-- Mention dropdown -->
-          <div v-if="pMentionOpen" class="purchase-mention-dropdown">
-            <div v-for="u in pFilteredMentionUsers" :key="u.value"
-              class="mention-item" @mousedown.prevent="pInsertMention(u)">
-              <v-icon icon="mdi-account" size="14" class="mr-1" />{{ u.text }}
-            </div>
-            <div v-if="pFilteredMentionUsers.length === 0" class="mention-item text-medium-emphasis">Нет совпадений</div>
-          </div>
-          <div class="d-flex ga-2 align-end">
-            <v-textarea
-              ref="purchaseCommentInput"
-              v-model="pCommentText"
-              :placeholder="pEnterToSend ? 'Сообщение... (Enter — отправить)' : 'Сообщение... (Ctrl+Enter — отправить)'"
-              variant="outlined" density="compact" rows="5" hide-details auto-grow
-              style="flex:1"
-              @keydown="onPurchaseCommentKeydown"
-              @input="onPurchaseCommentInput"
-            />
-            <div class="d-flex flex-column ga-1" style="min-width:36px">
-              <v-btn color="primary" icon size="small" :disabled="!pCommentText.trim()" :loading="pCommentSaving" @click="addPurchaseComment" title="Отправить">
-                <v-icon icon="mdi-send" size="18" />
-              </v-btn>
-              <v-btn icon size="small" variant="tonal" color="deep-purple" @click="pOpenMentionPicker" title="Упомянуть">
-                <v-icon icon="mdi-at" size="18" />
-              </v-btn>
-              <v-btn v-if="isManagerLevel" icon size="small" variant="tonal" color="orange" @click="openPurchaseBroadcast" title="Рассылка">
-                <v-icon icon="mdi-bullhorn" size="18" />
-              </v-btn>
-            </div>
-          </div>
-          <div class="d-flex align-center mt-1" style="font-size:11px;color:#888;user-select:none">
-            <span style="white-space:nowrap">{{ pEnterToSend ? 'Enter — отправка' : 'Enter — новая строка' }}</span>
-            <v-switch v-model="pEnterToSend" density="compact" hide-details color="primary"
-              style="flex:0 0 auto; margin: 0 16px"
-              @update:model-value="(v: any) => localStorage.setItem('pchat_enter_to_send', String(v))" />
-            <span style="white-space:nowrap">{{ pEnterToSend ? 'Ctrl+Enter — новая строка' : 'Ctrl+Enter — отправка' }}</span>
-          </div>
+        <v-card-text class="pa-2">
+          <ChatEmbed
+            :entity-type="'purchase'"
+            :entity-id="purchaseId"
+            :title="form.subject ? `Закупка: ${form.subject}` : `Закупка #${purchaseId}`"
+          />
         </v-card-text>
       </v-card>
 
@@ -1280,8 +1195,6 @@
           </FileDropZone>
           <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
-          <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            style="display:none" @change="uploadSectionFile" />
 
           <v-list v-if="uploadedFiles.length" density="compact">
             <v-list-item v-for="f in uploadedFiles" :key="f.id"
@@ -1377,48 +1290,90 @@
         </v-card>
       </v-dialog>
 
-      <!-- Диалог быстрого редактирования товара (цена + ссылки) -->
-      <v-dialog v-model="quickProductEditDialog" max-width="520">
+      <!-- Диалог быстрого редактирования товара (полная карточка) -->
+      <v-dialog v-model="quickProductEditDialog" max-width="700" scrollable>
         <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">
-            Обновить товар
-            <div class="text-caption text-medium-emphasis font-weight-regular">{{ quickProductEditName }}</div>
+          <v-card-title class="text-h6 pt-4 px-6">
+            {{ quickProductEditProductId ? 'Редактировать товар' : 'Обновить товар' }}
+            <div v-if="quickProductEditMeta.updated_by" class="text-caption text-medium-emphasis mt-1">
+              Изменено: {{ quickProductEditMeta.updated_by }} — {{ formatQuickProductDate(quickProductEditMeta.updated_at) }}
+            </div>
           </v-card-title>
-          <v-card-text>
-            <div class="d-flex gap-2 align-center mb-3">
-              <v-text-field v-model.number="quickProductEditPrice" label="Цена, ₽" type="number"
-                variant="outlined" density="compact" prefix="₽" hide-details class="flex-grow-1" />
-              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-calculator"
-                @click="recalcQuickProductPrice">Пересчитать</v-btn>
-            </div>
-            <template v-if="quickProductEditProductId">
-              <div class="text-body-2 mb-2 font-weight-medium">Ссылки на товар</div>
-              <div v-for="(link, i) in quickProductEditLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-                <v-text-field v-model="link.url" label="URL" variant="outlined" density="compact"
-                  hide-details class="flex-grow-1" />
-                <v-text-field v-model.number="link.price" label="Цена" type="number" variant="outlined"
-                  density="compact" hide-details style="max-width:90px" />
-                <v-text-field v-model="link.collected_at" label="Дата" type="date" variant="outlined"
-                  density="compact" hide-details style="max-width:130px" />
-                <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
-                  @click="quickProductEditLinks.splice(i, 1)" />
-              </div>
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mt-1"
-                @click="quickProductEditLinks.push({ url: '', price: null, collected_at: new Date().toISOString().slice(0,10) })">
-                Добавить ссылку
-              </v-btn>
-              <div class="text-caption text-medium-emphasis mt-3">
-                Цена и ссылки сохранятся в каталоге. Для полного редактирования — вкладка «Товары»
-              </div>
-            </template>
-            <div v-else class="text-caption text-medium-emphasis mt-1">
-              Товар не привязан к каталогу — обновится только цена в этой закупке
-            </div>
+          <v-card-text class="px-6">
+            <v-row dense>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.name" label="Наименование *"
+                  variant="outlined" density="compact"
+                  :rules="[v => !!v || 'Обязательное поле']" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-combobox v-model="quickProductForm.product_type"
+                  :items="['товар', 'услуга', 'работа']"
+                  label="Тип товара" variant="outlined" density="compact" clearable />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="quickProductForm.category"
+                  label="Категория" variant="outlined" density="compact" clearable />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="quickProductForm.country_origin"
+                  label="Страна производства" variant="outlined" density="compact" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="d-flex gap-2 align-center">
+                  <v-text-field v-model.number="quickProductForm.price" label="Цена, ₽" type="number"
+                    variant="outlined" density="compact" prefix="₽" hide-details class="flex-grow-1" />
+                  <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-calculator"
+                    @click="recalcQuickProductPrice">Пересчитать</v-btn>
+                </div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-switch v-model="quickProductForm.is_active" label="Активен" color="success" density="compact" hide-details />
+              </v-col>
+              <v-col cols="12">
+                <v-textarea v-model="quickProductForm.description" label="Точное описание"
+                  variant="outlined" density="compact" rows="3" auto-grow />
+              </v-col>
+              <v-col cols="12">
+                <v-textarea v-model="quickProductForm.description_44fz" label="Описание для 44-ФЗ"
+                  hint="Допустимые интервалы характеристик для публикации закупки"
+                  variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
+              </v-col>
+              <v-col cols="12" v-if="quickProductForm.photo_url || quickProductForm.photo_link">
+                <img :src="quickProductForm.photo_url || quickProductForm.photo_link"
+                  style="max-width:100%;max-height:150px;object-fit:contain;border-radius:4px;border:1px solid #e0e0e0" />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.photo_url" label="Ссылка на фото"
+                  variant="outlined" density="compact" prepend-inner-icon="mdi-image-outline" />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field v-model="quickProductForm.clarification_link" label="Уточняющая ссылка"
+                  variant="outlined" density="compact" prepend-inner-icon="mdi-link" />
+              </v-col>
+              <v-col cols="12" v-if="quickProductEditProductId">
+                <div class="text-body-2 mb-2 font-weight-medium">Ссылки для сравнения цен</div>
+                <div v-for="(link, i) in quickProductEditLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
+                  <v-text-field v-model="link.url" label="URL" variant="outlined" density="compact"
+                    hide-details class="flex-grow-1" />
+                  <v-text-field v-model.number="link.price" label="Цена" type="number" variant="outlined"
+                    density="compact" hide-details style="max-width:90px" />
+                  <v-text-field v-model="link.collected_at" label="Дата" type="date" variant="outlined"
+                    density="compact" hide-details style="max-width:130px" />
+                  <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
+                    @click="quickProductEditLinks.splice(i, 1)" />
+                </div>
+                <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" class="mt-1"
+                  @click="quickProductEditLinks.push({ url: '', price: null, collected_at: new Date().toISOString().slice(0,10) })">
+                  Добавить ссылку
+                </v-btn>
+              </v-col>
+            </v-row>
           </v-card-text>
-          <v-card-actions>
+          <v-card-actions class="px-6 pb-4">
             <v-spacer />
             <v-btn variant="text" @click="quickProductEditDialog = false">Отмена</v-btn>
-            <v-btn color="primary" variant="tonal" :loading="savingQuickProduct" @click="saveQuickProduct">
+            <v-btn color="primary" :loading="savingQuickProduct" @click="saveQuickProduct">
               Сохранить
             </v-btn>
           </v-card-actions>
@@ -1927,8 +1882,11 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3500" location="bottom right">
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
+      <template #actions>
+        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
+      </template>
     </v-snackbar>
 
     <!-- File preview dialog -->
@@ -2068,6 +2026,12 @@
         <v-card-text class="pa-4 pt-0">
           <!-- Import from file -->
           <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Данные:</strong> система автоматически извлечёт реквизиты из карточки контрагента
+              </div>
+            </v-alert>
             <FileDropZone v-model="addContractorFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
               hint="Excel, Word, PDF — перетащите или нажмите" class="mb-2" />
             <v-btn v-if="addContractorFile" variant="tonal" color="primary" size="small" :loading="addContractorImporting"
@@ -2196,7 +2160,7 @@
     </v-dialog>
 
     <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="980" scrollable>
+    <v-dialog v-model="itemsImportDialog" max-width="1400" scrollable>
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-package-variant-plus" class="mr-2" />
@@ -2208,12 +2172,21 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pa-4">
-          <v-alert v-if="!purchaseId" type="warning" class="mb-3" density="compact" icon="mdi-information-outline">
-            Для добавления в закупку сначала сохраните заказ
+          <v-alert v-if="!purchaseId" type="info" class="mb-3" density="compact" icon="mdi-information-outline">
+            Заказ будет автоматически сохранён при импорте
           </v-alert>
 
           <!-- Step 1: Upload file -->
           <template v-if="importStep === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
+                <strong>Заголовки столбцов:</strong> определяются автоматически по ключевым словам
+                (наименование, количество, цена, сумма и т.д.). Могут быть в любой строке.<br>
+                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и укажете соответствие полей.
+              </div>
+            </v-alert>
             <FileDropZone v-model="itemsImportFile"
               accept=".xlsx,.xls,.pdf,.docx,.doc"
               hint="Excel, PDF, Word — перетащите или нажмите"
@@ -2222,11 +2195,14 @@
 
           <!-- Step 2: Column mapping (table-style drag-and-drop) -->
           <template v-if="importStep === 2 && importPreviewData">
+            <v-alert v-if="currentSheetData" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ currentSheetData.name }} ({{ currentSheetData.total_rows }} строк данных)
+            </v-alert>
             <v-select
               v-if="importPreviewData.sheets.length > 1"
               v-model="importSelectedSheet"
               :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-              label="Выберите лист" variant="outlined" density="compact" class="mb-3"
+              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
             />
 
             <!-- COLUMN TABLE: headers on top, cards below -->
@@ -2803,6 +2779,7 @@ import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
+import ChatEmbed from '@/components/ChatEmbed.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -2857,11 +2834,11 @@ const backRoute = computed(() => {
   return '/orders'
 })
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const STATUS_LABEL_BASE: Record<string, string> = {
   wishes: 'Желания сотрудников', plan_schedule: 'План-график',
   confirmed: 'Подтверждено руководством', work_in_progress: 'Ведётся работа',
-  contracted: 'Заключён договор', delivered: 'Поставлено', paid: 'Оплачено',
+  contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_LABEL = computed<Record<string, string>>(() => ({
   ...STATUS_LABEL_BASE,
@@ -2870,7 +2847,7 @@ const STATUS_LABEL = computed<Record<string, string>>(() => ({
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
   confirmed: 'blue', work_in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  contracted: 'indigo', ordered: 'light-blue', delivered: 'deep-purple', paid: 'green',
 }
 const SUBSTATUS_OPTIONS = [
   { value: 'tz_forming', title: 'Формируется ТЗ' },
@@ -2971,11 +2948,11 @@ const form = reactive({
   framework_seq: null as number | null,
   responsible_person: '' as string,
   // Поля для генерации договора
-  vat_applicable: false as boolean,
-  vat_rate: null as number | null,
+  vat_applicable: true as boolean,
+  vat_rate: 22 as number | null,
   vat_exemption_article: '' as string,
   third_party_involved: false as boolean,
-  service_period_type: 'period' as string,
+  service_period_type: 'date' as string,
   service_start_date: '' as string,
   service_end_date: '' as string,
   description_mode: 'exact' as string,
@@ -3032,22 +3009,54 @@ const pickerInitiatorId    = ref<number | null>(null)
 const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
 
 // ── Org users list for executor dropdown ──
-interface OrgUser { id: number; full_name: string; position?: string | null }
+function toShortName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/)
+  if (parts.length >= 3) return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`
+  if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`
+  return fullName
+}
+interface OrgUser { id: number; full_name: string; short_name: string; position?: string | null }
 const orgUsersList = ref<OrgUser[]>([])
 async function loadOrgUsers() {
   try {
     const users = await apiFetch<any[]>('/users/')
     orgUsersList.value = users
       .filter(u => u.full_name)
-      .map(u => ({ id: u.id, full_name: u.full_name, position: u.position }))
+      .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
   } catch { orgUsersList.value = [] }
 }
 
 // ── Delivery address autocomplete ──
 const deliveryAddressSuggestions = ref<string[]>([])
 let _deliverySearchTimer: ReturnType<typeof setTimeout> | null = null
+async function loadDeliveryAddressHistory() {
+  try {
+    const orgId = currentSubsidyOrgId.value
+    if (!orgId) return
+    const results = await apiFetch<{ id: number; address: string }[]>(
+      `/delivery-addresses/?org_id=${orgId}&q=`
+    )
+    const addresses = results.map(r => r.address)
+    // Добавим адрес организации первым если его нет в истории
+    const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
+    if (subsidy?.org_id) {
+      try {
+        const orgs = await apiFetch<any[]>('/auth/my-orgs')
+        const org = orgs.find((o: any) => o.id === subsidy.org_id)
+        if (org?.address && !addresses.includes(org.address)) {
+          addresses.unshift(org.address)
+        }
+      } catch { /* silent */ }
+    }
+    deliveryAddressSuggestions.value = [...new Set(addresses)]
+  } catch { deliveryAddressSuggestions.value = [] }
+}
 async function onDeliveryAddressSearch(q: string) {
-  if (!q || q.length < 2) { deliveryAddressSuggestions.value = []; return }
+  if (!q || q.length < 2) {
+    // При пустом поле показать историю
+    if (!deliveryAddressSuggestions.value.length) loadDeliveryAddressHistory()
+    return
+  }
   if (_deliverySearchTimer) clearTimeout(_deliverySearchTimer)
   _deliverySearchTimer = setTimeout(async () => {
     try {
@@ -3281,16 +3290,41 @@ async function saveFileType() {
 const quickProductEditDialog = ref(false)
 const quickProductEditProductId = ref<number | null>(null)
 const quickProductEditItemIdx = ref<number>(-1)
-const quickProductEditName = ref('')
-const quickProductEditPrice = ref<number | null>(null)
 const quickProductEditLinks = ref<PriceLink[]>([])
 const savingQuickProduct = ref(false)
+const quickProductEditMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null })
+const quickProductForm = reactive({
+  name: '',
+  product_type: '' as string | null,
+  category: '' as string | null,
+  country_origin: 'Россия',
+  price: null as number | null,
+  is_active: true,
+  description: '',
+  description_44fz: '',
+  photo_url: '',
+  photo_link: '',
+  clarification_link: '',
+})
 
 async function openQuickProductEdit(item: OrderItem) {
   quickProductEditItemIdx.value = items.value.indexOf(item)
-  quickProductEditName.value = item.item_name
-  quickProductEditPrice.value = item.unit_price ?? null
   quickProductEditLinks.value = []
+  Object.assign(quickProductForm, {
+    name: item.item_name || '',
+    product_type: null,
+    category: null,
+    country_origin: 'Россия',
+    price: item.unit_price ?? null,
+    is_active: true,
+    description: '',
+    description_44fz: '',
+    photo_url: '',
+    photo_link: '',
+    clarification_link: '',
+  })
+  quickProductEditMeta.updated_at = null
+  quickProductEditMeta.updated_by = null
 
   // Resolve product_id: use existing or find by name in catalog
   let productId = item.product_id
@@ -3298,7 +3332,7 @@ async function openQuickProductEdit(item: OrderItem) {
     const match = products.value.find(p => p.name.trim().toLowerCase() === item.item_name.trim().toLowerCase())
     if (match) {
       productId = match.id
-      item.product_id = match.id  // backfill for future saves
+      item.product_id = match.id
     }
   }
   quickProductEditProductId.value = productId
@@ -3306,8 +3340,22 @@ async function openQuickProductEdit(item: OrderItem) {
   if (productId) {
     try {
       const prod = await apiFetch<any>(`/products/${productId}`)
-      quickProductEditPrice.value = prod.price ?? item.unit_price ?? null
+      Object.assign(quickProductForm, {
+        name: prod.name || item.item_name || '',
+        product_type: prod.product_type || null,
+        category: prod.category || null,
+        country_origin: prod.country_origin || 'Россия',
+        price: prod.price ?? item.unit_price ?? null,
+        is_active: prod.is_active ?? true,
+        description: prod.description || '',
+        description_44fz: prod.description_44fz || '',
+        photo_url: prod.photo_url || '',
+        photo_link: prod.photo_link || '',
+        clarification_link: prod.clarification_link || '',
+      })
       quickProductEditLinks.value = (prod.price_links || []).map((l: any) => ({ url: l.url, price: l.price ?? null, collected_at: l.collected_at ?? null }))
+      quickProductEditMeta.updated_at = prod.updated_at || null
+      quickProductEditMeta.updated_by = prod.updated_by || null
     } catch {}
   }
   quickProductEditDialog.value = true
@@ -3320,30 +3368,35 @@ function recalcQuickProductPrice() {
   const dates = [...new Set(links.map(l => l.collected_at!).filter(Boolean))].sort().reverse().slice(0, 3)
   const relevant = links.filter(l => dates.includes(l.collected_at!))
   const avg = relevant.reduce((s, l) => s + (l.price ?? 0), 0) / relevant.length
-  quickProductEditPrice.value = Math.round(avg * 100) / 100
+  quickProductForm.price = Math.round(avg * 100) / 100
 }
 
 async function saveQuickProduct() {
+  if (!quickProductForm.name.trim()) { showSnack('Укажите наименование', 'error'); return }
   savingQuickProduct.value = true
   try {
-    let finalPrice = quickProductEditPrice.value
+    let finalPrice = quickProductForm.price
     if (quickProductEditProductId.value) {
-      // Save to catalog, use returned price (recalculated from links)
+      // Full update to catalog via PUT
       const updated = await apiFetch<any>(`/products/${quickProductEditProductId.value}`, {
-        method: 'PATCH',
+        method: 'PUT',
         body: {
-          price: quickProductEditPrice.value,
+          ...quickProductForm,
+          price: quickProductForm.price || null,
           price_links: quickProductEditLinks.value.filter(l => l.url),
         },
       })
-      finalPrice = updated?.price ?? quickProductEditPrice.value
+      finalPrice = updated?.price ?? quickProductForm.price
     }
-    // Always update the order row price
-    if (quickProductEditItemIdx.value >= 0 && finalPrice != null) {
+    // Always update the order row
+    if (quickProductEditItemIdx.value >= 0) {
       const item = items.value[quickProductEditItemIdx.value]
       if (item) {
-        item.unit_price = finalPrice
-        calcItemTotal(quickProductEditItemIdx.value)
+        item.item_name = quickProductForm.name
+        if (finalPrice != null) {
+          item.unit_price = finalPrice
+          calcItemTotal(quickProductEditItemIdx.value)
+        }
       }
     }
     quickProductEditDialog.value = false
@@ -3353,6 +3406,12 @@ async function saveQuickProduct() {
   } finally {
     savingQuickProduct.value = false
   }
+}
+
+function formatQuickProductDate(d: string | null) {
+  if (!d) return ''
+  const dt = new Date(d)
+  return dt.toLocaleDateString('ru-RU') + ' ' + dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
 // ── Publications ──────────────────────────────────────────────────
@@ -4275,7 +4334,8 @@ const onSubsidyChange = async () => {
   feoSaveAttempted.value = false
   calcBudget()
   loadResponsiblePersons()
-  // Pre-fill delivery address from org if empty
+  // Pre-fill delivery address from org if empty & load address history
+  loadDeliveryAddressHistory()
   if (!form.delivery_address && form.subsidy_id) {
     try {
       const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
@@ -4587,11 +4647,51 @@ watch(importSelectedSheet, (newSheet) => {
 })
 
 async function doMappedImport() {
-  if (!itemsImportFile.value || !purchaseId.value) return
+  if (!itemsImportFile.value) return
   itemsImportLoading.value = true
   itemsImportResult.value = null
   importError.value = ''
   try {
+    // Auto-save new purchase if not yet saved
+    let pid = purchaseId.value
+    if (!pid) {
+      const validItems = items.value
+        .filter(i => i.item_name?.trim())
+        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+          ...rest,
+          unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
+          quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
+        }))
+      const payload = {
+        ...form,
+        planned_total_price: displayNmck.value || null,
+        total_nmck: displayNmck.value || null,
+        framework_seq: form.framework_seq || null,
+        contract_date: form.contract_date || null,
+        contract_end_date: form.contract_end_date || null,
+        delivery_date: form.delivery_date || null,
+        delivery_address: form.delivery_address || null,
+        procurement_planned_date: form.procurement_planned_date || null,
+        execution_term: form.execution_term || null,
+        execution_term_changed: form.execution_term_changed || null,
+        service_start_date: form.service_start_date || null,
+        service_end_date: form.service_end_date || null,
+        acceptance_doc_date: form.acceptance_doc_date || null,
+        acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
+        payment_doc_date: form.payment_doc_date || null,
+        items: validItems,
+        subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),
+      }
+      try {
+        const created = await apiFetch<any>('/purchases/', { method: 'POST', body: payload })
+        pid = created.id
+        clearDraft()
+        router.replace(`/orders/${created.id}/edit`)
+      } catch (e: any) {
+        throw new Error('Не удалось сохранить заказ: ' + (e?.detail || e?.message || 'заполните обязательные поля'))
+      }
+    }
+
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', itemsImportFile.value)
@@ -4616,14 +4716,17 @@ async function doMappedImport() {
       }
     }
 
-    const resp = await fetch(`/api/purchases/${purchaseId.value}/items/import-mapped?${params}`, {
+    const resp = await fetch(`/api/purchases/${pid}/items/import-mapped?${params}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: fd,
     })
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      throw new Error(err.detail || `Ошибка ${resp.status}`)
+      const errText = await resp.text().catch(() => '')
+      console.error('import-mapped error:', resp.status, errText)
+      let detail = `Ошибка ${resp.status}`
+      try { detail = JSON.parse(errText).detail || detail } catch {}
+      throw new Error(detail)
     }
     const data = await resp.json()
     itemsImportResult.value = data
@@ -5096,7 +5199,7 @@ const loadPurchase = async () => {
     vat_rate: data.vat_rate ?? null,
     vat_exemption_article: data.vat_exemption_article || '',
     third_party_involved: !!data.third_party_involved,
-    service_period_type: data.service_period_type || 'period',
+    service_period_type: data.service_period_type || 'date',
     service_start_date: data.service_start_date || '',
     service_end_date: data.service_end_date || '',
     description_mode: data.description_mode || 'exact',
@@ -5149,7 +5252,7 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
         _selectedProduct: prod ?? (i.item_name || null),
-        _photo_url: prod?.photo_url || undefined,
+        _photo_url: prod?.photo_url || prod?.photo_link || undefined,
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }
@@ -5927,13 +6030,13 @@ async function downloadKpXlsx() {
 /* ── Import column-mapping table (imap) ─────────────────── */
 .imap-grid {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 .imap-col {
   flex: 1;
-  min-width: 110px;
+  min-width: 130px;
   border: 1px dashed #ccc;
   border-radius: 6px;
   background: #fafafa;
@@ -5953,16 +6056,15 @@ async function downloadKpXlsx() {
   background: #fff8f8;
 }
 .imap-col-hdr {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   color: #555;
   padding: 5px 7px 3px;
   border-bottom: 1px solid #e8e8e8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 .imap-col-body {
   padding: 5px;
@@ -5997,9 +6099,8 @@ async function downloadKpXlsx() {
 .imap-card-name {
   font-size: 11px;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   flex: 1;
 }
 .imap-card-x {

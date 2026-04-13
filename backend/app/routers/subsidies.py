@@ -17,7 +17,7 @@ from app.schemas.schemas import (
     SubsidyCreate, SubsidyOut,
     SubsidyContractorOverrideCreate, SubsidyContractorOverrideOut,
 )
-from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id
+from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES, ALL_ROLES
 from app.models.user import User
 from typing import List
 
@@ -49,11 +49,13 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     def _calc_node(cat) -> float:
         kids = children_map.get(cat.id, [])
         if not kids:
-            return float(cat.budget) if cat.budget is not None and cat.budget > 0 else 0.0
-        child_sum = sum(_calc_node(k) for k in kids)
-        if child_sum > 0:
-            return child_sum
-        return float(cat.budget) if cat.budget is not None and cat.budget > 0 else 0.0
+            # Leaf node: use its budget
+            return float(cat.budget) if cat.budget is not None else 0.0
+        # Parent node: if budget is set manually (not null) → use it
+        if cat.budget is not None:
+            return float(cat.budget)
+        # Auto mode (budget is null) → sum of children
+        return sum(_calc_node(k) for k in kids)
 
     roots = [c for c in all_categories if c.level == 1]
     return sum(_calc_node(r) for r in roots)
@@ -62,7 +64,7 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
 @router.get("/", response_model=List[SubsidyOut])
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*ALL_ROLES)),
 ):
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
     org_ids = get_org_filter(current_user)
@@ -137,7 +139,7 @@ async def get_subsidy(
 async def create_subsidy(
     subsidy: SubsidyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*MANAGER_ROLES)),
 ):
     data = subsidy.dict()
     data['org_id'] = get_single_org_id(current_user) or current_user.org_id
@@ -164,11 +166,8 @@ async def update_subsidy(
     subsidy_id: int,
     subsidy: SubsidyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
-    from app.auth.jwt import ADMIN_ROLES
-    if current_user.role not in ADMIN_ROLES:
-        raise HTTPException(status_code=403, detail="Недостаточно прав: требуется роль администратора или выше")
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
@@ -214,11 +213,8 @@ async def update_subsidy(
 async def delete_subsidy(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("superadmin", "account_owner")),
 ):
-    from app.auth.jwt import OWNER_ROLES
-    if current_user.role not in OWNER_ROLES:
-        raise HTTPException(status_code=403, detail="Недостаточно прав: удаление субсидий доступно только хозяину аккаунта")
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
@@ -347,7 +343,7 @@ SUPPORTED_DOC_TYPES = {
 @router.get("/{subsidy_id}/templates")
 async def list_subsidy_templates(
     subsidy_id: int,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     """List which doc types have a subsidy-specific template override."""
     result = []
@@ -447,7 +443,7 @@ async def upload_subsidy_template(
     subsidy_id: int,
     doc_type: str,
     file: UploadFile = File(...),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     """Upload a .docx template override for a specific subsidy and doc type."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -470,7 +466,7 @@ async def upload_subsidy_template(
 async def download_subsidy_template(
     subsidy_id: int,
     doc_type: str,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     """Download the current subsidy-specific template (or global if no override)."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -499,7 +495,7 @@ async def download_subsidy_template(
 async def delete_subsidy_template(
     subsidy_id: int,
     doc_type: str,
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*MANAGER_ROLES)),
 ):
     """Delete subsidy-specific template override (falls back to global)."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -519,12 +515,9 @@ async def delete_subsidy_template(
 async def upload_global_template(
     doc_type: str,
     file: UploadFile = File(...),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_role(*ADMIN_ROLES)),
 ):
     """Upload a global .docx template (superadmin/account_owner only)."""
-    from app.auth.jwt import ADMIN_ROLES
-    if current_user.role not in ADMIN_ROLES:
-        raise HTTPException(403, "Только администраторы могут загружать глобальные шаблоны")
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
     if not file.filename.endswith(".docx"):
@@ -544,7 +537,7 @@ async def get_budget_history(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*MANAGER_ROLES)),
 ):
     from app.models.budget_history import BudgetHistory as BudgetHistoryModel
     from sqlalchemy import func as safunc

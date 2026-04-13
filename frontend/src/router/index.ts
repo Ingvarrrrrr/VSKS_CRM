@@ -239,6 +239,13 @@ const router = createRouter({
       component: OrgSettingsView,
       meta: { requiresAuth: false, title: 'Настройки организации' }
     },
+    // Wishes
+    {
+      path: '/wishes',
+      name: 'wishes',
+      component: () => import('../views/WishesView.vue'),
+      meta: { requiresAuth: true, title: 'Заявки' }
+    },
     // Internal chat
     {
       path: '/chat',
@@ -250,7 +257,7 @@ const router = createRouter({
 })
 
 // Разрешённые маршруты для employee
-const EMPLOYEE_ALLOWED = ['/my-tasks', '/orders/', '/login', '/register', '/', '/verify-email', '/reset-password']
+const EMPLOYEE_ALLOWED = ['/my-tasks', '/wishes', '/orders/', '/login', '/register', '/', '/verify-email', '/reset-password']
 
 // Навигационные хуки для проверки авторизации
 router.beforeEach((to, _, next) => {
@@ -272,6 +279,7 @@ router.beforeEach((to, _, next) => {
   if (isAuthenticated && role === 'employee') {
     const path = to.path
     const allowed = path === '/my-tasks'
+      || path === '/wishes'           // D-11
       || path === '/products'
       || path === '/contractors'
       || path === '/orders'

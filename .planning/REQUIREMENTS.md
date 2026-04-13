@@ -71,22 +71,22 @@
 
 ### Roles and Navigation (ROLES)
 
-- [ ] **ROLES-01**: Admin role must have access to all navigation sections: Dashboard, Subsidies, Purchases, Contractors, Contracts, Payments, FEO Categories, Wishes, User Management.
-- [ ] **ROLES-02**: Manager role must have access to: Dashboard, Subsidies, Purchases, Contractors, Contracts, Payments. Manager must not see User Management or FEO category admin.
-- [ ] **ROLES-03**: Viewer (employee) role must see only the "Мои заявки" (Wishes) section in navigation. All other sections must be inaccessible (return HTTP 403 from API if accessed directly).
-- [ ] **ROLES-04**: Navigation sidebar must render only the links permitted for the current user's role; forbidden links must not appear at all (not just disabled).
-- [ ] **ROLES-05**: The Vue Router must enforce role-based route guards: navigating to a forbidden route must redirect to the user's default landing page.
-- [ ] **ROLES-06**: All API endpoints must enforce role checks server-side using JWT claims; role enforcement must not rely solely on frontend guards.
+- [x] **ROLES-01**: Admin role must have access to all navigation sections: Dashboard, Subsidies, Purchases, Contractors, Contracts, Payments, FEO Categories, Wishes, User Management.
+- [x] **ROLES-02**: Manager role must have access to: Dashboard, Subsidies, Purchases, Contractors, Contracts, Payments. Manager must not see User Management or FEO category admin.
+- [x] **ROLES-03**: Viewer (employee) role must see only the "Мои заявки" (Wishes) section in navigation. All other sections must be inaccessible (return HTTP 403 from API if accessed directly).
+- [x] **ROLES-04**: Navigation sidebar must render only the links permitted for the current user's role; forbidden links must not appear at all (not just disabled).
+- [x] **ROLES-05**: The Vue Router must enforce role-based route guards: navigating to a forbidden route must redirect to the user's default landing page.
+- [x] **ROLES-06**: All API endpoints must enforce role checks server-side using JWT claims; role enforcement must not rely solely on frontend guards.
 
 ### Wishes Workflow (WISHES)
 
-- [ ] **WISHES-01**: The `wishes` table (already in DB) must be connected to a backend model `Wish` with fields: `id`, `title`, `description`, `requested_by` (user_id), `status` (`draft → submitted → approved → rejected → converted`), `created_at`, `updated_at`, `purchase_id` (nullable, set when converted).
-- [ ] **WISHES-02**: Viewer role must be able to create a new Wish via a form with fields: `title` (required), `description` (optional). Initial status is `draft`.
-- [ ] **WISHES-03**: Viewer must be able to submit a draft Wish (transition `draft → submitted`); only the creator may submit their own wish.
-- [ ] **WISHES-04**: Manager or Admin may approve a submitted Wish (`submitted → approved`) or reject it (`submitted → rejected`) with an optional rejection reason.
-- [ ] **WISHES-05**: When a Wish is approved, an Admin or Manager may convert it to a Purchase (`approved → converted`): this creates a new Purchase record pre-populated with `title` and `description` from the wish and sets `wish.purchase_id` to the new purchase's ID.
-- [ ] **WISHES-06**: The "Мои заявки" page must show the Viewer's own wishes with current status and, for approved/converted wishes, a link to the resulting purchase.
-- [ ] **WISHES-07**: Managers and Admins must have a "Заявки сотрудников" view showing all submitted wishes with approve/reject actions.
+- [x] **WISHES-01**: The `wishes` table (already in DB) must be connected to a backend model `Wish` with fields: `id`, `title`, `description`, `requested_by` (user_id), `status` (`draft → submitted → approved → rejected → converted`), `created_at`, `updated_at`, `purchase_id` (nullable, set when converted).
+- [x] **WISHES-02**: Viewer role must be able to create a new Wish via a form with fields: `title` (required), `description` (optional). Initial status is `draft`.
+- [x] **WISHES-03**: Viewer must be able to submit a draft Wish (transition `draft → submitted`); only the creator may submit their own wish.
+- [x] **WISHES-04**: Manager or Admin may approve a submitted Wish (`submitted → approved`) or reject it (`submitted → rejected`) with an optional rejection reason.
+- [x] **WISHES-05**: When a Wish is approved, an Admin or Manager may convert it to a Purchase (`approved → converted`): this creates a new Purchase record pre-populated with `title` and `description` from the wish and sets `wish.purchase_id` to the new purchase's ID.
+- [x] **WISHES-06**: The "Мои заявки" page must show the Viewer's own wishes with current status and, for approved/converted wishes, a link to the resulting purchase.
+- [x] **WISHES-07**: Managers and Admins must have a "Заявки сотрудников" view showing all submitted wishes with approve/reject actions.
 
 ---
 

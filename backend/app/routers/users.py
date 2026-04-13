@@ -13,7 +13,7 @@ from typing import List, Optional
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("/", response_model=List[UserOut])
-async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_role(*ADMIN_ROLES))):
     q = select(User).order_by(User.full_name)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:

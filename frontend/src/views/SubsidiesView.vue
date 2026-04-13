@@ -42,10 +42,16 @@
         <!-- ── Cards grid ── -->
         <div class="subsidies-grid">
           <div
-            v-for="s in filteredSubsidies" :key="s.id"
+            v-for="(s, idx) in filteredSubsidies" :key="s.id"
             class="subsidy-card"
-            :class="{ 'subsidy-card--active': selectedId === s.id }"
+            :class="{ 'subsidy-card--active': selectedId === s.id, 'subsidy-card--drag-over': cardDragOverIdx === idx, 'subsidy-card--dragging': cardDragIdx === idx }"
+            draggable="true"
             @click="toggleSelect(s.id)"
+            @dragstart="onCardDragStart($event, idx)"
+            @dragover.prevent="onCardDragOver(idx)"
+            @dragleave="cardDragOverIdx = -1"
+            @drop.prevent="onCardDrop(idx)"
+            @dragend="cardDragIdx = -1; cardDragOverIdx = -1"
           >
             <div class="sc-header">
               <div class="sc-name">{{ s.name }}</div>
@@ -64,8 +70,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.calculated_budget || s.budget) }}</div>
-            <div class="sc-budget-label">{{ (s.calculated_budget || 0) > 0 ? 'Рассчитанный бюджет' : 'Бюджет' }}</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
+            <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini">
@@ -83,8 +89,8 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.calculated_budget || s.budget)"
-              :color="progressColor(pct(s.planned, s.calculated_budget || s.budget))"
+              :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
+              :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
               height="6" rounded class="mt-3"
             />
             <div v-if="s.contractor_name" class="sc-contractor">
@@ -92,7 +98,7 @@
               <span>{{ s.contractor_name }}</span>
             </div>
             <div class="sc-footer">
-              <div class="sc-pct">{{ pct(s.planned, s.calculated_budget || s.budget) }}% запланировано</div>
+              <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
               <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
                 <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
                 ФЭО
@@ -214,8 +220,10 @@
                       Финансирование по ФЭО
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
+                    <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
+                    <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
-                      Фактически запланировано
+                      Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
                     <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
@@ -267,9 +275,9 @@
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="isAutoNode(node)" class="d-flex align-center justify-end">
-                          <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
-                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1"
+                        <div v-if="isAutoNode(node)" class="text-right">
+                          <div class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</div>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal"
                             title="Сумма автоматически считается из дочерних направлений"
                           >авто</v-chip>
                         </div>
@@ -290,10 +298,43 @@
                         </div>
                       </td>
 
-                      <!-- Фактически запланировано -->
+                      <!-- Плановое количество -->
+                      <td class="feo-td feo-td-num">
+                        <div v-if="isAutoQtyNode(node)" class="text-right">
+                          <div class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal"
+                            title="Количество автоматически считается из дочерних"
+                          >авто</v-chip>
+                        </div>
+                        <div v-else-if="inlineQtyId === node.id" class="d-flex align-center justify-end">
+                          <input
+                            ref="inlineQtyInputEl"
+                            v-model="inlineQtyVal"
+                            type="number"
+                            class="inline-input"
+                            @blur="saveInlineQty(node)"
+                            @keydown.enter="saveInlineQty(node)"
+                            @keydown.esc="inlineQtyId = null"
+                          />
+                        </div>
+                        <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
+                          <span v-if="feoQtyFor(node) > 0" class="feo-amount">{{ feoQtyFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
+                          <span v-else class="feo-set-hint">—</span>
+                        </div>
+                      </td>
+
+                      <!-- Плановая сумма (кол-во × стоимость за ед.) -->
+                      <td class="feo-td feo-td-num">
+                        <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount"
+                          :style="feoBudgetFor(node) > 0 && feoPlannedTotalFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                        >{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
+                        <span v-else class="feo-amount-empty">—</span>
+                      </td>
+
+                      <!-- Фактическая сумма -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="(feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node)) || (feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) > feoPlannedTotalFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
                           @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
@@ -303,16 +344,19 @@
 
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
-                        <!-- Level 3: кнопка раскрытия позиций -->
-                        <v-btn v-if="node.level === 3"
+                        <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
+                        <span class="feo-action-slot"><v-btn v-if="node.level === 3"
                           :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
                           variant="text" size="x-small"
                           :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
                           title="Показать плановые / фактические позиции"
                           @click="toggleItemPanel(node)"
-                        />
+                        /></span>
                         <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                           title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
+                        <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
+                          title="Показать закупки по этой категории"
+                          @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
                         <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
                           title="Редактировать" @click="startFeoEdit(node)" />
                         <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
@@ -322,7 +366,7 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
-                      <td colspan="4" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
+                      <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
@@ -497,7 +541,7 @@
                     @dragleave="dragOverId = null"
                     @drop.prevent="onDropToRoot"
                   >
-                    <td colspan="4" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
+                    <td colspan="6" class="feo-td text-center text-caption text-medium-emphasis" style="padding:12px">
                       <v-icon icon="mdi-arrow-up-bold" size="16" class="mr-1" />
                       Переместить на верхний уровень (корень)
                     </td>
@@ -508,6 +552,12 @@
                     <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
+                    </td>
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
                     <td class="feo-td" />
@@ -787,21 +837,77 @@
             </v-col>
           </v-row>
           <v-divider class="my-3" />
+          <!-- Финансирование по ФЭО -->
           <div class="d-flex align-center mb-2">
             <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
-            <v-switch
+            <v-btn-toggle
               v-model="feoForm.budgetAuto"
-              label="Авто из детей"
+              mandatory
               density="compact"
-              hide-details
               class="ml-4"
               color="primary"
-            />
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
           </div>
           <v-text-field
             v-if="!feoForm.budgetAuto"
             v-model.number="feoForm.budget"
             label="Сумма финансирования, ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
+          <v-divider class="my-3" />
+          <!-- Плановое количество -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановое количество</span>
+            <v-btn-toggle
+              v-model="feoForm.qtyAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-row v-if="!feoForm.qtyAuto" dense>
+            <v-col cols="8">
+              <v-text-field
+                v-model.number="feoForm.planned_quantity"
+                label="Количество"
+                variant="outlined" density="compact" type="number" hide-details
+              />
+            </v-col>
+            <v-col cols="4">
+              <v-combobox
+                v-model="feoForm.unit"
+                :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                label="Ед. изм."
+                variant="outlined" density="compact" hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-divider class="my-3" />
+          <!-- Плановая стоимость за ед. -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
+            <v-btn-toggle
+              v-model="feoForm.amtAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-text-field
+            v-if="!feoForm.amtAuto"
+            v-model.number="feoForm.planned_amount"
+            label="Плановая стоимость за ед., ₽"
             variant="outlined" density="compact" type="number" hide-details
           />
         </v-card-text>
@@ -848,17 +954,20 @@
             persistent-hint
           />
           <v-divider class="my-3" />
+          <!-- Финансирование по ФЭО -->
           <div class="d-flex align-center mb-2">
             <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
-            <v-switch
+            <v-btn-toggle
               v-if="feoEditForm.hasChildren"
               v-model="feoEditForm.budgetAuto"
-              label="Авто из детей"
+              mandatory
               density="compact"
-              hide-details
               class="ml-4"
               color="primary"
-            />
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
           </div>
           <v-text-field
             v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
@@ -868,6 +977,73 @@
           />
           <v-alert
             v-if="feoEditForm.hasChildren && feoEditForm.budgetAuto"
+            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
+          >
+            Сумма рассчитывается автоматически из дочерних направлений
+          </v-alert>
+          <v-divider class="my-3" />
+          <!-- Плановое количество -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановое количество</span>
+            <v-btn-toggle
+              v-if="feoEditForm.hasChildren"
+              v-model="feoEditForm.qtyAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-row v-if="!feoEditForm.hasChildren || !feoEditForm.qtyAuto" dense>
+            <v-col cols="8">
+              <v-text-field
+                v-model.number="feoEditForm.planned_quantity"
+                label="Количество"
+                variant="outlined" density="compact" type="number" hide-details
+              />
+            </v-col>
+            <v-col cols="4">
+              <v-combobox
+                v-model="feoEditForm.unit"
+                :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                label="Ед. изм."
+                variant="outlined" density="compact" hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-alert
+            v-if="feoEditForm.hasChildren && feoEditForm.qtyAuto"
+            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
+          >
+            Количество рассчитывается автоматически из дочерних направлений
+          </v-alert>
+          <v-divider class="my-3" />
+          <!-- Плановая стоимость за ед. -->
+          <div class="d-flex align-center mb-2">
+            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
+            <v-btn-toggle
+              v-if="feoEditForm.hasChildren"
+              v-model="feoEditForm.amtAuto"
+              mandatory
+              density="compact"
+              class="ml-4"
+              color="primary"
+            >
+              <v-btn :value="false" size="x-small">Вручную</v-btn>
+              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-text-field
+            v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
+            v-model.number="feoEditForm.planned_amount"
+            label="Плановая стоимость за ед., ₽"
+            variant="outlined" density="compact" type="number" hide-details
+          />
+          <v-alert
+            v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
             type="info" variant="tonal" density="compact" class="mt-2 text-caption"
           >
             Сумма рассчитывается автоматически из дочерних направлений
@@ -903,8 +1079,8 @@
             {{ feoDeleteError }}
             <div class="mt-2">
               <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-right"
-                @click="showDeleteFeoDialog = false; router.push(`/orders?subsidy_id=${feoDeleteTarget?.subsidy_id}`)">
-                Перейти к закупкам
+                @click="showDeleteFeoDialog = false; router.push(`/orders?feo_category_id=${feoDeleteTarget?.id}`)">
+                Перейти к закупкам этой категории
               </v-btn>
             </div>
           </v-alert>
@@ -1172,7 +1348,7 @@
     </v-dialog>
 
     <!-- ── Import FEO dialog ── -->
-    <v-dialog v-model="feoImport.show" max-width="540" persistent>
+    <v-dialog v-model="feoImport.show" max-width="1400" persistent>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-upload" color="primary" class="mr-2" />
@@ -1181,25 +1357,106 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
+
+          <!-- Step 1: File upload -->
           <template v-if="feoImport.step === 1">
-            <p class="text-body-2 text-medium-emphasis mb-4">
-              Загрузите файл .xlsx с колонками:<br>
-              <strong>Наименование</strong> (обяз.), <strong>Субсидия</strong> (обяз.),
-              Родительская категория, Код, Приложение, Финансирование, Активна (да/нет).
-            </p>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
+                <strong>Заголовки столбцов:</strong> система автоматически найдёт строку с заголовками по ключевым словам
+                (субсидия, направление, уровень, количество и т.д.). Заголовки могут быть в любой строке — не обязательно в первой.<br>
+                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и сможете вручную указать,
+                какой столбец соответствует какому полю.
+              </div>
+            </v-alert>
             <v-file-input
               v-model="feoImport.fileList"
-              label="Файл Excel (.xlsx)"
-              accept=".xlsx,.xls"
+              label="Выберите файл (Excel, PDF или Word)"
+              accept=".xlsx,.xls,.pdf,.docx,.doc"
               variant="outlined" density="compact"
-              prepend-icon="mdi-file-excel"
+              prepend-icon="mdi-file-upload"
               show-size
+              hint="Перетащите файл сюда или нажмите для выбора"
+              persistent-hint
               @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
             />
           </template>
-          <template v-else>
+
+          <!-- Step 2: Column mapping -->
+          <template v-if="feoImport.step === 2 && feoImport.previewData">
+            <v-alert v-if="feoCurrentSheet" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ feoCurrentSheet.name }} ({{ feoCurrentSheet.total_rows }} строк данных)
+            </v-alert>
+            <v-select
+              v-if="feoImport.previewData.sheets.length > 1"
+              v-model="feoImport.selectedSheet"
+              :items="feoImport.previewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
+              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
+              @update:model-value="feoAutoMap(feoCurrentSheet?.headers || [])"
+            />
+
+            <div class="feo-imap-grid">
+              <div v-for="target in FEO_TARGET_FIELDS" :key="target.value"
+                class="feo-imap-col"
+                :class="{
+                  'feo-imap-col--over': feoDragOverTarget === target.value,
+                  'feo-imap-col--filled': feoIsTargetFilled(target.value),
+                  'feo-imap-col--required': target.required && !feoIsTargetFilled(target.value),
+                }"
+                @dragover.prevent="feoDragOverTarget = target.value"
+                @dragleave="feoDragOverTarget = null"
+                @drop.prevent="feoOnDropToTarget(target.value, $event)">
+                <div class="feo-imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
+                <div class="feo-imap-col-body">
+                  <div v-if="feoIsTargetFilled(target.value)"
+                    class="feo-imap-card"
+                    draggable="true"
+                    @dragstart="feoOnDragStart(feoDragMapping[target.value] as number, $event)">
+                    <div class="feo-imap-card-row">
+                      <span class="feo-imap-card-name">{{ feoGetColumnLabel(feoDragMapping[target.value] as number) }}</span>
+                      <button class="feo-imap-card-x" @click.stop="feoUnmapTarget(target.value)">×</button>
+                    </div>
+                    <div class="feo-imap-card-samples">{{ feoGetSamples(feoDragMapping[target.value] as number).join(', ') || '—' }}</div>
+                  </div>
+                  <div v-else class="feo-imap-col-empty">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="feo-imap-unresolved mt-3"
+              :class="{ 'feo-imap-unresolved--over': feoDragOverTarget === '_unresolved' }"
+              @dragover.prevent="feoDragOverTarget = '_unresolved'"
+              @dragleave="feoDragOverTarget = null"
+              @drop.prevent="feoOnDropToUnresolved($event)">
+              <span class="feo-imap-unresolved-label">Не определилось</span>
+              <div class="d-flex gap-2 flex-wrap mt-1">
+                <template v-for="(_, idx) in feoCurrentHeaders" :key="idx">
+                  <div v-if="!feoIsMapped(idx) && !feoIsIgnored(idx)"
+                    class="feo-imap-card feo-imap-card--free"
+                    draggable="true"
+                    @dragstart="feoOnDragStart(idx, $event)">
+                    <div class="feo-imap-card-row">
+                      <span class="feo-imap-card-name">{{ feoGetColumnLabel(idx) }}</span>
+                      <button class="feo-imap-card-x feo-imap-card-x--grey" title="Убрать" @click.stop="feoIgnoreColumn(idx)">×</button>
+                    </div>
+                    <div class="feo-imap-card-samples">{{ feoGetSamples(idx).join(', ') || '—' }}</div>
+                  </div>
+                </template>
+                <span v-if="feoUnmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
+              </div>
+            </div>
+
+            <v-alert v-if="!feoMappingValid" type="warning" density="compact" icon="mdi-alert" class="mt-3">
+              Укажите столбцы «Субсидия» и «Уровень 2 / Направление»
+            </v-alert>
+          </template>
+
+          <!-- Step 3: Result -->
+          <template v-if="feoImport.step === 3">
             <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
               Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
+              Обновлено: <strong>{{ feoImport.result.updated ?? 0 }}</strong> &nbsp;
               Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
             </v-alert>
             <div v-if="feoImport.result?.errors?.length" class="mt-2">
@@ -1210,12 +1467,21 @@
               </v-list>
             </div>
           </template>
+
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
+          <v-btn v-if="feoImport.step === 2" variant="text" @click="feoImport.step = 1">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 3 ? 'Закрыть' : 'Отмена' }}</v-btn>
           <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
-            :disabled="!feoImport.file" @click="doFeoImport">Загрузить</v-btn>
+            :disabled="!feoImport.file" @click="doFeoImport">Далее</v-btn>
+          <v-btn v-if="feoImport.step === 2" color="success" variant="flat"
+            :loading="feoImport.loading" :disabled="!feoMappingValid"
+            @click="doFeoMappedImport">Импортировать</v-btn>
+          <v-btn v-if="feoImport.step === 3" color="primary" variant="flat"
+            @click="closeFeoImport">Готово</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1464,7 +1730,7 @@ interface SubsidyRow {
 interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
   level: number; name: string; code: string | null; appendix: string | null
-  is_active: boolean; budget: number | null
+  is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -1549,6 +1815,7 @@ const deleteErrorLinked  = ref(false)
 const feoEditTarget      = ref<FeoCategory | null>(null)
 const feoDeleteTarget    = ref<FeoCategory | null>(null)
 const feoDeleteError     = ref('')
+const feoDeleteLinkedIds = ref<number[]>([])
 
 // FEO search
 const feoSearch = ref('')
@@ -1558,6 +1825,16 @@ const inlineBudgetId = ref<number | null>(null)
 const inlineBudgetVal = ref('')
 const inlineInputEl = ref<HTMLInputElement | null>(null)
 
+// FEO inline planned_quantity edit
+const inlineQtyId = ref<number | null>(null)
+const inlineQtyVal = ref('')
+const inlineQtyInputEl = ref<HTMLInputElement | null>(null)
+
+// FEO inline planned_amount edit
+const inlineAmtId = ref<number | null>(null)
+const inlineAmtVal = ref('')
+const inlineAmtInputEl = ref<HTMLInputElement | null>(null)
+
 // FEO Drag & Drop
 const dragNodeId = ref<number | null>(null)
 const dragOverId = ref<number | null>(null)
@@ -1565,8 +1842,137 @@ const dragOverId = ref<number | null>(null)
 // FEO Import
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
-  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  loading: false,
+  result: null as { created: number; updated?: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  previewData: null as any,
+  selectedSheet: '',
 })
+
+// FEO column mapping
+const FEO_TARGET_FIELDS = [
+  { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
+  { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
+  { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
+  { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
+  { value: 'amt_lvl2', title: 'Плановая стоимость за ед. для Уровня 2 (Направление)',   required: false },
+  { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
+  { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
+  { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
+  { value: 'amt_lvl3', title: 'Плановая стоимость за ед. для Уровня 3 (Тип расходов)', required: false },
+  { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
+  { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
+  { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
+  { value: 'amt_lvl4', title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
+  { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
+  { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
+  { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
+  { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
+  { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
+  { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
+  { value: 'budget',   title: 'Финансирование Ур.2–4 (бюджет категории ФЭО)', required: false },
+  { value: 'active',   title: 'Активна (да / нет)',                          required: false },
+]
+const feoDragMapping = ref<Record<string, number | null>>({})
+const feoIgnoredCols = ref<number[]>([])
+const feoDragOverTarget = ref<string | null>(null)
+
+const feoCurrentSheet = computed(() => {
+  if (!feoImport.previewData) return null
+  const sheets = feoImport.previewData.sheets
+  return sheets.find((s: any) => s.name === feoImport.selectedSheet) || sheets[0]
+})
+const feoCurrentHeaders = computed(() => feoCurrentSheet.value?.headers || [])
+const feoMappingValid = computed(() =>
+  feoDragMapping.value['subsidy'] != null && feoDragMapping.value['lvl2'] != null
+)
+const feoUnmappedCount = computed(() =>
+  feoCurrentHeaders.value.filter((_: any, i: number) => !feoIsMapped(i) && !feoIsIgnored(i)).length
+)
+
+function feoIsMapped(idx: number): boolean {
+  return Object.values(feoDragMapping.value).includes(idx)
+}
+function feoIsIgnored(idx: number): boolean {
+  return feoIgnoredCols.value.includes(idx)
+}
+function feoIsTargetFilled(field: string): boolean {
+  return feoDragMapping.value[field] != null
+}
+function feoGetColumnLabel(idx: number): string {
+  return (feoCurrentHeaders.value[idx] as string) || `Столбец ${idx + 1}`
+}
+function feoGetSamples(idx: number): string[] {
+  const sample = feoCurrentSheet.value?.sample || []
+  return (sample as any[][]).slice(0, 1)
+    .map((row: any[]) => String(row[idx] ?? '').trim())
+    .filter(Boolean)
+}
+function feoOnDragStart(idx: number, e: DragEvent) {
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(idx))
+}
+function feoOnDropToTarget(field: string, e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  feoDragMapping.value[field] = idx
+  feoDragOverTarget.value = null
+}
+function feoOnDropToUnresolved(e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  feoDragOverTarget.value = null
+}
+function feoUnmapTarget(field: string) {
+  feoDragMapping.value[field] = null
+}
+function feoIgnoreColumn(idx: number) {
+  for (const f of Object.keys(feoDragMapping.value)) {
+    if (feoDragMapping.value[f] === idx) feoDragMapping.value[f] = null
+  }
+  if (!feoIgnoredCols.value.includes(idx)) feoIgnoredCols.value.push(idx)
+}
+
+function feoAutoMap(headers: string[]) {
+  const mapping: Record<string, number | null> = {}
+  for (const f of FEO_TARGET_FIELDS) mapping[f.value] = null
+  const KEYWORDS: Record<string, string[]> = {
+    subsidy:  ['субсидия'],
+    lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
+    qty_lvl2:  ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
+    unit_lvl2: ['ед. изм. (ур.2)', 'ед.изм. ур.2', 'единица ур.2'],
+    amt_lvl2:  ['плановая стоимость за ед. (ур.2)', 'плановая стоимость (ур.2)', 'стоимость за ед. (ур.2)', 'стоимость ур.2', 'плановая сумма (ур.2)', 'сумма ур.2', 'план.сумма ур.2'],
+    lvl3:      ['уровень 3', 'тип расходов', 'level 3'],
+    qty_lvl3:  ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
+    unit_lvl3: ['ед. изм. (ур.3)', 'ед.изм. ур.3', 'единица ур.3'],
+    amt_lvl3:  ['плановая стоимость за ед. (ур.3)', 'плановая стоимость (ур.3)', 'стоимость за ед. (ур.3)', 'стоимость ур.3', 'плановая сумма (ур.3)', 'сумма ур.3'],
+    lvl4:      ['уровень 4', 'конкретизир', 'level 4'],
+    qty_lvl4:  ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
+    unit_lvl4: ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
+    amt_lvl4:  ['плановая стоимость за ед. (ур.4)', 'плановая стоимость (ур.4)', 'стоимость за ед. (ур.4)', 'стоимость ур.4', 'плановая сумма (ур.4)', 'сумма ур.4'],
+    lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
+    code:     ['код'],
+    appendix: ['приложение'],
+    budget:   ['финансирование', 'бюджет'],
+    quantity: ['количество (ур.5)', 'количество ур.5', 'кол-во (ур.5)', 'кол-во ур.5'],
+    unit:     ['ед. изм', 'ед.изм', 'единица'],
+    item_amt: ['плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма плановая', 'сумма (ур.5)', 'сумма ур'],
+    active:   ['активна', 'активен'],
+  }
+  for (const [field, kws] of Object.entries(KEYWORDS)) {
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i].toLowerCase()
+      if (kws.some(kw => h.includes(kw))) {
+        mapping[field] = i
+        break
+      }
+    }
+  }
+  feoDragMapping.value = mapping
+}
 
 // ── FEO Level 5: Плановые позиции vs Фактические ──
 interface FeoPlannedItem {
@@ -1908,17 +2314,48 @@ async function importContractorsFromFile() {
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, is_active: true, hasChildren: false, parent_id: null as number | null })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
 
-const filteredSubsidies = computed(() =>
-  allSubsidies.value.filter(s => s.year === selectedYear.value)
-)
+const CARD_ORDER_KEY = 'subsidies_card_order'
+const cardDragIdx = ref(-1)
+const cardDragOverIdx = ref(-1)
+const subsidyOrder = ref<number[]>(JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '[]'))
+
+function onCardDragStart(e: DragEvent, idx: number) {
+  cardDragIdx.value = idx
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onCardDragOver(idx: number) {
+  cardDragOverIdx.value = idx
+}
+function onCardDrop(targetIdx: number) {
+  const srcIdx = cardDragIdx.value
+  if (srcIdx < 0 || srcIdx === targetIdx) return
+  const ids = filteredSubsidies.value.map(s => s.id)
+  const [moved] = ids.splice(srcIdx, 1)
+  ids.splice(targetIdx, 0, moved)
+  subsidyOrder.value = ids
+  localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(ids))
+  cardDragOverIdx.value = -1
+  cardDragIdx.value = -1
+}
+
+const filteredSubsidies = computed(() => {
+  const yearFiltered = allSubsidies.value.filter(s => s.year === selectedYear.value)
+  if (subsidyOrder.value.length === 0) return yearFiltered
+  const orderMap = new Map(subsidyOrder.value.map((id, i) => [id, i]))
+  return [...yearFiltered].sort((a, b) => {
+    const ai = orderMap.get(a.id) ?? 9999
+    const bi = orderMap.get(b.id) ?? 9999
+    return ai - bi
+  })
+})
 
 const selectedSubsidy = computed(() =>
   allSubsidies.value.find(s => s.id === selectedId.value) ?? null
@@ -1926,11 +2363,13 @@ const selectedSubsidy = computed(() =>
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
-  return selectedSubsidy.value.calculated_budget || selectedSubsidy.value.budget
+  // Use totalFeoBudget from local FEO tree if loaded, otherwise feo_budget_total from API
+  if (totalFeoBudget.value !== null && totalFeoBudget.value > 0) return totalFeoBudget.value
+  return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget
 })
 
 const totals = computed(() => ({
-  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.calculated_budget || x.budget), 0),
+  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget), 0),
   planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
   plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
   ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
@@ -2055,25 +2494,139 @@ const feoDeleteChildrenCount = computed(() => {
 async function startInlineBudget(node: FeoNode) {
   inlineBudgetId.value = node.id
   inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
+  _pendingBudgetSave = { nodeId: node.id, node }
   await nextTick()
-  inlineInputEl.value?.focus()
+  const el = Array.isArray(inlineInputEl.value) ? inlineInputEl.value[0] : inlineInputEl.value
+  el?.focus?.()
 }
 
+let _pendingBudgetSave: { nodeId: number; node: FeoNode } | null = null
+
 async function saveInlineBudget(node: FeoNode) {
-  if (inlineBudgetId.value !== node.id) return
+  // Save nodeId before clearing — blur may fire after re-render
+  const nodeId = _pendingBudgetSave?.nodeId ?? inlineBudgetId.value
+  if (!nodeId) return
+  const savedNode = _pendingBudgetSave?.node ?? node
+  _pendingBudgetSave = null
   inlineBudgetId.value = null
-  const val = inlineBudgetVal.value.trim() === '' ? null : parseFloat(inlineBudgetVal.value)
+  const raw = String(inlineBudgetVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
   try {
-    await apiFetch(`/feo-categories/${node.id}`, {
+    await apiFetch(`/feo-categories/${nodeId}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: node.name, code: node.code ?? null, appendix: node.appendix ?? null,
-        is_active: node.is_active, budget: val, subsidy_id: node.subsidy_id }),
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: val, planned_quantity: savedNode.planned_quantity ?? null,
+        planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
     })
-    const cat = feoCategories.value.find(c => c.id === node.id)
+    const cat = feoCategories.value.find(c => c.id === nodeId)
     if (cat) cat.budget = val
+    savedNode.budget = val
     feoCategories.value = [...feoCategories.value]
-    if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+}
+
+// ── Planned quantity helpers ─────────────────────
+function feoQtyFor(node: FeoNode): number {
+  if (!node.hasChildren) return node.planned_quantity != null ? Number(node.planned_quantity) : 0
+  if (node.planned_quantity != null) return Number(node.planned_quantity)
+  return node.children.reduce((acc, child) => acc + feoQtyFor(child), 0)
+}
+
+function isAutoQtyNode(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  return node.planned_quantity == null
+}
+
+// ── Planned amount helpers ───────────────────────
+function feoAmtFor(node: FeoNode): number {
+  if (!node.hasChildren) return node.planned_amount != null ? Number(node.planned_amount) : 0
+  if (node.planned_amount != null) return Number(node.planned_amount)
+  return node.children.reduce((acc, child) => acc + feoAmtFor(child), 0)
+}
+
+// ── Computed planned total: кол-во × стоимость за ед. ───
+// Parent = sum of children's planned totals (never qty × unitPrice of parent)
+// Leaf = own planned_quantity × own planned_amount
+function feoPlannedTotalFor(node: FeoNode): number {
+  if (node.hasChildren) {
+    return node.children.reduce((acc, child) => acc + feoPlannedTotalFor(child), 0)
+  }
+  // Leaf: qty × unit_price (both must be set on THIS node, not inherited)
+  const qty = node.planned_quantity != null ? Number(node.planned_quantity) : 0
+  const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : 0
+  if (qty > 0 && unitPrice > 0) return qty * unitPrice
+  return 0
+}
+
+function isAutoAmtNode(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  return node.planned_amount == null
+}
+
+let _pendingAmtSave: { nodeId: number; node: FeoNode } | null = null
+
+async function startInlineAmt(node: FeoNode) {
+  inlineAmtId.value = node.id
+  inlineAmtVal.value = node.planned_amount != null ? String(node.planned_amount) : ''
+  _pendingAmtSave = { nodeId: node.id, node }
+  await nextTick()
+  const elA = Array.isArray(inlineAmtInputEl.value) ? inlineAmtInputEl.value[0] : inlineAmtInputEl.value
+  elA?.focus?.()
+}
+
+async function saveInlineAmt(node: FeoNode) {
+  const nodeId = _pendingAmtSave?.nodeId ?? inlineAmtId.value
+  if (!nodeId) return
+  const savedNode = _pendingAmtSave?.node ?? node
+  _pendingAmtSave = null
+  inlineAmtId.value = null
+  const raw = String(inlineAmtVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
+  try {
+    await apiFetch(`/feo-categories/${nodeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: savedNode.planned_quantity ?? null,
+        planned_amount: val ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
+    })
+    const cat = feoCategories.value.find(c => c.id === nodeId)
+    if (cat) cat.planned_amount = val ?? null
+    savedNode.planned_amount = val ?? null
+    feoCategories.value = [...feoCategories.value]
+  } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+}
+
+let _pendingQtySave: { nodeId: number; node: FeoNode } | null = null
+
+async function startInlineQty(node: FeoNode) {
+  inlineQtyId.value = node.id
+  inlineQtyVal.value = node.planned_quantity != null ? String(node.planned_quantity) : ''
+  _pendingQtySave = { nodeId: node.id, node }
+  await nextTick()
+  const elQ = Array.isArray(inlineQtyInputEl.value) ? inlineQtyInputEl.value[0] : inlineQtyInputEl.value
+  elQ?.focus?.()
+}
+
+async function saveInlineQty(node: FeoNode) {
+  const nodeId = _pendingQtySave?.nodeId ?? inlineQtyId.value
+  if (!nodeId) return
+  const savedNode = _pendingQtySave?.node ?? node
+  _pendingQtySave = null
+  inlineQtyId.value = null
+  const raw = String(inlineQtyVal.value ?? '').trim()
+  const val = raw === '' ? null : parseFloat(raw)
+  try {
+    await apiFetch(`/feo-categories/${nodeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
+        is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: val,
+        planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
+    })
+    const cat = feoCategories.value.find(c => c.id === nodeId)
+    if (cat) cat.planned_quantity = val
+    savedNode.planned_quantity = val
+    feoCategories.value = [...feoCategories.value]
   } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
 }
 
@@ -2225,18 +2778,79 @@ async function doFeoImport() {
     const fd = new FormData()
     fd.append('file', feoImport.file)
     const token = localStorage.getItem('auth_token')
-    const res = await fetch('/api/feo-categories/import', {
+    const res = await fetch('/api/feo-categories/import-preview', {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: fd,
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      showSnack(err.detail || 'Ошибка импорта', 'error'); return
+      showSnack(err.detail || 'Ошибка чтения файла', 'error'); return
+    }
+    const data = await res.json()
+    feoImport.previewData = data
+    feoImport.selectedSheet = data.sheets[0]?.name || ''
+    feoIgnoredCols.value = []
+    feoAutoMap(data.sheets[0]?.headers || [])
+    feoImport.step = 2
+  } catch {
+    showSnack('Ошибка чтения файла', 'error')
+  } finally {
+    feoImport.loading = false
+  }
+}
+
+async function doFeoMappedImport() {
+  if (!feoImport.file) return
+  feoImport.loading = true
+  try {
+    const m = feoDragMapping.value
+    const sheet = feoCurrentSheet.value
+    const params = new URLSearchParams({
+      sheet_name: feoImport.selectedSheet,
+      header_row_offset: String(sheet?.header_row_offset ?? 0),
+      col_subsidy:  String(m['subsidy']  ?? -1),
+      col_lvl2:     String(m['lvl2']     ?? -1),
+      col_lvl3:     String(m['lvl3']     ?? -1),
+      col_lvl4:     String(m['lvl4']     ?? -1),
+      col_lvl5:     String(m['lvl5']     ?? -1),
+      col_code:     String(m['code']     ?? -1),
+      col_appendix: String(m['appendix'] ?? -1),
+      col_budget:   String(m['budget']   ?? -1),
+      col_quantity: String(m['quantity'] ?? -1),
+      col_unit:      String(m['unit']      ?? -1),
+      col_item_amt:  String(m['item_amt']  ?? -1),
+      col_active:    String(m['active']    ?? -1),
+      col_qty_lvl2:  String(m['qty_lvl2']  ?? -1),
+      col_qty_lvl3:  String(m['qty_lvl3']  ?? -1),
+      col_qty_lvl4:  String(m['qty_lvl4']  ?? -1),
+      col_unit_lvl2: String(m['unit_lvl2'] ?? -1),
+      col_unit_lvl3: String(m['unit_lvl3'] ?? -1),
+      col_unit_lvl4: String(m['unit_lvl4'] ?? -1),
+      col_amt_lvl2:  String(m['amt_lvl2']  ?? -1),
+      col_amt_lvl3:  String(m['amt_lvl3']  ?? -1),
+      col_amt_lvl4:  String(m['amt_lvl4']  ?? -1),
+    })
+    const fd = new FormData()
+    fd.append('file', feoImport.file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/feo-categories/import-mapped?${params}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const msg = err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
+      showSnack(msg, 'error')
+      console.error('FEO import error:', err)
+      return
     }
     feoImport.result = await res.json()
-    feoImport.step = 2
+    feoImport.step = 3
     showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
+    // Reload FEO tree immediately
+    if (selectedId.value) { await loadFeo(selectedId.value); syncFeoFilled() }
   } catch {
     showSnack('Ошибка импорта', 'error')
   } finally {
@@ -2248,6 +2862,8 @@ function closeFeoImport() {
   const wasCreated = (feoImport.result?.created ?? 0) > 0
   feoImport.show = false; feoImport.step = 1
   feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  feoImport.previewData = null; feoImport.selectedSheet = ''
+  feoDragMapping.value = {}; feoIgnoredCols.value = []
   if (wasCreated && selectedId.value) { loadFeo(selectedId.value); syncFeoFilled() }
 }
 
@@ -2377,12 +2993,15 @@ async function addFeoCategory() {
         code: feoForm.value.code || null,
         appendix: feoForm.value.appendix || null,
         is_active: true,
-        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget || null),
+        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget ?? null),
+        planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity ?? null),
+        planned_amount: feoForm.value.amtAuto ? null : (feoForm.value.planned_amount ?? null),
+        unit: feoForm.value.unit || null,
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '' }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
@@ -2409,12 +3028,19 @@ function syncFeoFilled() {
 function startFeoEdit(node: FeoNode) {
   feoEditTarget.value = node
   const autoMode = node.hasChildren && node.budget === null
+  const qtyAutoMode = node.hasChildren && node.planned_quantity === null
+  const amtAutoMode = node.hasChildren && node.planned_amount === null
   feoEditForm.value = {
     name: node.name,
     code: node.code || '',
     appendix: node.appendix || '',
     budget: node.budget ?? null,
     budgetAuto: autoMode,
+    planned_quantity: node.planned_quantity ?? null,
+    qtyAuto: qtyAutoMode,
+    planned_amount: node.planned_amount ?? null,
+    amtAuto: amtAutoMode,
+    unit: node.unit || '',
     is_active: node.is_active,
     hasChildren: node.hasChildren,
     parent_id: node.parent_id ?? null,
@@ -2445,7 +3071,10 @@ async function updateFeoCategory() {
         code: feoEditForm.value.code || null,
         appendix: feoEditForm.value.appendix || null,
         is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget || null),
+        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget ?? null),
+        planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity ?? null),
+        planned_amount: feoEditForm.value.amtAuto ? null : (feoEditForm.value.planned_amount ?? null),
+        unit: feoEditForm.value.unit || null,
       })
     })
     showEditFeoDialog.value = false
@@ -2476,7 +3105,14 @@ async function deleteFeoCategory() {
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
   } catch (e: any) {
-    feoDeleteError.value = e?.detail || 'Ошибка удаления'
+    const detail = e?.detail
+    if (detail && typeof detail === 'object' && detail.message) {
+      feoDeleteError.value = detail.message
+      feoDeleteLinkedIds.value = detail.feo_category_ids || []
+    } else {
+      feoDeleteError.value = typeof detail === 'string' ? detail : 'Ошибка удаления'
+      feoDeleteLinkedIds.value = []
+    }
   } finally {
     savingFeo.value = false
   }
@@ -2895,6 +3531,8 @@ onMounted(loadAll)
 .subsidies-page {
   padding: 20px 24px;
   max-width: 1600px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* ── Header ── */
@@ -2931,9 +3569,19 @@ onMounted(loadAll)
   border: 2px solid var(--crm-border);
   box-shadow: 0 1px 4px var(--crm-shadow);
   padding: 18px 20px;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  cursor: grab;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
   position: relative;
+}
+.subsidy-card:active {
+  cursor: grabbing;
+}
+.subsidy-card--dragging {
+  opacity: 0.4;
+}
+.subsidy-card--drag-over {
+  outline: 2px dashed rgb(var(--v-theme-primary));
+  outline-offset: -2px;
 }
 .subsidy-card::after {
   content: 'Нажмите для подробностей';
@@ -3062,7 +3710,7 @@ onMounted(loadAll)
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  min-width: 700px;
+  min-width: 1100px;
 }
 .feo-th {
   font-size: 11px; font-weight: 600; color: var(--crm-text-muted);
@@ -3074,7 +3722,7 @@ onMounted(loadAll)
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }
-.feo-th-actions { }
+.feo-th-actions { min-width: 170px; }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
@@ -3082,7 +3730,9 @@ onMounted(loadAll)
 .feo-td-name { min-width: 0; }
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
-.feo-td-actions { text-align: right; white-space: nowrap; }
+.feo-td-actions { text-align: right; white-space: nowrap; min-width: 170px; }
+.feo-td-actions .v-btn { background: transparent !important; }
+.feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
@@ -3177,5 +3827,124 @@ onMounted(loadAll)
   bottom: 5%;
   width: 3px;
   background: rgb(59, 130, 246);
+}
+
+/* ── FEO Column Mapping ── */
+.feo-imap-grid {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.feo-imap-col {
+  flex: 1;
+  min-width: 130px;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  transition: border-color 0.15s, background 0.15s;
+}
+.feo-imap-col--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.feo-imap-col--filled {
+  border-style: solid;
+  border-color: #43A047;
+  background: #f6fff6;
+}
+.feo-imap-col--required {
+  border-color: #ef9a9a;
+  background: #fff8f8;
+}
+.feo-imap-col-hdr {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #555;
+  padding: 5px 7px 3px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: normal;
+  word-break: break-word;
+}
+.feo-imap-col-body {
+  padding: 5px;
+  min-height: 58px;
+}
+.feo-imap-col-empty {
+  font-size: 10px;
+  color: #ccc;
+  text-align: center;
+  margin-top: 10px;
+  font-style: italic;
+}
+.feo-imap-card {
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  padding: 4px 6px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.feo-imap-card:hover {
+  border-color: #1976D2;
+  box-shadow: 0 1px 5px rgba(25, 118, 210, 0.15);
+}
+.feo-imap-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.feo-imap-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
+  flex: 1;
+}
+.feo-imap-card-x {
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.feo-imap-card-x:hover { color: #e53935; }
+.feo-imap-card-x--grey { color: #bbb; }
+.feo-imap-card-samples {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+.feo-imap-card--free {
+  background: #fafafa;
+}
+.feo-imap-unresolved {
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 44px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.feo-imap-unresolved--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.feo-imap-unresolved-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #aaa;
+  letter-spacing: 0.3px;
 }
 </style>

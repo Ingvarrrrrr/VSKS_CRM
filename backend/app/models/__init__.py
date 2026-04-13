@@ -35,3 +35,5 @@ from app.models.task_change import TaskChange, TaskFieldSeen
 from app.models.budget_history import BudgetHistory
 from app.models.chat_room import ChatRoom, ChatParticipant  # noqa: F401
 from app.models.chat_message import ChatMessage, MessageRead  # noqa: F401
+from app.models.wish import Wish  # noqa: F401
+from app.models.push_subscription import PushSubscription  # noqa: F401

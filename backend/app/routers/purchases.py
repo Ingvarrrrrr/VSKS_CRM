@@ -20,6 +20,10 @@ from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
 from datetime import datetime, date
+from app.models.user_hierarchy import UserHierarchy
+from app.chat_manager import manager as chat_manager
+from app.models.chat_room import ChatRoom, ChatParticipant
+from app.models.chat_message import ChatMessage
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -75,8 +79,47 @@ def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
+
+async def _create_assignment_chat_room(
+    db: AsyncSession,
+    assignor_id: int,
+    assignee_id: int,
+    org_id: int,
+    room_name: str,
+) -> int:
+    """Create or find a ChatRoom for this assignment context. Returns room_id."""
+    existing_q = select(ChatRoom.id).where(ChatRoom.name == room_name, ChatRoom.org_id == org_id)
+    existing = await db.execute(existing_q)
+    room_id = existing.scalar_one_or_none()
+    if room_id:
+        return room_id
+
+    room = ChatRoom(
+        name=room_name,
+        is_group=False,
+        org_id=org_id,
+        created_by=assignor_id,
+    )
+    db.add(room)
+    await db.flush()
+
+    db.add(ChatParticipant(room_id=room.id, user_id=assignor_id))
+    db.add(ChatParticipant(room_id=room.id, user_id=assignee_id))
+    await db.flush()
+
+    sys_msg = ChatMessage(
+        room_id=room.id,
+        sender_id=assignor_id,
+        content=f"[СИСТЕМА] Чат создан для обсуждения: {room_name}",
+    )
+    db.add(sys_msg)
+    await db.flush()
+
+    return room.id
+
+
 # Status workflow
-STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "delivered", "paid"]
+STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
 VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
 
 # ---------------------------------------------------------------------------
@@ -381,9 +424,13 @@ async def list_purchases(
         q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
     # Visibility by hierarchy position:
     # - superadmin/account_owner/admin/org_admin: see all in org (already filtered above)
-    # - manager/employee with subordinates: see own + subordinates' purchases
-    # - plain employee: see only purchases they participate in
-    if current_user.role in ('employee', 'manager'):
+    # - manager: sees own + subordinates' + managed dept/org purchases
+    # - employee: D-13 — sees ONLY purchases where they are the assigned executor
+    if current_user.role == 'employee':
+        # D-13: employee sees ONLY purchases where they are the executor
+        q = q.where(Purchase.assigned_user_id == current_user.id)
+    elif current_user.role == 'manager':
+        # Existing manager logic: subordinates + dept members + managed orgs + purchase members
         from app.models.user_hierarchy import UserHierarchy
         from app.models.manager_organization import ManagerOrganization
         from app.models.manager_department import ManagerDepartment
@@ -418,7 +465,7 @@ async def list_purchases(
             org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
             visible_user_ids.update(r[0] for r in org_users.all())
 
-        # Filter: assigned to visible user OR no assigned user (shared)
+        # Filter: assigned to visible user OR no assigned user (shared) OR purchase member
         from app.models.purchase_event import PurchaseMember
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
         q = q.where(
@@ -713,7 +760,7 @@ async def update_purchase(
         p.purchase_number = max_result.scalar() + 1
 
     # НМЦК logic: frozen after "contracted" status
-    CONTRACTED_STATUSES = ("contracted", "delivered", "paid")
+    CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
     is_contracted = p.status in CONTRACTED_STATUSES
 
     if is_contracted:
@@ -1105,18 +1152,144 @@ async def assign_purchase(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Assign a purchase to a user (or unassign if user_id is None)."""
+    """Assign a purchase to a user (or unassign if user_id is None).
+
+    Hierarchy validation (D-14/D-15):
+    - Subordinate: direct assignment + ChatRoom + notification
+    - Non-subordinate: consent flow (consent_pending=True) + ChatRoom + request notification
+    """
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
-    if user_id is not None:
-        user_check = await db.execute(select(User).where(User.id == user_id))
-        if not user_check.scalar_one_or_none():
-            raise HTTPException(404, "Пользователь не найден")
-    p.assigned_user_id = user_id
+
+    # Unassign case
+    if user_id is None:
+        p.assigned_user_id = None
+        await db.commit()
+        return {"ok": True, "assigned_user_id": None}
+
+    # Validate user exists
+    user_check = await db.execute(select(User).where(User.id == user_id))
+    target_user = user_check.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(404, "Пользователь не найден")
+
+    # Skip hierarchy check if assigning to self
+    if user_id == current_user.id:
+        p.assigned_user_id = user_id
+        await db.commit()
+        return {"ok": True, "assigned_user_id": user_id}
+
+    # Hierarchy check: is target a direct subordinate?
+    sub_res = await db.execute(
+        select(UserHierarchy.subordinate_id).where(
+            UserHierarchy.manager_id == current_user.id
+        )
+    )
+    subordinate_ids = [r[0] for r in sub_res.all()]
+    is_subordinate = user_id in subordinate_ids
+
+    purchase_title = p.subject or p.item_name or f"Закупка #{p.id}"
+    org_id = current_user.org_id or 1  # fallback
+
+    if not is_subordinate:
+        # D-15: Non-subordinate requires consent flow
+        from app.models.purchase_event import PurchaseMember
+        existing_member = await db.execute(
+            select(PurchaseMember).where(
+                PurchaseMember.purchase_id == p.id,
+                PurchaseMember.user_id == user_id,
+            )
+        )
+        member = existing_member.scalar_one_or_none()
+        if not member:
+            member = PurchaseMember(
+                purchase_id=p.id,
+                user_id=user_id,
+                role="executor",
+                added_by_id=current_user.id,
+                consent_pending=True,
+            )
+            db.add(member)
+        else:
+            member.consent_pending = True
+
+        # D-18: Create chat room for this purchase assignment context
+        room_id = await _create_assignment_chat_room(
+            db, current_user.id, user_id, org_id,
+            f"Закупка: {purchase_title}",
+        )
+
+        await db.commit()
+
+        # D-16: Send consent request notification via WS, include room_id
+        try:
+            await chat_manager.send_to_user(user_id, {
+                "type": "system_notification",
+                "subtype": "consent_request",
+                "purchase_id": p.id,
+                "room_id": room_id,
+                "message": f"[СИСТЕМА] Запрос на назначение исполнителем закупки: «{purchase_title}»",
+                "link": f"/orders/{p.id}/edit",
+            })
+        except Exception:
+            pass  # WS notification is best-effort
+
+        return {"ok": True, "consent_pending": True, "assigned_user_id": None, "room_id": room_id}
+    else:
+        # Subordinate: assign directly (D-14)
+        p.assigned_user_id = user_id
+
+        # D-18: Create chat room for this purchase assignment context
+        room_id = await _create_assignment_chat_room(
+            db, current_user.id, user_id, org_id,
+            f"Закупка: {purchase_title}",
+        )
+
+        await db.commit()
+
+        # D-16: Send assignment notification via WS, include room_id
+        try:
+            await chat_manager.send_to_user(user_id, {
+                "type": "system_notification",
+                "subtype": "executor_assigned",
+                "purchase_id": p.id,
+                "room_id": room_id,
+                "message": f"[СИСТЕМА] Вы назначены исполнителем закупки: «{purchase_title}»",
+                "link": f"/orders/{p.id}/edit",
+            })
+        except Exception:
+            pass  # WS notification is best-effort
+
+        return {"ok": True, "assigned_user_id": user_id, "room_id": room_id}
+
+
+@router.post("/{pid}/consent")
+async def accept_purchase_consent(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accept consent to be executor on a purchase (D-15)."""
+    from app.models.purchase_event import PurchaseMember
+    member_res = await db.execute(
+        select(PurchaseMember).where(
+            PurchaseMember.purchase_id == pid,
+            PurchaseMember.user_id == current_user.id,
+            PurchaseMember.consent_pending == True,  # noqa: E712
+        )
+    )
+    pm = member_res.scalar_one_or_none()
+    if not pm:
+        raise HTTPException(404, "Нет ожидающего запроса согласия")
+    pm.consent_pending = False
+    # Set as executor on the purchase
+    purchase = await db.get(Purchase, pid)
+    if purchase:
+        purchase.assigned_user_id = current_user.id
     await db.commit()
-    return {"ok": True, "assigned_user_id": user_id}
+    return {"status": "accepted", "purchase_id": pid}
 
 
 @router.get("/{pid}/tasks")
@@ -1148,7 +1321,7 @@ async def kanban_status_change(
     STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule"}
     target_status = STATUS_ALIASES.get(target_status, target_status)
     if target_status not in STATUS_ORDER:
-        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Поставлено", "Оплачено"]))
+        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
         allowed = ", ".join(f"{k} ({v})" for k, v in STATUS_LABELS_RU.items())
         raise HTTPException(422, f"Недопустимый статус: «{target_status}». Допустимые: {allowed}")
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
@@ -1969,7 +2142,40 @@ async def import_items_mapped(
     content = await file.read()
 
     try:
-        if fname.endswith('.xls'):
+        if fname.endswith(('.docx', '.doc')):
+            # Word document — extract table rows
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows_doc = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows_doc.append(tuple(cell.text.strip() for cell in row.cells))
+            if not all_rows_doc:
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        all_rows_doc.append((text,))
+            skip = header_row_offset + 1
+            data_iter = all_rows_doc[skip:] if len(all_rows_doc) > skip else []
+        elif fname.endswith('.pdf'):
+            # PDF — extract table rows
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows_pdf = []
+            for page in pdf.pages:
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows_pdf.extend([tuple(str(c).strip() if c else "" for c in row) for row in t])
+            pdf.close()
+            skip = header_row_offset + 1
+            data_iter = all_rows_pdf[skip:] if len(all_rows_pdf) > skip else []
+        elif fname.endswith('.xls'):
             try:
                 import xlrd as _xlrd_mod
             except ImportError:
@@ -1977,7 +2183,7 @@ async def import_items_mapped(
             wb_xls = _xlrd_mod.open_workbook(file_contents=content)
             ws_xls = wb_xls.sheet_by_name(sheet_name) if sheet_name else wb_xls.sheet_by_index(0)
             all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
-            skip = header_row_offset + 1  # skip empty rows + header row itself
+            skip = header_row_offset + 1
             data_iter = all_rows[skip:] if len(all_rows) > skip else []
         else:
             if not load_workbook:
@@ -2007,7 +2213,13 @@ async def import_items_mapped(
         if v is None:
             return None
         try:
-            return Decimal(str(v).replace(',', '.').replace(' ', '').replace('\xa0', ''))
+            s = str(v).replace(',', '.').replace(' ', '').replace('\xa0', '')
+            # Strip non-numeric suffix (e.g. "руб.", "шт.", "р.")
+            import re
+            m = re.match(r'^([0-9]+\.?[0-9]*)', s)
+            if not m:
+                return None
+            return Decimal(m.group(1))
         except Exception:
             return None
 
@@ -2028,59 +2240,94 @@ async def import_items_mapped(
     new_in_catalog = 0
     errors_list = []
 
-    for row in data_iter:
-        item_name = _cell(row, col_item_name)
-        if not item_name:
+    # Keywords that indicate non-product rows (totals, footers, signatures)
+    _SKIP_KEYWORDS = {
+        'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
+        'поставщик', 'покупатель', 'заказчик', 'исполнитель',
+        'генеральный директор', 'директор', 'бухгалтер', 'подпись',
+        'м.п.', 'м.п', 'печать', 'ооо', 'оао', 'зао', 'ип ',
+        'инн', 'кпп', 'огрн', 'р/с', 'к/с', 'бик',
+        'адрес', 'телефон', 'email', 'банк',
+        'примечание', 'основание', 'договор №', 'счёт №', 'счет №',
+    }
+
+    def _is_junk_row(name_val: str) -> bool:
+        """Check if this looks like a footer/total/signature row, not a product."""
+        low = name_val.lower().strip()
+        # Direct match with skip keywords
+        for kw in _SKIP_KEYWORDS:
+            if low.startswith(kw) or low == kw:
+                return True
+        # Row starts with "итого" variants like "Итого с НДС:", "Итого:"
+        if low.startswith('итого'):
+            return True
+        return False
+
+    for row_idx, row in enumerate(data_iter):
+        try:
+            item_name = _cell(row, col_item_name)
+            if not item_name:
+                continue
+
+            # Skip junk rows (totals, footers, signatures)
+            if _is_junk_row(item_name):
+                continue
+
+            description = _cell(row, col_description) if col_description >= 0 else None
+            quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
+            if not quantity:
+                quantity = Decimal('1')
+            unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
+            total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+            unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+
+            # Calculate missing values
+            if not total_price and unit_price:
+                total_price = quantity * unit_price
+            elif not unit_price and total_price and quantity:
+                unit_price = total_price / quantity
+
+            # VAT info → append to description
+            vat_str = _cell(row, col_vat) if col_vat >= 0 else None
+            if vat_str and description:
+                description = f"{description} (НДС: {vat_str})"
+            elif vat_str:
+                description = f"НДС: {vat_str}"
+
+            # Auto-match or create in catalog
+            matched_product = product_by_name.get(item_name.lower().strip())
+            if matched_product:
+                product_id = matched_product.id
+                matched_catalog += 1
+                if not unit_price and matched_product.price:
+                    unit_price = matched_product.price
+                    total_price = quantity * unit_price
+            else:
+                product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
+                product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+                new_in_catalog += 1
+
+            item = PurchaseItem(
+                purchase_id=pid,
+                product_id=product_id,
+                item_name=item_name,
+                item_type='товар',
+                quantity=quantity,
+                unit=unit,
+                unit_price=unit_price,
+                total_price=total_price,
+            )
+            db.add(item)
+            added += 1
+        except Exception as e:
+            errors_list.append(f"Строка {row_idx + 1}: {e}")
+            await db.rollback()
             continue
 
-        description = _cell(row, col_description) if col_description >= 0 else None
-        quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
-        if not quantity:
-            quantity = Decimal('1')
-        unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
-        total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
-        unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
-
-        # Calculate missing values
-        if not total_price and unit_price:
-            total_price = quantity * unit_price
-        elif not unit_price and total_price and quantity:
-            unit_price = total_price / quantity
-
-        # VAT info → append to description
-        vat_str = _cell(row, col_vat) if col_vat >= 0 else None
-        if vat_str and description:
-            description = f"{description} (НДС: {vat_str})"
-        elif vat_str:
-            description = f"НДС: {vat_str}"
-
-        # Auto-match or create in catalog
-        matched_product = product_by_name.get(item_name.lower().strip())
-        if matched_product:
-            product_id = matched_product.id
-            matched_catalog += 1
-            if not unit_price and matched_product.price:
-                unit_price = matched_product.price
-                total_price = quantity * unit_price
-        else:
-            product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
-            product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
-            new_in_catalog += 1
-
-        item = PurchaseItem(
-            purchase_id=pid,
-            product_id=product_id,
-            item_name=item_name,
-            item_type='товар',
-            quantity=quantity,
-            unit=unit,
-            unit_price=unit_price,
-            total_price=total_price,
-        )
-        db.add(item)
-        added += 1
-
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка сохранения: {e}")
     return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
 
 

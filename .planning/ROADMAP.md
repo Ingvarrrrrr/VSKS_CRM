@@ -153,14 +153,14 @@ Plans:
 - Wishes lifecycle (submit → approve → convert): NOT done
 - "Мои заявки" / "Заявки сотрудников" views: NOT done
 
-**Plans:** 5 plans
+**Plans:** 5/5 plans complete
 
 Plans:
-- [ ] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
-- [ ] 07-02-PLAN.md — Wishes API full CRUD + transitions + employee purchase filter (D-13)
-- [ ] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
-- [ ] 07-04-PLAN.md — Chat notification hooks + ChatRoom creation + executor reassignment hierarchy validation
-- [ ] 07-05-PLAN.md — Backend role gating: require_role on subsidies/contracts/payments/feo/users (ROLES-03)
+- [x] 07-01-PLAN.md — Wish model + Alembic migration + service_note columns + wishes router scaffold
+- [x] 07-02-PLAN.md — Wishes API full CRUD + transitions + employee purchase filter (D-13)
+- [x] 07-03-PLAN.md — WishesView.vue + router + AppBar navigation updates
+- [x] 07-04-PLAN.md — Chat notification hooks + ChatRoom creation + executor reassignment hierarchy validation
+- [x] 07-05-PLAN.md — Backend role gating: require_role on subsidies/contracts/payments/feo/users (ROLES-03)
 
 **Success Criteria:**
 1. Logging in as a Viewer shows only "Мои заявки" in the sidebar; direct navigation to `/subsidies` redirects to the Viewer's default page.
@@ -223,6 +223,16 @@ Plans:
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 10 to break down)
+
+### Phase 11: Fix task display per-user org filtering — badges, org selector, task scoping
+
+**Goal:** Fix badge counters, org selector, and task list scoping for per-user multi-org context
+**Requirements**: TASK-FILTER-01, TASK-FILTER-02, TASK-FILTER-03
+**Depends on:** Phase 10
+**Plans:** 1/1 plans complete
+
+Plans:
+- [x] 11-01-PLAN.md — Backend org_id filter on /badges + frontend filteredGeneralTasks, zero-task org hide, localStorage badge sync
 
 ---
 

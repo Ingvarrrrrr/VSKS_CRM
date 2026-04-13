@@ -4,13 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.payment import Payment
 from app.schemas.schemas import PaymentCreate, PaymentOut
-from app.auth.jwt import get_current_user, require_role
+from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 @router.get("/", response_model=List[PaymentOut])
-async def list_payments(contract_id: Optional[int] = Query(None), db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def list_payments(contract_id: Optional[int] = Query(None), db: AsyncSession = Depends(get_db), _=Depends(require_role(*MANAGER_ROLES))):
     q = select(Payment)
     if contract_id:
         q = q.where(Payment.contract_id == contract_id)

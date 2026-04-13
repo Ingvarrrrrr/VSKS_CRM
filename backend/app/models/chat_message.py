@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Index, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -15,6 +16,7 @@ class ChatMessage(Base):
     file_name = Column(String(255), nullable=True)
     file_mime = Column(String(100), nullable=True)
     file_size = Column(Integer, nullable=True)
+    mention_ids = Column(JSONB, nullable=True)   # [user_id, ...]  populated on send
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     room = relationship("ChatRoom", back_populates="messages")

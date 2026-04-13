@@ -14,6 +14,9 @@ class ChatRoom(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    entity_type = Column(String(50), nullable=True)   # "purchase" | "task" | None
+    entity_id = Column(Integer, nullable=True)
+
     participants = relationship("ChatParticipant", back_populates="room", cascade="all, delete-orphan")
     messages = relationship("ChatMessage", back_populates="room", cascade="all, delete-orphan")
 

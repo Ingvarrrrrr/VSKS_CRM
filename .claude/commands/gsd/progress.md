@@ -15,10 +15,10 @@ Provides situational awareness before continuing work.
 </objective>
 
 <execution_context>
-@./.claude/get-shit-done/workflows/progress.md
+@C:/Users/1/Desktop/Cursor/VSKS_CRM/.claude/get-shit-done/workflows/progress.md
 </execution_context>
 
 <process>
-Execute the progress workflow from @./.claude/get-shit-done/workflows/progress.md end-to-end.
+Execute the progress workflow from @C:/Users/1/Desktop/Cursor/VSKS_CRM/.claude/get-shit-done/workflows/progress.md end-to-end.
 Preserve all routing logic (Routes A through F) and edge case handling.
 </process>

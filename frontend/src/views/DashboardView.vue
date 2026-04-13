@@ -134,14 +134,14 @@
         </div>
       </v-col>
 
-      <!-- Radial Gauge -->
-      <v-col cols="12" md="4">
-        <div class="chart-card">
+      <!-- Radial Gauge (compact) -->
+      <v-col cols="12" md="2">
+        <div class="chart-card chart-card--compact">
           <div class="chart-card-header">
             <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
-            <span class="chart-card-title">Освоение бюджета</span>
+            <span class="chart-card-title">Освоение</span>
           </div>
-          <apexchart type="radialBar" height="270" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
+          <apexchart type="radialBar" height="180" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
           <div class="radial-footer">
             <span class="text-caption text-medium-emphasis">
               {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
@@ -150,27 +150,131 @@
         </div>
       </v-col>
 
-      <!-- Status Pie -->
-      <v-col cols="12" md="4">
-        <div class="chart-card">
+      <!-- Pipeline: Закупки по этапам -->
+      <v-col cols="12" md="6">
+        <div class="chart-card" style="height:100%">
           <div class="chart-card-header">
-            <v-icon icon="mdi-chart-pie" size="18" color="#F59E0B" class="mr-2" />
-            <span class="chart-card-title">Закупки по статусам</span>
+            <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
+            <span class="chart-card-title">Закупки по этапам</span>
+            <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
           </div>
-          <div v-if="statusPieReady">
-            <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
-              <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на сегмент для списка закупок
+          <div v-if="pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
+            <!-- Budget baseline row -->
+            <div class="pipeline-row">
+              <div class="pipeline-label">
+                <span class="pipeline-dot" style="background:#9CA3AF" />
+                Бюджет
+              </div>
+              <div class="pipeline-bar-track">
+                <div class="pipeline-bar-fill" style="width:100%; background:#9CA3AF; opacity:0.35" />
+              </div>
+              <div class="pipeline-meta">
+                <span class="pipeline-amount">{{ formatCurrencyShort(totalBudget) }}</span>
+                <span class="pipeline-pct" :style="{ color: chartMuted }">100%</span>
+              </div>
             </div>
-            <apexchart
-              :key="statusPieKey"
-              type="pie" height="260"
-              :options="statusPieOptions"
-              :series="statusPieSeries"
-            />
+            <div
+              v-for="stage in pipelineStages" :key="stage.status"
+              class="pipeline-row"
+              @click="onPipelineClick(stage.status)"
+            >
+              <div class="pipeline-label">
+                <span class="pipeline-dot" :style="{ background: stage.color }" />
+                {{ stage.label }}
+              </div>
+              <div class="pipeline-bar-track">
+                <div
+                  class="pipeline-bar-fill"
+                  :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
+                />
+              </div>
+              <div class="pipeline-meta">
+                <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
+                <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
+                  {{ stage.pct }}%
+                </span>
+              </div>
+            </div>
+            <!-- Wishes ring hint -->
+            <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
+              <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
+              Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
+              ({{ Math.round(wishesAmountForPie / (totalBudget || 1) * 100) }}% бюджета)
+            </div>
           </div>
           <div v-else class="chart-empty">
             <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
             <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
+          </div>
+        </div>
+      </v-col>
+    </v-row>
+
+    <!-- ── Monthly Payment Contracts Remaining ── -->
+    <v-row v-if="monthlyContractsRemaining.length > 0" class="chart-row">
+      <v-col cols="12" md="8">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <v-icon icon="mdi-calendar-refresh" size="18" color="#6366F1" class="mr-2" />
+            <span class="chart-card-title">Ежемесячные договоры — остаток к заказу</span>
+            <span class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
+          </div>
+          <div
+            v-for="c in monthlyContractsRemaining" :key="c.id"
+            class="pipeline-row"
+          >
+            <div class="pipeline-label">
+              <span class="pipeline-dot" style="background:#6366F1" />
+              {{ c.name }}
+            </div>
+            <div class="pipeline-bar-track">
+              <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
+            </div>
+            <div class="pipeline-meta">
+              <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
+              <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
+            </div>
+          </div>
+        </div>
+      </v-col>
+    </v-row>
+
+    <!-- ── Товары / Услуги Breakdown ── -->
+    <v-row v-if="pipelineByType.length > 0" class="chart-row">
+      <v-col cols="12" md="8">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <v-icon icon="mdi-chart-box" size="18" color="#8B5CF6" class="mr-2" />
+            <span class="chart-card-title">Структура закупок — Товары / Услуги</span>
+          </div>
+          <div class="pipeline-row">
+            <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
+            <div class="pipeline-bar-track" style="margin-bottom:3px">
+              <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
+            </div>
+            <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
+          </div>
+          <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
+            <div class="pipeline-label">
+              <span class="pipeline-dot" :style="{ background: stage.color }" />
+              {{ stage.label }}
+            </div>
+            <div style="flex:1; min-width:0">
+              <div class="pipeline-bar-track" style="margin-bottom:3px">
+                <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
+              </div>
+              <div class="pipeline-bar-track">
+                <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
+              </div>
+            </div>
+            <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
+              <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
+              <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
+            </div>
+          </div>
+          <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
           </div>
         </div>
       </v-col>
@@ -608,6 +712,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
+import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 
@@ -657,6 +762,9 @@ watch(globalSubsidyId, (id: number | null) => {
   if (id !== null) selectedSubsidyIds.value = [id]
   else selectedSubsidyIds.value = []
 }, { immediate: true })
+
+// Clear selection when year changes to avoid stale IDs from other year
+watch(selectedYear, () => { selectedSubsidyIds.value = [] })
 
 // Sync: local → global (only single selection)
 watch(selectedSubsidyIds, (ids: number[]) => {
@@ -916,7 +1024,7 @@ const STATUS_LABELS: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
   planned: 'Планируется', confirmed: 'Подтверждено',
   in_progress: 'Ведётся работа', work_in_progress: 'В работе',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено'
+  contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено'
 }
 
 // Status counts filtered by selected subsidies
@@ -934,7 +1042,7 @@ const STATUS_COLORS: Record<string, string> = {
   wishes: '#6B7280', plan_schedule: '#F59E0B',
   planned: '#94A3B8', confirmed: '#3B82F6',
   in_progress: '#14B8A6', work_in_progress: '#14B8A6',
-  contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E',
+  contracted: '#6366F1', ordered: '#0EA5E9', delivered: '#8B5CF6', paid: '#22C55E',
 }
 
 const statusPieReady = computed(() =>
@@ -954,6 +1062,141 @@ const statusPieSeries = computed(() => statusPieEntries.value.map(([, v]) => v))
 const statusPieLabels = computed(() => statusPieEntries.value.map(([k]) => STATUS_LABELS[k] || k))
 const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATUS_COLORS[k] || '#94A3B8'))
 const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
+
+// For custom StatusPieWithWishes component
+const statusPieForComponent = computed(() =>
+  statusPieEntries.value
+    .filter(([k]) => k !== 'wishes')
+    .map(([k, v]) => ({
+      status: k,
+      count: v,
+      color: STATUS_COLORS[k] || '#94A3B8',
+      label: STATUS_LABELS[k] || k,
+    }))
+)
+const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
+function onPieSliceClick(status: string) {
+  statusDrillStatus.value = status
+  statusDrillDialog.value = true
+}
+
+// Pipeline stages (purchase lifecycle funnel)
+const PIPELINE_ORDER = ['plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+const pipelineStages = computed(() => {
+  const budget = totalBudget.value || 1
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const filtered = allPurchases.value.filter((p: any) =>
+    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
+  )
+  return PIPELINE_ORDER
+    .map((status, idx) => {
+      const stagesAtOrBeyond = PIPELINE_ORDER.slice(idx)
+      const amount = filtered
+        .filter((p: any) => stagesAtOrBeyond.includes(p.status))
+        .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
+      return {
+        status,
+        label: STATUS_LABELS[status] || status,
+        color: STATUS_COLORS[status] || '#94A3B8',
+        amount,
+        pct: Math.round(amount / budget * 100),
+      }
+    })
+    .filter(s => s.amount > 0)
+})
+function onPipelineClick(status: string) {
+  statusDrillStatus.value = status
+  statusDrillDialog.value = true
+}
+
+// Helper: split purchase amount by товары/услуги using item-level data
+function purchaseTypeSplit(p: any): { goods: number, services: number } {
+  const items: any[] = p.items || []
+  if (items.length === 0) {
+    const total = purchaseEffectivePrice(p)
+    if (p.item_type === 'товар') return { goods: total, services: 0 }
+    if (p.item_type === 'услуга' || p.item_type === 'работа') return { goods: 0, services: total }
+    return { goods: total / 2, services: total / 2 }
+  }
+  let goods = 0, services = 0
+  for (const item of items) {
+    const amt = parseFloat(item.final_total || item.total_price || 0)
+    if (item.item_type === 'товар') goods += amt
+    else services += amt
+  }
+  return { goods, services }
+}
+
+// Товары/услуги breakdown by pipeline stage (cumulative)
+const pipelineByType = computed(() => {
+  const budget = totalBudget.value || 1
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const filtered = allPurchases.value.filter((p: any) =>
+    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
+  )
+  return PIPELINE_ORDER
+    .map((status, idx) => {
+      const stagesAtOrBeyond = PIPELINE_ORDER.slice(idx)
+      const stagePurchases = filtered.filter((p: any) => stagesAtOrBeyond.includes(p.status))
+      let goods = 0, services = 0
+      for (const p of stagePurchases) {
+        const split = purchaseTypeSplit(p)
+        goods += split.goods
+        services += split.services
+      }
+      const total = goods + services
+      return {
+        status,
+        label: STATUS_LABELS[status] || status,
+        color: STATUS_COLORS[status] || '#94A3B8',
+        goods,
+        services,
+        total,
+        goodsPct: budget > 0 ? Math.round(goods / budget * 100) : 0,
+        servicesPct: budget > 0 ? Math.round(services / budget * 100) : 0,
+      }
+    })
+    .filter(s => s.total > 0)
+})
+
+// Monthly payment contracts remaining
+const monthlyContractsRemaining = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const today = new Date()
+  return allPurchases.value
+    .filter((p: any) => {
+      if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
+      return p.is_monthly_payment && p.monthly_payment_count && p.monthly_payment_amount
+    })
+    .map((p: any) => {
+      const count = Number(p.monthly_payment_count)
+      const perMonth = parseFloat(p.monthly_payment_amount)
+      const total = count * perMonth
+      const start = p.service_start_date ? new Date(p.service_start_date) : null
+      let elapsed = 0
+      if (start && !isNaN(start.getTime())) {
+        const fullMonths = Math.min(
+          Math.max(0, (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth())),
+          count
+        )
+        const partialFraction = fullMonths < count ? today.getDate() / 30 : 0
+        elapsed = (fullMonths + Math.min(partialFraction, 1)) * perMonth
+      }
+      const remaining = Math.max(0, total - elapsed)
+      return {
+        id: p.id,
+        name: p.name || `Закупка #${p.id}`,
+        total,
+        remaining,
+        elapsedPct: total > 0 ? Math.min(100, Math.round((total - remaining) / total * 100)) : 0,
+      }
+    })
+    .filter(c => c.total > 0)
+})
+
+const totalMonthlyRemaining = computed(() =>
+  monthlyContractsRemaining.value.reduce((s, c) => s + c.remaining, 0)
+)
 
 const statusPieOptions = computed(() => ({
   chart: {
@@ -1024,9 +1267,10 @@ const barOptions = computed(() => ({
   },
   dataLabels: {
     enabled: true,
-    style: { fontSize: '10px', colors: ['#FFFFFF'] },
-    formatter: (val: number) => val > 0 ? formatCurrency(val) : '',
-    offsetX: 5
+    style: { fontSize: '10px', fontWeight: '600', colors: ['#1F2937'] },
+    formatter: (val: number) => val > 0 ? formatCurrencyShort(val) : '',
+    offsetX: 6,
+    background: { enabled: false }
   },
   xaxis: {
     categories: filteredSubsidyStats.value.map(s => truncate(s.name, 28)),
@@ -1140,7 +1384,13 @@ function purchaseEffectivePrice(p: any): number {
   const status = p.status
   if (status === 'paid') return parseFloat(p.payment_amount || 0)
   if (status === 'delivered') return parseFloat(p.acceptance_doc_amount || 0)
+  if (status === 'ordered') return parseFloat(p.contract_price || p.delivery_payment_amount || 0)
   if (status === 'contracted') {
+    const isFramework = p.purchase_contract_type === 'framework_cumulative' ||
+                        p.purchase_contract_type === 'framework_with_amount'
+    if (isFramework) {
+      return parseFloat(p.acceptance_doc_amount || p.delivery_payment_amount || 0)
+    }
     return p.purchase_method === 'single'
       ? parseFloat(p.contract_price || 0)
       : parseFloat(p.delivery_payment_amount || 0)
@@ -1190,6 +1440,7 @@ const A_STATUS_LABELS: Record<string, string> = {
   confirmed:        'Подтверждена',
   work_in_progress: 'В работе',
   contracted:       'Законтрактована',
+  ordered:          'Заказана',
   delivered:        'Поставлена',
   paid:             'Оплачена',
   planned:          'Планирование',
@@ -1201,6 +1452,7 @@ const A_STATUS_COLORS: Record<string, string> = {
   confirmed:        'blue',
   work_in_progress: 'teal',
   contracted:       'indigo',
+  ordered:          'light-blue',
   delivered:        'deep-purple',
   paid:             'green',
   planned:          'orange',
@@ -1463,6 +1715,49 @@ onMounted(() => {
   margin-top: -8px;
   padding-bottom: 4px;
 }
+
+/* ── Pipeline Chart ── */
+.pipeline-wrap { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.pipeline-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 110px;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 2px;
+  transition: background 0.15s;
+}
+.pipeline-row:hover { background: var(--crm-surface-alt); }
+.pipeline-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--crm-text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.pipeline-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; flex-shrink: 0; margin-right: 6px;
+}
+.pipeline-bar-track {
+  height: 10px; background: var(--crm-border); border-radius: 5px; overflow: hidden;
+}
+.pipeline-bar-fill {
+  height: 100%; border-radius: 5px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+.pipeline-meta {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+}
+.pipeline-amount { font-size: 11px; font-weight: 600; color: var(--crm-text); }
+.pipeline-pct { font-size: 11px; color: var(--crm-text-muted); min-width: 36px; text-align: right; }
+.pipeline-wishes-hint {
+  display: flex; align-items: center;
+  font-size: 11px; color: #F59E0B;
+  border-top: 1px solid var(--crm-border);
+  padding-top: 8px; margin-top: 4px;
+}
+.chart-card--compact { min-height: unset; }
 
 /* ── Recent Purchases ── */
 .purchase-list { margin-top: 4px; }

@@ -5,6 +5,26 @@
       <router-view />
     </v-main>
     <api-error-dialog />
+    <!-- Global chat FAB -->
+    <v-btn
+      v-if="isAuthenticated && route.path !== '/chat'"
+      icon
+      style="position: fixed; bottom: 24px; right: 24px; z-index: 999"
+      color="primary"
+      size="large"
+      :to="'/chat'"
+      elevation="6"
+    >
+      <v-badge
+        v-if="totalUnread > 0"
+        :content="totalUnread > 99 ? '99+' : totalUnread"
+        color="error"
+        floating
+      >
+        <v-icon icon="mdi-chat" />
+      </v-badge>
+      <v-icon v-else icon="mdi-chat" />
+    </v-btn>
   </v-app>
 </template>
 
@@ -15,6 +35,7 @@ import { useTheme } from 'vuetify'
 import AppBar from './components/AppBar.vue'
 import ApiErrorDialog from './components/ApiErrorDialog.vue'
 import { initTableResize } from './composables/useTableResize'
+import { totalUnread } from './composables/useChat'
 
 const route = useRoute()
 const theme = useTheme()

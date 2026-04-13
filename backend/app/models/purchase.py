@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date, Text
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -77,6 +77,11 @@ class Purchase(Base):
     assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     task_comment = Column(Text, nullable=True)
 
+    # Служебка (service note) — D-22
+    service_note_text = Column(Text, nullable=True)
+    service_note_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    service_note_at = Column(DateTime(timezone=True), nullable=True)
+
     # Приложение №3 fields
     treasury_code = Column(String(50), nullable=True)          # S: Казначейский код
     has_pretension = Column(Boolean, nullable=True, default=False)  # U: Претензионная работа
@@ -92,6 +97,7 @@ class Purchase(Base):
     contractor = relationship("Contractor")
     contract = relationship("Contract", back_populates="purchases")
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
+    service_note_author = relationship("User", foreign_keys=[service_note_by])
     event = relationship("Event")
     total_nmck = Column(Numeric(15, 2))
     items = relationship("PurchaseItem", back_populates="purchase",

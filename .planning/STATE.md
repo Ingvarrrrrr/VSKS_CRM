@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_plan: 1
 status: executing
-stopped_at: Completed 10-03-PLAN.md
-last_updated: "2026-04-04T18:29:07.598Z"
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-04-06T00:15:00.000Z"
 progress:
-  total_phases: 10
-  completed_phases: 3
-  total_plans: 21
-  completed_plans: 15
+  total_phases: 11
+  completed_phases: 5
+  total_plans: 22
+  completed_plans: 21
 ---
 
 # STATE.md — VSKS_CRM
@@ -19,9 +19,9 @@ progress:
 
 - **Phase:** 06-analytics-budget-history
 - **Current Plan:** 1
-- **Status:** Executing Phase 10
+- **Status:** Executing Phase 07
 - **Last Updated:** 2026-04-04
-- **Stopped At:** Completed 10-02-PLAN.md
+- **Stopped At:** Completed 07-04-PLAN.md
 
 ---
 
@@ -121,12 +121,28 @@ Role enforcement and delegation done; Wishes lifecycle not implemented.
 - BFF endpoint for tasks (`/api/tasks/my`)
 - Review status on tasks
 
-**Not done:**
+**Done (07-01):**
 
-- Wishes lifecycle (Viewer submits → Manager approves → Admin converts to purchase)
-- `GET /api/wishes`, `POST /api/wishes`, transition endpoints
-- "Мои заявки" view for Viewers
-- "Заявки сотрудников" view for Managers
+- Wish SQLAlchemy model (D-02 columns), schemas (WishCreate/Update/Reject/Convert/Out), migration applied
+- GET /api/wishes endpoint with org isolation + employee filter — router registered
+- service_note_text/by/at columns added to purchases table
+
+**Done (07-02):**
+
+- POST /api/wishes (create, draft, org isolation)
+- PUT /api/wishes/{id} (update draft, creator only)
+- POST /api/wishes/{id}/submit (draft -> submitted, creator only)
+- POST /api/wishes/{id}/approve (submitted -> approved, MANAGER_ROLES)
+- POST /api/wishes/{id}/reject (submitted -> rejected + reason, MANAGER_ROLES, D-08)
+- POST /api/wishes/{id}/convert (approved -> converted + inline Purchase, ADMIN_ROLES, D-23)
+- DELETE /api/wishes/{id} (draft only, creator only, 204)
+- Employee purchase list strictly filtered to assigned_user_id = current_user.id (D-13)
+
+**Done (07-03):**
+
+- WishesView.vue with role-based tabs: employee sees own wishes, manager/admin see all wishes
+- /wishes route with lazy import, employee guard updated
+- AppBar nav entry for all roles, advance reports fixed to ALL_ROLES
 
 ---
 
@@ -195,6 +211,7 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - Phase 8 added: Торговые площадки + КП email + E2E (n8n Росэлторг, Фабрикант test mode, SMTP КП, Playwright)
 - Post-Phase-8 work above supersedes some Phase 8 decisions (n8n removed in favour of direct API calls)
 - Phase 10 added: Chat Telegram-style UI — real-time delivery fix, sticky header, dual-mode search, Telegram-like polish
+- Phase 11 added: Fix task display per-user org filtering — badges show wrong org, org selector shows orgs with no tasks, task scoping broken
 
 ---
 
@@ -229,6 +246,24 @@ All items below were merged to `main` / `claude` branch outside any GSD phase pl
 - [10-03] `v-html` with `highlightSearch()` used for message highlight — XSS safe because user input is regex-escaped before use in replace
 - [10-03] `min_length=2` FastAPI Query guard on `/chat/search` prevents expensive single-char DB full-table scans
 - [10-03] Dual-mode search: single `searchQuery` ref drives `filteredRooms` or `filteredMessages` based on `selectedRoom` presence
+- [07-01] Old wishes table (subsidy_id/user_id/name schema, 0 rows) dropped and recreated with D-02 schema — no data loss
+- [07-01] alembic/env.py updated to use DATABASE_URL env var for Docker db-host connectivity (was hardcoded to localhost)
+- [07-01] WishOut creator_name/approver_name are computed in router (not DB columns) via lazy="joined" relationships
+- [07-05] update_subsidy/delete_subsidy inline role checks replaced with require_role dependency — consistent pattern, no behavior change
+- [07-05] 7 feo_categories endpoints that had zero authentication (create, update, delete, move, import, export, purchase-totals) now gated with require_role(*ADMIN_ROLES) — critical security fix
+- [07-05] contracts import endpoints (preview, mapped) upgraded from get_current_user to require_role(*MANAGER_ROLES)
+- [07-02] Employee purchase filter uses q.where(Purchase.assigned_user_id == current_user.id) with no NULL fallback — D-13 strict compliance
+- [07-02] convert_wish creates Purchase inline via db.flush() pattern (not HTTP call to create_purchase) — avoids budget check side-effects on wish-origin purchases
+- [07-02] selectinload() used explicitly in _load_wish() helper rather than relying on model-level lazy="joined" — explicit async session behavior
+- [07-03] Employee tab shows unconditionally (no v-tabs bar), manager/admin get two tabs — simpler UX for employees
+- [07-03] Manager filter defaults to "submitted" to show immediately actionable wishes
+- [07-03] Advance reports changed from MANAGER_ROLES to ALL_ROLES per D-09 requirement
+- [11-01] localStorage bridge for AppBar<->MyTasksView org_id sync: zero dependencies, backward compatible, 2-line AppBar change
+- [11-01] Client-side filteredGeneralTasks computed avoids refetch on org switch — all tasks already in memory from /tasks/init
+- [11-01] Optional org_id=None default on /badges preserves full backward compatibility for global badge calls
+- [07-04] _create_assignment_chat_room uses name+org_id uniqueness to avoid duplicate rooms on reassignment
+- [07-04] system_notification WS event forwarded as new_room to listeners so ChatView can auto-refresh room list
+- [07-04] accept_purchase_consent sets assigned_user_id after clearing consent_pending — consent flow complete; purchase org_id falls back to current_user.org_id
 - Multi-tenancy: `org_id` on all entities; superadmin sees all; `org_admin` / manager / employee see own org only
 - Files stored as PostgreSQL bytea (no S3/MinIO)
 - Status workflow is unidirectional; admin-only reverse approved

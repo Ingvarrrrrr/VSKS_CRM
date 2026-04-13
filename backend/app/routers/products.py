@@ -234,7 +234,8 @@ async def create_product(
 async def update_product(
     product_id: int,
     product: ProductCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Product).where(Product.id == product_id))
     db_product = result.scalar_one_or_none()
@@ -244,6 +245,9 @@ async def update_product(
     _apply_price_links(data, db_product)
     for key, value in data.items():
         setattr(db_product, key, value)
+    from datetime import datetime
+    db_product.updated_at = datetime.utcnow()
+    db_product.updated_by = current_user.full_name or current_user.username
     await db.commit()
     await db.refresh(db_product)
     return db_product

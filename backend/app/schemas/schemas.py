@@ -199,6 +199,9 @@ class FeoCategoryCreate(BaseModel):
     appendix: Optional[str] = None
     is_active: bool = True
     budget: Optional[float] = None
+    planned_quantity: Optional[float] = None
+    planned_amount: Optional[float] = None
+    unit: Optional[str] = None
 
 class FeoCategoryOut(BaseModel):
     id: int
@@ -210,6 +213,9 @@ class FeoCategoryOut(BaseModel):
     appendix: Optional[str] = None
     is_active: bool = True
     budget: Optional[float] = None
+    planned_quantity: Optional[float] = None
+    planned_amount: Optional[float] = None
+    unit: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class FeoCategoryTree(FeoCategoryOut):
@@ -422,6 +428,9 @@ class PurchaseCreate(BaseModel):
     treasury_code: Optional[str] = None
     has_pretension: Optional[bool] = False
     payment_basis_type: Optional[str] = "contract"
+    service_note_text: Optional[str] = None
+    service_note_by: Optional[int] = None
+    service_note_at: Optional[datetime] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -484,6 +493,8 @@ class ProductOut(ProductCreate):
     tz_verified_by: Optional[str] = None
     tz_44fz_verified_at: Optional[datetime] = None
     tz_44fz_verified_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Product Summary (сводная по продукции)

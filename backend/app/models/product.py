@@ -7,7 +7,7 @@ class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id"), nullable=True)
-    name = Column(String(500), nullable=False)
+    name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     description_44fz = Column(Text, nullable=True)  # Описание для 44-ФЗ (интервалы характеристик)
     category = Column(String(200), nullable=True)  # Категория товара из таблицы
@@ -36,5 +36,9 @@ class Product(Base):
     tz_verified_by = Column(String(200), nullable=True)
     tz_44fz_verified_at = Column(DateTime, nullable=True)
     tz_44fz_verified_by = Column(String(200), nullable=True)
+
+    # Кто и когда редактировал
+    updated_at = Column(DateTime, nullable=True)
+    updated_by = Column(String(200), nullable=True)  # full_name пользователя
 
     feo_category = relationship("FeoCategory", backref="products")

@@ -144,7 +144,7 @@
       <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
       <div class="org-cards-grid">
         <div
-          v-for="org in orgSummary"
+          v-for="org in visibleOrgSummary"
           :key="org.org_id ?? 'all'"
           class="org-sel-card"
           :class="{ 'org-sel-card--all': org.org_id === null }"
@@ -346,7 +346,7 @@
       <v-card v-else-if="taskViewMode === 'list'" variant="outlined">
         <v-data-table
           :headers="taskListHeaders"
-          :items="generalTasks"
+          :items="filteredGeneralTasks"
           density="compact"
           hover
           items-per-page="25"
@@ -681,61 +681,16 @@
             <div class="d-flex align-center mb-2">
               <v-icon icon="mdi-chat-outline" size="18" class="mr-1" />
               <span class="text-subtitle-2 font-weight-medium">Чат</span>
-              <v-chip v-if="taskComments.length" size="x-small" color="blue-grey" class="ml-2" variant="tonal">{{ taskComments.length }}</v-chip>
             </div>
-            <div v-if="commentsLoading" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
-            <div v-else ref="chatContainer" class="chat-container mb-2">
-              <div v-for="c in taskComments" :key="c.id"
-                class="chat-msg" :class="c.user_id === currentUserId ? 'chat-msg--mine' : 'chat-msg--other'">
-                <div class="chat-msg-header">
-                  <v-icon icon="mdi-account-circle" size="14" :color="c.user_id === currentUserId ? 'white' : 'primary'" class="mr-1" />
-                  <span class="chat-msg-author">{{ c.user_name }}</span>
-                  <span class="chat-msg-time">{{ formatDatetime(c.created_at) }}</span>
-                  <v-btn v-if="c.user_id === currentUserId" icon="mdi-delete-outline" size="x-small" variant="text" density="compact"
-                    :color="c.user_id === currentUserId ? 'white' : 'grey'" class="chat-msg-delete"
-                    @click.stop="deleteComment(c.id)" title="Удалить" />
-                </div>
-                <div class="chat-msg-text" v-html="renderMentions(c.text)"></div>
-              </div>
-              <div v-if="taskComments.length === 0" class="text-caption text-medium-emphasis text-center pa-4">Начните обсуждение</div>
-            </div>
-            <!-- Mention dropdown (from @ button or typing @) -->
-            <div v-if="mentionOpen" class="mention-dropdown">
-              <div v-for="u in filteredMentionUsers" :key="u.value"
-                class="mention-item" @mousedown.prevent="insertMention(u)">
-                <v-icon icon="mdi-account" size="14" class="mr-1" />{{ u.text }}
-              </div>
-              <div v-if="filteredMentionUsers.length === 0" class="mention-item text-medium-emphasis">Нет совпадений</div>
-            </div>
-            <div class="d-flex ga-2 align-end">
-              <v-textarea
-                ref="commentInput"
-                v-model="newCommentText"
-                :placeholder="enterToSend ? 'Сообщение... (Enter — отправить)' : 'Сообщение... (Ctrl+Enter — отправить)'"
-                variant="outlined" density="compact" rows="5" hide-details auto-grow
-                style="flex:1"
-                @keydown="onCommentKeydown"
-                @input="onCommentInput"
-              />
-              <div class="d-flex flex-column ga-1" style="min-width:36px">
-                <v-btn color="primary" icon size="small" :disabled="!newCommentText.trim()" :loading="commentSaving" @click="addComment" title="Отправить">
-                  <v-icon icon="mdi-send" size="18" />
-                </v-btn>
-                <v-btn icon size="small" variant="tonal" color="deep-purple" @click="openMentionPicker" title="Упомянуть участника">
-                  <v-icon icon="mdi-at" size="18" />
-                </v-btn>
-                <v-btn v-if="isManagerOrAdmin" icon size="small" variant="tonal" color="orange" @click="openBroadcastDialog" title="Рассылка">
-                  <v-icon icon="mdi-bullhorn" size="18" />
-                </v-btn>
-              </div>
-            </div>
-            <div class="d-flex align-center mt-1" style="font-size:11px;color:#888;user-select:none">
-              <span style="white-space:nowrap">{{ enterToSend ? 'Enter — отправка' : 'Enter — новая строка' }}</span>
-              <v-switch v-model="enterToSend" density="compact" hide-details color="primary"
-                style="flex:0 0 auto; margin: 0 16px"
-                @update:model-value="saveSendMode" />
-              <span style="white-space:nowrap">{{ enterToSend ? 'Ctrl+Enter — новая строка' : 'Ctrl+Enter — отправка' }}</span>
-            </div>
+            <ChatEmbed
+              :entity-type="'task'"
+              :entity-id="editingTask.id"
+              :title="editingTask.title"
+              :participant-ids="[
+                editingTask.created_by_id,
+                ...(editingTask.assignees || []).map((a: any) => a.user_id)
+              ].filter((id: any) => id != null)"
+            />
           </template>
         </v-card-text>
         <v-card-actions>
@@ -833,6 +788,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import ChatEmbed from '@/components/ChatEmbed.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -900,6 +856,15 @@ const dueDateRule = (v: string) => {
 
 // ── General tasks ──
 const generalTasks = ref<any[]>([])
+
+const filteredGeneralTasks = computed(() => {
+  if (selectedOrgId.value === null) return generalTasks.value
+  return generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
+})
+
+const visibleOrgSummary = computed(() =>
+  orgSummary.value.filter(o => o.org_id === null || o.task_count > 0)
+)
 const pendingConsentTasks = ref<any[]>([])
 const consentLoading = ref<string | null>(null)
 const consentDeclines = ref<any[]>([])
@@ -961,7 +926,7 @@ const priorityItems = [
   { title:'Высокий', value:'high' }, { title:'Срочно', value:'urgent' },
 ]
 
-const generalByStatus = (status: string) => generalTasks.value.filter(t => t.status === status)
+const generalByStatus = (status: string) => filteredGeneralTasks.value.filter(t => t.status === status)
 
 // ── Deadline urgency for card background ──
 function gtCardStyle(gt: any): Record<string, string> {
@@ -1606,6 +1571,11 @@ async function loadOrgSummary() {
 
 function selectOrg(orgId: number | null) {
   selectedOrgId.value = orgId
+  if (orgId !== null) {
+    localStorage.setItem('active_org_id', String(orgId))
+  } else {
+    localStorage.removeItem('active_org_id')
+  }
 }
 
 async function load() {

@@ -660,11 +660,9 @@
           <v-row class="mt-1">
             <v-col cols="12" md="3">
               <v-text-field :model-value="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
-                :placeholder="isNew ? 'Назначается автоматически' : ''"
-                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен после сохранения' : ''"
+                :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
+                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : ''"
                 persistent-hint
-                :readonly="isEdit && !isAdminLevel"
-                :bg-color="isEdit && !isAdminLevel ? 'grey-lighten-4' : undefined"
                 @update:model-value="onAutoFieldChange('contract_number', `Номер ${contractWordGen}`, $event)" />
             </v-col>
             <v-col cols="12" md="3">

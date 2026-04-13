@@ -77,6 +77,70 @@ def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
     return all_rows, None
 
 
+def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> list[list[list[str]]]:
+    """Fallback table extraction using original libraries (pdfplumber, python-docx, openpyxl)."""
+    raw_tables: list[list[list[str]]] = []
+    if file_type == "excel":
+        if load_workbook:
+            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            rows = [[str(c) if c is not None else "" for c in row] for row in ws.iter_rows(values_only=True)]
+            if rows:
+                raw_tables.append(rows)
+    elif file_type == "pdf":
+        if _pdfplumber:
+            with _pdfplumber.open(BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    tables = page.extract_tables() or []
+                    for tbl in tables:
+                        if tbl:
+                            raw_tables.append([[str(c) if c is not None else "" for c in row] for row in tbl])
+        if not raw_tables:
+            ocr_rows, _ = _ocr_pdf_to_rows(content)
+            if ocr_rows:
+                raw_tables.append(ocr_rows)
+    elif file_type == "docx":
+        if _DocxDocument:
+            doc = _DocxDocument(BytesIO(content))
+            for table in doc.tables:
+                rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+                if rows:
+                    raw_tables.append(rows)
+    return raw_tables
+
+
+def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
+    """Fallback column detection on raw tables."""
+    def _detect_columns_legacy(header_row: list[str]) -> dict:
+        col: dict = {}
+        for i, h in enumerate(header_row):
+            h_s = h.strip().lower()
+            if any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг")):
+                col.setdefault("item_name", i)
+            elif any(x in h_s for x in ("тип", "type", "вид")):
+                col.setdefault("item_type", i)
+            elif any(x in h_s for x in ("кол", "количеств", "qty", "quantity")):
+                col.setdefault("quantity", i)
+            elif any(x in h_s for x in ("ед.", "единиц", "unit", "изм")):
+                col.setdefault("unit", i)
+            elif any(x in h_s for x in ("цена ед", "цена за", "стоимость ед", "price")):
+                col.setdefault("unit_price", i)
+            elif any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
+                col.setdefault("total_price", i)
+        return col
+    best_table: list[list[str]] = []
+    best_col: dict = {}
+    best_header_row = 0
+    for table in raw_tables:
+        for r_idx, row in enumerate(table[:6]):
+            col = _detect_columns_legacy(row)
+            if "item_name" in col and len(col) > len(best_col):
+                best_col = col
+                best_table = table
+                best_header_row = r_idx
+    return best_table, best_col, best_header_row
+
+
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
@@ -2350,86 +2414,45 @@ async def import_items_smart(
     content = await file.read()
     filename = (file.filename or "").lower()
 
-    # --- Extract raw tables from file ---
-    raw_tables: list[list[list[str]]] = []
-    file_type = "unknown"
-
-    if filename.endswith((".xlsx", ".xls")):
-        file_type = "excel"
-        if not load_workbook:
-            raise HTTPException(500, "openpyxl не установлен")
-        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        rows = [[str(c) if c is not None else "" for c in row] for row in ws.iter_rows(values_only=True)]
-        if rows:
-            raw_tables.append(rows)
-    elif filename.endswith(".pdf"):
-        file_type = "pdf"
-        if not _pdfplumber:
-            raise HTTPException(500, "pdfplumber не установлен")
-        with _pdfplumber.open(BytesIO(content)) as pdf:
-            for page in pdf.pages:
-                tables = page.extract_tables() or []
-                for tbl in tables:
-                    if tbl:
-                        raw_tables.append([[str(c) if c is not None else "" for c in row] for row in tbl])
-    elif filename.endswith((".docx", ".doc")):
-        file_type = "docx"
-        if not _DocxDocument:
-            raise HTTPException(500, "python-docx не установлен")
-        doc = _DocxDocument(BytesIO(content))
-        for table in doc.tables:
-            rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
-            if rows:
-                raw_tables.append(rows)
-    else:
+    allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls")
+    if not any(filename.endswith(ext) for ext in allowed_ext):
         raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS")
 
+    file_type = "pdf" if filename.endswith(".pdf") else "excel" if filename.endswith((".xlsx", ".xls")) else "docx"
+
+    # --- Stage 1: Convert to Markdown via markitdown ---
+    from app.utils.document_to_markdown import (
+        file_to_markdown, parse_markdown_tables, pick_best_table, detect_columns,
+    )
+
+    try:
+        md_text = file_to_markdown(content, file.filename or filename)
+    except Exception as e:
+        logger.warning("markitdown conversion failed: %s", e)
+        raise HTTPException(400, f"Не удалось обработать файл: {e}")
+
+    # --- Stage 2: Extract tables from Markdown ---
+    raw_tables = parse_markdown_tables(md_text)
+
+    # Fallback: if markitdown found no tables, try legacy direct parsing
     if not raw_tables:
-        if file_type == "pdf":
-            # Try OCR for scanned PDFs
-            ocr_rows, ocr_error = _ocr_pdf_to_rows(content)
-            if ocr_rows:
-                raw_tables.append(ocr_rows)
-            else:
-                detail = ocr_error or "OCR не смог распознать таблицу."
-                raise HTTPException(
-                    400,
-                    f"Этот PDF — скан (изображение). {detail} "
-                    "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
-                )
-        else:
-            raise HTTPException(400, "Таблицы в документе не найдены")
+        raw_tables = _legacy_extract_tables(content, filename, file_type)
 
-    def _detect_columns(header_row: list[str]) -> dict:
-        col: dict = {}
-        for i, h in enumerate(header_row):
-            h_s = h.strip().lower()
-            if any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг")):
-                col.setdefault("item_name", i)
-            elif any(x in h_s for x in ("тип", "type", "вид")):
-                col.setdefault("item_type", i)
-            elif any(x in h_s for x in ("кол", "количеств", "qty", "quantity")):
-                col.setdefault("quantity", i)
-            elif any(x in h_s for x in ("ед.", "единиц", "unit", "изм")):
-                col.setdefault("unit", i)
-            elif any(x in h_s for x in ("цена ед", "цена за", "стоимость ед", "price")):
-                col.setdefault("unit_price", i)
-            elif any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
-                col.setdefault("total_price", i)
-        return col
+    if not raw_tables:
+        raise HTTPException(
+            400,
+            "Таблицы в документе не найдены. "
+            "Убедитесь что документ содержит таблицу с колонкой «Наименование»."
+        )
 
-    # Pick best table (most matched columns)
-    best_table: list[list[str]] = []
-    best_col: dict = {}
-    best_header_row = 0
-    for table in raw_tables:
-        for r_idx, row in enumerate(table[:6]):
-            col = _detect_columns(row)
-            if "item_name" in col and len(col) > len(best_col):
-                best_col = col
-                best_table = table
-                best_header_row = r_idx
+    # --- Stage 3: Detect columns ---
+    result = pick_best_table(raw_tables)
+    if result is None:
+        # Fallback: manual column detection on raw tables
+        best_table, best_col, best_header_row = _legacy_detect_best_table(raw_tables)
+    else:
+        best_table, best_header_row = result
+        best_col = detect_columns(best_table[best_header_row])
 
     if not best_table or "item_name" not in best_col:
         raise HTTPException(400, "Не удалось найти таблицу с позициями. Убедитесь что документ содержит колонку «Наименование».")

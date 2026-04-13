@@ -6,14 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
-from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES
+from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("/", response_model=List[UserOut])
-async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_role(*ADMIN_ROLES))):
+async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_role(*ALL_ROLES))):
     q = select(User).order_by(User.full_name)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:

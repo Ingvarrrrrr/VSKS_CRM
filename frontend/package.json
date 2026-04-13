@@ -16,6 +16,7 @@
     "@vue-flow/minimap": "^1.5.4",
     "apexcharts": "^4.7.0",
     "axios": "^1.13.5",
+    "grid-layout-plus": "^1.1.1",
     "jszip": "^3.10.1",
     "lodash-es": "^4.17.23",
     "pinia": "^3.0.4",

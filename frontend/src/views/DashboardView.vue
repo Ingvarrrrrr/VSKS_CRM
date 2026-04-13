@@ -27,6 +27,21 @@
           hide-details class="ml-3"
         />
         <v-btn
+          :icon="isEditing ? 'mdi-lock-open' : 'mdi-cursor-move'"
+          :variant="isEditing ? 'flat' : 'tonal'"
+          :color="isEditing ? 'warning' : 'default'"
+          size="small" class="ml-3"
+          @click="toggleEditing"
+          :title="isEditing ? 'Завершить редактирование' : 'Настроить расположение'"
+        />
+        <v-btn
+          v-if="isEditing"
+          icon="mdi-restore" variant="tonal" color="error"
+          size="small" class="ml-1"
+          @click="resetLayout"
+          title="Сбросить расположение"
+        />
+        <v-btn
           icon="mdi-refresh" variant="tonal" color="primary"
           :loading="loading" @click="loadAll" size="small" class="ml-3"
         />
@@ -66,7 +81,14 @@
     <v-window v-model="activeTab">
     <v-window-item value="summary">
 
-    <!-- ── Budget Overflow Alert ── -->
+    <!-- ── Edit mode banner ── -->
+    <div v-if="isEditing" class="edit-mode-banner">
+      <v-icon icon="mdi-cursor-move" size="18" class="mr-2" />
+      Режим редактирования — перетаскивайте и изменяйте размер виджетов
+      <v-btn size="small" variant="tonal" color="white" class="ml-4" @click="toggleEditing">Готово</v-btn>
+    </div>
+
+    <!-- ── Budget Overflow Alert (outside grid) ── -->
     <div v-if="overrunSubsidies.length > 0" class="budget-overrun-banner">
       <v-icon icon="mdi-alert" size="28" color="white" class="mr-3 flex-shrink-0" />
       <div class="overrun-content">
@@ -84,361 +106,409 @@
       </div>
     </div>
 
-    <!-- ── KPI Cards ── -->
-    <v-row v-if="loading" class="kpi-row">
-      <v-col cols="6" lg="3" v-for="n in 4" :key="'skel-'+n">
-        <v-skeleton-loader type="card" height="88" class="rounded-lg" />
-      </v-col>
-    </v-row>
-    <v-row v-else class="kpi-row">
-      <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
-        <div class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
-          <div class="kpi-icon-box">
-            <v-icon :icon="card.icon" size="26" />
+    <GridLayout
+      v-model:layout="layout"
+      :col-num="12"
+      :row-height="30"
+      :is-draggable="isEditing"
+      :is-resizable="isEditing"
+      :margin="[12, 12]"
+      :vertical-compact="true"
+      :use-css-transforms="true"
+      @layout-updated="onLayoutUpdated"
+    >
+      <!-- ── KPI Cards ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'kpi')" key="kpi">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> KPI
           </div>
-          <div class="kpi-body">
-            <div class="kpi-value">{{ formatCurrency(card.value) }}</div>
-            <div class="kpi-label">{{ card.label }}</div>
-          </div>
-          <div class="kpi-badge" v-if="card.badge">{{ card.badge }}</div>
+          <v-row v-if="loading" class="kpi-row" style="margin:0">
+            <v-col cols="6" lg="3" v-for="n in 4" :key="'skel-'+n">
+              <v-skeleton-loader type="card" height="88" class="rounded-lg" />
+            </v-col>
+          </v-row>
+          <v-row v-else class="kpi-row" style="margin:0">
+            <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
+              <div class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
+                <div class="kpi-icon-box">
+                  <v-icon :icon="card.icon" size="26" />
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value">{{ formatCurrency(card.value) }}</div>
+                  <div class="kpi-label">{{ card.label }}</div>
+                </div>
+                <div class="kpi-badge" v-if="card.badge">{{ card.badge }}</div>
+              </div>
+            </v-col>
+          </v-row>
         </div>
-      </v-col>
-    </v-row>
+      </GridItem>
 
-    <!-- ── Charts Row 1: Donut + Radial + Pie ── -->
-    <v-row class="chart-row">
-      <!-- Budget Donut / Inline Breakdown -->
-      <v-col cols="12" md="4">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <template v-if="donutView === 'breakdown'">
-              <v-btn icon="mdi-arrow-left" variant="text" size="x-small" class="mr-1" @click="donutView = 'donut'" />
-              <v-icon size="18" class="mr-2"
-                :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]"
-                :color="['success','primary','warning','grey'][drillDownSegment ?? 0]" />
-              <span class="chart-card-title">{{ SEGMENT_LABELS[drillDownSegment ?? 0] }}</span>
-            </template>
-            <template v-else>
-              <v-icon icon="mdi-chart-donut" size="18" color="#3B82F6" class="mr-2" />
-              <span class="chart-card-title">Структура бюджета</span>
-              <span class="text-caption text-medium-emphasis ml-2">(нажмите на сегмент)</span>
-            </template>
+      <!-- ── Donut Chart ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'donut')" key="donut">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Структура бюджета
           </div>
-          <Transition name="chart-fade" mode="out-in">
-            <div v-if="donutView === 'donut'" key="donut">
-              <apexchart v-if="donutReady" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
-              <div v-else class="chart-empty">
-                <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
-                <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <template v-if="donutView === 'breakdown'">
+                <v-btn icon="mdi-arrow-left" variant="text" size="x-small" class="mr-1" @click="donutView = 'donut'" />
+                <v-icon size="18" class="mr-2"
+                  :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]"
+                  :color="['success','primary','warning','grey'][drillDownSegment ?? 0]" />
+                <span class="chart-card-title">{{ SEGMENT_LABELS[drillDownSegment ?? 0] }}</span>
+              </template>
+              <template v-else>
+                <v-icon icon="mdi-chart-donut" size="18" color="#3B82F6" class="mr-2" />
+                <span class="chart-card-title">Структура бюджета</span>
+                <span class="text-caption text-medium-emphasis ml-2">(нажмите на сегмент)</span>
+              </template>
+            </div>
+            <Transition name="chart-fade" mode="out-in">
+              <div v-if="donutView === 'donut'" key="donut">
+                <apexchart v-if="donutReady" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
+                <div v-else class="chart-empty">
+                  <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
+                  <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
+                </div>
+              </div>
+              <div v-else key="breakdown">
+                <apexchart type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
+              </div>
+            </Transition>
+          </div>
+        </div>
+      </GridItem>
+
+      <!-- ── Radial Gauge ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'radial')" key="radial">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Освоение
+          </div>
+          <div class="chart-card chart-card--compact" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
+              <span class="chart-card-title">Освоение</span>
+            </div>
+            <apexchart type="radialBar" height="180" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
+            <div class="radial-footer">
+              <span class="text-caption text-medium-emphasis">
+                {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </GridItem>
+
+      <!-- ── Pipeline ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'pipeline')" key="pipeline">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Закупки по этапам
+          </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
+              <span class="chart-card-title">Закупки по этапам</span>
+              <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
+            </div>
+            <div v-if="pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
+              <div class="pipeline-row">
+                <div class="pipeline-label">
+                  <span class="pipeline-dot" style="background:#9CA3AF" />
+                  Бюджет
+                </div>
+                <div class="pipeline-bar-track">
+                  <div class="pipeline-bar-fill" style="width:100%; background:#9CA3AF; opacity:0.35" />
+                </div>
+                <div class="pipeline-meta">
+                  <span class="pipeline-amount">{{ formatCurrencyShort(totalBudget) }}</span>
+                  <span class="pipeline-pct" :style="{ color: chartMuted }">100%</span>
+                </div>
+              </div>
+              <div
+                v-for="stage in pipelineStages" :key="stage.status"
+                class="pipeline-row"
+                @click="onPipelineClick(stage.status)"
+              >
+                <div class="pipeline-label">
+                  <span class="pipeline-dot" :style="{ background: stage.color }" />
+                  {{ stage.label }}
+                </div>
+                <div class="pipeline-bar-track">
+                  <div
+                    class="pipeline-bar-fill"
+                    :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
+                  />
+                </div>
+                <div class="pipeline-meta">
+                  <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
+                  <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
+                    {{ stage.pct }}%
+                  </span>
+                </div>
+              </div>
+              <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
+                <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
+                Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
+                ({{ Math.round(wishesAmountForPie / (totalBudget || 1) * 100) }}% бюджета)
               </div>
             </div>
-            <div v-else key="breakdown">
-              <apexchart type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
+            <div v-else class="chart-empty">
+              <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
             </div>
-          </Transition>
-        </div>
-      </v-col>
-
-      <!-- Radial Gauge (compact) -->
-      <v-col cols="12" md="2">
-        <div class="chart-card chart-card--compact">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
-            <span class="chart-card-title">Освоение</span>
-          </div>
-          <apexchart type="radialBar" height="180" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
-          <div class="radial-footer">
-            <span class="text-caption text-medium-emphasis">
-              {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
-            </span>
           </div>
         </div>
-      </v-col>
+      </GridItem>
 
-      <!-- Pipeline: Закупки по этапам -->
-      <v-col cols="12" md="6">
-        <div class="chart-card" style="height:100%">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
-            <span class="chart-card-title">Закупки по этапам</span>
-            <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
+      <!-- ── Monthly Contracts ── -->
+      <GridItem v-if="monthlyContractsRemaining.length > 0" v-bind="layout.find(l => l.i === 'monthly')" key="monthly">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Ежемесячные договоры
           </div>
-          <div v-if="pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
-            <!-- Budget baseline row -->
-            <div class="pipeline-row">
-              <div class="pipeline-label">
-                <span class="pipeline-dot" style="background:#9CA3AF" />
-                Бюджет
-              </div>
-              <div class="pipeline-bar-track">
-                <div class="pipeline-bar-fill" style="width:100%; background:#9CA3AF; opacity:0.35" />
-              </div>
-              <div class="pipeline-meta">
-                <span class="pipeline-amount">{{ formatCurrencyShort(totalBudget) }}</span>
-                <span class="pipeline-pct" :style="{ color: chartMuted }">100%</span>
-              </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-calendar-refresh" size="18" color="#6366F1" class="mr-2" />
+              <span class="chart-card-title">Ежемесячные договоры — остаток к заказу</span>
+              <span class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
             </div>
             <div
-              v-for="stage in pipelineStages" :key="stage.status"
+              v-for="c in monthlyContractsRemaining" :key="c.id"
               class="pipeline-row"
-              @click="onPipelineClick(stage.status)"
             >
+              <div class="pipeline-label">
+                <span class="pipeline-dot" style="background:#6366F1" />
+                {{ c.name }}
+              </div>
+              <div class="pipeline-bar-track">
+                <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
+              </div>
+              <div class="pipeline-meta">
+                <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
+                <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </GridItem>
+
+      <!-- ── Goods/Services Breakdown ── -->
+      <GridItem v-if="pipelineByType.length > 0" v-bind="layout.find(l => l.i === 'breakdown')" key="breakdown">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Товары / Услуги
+          </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-chart-box" size="18" color="#8B5CF6" class="mr-2" />
+              <span class="chart-card-title">Структура закупок — Товары / Услуги</span>
+            </div>
+            <div class="pipeline-row">
+              <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
+              <div class="pipeline-bar-track" style="margin-bottom:3px">
+                <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
+              </div>
+              <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
+            </div>
+            <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
               <div class="pipeline-label">
                 <span class="pipeline-dot" :style="{ background: stage.color }" />
                 {{ stage.label }}
               </div>
-              <div class="pipeline-bar-track">
-                <div
-                  class="pipeline-bar-fill"
-                  :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
-                />
-              </div>
-              <div class="pipeline-meta">
-                <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
-                <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
-                  {{ stage.pct }}%
-                </span>
-              </div>
-            </div>
-            <!-- Wishes ring hint -->
-            <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
-              <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
-              Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
-              ({{ Math.round(wishesAmountForPie / (totalBudget || 1) * 100) }}% бюджета)
-            </div>
-          </div>
-          <div v-else class="chart-empty">
-            <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
-            <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
-          </div>
-        </div>
-      </v-col>
-    </v-row>
-
-    <!-- ── Monthly Payment Contracts Remaining ── -->
-    <v-row v-if="monthlyContractsRemaining.length > 0" class="chart-row">
-      <v-col cols="12" md="8">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-calendar-refresh" size="18" color="#6366F1" class="mr-2" />
-            <span class="chart-card-title">Ежемесячные договоры — остаток к заказу</span>
-            <span class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
-          </div>
-          <div
-            v-for="c in monthlyContractsRemaining" :key="c.id"
-            class="pipeline-row"
-          >
-            <div class="pipeline-label">
-              <span class="pipeline-dot" style="background:#6366F1" />
-              {{ c.name }}
-            </div>
-            <div class="pipeline-bar-track">
-              <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
-            </div>
-            <div class="pipeline-meta">
-              <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
-              <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
-            </div>
-          </div>
-        </div>
-      </v-col>
-    </v-row>
-
-    <!-- ── Товары / Услуги Breakdown ── -->
-    <v-row v-if="pipelineByType.length > 0" class="chart-row">
-      <v-col cols="12" md="8">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-chart-box" size="18" color="#8B5CF6" class="mr-2" />
-            <span class="chart-card-title">Структура закупок — Товары / Услуги</span>
-          </div>
-          <div class="pipeline-row">
-            <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
-            <div class="pipeline-bar-track" style="margin-bottom:3px">
-              <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
-            </div>
-            <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
-          </div>
-          <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
-            <div class="pipeline-label">
-              <span class="pipeline-dot" :style="{ background: stage.color }" />
-              {{ stage.label }}
-            </div>
-            <div style="flex:1; min-width:0">
-              <div class="pipeline-bar-track" style="margin-bottom:3px">
-                <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
-              </div>
-              <div class="pipeline-bar-track">
-                <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
-              </div>
-            </div>
-            <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
-              <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
-              <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
-            </div>
-          </div>
-          <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
-            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
-            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
-          </div>
-        </div>
-      </v-col>
-    </v-row>
-
-    <!-- ── Charts Row 2: Bar + Recent Purchases ── -->
-    <v-row class="chart-row">
-      <!-- Subsidy Bar Chart -->
-      <v-col cols="12" md="7">
-        <div class="chart-card">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-chart-bar" size="18" color="#8B5CF6" class="mr-2" />
-            <span class="chart-card-title">Субсидии — бюджет и исполнение</span>
-          </div>
-          <div v-if="barReady">
-            <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
-              <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на столбец для детализации по ФЭО категориям
-            </div>
-            <apexchart type="bar" :height="Math.max(220, filteredSubsidyStats.length * 70)" :options="barOptions" :series="barSeries" />
-          </div>
-          <div v-else class="chart-empty">
-            <v-icon icon="mdi-chart-bar" size="48" color="grey-lighten-2" />
-            <div class="text-caption text-medium-emphasis mt-2">Нет субсидий за {{ selectedYear }} год</div>
-          </div>
-        </div>
-      </v-col>
-
-      <!-- Recent Purchases -->
-      <v-col cols="12" md="5">
-        <div class="chart-card" style="height: 100%;">
-          <div class="chart-card-header">
-            <v-icon icon="mdi-clipboard-list-outline" size="18" color="#14B8A6" class="mr-2" />
-            <span class="chart-card-title">Последние закупки</span>
-            <span class="chart-link ml-auto" style="cursor:pointer" @click="goToOrders">Все →</span>
-          </div>
-          <div v-if="loadingPurchases" class="chart-empty">
-            <v-progress-circular indeterminate size="32" color="primary" />
-          </div>
-          <div v-else-if="recentPurchases.length === 0" class="chart-empty">
-            <v-icon icon="mdi-cart-off" size="48" color="grey-lighten-2" />
-            <div class="text-caption text-medium-emphasis mt-2">Нет закупок</div>
-          </div>
-          <div v-else class="purchase-list">
-            <div
-              v-for="p in recentPurchases" :key="p.id"
-              class="purchase-row"
-              @click="$router.push(`/orders/${p.id}/edit`)"
-            >
-              <div class="purchase-num">
-                <v-icon icon="mdi-package-variant" size="16" :color="statusColorHex(p.status)" />
-              </div>
-              <div class="purchase-main">
-                <div class="purchase-name">{{ p.subject || p.items?.[0]?.item_name || p.item_name || 'Без названия' }}</div>
-                <div class="purchase-meta">
-                  {{ p.registry_number || p.order_number || '—' }}
-                  <span v-if="p.contractor_name"> · {{ p.contractor_name }}</span>
+              <div style="flex:1; min-width:0">
+                <div class="pipeline-bar-track" style="margin-bottom:3px">
+                  <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
+                </div>
+                <div class="pipeline-bar-track">
+                  <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
                 </div>
               </div>
-              <div class="purchase-right">
-                <div class="purchase-amount">{{ formatCurrencyShort(purchaseEffectivePrice(p)) }}</div>
-                <v-chip size="x-small" :color="statusColor(p.status)" variant="flat" class="mt-1">
-                  {{ statusLabel(p.status) }}
-                </v-chip>
+              <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
+                <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
+                <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
+              </div>
+            </div>
+            <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
+              <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
+              <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
+            </div>
+          </div>
+        </div>
+      </GridItem>
+
+      <!-- ── Subsidy Bar Chart ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'bar')" key="bar">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Субсидии — бюджет
+          </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-chart-bar" size="18" color="#8B5CF6" class="mr-2" />
+              <span class="chart-card-title">Субсидии — бюджет и исполнение</span>
+            </div>
+            <div v-if="barReady">
+              <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
+                <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на столбец для детализации по ФЭО категориям
+              </div>
+              <apexchart type="bar" :height="Math.max(220, filteredSubsidyStats.length * 70)" :options="barOptions" :series="barSeries" />
+            </div>
+            <div v-else class="chart-empty">
+              <v-icon icon="mdi-chart-bar" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет субсидий за {{ selectedYear }} год</div>
+            </div>
+          </div>
+        </div>
+      </GridItem>
+
+      <!-- ── Recent Purchases ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'purchases')" key="purchases">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Последние закупки
+          </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-clipboard-list-outline" size="18" color="#14B8A6" class="mr-2" />
+              <span class="chart-card-title">Последние закупки</span>
+              <span class="chart-link ml-auto" style="cursor:pointer" @click="goToOrders">Все →</span>
+            </div>
+            <div v-if="loadingPurchases" class="chart-empty">
+              <v-progress-circular indeterminate size="32" color="primary" />
+            </div>
+            <div v-else-if="recentPurchases.length === 0" class="chart-empty">
+              <v-icon icon="mdi-cart-off" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет закупок</div>
+            </div>
+            <div v-else class="purchase-list">
+              <div
+                v-for="p in recentPurchases" :key="p.id"
+                class="purchase-row"
+                @click="$router.push(`/orders/${p.id}/edit`)"
+              >
+                <div class="purchase-num">
+                  <v-icon icon="mdi-package-variant" size="16" :color="statusColorHex(p.status)" />
+                </div>
+                <div class="purchase-main">
+                  <div class="purchase-name">{{ p.subject || p.items?.[0]?.item_name || p.item_name || 'Без названия' }}</div>
+                  <div class="purchase-meta">
+                    {{ p.registry_number || p.order_number || '—' }}
+                    <span v-if="p.contractor_name"> · {{ p.contractor_name }}</span>
+                  </div>
+                </div>
+                <div class="purchase-right">
+                  <div class="purchase-amount">{{ formatCurrencyShort(purchaseEffectivePrice(p)) }}</div>
+                  <v-chip size="x-small" :color="statusColor(p.status)" variant="flat" class="mt-1">
+                    {{ statusLabel(p.status) }}
+                  </v-chip>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </v-col>
-    </v-row>
+      </GridItem>
 
-    <!-- ── Summary Table ── -->
-    <div class="chart-card table-card">
-      <div class="chart-card-header">
-        <v-icon icon="mdi-table" size="18" color="#1976D2" class="mr-2" />
-        <span class="chart-card-title">Детализация субсидий — {{ selectedYear }}</span>
-        <div class="ml-auto d-flex align-center" style="gap: 12px;">
-          <v-btn
-            variant="tonal" color="primary" size="small"
-            prepend-icon="mdi-chart-pie"
-            @click="openBreakdown('budget')"
-          >
-            Аналитика
-          </v-btn>
+      <!-- ── Summary Table ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'table')" key="table">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Детализация субсидий
+          </div>
+          <div class="chart-card table-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-table" size="18" color="#1976D2" class="mr-2" />
+              <span class="chart-card-title">Детализация субсидий — {{ selectedYear }}</span>
+              <div class="ml-auto d-flex align-center" style="gap: 12px;">
+                <v-btn
+                  variant="tonal" color="primary" size="small"
+                  prepend-icon="mdi-chart-pie"
+                  @click="openBreakdown('budget')"
+                >
+                  Аналитика
+                </v-btn>
+              </div>
+            </div>
+
+            <v-table density="compact" class="dash-table mt-3">
+              <thead>
+                <tr>
+                  <th>Субсидия</th>
+                  <th class="text-right">Бюджет</th>
+                  <th class="text-right">Запланировано</th>
+                  <th class="text-right">Заказано</th>
+                  <th class="text-right">Оплачено</th>
+                  <th class="text-right">Остаток</th>
+                  <th style="width: 160px;" class="text-center">% освоения</th>
+                  <th style="width: 60px;"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="s in filteredSubsidies" :key="s.id"
+                  class="table-row-hover"
+                  @click="openBreakdown('budget')"
+                  style="cursor: pointer;"
+                >
+                  <td>
+                    <div class="font-weight-medium">{{ s.name }}</div>
+                    <div v-if="s.description" class="text-caption text-medium-emphasis">{{ s.description }}</div>
+                  </td>
+                  <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
+                  <td class="text-right text-warning">{{ formatCurrency(s.plan_schedule) }}</td>
+                  <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
+                  <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
+                  <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
+                    {{ formatCurrency(s.budget - s.paid) }}
+                  </td>
+                  <td>
+                    <v-progress-linear
+                      :model-value="pct(s.paid, s.budget)" height="18"
+                      :color="progressColor(pct(s.paid, s.budget))" rounded
+                      class="gradient-progress"
+                    >
+                      <template #default>
+                        <span class="text-caption font-weight-bold">{{ pct(s.paid, s.budget) }}%</span>
+                      </template>
+                    </v-progress-linear>
+                  </td>
+                  <td>
+                    <v-btn icon="mdi-magnify" size="x-small" variant="text" @click.stop="openBreakdown('budget')" />
+                  </td>
+                </tr>
+
+                <tr class="total-row">
+                  <td><strong>ИТОГО</strong></td>
+                  <td class="text-right"><strong>{{ formatCurrency(totalBudget) }}</strong></td>
+                  <td class="text-right text-warning"><strong>{{ formatCurrency(totalPlanSchedule) }}</strong></td>
+                  <td class="text-right text-primary"><strong>{{ formatCurrency(totalOrdered) }}</strong></td>
+                  <td class="text-right text-success"><strong>{{ formatCurrency(totalPaid) }}</strong></td>
+                  <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
+                    <strong>{{ formatCurrency(totalRemaining) }}</strong>
+                  </td>
+                  <td>
+                    <v-progress-linear
+                      :model-value="totalUsagePct" height="18"
+                      :color="progressColor(totalUsagePct)" rounded
+                      class="gradient-progress"
+                    >
+                      <template #default>
+                        <span class="text-caption font-weight-bold">{{ totalUsagePct }}%</span>
+                      </template>
+                    </v-progress-linear>
+                  </td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
         </div>
-      </div>
-
-      <v-table density="compact" class="dash-table mt-3">
-        <thead>
-          <tr>
-            <th>Субсидия</th>
-            <th class="text-right">Бюджет</th>
-            <th class="text-right">Запланировано</th>
-            <th class="text-right">Заказано</th>
-            <th class="text-right">Оплачено</th>
-            <th class="text-right">Остаток</th>
-            <th style="width: 160px;" class="text-center">% освоения</th>
-            <th style="width: 60px;"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="s in filteredSubsidies" :key="s.id"
-            class="table-row-hover"
-            @click="openBreakdown('budget')"
-            style="cursor: pointer;"
-          >
-            <td>
-              <div class="font-weight-medium">{{ s.name }}</div>
-              <div v-if="s.description" class="text-caption text-medium-emphasis">{{ s.description }}</div>
-            </td>
-            <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
-            <td class="text-right text-warning">{{ formatCurrency(s.plan_schedule) }}</td>
-            <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
-            <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
-            <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
-              {{ formatCurrency(s.budget - s.paid) }}
-            </td>
-            <td>
-              <v-progress-linear
-                :model-value="pct(s.paid, s.budget)" height="18"
-                :color="progressColor(pct(s.paid, s.budget))" rounded
-                class="gradient-progress"
-              >
-                <template #default>
-                  <span class="text-caption font-weight-bold">{{ pct(s.paid, s.budget) }}%</span>
-                </template>
-              </v-progress-linear>
-            </td>
-            <td>
-              <v-btn icon="mdi-magnify" size="x-small" variant="text" @click.stop="openBreakdown('budget')" />
-            </td>
-          </tr>
-
-          <!-- Total row -->
-          <tr class="total-row">
-            <td><strong>ИТОГО</strong></td>
-            <td class="text-right"><strong>{{ formatCurrency(totalBudget) }}</strong></td>
-            <td class="text-right text-warning"><strong>{{ formatCurrency(totalPlanSchedule) }}</strong></td>
-            <td class="text-right text-primary"><strong>{{ formatCurrency(totalOrdered) }}</strong></td>
-            <td class="text-right text-success"><strong>{{ formatCurrency(totalPaid) }}</strong></td>
-            <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
-              <strong>{{ formatCurrency(totalRemaining) }}</strong>
-            </td>
-            <td>
-              <v-progress-linear
-                :model-value="totalUsagePct" height="18"
-                :color="progressColor(totalUsagePct)" rounded
-                class="gradient-progress"
-              >
-                <template #default>
-                  <span class="text-caption font-weight-bold">{{ totalUsagePct }}%</span>
-                </template>
-              </v-progress-linear>
-            </td>
-            <td></td>
-          </tr>
-        </tbody>
-      </v-table>
-    </div>
+      </GridItem>
+    </GridLayout>
 
     </v-window-item>
 
@@ -723,8 +793,11 @@ import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
+import { GridLayout, GridItem } from 'grid-layout-plus'
+import { useDashboardLayout } from '@/composables/useDashboardLayout'
 
 const { globalSubsidyId } = useGlobalSubsidy()
+const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated } = useDashboardLayout()
 
 const theme = useTheme()
 const router = useRouter()
@@ -1999,4 +2072,71 @@ onMounted(() => {
 .chart-row .v-col:nth-child(1) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both; }
 .chart-row .v-col:nth-child(2) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.38s both; }
 .chart-row .v-col:nth-child(3) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.46s both; }
+
+/* ── Grid layout widgets ── */
+.grid-widget {
+  height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+.grid-widget--editing {
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.4);
+  cursor: grab;
+}
+.grid-widget--editing:active {
+  cursor: grabbing;
+}
+
+.widget-drag-handle {
+  background: linear-gradient(90deg, rgba(245,158,11,0.15), transparent);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--crm-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--crm-border);
+}
+
+.edit-mode-banner {
+  background: linear-gradient(90deg, #F59E0B, #EF4444);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* grid-layout-plus overrides */
+:deep(.vue-grid-item) {
+  transition: all 0.2s ease;
+}
+:deep(.vue-grid-item.vue-grid-placeholder) {
+  background: rgba(59,130,246,0.15) !important;
+  border: 2px dashed #3B82F6 !important;
+  border-radius: 12px;
+}
+:deep(.vue-grid-item > .vue-resizable-handle) {
+  width: 16px;
+  height: 16px;
+  bottom: 4px;
+  right: 4px;
+  background: none;
+}
+:deep(.vue-grid-item > .vue-resizable-handle::after) {
+  content: '';
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--crm-text-muted);
+  border-bottom: 2px solid var(--crm-text-muted);
+  border-radius: 0 0 2px 0;
+}
 </style>

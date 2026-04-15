@@ -294,7 +294,7 @@
             <v-col cols="12" md="6">
               <v-combobox v-model="form.product_type"
                 :items="typeOptions"
-                label="Тип товара"
+                label="Товар / Услуга"
                 variant="outlined" density="compact" clearable
                 hint="Напр.: Ноутбук, Тренажёр, Ткань" persistent-hint />
             </v-col>

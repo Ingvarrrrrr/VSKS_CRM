@@ -769,6 +769,7 @@ onMounted(async () => {
     const me = await apiFetch<any>('/users/me')
     if (me.role) localStorage.setItem('user_role', me.role)
     if (me.full_name || me.username) localStorage.setItem('user_name', me.full_name || me.username)
+    if (me.can_publish !== undefined) localStorage.setItem('can_publish', me.can_publish ? 'true' : 'false')
   } catch {}
 
   await loadMyOrgs()

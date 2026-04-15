@@ -19,6 +19,7 @@ class Token(BaseModel):
     org_id: Optional[int] = None
     org_name: Optional[str] = None
     user_id: Optional[int] = None
+    can_publish: bool = False
 
 # User
 class UserCreate(BaseModel):
@@ -68,6 +69,7 @@ class UserOut(BaseModel):
     org_id: Optional[int] = None
     is_email_confirmed: bool = True
     has_signature: bool = False
+    can_publish: bool = False
     inn: Optional[str] = None
 
     @classmethod

@@ -71,6 +71,7 @@ onMounted(async () => {
         localStorage.setItem('user_role', user.role || '')
         if (user.full_name) localStorage.setItem('user_name', user.full_name)
         if (user.id) localStorage.setItem('user_id', String(user.id))
+        localStorage.setItem('can_publish', user.can_publish ? 'true' : 'false')
       } else if (res.status === 401) {
         localStorage.removeItem('auth_token')
         localStorage.removeItem('user_role')

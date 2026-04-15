@@ -126,6 +126,7 @@ const login = async () => {
     if (data.user_id) localStorage.setItem('user_id', String(data.user_id))
     if (data.org_id) localStorage.setItem('user_org_id', String(data.org_id))
     if (data.org_name) localStorage.setItem('user_org_name', data.org_name)
+    localStorage.setItem('can_publish', data.can_publish ? 'true' : 'false')
     window.location.href = '/'
   } catch (err: any) {
     error.value = err.message || 'Ошибка авторизации'

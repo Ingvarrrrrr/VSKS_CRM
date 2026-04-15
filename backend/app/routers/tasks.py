@@ -22,6 +22,47 @@ from app.models.chat_message import ChatMessage
 logger = logging.getLogger(__name__)
 
 
+async def _get_visible_user_ids(current_user, db) -> Optional[set]:
+    """Returns set of user IDs visible to current_user based on hierarchy, or None if all visible."""
+    if current_user.role in ('superadmin', 'account_owner', 'admin', 'org_admin'):
+        return None  # sees all in org
+
+    visible = {current_user.id}
+
+    if current_user.role == 'manager':
+        from app.models.manager_department import ManagerDepartment
+        from app.models.manager_organization import ManagerOrganization
+        from app.models.department import DepartmentMember
+        from app.routers.user_hierarchy import get_all_subordinate_ids
+
+        # Direct + recursive subordinates
+        sub_ids = await get_all_subordinate_ids(current_user.id, db)
+        visible.update(sub_ids)
+
+        # Managed departments
+        md_res = await db.execute(
+            select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
+        )
+        managed_dept_ids = [r[0] for r in md_res.all()]
+        if managed_dept_ids:
+            dm_res = await db.execute(
+                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
+            )
+            visible.update(r[0] for r in dm_res.all())
+
+        # Managed organizations
+        mo_res = await db.execute(
+            select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
+        )
+        managed_org_ids = [r[0] for r in mo_res.all()]
+        if managed_org_ids:
+            org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
+            visible.update(r[0] for r in org_users.all())
+
+    # employee: visible = {current_user.id} only
+    return visible
+
+
 async def _create_task_chat_room(
     db: AsyncSession,
     assignor_id: int,
@@ -252,6 +293,17 @@ async def list_tasks(
     if org_ids is not None:
         q = q.where(Task.org_id.in_(org_ids))
 
+    # Hierarchy-based task visibility
+    visible_ids = await _get_visible_user_ids(current_user, db)
+    if visible_ids is not None:
+        assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids)).scalar_subquery()
+        q = q.where(
+            or_(
+                Task.created_by_id.in_(visible_ids),
+                Task.id.in_(assignee_tasks),
+            )
+        )
+
     if status:
         q = q.where(Task.status == status)
     if assigned_to_me:
@@ -304,21 +356,41 @@ async def org_summary(
     total_purchases = 0
     total_unseen = 0
 
+    # Compute visibility once, reuse across all orgs
+    visible_ids = await _get_visible_user_ids(current_user, db)
+
     for org in orgs:
-        task_q = select(func.count(Task.id)).where(
-            Task.org_id == org.id,
-            or_(
-                Task.created_by_id == user_id,
-                Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id == user_id)),
-                Task.id.in_(select(TaskComment.task_id).where(TaskComment.user_id == user_id).distinct()),
+        if visible_ids is None:
+            # Admin/superadmin: count all tasks in org
+            task_q = select(func.count(Task.id)).where(Task.org_id == org.id)
+        else:
+            # Employee/Manager: tasks where visible users are creator or assignee
+            task_q = select(func.count(Task.id)).where(
+                Task.org_id == org.id,
+                or_(
+                    Task.created_by_id.in_(visible_ids),
+                    Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids))),
+                )
             )
-        )
         task_count = (await db.execute(task_q)).scalar() or 0
 
-        purchase_q = select(func.count(Purchase.id)).join(
+        # Purchase count — respects role-based visibility
+        from app.models.purchase_event import PurchaseMember
+        purchase_base = select(func.count(Purchase.id)).join(
             Subsidy, Purchase.subsidy_id == Subsidy.id
         ).where(Subsidy.org_id == org.id)
-        purchase_count = (await db.execute(purchase_q)).scalar() or 0
+
+        if visible_ids is not None:
+            # employee/manager: only see purchases assigned to visible users or where they are a member
+            member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_ids))
+            purchase_base = purchase_base.where(
+                or_(
+                    Purchase.assigned_user_id.in_(visible_ids),
+                    Purchase.assigned_user_id.is_(None),
+                    Purchase.id.in_(member_pids),
+                )
+            )
+        purchase_count = (await db.execute(purchase_base)).scalar() or 0
 
         unseen_q = select(func.count(func.distinct(TaskChange.task_id))).join(
             Task, TaskChange.task_id == Task.id

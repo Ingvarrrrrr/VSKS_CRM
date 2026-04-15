@@ -156,8 +156,8 @@
           <div class="osc-body">
             <div class="osc-name">{{ org.org_name }}</div>
             <div class="osc-stats">
-              <span><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
-              <span><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
+              <span class="osc-stat-clickable" @click.stop="selectOrg(org.org_id); activeTab = 'general'"><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
+              <span class="osc-stat-clickable" @click.stop="selectOrg(org.org_id); activeTab = 'purchases'"><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
             </div>
           </div>
           <div v-if="org.unseen_count > 0" class="osc-badge">{{ org.unseen_count }}</div>
@@ -1995,6 +1995,16 @@ onUnmounted(() => {
 .osc-stat-label {
   font-size: 10px;
   opacity: 0.75;
+}
+.osc-stat-clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  transition: background 0.15s;
+}
+.osc-stat-clickable:hover {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
 }
 .osc-badge {
   position: absolute;

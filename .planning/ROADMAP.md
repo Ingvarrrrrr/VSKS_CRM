@@ -236,6 +236,26 @@ Plans:
 
 ---
 
+### Phase 12: Plan-Graph FEO Integration
+
+**Goal:** Connect FEO line items to the purchase plan-graph: FEO planned amounts become the "Plan-schedule" baseline in the pipeline dashboard, purchases are matched to FEO items when created, residual budget is tracked per FEO item, each plan-graph iteration is versioned with dates for export/signing, and a printable plan-graph form can be attached to each subsidy.
+
+**Requirements:** PLANGRAPH-01, PLANGRAPH-02, PLANGRAPH-03, PLANGRAPH-04, PLANGRAPH-05, PLANGRAPH-06, PLANGRAPH-07, PLANGRAPH-08
+
+**Depends on:** Phase 2 (FEO model), Phase 11 (stable dashboard)
+
+**Plans:** 0/0 plans (run /gsd:plan-phase 12 to break down)
+
+**Success Criteria:**
+1. Dashboard pipeline "План-график" bar shows the sum of FEO item planned costs even before any purchases exist.
+2. When a purchase is saved with a FEO category, the system finds the matching FEO item and links them (by name similarity or manual mapping).
+3. If purchase actual amount < FEO planned amount, the FEO item shows as a folder with: (a) the purchase, (b) a residual row = planned − actual.
+4. If a new purchase would exceed the remaining FEO item budget, a warning is shown and non-admin users are blocked.
+5. Each time the plan-graph is changed (purchase added/removed/amount changed), a new version is recorded with date and author.
+6. Admin can export the plan-graph as a formatted document (Excel/PDF) and attach it to a subsidy.
+
+---
+
 ### Post-Phase 8: Untracked Additional Work ✅ DELIVERED
 
 Features delivered after Phase 8 completion, outside GSD tracking:

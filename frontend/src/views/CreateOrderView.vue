@@ -659,11 +659,12 @@
           <v-window-item value="contract">
           <v-row class="mt-1">
             <v-col cols="12" md="3">
-              <v-text-field :model-value="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
+              <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                 :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
-                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : ''"
+                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
                 persistent-hint
-                @update:model-value="onAutoFieldChange('contract_number', `Номер ${contractWordGen}`, $event)" />
+                :readonly="!isNew && !contractNumberEditEnabled"
+                @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
@@ -1307,7 +1308,7 @@
               <v-col cols="12" md="6">
                 <v-combobox v-model="quickProductForm.product_type"
                   :items="['товар', 'услуга', 'работа']"
-                  label="Тип товара" variant="outlined" density="compact" clearable />
+                  label="Товар / Услуга" variant="outlined" density="compact" clearable />
               </v-col>
               <v-col cols="12" md="6">
                 <v-text-field v-model="quickProductForm.category"
@@ -1315,7 +1316,8 @@
               </v-col>
               <v-col cols="12" md="6">
                 <v-text-field v-model="quickProductForm.country_origin"
-                  label="Страна производства" variant="outlined" density="compact" />
+                  label="Страна производства" variant="outlined" density="compact"
+                  hint="По умолчанию — Россия. Измените при необходимости" persistent-hint />
               </v-col>
               <v-col cols="12" md="6">
                 <div class="d-flex gap-2 align-center">
@@ -1418,7 +1420,7 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-            <v-menu v-if="isManagerLevel">
+            <v-menu>
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
@@ -1441,7 +1443,7 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-            <v-btn v-if="isManagerLevel && isSectionVisible('contractor')"
+            <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
               color="indigo"
@@ -1451,7 +1453,7 @@
             >
               {{ contractWord }}
             </v-btn>
-            <v-btn v-if="isManagerLevel && isSectionVisible('contractor')"
+            <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-edit-outline"
               variant="tonal"
               color="deep-purple"
@@ -1461,7 +1463,7 @@
             >
               {{ contractWord }} ФАДМ
             </v-btn>
-            <v-btn v-if="isManagerLevel"
+            <v-btn
               prepend-icon="mdi-file-word-outline"
               variant="tonal"
               color="blue-darken-2"
@@ -1508,8 +1510,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 10. Публикация на площадках (admin+) -->
-      <v-card v-if="isEdit && isSectionVisible('platform_publication')" variant="outlined" class="mb-4" style="border-color:#7C3AED">
+      <!-- 10. Публикация на площадках (can_publish permission) -->
+      <v-card v-if="isEdit && isSectionVisible('platform_publication') && canPublish" variant="outlined" class="mb-4" style="border-color:#7C3AED">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
           <span class="d-flex align-center gap-2">
             <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
@@ -2791,6 +2793,7 @@ const isEmployee = computed(() => userRole === 'employee')
 const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
+const canPublish = ref(localStorage.getItem('can_publish') === 'true' || isAdminLevel.value)
 
 // НМЦД mode: auto (from items) or manual (user enters directly)
 const nmckMode = ref<'auto' | 'manual'>('auto')
@@ -4036,10 +4039,18 @@ function clearFrameworkContract() {
   form.contract_id = null
 }
 
+const contractNumberEditEnabled = ref(false)
+
 function onAutoFieldChange(field: string, label: string, value: any) {
   if (!isAdminLevel.value) return
-  if (!confirm(`Вы уверены, что хотите изменить ${label}? Это поле генерируется автоматически.`)) return
   ;(form as any)[field] = value
+}
+
+function enableContractNumberEdit() {
+  if (!contractNumberEditEnabled.value) {
+    if (!confirm(`Вы уверены, что хотите изменить это поле? Оно генерируется автоматически.`)) return
+    contractNumberEditEnabled.value = true
+  }
 }
 
 function editFrameworkSeq() {

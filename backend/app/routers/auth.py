@@ -56,7 +56,8 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             jwt_payload["org_ids"] = contour_ids
     token = create_access_token(jwt_payload)
     return Token(access_token=token, role=user.role, full_name=user.full_name,
-                 org_id=user.org_id, org_name=org_name, user_id=user.id)
+                 org_id=user.org_id, org_name=org_name, user_id=user.id,
+                 can_publish=user.can_publish or False)
 
 
 class ForgotPasswordRequest(BaseModel):

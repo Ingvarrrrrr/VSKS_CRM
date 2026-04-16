@@ -190,7 +190,7 @@ Plans:
 
 ---
 
-### Phase 9: Внутренний чат с уведомлениями ○ IN PROGRESS
+### Phase 9: Внутренний чат с уведомлениями ✅ COMPLETED
 
 **Goal:** Реализовать встроенный мессенджер в CRM — аналог Telegram. Личные сообщения, групповые чаты, уведомления в реальном времени. Общение только между пользователями, занесёнными в персонал системы.
 
@@ -205,7 +205,7 @@ Plans:
 - [x] 09-02-PLAN.md — ConnectionManager + nginx WebSocket proxy config
 - [x] 09-03-PLAN.md — Backend REST + WS API (chat.py router) + /tasks/badges extension
 - [x] 09-04-PLAN.md — Frontend: ChatView.vue + useChat.ts composable + Vue router entry
-- [ ] 09-05-PLAN.md — AppBar: chat nav item + badge + WS/polling integration
+- [x] 09-05-PLAN.md — AppBar: chat nav item + badge + WS/polling integration
 
 **Success Criteria:**
 1. Пользователь может открыть чат, выбрать другого сотрудника из списка персонала и отправить сообщение — оно появляется у получателя в реальном времени без перезагрузки страницы.
@@ -222,7 +222,10 @@ Plans:
 **Plans:** 3/4 plans executed
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 10 to break down)
+- [x] 10-01-PLAN.md — Real-time WS delivery fix (no refresh required)
+- [x] 10-02-PLAN.md — Sticky chat header
+- [x] 10-03-PLAN.md — Dual-mode search (in-chat + across chats)
+- [ ] 10-04-PLAN.md — AppBar chat integration (nav item + badge + WS/polling)
 
 ### Phase 11: Fix task display per-user org filtering — badges, org selector, task scoping
 
@@ -244,7 +247,7 @@ Plans:
 
 **Depends on:** Phase 2 (FEO model), Phase 11 (stable dashboard)
 
-**Plans:** 0/0 plans (run /gsd:plan-phase 12 to break down)
+**Plans:** 0/4 plans (not executed)
 
 **Success Criteria:**
 1. Dashboard pipeline "План-график" bar shows the sum of FEO item planned costs even before any purchases exist.
@@ -253,6 +256,32 @@ Plans:
 4. If a new purchase would exceed the remaining FEO item budget, a warning is shown and non-admin users are blocked.
 5. Each time the plan-graph is changed (purchase added/removed/amount changed), a new version is recorded with date and author.
 6. Admin can export the plan-graph as a formatted document (Excel/PDF) and attach it to a subsidy.
+
+---
+
+### Post-Phase 11: Фидбек Голичков + Суперадмин (апрель 2026) ✅ DELIVERED
+
+Features delivered from user feedback documents, outside GSD phase tracking:
+
+| Feature | Commit |
+|---------|--------|
+| Hierarchy-based task/purchase filtering (_get_visible_user_ids) | 36625ed |
+| org-summary counts respect role visibility | 36625ed |
+| Document buttons (ТЗ/Договор/Лист) open to all roles | 36625ed |
+| can_publish permission (User model + migration + full pipeline) | 36625ed |
+| Clickable org stat badges → navigate to tasks/purchases | 36625ed |
+| Contract number: single confirm on click, not per-keystroke | 36625ed |
+| "Тип товара" → "Товар / Услуга" label | 36625ed |
+| "Россия" default — persistent hint | 36625ed |
+| autodeploy.sh: rebuild backend, not just restart | 6a0d0a0 |
+| Superadmin sees all tasks/purchases when selecting org | 57386cd |
+| org-summary excludes done/cancelled tasks, paid purchases | 57386cd |
+| Kanban: collapsible "Архив" column | 57386cd |
+| Kanban: subsidy filter dropdown | 57386cd |
+| Org card stats: larger font, readable | 57386cd |
+| Draggable dashboard widgets (grid-layout-plus) | c0ba75f |
+| Visual enhancements (glassmorphism, animations, transitions) | 2254e1f |
+| Markitdown document import pipeline | e6c147f |
 
 ---
 

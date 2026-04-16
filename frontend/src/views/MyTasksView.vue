@@ -1636,15 +1636,19 @@ async function loadOrgData() {
     const orgId = selectedOrgId.value
     const isAdmin = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
 
-    if (isAdmin && orgId !== null) {
-      // Admin viewing specific org: load ALL tasks in that org via /tasks/ endpoint
-      generalTasks.value = await apiFetch<any[]>(`/tasks/?org_id=${orgId}`).catch(() => [])
-      // Purchases: backend filters by org via JWT; load all and filter client-side by subsidy org if needed
-      const allPurchases = await apiFetch<any[]>('/purchases/').catch(() => [])
+    if (isAdmin) {
+      // Admin: load ALL tasks and purchases (server handles access control)
+      // For specific org, pass org_id filter; for "all orgs" (null), load everything
+      const taskUrl = orgId !== null ? `/tasks/?org_id=${orgId}` : '/tasks/'
+      const [allTasks, allPurchases] = await Promise.all([
+        apiFetch<any[]>(taskUrl).catch(() => []),
+        apiFetch<any[]>('/purchases/').catch(() => []),
+      ])
+      generalTasks.value = allTasks
       tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
       archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
     } else {
-      // Employee/manager or "all orgs" selected: use /tasks/init (my tasks)
+      // Employee/manager: use my-tasks endpoints
       await load()
     }
   } catch (e) { console.error('Load org data error:', e) }
@@ -1721,7 +1725,12 @@ async function pollTasks() {
 let _pollInterval: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   loadOrgSummary()
-  await load()
+  const isAdminMount = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
+  if (isAdminMount) {
+    await loadOrgData()
+  } else {
+    await load()
+  }
   _pollInterval = setInterval(pollTasks, 30_000)
 
   // Link purchase mode: ?link_purchase=ID

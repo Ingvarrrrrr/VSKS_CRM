@@ -208,8 +208,25 @@
       <div class="text-body-2 text-medium-emphasis mt-1">Попросите администратора назначить вам закупки</div>
     </div>
 
+    <!-- Subsidy filter for kanban -->
+    <div v-if="viewMode === 'kanban' && subsidyItems.length > 2" class="d-flex align-center mb-3 ga-2">
+      <v-select
+        v-model="kanbanSubsidyFilter"
+        :items="subsidyItems"
+        item-title="title"
+        item-value="value"
+        density="compact"
+        variant="outlined"
+        hide-details
+        style="max-width:280px"
+        prepend-inner-icon="mdi-filter-outline"
+        label="Субсидия"
+        clearable
+      />
+    </div>
+
     <!-- Kanban View -->
-    <div v-else-if="viewMode === 'kanban'" class="kanban-board">
+    <div v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'" class="kanban-board">
       <div
         v-for="col in visibleColumns" :key="col.status"
         class="kanban-column"
@@ -275,7 +292,7 @@
     </div>
 
     <!-- List View -->
-    <v-card v-else variant="outlined">
+    <v-card v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'" variant="outlined">
       <v-table density="compact" hover>
         <thead>
           <tr>
@@ -391,10 +408,29 @@
 
       <!-- KANBAN VIEW -->
       <div v-else class="kanban-board">
-        <div v-for="col in GT_COLUMNS" :key="col.status" class="kanban-column" @dragover.prevent @drop="onDropGeneral($event, col.status)">
+        <div
+          v-for="col in GT_COLUMNS" :key="col.status"
+          :class="['kanban-column', col.status === 'done' && !archiveExpanded ? 'kanban-column--collapsed' : '']"
+          @dragover.prevent @drop="onDropGeneral($event, col.status)"
+        >
+          <!-- Collapsed archive column -->
+          <div v-if="col.status === 'done' && !archiveExpanded"
+            class="kanban-column-collapsed-body"
+            :style="{ borderColor: col.color }"
+            @click="archiveExpanded = true"
+            title="Развернуть архив"
+          >
+            <v-icon size="16" :color="col.color" class="mb-2">mdi-archive-outline</v-icon>
+            <span class="kanban-collapsed-label">Архив</span>
+            <v-chip size="x-small" :color="col.color" variant="tonal" class="mt-2">{{ generalByStatus(col.status).length }}</v-chip>
+          </div>
+          <template v-else>
           <div class="kanban-column-header" :style="{ borderTopColor: col.color }">
             <span class="kanban-column-title">{{ col.label }}</span>
             <v-chip size="x-small" :color="col.color" variant="tonal">{{ generalByStatus(col.status).length }}</v-chip>
+            <v-btn v-if="col.status === 'done'" icon size="x-small" variant="text" class="ml-1" @click="archiveExpanded = false" title="Свернуть">
+              <v-icon size="16">mdi-chevron-right</v-icon>
+            </v-btn>
           </div>
           <div class="kanban-column-body">
             <div
@@ -451,6 +487,7 @@
             </div>
             <div v-if="generalByStatus(col.status).length === 0" class="kanban-empty">Нет задач</div>
           </div>
+          </template>
         </div>
       </div>
     </template>
@@ -917,8 +954,9 @@ const GT_COLUMNS = [
   { status: 'todo', label: 'К выполнению', color: '#F59E0B' },
   { status: 'in_progress', label: 'В работе', color: '#3B82F6' },
   { status: 'review', label: 'На проверке', color: '#8B5CF6' },
-  { status: 'done', label: 'Готово', color: '#22C55E' },
+  { status: 'done', label: 'Архив', color: '#22C55E' },
 ]
+const archiveExpanded = ref(false)
 const PRIORITY_LABEL: Record<string,string> = { low:'Низкий', medium:'Средний', high:'Высокий', urgent:'Срочно' }
 const PRIORITY_COLOR: Record<string,string> = { low:'grey', medium:'blue', high:'orange', urgent:'red' }
 const priorityItems = [
@@ -1486,11 +1524,23 @@ const SUBSTATUS_LABEL: Record<string, string> = {
   tz_forming: 'Формируется ТЗ', kp_collecting: 'Сбор КП', on_platform: 'На площадке',
 }
 
+const kanbanSubsidyFilter = ref<number | null>(null)
+const subsidyItems = computed(() => {
+  const all = [...tasks.value, ...archiveTasks.value]
+  const seen = new Map<number, string>()
+  for (const t of all) {
+    if (t.subsidy_id && !seen.has(t.subsidy_id)) {
+      seen.set(t.subsidy_id, t.subsidy_name || `Субсидия #${t.subsidy_id}`)
+    }
+  }
+  return [{ title: 'Все субсидии', value: null }, ...Array.from(seen.entries()).map(([v, title]) => ({ title, value: v }))]
+})
 const visibleColumns = computed(() => showArchive.value ? [...COLUMNS, ARCHIVE_COLUMN] : COLUMNS)
 const filteredTasks = computed(() => [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])])
 const tasksByStatus = (status: string) => {
-  if (status === 'paid') return archiveTasks.value
-  return tasks.value.filter(t => t.status === status)
+  const base = status === 'paid' ? archiveTasks.value : tasks.value.filter((t: any) => t.status === status)
+  if (kanbanSubsidyFilter.value === null) return base
+  return base.filter((t: any) => t.subsidy_id === kanbanSubsidyFilter.value)
 }
 
 let draggedTask: any = null
@@ -1569,13 +1619,36 @@ async function loadOrgSummary() {
   }
 }
 
-function selectOrg(orgId: number | null) {
+async function selectOrg(orgId: number | null) {
   selectedOrgId.value = orgId
   if (orgId !== null) {
     localStorage.setItem('active_org_id', String(orgId))
   } else {
     localStorage.removeItem('active_org_id')
   }
+  // Reload tasks and purchases for the selected org
+  await loadOrgData()
+}
+
+async function loadOrgData() {
+  loading.value = true
+  try {
+    const orgId = selectedOrgId.value
+    const isAdmin = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
+
+    if (isAdmin && orgId !== null) {
+      // Admin viewing specific org: load ALL tasks in that org via /tasks/ endpoint
+      generalTasks.value = await apiFetch<any[]>(`/tasks/?org_id=${orgId}`).catch(() => [])
+      // Purchases: backend filters by org via JWT; load all and filter client-side by subsidy org if needed
+      const allPurchases = await apiFetch<any[]>('/purchases/').catch(() => [])
+      tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
+      archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
+    } else {
+      // Employee/manager or "all orgs" selected: use /tasks/init (my tasks)
+      await load()
+    }
+  } catch (e) { console.error('Load org data error:', e) }
+  finally { loading.value = false }
 }
 
 async function load() {
@@ -1705,6 +1778,39 @@ onUnmounted(() => {
   background: var(--crm-surface-alt);
   border-radius: 12px;
   border: 1px solid var(--crm-border);
+}
+
+.kanban-column--collapsed {
+  min-width: 48px;
+  max-width: 48px;
+  flex: 0 0 48px;
+}
+
+.kanban-column-collapsed-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 6px;
+  height: 100%;
+  cursor: pointer;
+  border-radius: 12px;
+  border: 2px solid;
+  transition: opacity 0.2s;
+  opacity: 0.7;
+  background: var(--crm-surface-alt);
+}
+.kanban-column-collapsed-body:hover {
+  opacity: 1;
+}
+.kanban-collapsed-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--crm-text-secondary);
+  margin: 4px 0;
 }
 
 .kanban-column-header {
@@ -1989,12 +2095,14 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   margin-top: 6px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
 }
 .osc-stat-label {
-  font-size: 10px;
-  opacity: 0.75;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
 }
 .osc-stat-clickable {
   cursor: pointer;

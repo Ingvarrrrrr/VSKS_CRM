@@ -284,13 +284,16 @@ async def list_tasks(
     category: Optional[str] = None,
     department: Optional[str] = None,
     search: Optional[str] = None,
+    org_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = select(Task)
 
     org_ids = get_org_filter(current_user)
-    if org_ids is not None:
+    if org_id is not None:
+        q = q.where(Task.org_id == org_id)
+    elif org_ids is not None:
         q = q.where(Task.org_id.in_(org_ids))
 
     # Hierarchy-based task visibility
@@ -361,12 +364,16 @@ async def org_summary(
 
     for org in orgs:
         if visible_ids is None:
-            # Admin/superadmin: count all tasks in org
-            task_q = select(func.count(Task.id)).where(Task.org_id == org.id)
-        else:
-            # Employee/Manager: tasks where visible users are creator or assignee
+            # Admin/superadmin: count all tasks in org (exclude done/cancelled)
             task_q = select(func.count(Task.id)).where(
                 Task.org_id == org.id,
+                Task.status.notin_(['done', 'cancelled']),
+            )
+        else:
+            # Employee/Manager: tasks where visible users are creator or assignee (exclude done/cancelled)
+            task_q = select(func.count(Task.id)).where(
+                Task.org_id == org.id,
+                Task.status.notin_(['done', 'cancelled']),
                 or_(
                     Task.created_by_id.in_(visible_ids),
                     Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids))),
@@ -378,7 +385,7 @@ async def org_summary(
         from app.models.purchase_event import PurchaseMember
         purchase_base = select(func.count(Purchase.id)).join(
             Subsidy, Purchase.subsidy_id == Subsidy.id
-        ).where(Subsidy.org_id == org.id)
+        ).where(Subsidy.org_id == org.id, Purchase.status != 'paid')
 
         if visible_ids is not None:
             # employee/manager: only see purchases assigned to visible users or where they are a member

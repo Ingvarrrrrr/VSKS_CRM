@@ -328,6 +328,7 @@ async def upsert_contractor_override(
 # ── Per-subsidy document templates ──────────────────────────────────────────
 
 TEMPLATES_BASE = "/app/templates"
+SUBSIDY_TEMPLATES_BASE = "/app/uploads/templates"
 SUPPORTED_DOC_TYPES = {
     "contract":              "Договор",
     "contract_tz":           "Договор с ТЗ",
@@ -347,7 +348,7 @@ async def list_subsidy_templates(
 ):
     """List which doc types have a subsidy-specific template override."""
     result = []
-    subsidy_dir = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id))
+    subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id))
     for doc_type, label in SUPPORTED_DOC_TYPES.items():
         path = os.path.join(subsidy_dir, f"{doc_type}.docx")
         global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
@@ -451,7 +452,7 @@ async def upload_subsidy_template(
     if not file.filename.endswith(".docx"):
         raise HTTPException(400, "Допускаются только .docx файлы")
 
-    subsidy_dir = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id))
+    subsidy_dir = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id))
     os.makedirs(subsidy_dir, exist_ok=True)
     dest = os.path.join(subsidy_dir, f"{doc_type}.docx")
 
@@ -472,7 +473,7 @@ async def download_subsidy_template(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
 
-    subsidy_path = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
+    subsidy_path = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
     global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
 
     if os.path.exists(subsidy_path):
@@ -501,7 +502,7 @@ async def delete_subsidy_template(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, f"Неизвестный тип документа: {doc_type}")
 
-    path = os.path.join(TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
+    path = os.path.join(SUBSIDY_TEMPLATES_BASE, "subsidies", str(subsidy_id), f"{doc_type}.docx")
     if not os.path.exists(path):
         raise HTTPException(404, "Индивидуальный шаблон не найден")
 

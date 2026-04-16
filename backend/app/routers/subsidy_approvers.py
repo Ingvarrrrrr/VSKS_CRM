@@ -10,7 +10,7 @@ from app.schemas.schemas import SubsidyApproverCreate, SubsidyApproverOut
 from app.auth.jwt import get_current_user, get_org_filter
 from typing import List
 
-SUBSIDY_TEMPLATES_DIR = "/app/templates/subsidies"
+SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates/subsidies"
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidy-approvers"])
 

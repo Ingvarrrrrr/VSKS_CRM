@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/purchases", tags=["documents"])
 guide_router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 TEMPLATES_DIR = "/app/templates"
+SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 
 DOC_TYPES = {
     "service_note":          ("service_note.docx",          "SZ_Organizaciya"),
@@ -282,7 +283,7 @@ async def generate_document(
 
     # Override template path with subsidy-specific template if available
     if p.subsidy_id:
-        subsidy_template = os.path.join(TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_type}.docx")
+        subsidy_template = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_type}.docx")
         if os.path.exists(subsidy_template):
             template_path = subsidy_template
 

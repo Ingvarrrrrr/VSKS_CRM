@@ -1,24 +1,32 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
 
 class WishCreate(BaseModel):
     title: str
+    category: Optional[str] = None
     description: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     estimated_price: Optional[Decimal] = None
+    link: Optional[str] = None
+    priority: Optional[str] = None
+    desired_date: Optional[date] = None
     justification: Optional[str] = None
 
 
 class WishUpdate(BaseModel):
     title: Optional[str] = None
+    category: Optional[str] = None
     description: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     estimated_price: Optional[Decimal] = None
+    link: Optional[str] = None
+    priority: Optional[str] = None
+    desired_date: Optional[date] = None
     justification: Optional[str] = None
 
 
@@ -36,10 +44,14 @@ class WishOut(BaseModel):
     id: int
     org_id: int
     title: str
+    category: Optional[str] = None
     description: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     estimated_price: Optional[Decimal] = None
+    link: Optional[str] = None
+    priority: Optional[str] = None
+    desired_date: Optional[date] = None
     justification: Optional[str] = None
     status: str
     rejection_reason: Optional[str] = None

@@ -3,7 +3,7 @@
     <!-- Header -->
     <div class="d-flex align-center mb-4 flex-wrap" style="gap:12px">
       <div>
-        <h1 class="text-h5 font-weight-bold">Мои задачи и закупки</h1>
+        <h1 class="text-h5 font-weight-bold">{{ pageTitle }}</h1>
         <span class="text-body-2 text-medium-emphasis">{{ TAB_SUBTITLES[activeTab] }}</span>
       </div>
       <v-spacer />
@@ -156,8 +156,8 @@
           <div class="osc-body">
             <div class="osc-name">{{ org.org_name }}</div>
             <div class="osc-stats">
-              <span class="osc-stat-clickable" @click.stop="selectOrg(org.org_id); activeTab = 'general'"><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
-              <span class="osc-stat-clickable" @click.stop="selectOrg(org.org_id); activeTab = 'purchases'"><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
+              <span class="osc-stat-clickable" @click.stop="activeTab = 'general'; selectOrg(org.org_id)"><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
+              <span class="osc-stat-clickable" @click.stop="activeTab = 'purchases'; selectOrg(org.org_id)"><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
             </div>
           </div>
           <div v-if="org.unseen_count > 0" class="osc-badge">{{ org.unseen_count }}</div>
@@ -902,6 +902,19 @@ const filteredGeneralTasks = computed(() => {
 const visibleOrgSummary = computed(() =>
   orgSummary.value.filter(o => o.org_id === null || o.task_count > 0)
 )
+
+const pageTitle = computed(() => {
+  let base = ''
+  if (activeTab.value === 'general') base = 'Мои задачи'
+  else if (activeTab.value === 'purchases') base = 'Мои закупки'
+  else base = 'Мои задачи и закупки'
+
+  if (selectedOrgId.value !== null) {
+    const org = orgSummary.value.find(o => o.org_id === selectedOrgId.value)
+    if (org) base += ` — ${org.org_name}`
+  }
+  return base
+})
 const pendingConsentTasks = ref<any[]>([])
 const consentLoading = ref<string | null>(null)
 const consentDeclines = ref<any[]>([])
@@ -1724,7 +1737,7 @@ async function pollTasks() {
 
 let _pollInterval: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
-  loadOrgSummary()
+  await loadOrgSummary()
   const isAdminMount = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
   if (isAdminMount) {
     await loadOrgData()

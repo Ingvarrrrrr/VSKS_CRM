@@ -13,9 +13,9 @@
     <v-btn
       v-if="isAuthenticated && route.path !== '/chat'"
       icon
-      style="position: fixed; bottom: 24px; right: 24px; z-index: 999"
+      style="position: fixed; bottom: 90px; right: 24px; z-index: 999"
       color="primary"
-      size="large"
+      size="default"
       :to="'/chat'"
       elevation="6"
     >

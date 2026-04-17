@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Numeric, Text, ForeignKey, DateTime, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -10,10 +10,14 @@ class Wish(Base):
     id = Column(Integer, primary_key=True, index=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
+    category = Column(String(50), nullable=True)   # Товар / Услуга / Работа
     description = Column(Text, nullable=True)
     quantity = Column(Numeric(15, 4), nullable=True)
     unit = Column(String(50), nullable=True)
     estimated_price = Column(Numeric(15, 2), nullable=True)
+    link = Column(String(2000), nullable=True)      # URL reference
+    priority = Column(String(20), nullable=True)    # low / medium / high / urgent
+    desired_date = Column(Date, nullable=True)       # желаемый срок
     justification = Column(Text, nullable=True)
     status = Column(String(30), default="draft", nullable=False, index=True)
     rejection_reason = Column(Text, nullable=True)

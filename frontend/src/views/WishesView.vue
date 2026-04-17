@@ -35,6 +35,14 @@
           <v-card variant="outlined" class="pa-3 h-100">
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
+                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
+                  <v-chip v-if="wish.category" size="x-small" variant="tonal" color="blue-grey">
+                    {{ wish.category }}
+                  </v-chip>
+                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
+                    {{ priorityLabel[wish.priority] }}
+                  </v-chip>
+                </div>
                 <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
                 <div v-if="wish.description" class="text-body-2 text-medium-emphasis mt-1" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
                   {{ wish.description }}
@@ -60,6 +68,17 @@
             <div class="d-flex flex-wrap ga-2 text-caption text-medium-emphasis mb-2">
               <span v-if="wish.quantity">Кол-во: <b>{{ wish.quantity }} {{ wish.unit || '' }}</b></span>
               <span v-if="wish.estimated_price">Цена: <b>{{ formatPrice(wish.estimated_price) }}</b></span>
+              <span v-if="wish.desired_date">
+                <v-icon icon="mdi-calendar" size="12" class="mr-0.5" />
+                <b>{{ formatDate(wish.desired_date) }}</b>
+              </span>
+            </div>
+
+            <!-- Link -->
+            <div v-if="wish.link" class="mb-2">
+              <a :href="wish.link" target="_blank" class="text-caption text-primary" style="word-break:break-all">
+                <v-icon icon="mdi-link" size="12" class="mr-1" />{{ wish.link }}
+              </a>
             </div>
 
             <!-- Rejection reason -->
@@ -141,6 +160,14 @@
           <v-card variant="outlined" class="pa-3 h-100">
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
+                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
+                  <v-chip v-if="wish.category" size="x-small" variant="tonal" color="blue-grey">
+                    {{ wish.category }}
+                  </v-chip>
+                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
+                    {{ priorityLabel[wish.priority] }}
+                  </v-chip>
+                </div>
                 <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
                 <div class="text-caption text-medium-emphasis mt-0.5">
                   <v-icon icon="mdi-account" size="12" class="mr-1" />{{ wish.creator_name || 'Неизвестно' }}
@@ -158,6 +185,10 @@
             <div class="d-flex flex-wrap ga-2 text-caption text-medium-emphasis mb-2">
               <span v-if="wish.quantity">Кол-во: <b>{{ wish.quantity }} {{ wish.unit || '' }}</b></span>
               <span v-if="wish.estimated_price">Цена: <b>{{ formatPrice(wish.estimated_price) }}</b></span>
+              <span v-if="wish.desired_date">
+                <v-icon icon="mdi-calendar" size="12" class="mr-0.5" />
+                <b>{{ formatDate(wish.desired_date) }}</b>
+              </span>
             </div>
 
             <!-- Justification -->
@@ -212,31 +243,72 @@
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
-    <v-dialog v-model="wishDialog" max-width="600" scrollable>
+    <v-dialog v-model="wishDialog" max-width="680" scrollable>
       <v-card>
         <v-card-title class="pa-4 pb-2">
           {{ editingWish ? 'Редактировать заявку' : 'Новая заявка' }}
         </v-card-title>
         <v-card-text class="pa-4">
           <v-form ref="wishFormRef" @submit.prevent="saveWish">
+
+            <!-- Section: Что нужно -->
+            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1">
+              <v-icon icon="mdi-package-variant" size="14" />
+              Что нужно
+            </div>
+
             <v-text-field
               v-model="wishForm.title"
               label="Наименование *"
+              placeholder="Например: Ноутбук для бухгалтера"
               :rules="[v => !!v || 'Обязательное поле']"
               variant="outlined"
               density="compact"
               class="mb-3"
             />
+
+            <v-row dense class="mb-3">
+              <v-col cols="12" sm="6">
+                <v-select
+                  v-model="wishForm.category"
+                  :items="categoryOptions"
+                  label="Категория"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                />
+              </v-col>
+              <v-col cols="12" sm="6">
+                <v-select
+                  v-model="wishForm.priority"
+                  :items="priorityOptions"
+                  label="Приоритет"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                />
+              </v-col>
+            </v-row>
+
             <v-textarea
               v-model="wishForm.description"
               label="Описание"
+              placeholder="Опишите подробно что именно нужно"
+              hint="Опишите подробно что именно нужно"
               variant="outlined"
               density="compact"
               rows="3"
               class="mb-3"
             />
+
+            <!-- Section: Детали -->
+            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1 mt-1">
+              <v-icon icon="mdi-clipboard-list-outline" size="14" />
+              Детали
+            </div>
+
             <v-row dense class="mb-3">
-              <v-col cols="6">
+              <v-col cols="6" sm="4">
                 <v-text-field
                   v-model.number="wishForm.quantity"
                   label="Количество"
@@ -246,31 +318,66 @@
                   min="0"
                 />
               </v-col>
-              <v-col cols="6">
+              <v-col cols="6" sm="4">
                 <v-text-field
                   v-model="wishForm.unit"
-                  label="Единица измерения"
+                  label="Ед. измерения"
+                  placeholder="шт, кг, м..."
                   variant="outlined"
                   density="compact"
                 />
               </v-col>
+              <v-col cols="12" sm="4">
+                <v-text-field
+                  v-model.number="wishForm.estimated_price"
+                  label="Примерная цена (₽)"
+                  type="number"
+                  variant="outlined"
+                  density="compact"
+                  hint="Если известна"
+                  min="0"
+                />
+              </v-col>
             </v-row>
+
             <v-text-field
-              v-model.number="wishForm.estimated_price"
-              label="Примерная стоимость (₽)"
-              type="number"
+              v-model="wishForm.link"
+              label="Ссылка на товар/услугу"
+              placeholder="https://..."
+              hint="Пример товара или ссылка для сравнения"
               variant="outlined"
               density="compact"
+              prepend-inner-icon="mdi-link"
               class="mb-3"
-              min="0"
             />
+
+            <!-- Section: Срочность и обоснование -->
+            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1 mt-1">
+              <v-icon icon="mdi-calendar-clock" size="14" />
+              Срочность и обоснование
+            </div>
+
+            <v-text-field
+              v-model="wishForm.desired_date"
+              label="Желаемый срок"
+              type="date"
+              variant="outlined"
+              density="compact"
+              hint="К какому сроку необходимо"
+              class="mb-3"
+            />
+
             <v-textarea
               v-model="wishForm.justification"
-              label="Обоснование"
+              label="Обоснование *"
+              placeholder="Почему это необходимо для работы"
+              hint="Почему это необходимо для работы"
+              :rules="[v => !!v || 'Укажите обоснование']"
               variant="outlined"
               density="compact"
               rows="3"
             />
+
           </v-form>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -381,10 +488,14 @@ interface Wish {
   id: number
   org_id: number
   title: string
+  category?: string
   description?: string
   quantity?: number
   unit?: string
   estimated_price?: number
+  link?: string
+  priority?: string
+  desired_date?: string
   justification?: string
   status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'converted'
   rejection_reason?: string
@@ -428,6 +539,28 @@ const statusLabel: Record<string, string> = {
   converted: 'Конвертирована',
 }
 
+// Priority
+const priorityColor: Record<string, string> = {
+  low: 'grey',
+  medium: 'blue',
+  high: 'orange',
+  urgent: 'red',
+}
+const priorityLabel: Record<string, string> = {
+  low: 'Низкий',
+  medium: 'Средний',
+  high: 'Высокий',
+  urgent: 'Срочный',
+}
+
+const categoryOptions = ['Товар', 'Услуга', 'Работа']
+const priorityOptions = [
+  { title: 'Низкий', value: 'low' },
+  { title: 'Средний', value: 'medium' },
+  { title: 'Высокий', value: 'high' },
+  { title: 'Срочный', value: 'urgent' },
+]
+
 // Tabs
 const activeTab = ref('my')
 
@@ -454,10 +587,14 @@ const wishFormRef = ref<any>(null)
 const savingWish = ref(false)
 const wishForm = ref({
   title: '',
+  category: null as string | null,
   description: '',
   quantity: null as number | null,
   unit: '',
   estimated_price: null as number | null,
+  link: '',
+  priority: null as string | null,
+  desired_date: '',
   justification: '',
 })
 
@@ -502,6 +639,12 @@ function formatPrice(price: number) {
   return price.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })
 }
 
+function formatDate(dateStr: string) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 async function loadWishes() {
   loading.value = true
   try {
@@ -533,7 +676,18 @@ async function loadSubsidies() {
 
 function openCreateDialog() {
   editingWish.value = null
-  wishForm.value = { title: '', description: '', quantity: null, unit: '', estimated_price: null, justification: '' }
+  wishForm.value = {
+    title: '',
+    category: null,
+    description: '',
+    quantity: null,
+    unit: '',
+    estimated_price: null,
+    link: '',
+    priority: null,
+    desired_date: '',
+    justification: '',
+  }
   wishDialog.value = true
 }
 
@@ -541,10 +695,14 @@ function openEditDialog(wish: Wish) {
   editingWish.value = wish
   wishForm.value = {
     title: wish.title,
+    category: wish.category || null,
     description: wish.description || '',
     quantity: wish.quantity ?? null,
     unit: wish.unit || '',
     estimated_price: wish.estimated_price ?? null,
+    link: wish.link || '',
+    priority: wish.priority || null,
+    desired_date: wish.desired_date || '',
     justification: wish.justification || '',
   }
   wishDialog.value = true
@@ -557,10 +715,14 @@ async function saveWish() {
   try {
     const body = {
       title: wishForm.value.title,
+      category: wishForm.value.category || undefined,
       description: wishForm.value.description || undefined,
       quantity: wishForm.value.quantity ?? undefined,
       unit: wishForm.value.unit || undefined,
       estimated_price: wishForm.value.estimated_price ?? undefined,
+      link: wishForm.value.link || undefined,
+      priority: wishForm.value.priority || undefined,
+      desired_date: wishForm.value.desired_date || undefined,
       justification: wishForm.value.justification || undefined,
     }
     if (editingWish.value) {

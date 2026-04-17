@@ -11,7 +11,7 @@
         <v-btn value="purchases" size="small"><v-icon icon="mdi-cart" class="mr-1" size="18"/>Закупки</v-btn>
         <v-btn value="general" size="small">
           <v-icon icon="mdi-clipboard-list" class="mr-1" size="18"/>Задачи
-          <v-chip v-if="generalTasks.length" size="x-small" color="primary" class="ml-1">{{ generalTasks.length }}</v-chip>
+          <v-chip v-if="generalTasks.length" size="x-small" color="white" variant="flat" class="ml-1" style="color: #1565C0; font-weight: 700">{{ generalTasks.length }}</v-chip>
           <v-chip v-if="pendingConsentTasks.length" size="x-small" color="orange" class="ml-1">+{{ pendingConsentTasks.length }}</v-chip>
         </v-btn>
         <v-btn value="report" size="small"><v-icon icon="mdi-chart-bar" class="mr-1" size="18"/>Отчёт</v-btn>
@@ -2117,14 +2117,14 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   margin-top: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #475569;
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
 }
 .osc-stat-label {
-  font-size: 12px;
-  font-weight: 500;
-  opacity: 0.85;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.9;
 }
 .osc-stat-clickable {
   cursor: pointer;

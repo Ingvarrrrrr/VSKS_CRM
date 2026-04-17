@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -11,6 +11,7 @@ from app.auth.jwt import (
 )
 from app.models.user import User
 from app.models.wish import Wish
+from app.models.wish_item import WishItem
 from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
@@ -23,14 +24,24 @@ def _enrich(w: Wish) -> WishOut:
         d.creator_name = w.creator.full_name or w.creator.username
     if w.approver:
         d.approver_name = w.approver.full_name or w.approver.username
+    if w.subsidy:
+        d.subsidy_name = w.subsidy.name
+    if w.assignee:
+        d.assignee_name = w.assignee.full_name or w.assignee.username
     return d
 
 
 async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
-    """Load wish with creator and approver relationships."""
+    """Load wish with all relationships."""
     result = await db.execute(
         select(Wish)
-        .options(selectinload(Wish.creator), selectinload(Wish.approver))
+        .options(
+            selectinload(Wish.creator),
+            selectinload(Wish.approver),
+            selectinload(Wish.assignee),
+            selectinload(Wish.subsidy),
+            selectinload(Wish.items),
+        )
         .where(Wish.id == wish_id)
     )
     wish = result.scalar_one_or_none()
@@ -50,7 +61,13 @@ async def list_wishes(
 ):
     """List wishes. Employee sees only own; manager/admin sees all in org."""
     org_ids = get_org_filter(current_user)
-    q = select(Wish).options(selectinload(Wish.creator), selectinload(Wish.approver))
+    q = select(Wish).options(
+        selectinload(Wish.creator),
+        selectinload(Wish.approver),
+        selectinload(Wish.assignee),
+        selectinload(Wish.subsidy),
+        selectinload(Wish.items),
+    )
     if org_ids is not None:
         q = q.where(Wish.org_id.in_(org_ids))
     # Employee: always own only
@@ -77,17 +94,40 @@ async def create_wish(
     wish = Wish(
         org_id=org_id,
         title=body.title,
+        category=body.category,
         description=body.description,
         quantity=body.quantity,
         unit=body.unit,
         estimated_price=body.estimated_price,
+        link=body.link,
+        priority=body.priority,
+        desired_date=body.desired_date,
         justification=body.justification,
+        subsidy_id=body.subsidy_id,
+        feo_category_id=body.feo_category_id,
+        assigned_to=body.assigned_to,
         status="draft",
         created_by=current_user.id,
     )
     db.add(wish)
+    await db.flush()
+
+    if body.items:
+        for item_data in body.items:
+            wi = WishItem(
+                wish_id=wish.id,
+                item_name=item_data.get('item_name', ''),
+                item_type=item_data.get('item_type', 'товар'),
+                quantity=item_data.get('quantity', 1),
+                unit=item_data.get('unit', 'шт'),
+                unit_price=item_data.get('unit_price', 0),
+                total_price=item_data.get('total_price', 0),
+                country_origin=item_data.get('country_origin', 'Россия'),
+            )
+            db.add(wi)
+        await db.flush()
+
     await db.commit()
-    await db.refresh(wish)
     wish = await _load_wish(wish.id, db)
     return _enrich(wish)
 
@@ -107,12 +147,27 @@ async def update_wish(
     if wish.status != "draft":
         raise HTTPException(status_code=400, detail="Можно редактировать только черновик")
 
-    update_data = body.model_dump(exclude_none=True)
+    update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():
         setattr(wish, field, value)
 
+    if body.items is not None:
+        await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
+        for item_data in body.items:
+            wi = WishItem(
+                wish_id=wish.id,
+                item_name=item_data.get('item_name', ''),
+                item_type=item_data.get('item_type', 'товар'),
+                quantity=item_data.get('quantity', 1),
+                unit=item_data.get('unit', 'шт'),
+                unit_price=item_data.get('unit_price', 0),
+                total_price=item_data.get('total_price', 0),
+                country_origin=item_data.get('country_origin', 'Россия'),
+            )
+            db.add(wi)
+        await db.flush()
+
     await db.commit()
-    await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
 

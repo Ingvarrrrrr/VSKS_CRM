@@ -27,6 +27,13 @@ class Wish(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
+    feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
+    assignee = relationship("User", foreign_keys=[assigned_to], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
+    subsidy = relationship("Subsidy", lazy="selectin")
+    items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin")

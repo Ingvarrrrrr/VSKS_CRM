@@ -1,7 +1,19 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime, date
 from decimal import Decimal
+
+
+class WishItemOut(BaseModel):
+    id: int
+    item_name: str
+    item_type: Optional[str] = "товар"
+    quantity: Optional[float] = 1
+    unit: Optional[str] = "шт"
+    unit_price: Optional[float] = 0
+    total_price: Optional[float] = 0
+    country_origin: Optional[str] = "Россия"
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WishCreate(BaseModel):
@@ -15,6 +27,10 @@ class WishCreate(BaseModel):
     priority: Optional[str] = None
     desired_date: Optional[date] = None
     justification: Optional[str] = None
+    subsidy_id: Optional[int] = None
+    feo_category_id: Optional[int] = None
+    assigned_to: Optional[int] = None
+    items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
 
 class WishUpdate(BaseModel):
@@ -28,6 +44,10 @@ class WishUpdate(BaseModel):
     priority: Optional[str] = None
     desired_date: Optional[date] = None
     justification: Optional[str] = None
+    subsidy_id: Optional[int] = None
+    feo_category_id: Optional[int] = None
+    assigned_to: Optional[int] = None
+    items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
 
 class WishReject(BaseModel):
@@ -62,6 +82,12 @@ class WishOut(BaseModel):
     purchase_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    subsidy_id: Optional[int] = None
+    subsidy_name: Optional[str] = None
+    feo_category_id: Optional[int] = None
+    assigned_to: Optional[int] = None
+    assignee_name: Optional[str] = None
+    items: list = []
 
     class Config:
         from_attributes = True

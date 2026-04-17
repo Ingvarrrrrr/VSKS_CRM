@@ -36,16 +36,21 @@
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
                 <div class="d-flex align-center ga-1 mb-1 flex-wrap">
-                  <v-chip v-if="wish.category" size="x-small" variant="tonal" color="blue-grey">
-                    {{ wish.category }}
-                  </v-chip>
                   <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
                     {{ priorityLabel[wish.priority] }}
                   </v-chip>
+                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
+                    {{ wish.subsidy_name }}
+                  </v-chip>
                 </div>
                 <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
-                <div v-if="wish.description" class="text-body-2 text-medium-emphasis mt-1" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
-                  {{ wish.description }}
+                <div class="text-caption text-medium-emphasis mt-1">
+                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
+                  <span v-if="wish.items_count && wish.total_amount"> · </span>
+                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
+                </div>
+                <div v-if="wish.assigned_to_name" class="text-caption text-medium-emphasis mt-0.5">
+                  <v-icon icon="mdi-account-arrow-right" size="12" class="mr-1" />{{ wish.assigned_to_name }}
                 </div>
               </div>
               <div class="d-flex flex-column align-end ga-1">
@@ -66,19 +71,10 @@
 
             <!-- Metadata -->
             <div class="d-flex flex-wrap ga-2 text-caption text-medium-emphasis mb-2">
-              <span v-if="wish.quantity">Кол-во: <b>{{ wish.quantity }} {{ wish.unit || '' }}</b></span>
-              <span v-if="wish.estimated_price">Цена: <b>{{ formatPrice(wish.estimated_price) }}</b></span>
               <span v-if="wish.desired_date">
                 <v-icon icon="mdi-calendar" size="12" class="mr-0.5" />
                 <b>{{ formatDate(wish.desired_date) }}</b>
               </span>
-            </div>
-
-            <!-- Link -->
-            <div v-if="wish.link" class="mb-2">
-              <a :href="wish.link" target="_blank" class="text-caption text-primary" style="word-break:break-all">
-                <v-icon icon="mdi-link" size="12" class="mr-1" />{{ wish.link }}
-              </a>
             </div>
 
             <!-- Rejection reason -->
@@ -161,34 +157,29 @@
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
                 <div class="d-flex align-center ga-1 mb-1 flex-wrap">
-                  <v-chip v-if="wish.category" size="x-small" variant="tonal" color="blue-grey">
-                    {{ wish.category }}
-                  </v-chip>
                   <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
                     {{ priorityLabel[wish.priority] }}
+                  </v-chip>
+                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
+                    {{ wish.subsidy_name }}
                   </v-chip>
                 </div>
                 <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
                 <div class="text-caption text-medium-emphasis mt-0.5">
                   <v-icon icon="mdi-account" size="12" class="mr-1" />{{ wish.creator_name || 'Неизвестно' }}
                 </div>
-                <div v-if="wish.description" class="text-body-2 text-medium-emphasis mt-1" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
-                  {{ wish.description }}
+                <div class="text-caption text-medium-emphasis mt-1">
+                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
+                  <span v-if="wish.items_count && wish.total_amount"> · </span>
+                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
+                </div>
+                <div v-if="wish.assigned_to_name" class="text-caption text-medium-emphasis mt-0.5">
+                  <v-icon icon="mdi-account-arrow-right" size="12" class="mr-1" />{{ wish.assigned_to_name }}
                 </div>
               </div>
               <v-chip :color="statusColor[wish.status]" size="small" variant="tonal">
                 {{ statusLabel[wish.status] }}
               </v-chip>
-            </div>
-
-            <!-- Metadata -->
-            <div class="d-flex flex-wrap ga-2 text-caption text-medium-emphasis mb-2">
-              <span v-if="wish.quantity">Кол-во: <b>{{ wish.quantity }} {{ wish.unit || '' }}</b></span>
-              <span v-if="wish.estimated_price">Цена: <b>{{ formatPrice(wish.estimated_price) }}</b></span>
-              <span v-if="wish.desired_date">
-                <v-icon icon="mdi-calendar" size="12" class="mr-0.5" />
-                <b>{{ formatDate(wish.desired_date) }}</b>
-              </span>
             </div>
 
             <!-- Justification -->
@@ -243,148 +234,251 @@
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
-    <v-dialog v-model="wishDialog" max-width="680" scrollable>
+    <v-dialog v-model="wishDialog" max-width="900" scrollable>
       <v-card>
         <v-card-title class="pa-4 pb-2">
-          {{ editingWish ? 'Редактировать заявку' : 'Новая заявка' }}
+          {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
         </v-card-title>
         <v-card-text class="pa-4">
-          <v-form ref="wishFormRef" @submit.prevent="saveWish">
+          <v-form ref="wishFormRef" @submit.prevent>
 
-            <!-- Section: Что нужно -->
-            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1">
-              <v-icon icon="mdi-package-variant" size="14" />
-              Что нужно
-            </div>
+            <!-- Section 1: Основная информация -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2">mdi-information-outline</v-icon>Основная информация
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-row dense>
+                  <v-col cols="12">
+                    <v-select
+                      v-model="wishForm.subsidy_id"
+                      :items="subsidies"
+                      item-title="name"
+                      item-value="id"
+                      label="Субсидия *"
+                      variant="outlined"
+                      density="compact"
+                      :rules="[v => !!v || 'Выберите субсидию']"
+                      clearable
+                      @update:model-value="onSubsidyChange"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-select
+                      v-model="selectedFeo1"
+                      :items="feoLevel1"
+                      item-title="name"
+                      item-value="id"
+                      label="Категория ФЭО (ур.1)"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :disabled="!wishForm.subsidy_id"
+                      @update:model-value="onFeo1Change"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-select
+                      v-model="selectedFeo2"
+                      :items="feoLevel2"
+                      item-title="name"
+                      item-value="id"
+                      label="Категория ФЭО (ур.2)"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :disabled="!selectedFeo1"
+                      @update:model-value="onFeo2Change"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-select
+                      v-model="selectedFeo3"
+                      :items="feoLevel3"
+                      item-title="name"
+                      item-value="id"
+                      label="Категория ФЭО (ур.3)"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :disabled="!selectedFeo2"
+                    />
+                  </v-col>
+                  <v-col cols="12">
+                    <v-autocomplete
+                      v-model="wishForm.assigned_to"
+                      :items="orgUsers"
+                      item-title="full_name"
+                      item-value="id"
+                      label="Кому направить"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :disabled="!wishForm.subsidy_id"
+                      hint="Сотрудник, которому адресована заявка"
+                      persistent-hint
+                    />
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
 
-            <v-text-field
-              v-model="wishForm.title"
-              label="Наименование *"
-              placeholder="Например: Ноутбук для бухгалтера"
-              :rules="[v => !!v || 'Обязательное поле']"
-              variant="outlined"
-              density="compact"
-              class="mb-3"
-            />
+            <!-- Section 2: Позиции -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2 d-flex align-center justify-space-between">
+                <span><v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции</span>
+                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addItem">
+                  Добавить позицию
+                </v-btn>
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-table v-if="wishForm.items.length" density="compact">
+                  <thead>
+                    <tr>
+                      <th style="width:40px">№</th>
+                      <th>Наименование</th>
+                      <th style="width:120px">Тип</th>
+                      <th style="width:80px">Кол-во</th>
+                      <th style="width:80px">Ед.изм.</th>
+                      <th style="width:110px">Цена ед., ₽</th>
+                      <th style="width:110px">Сумма, ₽</th>
+                      <th style="width:40px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(item, idx) in wishForm.items" :key="idx">
+                      <td>{{ idx + 1 }}</td>
+                      <td>
+                        <v-text-field
+                          v-model="item.item_name"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          placeholder="Наименование"
+                        />
+                      </td>
+                      <td>
+                        <v-select
+                          v-model="item.item_type"
+                          :items="['товар', 'услуга', 'работа']"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                        />
+                      </td>
+                      <td>
+                        <v-text-field
+                          v-model.number="item.quantity"
+                          type="number"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          min="0"
+                          @update:model-value="calcItemTotal(idx)"
+                        />
+                      </td>
+                      <td>
+                        <v-combobox
+                          v-model="item.unit"
+                          :items="['шт', 'компл', 'усл', 'м', 'кг', 'л', 'м²']"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                        />
+                      </td>
+                      <td>
+                        <v-text-field
+                          v-model.number="item.unit_price"
+                          type="number"
+                          variant="outlined"
+                          density="compact"
+                          hide-details
+                          min="0"
+                          @update:model-value="calcItemTotal(idx)"
+                        />
+                      </td>
+                      <td class="font-weight-bold text-no-wrap">
+                        {{ (item.total_price || 0).toLocaleString('ru-RU') }}
+                      </td>
+                      <td>
+                        <v-btn
+                          icon="mdi-delete"
+                          size="x-small"
+                          variant="text"
+                          color="error"
+                          @click="removeItem(idx)"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colspan="6" class="text-right font-weight-bold pa-2">Итого НМЦК:</td>
+                      <td class="font-weight-bold text-primary pa-2 text-no-wrap">
+                        {{ totalNmck.toLocaleString('ru-RU') }} ₽
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </v-table>
+                <div v-else class="text-center text-medium-emphasis py-4">
+                  Нет позиций. Нажмите «Добавить позицию»
+                </div>
+              </v-card-text>
+            </v-card>
 
-            <v-row dense class="mb-3">
-              <v-col cols="12" sm="6">
-                <v-select
-                  v-model="wishForm.category"
-                  :items="categoryOptions"
-                  label="Категория"
-                  variant="outlined"
-                  density="compact"
-                  clearable
-                />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-select
-                  v-model="wishForm.priority"
-                  :items="priorityOptions"
-                  label="Приоритет"
-                  variant="outlined"
-                  density="compact"
-                  clearable
-                />
-              </v-col>
-            </v-row>
-
-            <v-textarea
-              v-model="wishForm.description"
-              label="Описание"
-              placeholder="Опишите подробно что именно нужно"
-              hint="Опишите подробно что именно нужно"
-              variant="outlined"
-              density="compact"
-              rows="3"
-              class="mb-3"
-            />
-
-            <!-- Section: Детали -->
-            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1 mt-1">
-              <v-icon icon="mdi-clipboard-list-outline" size="14" />
-              Детали
-            </div>
-
-            <v-row dense class="mb-3">
-              <v-col cols="6" sm="4">
-                <v-text-field
-                  v-model.number="wishForm.quantity"
-                  label="Количество"
-                  type="number"
-                  variant="outlined"
-                  density="compact"
-                  min="0"
-                />
-              </v-col>
-              <v-col cols="6" sm="4">
-                <v-text-field
-                  v-model="wishForm.unit"
-                  label="Ед. измерения"
-                  placeholder="шт, кг, м..."
-                  variant="outlined"
-                  density="compact"
-                />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-text-field
-                  v-model.number="wishForm.estimated_price"
-                  label="Примерная цена (₽)"
-                  type="number"
-                  variant="outlined"
-                  density="compact"
-                  hint="Если известна"
-                  min="0"
-                />
-              </v-col>
-            </v-row>
-
-            <v-text-field
-              v-model="wishForm.link"
-              label="Ссылка на товар/услугу"
-              placeholder="https://..."
-              hint="Пример товара или ссылка для сравнения"
-              variant="outlined"
-              density="compact"
-              prepend-inner-icon="mdi-link"
-              class="mb-3"
-            />
-
-            <!-- Section: Срочность и обоснование -->
-            <div class="text-caption font-weight-bold text-medium-emphasis text-uppercase mb-2 d-flex align-center ga-1 mt-1">
-              <v-icon icon="mdi-calendar-clock" size="14" />
-              Срочность и обоснование
-            </div>
-
-            <v-text-field
-              v-model="wishForm.desired_date"
-              label="Желаемый срок"
-              type="date"
-              variant="outlined"
-              density="compact"
-              hint="К какому сроку необходимо"
-              class="mb-3"
-            />
-
-            <v-textarea
-              v-model="wishForm.justification"
-              label="Обоснование *"
-              placeholder="Почему это необходимо для работы"
-              hint="Почему это необходимо для работы"
-              :rules="[v => !!v || 'Укажите обоснование']"
-              variant="outlined"
-              density="compact"
-              rows="3"
-            />
+            <!-- Section 3: Обоснование и сроки -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2">mdi-text-box-check-outline</v-icon>Обоснование и сроки
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-row dense>
+                  <v-col cols="12">
+                    <v-textarea
+                      v-model="wishForm.justification"
+                      label="Обоснование *"
+                      variant="outlined"
+                      density="compact"
+                      rows="3"
+                      :rules="[v => !!v || 'Обязательное поле']"
+                      hint="Почему это необходимо для работы"
+                      persistent-hint
+                    />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-select
+                      v-model="wishForm.priority"
+                      :items="priorityOptions"
+                      label="Приоритет"
+                      variant="outlined"
+                      density="compact"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field
+                      v-model="wishForm.desired_date"
+                      label="Желаемый срок"
+                      type="date"
+                      variant="outlined"
+                      density="compact"
+                    />
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
 
           </v-form>
         </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
+
+        <v-card-actions class="px-4 pb-4">
           <v-btn variant="text" @click="wishDialog = false">Отмена</v-btn>
-          <v-btn variant="flat" color="primary" :loading="savingWish" @click="saveWish">
-            {{ editingWish ? 'Сохранить' : 'Создать' }}
+          <v-spacer />
+          <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
+            Сохранить черновик
+          </v-btn>
+          <v-btn color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
+            Отправить на согласование
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -423,8 +517,7 @@
             <div class="text-subtitle-2 font-weight-bold mb-1">Исходная заявка</div>
             <div class="text-body-2">{{ convertingWish?.title }}</div>
             <div class="text-caption text-medium-emphasis mt-1">
-              <span v-if="convertingWish?.quantity">Кол-во: {{ convertingWish.quantity }} {{ convertingWish.unit || '' }}</span>
-              <span v-if="convertingWish?.estimated_price" class="ml-2">Цена: {{ formatPrice(convertingWish.estimated_price) }}</span>
+              <span v-if="convertingWish?.total_amount">НМЦК: {{ formatPrice(convertingWish.total_amount) }}</span>
             </div>
           </div>
           <v-row dense class="mb-3">
@@ -484,16 +577,25 @@ import { apiFetch } from '@/api'
 
 const router = useRouter()
 
+interface WishItem {
+  item_name: string
+  item_type: string
+  quantity: number
+  unit: string
+  unit_price: number
+  total_price: number
+  country_origin: string
+}
+
 interface Wish {
   id: number
   org_id: number
   title: string
-  category?: string
-  description?: string
-  quantity?: number
-  unit?: string
-  estimated_price?: number
-  link?: string
+  subsidy_id?: number
+  subsidy_name?: string
+  feo_category_id?: number
+  assigned_to?: number
+  assigned_to_name?: string
   priority?: string
   desired_date?: string
   justification?: string
@@ -504,6 +606,8 @@ interface Wish {
   approved_by?: number
   approver_name?: string
   purchase_id?: number
+  items_count?: number
+  total_amount?: number
   created_at: string
   updated_at: string
 }
@@ -511,11 +615,24 @@ interface Wish {
 interface Subsidy {
   id: number
   name: string
+  org_id?: number
+}
+
+interface FeoCategory {
+  id: number
+  name: string
+  subsidy_id?: number
+  parent_id?: number | null
+}
+
+interface User {
+  id: number
+  full_name: string
+  org_id?: number
 }
 
 // Role detection
 const userRole = localStorage.getItem('user_role') || ''
-const userId = Number(localStorage.getItem('user_id') || 0)
 
 const ADMIN_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin']
 const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager']
@@ -553,7 +670,6 @@ const priorityLabel: Record<string, string> = {
   urgent: 'Срочный',
 }
 
-const categoryOptions = ['Товар', 'Услуга', 'Работа']
 const priorityOptions = [
   { title: 'Низкий', value: 'low' },
   { title: 'Средний', value: 'medium' },
@@ -580,23 +696,96 @@ const allFilters = [
   { value: 'converted', label: 'Конвертированные' },
 ]
 
+// Reference data
+const subsidies = ref<Subsidy[]>([])
+const allFeoCategories = ref<FeoCategory[]>([])
+const users = ref<User[]>([])
+
+// FEO cascading selects
+const selectedFeo1 = ref<number | null>(null)
+const selectedFeo2 = ref<number | null>(null)
+const selectedFeo3 = ref<number | null>(null)
+
+const feoLevel1 = computed(() =>
+  wishForm.value.subsidy_id
+    ? allFeoCategories.value.filter(c => c.subsidy_id === wishForm.value.subsidy_id && !c.parent_id)
+    : []
+)
+const feoLevel2 = computed(() =>
+  selectedFeo1.value
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value)
+    : []
+)
+const feoLevel3 = computed(() =>
+  selectedFeo2.value
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value)
+    : []
+)
+
+const orgUsers = computed(() => {
+  if (!wishForm.value.subsidy_id) return users.value
+  const sub = subsidies.value.find(s => s.id === wishForm.value.subsidy_id)
+  if (!sub || !sub.org_id) return users.value
+  return users.value.filter(u => u.org_id === sub.org_id)
+})
+
 // Create/edit dialog
 const wishDialog = ref(false)
-const editingWish = ref<Wish | null>(null)
+const editingWishId = ref<number | null>(null)
 const wishFormRef = ref<any>(null)
-const savingWish = ref(false)
+const saving = ref(false)
+
 const wishForm = ref({
-  title: '',
-  category: null as string | null,
-  description: '',
-  quantity: null as number | null,
-  unit: '',
-  estimated_price: null as number | null,
-  link: '',
-  priority: null as string | null,
-  desired_date: '',
+  subsidy_id: null as number | null,
+  feo_category_id: null as number | null,
+  assigned_to: null as number | null,
   justification: '',
+  priority: 'medium' as string,
+  desired_date: '',
+  items: [] as WishItem[],
 })
+
+// Items computed total
+const totalNmck = computed(() =>
+  wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
+)
+
+function addItem() {
+  wishForm.value.items.push({
+    item_name: '',
+    item_type: 'товар',
+    quantity: 1,
+    unit: 'шт',
+    unit_price: 0,
+    total_price: 0,
+    country_origin: 'Россия',
+  })
+}
+
+function removeItem(idx: number) {
+  wishForm.value.items.splice(idx, 1)
+}
+
+function calcItemTotal(idx: number) {
+  const item = wishForm.value.items[idx]
+  item.total_price = (item.quantity || 0) * (item.unit_price || 0)
+}
+
+function onSubsidyChange() {
+  selectedFeo1.value = null
+  selectedFeo2.value = null
+  selectedFeo3.value = null
+  wishForm.value.assigned_to = null
+}
+
+function onFeo1Change() {
+  selectedFeo2.value = null
+  selectedFeo3.value = null
+}
+
+function onFeo2Change() {
+  selectedFeo3.value = null
+}
 
 // Submit
 const submittingId = ref<number | null>(null)
@@ -619,7 +808,6 @@ const convertForm = ref({
   approved_price: null as number | null,
   subsidy_id: null as number | null,
 })
-const subsidies = ref<Subsidy[]>([])
 
 // Approve
 const approvingId = ref<number | null>(null)
@@ -649,7 +837,7 @@ async function loadWishes() {
   loading.value = true
   try {
     myWishes.value = await apiFetch<Wish[]>('/wishes?mine_only=true')
-  } catch (e) {
+  } catch {
     showSnack('Ошибка загрузки заявок', 'error')
   } finally {
     loading.value = false
@@ -661,83 +849,79 @@ async function loadAllWishes() {
   try {
     const params = allFilter.value === 'all' ? '' : `?status=${allFilter.value}`
     allWishes.value = await apiFetch<Wish[]>(`/wishes${params}`)
-  } catch (e) {
+  } catch {
     showSnack('Ошибка загрузки заявок', 'error')
   } finally {
     loadingAll.value = false
   }
 }
 
-async function loadSubsidies() {
-  try {
-    subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
-  } catch {}
+function resetForm() {
+  wishForm.value = {
+    subsidy_id: null,
+    feo_category_id: null,
+    assigned_to: null,
+    justification: '',
+    priority: 'medium',
+    desired_date: '',
+    items: [],
+  }
+  selectedFeo1.value = null
+  selectedFeo2.value = null
+  selectedFeo3.value = null
 }
 
 function openCreateDialog() {
-  editingWish.value = null
-  wishForm.value = {
-    title: '',
-    category: null,
-    description: '',
-    quantity: null,
-    unit: '',
-    estimated_price: null,
-    link: '',
-    priority: null,
-    desired_date: '',
-    justification: '',
-  }
+  editingWishId.value = null
+  resetForm()
   wishDialog.value = true
 }
 
 function openEditDialog(wish: Wish) {
-  editingWish.value = wish
-  wishForm.value = {
-    title: wish.title,
-    category: wish.category || null,
-    description: wish.description || '',
-    quantity: wish.quantity ?? null,
-    unit: wish.unit || '',
-    estimated_price: wish.estimated_price ?? null,
-    link: wish.link || '',
-    priority: wish.priority || null,
-    desired_date: wish.desired_date || '',
-    justification: wish.justification || '',
-  }
+  editingWishId.value = wish.id
+  resetForm()
+  wishForm.value.subsidy_id = wish.subsidy_id ?? null
+  wishForm.value.feo_category_id = wish.feo_category_id ?? null
+  wishForm.value.assigned_to = wish.assigned_to ?? null
+  wishForm.value.justification = wish.justification || ''
+  wishForm.value.priority = wish.priority || 'medium'
+  wishForm.value.desired_date = wish.desired_date || ''
   wishDialog.value = true
 }
 
-async function saveWish() {
-  const { valid } = await wishFormRef.value?.validate()
+async function saveWish(andSubmit = false) {
+  const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
   if (!valid) return
-  savingWish.value = true
+
+  saving.value = true
   try {
-    const body = {
-      title: wishForm.value.title,
-      category: wishForm.value.category || undefined,
-      description: wishForm.value.description || undefined,
-      quantity: wishForm.value.quantity ?? undefined,
-      unit: wishForm.value.unit || undefined,
-      estimated_price: wishForm.value.estimated_price ?? undefined,
-      link: wishForm.value.link || undefined,
-      priority: wishForm.value.priority || undefined,
-      desired_date: wishForm.value.desired_date || undefined,
-      justification: wishForm.value.justification || undefined,
+    const feo = selectedFeo3.value || selectedFeo2.value || selectedFeo1.value
+    const title = wishForm.value.items.map(i => i.item_name).filter(Boolean).join(', ') || 'Новая заявка'
+    const payload = {
+      ...wishForm.value,
+      feo_category_id: feo,
+      title,
     }
-    if (editingWish.value) {
-      await apiFetch(`/wishes/${editingWish.value.id}`, { method: 'PUT', body: JSON.stringify(body) })
+
+    if (editingWishId.value) {
+      await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
       showSnack('Заявка обновлена')
     } else {
-      await apiFetch('/wishes', { method: 'POST', body: JSON.stringify(body) })
-      showSnack('Заявка создана')
+      const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
+      if (andSubmit && created?.id) {
+        await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
+        showSnack('Заявка отправлена на согласование')
+      } else {
+        showSnack('Черновик сохранён')
+      }
     }
+
     wishDialog.value = false
     await loadWishes()
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при сохранении', 'error')
   } finally {
-    savingWish.value = false
+    saving.value = false
   }
 }
 
@@ -747,7 +931,7 @@ async function submitWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}/submit`, { method: 'POST' })
     showSnack('Заявка отправлена')
     await loadWishes()
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при отправке', 'error')
   } finally {
     submittingId.value = null
@@ -760,7 +944,7 @@ async function deleteWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}`, { method: 'DELETE' })
     showSnack('Заявка удалена')
     await loadWishes()
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при удалении', 'error')
   } finally {
     deletingId.value = null
@@ -773,7 +957,7 @@ async function approveWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}/approve`, { method: 'POST' })
     showSnack('Заявка одобрена')
     await loadAllWishes()
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при одобрении', 'error')
   } finally {
     approvingId.value = null
@@ -797,7 +981,7 @@ async function rejectWish() {
     showSnack('Заявка отклонена')
     rejectDialog.value = false
     await loadAllWishes()
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при отклонении', 'error')
   } finally {
     rejectingWish.value = false
@@ -807,12 +991,11 @@ async function rejectWish() {
 function openConvertDialog(wish: Wish) {
   convertingWish.value = wish
   convertForm.value = {
-    approved_quantity: wish.quantity ?? null,
-    approved_price: wish.estimated_price ?? null,
-    subsidy_id: null,
+    approved_quantity: null,
+    approved_price: wish.total_amount ?? null,
+    subsidy_id: wish.subsidy_id ?? null,
   }
   convertDialog.value = true
-  loadSubsidies()
 }
 
 async function convertWish() {
@@ -831,7 +1014,7 @@ async function convertWish() {
     convertDialog.value = false
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)
-  } catch (e) {
+  } catch {
     showSnack('Ошибка при создании закупки', 'error')
   } finally {
     convertingWishLoading.value = false
@@ -839,6 +1022,11 @@ async function convertWish() {
 }
 
 onMounted(async () => {
+  await Promise.all([
+    apiFetch<Subsidy[]>('/subsidies/').then(r => { subsidies.value = r }).catch(() => {}),
+    apiFetch<FeoCategory[]>('/feo-categories/').then(r => { allFeoCategories.value = r }).catch(() => {}),
+    apiFetch<User[]>('/users/').then(r => { users.value = r }).catch(() => {}),
+  ])
   await loadWishes()
   if (isManagerOrAdmin.value) {
     await loadAllWishes()

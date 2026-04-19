@@ -1,0 +1,1776 @@
+<template>
+  <div class="purchase-items-editor">
+    <!-- Header row -->
+    <div class="d-flex align-center justify-space-between mb-2 flex-wrap ga-2">
+      <span class="text-subtitle-1 font-weight-bold">
+        {{ itemShape === 'purchase' ? 'Позиции закупки' : 'Позиции' }}
+      </span>
+      <div class="d-flex align-center ga-2 flex-wrap">
+        <v-btn v-if="selectedItemIdxs.length > 0 && !props.readonly"
+          variant="tonal" prepend-icon="mdi-delete-sweep-outline" size="small" color="error"
+          @click="removeSelectedItems">
+          Удалить ({{ selectedItemIdxs.length }})
+        </v-btn>
+        <slot name="toolbar-actions" />
+        <v-btn v-if="props.supportsExcelImport && !props.readonly"
+          variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
+          @click="openImportDialog">
+          Импорт из файла
+        </v-btn>
+        <v-btn v-if="props.supportsSmartImport && !props.readonly"
+          variant="outlined" prepend-icon="mdi-brain" size="small" color="indigo"
+          @click="openSmartImportDialog">
+          Умный импорт
+        </v-btn>
+      </div>
+    </div>
+
+    <!-- Purchase shape table -->
+    <template v-if="itemShape === 'purchase'">
+      <div class="overflow-x-auto">
+        <v-table density="compact">
+          <thead>
+            <tr>
+              <th style="width:36px;padding:0 4px;text-align:center">
+                <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
+                  :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
+                  @update:model-value="toggleSelectAll" />
+              </th>
+              <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
+              <th style="min-width:420px">Наименование</th>
+              <th style="min-width:180px">Тип</th>
+              <th style="min-width:140px">Кол-во</th>
+              <th style="min-width:140px">Ед. изм.</th>
+              <th style="min-width:150px">Цена ед., ₽</th>
+              <th style="min-width:150px">Сумма, ₽</th>
+              <th style="min-width:150px">Страна происхождения</th>
+              <th style="width:48px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, idx) in localItems" :key="idx">
+              <td style="width:36px;padding:0 4px;text-align:center">
+                <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+                  @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
+              </td>
+              <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
+              <td style="min-width:420px">
+                <div class="d-flex align-center gap-1">
+                  <v-tooltip v-if="item._photo_url" location="right">
+                    <template #activator="{ props: tip }">
+                      <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                        <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
+                      </v-avatar>
+                    </template>
+                    <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
+                  </v-tooltip>
+                  <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+
+                  <v-tooltip v-if="item.item_name && !item.product_id"
+                    text="Позиция не привязана к каталогу" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
+                    </template>
+                  </v-tooltip>
+
+                  <v-textarea
+                    v-model="item.item_name"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    clearable
+                    readonly
+                    rows="1"
+                    auto-grow
+                    class="my-1"
+                    style="cursor:pointer;min-width:280px"
+                    placeholder="Нажмите для выбора..."
+                    :disabled="props.readonly"
+                    @click="openProductPicker(idx)"
+                    @click:clear.stop="clearItem(idx)"
+                  />
+                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                        color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
+                        @click.stop="openQuickProductEdit(item)" />
+                    </template>
+                  </v-tooltip>
+                </div>
+              </td>
+              <td>
+                <v-select v-model="item.item_type"
+                  :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
+                  item-title="title" item-value="value" density="compact" variant="outlined"
+                  hide-details class="my-1" :disabled="props.readonly" />
+              </td>
+              <td>
+                <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                  @update:model-value="calcItemTotal(idx)" />
+              </td>
+              <td>
+                <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
+                  hide-details class="my-1" :disabled="props.readonly" />
+              </td>
+              <td>
+                <v-text-field v-model.number="item.unit_price" type="number" density="compact"
+                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                  @update:model-value="calcItemTotal(idx)" />
+              </td>
+              <td>
+                <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                  variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
+              </td>
+              <td>
+                <v-text-field v-model="item.country_origin" density="compact"
+                  variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
+              </td>
+              <td>
+                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                  :disabled="props.readonly"
+                  @click="removeItem(idx)" />
+              </td>
+            </tr>
+            <tr v-if="!localItems.length">
+              <td colspan="10" class="text-center text-medium-emphasis py-4">
+                Нет позиций. Нажмите «Добавить позицию».
+              </td>
+            </tr>
+          </tbody>
+          <tfoot v-if="localItems.length">
+            <tr>
+              <td colspan="7" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
+              <td class="py-2 font-weight-bold text-blue-darken-2">
+                {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
+              </td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </v-table>
+      </div>
+    </template>
+
+    <!-- Wish shape table -->
+    <template v-else>
+      <div class="overflow-x-auto">
+        <v-table density="compact">
+          <thead>
+            <tr>
+              <th style="width:36px;padding:0 4px;text-align:center">
+                <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
+                  :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
+                  @update:model-value="toggleSelectAll" />
+              </th>
+              <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
+              <th style="min-width:380px">Наименование</th>
+              <th style="min-width:150px">Тип</th>
+              <th style="min-width:120px">Кол-во</th>
+              <th style="min-width:120px">Ед. изм.</th>
+              <th style="min-width:140px">Цена ед., ₽</th>
+              <th style="min-width:140px">Сумма, ₽</th>
+              <th style="width:48px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, idx) in localItems" :key="idx">
+              <td style="width:36px;padding:0 4px;text-align:center">
+                <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+                  @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
+              </td>
+              <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
+              <td style="min-width:380px">
+                <div class="d-flex align-center gap-1">
+                  <v-tooltip v-if="item._photo_url" location="right">
+                    <template #activator="{ props: tip }">
+                      <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                        <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
+                      </v-avatar>
+                    </template>
+                    <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
+                  </v-tooltip>
+                  <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+
+                  <v-tooltip v-if="item.item_name && !item.product_id"
+                    text="Позиция не привязана к каталогу" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
+                    </template>
+                  </v-tooltip>
+
+                  <v-textarea
+                    v-model="item.item_name"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    clearable
+                    readonly
+                    rows="1"
+                    auto-grow
+                    class="my-1"
+                    style="cursor:pointer;min-width:240px"
+                    placeholder="Нажмите для выбора..."
+                    :disabled="props.readonly"
+                    @click="openProductPicker(idx)"
+                    @click:clear.stop="clearItem(idx)"
+                  />
+                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                        color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
+                        @click.stop="openQuickProductEdit(item)" />
+                    </template>
+                  </v-tooltip>
+                </div>
+              </td>
+              <td>
+                <v-select v-model="item.item_type"
+                  :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
+                  item-title="title" item-value="value" density="compact" variant="outlined"
+                  hide-details class="my-1" :disabled="props.readonly" />
+              </td>
+              <td>
+                <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                  @update:model-value="calcItemTotal(idx)" />
+              </td>
+              <td>
+                <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
+                  hide-details class="my-1" :disabled="props.readonly" />
+              </td>
+              <td>
+                <v-text-field v-model.number="item.unit_price" type="number" density="compact"
+                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                  @update:model-value="calcItemTotal(idx)" />
+              </td>
+              <td>
+                <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                  variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
+              </td>
+              <td>
+                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                  :disabled="props.readonly"
+                  @click="removeItem(idx)" />
+              </td>
+            </tr>
+            <tr v-if="!localItems.length">
+              <td colspan="9" class="text-center text-medium-emphasis py-4">
+                Нет позиций. Нажмите «Добавить позицию».
+              </td>
+            </tr>
+          </tbody>
+          <tfoot v-if="localItems.length">
+            <tr>
+              <td colspan="6" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
+              <td class="py-2 font-weight-bold text-blue-darken-2">
+                {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
+              </td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </v-table>
+      </div>
+    </template>
+
+    <!-- Bottom action buttons -->
+    <div v-if="!props.readonly" class="d-flex gap-2 mt-3 flex-wrap">
+      <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem">
+        Добавить позицию
+      </v-btn>
+      <v-btn v-if="props.supportsFullProductDialog"
+        variant="outlined" prepend-icon="mdi-package-variant-plus" size="small" color="primary"
+        @click="openFullProduct(-1)">
+        Добавить товар в каталог
+      </v-btn>
+      <v-btn v-if="props.supportsExcelImport"
+        variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
+        @click="openImportDialog">
+        Импорт из файла
+      </v-btn>
+    </div>
+
+    <!-- ===== Product picker dialog ===== -->
+    <v-dialog v-model="productPickerDialog" max-width="720" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center justify-space-between">
+          <span>Выбрать товар из каталога</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="productPickerDialog = false" />
+        </v-card-title>
+        <v-card-text class="px-4 pb-2">
+          <v-text-field
+            v-model="productPickerSearch"
+            prepend-inner-icon="mdi-magnify"
+            label="Поиск по наименованию / описанию / типу"
+            variant="outlined" density="compact" clearable hide-details autofocus
+            class="mb-3"
+          />
+          <div v-if="!productPickerResults.length" class="text-center text-medium-emphasis py-8">
+            <v-icon icon="mdi-package-variant-closed" size="40" class="mb-2" />
+            <div>Ничего не найдено</div>
+            <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
+              @click="createProductFromPicker">
+              Добавить «{{ productPickerSearch }}» в каталог
+            </v-btn>
+          </div>
+          <v-table v-else density="compact" hover>
+            <thead>
+              <tr>
+                <th style="width:48px"></th>
+                <th>Наименование</th>
+                <th style="width:110px">Тип</th>
+                <th style="width:130px;text-align:right">Цена, ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in productPickerResults" :key="p.id"
+                style="cursor:pointer" @click="selectFromPicker(p)">
+                <td>
+                  <v-avatar size="36" rounded="sm" class="my-1" style="overflow:hidden">
+                    <img v-if="p.photo_url || p.photo_link" :src="(p.photo_url || p.photo_link)!" style="width:36px;height:36px;object-fit:cover;display:block" />
+                    <v-icon v-else icon="mdi-package-variant" color="grey" size="20" />
+                  </v-avatar>
+                </td>
+                <td>
+                  <div class="font-weight-medium">{{ p.name }}</div>
+                  <div v-if="p.description" class="text-caption text-medium-emphasis"
+                    style="max-width:340px;white-space:normal;line-height:1.3">
+                    {{ p.description.slice(0, 90) }}{{ p.description.length > 90 ? '…' : '' }}
+                  </div>
+                </td>
+                <td>
+                  <v-chip v-if="p.product_type" size="x-small" variant="tonal">{{ p.product_type }}</v-chip>
+                </td>
+                <td style="text-align:right" class="font-weight-medium text-blue-darken-2">
+                  {{ p.price ? Number(p.price).toLocaleString('ru-RU') + ' ₽' : '—' }}
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-3">
+          <v-btn v-if="props.supportsFullProductDialog"
+            variant="tonal" color="teal" size="small" prepend-icon="mdi-plus" @click="createProductFromPicker">
+            Новый товар/услуга
+          </v-btn>
+          <span class="text-caption text-medium-emphasis ml-2">{{ productPickerResults.length }} позиций</span>
+          <v-spacer />
+          <v-btn variant="text" @click="productPickerDialog = false">Отмена</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ===== Full product card dialog ===== -->
+    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Добавить товар / услугу в каталог</v-card-title>
+        <v-card-text class="px-6">
+          <v-row dense>
+            <v-col cols="12">
+              <v-combobox
+                v-model="fullProductForm.name"
+                v-model:search="fullProductNameSearch"
+                :items="fullProductNameSuggestions"
+                no-filter
+                label="Наименование *"
+                variant="outlined" density="compact"
+                autofocus
+                :rules="[(v: string) => !!v || 'Обязательное поле']"
+                :hint="isFullProductDuplicate ? '⚠ Товар с таким названием уже есть в каталоге' : ''"
+                :persistent-hint="isFullProductDuplicate"
+              >
+                <template #item="{ item: listItem, props: itemProps }">
+                  <v-list-item v-bind="itemProps" :title="listItem.raw">
+                    <template #append>
+                      <v-chip size="x-small" color="warning" variant="tonal">уже есть</v-chip>
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-combobox>
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="fullProductForm.item_kind"
+                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
+                label="Товар / Услуга" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-combobox v-model="fullProductForm.product_type"
+                :items="fullProductTypeOptions"
+                label="Тип товара" variant="outlined" density="compact" clearable
+                hint="Напр.: Ноутбук, Тренажёр" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-combobox v-model="fullProductForm.category"
+                :items="fullProductCategoryOptions"
+                label="Категория" variant="outlined" density="compact" clearable
+                hint="Выберите или введите новую" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field v-model.number="fullProductForm.price" label="Цена за ед., ₽" type="number"
+                variant="outlined" density="compact"
+                :readonly="fullAvgPrice !== null"
+                :hint="fullAvgPrice !== null ? 'Среднее из ссылок — ' + fullAvgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки'"
+                persistent-hint />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-switch v-model="fullProductForm.is_active" label="Активен" color="success" density="compact" hide-details class="mt-1" />
+            </v-col>
+            <v-col cols="12">
+              <v-textarea v-model="fullProductForm.description" label="Описание" variant="outlined"
+                density="compact" rows="2" auto-grow />
+            </v-col>
+            <v-col v-if="props.supportsPhotoUpload" cols="12">
+              <div class="text-subtitle-2 mb-2">Фото товара</div>
+              <div v-if="fullProductPhotoPreview" class="mb-3">
+                <img :src="fullProductPhotoPreview" style="max-width:100%;max-height:140px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5" />
+              </div>
+              <v-file-input
+                v-model="fullProductPhotoFileList"
+                label="Загрузить фото с компьютера"
+                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                variant="outlined" density="compact" prepend-icon="mdi-camera" show-size clearable
+                @update:model-value="onFullPhotoFileChange"
+              />
+              <v-text-field v-model="fullProductForm.photo_link" label="Или ссылка на фото" variant="outlined"
+                density="compact" prepend-inner-icon="mdi-image-outline" class="mt-2"
+                :disabled="!!fullProductPhotoFile" />
+            </v-col>
+            <v-col cols="12">
+              <div class="text-subtitle-2 mb-2">
+                Ссылки для сравнения цен
+                <span v-if="fullAvgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
+                  ср. {{ fullAvgPrice.toLocaleString('ru-RU') }} ₽
+                </span>
+              </div>
+              <div v-for="(link, i) in fullProductForm.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
+                <v-text-field v-model="link.url" :label="'Ссылка ' + (i + 1)" variant="outlined" density="compact"
+                  hide-details prepend-inner-icon="mdi-link" class="flex-grow-1" />
+                <v-text-field v-model.number="link.price" label="Цена, ₽" type="number"
+                  variant="outlined" density="compact" hide-details style="max-width:140px" />
+                <v-btn v-if="link.url" icon="mdi-open-in-new" variant="text" size="x-small" color="primary"
+                  :href="link.url" target="_blank" />
+                <v-btn icon="mdi-minus-circle" variant="text" size="x-small" color="error"
+                  @click="fullProductForm.priceLinks.splice(i, 1)" />
+              </div>
+              <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary"
+                @click="fullProductForm.priceLinks.push({ url: '', price: null })">
+                Добавить ссылку
+              </v-btn>
+            </v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="fullProductSaving" @click="saveFullProduct">Добавить в каталог</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ===== Items import dialog (Excel 2-step + Smart import) ===== -->
+    <v-dialog v-model="itemsImportDialog" max-width="1400" scrollable>
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon :icon="isSmartMode ? 'mdi-brain' : 'mdi-package-variant-plus'" class="mr-2" />
+          {{ isSmartMode ? 'Умный импорт позиций' : 'Импорт товаров из файла' }}
+          <v-spacer />
+          <v-chip v-if="importStep > 1 && !isSmartMode" size="small" color="primary" variant="tonal" class="ml-2">
+            Шаг {{ importStep }} / 3
+          </v-chip>
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-4">
+          <!-- Excel import: Step 1 - Upload file -->
+          <template v-if="!isSmartMode && importStep === 1">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
+                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
+                <strong>Заголовки столбцов:</strong> определяются автоматически по ключевым словам
+                (наименование, количество, цена, сумма и т.д.). Могут быть в любой строке.<br>
+                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и укажете соответствие полей.
+              </div>
+            </v-alert>
+            <FileDropZone v-model="itemsImportFile"
+              accept=".xlsx,.xls,.pdf,.docx,.doc"
+              hint="Excel, PDF, Word — перетащите или нажмите"
+              class="mb-2" />
+          </template>
+
+          <!-- Excel import: Step 2 - Column mapping -->
+          <template v-if="!isSmartMode && importStep === 2 && importPreviewData">
+            <v-alert v-if="currentSheetData" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
+              <strong>Лист:</strong> {{ currentSheetData.name }} ({{ currentSheetData.total_rows }} строк данных)
+            </v-alert>
+            <v-select
+              v-if="importPreviewData.sheets.length > 1"
+              v-model="importSelectedSheet"
+              :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
+              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
+            />
+
+            <!-- COLUMN TABLE: headers on top, cards below -->
+            <div class="imap-grid">
+              <div v-for="target in TARGET_FIELDS" :key="target.value"
+                class="imap-col"
+                :class="{
+                  'imap-col--over': dragOverTarget === target.value,
+                  'imap-col--filled': isTargetFilled(target.value),
+                  'imap-col--required': target.required && !isTargetFilled(target.value),
+                }"
+                @dragover.prevent="dragOverTarget = target.value"
+                @dragleave="dragOverTarget = null"
+                @drop.prevent="onDropToTarget(target.value, $event)">
+                <div class="imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
+                <div class="imap-col-body">
+                  <div v-if="isTargetFilled(target.value)"
+                    class="imap-card"
+                    draggable="true"
+                    @dragstart="onDragStart(dragMapping[target.value] as number, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ getColumnLabel(dragMapping[target.value] as number) }}</span>
+                      <button class="imap-card-x" @click.stop="unmapTarget(target.value)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ getSamples(dragMapping[target.value] as number).join(', ') || '—' }}</div>
+                  </div>
+                  <div v-else class="imap-col-empty">—</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- NOT RESOLVED section -->
+            <div class="imap-unresolved mt-3"
+              :class="{ 'imap-unresolved--over': dragOverTarget === '_unresolved' }"
+              @dragover.prevent="dragOverTarget = '_unresolved'"
+              @dragleave="dragOverTarget = null"
+              @drop.prevent="onDropToUnresolved($event)">
+              <span class="imap-unresolved-label">Не определилось</span>
+              <div class="d-flex gap-2 flex-wrap mt-1">
+                <template v-for="(_, colIdx) in currentSheetHeaders" :key="colIdx">
+                  <div v-if="!isMapped(colIdx) && !isIgnored(colIdx)"
+                    class="imap-card imap-card--free"
+                    draggable="true"
+                    @dragstart="onDragStart(colIdx, $event)">
+                    <div class="imap-card-row">
+                      <span class="imap-card-name">{{ getColumnLabel(colIdx) }}</span>
+                      <button class="imap-card-x imap-card-x--grey" title="Убрать" @click.stop="ignoreColumn(colIdx)">×</button>
+                    </div>
+                    <div class="imap-card-samples">{{ getSamples(colIdx).join(', ') || '—' }}</div>
+                  </div>
+                </template>
+                <span v-if="unmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
+              </div>
+            </div>
+
+            <v-alert v-if="!mappingHasName" type="warning" density="compact" icon="mdi-alert" class="mt-3">
+              Укажите столбец «Наименование»
+            </v-alert>
+          </template>
+
+          <!-- Excel import: Step 3 - Result -->
+          <template v-if="!isSmartMode && importStep === 3">
+            <v-alert v-if="itemsImportResult" type="success" density="compact" class="mb-2">
+              <div>Добавлено позиций: <strong>{{ (itemsImportResult as any).added ?? (itemsImportResult as any).imported }}</strong></div>
+              <div v-if="(itemsImportResult as any).matched_catalog">Из каталога: {{ (itemsImportResult as any).matched_catalog }}</div>
+              <div v-if="(itemsImportResult as any).new_in_catalog">Новых в каталоге: {{ (itemsImportResult as any).new_in_catalog }}</div>
+            </v-alert>
+            <v-alert v-if="importError" type="error" density="compact">
+              {{ importError }}
+            </v-alert>
+          </template>
+
+          <!-- Smart import section -->
+          <template v-if="isSmartMode">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
+              <div class="text-body-2">
+                <strong>Умный импорт</strong> — автоматически распознаёт наименования, количество и цены из файла.<br>
+                Поддерживаются Excel, Word, PDF. Распознавание производится без LLM, на основе эвристик.
+              </div>
+            </v-alert>
+            <div class="mb-4">
+              <v-file-input
+                v-model="smartImportFileList"
+                label="Выберите файл для умного импорта"
+                accept=".xlsx,.xls,.pdf,.docx,.doc"
+                variant="outlined" density="compact" prepend-icon="mdi-file-document-outline"
+                show-size clearable
+                @update:model-value="onSmartFileChange"
+              />
+            </div>
+
+            <!-- Preview table -->
+            <template v-if="smartImportPreview && smartImportPreview.length">
+              <div class="text-subtitle-2 mb-2">
+                Распознано позиций: <strong>{{ smartImportPreview.length }}</strong>
+                <span v-if="smartImportColumns?.length" class="ml-2 text-caption text-medium-emphasis">
+                  (столбцы: {{ smartImportColumns.join(', ') }})
+                </span>
+              </div>
+
+              <!-- Column mapping panel toggle -->
+              <v-btn v-if="!columnMappingApplied" variant="tonal" size="small" class="mb-3"
+                prepend-icon="mdi-tune" @click="showMappingPanel = !showMappingPanel">
+                {{ showMappingPanel ? 'Скрыть' : 'Настроить' }} маппинг столбцов
+              </v-btn>
+              <v-chip v-if="columnMappingApplied" color="success" variant="tonal" size="small" class="mb-3">
+                Маппинг применён
+              </v-chip>
+
+              <div v-if="showMappingPanel" class="mb-3 pa-3" style="border:1px solid #e0e0e0;border-radius:8px">
+                <div class="text-caption font-weight-bold mb-2">Сопоставление столбцов файла → полей CRM</div>
+                <v-row dense>
+                  <v-col v-for="(label, field) in CRM_MAPPING_FIELDS" :key="field" cols="12" md="4">
+                    <v-select
+                      v-model="columnFieldMapping[field]"
+                      :items="crmFieldSelectItems"
+                      :label="label"
+                      item-title="title" item-value="value"
+                      variant="outlined" density="compact" hide-details class="mb-2"
+                    />
+                  </v-col>
+                </v-row>
+                <v-btn color="primary" size="small" variant="flat" @click="applyColumnMapping">
+                  Применить маппинг
+                </v-btn>
+              </div>
+
+              <v-table density="compact" class="mb-3">
+                <thead>
+                  <tr>
+                    <th>Наименование</th>
+                    <th>Тип</th>
+                    <th>Кол-во</th>
+                    <th>Ед.</th>
+                    <th>Цена ед.</th>
+                    <th>Сумма</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, ri) in smartImportPreview.slice(0, 10)" :key="ri">
+                    <td>{{ row.item_name || '—' }}</td>
+                    <td>{{ row.item_type || '—' }}</td>
+                    <td>{{ row.quantity ?? '—' }}</td>
+                    <td>{{ row.unit || '—' }}</td>
+                    <td>{{ row.unit_price ?? '—' }}</td>
+                    <td>{{ row.total_price ?? '—' }}</td>
+                  </tr>
+                </tbody>
+              </v-table>
+              <div v-if="smartImportPreview.length > 10" class="text-caption text-medium-emphasis mb-2">
+                + ещё {{ smartImportPreview.length - 10 }} строк
+              </div>
+            </template>
+
+            <v-alert v-if="smartImportResult" type="success" density="compact" class="mb-2">
+              Добавлено позиций: <strong>{{ smartImportResult.added }}</strong>
+            </v-alert>
+          </template>
+
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-btn v-if="!isSmartMode && importStep > 1 && importStep < 3" variant="text" @click="importStep--">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
+          </v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="closeImportDialog">Закрыть</v-btn>
+
+          <!-- Excel import buttons -->
+          <template v-if="!isSmartMode">
+            <v-btn v-if="importStep === 1" color="primary" variant="flat"
+              :loading="itemsImportLoading"
+              :disabled="!itemsImportFile"
+              @click="doImportPreview">
+              Далее
+            </v-btn>
+            <v-btn v-if="importStep === 2" color="success" variant="flat"
+              :loading="itemsImportLoading"
+              :disabled="!mappingHasName"
+              @click="doMappedImport">
+              Импортировать
+            </v-btn>
+            <v-btn v-if="importStep === 3" color="primary" variant="flat"
+              @click="closeImportDialog">
+              Готово
+            </v-btn>
+          </template>
+
+          <!-- Smart import buttons -->
+          <template v-if="isSmartMode">
+            <v-btn v-if="!smartImportPreview" color="primary" variant="flat"
+              :loading="smartImportLoading"
+              :disabled="!smartImportFile"
+              @click="doSmartPreview">
+              Распознать
+            </v-btn>
+            <v-btn v-if="smartImportPreview && smartImportPreview.length && !smartImportResult"
+              color="success" variant="flat"
+              :loading="smartImportLoading"
+              @click="doSmartImport">
+              Добавить позиции
+            </v-btn>
+          </template>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ===== Snackbar ===== -->
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
+      {{ snack.text }}
+      <template #actions>
+        <v-btn variant="text" size="small" @click="snack.show = false">OK</v-btn>
+      </template>
+    </v-snackbar>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, reactive, onMounted } from 'vue'
+import { apiFetch } from '@/api'
+import FileDropZone from '@/components/FileDropZone.vue'
+
+// ── Interfaces ───────────────────────────────────────────────────────────────
+
+interface EditorItem {
+  product_id: number | null
+  item_name: string
+  item_type: string
+  quantity: number | null
+  unit: string
+  unit_price: number | null
+  total_price: number | null
+  country_origin: string
+  // Purchase-only (undefined when itemShape === 'wish'):
+  final_unit_price?: number | null
+  final_total?: number | null
+  feo_planned_item_id?: number | null
+  // UI-local state (stripped by parent before save):
+  _selectedProduct?: Product | null
+  _photo_url?: string
+  _description?: string
+  _description_44fz?: string
+}
+
+interface Product {
+  id: number
+  name: string
+  description?: string
+  product_type?: string
+  category?: string
+  price?: number | null
+  avg_price?: number | null
+  photo_url?: string | null
+  photo_link?: string | null
+  contract_price?: number | null
+  description_44fz?: string
+}
+
+interface PriceLink {
+  url: string
+  price: number | null
+}
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
+const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
+
+// Export COUNTRIES so template can use it if needed (not currently rendered but kept for completeness)
+void COUNTRIES
+
+// ── Props & Emits ────────────────────────────────────────────────────────────
+
+const props = withDefaults(defineProps<{
+  modelValue: EditorItem[]
+  itemShape: 'purchase' | 'wish'
+  purchaseId?: number | null
+  allowedItemTypes?: string[]
+  defaultItemType?: string
+  defaultUnit?: string
+  defaultCountry?: string
+  supportsExcelImport?: boolean
+  supportsSmartImport?: boolean
+  supportsFullProductDialog?: boolean
+  supportsPhotoUpload?: boolean
+  readonly?: boolean
+}>(), {
+  allowedItemTypes: () => ['товар', 'услуга', 'работа'],
+  defaultItemType: 'товар',
+  defaultUnit: 'шт.',
+  defaultCountry: 'Россия',
+  supportsExcelImport: true,
+  supportsSmartImport: true,
+  supportsFullProductDialog: true,
+  supportsPhotoUpload: true,
+  readonly: false,
+  purchaseId: null,
+})
+
+const emit = defineEmits<{
+  'update:modelValue': [items: EditorItem[]]
+  'item-added': [item: EditorItem]
+  'item-removed': [idx: number]
+  'product-created': [product: Product]
+  'items-changed': []
+  'reload-requested': []
+}>()
+
+// ── Local state ──────────────────────────────────────────────────────────────
+
+const localItems = ref<EditorItem[]>([...props.modelValue])
+
+watch(
+  () => props.modelValue,
+  (v) => { localItems.value = [...v] },
+  { deep: true }
+)
+
+function emitUpdate() {
+  emit('update:modelValue', [...localItems.value])
+  emit('items-changed')
+}
+
+// Snackbar
+const snack = reactive({ show: false, text: '', color: 'success' })
+function showSnack(text: string, color = 'success') {
+  snack.text = text; snack.color = color; snack.show = true
+}
+
+// Products catalogue
+const products = ref<Product[]>([])
+
+onMounted(async () => {
+  try {
+    products.value = await apiFetch<Product[]>('/products/')
+  } catch (e) {
+    console.warn('[PurchaseItemsEditor] Could not load products:', e)
+  }
+})
+
+// ── Totals ───────────────────────────────────────────────────────────────────
+
+const internalTotalNmck = computed(() =>
+  localItems.value.reduce((s, i) => s + (i.total_price || 0), 0)
+)
+
+// ── Items CRUD ────────────────────────────────────────────────────────────────
+
+function addItem() {
+  const newItem: EditorItem = {
+    product_id: null,
+    item_name: '',
+    item_type: props.defaultItemType,
+    quantity: null,
+    unit: props.defaultUnit,
+    unit_price: null,
+    total_price: null,
+    country_origin: props.defaultCountry,
+    _selectedProduct: null,
+    _photo_url: undefined,
+    _description: undefined,
+    _description_44fz: undefined,
+  }
+  if (props.itemShape === 'purchase') {
+    newItem.final_unit_price = null
+    newItem.final_total = null
+    newItem.feo_planned_item_id = null
+  }
+  localItems.value.push(newItem)
+  emit('item-added', newItem)
+  emitUpdate()
+}
+
+function removeItem(idx: number) {
+  localItems.value.splice(idx, 1)
+  selectedItemIdxs.value = selectedItemIdxs.value
+    .filter(i => i !== idx)
+    .map(i => (i > idx ? i - 1 : i))
+  emit('item-removed', idx)
+  emitUpdate()
+}
+
+function clearItem(idx: number) {
+  localItems.value[idx].item_name = ''
+  localItems.value[idx].product_id = null
+  localItems.value[idx]._selectedProduct = null
+  localItems.value[idx]._photo_url = undefined
+  localItems.value[idx]._description = undefined
+  localItems.value[idx]._description_44fz = undefined
+  emitUpdate()
+}
+
+function calcItemTotal(idx: number) {
+  const item = localItems.value[idx]
+  if (item.quantity != null && item.unit_price != null) {
+    item.total_price = Math.round(item.quantity * item.unit_price * 100) / 100
+  } else {
+    item.total_price = null
+  }
+  emitUpdate()
+}
+
+// ── Selection ────────────────────────────────────────────────────────────────
+
+const selectedItemIdxs = ref<number[]>([])
+const allItemsSelected = computed(() =>
+  localItems.value.length > 0 && selectedItemIdxs.value.length === localItems.value.length
+)
+
+function toggleSelectAll(val: boolean | null) {
+  selectedItemIdxs.value = val ? localItems.value.map((_, i) => i) : []
+}
+
+function toggleItemSelect(idx: number, val: boolean | null) {
+  if (val) {
+    if (!selectedItemIdxs.value.includes(idx)) selectedItemIdxs.value.push(idx)
+  } else {
+    selectedItemIdxs.value = selectedItemIdxs.value.filter(i => i !== idx)
+  }
+}
+
+function removeSelectedItems() {
+  const toRemove = new Set(selectedItemIdxs.value)
+  localItems.value = localItems.value.filter((_, i) => !toRemove.has(i))
+  selectedItemIdxs.value = []
+  emitUpdate()
+}
+
+// ── Product selection ────────────────────────────────────────────────────────
+
+const productFilter = (_value: string, query: string, item?: any): boolean => {
+  if (!query.trim()) return true
+  const q = query.toLowerCase().trim()
+  const name = (item?.raw?.name || '').toLowerCase()
+  const desc = (item?.raw?.description || '').toLowerCase()
+  const type = (item?.raw?.product_type || '').toLowerCase()
+  return name.includes(q) || desc.includes(q) || type.includes(q)
+}
+
+// Keep productFilter available but it's not used directly in this component's template
+void productFilter
+
+function productItemsFor(search?: string): Product[] {
+  const q = (search || '').toLowerCase().trim()
+  if (!q) return products.value
+  return products.value.filter(p => {
+    const name = (p.name || '').toLowerCase()
+    const desc = (p.description || '').toLowerCase()
+    const type = (p.product_type || '').toLowerCase()
+    return name.includes(q) || desc.includes(q) || type.includes(q)
+  })
+}
+
+const hasProducts = computed(() => products.value.length > 0)
+void hasProducts
+
+function onItemProductSelect(idx: number, val: any) {
+  const item = localItems.value[idx]
+  if (!val) {
+    item.item_name = ''
+    item.product_id = null
+    item._selectedProduct = null
+    item._photo_url = undefined
+    item._description = undefined
+    item._description_44fz = undefined
+  } else if (typeof val === 'string') {
+    item.item_name = val
+    item.product_id = null
+    item._selectedProduct = val
+    item._photo_url = undefined
+    item._description = undefined
+    item._description_44fz = undefined
+  } else {
+    item.item_name = val.name || ''
+    item.product_id = val.id
+    item._selectedProduct = val
+    item._photo_url = val.photo_url || val.photo_link || undefined
+    item._description = val.description || undefined
+    item._description_44fz = val.description_44fz || undefined
+    if (val.product_type && !item.item_type) item.item_type = val.product_type
+    if (!item.unit_price) {
+      const bestPrice = val.contract_price ?? val.price
+      if (bestPrice) {
+        item.unit_price = Number(bestPrice)
+        calcItemTotal(idx)
+      }
+    }
+  }
+  emitUpdate()
+}
+
+// ── Product picker dialog ────────────────────────────────────────────────────
+
+const productPickerDialog = ref(false)
+const productPickerSearch = ref('')
+const productPickerIdx = ref(-1)
+
+const productPickerResults = computed(() => productItemsFor(productPickerSearch.value))
+
+function openProductPicker(idx: number) {
+  productPickerIdx.value = idx
+  productPickerSearch.value = localItems.value[idx]?.item_name || ''
+  productPickerDialog.value = true
+}
+
+function selectFromPicker(prod: Product) {
+  productPickerDialog.value = false
+  onItemProductSelect(productPickerIdx.value, prod)
+}
+
+function createProductFromPicker() {
+  productPickerDialog.value = false
+  openFullProduct(productPickerIdx.value, productPickerSearch.value)
+}
+
+// ── Full product dialog ───────────────────────────────────────────────────────
+
+const fullProductDialog = ref(false)
+const fullProductSaving = ref(false)
+const fullProductIdx = ref(-1)
+const fullProductPhotoFile = ref<File | null>(null)
+const fullProductPhotoFileList = ref<File[]>([])
+const fullProductPhotoPreview = ref<string | null>(null)
+const fullProductForm = reactive({
+  name: '' as string,
+  category: '',
+  product_type: '',
+  item_kind: 'товар' as string,
+  price: null as number | null,
+  description: '',
+  photo_url: '',
+  photo_link: '',
+  is_active: true,
+  priceLinks: [] as PriceLink[],
+})
+
+const fullProductNameSearch = ref('')
+const fullProductNameSuggestions = computed(() => {
+  const q = (fullProductNameSearch.value || '').toLowerCase().trim()
+  if (q.length < 2) return []
+  return products.value
+    .filter(p => p.name.toLowerCase().includes(q))
+    .map(p => p.name)
+    .slice(0, 15)
+})
+
+const isFullProductDuplicate = computed(() => {
+  const q = (typeof fullProductForm.name === 'string' ? fullProductForm.name : '').toLowerCase().trim()
+  if (!q) return false
+  return products.value.some(p => p.name.toLowerCase().trim() === q)
+})
+
+const fullProductTypeOptions = computed(() => {
+  const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
+  return [...new Set(types)].sort()
+})
+
+const fullProductCategoryOptions = computed(() => {
+  const cats = products.value.map(p => p.category).filter(Boolean) as string[]
+  return [...new Set(cats)].sort()
+})
+
+const fullAvgPrice = computed<number | null>(() => {
+  const prices = fullProductForm.priceLinks
+    .map(l => l.price)
+    .filter((p): p is number => p !== null && !isNaN(Number(p)) && Number(p) > 0)
+  if (!prices.length) return null
+  return Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
+})
+
+watch(fullAvgPrice, v => { if (v !== null) fullProductForm.price = v })
+
+function onFullPhotoFileChange(files: File[] | File | null) {
+  const fileArr = Array.isArray(files) ? files : (files ? [files] : [])
+  const f = fileArr[0] ?? null
+  fullProductPhotoFile.value = f
+  fullProductPhotoPreview.value = f ? URL.createObjectURL(f) : null
+}
+
+function openFullProduct(idx: number, prefill?: string) {
+  fullProductIdx.value = idx
+  Object.assign(fullProductForm, {
+    name: prefill || '',
+    category: '',
+    product_type: '',
+    item_kind: 'товар',
+    price: null,
+    description: '',
+    photo_url: '',
+    photo_link: '',
+    is_active: true,
+    priceLinks: [],
+  })
+  fullProductPhotoFile.value = null
+  fullProductPhotoFileList.value = []
+  fullProductPhotoPreview.value = null
+  fullProductDialog.value = true
+}
+
+function openQuickProductEdit(item: EditorItem) {
+  const idx = localItems.value.indexOf(item)
+  openFullProduct(idx, item.item_name)
+}
+
+async function saveFullProduct() {
+  const nameStr = typeof fullProductForm.name === 'string' ? fullProductForm.name : (fullProductForm.name as any)?.name || ''
+  if (!nameStr.trim()) return
+  fullProductSaving.value = true
+  try {
+    const body: any = {
+      name: nameStr,
+      category: fullProductForm.category || null,
+      product_type: fullProductForm.product_type || null,
+      item_kind: fullProductForm.item_kind || 'товар',
+      price: fullAvgPrice.value ?? fullProductForm.price ?? null,
+      description: fullProductForm.description || null,
+      photo_link: fullProductForm.photo_link || null,
+      is_active: fullProductForm.is_active,
+      price_links: fullProductForm.priceLinks.filter(l => l.url),
+    }
+    const created = await apiFetch<Product>('/products/', { method: 'POST', body })
+    // Upload photo if selected
+    if (fullProductPhotoFile.value) {
+      const fd = new FormData()
+      fd.append('file', fullProductPhotoFile.value)
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/products/${created.id}/photo`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      })
+      if (res.ok) Object.assign(created, await res.json())
+    }
+    products.value = await apiFetch<Product[]>('/products/')
+    if (fullProductIdx.value >= 0) {
+      onItemProductSelect(fullProductIdx.value, created)
+    }
+    emit('product-created', created)
+    showSnack(`Товар "${created.name}" добавлен в каталог`)
+    fullProductDialog.value = false
+    fullProductPhotoFile.value = null
+    fullProductPhotoFileList.value = []
+    fullProductPhotoPreview.value = null
+  } catch {
+    showSnack('Ошибка при добавлении товара', 'error')
+  } finally {
+    fullProductSaving.value = false
+  }
+}
+
+// ── Excel import ──────────────────────────────────────────────────────────────
+
+const itemsImportDialog = ref(false)
+const isSmartMode = ref(false)
+const itemsImportFile = ref<File | null>(null)
+const itemsImportLoading = ref(false)
+const itemsImportResult = ref<Record<string, any> | null>(null)
+const importStep = ref(1)
+const importPreviewData = ref<any>(null)
+const importSelectedSheet = ref('')
+const dragMapping = ref<Record<string, number | null>>({})
+const ignoredColumns = ref<number[]>([])
+const dragOverTarget = ref<string | null>(null)
+const importError = ref('')
+
+const TARGET_FIELDS = [
+  { value: 'item_name',   title: 'Наименование', required: true },
+  { value: 'unit_price',  title: 'Цена за ед.',  required: false },
+  { value: 'quantity',    title: 'Количество',    required: false },
+  { value: 'unit',        title: 'Ед. изм.',      required: false },
+  { value: 'total_price', title: 'Сумма',         required: false },
+  { value: 'description', title: 'Описание',      required: false },
+]
+
+const currentSheetData = computed(() => {
+  if (!importPreviewData.value) return null
+  const sheets = importPreviewData.value.sheets
+  return sheets.find((s: any) => s.name === importSelectedSheet.value) || sheets[0]
+})
+
+const currentSheetHeaders = computed(() => currentSheetData.value?.headers || [])
+
+const mappingHasName = computed(() =>
+  dragMapping.value['item_name'] !== null && dragMapping.value['item_name'] !== undefined
+)
+
+function isMapped(idx: number): boolean {
+  return Object.values(dragMapping.value).includes(idx)
+}
+
+function isIgnored(idx: number): boolean {
+  return ignoredColumns.value.includes(idx)
+}
+
+function isTargetFilled(field: string): boolean {
+  return dragMapping.value[field] !== null && dragMapping.value[field] !== undefined
+}
+
+function getColumnLabel(idx: number): string {
+  return (currentSheetHeaders.value[idx] as string) || `Столбец ${idx + 1}`
+}
+
+const unmappedCount = computed(() =>
+  currentSheetHeaders.value.filter((_: any, i: number) => !isMapped(i) && !isIgnored(i)).length
+)
+
+function getSamples(idx: number): string[] {
+  const sample = currentSheetData.value?.sample || []
+  return (sample as any[][]).slice(0, 1)
+    .map((row: any[]) => String(row[idx] ?? '').trim())
+    .filter(Boolean)
+}
+
+function onDragStart(idx: number, e: DragEvent) {
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(idx))
+}
+
+function onDropToTarget(field: string, e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  dragMapping.value[field] = idx
+  dragOverTarget.value = null
+}
+
+function onDropToUnresolved(e: DragEvent) {
+  const idx = parseInt(e.dataTransfer!.getData('text/plain'))
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  dragOverTarget.value = null
+}
+
+function unmapTarget(field: string) {
+  dragMapping.value[field] = null
+}
+
+function ignoreColumn(idx: number) {
+  for (const f of Object.keys(dragMapping.value)) {
+    if (dragMapping.value[f] === idx) dragMapping.value[f] = null
+  }
+  if (!ignoredColumns.value.includes(idx)) ignoredColumns.value.push(idx)
+}
+
+function autoDetectMapping(headers: string[]): Record<string, number | null> {
+  const mapping: Record<string, number | null> = {}
+  TARGET_FIELDS.forEach(f => { mapping[f.value] = null })
+  const keywords: Record<string, string[]> = {
+    item_name:   ['наименован', 'назван', 'товар', 'предмет', 'name', 'продукц'],
+    description: ['описан', 'характерист', 'тз', 'спецификац', 'specification'],
+    quantity:    ['кол-во', 'количеств', 'qty', 'кол.'],
+    unit_price:  ['цена', 'price', 'за единиц', 'за ед'],
+    total_price: ['сумм', 'итого', 'total', 'стоимость'],
+    unit:        ['ед.', 'единиц', 'изм', 'unit'],
+  }
+  const used = new Set<number>()
+  for (const [field, kws] of Object.entries(keywords)) {
+    for (let i = 0; i < headers.length; i++) {
+      if (used.has(i)) continue
+      const h = headers[i].toLowerCase()
+      if (kws.some(kw => h.includes(kw))) {
+        mapping[field] = i; used.add(i); break
+      }
+    }
+  }
+  return mapping
+}
+
+watch(importSelectedSheet, (newSheet) => {
+  if (!importPreviewData.value) return
+  const sheet = importPreviewData.value.sheets.find((s: any) => s.name === newSheet)
+  if (sheet) {
+    dragMapping.value = autoDetectMapping(sheet.headers)
+    ignoredColumns.value = []
+  }
+})
+
+function openImportDialog() {
+  isSmartMode.value = false
+  itemsImportDialog.value = true
+}
+
+function openSmartImportDialog() {
+  isSmartMode.value = true
+  smartImportPreview.value = null
+  smartImportResult.value = null
+  smartImportFile.value = null
+  smartImportFileList.value = []
+  itemsImportDialog.value = true
+}
+
+function closeImportDialog() {
+  itemsImportDialog.value = false
+  importStep.value = 1
+  itemsImportFile.value = null
+  importPreviewData.value = null
+  dragMapping.value = {}
+  ignoredColumns.value = []
+  itemsImportResult.value = null
+  importError.value = ''
+  isSmartMode.value = false
+}
+
+async function doImportPreview() {
+  if (!itemsImportFile.value) return
+  itemsImportLoading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', itemsImportFile.value)
+    const resp = await fetch('/api/purchases/items/import-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || `Ошибка ${resp.status}`)
+    }
+    const data = await resp.json()
+    importPreviewData.value = data
+    importSelectedSheet.value = data.sheets[0]?.name || ''
+    dragMapping.value = autoDetectMapping(data.sheets[0]?.headers || [])
+    ignoredColumns.value = []
+    importStep.value = 2
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка чтения файла', 'error')
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
+function buildEditorItemFromRow(row: any[], mapping: Record<string, number | null>): EditorItem {
+  function getVal(field: string): any {
+    const idx = mapping[field]
+    if (idx === null || idx === undefined) return null
+    return row[idx] ?? null
+  }
+  const unitPrice = getVal('unit_price') !== null ? Number(getVal('unit_price')) : null
+  const quantity = getVal('quantity') !== null ? Number(getVal('quantity')) : null
+  const totalPrice = getVal('total_price') !== null
+    ? Number(getVal('total_price'))
+    : (unitPrice !== null && quantity !== null ? Math.round(unitPrice * quantity * 100) / 100 : null)
+
+  const item: EditorItem = {
+    product_id: null,
+    item_name: String(getVal('item_name') ?? '').trim(),
+    item_type: props.defaultItemType,
+    quantity,
+    unit: String(getVal('unit') ?? props.defaultUnit).trim() || props.defaultUnit,
+    unit_price: unitPrice,
+    total_price: totalPrice,
+    country_origin: props.defaultCountry,
+    _selectedProduct: null,
+    _photo_url: undefined,
+    _description: String(getVal('description') ?? '').trim() || undefined,
+    _description_44fz: undefined,
+  }
+  if (props.itemShape === 'purchase') {
+    item.final_unit_price = null
+    item.final_total = null
+    item.feo_planned_item_id = null
+  }
+  return item
+}
+
+async function doMappedImport() {
+  if (!itemsImportFile.value) return
+  itemsImportLoading.value = true
+  itemsImportResult.value = null
+  importError.value = ''
+  try {
+    if (props.purchaseId) {
+      // Purchase context — call pid-bound endpoint
+      const token = localStorage.getItem('auth_token')
+      const fd = new FormData()
+      fd.append('file', itemsImportFile.value)
+      const params = new URLSearchParams()
+      if (importSelectedSheet.value) params.set('sheet_name', importSelectedSheet.value)
+      const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
+      if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
+      const paramMap: Record<string, string> = {
+        item_name: 'col_item_name',
+        description: 'col_description',
+        quantity: 'col_quantity',
+        unit_price: 'col_unit_price',
+        total_price: 'col_total_price',
+        unit: 'col_unit',
+      }
+      for (const [field, colIdx] of Object.entries(dragMapping.value)) {
+        if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
+          params.set(paramMap[field], String(colIdx))
+        }
+      }
+      const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        body: fd,
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '')
+        let detail = `Ошибка ${resp.status}`
+        try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
+        throw new Error(detail)
+      }
+      const data = await resp.json()
+      itemsImportResult.value = data
+      importStep.value = 3
+      if (data.added > 0) {
+        showSnack(`Импортировано ${data.added} позиций`)
+        emit('reload-requested')
+      } else {
+        importError.value = 'Не удалось импортировать ни одной позиции. Проверьте маппинг столбцов.'
+      }
+    } else {
+      // Wish / no-pid context — build rows client-side
+      const sheet = importPreviewData.value?.sheets?.find((s: any) => s.name === importSelectedSheet.value)
+        ?? importPreviewData.value?.sheets?.[0]
+      if (!sheet) { showSnack('Нет данных превью', 'error'); return }
+      const headerOffset = sheet.header_row_offset ?? 0
+      const dataRows = (sheet.sample as any[][]).slice(headerOffset + 1)
+      const newItems: EditorItem[] = dataRows
+        .filter(row => {
+          const nameIdx = dragMapping.value['item_name']
+          return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
+        })
+        .map(row => buildEditorItemFromRow(row, dragMapping.value))
+      localItems.value = [...localItems.value, ...newItems]
+      emitUpdate()
+      itemsImportResult.value = { imported: newItems.length, added: newItems.length }
+      importStep.value = 3
+      showSnack(`Добавлено позиций: ${newItems.length}`)
+    }
+  } catch (e: any) {
+    importError.value = e?.message ?? 'Ошибка импорта'
+    importStep.value = 3
+    showSnack('Ошибка импорта', 'error')
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
+// ── Smart import ──────────────────────────────────────────────────────────────
+
+const smartImportFile = ref<File | null>(null)
+const smartImportFileList = ref<File[]>([])
+const smartImportLoading = ref(false)
+const smartImportPreview = ref<any[] | null>(null)
+const smartImportColumns = ref<string[] | null>(null)
+const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
+
+const CRM_MAPPING_FIELDS: Record<string, string> = {
+  item_name: 'Наименование',
+  quantity: 'Кол-во',
+  unit: 'Ед. изм.',
+  unit_price: 'Цена за ед.',
+  total_price: 'Сумма',
+}
+
+const crmFieldSelectItems = [
+  { title: 'Наименование', value: 'item_name' },
+  { title: 'Кол-во', value: 'quantity' },
+  { title: 'Ед. изм.', value: 'unit' },
+  { title: 'Цена за ед.', value: 'unit_price' },
+  { title: 'Сумма', value: 'total_price' },
+  { title: '— игнорировать', value: '_ignore' },
+]
+
+const showMappingPanel = ref(false)
+const columnFieldMapping = ref<Record<string, string>>({})
+const columnMappingApplied = ref(false)
+
+watch(smartImportPreview, (v) => {
+  if (v) {
+    columnFieldMapping.value = Object.fromEntries(Object.keys(CRM_MAPPING_FIELDS).map(f => [f, f]))
+    columnMappingApplied.value = false
+    showMappingPanel.value = false
+  }
+})
+
+function onSmartFileChange(files: File[] | File | null) {
+  const fileArr = Array.isArray(files) ? files : (files ? [files] : [])
+  smartImportFile.value = fileArr[0] ?? null
+  smartImportPreview.value = null
+  smartImportResult.value = null
+}
+
+function applyColumnMapping() {
+  if (!smartImportPreview.value) return
+  const mapping = columnFieldMapping.value
+  smartImportPreview.value = smartImportPreview.value.map(row => {
+    const newRow: any = { ...row }
+    for (const [field, src] of Object.entries(mapping)) {
+      newRow[field] = src === '_ignore' ? null : (row[src as keyof typeof row] ?? null)
+    }
+    return newRow
+  })
+  columnMappingApplied.value = true
+  showMappingPanel.value = false
+}
+
+async function doSmartPreview() {
+  if (!smartImportFile.value) return
+
+  if (!props.purchaseId) {
+    // Wish / no-pid context: use preview-only endpoint + autoDetect
+    smartImportLoading.value = true
+    smartImportPreview.value = null
+    smartImportResult.value = null
+    try {
+      const token = localStorage.getItem('auth_token')
+      const fd = new FormData()
+      fd.append('file', smartImportFile.value)
+      const resp = await fetch('/api/purchases/items/import-preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        body: fd,
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
+      }
+      const data = await resp.json()
+      // Auto-detect mapping from first sheet and build preview rows
+      const firstSheet = data.sheets?.[0]
+      if (!firstSheet) { showSnack('Позиции не распознаны', 'warning'); return }
+      const detectedMapping = autoDetectMapping(firstSheet.headers || [])
+      const headerOffset = firstSheet.header_row_offset ?? 0
+      const dataRows = (firstSheet.sample as any[][]).slice(headerOffset + 1)
+      const preview = dataRows
+        .filter(row => {
+          const nameIdx = detectedMapping['item_name']
+          return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
+        })
+        .map(row => {
+          const item: Record<string, any> = {}
+          for (const [field, idx] of Object.entries(detectedMapping)) {
+            if (idx !== null && idx !== undefined) item[field] = row[idx]
+          }
+          return item
+        })
+      smartImportPreview.value = preview
+      smartImportColumns.value = Object.keys(detectedMapping).filter(k => detectedMapping[k] !== null)
+      if (!preview.length) showSnack('Позиции не распознаны', 'warning')
+    } catch (e: any) {
+      showSnack(e.message || 'Ошибка распознавания', 'error')
+    } finally {
+      smartImportLoading.value = false
+    }
+    return
+  }
+
+  // Purchase context with pid
+  smartImportLoading.value = true
+  smartImportPreview.value = null
+  smartImportResult.value = null
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', smartImportFile.value)
+    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=false`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
+    }
+    const data = await resp.json()
+    smartImportPreview.value = data.preview || []
+    smartImportColumns.value = data.columns_found || []
+    if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка распознавания', 'error')
+  } finally {
+    smartImportLoading.value = false
+  }
+}
+
+async function doSmartImport() {
+  if (!smartImportPreview.value?.length) return
+
+  // If user applied custom column mapping OR no purchaseId, add items directly from re-mapped preview
+  if (columnMappingApplied.value || !props.purchaseId) {
+    const newItems: EditorItem[] = smartImportPreview.value.map(row => {
+      const item: EditorItem = {
+        product_id: null,
+        item_name: row.item_name || '',
+        item_type: row.item_type || props.defaultItemType,
+        quantity: row.quantity ?? null,
+        unit: row.unit || props.defaultUnit,
+        unit_price: row.unit_price ?? null,
+        total_price: row.total_price ?? null,
+        country_origin: props.defaultCountry,
+        _selectedProduct: null,
+        _photo_url: undefined,
+        _description: undefined,
+        _description_44fz: undefined,
+      }
+      if (props.itemShape === 'purchase') {
+        item.final_unit_price = null
+        item.final_total = null
+        item.feo_planned_item_id = null
+      }
+      return item
+    })
+    localItems.value.push(...newItems)
+    emitUpdate()
+    smartImportResult.value = { added: newItems.length, matched_catalog: 0, unmatched: newItems.length }
+    showSnack(`${newItems.length} позиций добавлены в список.`, 'info')
+    itemsImportDialog.value = false
+    return
+  }
+
+  if (!smartImportFile.value || !props.purchaseId) return
+  smartImportLoading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', smartImportFile.value)
+    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      body: fd,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
+    }
+    smartImportResult.value = await resp.json()
+    if (smartImportResult.value!.added > 0) {
+      showSnack(`Импортировано ${smartImportResult.value!.added} позиций`)
+      emit('reload-requested')
+    }
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка импорта', 'error')
+  } finally {
+    smartImportLoading.value = false
+  }
+}
+</script>
+
+<style scoped>
+/* ── Import column-mapping table (imap) ─────────────────── */
+.imap-grid {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.imap-col {
+  flex: 1;
+  min-width: 130px;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  transition: border-color 0.15s, background 0.15s;
+}
+.imap-col--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.imap-col--filled {
+  border-style: solid;
+  border-color: #43A047;
+  background: #f6fff6;
+}
+.imap-col--required {
+  border-color: #ef9a9a;
+  background: #fff8f8;
+}
+.imap-col-hdr {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #555;
+  padding: 5px 7px 3px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: normal;
+  word-break: break-word;
+}
+.imap-col-body {
+  padding: 5px;
+  min-height: 58px;
+}
+.imap-col-empty {
+  font-size: 10px;
+  color: #ccc;
+  text-align: center;
+  margin-top: 10px;
+  font-style: italic;
+}
+.imap-card {
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  padding: 4px 6px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.imap-card:hover {
+  border-color: #1976D2;
+  box-shadow: 0 1px 5px rgba(25, 118, 210, 0.15);
+}
+.imap-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.imap-card-name {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
+  flex: 1;
+}
+.imap-card-x {
+  font-size: 14px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #aaa;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.imap-card-x:hover { color: #e53935; }
+.imap-card-x--grey { color: #bbb; }
+.imap-card-samples {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+.imap-card--free {
+  background: #fafafa;
+}
+.imap-unresolved {
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 44px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.imap-unresolved--over {
+  border-color: #1976D2;
+  background: rgba(25, 118, 210, 0.04);
+}
+.imap-unresolved-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #aaa;
+  letter-spacing: 0.3px;
+}
+/* ──────────────────────────────────────────────────────── */
+.purchase-items-editor {
+  width: 100%;
+}
+</style>

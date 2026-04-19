@@ -306,6 +306,17 @@ Plans:
 - [x] 14-03-PLAN.md — RiskRadarView.vue assembly with polar + radial charts, 2×3 grid, ticker, dual-theme CSS tokens (Wave 2)
 - [ ] 14-04-PLAN.md — Polish + automated audit + human UAT on 4 theme×mode combos (Wave 3, checkpoint)
 
+### Phase 15: Reusable Purchase Items Editor — унификация формы позиций в «Новом заказе» и «Заявке»
+
+**Goal:** Extract the full position-editor block (inline table + products autocomplete with photo tooltip, quick/full product dialogs with photo upload, Excel import with drag-and-drop column mapping, smart AI import, FileDropZone) from CreateOrderView.vue into a reusable component `<PurchaseItemsEditor v-model="items" :supports_photos :supports_files :allowed_item_types />`. Wire it into both CreateOrderView.vue (replacing ~2000 lines of inline logic) and WishesView.vue Section 2 "Позиции" so Заявка gets full parity with Новый заказ — same products DB, same photos, same imports. Existing OrderProductsTable.vue (285 lines, unused) is evaluated as a starter or deleted.
+**Requirements**: ITEMS-EDITOR-01..08 (informal — see 15-CONTEXT.md for the authoritative contract)
+**Depends on:** None (pure refactor — backend API and DB tables products/purchase_items/wish_items are unchanged)
+**Unblocks:** Phase 13 (Заявки v3 auto-redistribution reuses the same editor)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 15 to break down)
+
 ---
 
 ### Post-Phase 8: Untracked Additional Work ✅ DELIVERED

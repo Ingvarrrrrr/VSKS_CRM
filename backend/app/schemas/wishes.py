@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
 
@@ -87,7 +87,7 @@ class WishOut(BaseModel):
     feo_category_id: Optional[int] = None
     assigned_to: Optional[int] = None
     assignee_name: Optional[str] = None
-    items: list = []
+    items: List[WishItemOut] = []
 
     class Config:
         from_attributes = True

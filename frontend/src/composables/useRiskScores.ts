@@ -264,6 +264,19 @@ export function useRiskScores(opts: UseRiskScoresOptions): UseRiskScoresReturn {
     return rawPurchases.value.filter(p => p.subsidy_id != null && ids.includes(p.subsidy_id))
   })
 
+  // Clamp any formula output to [0, 100]. Without this, pathological inputs
+  // (e.g. negative total_confirmed, NaN from divide-by-zero edge cases) can
+  // propagate a negative score into the polar chart, which ApexCharts passes
+  // straight into <circle r="..."> and the SVG engine rejects the whole
+  // render — observed as "attribute r: A negative value is not valid"
+  // errors in console plus an empty main area after leaving /dashboard/radar.
+  function clampScore(n: number): number {
+    if (!Number.isFinite(n)) return 0
+    if (n < 0) return 0
+    if (n > 100) return 100
+    return Math.round(n)
+  }
+
   const scores = computed<RiskScore[]>(() => {
     const results: Record<RiskMetricKey, { score: number; count: number; desc: string }> = {
       budget_overrun: budgetOverrun(filteredSubsidies.value),
@@ -273,15 +286,18 @@ export function useRiskScores(opts: UseRiskScoresOptions): UseRiskScoresReturn {
       feo_imbalance: feoImbalance(filteredSubsidies.value),
       overdue_payments: overduePayments(filteredPurchases.value),
     }
-    return ORDERED_KEYS.map(k => ({
-      key: k,
-      label: META[k].label,
-      icon: META[k].icon,
-      score: results[k].score,
-      severity: severityFromScore(results[k].score),
-      affectedCount: results[k].count,
-      description: results[k].desc,
-    }))
+    return ORDERED_KEYS.map(k => {
+      const safeScore = clampScore(results[k].score)
+      return {
+        key: k,
+        label: META[k].label,
+        icon: META[k].icon,
+        score: safeScore,
+        severity: severityFromScore(safeScore),
+        affectedCount: Math.max(0, results[k].count | 0),
+        description: results[k].desc,
+      }
+    })
   })
 
   const overallScore = computed<number>(() => {
@@ -289,7 +305,7 @@ export function useRiskScores(opts: UseRiskScoresOptions): UseRiskScoresReturn {
     if (!arr.length) return 0
     let total = 0
     for (const s of arr) total += s.score * WEIGHTS[s.key]
-    return Math.round(total)
+    return clampScore(total)
   })
 
   const overallSeverity = computed<RiskSeverity>(() => severityFromScore(overallScore.value))

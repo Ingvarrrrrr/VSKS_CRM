@@ -45,6 +45,18 @@
           icon="mdi-refresh" variant="tonal" color="primary"
           :loading="loading" @click="loadAll" size="small" class="ml-3"
         />
+        <v-chip-group
+          v-model="dashboardToggleMode"
+          mandatory class="ml-3"
+          selected-class="text-primary"
+        >
+          <v-chip value="classic" size="small" variant="outlined" prepend-icon="mdi-view-dashboard" style="min-height: 44px">
+            Классик
+          </v-chip>
+          <v-chip value="radar" size="small" variant="outlined" prepend-icon="mdi-radar" style="min-height: 44px">
+            Радар
+          </v-chip>
+        </v-chip-group>
       </div>
     </div>
 
@@ -795,9 +807,15 @@ import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useDashboardLayout } from '@/composables/useDashboardLayout'
+import { useDashboardMode } from '@/composables/useDashboardMode'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated } = useDashboardLayout()
+const { setMode } = useDashboardMode()
+const dashboardToggleMode = ref<'classic' | 'radar'>('classic')
+watch(dashboardToggleMode, (v) => {
+  if (v === 'classic' || v === 'radar') setMode(v)
+})
 
 const theme = useTheme()
 const router = useRouter()
@@ -1613,6 +1631,7 @@ watch(selectedSubsidyIds, () => {
 })
 
 onMounted(() => {
+  setMode('classic')
   loadAll()
   if (activeTab.value === 'analytics') {
     loadAnalytics()

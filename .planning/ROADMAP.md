@@ -306,16 +306,69 @@ Plans:
 - [x] 14-03-PLAN.md — RiskRadarView.vue assembly with polar + radial charts, 2×3 grid, ticker, dual-theme CSS tokens (Wave 2)
 - [ ] 14-04-PLAN.md — Polish + automated audit + human UAT on 4 theme×mode combos (Wave 3, checkpoint)
 
-### Phase 15: Reusable Purchase Items Editor — унификация формы позиций в «Новом заказе» и «Заявке»
+### Phase 15: Reusable Purchase Items Editor — унификация формы позиций в «Новом заказе» и «Заявке» ✅ COMPLETED (2026-04-19)
 
-**Goal:** Extract the full position-editor block (inline table + products autocomplete with photo tooltip, quick/full product dialogs with photo upload, Excel import with drag-and-drop column mapping, smart AI import, FileDropZone) from CreateOrderView.vue into a reusable component `<PurchaseItemsEditor v-model="items" :supports_photos :supports_files :allowed_item_types />`. Wire it into both CreateOrderView.vue (replacing ~2000 lines of inline logic) and WishesView.vue Section 2 "Позиции" so Заявка gets full parity with Новый заказ — same products DB, same photos, same imports. Existing OrderProductsTable.vue (285 lines, unused) is evaluated as a starter or deleted.
+**Goal:** Extract the full position-editor block (inline table + products autocomplete with photo tooltip, quick/full product dialogs with photo upload, Excel import with drag-and-drop column mapping, smart AI import, FileDropZone) from CreateOrderView.vue into a reusable component `<PurchaseItemsEditor v-model="items" :supports_photos :supports_files :allowed_item_types />`. Wire it into both CreateOrderView.vue (replacing ~2000 lines of inline logic) and WishesView.vue Section 2 "Позиции" so Заявка gets full parity with Новый заказ — same products DB, same photos, same imports.
 **Requirements**: ITEMS-EDITOR-01..08 (informal — see 15-CONTEXT.md for the authoritative contract)
-**Depends on:** None (pure refactor — backend API and DB tables products/purchase_items/wish_items are unchanged)
+**Depends on:** None (pure refactor)
 **Unblocks:** Phase 13 (Заявки v3 auto-redistribution reuses the same editor)
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 15 to break down)
+- [x] 15-01-PLAN.md — Extract PurchaseItemsEditor.vue component
+- [x] 15-02-PLAN.md — Delete dead OrderProductsTable.vue
+- [x] 15-03-PLAN.md — Wire into CreateOrderView (-1425 lines)
+- [x] 15-04-PLAN.md — Wire into WishesView Section 2 (-100 lines)
+- [x] 15-05-PLAN.md — E2E smoke spec + closure (3/3 pass on deploy)
+
+---
+
+### Phase 16: Refactor Monoliths — Декомпозиция роутеров и views по принципу «один процесс — один модуль»
+
+**Goal:** Разрезать накопившиеся монолиты на тематические модули. Правило «один процесс = один модуль» нарушено за фазы 1-7: новые фичи лились в существующие файлы без выделения. Результат — 3 файла на ~7 000 строк в сумме, тяжело читать, трудно тестировать, конфликты в git при параллельной работе.
+
+**Что декомпозировать:**
+
+1. **`backend/app/routers/purchases.py` (3200 строк):**
+   - `purchases.py` — только CRUD (list, get, create, update, delete)
+   - `purchase_transitions.py` — workflow status transitions (planned→confirmed→…→paid)
+   - `purchase_budget.py` — `_check_budget` + FEO cap validation
+   - `purchase_members.py` — participants + consent flow
+   - `purchase_files.py` уже отдельно — оставить как есть
+   - `purchase_export.py` — Excel export (перенести из purchases.py)
+
+2. **`backend/app/routers/tasks.py` (1639 строк):**
+   - `tasks.py` — только CRUD + list
+   - `task_visibility.py` — `_get_visible_user_ids` + related helpers
+   - `task_badges.py` — `/badges` + `org-summary` endpoints
+   - `task_delegation.py` — subtasks, consent, assignee management
+   - `task_comments.py` — comments + mentions
+
+3. **`frontend/src/views/MyTasksView.vue` (2155 строк):**
+   - `MyTasksView.vue` — оркестратор (router, state, api calls)
+   - `components/OrgSelector.vue` — карточки орг + "Все организации"
+   - `components/TasksTable.vue` + `TasksKanban.vue` — вкладка Задачи
+   - `components/PurchasesTable.vue` + `PurchasesKanban.vue` — вкладка Закупки
+   - `components/OrgSummaryBar.vue` — счётчики + badges
+
+**Requirements:** REFACTOR-01..12 (TBD during planning)
+**Depends on:** Phase 15 (demonstrates the extraction pattern)
+**Unblocks:** Phase 12, 13, параллельная разработка, снижение когнитивной нагрузки
+
+**Non-goals (не в этой фазе):**
+- Изменения функциональности — чистый рефакторинг
+- Изменения DB схемы
+- Изменения API контрактов (имена endpoints/URL-ов остаются)
+- Миграция stack'а или библиотек
+
+**Success Criteria:**
+1. Каждый новый модуль ≤ 800 строк. Ни одного файла ≥ 1000 строк после фазы.
+2. Все существующие E2E тесты (67+3) проходят без изменений — 0 regression.
+3. Backend импорты: `from app.routers import purchases, purchase_transitions, ...` работают; `app/main.py` монтирует все роутеры.
+4. Frontend билд зелёный; MyTasksView рендерится идентично визуально (до/после — скриншот-diff).
+5. Каждый коммит рефакторинга атомарный: «extract X from Y» — удалил здесь, добавил там, build зелёный.
+
+**Plans:** TBD (run `/gsd:plan-phase 16` когда Phase 11 stabilization закроется)
 
 ---
 

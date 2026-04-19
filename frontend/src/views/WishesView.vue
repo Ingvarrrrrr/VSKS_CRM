@@ -800,6 +800,7 @@ async function saveWish(andSubmit = false) {
       ...wishForm.value,
       feo_category_id: feo,
       title,
+      items: wishForm.value.items.map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => rest),
     }
 
     if (editingWishId.value) {

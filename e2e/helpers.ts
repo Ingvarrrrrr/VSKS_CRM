@@ -1,5 +1,24 @@
 import { Page, expect } from '@playwright/test';
 
+/** Dismiss the global "Выбрать организации" picker if it pops up after login */
+export async function dismissOrgPicker(page: Page) {
+  const dialog = page.locator('dialog, [role="dialog"]').filter({ hasText: 'Выбрать организации' }).first();
+  if (await dialog.isVisible({ timeout: 1500 }).catch(() => false)) {
+    // Tick first listed org to enable "Применить"
+    const firstOrg = dialog.locator('.v-list-item').nth(1); // [0] = "Выбрать все", [1] = first real org
+    await firstOrg.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(200);
+    const applyBtn = dialog.getByRole('button', { name: /Применить/i });
+    if (await applyBtn.isEnabled({ timeout: 1000 }).catch(() => false)) {
+      await applyBtn.click({ force: true });
+      await page.waitForTimeout(500);
+    } else {
+      // Fallback: press Escape
+      await page.keyboard.press('Escape');
+    }
+  }
+}
+
 /** Wait for Vuetify overlays to disappear */
 export async function waitForOverlays(page: Page) {
   // Wait for v-overlay__scrim to disappear (loading overlays, etc.)

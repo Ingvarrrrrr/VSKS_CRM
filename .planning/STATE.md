@@ -2,20 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 16
-status: Phase 16 context gathered — ready to plan
-last_updated: "2026-04-19T22:00:00.000Z"
+status: Ready to execute
+last_updated: "2026-04-19T22:58:09.981Z"
 progress:
   total_phases: 16
   completed_phases: 7
-  total_plans: 35
-  completed_plans: 30
+  total_plans: 50
+  completed_plans: 32
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
+Phase: 16 (refactor-monoliths) — EXECUTING
+Plan: 2 of 15
 Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
 Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
 
@@ -63,6 +64,8 @@ Recent (parked): Phase 13 (Заявки v3 — авторасспределен�
 - [Phase 15]: wishForm.items typed as any[] to accept EditorItem superset; saveWish strips helper fields with destructure map
 - [Phase 15]: FEO column Branch 3 (no per-row FEO in old items table) — no #row-extra slot; feo_planned_item_id flows via v-model
 - [Phase 15]: quickProductEditDialog deleted as dead code (Plan 15-03) — caller button removed with items table; PurchaseItemsEditor has own internal handler
+- [Phase 16]: httpx 0.27.0 already present in requirements.txt — kept existing version
+- [Phase 16]: ASGITransport (in-process) pattern for FastAPI pytest — no port conflicts, < 10s execution
 
 ## Blockers
 

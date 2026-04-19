@@ -372,6 +372,7 @@ const isEmployee = computed(() => userRoleRaw.value === 'employee')
 
 const allNavShortcuts = [
   { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
+  { label: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', roles: MANAGER_ROLES },
   { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
   { label: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
   { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
@@ -444,6 +445,7 @@ const menuItems = computed(() => {
   const role = userRoleRaw.value
   const items = [
     { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
+    { title: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', roles: MANAGER_ROLES },
     { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
     { title: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
     { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },

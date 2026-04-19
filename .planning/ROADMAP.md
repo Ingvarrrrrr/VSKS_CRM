@@ -298,12 +298,12 @@ Plans:
 **Goal:** Deliver a Neon Telemetry "mission control" variant of the Dashboard at /dashboard/radar — same data as classic DashboardView, reprojected as 6 weighted risk scores + polar radar + alerts ticker, both Vuetify themes first-class, without modifying DashboardView.vue.
 **Requirements**: RISK-RADAR-01..10 (informal — Phase 14 has no ROADMAP REQ-IDs; see 14-UI-SPEC.md + 14-CONTEXT.md for the authoritative contract)
 **Depends on:** None (Phase 14 is independent of Phase 12/13 — reuses existing /api/dashboard/charts)
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 - [x] 14-01-PLAN.md — Foundation: router entry + useDashboardMode + useRiskScores composables (Wave 1, parallel with 14-02)
 - [x] 14-02-PLAN.md — Reusable components: RiskMetricCard + AlertsTicker (Wave 1, parallel with 14-01)
-- [ ] 14-03-PLAN.md — RiskRadarView.vue assembly with polar + radial charts, 2×3 grid, ticker, dual-theme CSS tokens (Wave 2)
+- [x] 14-03-PLAN.md — RiskRadarView.vue assembly with polar + radial charts, 2×3 grid, ticker, dual-theme CSS tokens (Wave 2)
 - [ ] 14-04-PLAN.md — Polish + automated audit + human UAT on 4 theme×mode combos (Wave 3, checkpoint)
 
 ---

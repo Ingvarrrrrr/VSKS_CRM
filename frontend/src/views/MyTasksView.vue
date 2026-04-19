@@ -11,7 +11,7 @@
         <v-btn value="purchases" size="small"><v-icon icon="mdi-cart" class="mr-1" size="18"/>Закупки</v-btn>
         <v-btn value="general" size="small">
           <v-icon icon="mdi-clipboard-list" class="mr-1" size="18"/>Задачи
-          <v-chip v-if="generalTasks.length" size="x-small" color="white" variant="flat" class="ml-1" style="color: #1565C0; font-weight: 700">{{ generalTasks.length }}</v-chip>
+          <v-chip v-if="visibleActiveTasksCount" size="x-small" color="white" variant="flat" class="ml-1" style="color: #1565C0; font-weight: 700">{{ visibleActiveTasksCount }}</v-chip>
           <v-chip v-if="pendingConsentTasks.length" size="x-small" color="orange" class="ml-1">+{{ pendingConsentTasks.length }}</v-chip>
         </v-btn>
         <v-btn value="report" size="small"><v-icon icon="mdi-chart-bar" class="mr-1" size="18"/>Отчёт</v-btn>
@@ -140,7 +140,7 @@
     </v-expand-transition>
 
     <!-- Organization cards -->
-    <div v-if="selectedOrgId === null && orgSummary.length > 1" class="mb-6">
+    <div v-if="orgCardsOpen && orgSummary.length > 1" class="mb-6">
       <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
       <div class="org-cards-grid">
         <div
@@ -166,12 +166,12 @@
     </div>
 
     <!-- Back to org selection -->
-    <v-btn v-if="orgSummary.length > 1 && selectedOrgId !== null" variant="text" size="small" color="primary"
-      prepend-icon="mdi-arrow-left" class="mb-3" @click="selectedOrgId = null">
+    <v-btn v-if="orgSummary.length > 1 && !orgCardsOpen" variant="text" size="small" color="primary"
+      prepend-icon="mdi-arrow-left" class="mb-3" @click="orgCardsOpen = true">
       К выбору организации
     </v-btn>
 
-    <div v-show="selectedOrgId !== null || orgSummary.length <= 1">
+    <div v-show="!orgCardsOpen || orgSummary.length <= 1">
 
     <!-- ═══ PURCHASES TAB ═══ -->
     <template v-if="activeTab === 'purchases'">
@@ -831,6 +831,9 @@ const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const selectedOrgId = ref<number | null>(null)
+// True = show org picker cards (initial state). False = a card was clicked (all or specific).
+// Distinguishes "no choice yet" (null + open) from "All orgs selected" (null + closed).
+const orgCardsOpen = ref<boolean>(true)
 const orgSummary = ref<{org_id: number | null, org_name: string, task_count: number, purchase_count: number, unseen_count: number}[]>([])
 const orgLoading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
@@ -898,6 +901,13 @@ const filteredGeneralTasks = computed(() => {
   if (selectedOrgId.value === null) return generalTasks.value
   return generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
 })
+
+// Header chip counter — only active tasks (exclude done/cancelled/archive) for currently viewed scope.
+// Previously used generalTasks.length which counted all loaded tasks including done/cancelled,
+// causing mismatch with org-summary card counts (backend already excludes done/cancelled there).
+const visibleActiveTasksCount = computed(() =>
+  filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length
+)
 
 const visibleOrgSummary = computed(() =>
   orgSummary.value.filter(o => o.org_id === null || o.task_count > 0)
@@ -1634,6 +1644,11 @@ async function loadOrgSummary() {
 
 async function selectOrg(orgId: number | null) {
   selectedOrgId.value = orgId
+  orgCardsOpen.value = false
+  // Clear lists BEFORE awaiting new data — prevents flash of stale/unfiltered rows
+  generalTasks.value = []
+  tasks.value = []
+  archiveTasks.value = []
   if (orgId !== null) {
     localStorage.setItem('active_org_id', String(orgId))
   } else {
@@ -1653,16 +1668,29 @@ async function loadOrgData() {
       // Admin: load ALL tasks and purchases (server handles access control)
       // For specific org, pass org_id filter; for "all orgs" (null), load everything
       const taskUrl = orgId !== null ? `/tasks/?org_id=${orgId}` : '/tasks/'
+      const purchaseUrl = orgId !== null ? `/purchases/?org_id=${orgId}` : '/purchases/'
       const [allTasks, allPurchases] = await Promise.all([
         apiFetch<any[]>(taskUrl).catch(() => []),
-        apiFetch<any[]>('/purchases/').catch(() => []),
+        apiFetch<any[]>(purchaseUrl).catch(() => []),
       ])
       generalTasks.value = allTasks
       tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
       archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
     } else {
-      // Employee/manager: use my-tasks endpoints
-      await load()
+      // Employee/manager: backend already filters by user visibility.
+      // For a specific org, narrow by org_id too.
+      if (orgId !== null) {
+        const [allTasks, allPurchases] = await Promise.all([
+          apiFetch<any[]>(`/tasks/?org_id=${orgId}`).catch(() => []),
+          apiFetch<any[]>(`/purchases/?org_id=${orgId}`).catch(() => []),
+        ])
+        generalTasks.value = allTasks
+        tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
+        archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
+      } else {
+        // "All organizations" mode for non-admin: aggregate across all visible orgs
+        await load()
+      }
     }
   } catch (e) { console.error('Load org data error:', e) }
   finally { loading.value = false }

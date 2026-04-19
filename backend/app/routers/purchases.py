@@ -505,11 +505,25 @@ async def list_purchases(
     #   + managed-department members + managed-organization members (by hierarchy).
     #   Being 'admin' is a system-privilege role (delete/export/settings), not a
     #   visibility role — an admin without subordinates sees only their own stuff.
+    # Chat participation (purchase-linked rooms) — a user can join a purchase
+    # discussion via @mention / consent, and that also means "I participate".
+    from app.models.chat_room import ChatRoom, ChatParticipant
+    chat_pids_me = (
+        select(ChatRoom.entity_id)
+        .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
+        .where(
+            ChatParticipant.user_id == current_user.id,
+            ChatRoom.entity_type == 'purchase',
+            ChatRoom.entity_id.isnot(None),
+        )
+    )
+
     if current_user.role == 'employee':
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
         q = q.where(
             (Purchase.assigned_user_id == current_user.id) |
-            (Purchase.id.in_(member_pids))
+            (Purchase.id.in_(member_pids)) |
+            (Purchase.id.in_(chat_pids_me))
         )
     elif current_user.role not in ('superadmin', 'account_owner'):
         # manager / admin / org_admin — all follow the same hierarchy rule.
@@ -546,14 +560,15 @@ async def list_purchases(
             org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
             visible_user_ids.update(r[0] for r in org_users.all())
 
-        # Filter: assigned to visible user OR purchase member OR created by visible user.
+        # Filter: assigned to visible user OR purchase member OR chat-room participant.
         # NOTE: intentionally dropped the "assigned_user_id IS NULL" OR-branch — previously
         # every unassigned purchase leaked to every non-superadmin role, defeating the
-        # hierarchy rule. Unassigned purchases are now visible only via membership.
+        # hierarchy rule. Unassigned purchases are now visible only via participation.
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
         q = q.where(
             (Purchase.assigned_user_id.in_(visible_user_ids)) |
-            (Purchase.id.in_(member_pids))
+            (Purchase.id.in_(member_pids)) |
+            (Purchase.id.in_(chat_pids_me))
         )
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)

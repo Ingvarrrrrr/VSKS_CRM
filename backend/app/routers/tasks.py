@@ -311,18 +311,31 @@ async def list_tasks(
     # Visibility = hierarchy ∪ direct participation by the current user.
     # Hierarchy picks up tasks where *anyone in my reporting tree* is creator
     # or assignee. Direct participation picks up tasks I'm personally involved
-    # in — currently: I commented on it (TaskComment). This is not inherited
-    # downward: a subordinate who commented doesn't give me the task unless
-    # hierarchy already includes me, and vice versa.
+    # in:
+    #   - I commented (TaskComment)
+    #   - I'm a chat-room participant for a room linked to the task
+    #     (entity_type='task'); this covers @mentions and discussion invites
+    # Direct participation is NOT inherited downward — only my own.
     visible_ids = await _get_visible_user_ids(current_user, db)
     if visible_ids is not None:
         assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids)).scalar_subquery()
         commented_tasks = select(TaskComment.task_id).where(TaskComment.user_id == current_user.id).scalar_subquery()
+        chat_tasks = (
+            select(ChatRoom.entity_id)
+            .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
+            .where(
+                ChatParticipant.user_id == current_user.id,
+                ChatRoom.entity_type == 'task',
+                ChatRoom.entity_id.isnot(None),
+            )
+            .scalar_subquery()
+        )
         q = q.where(
             or_(
                 Task.created_by_id.in_(visible_ids),
                 Task.id.in_(assignee_tasks),
                 Task.id.in_(commented_tasks),
+                Task.id.in_(chat_tasks),
             )
         )
 
@@ -390,7 +403,7 @@ async def org_summary(
             )
         else:
             # Everyone else: tasks where someone in my hierarchy tree is creator/assignee,
-            # OR tasks I personally commented on (direct participation in discussion).
+            # OR tasks I personally participate in (commented OR chat-room participant).
             task_q = select(func.count(Task.id)).where(
                 Task.org_id == org.id,
                 Task.status.notin_(['done', 'cancelled']),
@@ -398,6 +411,15 @@ async def org_summary(
                     Task.created_by_id.in_(visible_ids),
                     Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids))),
                     Task.id.in_(select(TaskComment.task_id).where(TaskComment.user_id == user_id)),
+                    Task.id.in_(
+                        select(ChatRoom.entity_id)
+                        .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
+                        .where(
+                            ChatParticipant.user_id == user_id,
+                            ChatRoom.entity_type == 'task',
+                            ChatRoom.entity_id.isnot(None),
+                        )
+                    ),
                 )
             )
         task_count = (await db.execute(task_q)).scalar() or 0
@@ -409,15 +431,29 @@ async def org_summary(
         ).where(Subsidy.org_id == org.id, Purchase.status != 'paid')
 
         if visible_ids is not None:
-            # NOTE: previously included `Purchase.assigned_user_id IS NULL` as an OR-branch,
-            # which leaked every unassigned purchase (~379 in VSKS) into the count for any
-            # non-SaaS role — observed as "381 total" in the All-Orgs card for Lyubarets.
-            # Dropped: unassigned purchases now visible only via membership.
+            # Purchase visibility:
+            #   - assigned_user_id in hierarchy, OR
+            #   - I'm a PurchaseMember (invited to the discussion), OR
+            #   - I'm a chat-room participant for a room linked to the purchase
+            # Previously included `Purchase.assigned_user_id IS NULL`, which leaked
+            # every unassigned purchase (~379 in VSKS) into the count for any
+            # non-SaaS role — observed as "381 total" in the All-Orgs card for
+            # Lyubarets. Dropped.
             member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_ids))
+            chat_pids = (
+                select(ChatRoom.entity_id)
+                .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
+                .where(
+                    ChatParticipant.user_id == user_id,
+                    ChatRoom.entity_type == 'purchase',
+                    ChatRoom.entity_id.isnot(None),
+                )
+            )
             purchase_base = purchase_base.where(
                 or_(
                     Purchase.assigned_user_id.in_(visible_ids),
                     Purchase.id.in_(member_pids),
+                    Purchase.id.in_(chat_pids),
                 )
             )
         purchase_count = (await db.execute(purchase_base)).scalar() or 0

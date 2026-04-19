@@ -467,6 +467,7 @@ async def list_purchases(
     contract_id: Optional[int] = Query(None),
     feo_category_id: Optional[int] = Query(None),
     subsidy_id: Optional[int] = Query(None),
+    org_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     purchase_method: Optional[str] = Query(None),
@@ -476,6 +477,7 @@ async def list_purchases(
     current_user: User = Depends(get_current_user),
 ):
     from app.models.subsidy import Subsidy
+    from app.models.purchase_event import PurchaseMember
     q = select(Purchase).options(
         selectinload(Purchase.contractor),
         selectinload(Purchase.feo_category),
@@ -484,15 +486,26 @@ async def list_purchases(
         selectinload(Purchase.event),
     )
     org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+    needs_subsidy_join = org_ids is not None or org_id is not None
+    if needs_subsidy_join:
+        q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
+        if org_id is not None:
+            # Explicit org filter takes precedence; still validate user has access to this org
+            if org_ids is not None and org_id not in org_ids:
+                return []
+            q = q.where(Subsidy.org_id == org_id)
+        elif org_ids is not None:
+            q = q.where(Subsidy.org_id.in_(org_ids))
     # Visibility by hierarchy position:
     # - superadmin/account_owner/admin/org_admin: see all in org (already filtered above)
     # - manager: sees own + subordinates' + managed dept/org purchases
-    # - employee: D-13 — sees ONLY purchases where they are the assigned executor
+    # - employee: sees ONLY purchases where they are the executor OR a participant (PurchaseMember)
     if current_user.role == 'employee':
-        # D-13: employee sees ONLY purchases where they are the executor
-        q = q.where(Purchase.assigned_user_id == current_user.id)
+        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
+        q = q.where(
+            (Purchase.assigned_user_id == current_user.id) |
+            (Purchase.id.in_(member_pids))
+        )
     elif current_user.role == 'manager':
         # Existing manager logic: subordinates + dept members + managed orgs + purchase members
         from app.models.user_hierarchy import UserHierarchy

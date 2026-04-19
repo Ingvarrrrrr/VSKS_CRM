@@ -312,7 +312,7 @@ Plans:
 **Requirements**: ITEMS-EDITOR-01..08 (informal — see 15-CONTEXT.md for the authoritative contract)
 **Depends on:** None (pure refactor — backend API and DB tables products/purchase_items/wish_items are unchanged)
 **Unblocks:** Phase 13 (Заявки v3 auto-redistribution reuses the same editor)
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 15 to break down)

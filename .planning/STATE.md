@@ -63,7 +63,14 @@ Next: Phase 13 (Заявки v3 — авторасспределение) — un
 
 ## Blockers
 
-- **INTERNAL_ERROR на /dashboard/radar** (2026-04-19): диалог "Внутренняя ошибка сервера", ID 8af65587-5d12-4410-8538-55b914a89b5a. Traceback обрезан: видно `anyio.WouldBlock → anyio.EndOfStream` в starlette middleware base.py. Подозрение — N+1 SUM в `/api/contracts` (300+ контрактов × 3 SUM = 900 DB hits) × 4 параллельных запроса из `useRiskScores.refresh()` → exhaust DB pool. Ждём полный traceback от пользователя для точной диагностики.
+_нет активных блокеров_
+
+### Closed 2026-04-19
+
+- **INTERNAL_ERROR на /dashboard/radar** → оказалось не backend N+1, а frontend: ApexCharts получал negative `<circle r>` из unclamped `feoImbalance` score + `mode="out-in"` в `<transition>` не давал новой view монтироваться. Закрыто в `e9efc8d` + `c313c57`. Детали в 05_Gotchas.
+- **PydanticSerializationError для WishItem** на `/api/wishes/` → `WishOut.items` был нетипизированным `list`. Pydantic не знал схему. Закрыто в `5c592d8` (items: List[WishItemOut]).
+- **Автодеплой висел 2 дня** → webhook.py однопоточный HTTPServer в silent-hang. Закрыто в `2d04e4e` (ThreadingHTTPServer + always-restart + /healthz).
+- **4 UX-бага Любарца на /my-tasks** → Phase 11 incomplete. Закрыто в `ce90039` (backend: employee + PurchaseMember + ?org_id) и `f3cf2cc` (frontend: org picker, flash, counter).
 
 ## Roadmap Evolution
 

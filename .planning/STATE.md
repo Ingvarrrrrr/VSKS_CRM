@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 15
 status: Ready to execute
-last_updated: "2026-04-19T12:34:58.942Z"
+last_updated: "2026-04-19T12:51:59.742Z"
 progress:
   total_phases: 15
   completed_phases: 6
   total_plans: 35
-  completed_plans: 28
+  completed_plans: 29
 ---
 
 # STATE.md — VSKS_CRM
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 15 (Reusable Purchase Items Editor) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 
 - **Milestone:** v1.0
 - **Current Phase:** 15
@@ -53,6 +53,8 @@ Plan: 4 of 5
 - [Phase 15]: PurchaseItemsEditor.vue: purchaseId-aware import branching — null path uses client-side row assembly from preview, set path calls pid-bound API; imap-* CSS migrated to component scoped styles; emit('items-changed') replaces direct syncContractPriceIfSingle call
 - [Phase 15]: WishesView :readonly=false since dialog guard at call-site ensures only draft wishes are editable
 - [Phase 15]: wishForm.items typed as any[] to accept EditorItem superset; saveWish strips helper fields with destructure map
+- [Phase 15]: FEO column Branch 3 (no per-row FEO in old items table) — no #row-extra slot; feo_planned_item_id flows via v-model
+- [Phase 15]: quickProductEditDialog deleted as dead code (Plan 15-03) — caller button removed with items table; PurchaseItemsEditor has own internal handler
 
 ## Blockers
 

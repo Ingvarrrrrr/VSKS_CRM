@@ -15,7 +15,7 @@ from .routers import (
     commercial_requests, suppliers, purchase_events, user_hierarchy,
     system_incidents, organizations, reports, events, purchase_approvals,
     tasks, departments, delivery_addresses, hierarchy, billing,
-    wishes,
+    wishes, purchase_export,
 )
 from .routers import org_config
 from .routers import feo_planned_items
@@ -305,6 +305,7 @@ app.include_router(organizations.router)
 app.include_router(reports.router)
 app.include_router(events.router)
 app.include_router(purchase_approvals.router)
+app.include_router(purchase_export.router)
 app.include_router(tasks.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)

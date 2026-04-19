@@ -910,7 +910,12 @@ const visibleActiveTasksCount = computed(() =>
 )
 
 const visibleOrgSummary = computed(() =>
-  orgSummary.value.filter(o => o.org_id === null || o.task_count > 0)
+  // Keep the "Все организации" aggregator even when empty, and show any org
+  // where the user has either tasks OR purchases. Previously we only checked
+  // task_count, which hid orgs where the user only participates via purchase
+  // membership (e.g. Lyubarets had АНО hidden despite being a discussion
+  // participant on 2 АНО purchases).
+  orgSummary.value.filter(o => o.org_id === null || o.task_count > 0 || o.purchase_count > 0)
 )
 
 const pageTitle = computed(() => {

@@ -308,14 +308,21 @@ async def list_tasks(
     elif org_ids is not None:
         q = q.where(Task.org_id.in_(org_ids))
 
-    # Hierarchy-based task visibility
+    # Visibility = hierarchy ∪ direct participation by the current user.
+    # Hierarchy picks up tasks where *anyone in my reporting tree* is creator
+    # or assignee. Direct participation picks up tasks I'm personally involved
+    # in — currently: I commented on it (TaskComment). This is not inherited
+    # downward: a subordinate who commented doesn't give me the task unless
+    # hierarchy already includes me, and vice versa.
     visible_ids = await _get_visible_user_ids(current_user, db)
     if visible_ids is not None:
         assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids)).scalar_subquery()
+        commented_tasks = select(TaskComment.task_id).where(TaskComment.user_id == current_user.id).scalar_subquery()
         q = q.where(
             or_(
                 Task.created_by_id.in_(visible_ids),
                 Task.id.in_(assignee_tasks),
+                Task.id.in_(commented_tasks),
             )
         )
 
@@ -376,36 +383,40 @@ async def org_summary(
 
     for org in orgs:
         if visible_ids is None:
-            # Admin/superadmin: count all tasks in org (exclude done/cancelled)
+            # SaaS-level (superadmin / account_owner): count all tasks in org (exclude done/cancelled)
             task_q = select(func.count(Task.id)).where(
                 Task.org_id == org.id,
                 Task.status.notin_(['done', 'cancelled']),
             )
         else:
-            # Employee/Manager: tasks where visible users are creator or assignee (exclude done/cancelled)
+            # Everyone else: tasks where someone in my hierarchy tree is creator/assignee,
+            # OR tasks I personally commented on (direct participation in discussion).
             task_q = select(func.count(Task.id)).where(
                 Task.org_id == org.id,
                 Task.status.notin_(['done', 'cancelled']),
                 or_(
                     Task.created_by_id.in_(visible_ids),
                     Task.id.in_(select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids))),
+                    Task.id.in_(select(TaskComment.task_id).where(TaskComment.user_id == user_id)),
                 )
             )
         task_count = (await db.execute(task_q)).scalar() or 0
 
-        # Purchase count — respects role-based visibility
+        # Purchase count — respects hierarchy-based visibility.
         from app.models.purchase_event import PurchaseMember
         purchase_base = select(func.count(Purchase.id)).join(
             Subsidy, Purchase.subsidy_id == Subsidy.id
         ).where(Subsidy.org_id == org.id, Purchase.status != 'paid')
 
         if visible_ids is not None:
-            # employee/manager: only see purchases assigned to visible users or where they are a member
+            # NOTE: previously included `Purchase.assigned_user_id IS NULL` as an OR-branch,
+            # which leaked every unassigned purchase (~379 in VSKS) into the count for any
+            # non-SaaS role — observed as "381 total" in the All-Orgs card for Lyubarets.
+            # Dropped: unassigned purchases now visible only via membership.
             member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_ids))
             purchase_base = purchase_base.where(
                 or_(
                     Purchase.assigned_user_id.in_(visible_ids),
-                    Purchase.assigned_user_id.is_(None),
                     Purchase.id.in_(member_pids),
                 )
             )

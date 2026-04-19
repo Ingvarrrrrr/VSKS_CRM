@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 13
-status: Phase 15 complete — ready for Phase 13
-last_updated: "2026-04-19T16:30:00.000Z"
+current_phase: 16
+status: Phase 16 context gathered — ready to plan
+last_updated: "2026-04-19T22:00:00.000Z"
 progress:
-  total_phases: 15
+  total_phases: 16
   completed_phases: 7
   total_plans: 35
   completed_plans: 30
@@ -16,8 +16,10 @@ progress:
 
 ## Current Position
 
-Phase 15 (Reusable Purchase Items Editor) — ✅ COMPLETE (5/5 plans)
-Next: Phase 13 (Заявки v3 — авторасспределение) — unblocked by Phase 15 shared editor
+Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
+Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
+
+Recent (parked): Phase 13 (Заявки v3 — авторасспределение) — unblocked by Phase 15, waiting after Phase 16.
 
 - **Milestone:** v1.0
 - **Last Completed Phase:** 15
@@ -34,6 +36,7 @@ Next: Phase 13 (Заявки v3 — авторасспределение) — un
 
 ## Recent Activity (April 2026)
 
+- 2026-04-19: Phase 16 context gathered — CONTEXT.md + DISCUSSION-LOG.md for Refactor Monoliths (faaa12d). Auto-mode picked 6 gray-area defaults: backend-first order, 6 modules for purchases.py (added items_import), 5 for tasks.py, orchestrator+5 components for MyTasksView, helpers stay in originating modules, strict URL preservation, E2E + smoke gates.
 - 2026-04-19: Autodeploy hardened (2d04e4e) — ThreadingHTTPServer в webhook.py, always-restart в autodeploy.sh, /healthz endpoint. Root cause предыдущего падения: single-threaded HTTPServer завис в accept loop, systemd репортил active, но всё таймаутило. 2 дня push'ей были silently dropped.
 - 2026-04-19: Phase 11 reopened+fixed — 4 UX бага на /my-tasks под employee: закупки без org/member фильтра (ce90039), flash unfiltered tasks + "Все организации" не кликалось + счётчик header считал done/cancelled (f3cf2cc).
 - 2026-04-19: Phase 15 closed — PurchaseItemsEditor extracted (15-01), dead OrderProductsTable removed (15-02), wired into CreateOrderView -1425 lines (15-03), wired into WishesView -100 lines (15-04), E2E smoke spec 3/3 pass on deploy (15-05). Заявка ↔ Новый заказ parity achieved.

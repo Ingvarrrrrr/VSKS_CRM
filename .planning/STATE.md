@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 15
 status: Ready to execute
-last_updated: "2026-04-19T12:27:45.335Z"
+last_updated: "2026-04-19T12:34:58.942Z"
 progress:
   total_phases: 15
   completed_phases: 6
   total_plans: 35
-  completed_plans: 27
+  completed_plans: 28
 ---
 
 # STATE.md — VSKS_CRM
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 15 (Reusable Purchase Items Editor) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 
 - **Milestone:** v1.0
 - **Current Phase:** 15
@@ -51,6 +51,8 @@ Plan: 3 of 5
 - [Phase 14]: RiskRadarView uses isDark-reactive hex dictionaries for ApexCharts colors (CSS vars not readable by SVG engine)
 - [Phase 15]: OrderProductsTable.vue confirmed dead (only .backup.vue referenced it) — deleted to clean frontend/src/components before PurchaseItemsEditor lands
 - [Phase 15]: PurchaseItemsEditor.vue: purchaseId-aware import branching — null path uses client-side row assembly from preview, set path calls pid-bound API; imap-* CSS migrated to component scoped styles; emit('items-changed') replaces direct syncContractPriceIfSingle call
+- [Phase 15]: WishesView :readonly=false since dialog guard at call-site ensures only draft wishes are editable
+- [Phase 15]: wishForm.items typed as any[] to accept EditorItem superset; saveWish strips helper fields with destructure map
 
 ## Blockers
 

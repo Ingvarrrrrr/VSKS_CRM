@@ -202,6 +202,15 @@ const validItems = items.value
 - Plan 15-05 (E2E + UAT): CreateOrderView ready for browser smoke validation
 - No blockers
 
+## Self-Check: PASSED
+
+- `15-03-SUMMARY.md` exists: FOUND
+- `frontend/src/views/CreateOrderView.vue` exists: FOUND
+- Commit `29d4d9b` (Task 1): FOUND
+- Commit `929a8e0` (Task 2): FOUND
+- `cd frontend && npx tsc --noEmit`: 0 errors
+- `cd frontend && npm run build`: SUCCESS
+
 ---
 *Phase: 15-reusable-purchase-items-editor*
 *Completed: 2026-04-19*

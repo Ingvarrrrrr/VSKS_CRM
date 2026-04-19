@@ -2,37 +2,40 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 15
-status: Ready to execute
-last_updated: "2026-04-19T12:51:59.742Z"
+current_phase: 13
+status: Phase 15 complete — ready for Phase 13
+last_updated: "2026-04-19T16:30:00.000Z"
 progress:
   total_phases: 15
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 35
-  completed_plans: 29
+  completed_plans: 30
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 15 (Reusable Purchase Items Editor) — EXECUTING
-Plan: 5 of 5
+Phase 15 (Reusable Purchase Items Editor) — ✅ COMPLETE (5/5 plans)
+Next: Phase 13 (Заявки v3 — авторасспределение) — unblocked by Phase 15 shared editor
 
 - **Milestone:** v1.0
-- **Current Phase:** 15
-- **Previous Phase:** 10 (Chat Telegram UI) — 3/4 plans executed, 1 remaining
+- **Last Completed Phase:** 15
+- **Previous Phase:** 14.1 (Risk Radar — nav + formulas dialog)
 - **Profile:** balanced (Opus plans, Sonnet executes)
 
 ## Status
 
-- Phases 1-9, 11: ✅ Complete
+- Phases 1-9, 11, 14, 15: ✅ Complete
 - Phase 10: 🟡 3/4 plans done (1 remaining: AppBar chat integration)
 - Phase 12: 📋 4 plans ready, 0 executed
-- Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2)
+- Phase 13: 📋 ready to plan (Phase 15 unblocks it)
+- Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2, Суперадмин-3)
 
 ## Recent Activity (April 2026)
 
+- 2026-04-19: Phase 15 closed — PurchaseItemsEditor extracted (15-01), dead OrderProductsTable removed (15-02), wired into CreateOrderView -1425 lines (15-03), wired into WishesView -100 lines (15-04), E2E smoke spec 3/3 pass on deploy (15-05). Заявка ↔ Новый заказ parity achieved.
+- 2026-04-19: Phase 14.1 post-MVP fixes — Radar nav entry (b911e75), Classic/Radar toggle in DashboardView (4a43c30), formulas info dialog (5c87c47). QA PASS WITH NOTES.
 - 2026-04-19: Phase 14 UI-SPEC approved (revision 1/2, typography fix) — CONTEXT.md + DISCUSSION-LOG.md + UI-SPEC.md ready for planning
 - 2026-04-19: Phase 14 context gathered (Risk Radar Neon Telemetry Dashboard)
 - 2026-04-17: Superadmin-3 feedback, Wishes v2 (items+FEO+subsidy), persistent templates volume
@@ -58,7 +61,7 @@ Plan: 5 of 5
 
 ## Blockers
 
-- (none active)
+- **INTERNAL_ERROR на /dashboard/radar** (2026-04-19): диалог "Внутренняя ошибка сервера", ID 8af65587-5d12-4410-8538-55b914a89b5a. Traceback обрезан: видно `anyio.WouldBlock → anyio.EndOfStream` в starlette middleware base.py. Подозрение — N+1 SUM в `/api/contracts` (300+ контрактов × 3 SUM = 900 DB hits) × 4 параллельных запроса из `useRiskScores.refresh()` → exhaust DB pool. Ждём полный traceback от пользователя для точной диагностики.
 
 ## Roadmap Evolution
 

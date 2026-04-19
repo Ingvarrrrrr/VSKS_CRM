@@ -31,6 +31,12 @@
           :loading="loading" @click="refresh" size="small" class="ml-3"
           title="Обновить данные" aria-label="Обновить данные Risk Radar"
         />
+        <v-btn
+          icon="mdi-information-outline" variant="tonal" color="primary"
+          size="small" class="ml-3"
+          title="Как считаются риски"
+          @click="formulasDialogOpen = true"
+        />
         <v-chip-group
           v-model="toggleMode"
           mandatory class="ml-3"
@@ -134,6 +140,81 @@
     </template>
 
   </div>
+
+  <!-- ── Formulas info dialog ── -->
+  <v-dialog v-model="formulasDialogOpen" max-width="720">
+    <v-card>
+      <v-card-title class="text-h6 pa-4 pb-2">Как считаются риски</v-card-title>
+      <v-card-text class="pa-4">
+        <p class="text-body-2 mb-4">
+          Все метрики — от 0 до 100. 0–39 — норма, 40–64 — внимание, 65–79 — высокий, 80–100 — критический. Общий риск — взвешенное среднее.
+        </p>
+        <div class="formulas-table-wrapper">
+          <table class="formulas-table">
+            <thead>
+              <tr>
+                <th>Метрика</th>
+                <th>Источник данных</th>
+                <th>Формула</th>
+                <th>Вес</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Превышение бюджета</td>
+                <td><code>/api/dashboard/charts</code> → subsidy_stats</td>
+                <td>Σ max(0, total_planned − budget) / Σ budget × 100 (≤ 100)</td>
+                <td>0.25</td>
+              </tr>
+              <tr>
+                <td>Просрочки договоров</td>
+                <td><code>/api/contracts</code></td>
+                <td>count(status ≠ completed AND end_date ≤ сегодня + 14 дн) / всего × 100</td>
+                <td>0.20</td>
+              </tr>
+              <tr>
+                <td>Зависшие заявки</td>
+                <td><code>/api/wishes</code></td>
+                <td>count(status = approved AND возраст > 14 дн) / всего approved × 100</td>
+                <td>0.15</td>
+              </tr>
+              <tr>
+                <td>Насыщение рамочных</td>
+                <td><code>/api/contracts</code> (framework)</td>
+                <td>max(current_amount / max_amount × 100) — худший случай</td>
+                <td>0.20</td>
+              </tr>
+              <tr>
+                <td>Дисбаланс ФЭО</td>
+                <td><code>/api/dashboard/charts</code> → subsidy_stats</td>
+                <td>std_dev(утилизация%) / mean(утилизация%) × 100 — коэфф. вариации</td>
+                <td>0.10</td>
+              </tr>
+              <tr>
+                <td>Просрочки оплат</td>
+                <td><code>/api/purchases</code></td>
+                <td>count(status = contracted AND contract_date &lt; сегодня − 30 дн) / всего contracted × 100</td>
+                <td>0.10</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-4">
+          <div class="text-subtitle-2 mb-2">Пороги уровней</div>
+          <div class="thresholds-list">
+            <span class="threshold-item threshold-ok">0–39: Норма</span>
+            <span class="threshold-item threshold-warn">40–64: Внимание</span>
+            <span class="threshold-item threshold-high">65–79: Высокий</span>
+            <span class="threshold-item threshold-critical">80–100: Критический</span>
+          </div>
+        </div>
+      </v-card-text>
+      <v-card-actions class="pa-4 pt-0">
+        <v-spacer />
+        <v-btn variant="tonal" @click="formulasDialogOpen = false">Понятно</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -150,6 +231,9 @@ import AlertsTicker from '../components/AlertsTicker.vue'
 // ─── Theme (D-03, D-04) ────────────────────────────────────────────
 const theme = useTheme()
 const isDark = computed(() => theme.global.current.value.dark)
+
+// ─── Formulas dialog ───────────────────────────────────────────────
+const formulasDialogOpen = ref(false)
 
 // ─── Dashboard mode persistence (D-02) ─────────────────────────────
 const { setMode, syncRouteWithMode } = useDashboardMode()
@@ -529,4 +613,47 @@ defineExpose({ scores, overallScore, overallSeverity, lastRefreshedAt })
   0%,100% { background-position: 0% 50%; }
   50%     { background-position: 100% 50%; }
 }
+
+/* ───── Formulas dialog ───── */
+.formulas-table-wrapper {
+  overflow-x: auto;
+}
+.formulas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.formulas-table th,
+.formulas-table td {
+  padding: 8px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.4;
+}
+.formulas-table th {
+  font-weight: 600;
+  background: rgba(128, 128, 128, 0.08);
+}
+.formulas-table code {
+  font-size: 11px;
+  background: rgba(128, 128, 128, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.thresholds-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.threshold-item {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.threshold-ok       { background: rgba(8, 145, 178, 0.15); color: #0891B2; }
+.threshold-warn     { background: rgba(180, 83, 9, 0.15);  color: #B45309; }
+.threshold-high     { background: rgba(194, 65, 12, 0.15); color: #C2410C; }
+.threshold-critical { background: rgba(190, 18, 60, 0.15); color: #BE123C; }
 </style>

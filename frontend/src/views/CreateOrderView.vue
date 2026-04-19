@@ -294,11 +294,6 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
           <span>{{ formMode === 'service_note_delivery' ? 'Оборудование для выдачи' : 'Позиции закупки' }}</span>
           <div class="d-flex align-center ga-2">
-            <v-btn v-if="selectedItemIdxs.length > 0"
-              variant="tonal" prepend-icon="mdi-delete-sweep-outline" size="small" color="error"
-              @click="removeSelectedItems">
-              Удалить ({{ selectedItemIdxs.length }})
-            </v-btn>
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" :title="`Зафиксирована при заключении ${contractWordGen}`">
               НМЦД (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
@@ -308,132 +303,21 @@
           </div>
         </v-card-title>
         <v-card-text>
-          <div class="overflow-x-auto">
-            <v-table density="compact">
-              <thead>
-                <tr>
-                  <th style="width:36px;padding:0 4px;text-align:center">
-                    <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
-                      :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
-                      @update:model-value="toggleSelectAll" />
-                  </th>
-                  <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-                  <th style="min-width:420px">Наименование</th>
-                  <th style="min-width:180px">Тип</th>
-                  <th style="min-width:140px">Кол-во</th>
-                  <th style="min-width:140px">Ед. изм.</th>
-                  <th style="min-width:150px">Цена ед., ₽</th>
-                  <th style="min-width:150px">Сумма, ₽</th>
-                  <th style="min-width:150px">Страна происхождения</th>
-                  <th style="width:48px"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(item, idx) in items" :key="idx">
-                  <td style="width:36px;padding:0 4px;text-align:center">
-                    <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
-                      @update:model-value="val => toggleItemSelect(idx, val)" />
-                  </td>
-                  <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
-                  <td style="min-width:420px">
-                    <div class="d-flex align-center gap-1">
-                      <!-- Mini thumbnail in row -->
-                      <v-tooltip v-if="item._photo_url" location="right">
-                        <template #activator="{ props: tip }">
-                          <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
-                            <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
-                          </v-avatar>
-                        </template>
-                        <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
-                      </v-tooltip>
-                      <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-
-                      <v-tooltip v-if="item.item_name && !item.product_id && form.purchase_method !== 'advance'"
-                        text="Позиция не привязана к каталогу" location="top">
-                        <template #activator="{ props: tip }">
-                          <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
-                        </template>
-                      </v-tooltip>
-
-                      <v-textarea
-                        v-model="item.item_name"
-                        density="compact"
-                        variant="outlined"
-                        hide-details
-                        clearable
-                        readonly
-                        rows="1"
-                        auto-grow
-                        class="my-1"
-                        style="cursor:pointer;min-width:280px"
-                        placeholder="Нажмите для выбора..."
-                        @click="openProductPicker(idx)"
-                        @click:clear.stop="clearItem(idx)"
-                      />
-                      <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
-                        <template #activator="{ props: tip }">
-                          <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
-                            color="teal" class="flex-shrink-0 ml-1"
-                            @click.stop="openQuickProductEdit(item)" />
-                        </template>
-                      </v-tooltip>
-                    </div>
-                  </td>
-                  <td>
-                    <v-select v-model="item.item_type"
-                      :items="[{value:'товар',title:'Товар'},{value:'услуга',title:'Услуга'},{value:'работа',title:'Работа'}]"
-                      item-title="title" item-value="value" density="compact" variant="outlined"
-                      :error="form.item_type === 'mixed' && !!item.item_name?.trim() && !item.item_type"
-                      hide-details class="my-1" />
-                  </td>
-                  <td>
-                    <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                      variant="outlined" hide-details class="my-1"
-                      @update:model-value="calcItemTotal(idx)" />
-                  </td>
-                  <td>
-                    <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
-                      hide-details class="my-1" />
-                  </td>
-                  <td>
-                    <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                      variant="outlined" hide-details class="my-1"
-                      @update:model-value="calcItemTotal(idx)" />
-                  </td>
-                  <td>
-                    <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
-                      variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
-                  </td>
-                  <td>
-                    <v-text-field v-model="item.country_origin" density="compact"
-                      variant="outlined" hide-details class="my-1" placeholder="Россия" />
-                  </td>
-                  <td>
-                    <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                      @click="removeItem(idx)" />
-                  </td>
-                </tr>
-                <tr v-if="!items.length">
-                  <td colspan="10" class="text-center text-medium-emphasis py-4">
-                    Нет позиций. Нажмите «Добавить позицию».
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-          </div>
-          <div class="d-flex gap-2 mt-3 flex-wrap">
-            <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem">
-              Добавить позицию
-            </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-package-variant-plus" size="small" color="primary"
-              @click="openFullProduct(-1)">
-              Добавить товар в каталог
-            </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
-              @click="closeImportDialog(); itemsImportDialog = true">
-              Импорт из файла
-            </v-btn>
-          </div>
+          <PurchaseItemsEditor
+            v-model="items"
+            item-shape="purchase"
+            :purchase-id="purchaseId"
+            :default-unit="'шт.'"
+            :default-country="'Российская Федерация'"
+            :allowed-item-types="['товар','услуга','работа']"
+            :supports-excel-import="true"
+            :supports-smart-import="true"
+            :supports-full-product-dialog="true"
+            :supports-photo-upload="true"
+            @items-changed="syncContractPriceIfSingle"
+            @reload-requested="loadPurchase"
+            @product-created="onProductCreatedFromEditor"
+          />
         </v-card-text>
       </v-card>
 
@@ -1910,113 +1794,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Full product add dialog -->
-    <v-dialog v-model="fullProductDialog" max-width="700" scrollable>
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Добавить товар / услугу в каталог</v-card-title>
-        <v-card-text class="px-6">
-          <v-row dense>
-            <v-col cols="12">
-              <v-combobox
-                v-model="fullProductForm.name"
-                v-model:search="fullProductNameSearch"
-                :items="fullProductNameSuggestions"
-                no-filter
-                label="Наименование *"
-                variant="outlined" density="compact"
-                autofocus
-                :rules="[v => !!v || 'Обязательное поле']"
-                :hint="isFullProductDuplicate ? '⚠ Товар с таким названием уже есть в каталоге' : ''"
-                :persistent-hint="isFullProductDuplicate"
-              >
-                <template #item="{ item, props }">
-                  <v-list-item v-bind="props" :title="item.raw">
-                    <template #append>
-                      <v-chip size="x-small" color="warning" variant="tonal">уже есть</v-chip>
-                    </template>
-                  </v-list-item>
-                </template>
-              </v-combobox>
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="fullProductForm.item_kind"
-                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
-                label="Товар / Услуга" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-combobox v-model="fullProductForm.product_type"
-                :items="fullProductTypeOptions"
-                label="Тип товара" variant="outlined" density="compact" clearable
-                hint="Напр.: Ноутбук, Тренажёр" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-combobox v-model="fullProductForm.category"
-                :items="fullProductCategoryOptions"
-                label="Категория" variant="outlined" density="compact" clearable
-                hint="Выберите или введите новую" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="fullProductForm.price" label="Цена за ед., ₽" type="number"
-                variant="outlined" density="compact"
-                :readonly="fullAvgPrice !== null"
-                :hint="fullAvgPrice !== null ? 'Среднее из ссылок — ' + fullAvgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки'"
-                persistent-hint />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-switch v-model="fullProductForm.is_active" label="Активен" color="success" density="compact" hide-details class="mt-1" />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="fullProductForm.description" label="Описание" variant="outlined"
-                density="compact" rows="2" auto-grow />
-            </v-col>
-            <v-col cols="12">
-              <div class="text-subtitle-2 mb-2">Фото товара</div>
-              <div v-if="fullProductPhotoPreview" class="mb-3">
-                <img :src="fullProductPhotoPreview" style="max-width:100%;max-height:140px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5" />
-              </div>
-              <v-file-input
-                v-model="fullProductPhotoFileList"
-                label="Загрузить фото с компьютера"
-                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                variant="outlined" density="compact" prepend-icon="mdi-camera" show-size clearable
-                @update:model-value="onFullPhotoFileChange"
-              />
-              <v-text-field v-model="fullProductForm.photo_link" label="Или ссылка на фото" variant="outlined"
-                density="compact" prepend-inner-icon="mdi-image-outline" class="mt-2"
-                :disabled="!!fullProductPhotoFile" />
-            </v-col>
-            <v-col cols="12">
-              <div class="text-subtitle-2 mb-2">
-                Ссылки для сравнения цен
-                <span v-if="fullAvgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
-                  ср. {{ fullAvgPrice.toLocaleString('ru-RU') }} ₽
-                </span>
-              </div>
-              <div v-for="(link, i) in fullProductForm.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-                <v-text-field v-model="link.url" :label="'Ссылка ' + (i + 1)" variant="outlined" density="compact"
-                  hide-details prepend-inner-icon="mdi-link" class="flex-grow-1" />
-                <v-text-field v-model.number="link.price" label="Цена, ₽" type="number"
-                  variant="outlined" density="compact" hide-details style="max-width:140px" />
-                <v-btn v-if="link.url" icon="mdi-open-in-new" variant="text" size="x-small" color="primary"
-                  :href="link.url" target="_blank" />
-                <v-btn icon="mdi-minus-circle" variant="text" size="x-small" color="error"
-                  @click="fullProductForm.priceLinks.splice(i, 1)" />
-              </div>
-              <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary"
-                @click="fullProductForm.priceLinks.push({ url: '', price: null })">
-                Добавить ссылку
-              </v-btn>
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="fullProductSaving" @click="saveFullProduct">Добавить в каталог</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
     <!-- Add contractor inline dialog -->
     <v-dialog v-model="addContractorDialog" max-width="700" scrollable>
       <v-card>
@@ -2086,223 +1863,6 @@
           <v-spacer />
           <v-btn variant="text" @click="addContractorDialog = false">Отмена</v-btn>
           <v-btn color="primary" variant="flat" :loading="addContractorSaving" :disabled="!addContractorForm.name.trim()" @click="saveNewContractor">Добавить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Product picker dialog -->
-    <v-dialog v-model="productPickerDialog" max-width="720" scrollable>
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center justify-space-between">
-          <span>Выбрать товар из каталога</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="productPickerDialog = false" />
-        </v-card-title>
-        <v-card-text class="px-4 pb-2">
-          <v-text-field
-            v-model="productPickerSearch"
-            prepend-inner-icon="mdi-magnify"
-            label="Поиск по наименованию / описанию / типу"
-            variant="outlined" density="compact" clearable hide-details autofocus
-            class="mb-3"
-          />
-          <div v-if="!productPickerResults.length" class="text-center text-medium-emphasis py-8">
-            <v-icon icon="mdi-package-variant-closed" size="40" class="mb-2" />
-            <div>Ничего не найдено</div>
-            <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
-              @click="createProductFromPicker">
-              Добавить «{{ productPickerSearch }}» в каталог
-            </v-btn>
-          </div>
-          <v-table v-else density="compact" hover>
-            <thead>
-              <tr>
-                <th style="width:48px"></th>
-                <th>Наименование</th>
-                <th style="width:110px">Тип</th>
-                <th style="width:130px;text-align:right">Цена, ₽</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in productPickerResults" :key="p.id"
-                style="cursor:pointer" class="hover-row" @click="selectFromPicker(p)">
-                <td>
-                  <v-avatar size="36" rounded="sm" class="my-1" style="overflow:hidden">
-                    <img v-if="p.photo_url || p.photo_link" :src="p.photo_url || p.photo_link" style="width:36px;height:36px;object-fit:cover;display:block" />
-                    <v-icon v-else icon="mdi-package-variant" color="grey" size="20" />
-                  </v-avatar>
-                </td>
-                <td>
-                  <div class="font-weight-medium">{{ p.name }}</div>
-                  <div v-if="p.description" class="text-caption text-medium-emphasis"
-                    style="max-width:340px;white-space:normal;line-height:1.3">
-                    {{ p.description.slice(0, 90) }}{{ p.description.length > 90 ? '…' : '' }}
-                  </div>
-                </td>
-                <td>
-                  <v-chip v-if="p.product_type" size="x-small" variant="tonal">{{ p.product_type }}</v-chip>
-                </td>
-                <td style="text-align:right" class="font-weight-medium text-blue-darken-2">
-                  {{ p.price ? Number(p.price).toLocaleString('ru-RU') + ' ₽' : '—' }}
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-3">
-          <v-btn variant="tonal" color="teal" size="small" prepend-icon="mdi-plus" @click="createProductFromPicker">
-            Новый товар/услуга
-          </v-btn>
-          <span class="text-caption text-medium-emphasis ml-2">{{ productPickerResults.length }} позиций</span>
-          <v-spacer />
-          <v-btn variant="text" @click="productPickerDialog = false">Отмена</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Items import dialog -->
-    <v-dialog v-model="itemsImportDialog" max-width="1400" scrollable>
-      <v-card>
-        <v-card-title class="pa-4 d-flex align-center">
-          <v-icon icon="mdi-package-variant-plus" class="mr-2" />
-          Импорт товаров из файла
-          <v-spacer />
-          <v-chip v-if="importStep > 1" size="small" color="primary" variant="tonal" class="ml-2">
-            Шаг {{ importStep }} / 3
-          </v-chip>
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-4">
-          <v-alert v-if="!purchaseId" type="info" class="mb-3" density="compact" icon="mdi-information-outline">
-            Заказ будет автоматически сохранён при импорте
-          </v-alert>
-
-          <!-- Step 1: Upload file -->
-          <template v-if="importStep === 1">
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
-              <div class="text-body-2">
-                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
-                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
-                <strong>Заголовки столбцов:</strong> определяются автоматически по ключевым словам
-                (наименование, количество, цена, сумма и т.д.). Могут быть в любой строке.<br>
-                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и укажете соответствие полей.
-              </div>
-            </v-alert>
-            <FileDropZone v-model="itemsImportFile"
-              accept=".xlsx,.xls,.pdf,.docx,.doc"
-              hint="Excel, PDF, Word — перетащите или нажмите"
-              class="mb-2" />
-          </template>
-
-          <!-- Step 2: Column mapping (table-style drag-and-drop) -->
-          <template v-if="importStep === 2 && importPreviewData">
-            <v-alert v-if="currentSheetData" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
-              <strong>Лист:</strong> {{ currentSheetData.name }} ({{ currentSheetData.total_rows }} строк данных)
-            </v-alert>
-            <v-select
-              v-if="importPreviewData.sheets.length > 1"
-              v-model="importSelectedSheet"
-              :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
-            />
-
-            <!-- COLUMN TABLE: headers on top, cards below -->
-            <div class="imap-grid">
-              <div v-for="target in TARGET_FIELDS" :key="target.value"
-                class="imap-col"
-                :class="{
-                  'imap-col--over': dragOverTarget === target.value,
-                  'imap-col--filled': isTargetFilled(target.value),
-                  'imap-col--required': target.required && !isTargetFilled(target.value),
-                }"
-                @dragover.prevent="dragOverTarget = target.value"
-                @dragleave="dragOverTarget = null"
-                @drop.prevent="onDropToTarget(target.value, $event)">
-                <!-- Fixed header -->
-                <div class="imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
-                <!-- Drop body -->
-                <div class="imap-col-body">
-                  <div v-if="isTargetFilled(target.value)"
-                    class="imap-card"
-                    draggable="true"
-                    @dragstart="onDragStart(dragMapping[target.value] as number, $event)">
-                    <div class="imap-card-row">
-                      <span class="imap-card-name">{{ getColumnLabel(dragMapping[target.value] as number) }}</span>
-                      <button class="imap-card-x" @click.stop="unmapTarget(target.value)">×</button>
-                    </div>
-                    <div class="imap-card-samples">{{ getSamples(dragMapping[target.value] as number).join(', ') || '—' }}</div>
-                  </div>
-                  <div v-else class="imap-col-empty">—</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- NOT RESOLVED section -->
-            <div class="imap-unresolved mt-3"
-              :class="{ 'imap-unresolved--over': dragOverTarget === '_unresolved' }"
-              @dragover.prevent="dragOverTarget = '_unresolved'"
-              @dragleave="dragOverTarget = null"
-              @drop.prevent="onDropToUnresolved($event)">
-              <span class="imap-unresolved-label">Не определилось</span>
-              <div class="d-flex gap-2 flex-wrap mt-1">
-                <template v-for="(_, idx) in currentSheetHeaders" :key="idx">
-                  <div v-if="!isMapped(idx) && !isIgnored(idx)"
-                    class="imap-card imap-card--free"
-                    draggable="true"
-                    @dragstart="onDragStart(idx, $event)">
-                    <div class="imap-card-row">
-                      <span class="imap-card-name">{{ getColumnLabel(idx) }}</span>
-                      <button class="imap-card-x imap-card-x--grey" title="Убрать" @click.stop="ignoreColumn(idx)">×</button>
-                    </div>
-                    <div class="imap-card-samples">{{ getSamples(idx).join(', ') || '—' }}</div>
-                  </div>
-                </template>
-                <span v-if="unmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
-              </div>
-            </div>
-
-            <v-alert v-if="!mappingHasName" type="warning" density="compact" icon="mdi-alert" class="mt-3">
-              Укажите столбец «Наименование»
-            </v-alert>
-          </template>
-
-          <!-- Step 3: Result -->
-          <template v-if="importStep === 3">
-            <v-alert v-if="itemsImportResult" type="success" density="compact" class="mb-2">
-              <div>Добавлено позиций: <strong>{{ itemsImportResult.added }}</strong></div>
-              <div v-if="itemsImportResult.matched_catalog">Из каталога: {{ itemsImportResult.matched_catalog }}</div>
-              <div v-if="itemsImportResult.new_in_catalog">Новых в каталоге: {{ itemsImportResult.new_in_catalog }}</div>
-            </v-alert>
-            <v-alert v-if="importError" type="error" density="compact">
-              {{ importError }}
-            </v-alert>
-          </template>
-
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-btn v-if="importStep > 1 && importStep < 3" variant="text" @click="importStep--">
-            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="closeImportDialog">Закрыть</v-btn>
-
-          <v-btn v-if="importStep === 1" color="primary" variant="flat"
-            :loading="itemsImportLoading"
-            :disabled="!itemsImportFile"
-            @click="doImportPreview">
-            Далее
-          </v-btn>
-
-          <v-btn v-if="importStep === 2" color="success" variant="flat"
-            :loading="itemsImportLoading"
-            :disabled="!mappingHasName"
-            @click="doMappedImport">
-            Импортировать
-          </v-btn>
-
-          <v-btn v-if="importStep === 3" color="primary" variant="flat"
-            @click="closeImportDialog">
-            Готово
-          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2780,6 +2340,7 @@ import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
+import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -4257,6 +3818,14 @@ function syncContractPriceIfSingle() {
   if (isSinglePurchase.value && displayNmck.value > 0) {
     form.contract_price = displayNmck.value
     calcEconomy()
+  }
+}
+
+function onProductCreatedFromEditor(product: Product) {
+  // Mirror the existing behaviour: push into local products list so any
+  // parent-side product selects stay up-to-date.
+  if (product && !products.value.some(p => p.id === product.id)) {
+    products.value.push(product)
   }
 }
 

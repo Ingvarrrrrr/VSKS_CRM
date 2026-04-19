@@ -2,9 +2,24 @@
   <v-app>
     <app-bar v-if="showAppBar" />
     <v-main>
-      <router-view v-slot="{ Component }">
-        <transition name="page" mode="out-in">
-          <component :is="Component" />
+      <router-view v-slot="{ Component, route }">
+        <!--
+          NO `mode="out-in"` and explicit `:key="route.fullPath"`.
+
+          Previously this was `mode="out-in"` + no key: Vue waited for the old
+          view to finish its leave transition before mounting the new one, so
+          any hang in the old view's unmount (classic case: ApexCharts tooltip
+          Teleport still holding references after leaving /dashboard/radar)
+          froze the transition in the "out" phase and the new view never
+          mounted — user sees an empty main area while sidebar/app bar remain.
+
+          The key forces Vue to treat each route as a fresh component instance
+          (no accidental re-use of state across routes), and the default
+          transition mode lets enter/leave run in parallel so the new view
+          becomes visible even if the old one is slow to tear down.
+        -->
+        <transition name="page">
+          <component :is="Component" :key="route.fullPath" />
         </transition>
       </router-view>
     </v-main>

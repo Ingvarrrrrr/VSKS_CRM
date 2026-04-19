@@ -325,105 +325,24 @@
 
             <!-- Section 2: Позиции -->
             <v-card variant="outlined" class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-4 pb-2 d-flex align-center justify-space-between">
-                <span><v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции</span>
-                <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="addItem">
-                  Добавить позицию
-                </v-btn>
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
-                <v-table v-if="wishForm.items.length" density="compact">
-                  <thead>
-                    <tr>
-                      <th style="width:40px">№</th>
-                      <th>Наименование</th>
-                      <th style="width:120px">Тип</th>
-                      <th style="width:80px">Кол-во</th>
-                      <th style="width:80px">Ед.изм.</th>
-                      <th style="width:110px">Цена ед., ₽</th>
-                      <th style="width:110px">Сумма, ₽</th>
-                      <th style="width:40px"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(item, idx) in wishForm.items" :key="idx">
-                      <td>{{ idx + 1 }}</td>
-                      <td>
-                        <v-text-field
-                          v-model="item.item_name"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                          placeholder="Наименование"
-                        />
-                      </td>
-                      <td>
-                        <v-select
-                          v-model="item.item_type"
-                          :items="['товар', 'услуга', 'работа']"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                        />
-                      </td>
-                      <td>
-                        <v-text-field
-                          v-model.number="item.quantity"
-                          type="number"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                          min="0"
-                          @update:model-value="calcItemTotal(idx)"
-                        />
-                      </td>
-                      <td>
-                        <v-combobox
-                          v-model="item.unit"
-                          :items="['шт', 'компл', 'усл', 'м', 'кг', 'л', 'м²']"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                        />
-                      </td>
-                      <td>
-                        <v-text-field
-                          v-model.number="item.unit_price"
-                          type="number"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                          min="0"
-                          @update:model-value="calcItemTotal(idx)"
-                        />
-                      </td>
-                      <td class="font-weight-bold text-no-wrap">
-                        {{ (item.total_price || 0).toLocaleString('ru-RU') }}
-                      </td>
-                      <td>
-                        <v-btn
-                          icon="mdi-delete"
-                          size="x-small"
-                          variant="text"
-                          color="error"
-                          @click="removeItem(idx)"
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colspan="6" class="text-right font-weight-bold pa-2">Итого НМЦК:</td>
-                      <td class="font-weight-bold text-primary pa-2 text-no-wrap">
-                        {{ totalNmck.toLocaleString('ru-RU') }} ₽
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </v-table>
-                <div v-else class="text-center text-medium-emphasis py-4">
-                  Нет позиций. Нажмите «Добавить позицию»
-                </div>
+                <PurchaseItemsEditor
+                  v-model="wishForm.items"
+                  item-shape="wish"
+                  :purchase-id="null"
+                  :default-item-type="'товар'"
+                  :default-unit="'шт.'"
+                  :default-country="'Россия'"
+                  :allowed-item-types="['товар','услуга','работа']"
+                  :supports-excel-import="true"
+                  :supports-smart-import="true"
+                  :supports-full-product-dialog="true"
+                  :supports-photo-upload="true"
+                  :readonly="false"
+                />
               </v-card-text>
             </v-card>
 
@@ -574,6 +493,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 
 const router = useRouter()
 
@@ -742,34 +662,13 @@ const wishForm = ref({
   justification: '',
   priority: 'medium' as string,
   desired_date: '',
-  items: [] as WishItem[],
+  items: [] as any[],
 })
 
 // Items computed total
 const totalNmck = computed(() =>
   wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
 )
-
-function addItem() {
-  wishForm.value.items.push({
-    item_name: '',
-    item_type: 'товар',
-    quantity: 1,
-    unit: 'шт',
-    unit_price: 0,
-    total_price: 0,
-    country_origin: 'Россия',
-  })
-}
-
-function removeItem(idx: number) {
-  wishForm.value.items.splice(idx, 1)
-}
-
-function calcItemTotal(idx: number) {
-  const item = wishForm.value.items[idx]
-  item.total_price = (item.quantity || 0) * (item.unit_price || 0)
-}
 
 function onSubsidyChange() {
   selectedFeo1.value = null

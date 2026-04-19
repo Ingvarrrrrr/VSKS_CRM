@@ -2,25 +2,25 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 14
+current_phase: 15
 status: Ready to execute
-last_updated: "2026-04-19T07:55:55.331Z"
+last_updated: "2026-04-19T12:21:11.571Z"
 progress:
-  total_phases: 14
-  completed_phases: 5
-  total_plans: 30
-  completed_plans: 24
+  total_phases: 15
+  completed_phases: 6
+  total_plans: 35
+  completed_plans: 26
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 14 (risk-radar-dashboard-neon-telemetry) — EXECUTING
-Plan: 4 of 4
+Phase: 15 (Reusable Purchase Items Editor) — EXECUTING
+Plan: 2 of 5
 
 - **Milestone:** v1.0
-- **Current Phase:** 14
+- **Current Phase:** 15
 - **Previous Phase:** 10 (Chat Telegram UI) — 3/4 plans executed, 1 remaining
 - **Profile:** balanced (Opus plans, Sonnet executes)
 
@@ -49,6 +49,7 @@ Plan: 4 of 4
 - [Phase 14]: AlertsTicker uses doubledItems+translateX(-50%) for seamless CSS marquee loop without JS timers
 - [Phase 14]: Stub RiskRadarView.vue created to unblock vite-plugin-pwa build (Plan 14-03 replaces it)
 - [Phase 14]: RiskRadarView uses isDark-reactive hex dictionaries for ApexCharts colors (CSS vars not readable by SVG engine)
+- [Phase 15]: OrderProductsTable.vue confirmed dead (only .backup.vue referenced it) — deleted to clean frontend/src/components before PurchaseItemsEditor lands
 
 ## Blockers
 

@@ -1662,11 +1662,20 @@ async function loadOrgData() {
   loading.value = true
   try {
     const orgId = selectedOrgId.value
-    const isAdmin = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
+    // Visibility is a backend concern — the server filters /tasks/ and /purchases/
+    // by hierarchy (own + recursive subordinates + managed depts + managed orgs).
+    // Only 'superadmin' and 'account_owner' (SaaS-level) get the unfiltered view.
+    // System roles like 'admin' / 'org_admin' grant privileges (delete/export/
+    // settings) but do NOT widen visibility — an admin without subordinates sees
+    // only their own rows, same as an employee with a team sees their team.
+    //
+    // For employee on the "All organizations" tab we still call load() because
+    // it bundles pending-consent + categories + departments (needed for the UI).
+    const isEmployeeAllOrgs = currentUserRole === 'employee' && orgId === null
 
-    if (isAdmin) {
-      // Admin: load ALL tasks and purchases (server handles access control)
-      // For specific org, pass org_id filter; for "all orgs" (null), load everything
+    if (isEmployeeAllOrgs) {
+      await load()
+    } else {
       const taskUrl = orgId !== null ? `/tasks/?org_id=${orgId}` : '/tasks/'
       const purchaseUrl = orgId !== null ? `/purchases/?org_id=${orgId}` : '/purchases/'
       const [allTasks, allPurchases] = await Promise.all([
@@ -1676,21 +1685,6 @@ async function loadOrgData() {
       generalTasks.value = allTasks
       tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
       archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
-    } else {
-      // Employee/manager: backend already filters by user visibility.
-      // For a specific org, narrow by org_id too.
-      if (orgId !== null) {
-        const [allTasks, allPurchases] = await Promise.all([
-          apiFetch<any[]>(`/tasks/?org_id=${orgId}`).catch(() => []),
-          apiFetch<any[]>(`/purchases/?org_id=${orgId}`).catch(() => []),
-        ])
-        generalTasks.value = allTasks
-        tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
-        archiveTasks.value = allPurchases.filter((t: any) => t.status === 'paid')
-      } else {
-        // "All organizations" mode for non-admin: aggregate across all visible orgs
-        await load()
-      }
     }
   } catch (e) { console.error('Load org data error:', e) }
   finally { loading.value = false }
@@ -1766,11 +1760,17 @@ async function pollTasks() {
 let _pollInterval: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await loadOrgSummary()
-  const isAdminMount = ['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentUserRole)
-  if (isAdminMount) {
-    await loadOrgData()
-  } else {
+  // loadOrgData() dispatches correctly by role:
+  //   - employee + "All orgs" → load() for pending-consent + metadata bundle
+  //   - everyone else → /tasks/ + /purchases/, backend filters by hierarchy
+  // The old split that sent 'admin'/'org_admin' into the unfiltered admin
+  // branch was the bug under Lyubarets — she saw every org's purchases even
+  // though she's not a SaaS-level role. Fixed on backend (tasks/purchases
+  // routers) and here by collapsing the branch.
+  if (currentUserRole === 'employee') {
     await load()
+  } else {
+    await loadOrgData()
   }
   _pollInterval = setInterval(pollTasks, 30_000)
 

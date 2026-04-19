@@ -496,24 +496,28 @@ async def list_purchases(
             q = q.where(Subsidy.org_id == org_id)
         elif org_ids is not None:
             q = q.where(Subsidy.org_id.in_(org_ids))
-    # Visibility by hierarchy position:
-    # - superadmin/account_owner/admin/org_admin: see all in org (already filtered above)
-    # - manager: sees own + subordinates' + managed dept/org purchases
-    # - employee: sees ONLY purchases where they are the executor OR a participant (PurchaseMember)
+    # Visibility by hierarchy position (business rule, not title):
+    # - superadmin / account_owner: SaaS-level, see everything in tenant (already
+    #   scoped by get_org_filter above; no extra user-level filter).
+    # - employee: sees ONLY purchases where they are the executor OR a participant
+    #   (PurchaseMember); no one else's rows, even if they share an org.
+    # - everyone else (manager, admin, org_admin): sees own + recursive subordinates
+    #   + managed-department members + managed-organization members (by hierarchy).
+    #   Being 'admin' is a system-privilege role (delete/export/settings), not a
+    #   visibility role — an admin without subordinates sees only their own stuff.
     if current_user.role == 'employee':
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
         q = q.where(
             (Purchase.assigned_user_id == current_user.id) |
             (Purchase.id.in_(member_pids))
         )
-    elif current_user.role == 'manager':
-        # Existing manager logic: subordinates + dept members + managed orgs + purchase members
+    elif current_user.role not in ('superadmin', 'account_owner'):
+        # manager / admin / org_admin — all follow the same hierarchy rule.
         from app.models.user_hierarchy import UserHierarchy
         from app.models.manager_organization import ManagerOrganization
         from app.models.manager_department import ManagerDepartment
         from app.models.department import DepartmentMember
 
-        # Collect all user IDs this user can see
         visible_user_ids = {current_user.id}
 
         # Direct subordinates
@@ -533,7 +537,7 @@ async def list_purchases(
             )
             visible_user_ids.update(r[0] for r in dm_res.all())
 
-        # Members of managed orgs — see all
+        # Members of managed orgs
         mo_res = await db.execute(
             select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
         )
@@ -542,12 +546,13 @@ async def list_purchases(
             org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
             visible_user_ids.update(r[0] for r in org_users.all())
 
-        # Filter: assigned to visible user OR no assigned user (shared) OR purchase member
-        from app.models.purchase_event import PurchaseMember
+        # Filter: assigned to visible user OR purchase member OR created by visible user.
+        # NOTE: intentionally dropped the "assigned_user_id IS NULL" OR-branch — previously
+        # every unassigned purchase leaked to every non-superadmin role, defeating the
+        # hierarchy rule. Unassigned purchases are now visible only via membership.
         member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
         q = q.where(
             (Purchase.assigned_user_id.in_(visible_user_ids)) |
-            (Purchase.assigned_user_id.is_(None)) |
             (Purchase.id.in_(member_pids))
         )
     if contract_id:

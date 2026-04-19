@@ -23,43 +23,55 @@ logger = logging.getLogger(__name__)
 
 
 async def _get_visible_user_ids(current_user, db) -> Optional[set]:
-    """Returns set of user IDs visible to current_user based on hierarchy, or None if all visible."""
-    if current_user.role in ('superadmin', 'account_owner', 'admin', 'org_admin'):
-        return None  # sees all in org
+    """
+    Returns the set of user IDs whose tasks/purchases current_user may see.
+    Returning None means "no user-level filter, scope purely by org_id".
+
+    Visibility rule (business, not title):
+      - superadmin / account_owner  → SaaS-wide or tenant-wide → None (no user filter)
+      - everyone else (admin, org_admin, manager, employee) → by hierarchy:
+          {self} ∪ recursive subordinates ∪ managed-department members
+                ∪ managed-organization members
+        — employees and admins without subordinates end up with just {self}.
+
+    Being 'admin' or 'org_admin' grants system privileges (settings, delete,
+    export, publish) but does NOT widen visibility. Only the SaaS-level
+    roles see everything by virtue of being the platform itself.
+    """
+    if current_user.role in ('superadmin', 'account_owner'):
+        return None  # SaaS-level — no user-level filter
+
+    from app.models.manager_department import ManagerDepartment
+    from app.models.manager_organization import ManagerOrganization
+    from app.models.department import DepartmentMember
+    from app.routers.user_hierarchy import get_all_subordinate_ids
 
     visible = {current_user.id}
 
-    if current_user.role == 'manager':
-        from app.models.manager_department import ManagerDepartment
-        from app.models.manager_organization import ManagerOrganization
-        from app.models.department import DepartmentMember
-        from app.routers.user_hierarchy import get_all_subordinate_ids
+    # Direct + recursive subordinates (everyone can have reports, incl. admins)
+    sub_ids = await get_all_subordinate_ids(current_user.id, db)
+    visible.update(sub_ids)
 
-        # Direct + recursive subordinates
-        sub_ids = await get_all_subordinate_ids(current_user.id, db)
-        visible.update(sub_ids)
-
-        # Managed departments
-        md_res = await db.execute(
-            select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
+    # Managed departments
+    md_res = await db.execute(
+        select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
+    )
+    managed_dept_ids = [r[0] for r in md_res.all()]
+    if managed_dept_ids:
+        dm_res = await db.execute(
+            select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
         )
-        managed_dept_ids = [r[0] for r in md_res.all()]
-        if managed_dept_ids:
-            dm_res = await db.execute(
-                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
-            )
-            visible.update(r[0] for r in dm_res.all())
+        visible.update(r[0] for r in dm_res.all())
 
-        # Managed organizations
-        mo_res = await db.execute(
-            select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
-        )
-        managed_org_ids = [r[0] for r in mo_res.all()]
-        if managed_org_ids:
-            org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
-            visible.update(r[0] for r in org_users.all())
+    # Managed organizations
+    mo_res = await db.execute(
+        select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
+    )
+    managed_org_ids = [r[0] for r in mo_res.all()]
+    if managed_org_ids:
+        org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
+        visible.update(r[0] for r in org_users.all())
 
-    # employee: visible = {current_user.id} only
     return visible
 
 

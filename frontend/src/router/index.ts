@@ -44,6 +44,12 @@ const router = createRouter({
       meta: { requiresAuth: false, title: 'Дашборд' }
     },
     {
+      path: '/dashboard/radar',
+      name: 'radar-dashboard',
+      component: () => import('../views/RiskRadarView.vue'),
+      meta: { requiresAuth: false, title: 'Risk Radar' }
+    },
+    {
       path: '/subsidies',
       name: 'subsidies',
       component: SubsidiesView,

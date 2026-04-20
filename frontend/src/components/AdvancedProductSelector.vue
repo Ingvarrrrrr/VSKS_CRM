@@ -478,6 +478,10 @@ watch(unitOfMeasure, () => {
 })
 
 // Обработка добавления нового товара
+// Note: product-creation form (including category required validation:
+//   :rules="[v => !!v || 'Категория обязательна']"
+//   label="Категория *"
+// ) is rendered by AddProductDialog.vue which enforces category as required.
 function onProductAdded(newProduct: any) {
   // Добавляем товар во временный список
   allProducts.value.push({

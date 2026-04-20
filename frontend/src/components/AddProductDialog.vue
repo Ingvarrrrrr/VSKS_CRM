@@ -43,9 +43,9 @@
               <v-select
                 v-model="product.category"
                 :items="categories"
-                label="Категория ФЭО *"
+                label="Категория *"
                 variant="outlined"
-                :rules="[v => !!v || 'Обязательное поле']"
+                :rules="[v => !!v || 'Категория обязательна']"
                 required
               />
             </v-col>

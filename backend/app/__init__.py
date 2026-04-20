@@ -18,6 +18,7 @@ from .routers import (
     wishes, purchase_export, purchase_items_import, purchase_members,
 )
 from .routers import org_config
+from .routers import purchase_transitions
 from .routers import feo_planned_items
 from .routers import telegram_webhook
 from .routers import settings as settings_router
@@ -308,6 +309,7 @@ app.include_router(purchase_approvals.router)
 app.include_router(purchase_export.router)
 app.include_router(purchase_items_import.router)
 app.include_router(purchase_members.router)
+app.include_router(purchase_transitions.router)
 app.include_router(tasks.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)

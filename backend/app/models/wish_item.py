@@ -16,5 +16,7 @@ class WishItem(Base):
     unit_price = Column(Numeric(15, 2), default=0)
     total_price = Column(Numeric(15, 2), default=0)
     country_origin = Column(String(100), default="Россия")
+    target_column_key = Column(String(200), nullable=True)  # Phase 13 D-04: kanban column override; falls back to product.category when null
 
     wish = relationship("Wish", back_populates="items")
+    product = relationship("Product", foreign_keys=[product_id])

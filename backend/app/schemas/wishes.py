@@ -13,7 +13,13 @@ class WishItemOut(BaseModel):
     unit_price: Optional[float] = 0
     total_price: Optional[float] = 0
     country_origin: Optional[str] = "Россия"
+    target_column_key: Optional[str] = None  # Phase 13 D-04: kanban column override
     model_config = ConfigDict(from_attributes=True)
+
+
+class WishItemPatch(BaseModel):
+    """D-04: Patch payload for drag-drop column reassignment."""
+    target_column_key: Optional[str] = None
 
 
 class WishCreate(BaseModel):

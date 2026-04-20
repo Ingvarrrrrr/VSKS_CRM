@@ -332,6 +332,7 @@ SUBSIDY_TEMPLATES_BASE = "/app/uploads/templates"
 SUPPORTED_DOC_TYPES = {
     "contract":              "Договор",
     "contract_tz":           "Договор с ТЗ",
+    "tech_spec":             "Техническое задание (ТЗ)",
     "contract_fadm":         "Договор ФАДМ",
     "service_note":          "Служебная записка",
     "service_note_delivery": "СЗ на выдачу",

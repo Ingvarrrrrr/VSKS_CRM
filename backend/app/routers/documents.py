@@ -32,6 +32,7 @@ DOC_TYPES = {
     "service_note_delivery": ("service_note_delivery.docx", "SZ_Vydacha"),
     "service_note_payment":  ("service_note_payment.docx",  "SZ_Oplata"),
     "contract_tz":           ("contract_tz.docx",           "Contract_TZ"),
+    "tech_spec":             ("tech_spec.docx",             "Tech_Spec"),
     "contract":              ("contract.docx",              "Contract"),
     "contract_fadm":         ("contract_fadm.docx",         "Contract_FADM"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),

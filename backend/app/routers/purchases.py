@@ -15,6 +15,7 @@ from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.models.user import User
 from app.routers.contracts import ensure_contract_linked
+from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime, date
@@ -67,55 +68,6 @@ async def _create_assignment_chat_room(
 STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
 VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
 
-
-
-FRAMEWORK_TYPES = {"framework_cumulative", "framework_with_amount"}
-
-
-async def _assign_framework_seq(p: Purchase, db: AsyncSession, exclude_id: Optional[int] = None) -> None:
-    """Auto-assign framework_seq if purchase belongs to a framework contract and seq is not set."""
-    if p.purchase_contract_type not in FRAMEWORK_TYPES or not p.contract_id:
-        return
-    if p.framework_seq is not None:
-        return  # already set (manual override)
-    q = select(func.coalesce(func.max(Purchase.framework_seq), 0)).where(
-        Purchase.contract_id == p.contract_id
-    )
-    if exclude_id:
-        q = q.where(Purchase.id != exclude_id)
-    result = await db.execute(q)
-    p.framework_seq = (result.scalar() or 0) + 1
-
-
-async def _check_budget(
-    subsidy_id: Optional[int],
-    amount: Optional[Decimal],
-    exclude_pid: Optional[int],
-    db: AsyncSession
-):
-    """Raises 422 if adding `amount` to subsidy total would exceed its budget."""
-    if not subsidy_id or not amount:
-        return
-    subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
-    subsidy = subsidy_r.scalar_one_or_none()
-    if not subsidy:
-        return
-    q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
-        Purchase.subsidy_id == subsidy_id
-    )
-    if exclude_pid:
-        q = q.where(Purchase.id != exclude_pid)
-    total_r = await db.execute(q)
-    total = Decimal(str(total_r.scalar() or 0))
-    amt = Decimal(str(amount))
-    budget = Decimal(str(subsidy.budget))
-    if total + amt > budget:
-        remaining = budget - total
-        raise HTTPException(
-            422,
-            f"Превышение бюджета субсидии «{subsidy.name}». "
-            f"Доступно: {remaining:,.2f} ₽, запрашивается: {amt:,.2f} ₽"
-        )
 
 # Fields required for each transition target
 TRANSITION_REQUIRED: dict[str, list[str]] = {

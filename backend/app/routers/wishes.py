@@ -12,7 +12,10 @@ from app.auth.jwt import (
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
-from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert
+from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch
+from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
+from app.routers.purchase_members import _create_assignment_chat_room
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
@@ -302,3 +305,140 @@ async def delete_wish(
 
     await db.delete(wish)
     await db.commit()
+
+
+@router.patch("/{wish_id}/items/{item_id}")
+async def patch_wish_item(
+    wish_id: int,
+    item_id: int,
+    body: WishItemPatch,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """D-04: Drag-drop target update. Scoped to wish — cannot move items between wishes.
+
+    Returns 409 if wish is approved (read-only).
+    Returns 404 if item does not belong to wish_id.
+    """
+    wish = await _load_wish(wish_id, db)
+    if wish.status not in ("draft", "submitted"):
+        raise HTTPException(status_code=409, detail="Заявка уже одобрена — редактирование запрещено")
+    # Find item BELONGING TO THIS WISH
+    item = next((i for i in wish.items if i.id == item_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Позиция не найдена в данной заявке")
+    # body.target_column_key may be None (clear) or a non-empty string (override)
+    item.target_column_key = body.target_column_key
+    await db.commit()
+    await db.refresh(item)
+    return {"id": item.id, "target_column_key": item.target_column_key}
+
+
+@router.post("/{wish_id}/approve-distribution")
+async def approve_distribution(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """D-05/D-06: Atomic all-or-nothing approve. Creates N purchases (status='wishes'),
+    one per distinct resolved column key group, copies wish items to purchase_items,
+    creates assignment chat rooms, then marks wish.status='approved'.
+
+    Rolls back entirely on any failure — zero purchases persist if any step fails.
+    Returns 400 if wish is already approved.
+    """
+    from sqlalchemy.orm import selectinload as sil
+
+    wish = await _load_wish(wish_id, db)
+    if wish.status == "approved":
+        raise HTTPException(status_code=400, detail="Заявка уже одобрена")
+    if wish.status not in ("draft", "submitted"):
+        raise HTTPException(status_code=400, detail=f"Нельзя одобрить заявку в статусе {wish.status}")
+    if not wish.items:
+        raise HTTPException(status_code=400, detail="Заявка пустая — нечего одобрять")
+
+    # Preload wish items with products for category resolution
+    res = await db.execute(
+        select(WishItem)
+        .options(sil(WishItem.product))
+        .where(WishItem.wish_id == wish_id)
+    )
+    items_full = res.scalars().all()
+
+    def _resolve_key(it: WishItem) -> str:
+        """target_column_key → product.category → '__uncategorized__'"""
+        if it.target_column_key:
+            return it.target_column_key
+        if it.product_id and it.product and it.product.category:
+            return it.product.category
+        return "__uncategorized__"
+
+    groups: dict[str, list] = {}
+    for it in items_full:
+        groups.setdefault(_resolve_key(it), []).append(it)
+
+    if not groups:
+        raise HTTPException(status_code=400, detail="Нет позиций для распределения")
+
+    created_purchase_ids: list[int] = []
+    try:
+        for column_key, items_in_col in groups.items():
+            total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
+            display_key = "Не определено" if column_key == "__uncategorized__" else column_key
+            p = Purchase(
+                subsidy_id=wish.subsidy_id,
+                feo_category_id=wish.feo_category_id,
+                item_name=wish.title or f"Заявка #{wish.id}",
+                subject=f"{wish.title or 'Заявка'} — {display_key}",
+                planned_total_price=total_nmck,
+                total_nmck=total_nmck,
+                nmck=total_nmck,
+                status="wishes",
+                assigned_user_id=wish.assigned_to,
+                service_note_text=wish.justification,
+                service_note_by=wish.created_by,
+            )
+            db.add(p)
+            await db.flush()  # get p.id
+            created_purchase_ids.append(p.id)
+
+            for wi in items_in_col:
+                pi = PurchaseItem(
+                    purchase_id=p.id,
+                    product_id=wi.product_id,
+                    item_name=wi.item_name,
+                    item_type=wi.item_type,
+                    quantity=wi.quantity,
+                    unit=wi.unit,
+                    unit_price=wi.unit_price,
+                    total_price=wi.total_price,
+                    country_origin=wi.country_origin,
+                )
+                db.add(pi)
+            await db.flush()
+
+            # Create chat room per purchase if there is an assignee different from current user
+            if wish.assigned_to and wish.assigned_to != current_user.id:
+                org_id = getattr(current_user, 'org_id', None) or wish.org_id
+                await _create_assignment_chat_room(
+                    db, current_user.id, wish.assigned_to,
+                    org_id,
+                    f"Закупка: {p.subject}",
+                )
+
+        wish.status = "approved"
+        wish.approved_by = current_user.id
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Ошибка при создании закупок — откат: {e}")
+
+    return {
+        "wish_id": wish.id,
+        "purchase_ids": created_purchase_ids,
+        "count": len(created_purchase_ids),
+        "status": "approved",
+    }

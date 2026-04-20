@@ -67,131 +67,25 @@
       <div class="text-body-2 text-medium-emphasis mt-1">Попросите администратора назначить вам закупки</div>
     </div>
 
-    <!-- Subsidy filter for kanban -->
-    <div v-if="viewMode === 'kanban' && subsidyItems.length > 2" class="d-flex align-center mb-3 ga-2">
-      <v-select
-        v-model="kanbanSubsidyFilter"
-        :items="subsidyItems"
-        item-title="title"
-        item-value="value"
-        density="compact"
-        variant="outlined"
-        hide-details
-        style="max-width:280px"
-        prepend-inner-icon="mdi-filter-outline"
-        label="Субсидия"
-        clearable
-      />
-    </div>
-
     <!-- Kanban View -->
-    <div v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'" class="kanban-board">
-      <div
-        v-for="col in visibleColumns" :key="col.status"
-        class="kanban-column"
-        @dragover.prevent
-        @drop="onDrop($event, col.status)"
-      >
-        <div class="kanban-column-header" :style="{ borderTopColor: col.color }">
-          <span class="kanban-column-title">{{ col.label }}</span>
-          <v-chip size="x-small" :color="col.color" variant="tonal">{{ tasksByStatus(col.status).length }}</v-chip>
-        </div>
-        <div class="kanban-column-body">
-          <div
-            v-for="task in tasksByStatus(col.status)" :key="task.id"
-            class="kanban-card"
-            draggable="true"
-            @dragstart="onDragStart($event, task)"
-            @click="openTask(task.id)"
-          >
-            <div class="kanban-card-header">
-              <span class="kanban-card-title">{{ task.subject || `Закупка #${task.purchase_number || task.id}` }}</span>
-            </div>
-            <div v-if="task.contractor_name" class="kanban-card-meta">
-              <v-icon icon="mdi-domain" size="12" class="mr-1" />{{ task.contractor_name }}
-            </div>
-            <div v-if="task.substatus" class="kanban-card-meta">
-              <v-chip size="x-small" variant="outlined" color="teal">
-                {{ SUBSTATUS_LABEL[task.substatus] || task.substatus }}
-              </v-chip>
-            </div>
-            <div class="kanban-card-footer">
-              <span class="kanban-card-amount">{{ formatMoney(task.contract_price || task.planned_total_price) }}</span>
-              <v-chip
-                v-if="task.execution_term"
-                :color="deadlineColor(task.execution_term)" size="x-small" variant="tonal"
-              >{{ formatDate(task.execution_term) }}</v-chip>
-              <v-icon v-if="task.is_monthly_payment" size="14" color="blue" title="Ежемесячный платёж" class="ml-1">mdi-calendar-sync</v-icon>
-            </div>
-            <!-- Missing fields indicators -->
-            <div v-if="!task.contractor_name || !task.execution_term || !(task.contract_price || task.planned_total_price)" class="d-flex flex-wrap ga-1 mt-1">
-              <v-chip v-if="!task.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off" title="Не выбран контрагент">Контрагент</v-chip>
-              <v-chip v-if="!task.execution_term" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert" title="Не указан срок исполнения">Срок</v-chip>
-              <v-chip v-if="!(task.contract_price || task.planned_total_price)" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub" title="Не указана сумма">Сумма</v-chip>
-            </div>
-            <!-- Unseen changes -->
-            <div v-if="task.unseen_changes_count" class="d-flex align-center mt-1">
-              <v-chip size="x-small" variant="flat" color="warning" :title="`${task.unseen_changes_count} новых изменений`">
-                <v-icon icon="mdi-bell-ring" size="10" class="mr-1" />{{ task.unseen_changes_count }}
-              </v-chip>
-            </div>
-            <div v-if="task.delivery_date && task.status === 'contracted'" class="kanban-card-meta">
-              <v-icon icon="mdi-truck-delivery" size="12" class="mr-1" />Доставка: {{ formatDate(task.delivery_date) }}
-            </div>
-            <div v-if="task.task_comment" class="kanban-card-comment">
-              <v-icon icon="mdi-comment-text-outline" size="12" class="mr-1" />
-              <span>{{ task.task_comment.length > 100 ? task.task_comment.slice(0, 100) + '…' : task.task_comment }}</span>
-            </div>
-          </div>
-          <div v-if="tasksByStatus(col.status).length === 0" class="kanban-empty">
-            Нет задач
-          </div>
-        </div>
-      </div>
-    </div>
+    <PurchasesKanban
+      v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'"
+      :purchases="tasks"
+      :archive-purchases="archiveTasks"
+      :selected-org-id="selectedOrgId"
+      :show-archive="showArchive"
+      @open-purchase="openTask"
+      @update-kanban-status="handleUpdateKanbanStatus"
+    />
 
     <!-- List View -->
-    <v-card v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'" variant="outlined">
-      <v-table density="compact" hover>
-        <thead>
-          <tr>
-            <th>Статус</th>
-            <th>Название</th>
-            <th>Контрагент</th>
-            <th class="text-right">Сумма</th>
-            <th>Срок</th>
-            <th>Комментарий</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="task in filteredTasks" :key="task.id" style="cursor:pointer" @click="openTask(task.id)">
-            <td>
-              <div class="d-flex align-center ga-1 flex-wrap">
-                <v-chip :color="statusColor(task.status)" size="x-small" variant="flat">
-                  {{ purchaseStatusLabel(task) }}
-                </v-chip>
-                <v-chip v-if="task.substatus" size="x-small" variant="outlined" color="teal">
-                  {{ SUBSTATUS_LABEL[task.substatus] || task.substatus }}
-                </v-chip>
-              </div>
-            </td>
-            <td class="font-weight-medium">{{ task.subject || `Закупка #${task.purchase_number || task.id}` }}</td>
-            <td class="text-body-2">{{ task.contractor_name || '—' }}</td>
-            <td class="text-right text-body-2">{{ formatMoney(task.contract_price || task.planned_total_price) }}</td>
-            <td>
-              <v-chip v-if="task.execution_term" :color="deadlineColor(task.execution_term)" size="x-small" variant="tonal">
-                {{ formatDate(task.execution_term) }}
-              </v-chip>
-              <span v-else class="text-medium-emphasis">—</span>
-            </td>
-            <td class="text-body-2 text-truncate" style="max-width:200px">{{ task.task_comment || '' }}</td>
-          </tr>
-          <tr v-if="filteredTasks.length === 0">
-            <td colspan="6" class="text-center text-medium-emphasis pa-4">Нет задач</td>
-          </tr>
-        </tbody>
-      </v-table>
-    </v-card>
+    <PurchasesTable
+      v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'"
+      :purchases="filteredTasks"
+      :selected-org-id="selectedOrgId"
+      :loading="loading"
+      @open-purchase="openTask"
+    />
 
     </template>
 
@@ -584,6 +478,8 @@ import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
 import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'
 import TasksTable from '@/components/my-tasks/TasksTable.vue'
 import TasksKanban from '@/components/my-tasks/TasksKanban.vue'
+import PurchasesTable from '@/components/my-tasks/PurchasesTable.vue'
+import PurchasesKanban from '@/components/my-tasks/PurchasesKanban.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -1324,6 +1220,35 @@ async function onDrop(e: DragEvent, targetStatus: string) {
 }
 
 function openTask(id: number) { router.push(`/orders/${id}/edit`) }
+
+// ── Handler for PurchasesKanban 'update-kanban-status' emit ──────────────────
+async function handleUpdateKanbanStatus(purchaseId: number, newStatus: string) {
+  const task = [...tasks.value, ...archiveTasks.value].find(t => t.id === purchaseId)
+  if (!task) return
+  const oldStatus = task.status
+  // Optimistic update
+  task.status = newStatus
+  if (newStatus === 'paid') {
+    tasks.value = tasks.value.filter(t => t.id !== purchaseId)
+    archiveTasks.value.unshift(task)
+  } else if (oldStatus === 'paid') {
+    archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
+    tasks.value.push(task)
+  }
+  try {
+    await apiFetch(`/purchases/${purchaseId}/kanban-status?status=${newStatus}`, { method: 'PATCH' })
+  } catch {
+    // Rollback
+    task.status = oldStatus
+    if (newStatus === 'paid') {
+      archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
+      tasks.value.push(task)
+    } else if (oldStatus === 'paid') {
+      tasks.value = tasks.value.filter(t => t.id !== purchaseId)
+      archiveTasks.value.unshift(task)
+    }
+  }
+}
 
 function statusColor(s: string): string {
   const map: Record<string, string> = {

@@ -370,7 +370,7 @@ Plans:
 4. Frontend билд зелёный; MyTasksView рендерится идентично визуально (до/после — скриншот-diff).
 5. Каждый коммит рефакторинга атомарный: «extract X from Y» — удалил здесь, добавил там, build зелёный.
 
-**Plans:** 13/15 plans executed
+**Plans:** 14/15 plans executed
 
 Plans:
 - [ ] TBD

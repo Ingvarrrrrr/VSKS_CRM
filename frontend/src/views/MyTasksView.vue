@@ -1,175 +1,34 @@
 <template>
   <v-container fluid class="pa-4">
-    <!-- Header -->
-    <div class="d-flex align-center mb-4 flex-wrap" style="gap:12px">
-      <div>
-        <h1 class="text-h5 font-weight-bold">{{ pageTitle }}</h1>
-        <span class="text-body-2 text-medium-emphasis">{{ TAB_SUBTITLES[activeTab] }}</span>
-      </div>
-      <v-spacer />
-      <v-btn-toggle v-model="activeTab" mandatory density="compact" color="primary" class="mr-2">
-        <v-btn value="purchases" size="small"><v-icon icon="mdi-cart" class="mr-1" size="18"/>Закупки</v-btn>
-        <v-btn value="general" size="small">
-          <v-icon icon="mdi-clipboard-list" class="mr-1" size="18"/>Задачи
-          <v-chip v-if="visibleActiveTasksCount" size="x-small" color="white" variant="flat" class="ml-1" style="color: #1565C0; font-weight: 700">{{ visibleActiveTasksCount }}</v-chip>
-          <v-chip v-if="pendingConsentTasks.length" size="x-small" color="orange" class="ml-1">+{{ pendingConsentTasks.length }}</v-chip>
-        </v-btn>
-        <v-btn value="report" size="small"><v-icon icon="mdi-chart-bar" class="mr-1" size="18"/>Отчёт</v-btn>
-      </v-btn-toggle>
-      <v-btn-toggle v-if="activeTab === 'purchases'" v-model="viewMode" mandatory density="compact" color="primary">
-        <v-btn value="kanban" size="small"><v-icon icon="mdi-view-column" class="mr-1" size="18"/>Канбан</v-btn>
-        <v-btn value="list" size="small"><v-icon icon="mdi-format-list-bulleted" class="mr-1" size="18"/>Список</v-btn>
-      </v-btn-toggle>
-      <v-btn-toggle v-if="activeTab === 'general'" v-model="taskViewMode" mandatory density="compact" color="primary" class="mr-2">
-        <v-btn value="kanban" size="small"><v-icon icon="mdi-view-column" class="mr-1" size="18"/>Канбан</v-btn>
-        <v-btn value="list" size="small"><v-icon icon="mdi-format-list-bulleted" class="mr-1" size="18"/>Список</v-btn>
-      </v-btn-toggle>
-      <v-btn v-if="activeTab === 'general'" color="primary" size="small" prepend-icon="mdi-plus" @click="openNewTask">
-        Новая задача
-      </v-btn>
-      <v-btn
-        v-if="activeTab === 'purchases'"
-        :variant="showArchive ? 'flat' : 'outlined'" color="grey"
-        size="small" prepend-icon="mdi-archive" @click="showArchive = !showArchive"
-      >Архив</v-btn>
-      <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="load">
-        Обновить
-      </v-btn>
-    </div>
-
-    <!-- ═══ PENDING CONSENT — always visible ═══ -->
-    <v-expand-transition>
-      <div v-if="pendingConsentTasks.length" class="mb-4">
-        <div class="d-flex align-center mb-2 ga-2">
-          <v-icon icon="mdi-bell-ring" color="orange" size="20" />
-          <span class="text-subtitle-2 font-weight-bold">Требуется ваше согласие на задачи</span>
-          <v-chip color="orange" size="small" variant="tonal">{{ pendingConsentTasks.length }}</v-chip>
-        </div>
-        <v-row dense>
-          <v-col v-for="pt in pendingConsentTasks" :key="pt.id" cols="12" sm="6" md="4">
-            <v-card variant="outlined" class="pa-3 h-100" style="border-color:rgba(245,158,11,0.6);border-width:2px">
-              <div class="d-flex align-start mb-1 ga-1">
-                <v-icon icon="mdi-clipboard-arrow-right-outline" color="orange" size="18" class="mt-0.5 flex-shrink-0" />
-                <span class="text-body-2 font-weight-medium">{{ pt.title }}</span>
-              </div>
-              <div class="text-caption text-medium-emphasis mb-3">
-                <span>Поставил: <b>{{ pt.created_by_name || '—' }}</b></span>
-                <span v-if="pt.due_date" class="ml-2">· 📅 {{ pt.due_date.split('T')[0] }}</span>
-                <span v-if="pt.priority" class="ml-2">· {{ {low:'Низкий',medium:'Средний',high:'Высокий',urgent:'Срочно'}[pt.priority] || pt.priority }}</span>
-              </div>
-              <div class="d-flex ga-2">
-                <v-btn size="small" color="success" variant="flat" rounded
-                  :loading="consentLoading === String(pt.id) + '_accept'"
-                  prepend-icon="mdi-check-circle"
-                  @click="respondConsent(pt.id, true)">
-                  Принять
-                </v-btn>
-                <v-btn size="small" color="error" variant="tonal" rounded
-                  :loading="consentLoading === String(pt.id) + '_decline'"
-                  prepend-icon="mdi-close-circle"
-                  @click="respondConsent(pt.id, false)">
-                  Отклонить
-                </v-btn>
-              </div>
-            </v-card>
-          </v-col>
-        </v-row>
-      </div>
-    </v-expand-transition>
-
-    <!-- ═══ ACCEPTANCE NOTIFICATIONS — for task creators ═══ -->
-    <v-expand-transition>
-      <div v-if="acceptNotifs.length" class="mb-4">
-        <div class="d-flex align-center mb-2 ga-2">
-          <v-icon icon="mdi-check-circle" color="success" size="20" />
-          <span class="text-subtitle-2 font-weight-bold">Задачи приняты</span>
-          <v-chip color="success" size="small" variant="tonal">{{ acceptNotifs.length }}</v-chip>
-        </div>
-        <v-row dense>
-          <v-col v-for="d in acceptNotifs" :key="d.id" cols="12" sm="6" md="4">
-            <v-card variant="tonal" color="success" class="pa-3 h-100">
-              <div class="d-flex align-start mb-1 ga-1">
-                <v-icon icon="mdi-check-circle-outline" color="success" size="18" class="flex-shrink-0 mt-0.5" />
-                <span class="text-body-2 font-weight-medium">{{ d.task_title }}</span>
-              </div>
-              <div class="text-caption mb-3 text-medium-emphasis">
-                <b>{{ d.declined_by_name }}</b> принял задачу
-                <span v-if="d.created_at" class="ml-1">· {{ d.created_at.split('T')[0] }}</span>
-              </div>
-              <v-btn size="small" color="success" variant="flat" rounded
-                :loading="ackLoading === d.id"
-                prepend-icon="mdi-check"
-                @click="acknowledgeDecline(d.id)">
-                Понял
-              </v-btn>
-            </v-card>
-          </v-col>
-        </v-row>
-      </div>
-    </v-expand-transition>
-
-    <!-- ═══ DECLINE NOTIFICATIONS — for task creators ═══ -->
-    <v-expand-transition>
-      <div v-if="declineNotifs.length" class="mb-4">
-        <div class="d-flex align-center mb-2 ga-2">
-          <v-icon icon="mdi-account-cancel" color="error" size="20" />
-          <span class="text-subtitle-2 font-weight-bold">Ваши назначения отклонены</span>
-          <v-chip color="error" size="small" variant="tonal">{{ declineNotifs.length }}</v-chip>
-        </div>
-        <v-row dense>
-          <v-col v-for="d in declineNotifs" :key="d.id" cols="12" sm="6" md="4">
-            <v-card variant="tonal" color="error" class="pa-3 h-100">
-              <div class="d-flex align-start mb-1 ga-1">
-                <v-icon icon="mdi-close-circle-outline" color="error" size="18" class="flex-shrink-0 mt-0.5" />
-                <span class="text-body-2 font-weight-medium">{{ d.task_title }}</span>
-              </div>
-              <div class="text-caption mb-3 text-medium-emphasis">
-                <b>{{ d.declined_by_name }}</b> отклонил назначение
-                <span v-if="d.created_at" class="ml-1">· {{ d.created_at.split('T')[0] }}</span>
-              </div>
-              <v-btn size="small" color="error" variant="flat" rounded
-                :loading="ackLoading === d.id"
-                prepend-icon="mdi-check"
-                @click="acknowledgeDecline(d.id)">
-                Понял
-              </v-btn>
-            </v-card>
-          </v-col>
-        </v-row>
-      </div>
-    </v-expand-transition>
+    <!-- Header + consent/notification banners -->
+    <OrgSummaryBar
+      v-model:active-tab="activeTab"
+      v-model:view-mode="viewMode"
+      v-model:task-view-mode="taskViewMode"
+      v-model:show-archive="showArchive"
+      :loading="loading"
+      :visible-active-tasks-count="visibleActiveTasksCount"
+      :page-title="pageTitle"
+      :pending-consent-tasks="pendingConsentTasks"
+      :accept-notifs="acceptNotifs"
+      :decline-notifs="declineNotifs"
+      :consent-loading="consentLoading"
+      :ack-loading="ackLoading"
+      @new-task="openNewTask"
+      @refresh="load"
+      @respond-consent="({ taskId, accept }) => respondConsent(taskId, accept)"
+      @acknowledge-decline="acknowledgeDecline"
+    />
 
     <!-- Organization cards -->
-    <div v-if="orgCardsOpen && orgSummary.length > 1" class="mb-6">
-      <div class="text-subtitle-1 font-weight-medium mb-3">Выберите организацию</div>
-      <div class="org-cards-grid">
-        <div
-          v-for="org in visibleOrgSummary"
-          :key="org.org_id ?? 'all'"
-          class="org-sel-card"
-          :class="{ 'org-sel-card--all': org.org_id === null }"
-          @click="selectOrg(org.org_id)"
-        >
-          <div class="osc-icon-box">
-            <v-icon :icon="org.org_id === null ? 'mdi-domain-plus' : 'mdi-domain'" size="22" />
-          </div>
-          <div class="osc-body">
-            <div class="osc-name">{{ org.org_name }}</div>
-            <div class="osc-stats">
-              <span class="osc-stat-clickable" @click.stop="activeTab = 'general'; selectOrg(org.org_id)"><v-icon size="12" class="mr-1">mdi-clipboard-check</v-icon>{{ org.task_count }} <span class="osc-stat-label">задач</span></span>
-              <span class="osc-stat-clickable" @click.stop="activeTab = 'purchases'; selectOrg(org.org_id)"><v-icon size="12" class="mr-1">mdi-cart</v-icon>{{ org.purchase_count }} <span class="osc-stat-label">закупок</span></span>
-            </div>
-          </div>
-          <div v-if="org.unseen_count > 0" class="osc-badge">{{ org.unseen_count }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Back to org selection -->
-    <v-btn v-if="orgSummary.length > 1 && !orgCardsOpen" variant="text" size="small" color="primary"
-      prepend-icon="mdi-arrow-left" class="mb-3" @click="orgCardsOpen = true">
-      К выбору организации
-    </v-btn>
+    <OrgSelector
+      :org-summary="orgSummary"
+      :selected-org-id="selectedOrgId"
+      :org-cards-open="orgCardsOpen"
+      @select-org="selectOrg"
+      @update:org-cards-open="orgCardsOpen = $event"
+      @click-stat="handleOrgStatClick"
+    />
 
     <div v-show="!orgCardsOpen || orgSummary.length <= 1">
 
@@ -826,20 +685,17 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import ChatEmbed from '@/components/ChatEmbed.vue'
+import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
+import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'
 
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const selectedOrgId = ref<number | null>(null)
-// True = show org picker cards (initial state). False = a card was clicked (all or specific).
-// Distinguishes "no choice yet" (null + open) from "All orgs selected" (null + closed).
-const orgCardsOpen = ref<boolean>(true)
+const orgCardsOpen = ref<boolean>(true) // true = show org picker; false = org was selected
 const orgSummary = ref<{org_id: number | null, org_name: string, task_count: number, purchase_count: number, unseen_count: number}[]>([])
-const orgLoading = ref(false)
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
 const currentUserRole = localStorage.getItem('user_role') || 'employee'
-const isEmployee = currentUserRole === 'employee'
-const isManagerOrAdmin = ['superadmin', 'org_admin', 'admin', 'manager'].includes(currentUserRole)
 const chatContainer = ref<HTMLElement | null>(null)
 const commentInput = ref<any>(null)
 const viewMode = ref<'kanban' | 'list'>('kanban')
@@ -850,14 +706,10 @@ const showArchive = ref(false)
 const linkPurchaseId = ref<number | null>(null)
 
 const taskListHeaders = [
-  { title: '№', key: 'task_number', width: 60 },
-  { title: 'Название', key: 'title', minWidth: 200 },
-  { title: 'Приоритет', key: 'priority', width: 100 },
-  { title: 'Статус', key: 'status', width: 120 },
-  { title: 'Исполнители', key: 'assignees', width: 160, sortable: false },
-  { title: 'Срок', key: 'due_date', width: 110 },
-  { title: 'Закупка', key: 'purchase_subject', width: 150, sortable: false },
-  { title: '', key: 'actions', width: 80, sortable: false },
+  { title: '№', key: 'task_number', width: 60 }, { title: 'Название', key: 'title', minWidth: 200 },
+  { title: 'Приоритет', key: 'priority', width: 100 }, { title: 'Статус', key: 'status', width: 120 },
+  { title: 'Исполнители', key: 'assignees', width: 160, sortable: false }, { title: 'Срок', key: 'due_date', width: 110 },
+  { title: 'Закупка', key: 'purchase_subject', width: 150, sortable: false }, { title: '', key: 'actions', width: 80, sortable: false },
 ]
 
 async function doLinkPurchase(taskId: number) {
@@ -882,53 +734,25 @@ const commentDialog = ref(false)
 const commentText = ref('')
 const commentTaskId = ref<number | null>(null)
 
-const TAB_SUBTITLES: Record<string, string> = {
-  purchases: 'Канбан-доска по закупкам',
-  general: 'Общие задачи',
-  report: 'Отчёт по отделам',
-}
-
 const todayStr = new Date().toISOString().split('T')[0]
-const dueDateRule = (v: string) => {
-  if (!v) return true
-  return v >= todayStr || 'Срок не может быть раньше сегодня'
-}
+const dueDateRule = (v: string) => !v || v >= todayStr || 'Срок не может быть раньше сегодня'
 
 // ── General tasks ──
 const generalTasks = ref<any[]>([])
+const filteredGeneralTasks = computed(() =>
+  selectedOrgId.value === null ? generalTasks.value : generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
+)
 
-const filteredGeneralTasks = computed(() => {
-  if (selectedOrgId.value === null) return generalTasks.value
-  return generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
-})
-
-// Header chip counter — only active tasks (exclude done/cancelled/archive) for currently viewed scope.
-// Previously used generalTasks.length which counted all loaded tasks including done/cancelled,
-// causing mismatch with org-summary card counts (backend already excludes done/cancelled there).
+// Active tasks count — excludes done/cancelled to match org-summary card counts.
 const visibleActiveTasksCount = computed(() =>
   filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length
 )
 
-const visibleOrgSummary = computed(() =>
-  // Keep the "Все организации" aggregator even when empty, and show any org
-  // where the user has either tasks OR purchases. Previously we only checked
-  // task_count, which hid orgs where the user only participates via purchase
-  // membership (e.g. Lyubarets had АНО hidden despite being a discussion
-  // participant on 2 АНО purchases).
-  orgSummary.value.filter(o => o.org_id === null || o.task_count > 0 || o.purchase_count > 0)
-)
-
 const pageTitle = computed(() => {
-  let base = ''
-  if (activeTab.value === 'general') base = 'Мои задачи'
-  else if (activeTab.value === 'purchases') base = 'Мои закупки'
-  else base = 'Мои задачи и закупки'
-
-  if (selectedOrgId.value !== null) {
-    const org = orgSummary.value.find(o => o.org_id === selectedOrgId.value)
-    if (org) base += ` — ${org.org_name}`
-  }
-  return base
+  const BASE = { general: 'Мои задачи', purchases: 'Мои закупки', report: 'Мои задачи и закупки' }
+  let base = BASE[activeTab.value] ?? 'Мои задачи'
+  const org = selectedOrgId.value !== null ? orgSummary.value.find(o => o.org_id === selectedOrgId.value) : null
+  return org ? `${base} — ${org.org_name}` : base
 })
 const pendingConsentTasks = ref<any[]>([])
 const consentLoading = ref<string | null>(null)
@@ -963,12 +787,9 @@ const delegateForm = ref({ title: '', description: '', priority: 'medium', due_d
 
 const isTaskReadonly = computed(() => {
   if (!editingTask.value) return false
-  const role = localStorage.getItem('user_role') || ''
-  if (['superadmin', 'org_admin', 'admin'].includes(role)) return false
-  const uid = currentUserId
+  if (['superadmin', 'org_admin', 'admin'].includes(localStorage.getItem('user_role') || '')) return false
   const t = editingTask.value
-  const isAssignee = (t.assignees || []).some((a: any) => a.user_id === uid)
-  return isAssignee && t.created_by_id !== uid
+  return (t.assignees || []).some((a: any) => a.user_id === currentUserId) && t.created_by_id !== currentUserId
 })
 
 // Report
@@ -1636,14 +1457,11 @@ async function saveComment() {
 }
 
 async function loadOrgSummary() {
-  orgLoading.value = true
   try {
     orgSummary.value = await apiFetch<any[]>('/tasks/org-summary')
   } catch (e) {
     console.error('Failed to load org summary:', e)
     orgSummary.value = []
-  } finally {
-    orgLoading.value = false
   }
 }
 
@@ -1663,22 +1481,16 @@ async function selectOrg(orgId: number | null) {
   await loadOrgData()
 }
 
+async function handleOrgStatClick({ orgId, tab }: { orgId: number | null; tab: 'general' | 'purchases' }) {
+  activeTab.value = tab
+  await selectOrg(orgId)
+}
+
 async function loadOrgData() {
   loading.value = true
   try {
     const orgId = selectedOrgId.value
-    // Visibility is a backend concern — the server filters /tasks/ and /purchases/
-    // by hierarchy (own + recursive subordinates + managed depts + managed orgs).
-    // Only 'superadmin' and 'account_owner' (SaaS-level) get the unfiltered view.
-    // System roles like 'admin' / 'org_admin' grant privileges (delete/export/
-    // settings) but do NOT widen visibility — an admin without subordinates sees
-    // only their own rows, same as an employee with a team sees their team.
-    //
-    // For employee on the "All organizations" tab we still call load() because
-    // it bundles pending-consent + categories + departments (needed for the UI).
-    const isEmployeeAllOrgs = currentUserRole === 'employee' && orgId === null
-
-    if (isEmployeeAllOrgs) {
+    if (currentUserRole === 'employee' && orgId === null) {
       await load()
     } else {
       const taskUrl = orgId !== null ? `/tasks/?org_id=${orgId}` : '/tasks/'
@@ -1765,13 +1577,6 @@ async function pollTasks() {
 let _pollInterval: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await loadOrgSummary()
-  // loadOrgData() dispatches correctly by role:
-  //   - employee + "All orgs" → load() for pending-consent + metadata bundle
-  //   - everyone else → /tasks/ + /purchases/, backend filters by hierarchy
-  // The old split that sent 'admin'/'org_admin' into the unfiltered admin
-  // branch was the bug under Lyubarets — she saw every org's purchases even
-  // though she's not a SaaS-level role. Fixed on backend (tasks/purchases
-  // routers) and here by collapsing the branch.
   if (currentUserRole === 'employee') {
     await load()
   } else {
@@ -2091,98 +1896,5 @@ onUnmounted(() => {
   outline-color: #D97706;
 }
 
-.org-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
-}
-.org-sel-card {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 20px;
-  border-radius: 12px;
-  border: 1.5px solid rgba(0,0,0,0.12);
-  background: #fff;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-  min-height: 88px;
-}
-.org-sel-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
-  border-color: #2563EB;
-}
-.org-sel-card--all {
-  border-color: #2563EB;
-  background: #EFF6FF;
-}
-.osc-icon-box {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: #EFF6FF;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #2563EB;
-}
-.org-sel-card--all .osc-icon-box {
-  background: #2563EB;
-  color: #fff;
-}
-.osc-body {
-  flex: 1;
-  min-width: 0;
-}
-.osc-name {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #1e293b;
-}
-.osc-stats {
-  display: flex;
-  gap: 12px;
-  margin-top: 6px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #334155;
-}
-.osc-stat-label {
-  font-size: 13px;
-  font-weight: 600;
-  opacity: 0.9;
-}
-.osc-stat-clickable {
-  cursor: pointer;
-  border-radius: 4px;
-  padding: 1px 4px;
-  transition: background 0.15s;
-}
-.osc-stat-clickable:hover {
-  background: rgba(99, 102, 241, 0.12);
-  color: #4f46e5;
-}
-.osc-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border-radius: 10px;
-  background: #F59E0B;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+/* org-cards-grid, org-sel-card, osc-* CSS moved to OrgSelector.vue <style scoped> */
 </style>

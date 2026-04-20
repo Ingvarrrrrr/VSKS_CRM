@@ -311,6 +311,8 @@ app.include_router(purchase_items_import.router)
 app.include_router(purchase_members.router)
 app.include_router(purchase_transitions.router)
 app.include_router(tasks.router)
+from .routers import task_comments
+app.include_router(task_comments.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)

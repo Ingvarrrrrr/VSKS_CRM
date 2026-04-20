@@ -32,388 +32,134 @@
 
     <div v-show="!orgCardsOpen || orgSummary.length <= 1">
 
-    <!-- ═══ PURCHASES TAB ═══ -->
-    <template v-if="activeTab === 'purchases'">
-    <!-- Pending approvals -->
-    <v-card v-if="pendingApprovals.length" variant="outlined" class="mb-4" style="border-color:#059669">
-      <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center ga-2">
-        <v-icon icon="mdi-check-decagram" color="green-darken-2" size="20" />
-        Ожидают моего согласования
-        <v-chip color="orange" size="small" variant="tonal">{{ pendingApprovals.length }}</v-chip>
-      </v-card-title>
-      <v-list density="compact">
-        <v-list-item v-for="pa in pendingApprovals" :key="pa.approval.id"
-          :to="`/orders/${pa.approval.purchase_id}/edit`"
-          prepend-icon="mdi-file-sign">
-          <v-list-item-title>
-            Закупка #{{ pa.purchase.purchase_number }} — {{ pa.purchase.subject || pa.purchase.item_name || 'Без названия' }}
-          </v-list-item-title>
-          <v-list-item-subtitle>
-            {{ pa.approval.role_name }}: {{ pa.approval.approver_full_name }}
-          </v-list-item-subtitle>
-        </v-list-item>
-      </v-list>
-    </v-card>
-
-    <!-- Loading -->
-    <div v-if="loading && tasks.length === 0" class="d-flex justify-center py-12">
-      <v-progress-circular indeterminate color="primary" size="48" />
-    </div>
-
-    <!-- Empty state -->
-    <div v-else-if="!loading && tasks.length === 0 && !showArchive" class="text-center py-12">
-      <v-icon icon="mdi-clipboard-check-outline" size="64" color="grey-lighten-2" />
-      <div class="text-h6 text-medium-emphasis mt-4">Нет назначенных задач</div>
-      <div class="text-body-2 text-medium-emphasis mt-1">Попросите администратора назначить вам закупки</div>
-    </div>
-
-    <!-- Kanban View -->
-    <PurchasesKanban
-      v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'"
-      :purchases="tasks"
-      :archive-purchases="archiveTasks"
-      :selected-org-id="selectedOrgId"
-      :show-archive="showArchive"
-      @open-purchase="openTask"
-      @update-kanban-status="handleUpdateKanbanStatus"
-    />
-
-    <!-- List View -->
-    <PurchasesTable
-      v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'"
-      :purchases="filteredTasks"
-      :selected-org-id="selectedOrgId"
-      :loading="loading"
-      @open-purchase="openTask"
-    />
-
-    </template>
-
-    <!-- ═══ GENERAL TASKS TAB ═══ -->
-    <template v-if="activeTab === 'general'">
-
-      <!-- Link purchase banner -->
-      <v-alert v-if="linkPurchaseId" type="info" variant="tonal" closable class="mb-3"
-        @click:close="linkPurchaseId = null; $router.replace({ query: {} })">
-        <div class="d-flex align-center ga-2">
-          <v-icon>mdi-link-variant</v-icon>
-          <span>Выберите задачу для привязки к закупке <b>#{{ linkPurchaseId }}</b></span>
-          <v-btn size="small" variant="text" @click="linkPurchaseId = null; $router.replace({ query: {} })">Отмена</v-btn>
-        </div>
-      </v-alert>
-
-      <div v-if="loading && generalTasks.length === 0" class="d-flex justify-center py-12">
-        <v-progress-circular indeterminate color="primary" size="48" />
-      </div>
-      <div v-else-if="generalTasks.length === 0" class="text-center py-12">
-        <v-icon icon="mdi-clipboard-plus-outline" size="64" color="grey-lighten-2" />
-        <div class="text-h6 text-medium-emphasis mt-4">Нет задач</div>
-        <div class="text-body-2 text-medium-emphasis mt-1">Создайте первую задачу</div>
-        <v-btn color="primary" class="mt-4" prepend-icon="mdi-plus" @click="openNewTask">Новая задача</v-btn>
-      </div>
-
-      <!-- LIST VIEW -->
-      <TasksTable
-        v-else-if="taskViewMode === 'list'"
-        :tasks="filteredGeneralTasks"
-        :current-user-id="currentUserId"
-        :link-purchase-id="linkPurchaseId"
-        @open-task="editGeneralTask"
-        @link-purchase="doLinkPurchase"
-        @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
-        @confirm-done="confirmTaskDone"
-        @reject-done="rejectTaskDone"
-      />
-
-      <!-- KANBAN VIEW -->
-      <TasksKanban
-        v-else
-        :tasks="filteredGeneralTasks"
-        :current-user-id="currentUserId"
-        :link-purchase-id="linkPurchaseId"
-        @open-task="editGeneralTask"
-        @update-status="handleUpdateTaskStatus"
-        @link-purchase="doLinkPurchase"
-        @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
-        @confirm-done="confirmTaskDone"
-        @reject-done="rejectTaskDone"
-      />
-    </template>
-
-    <!-- ═══ REPORT TAB ═══ -->
-    <template v-if="activeTab === 'report'">
-      <div class="d-flex align-center mb-4 ga-3 flex-wrap">
-        <v-select
-          v-model="reportDept"
-          :items="departments"
-          label="Отдел"
-          variant="outlined" density="compact" clearable
-          style="max-width:280px"
-          placeholder="Все отделы"
-        />
-        <v-select
-          v-model="reportWeeks"
-          :items="[{title:'1 неделя',value:1},{title:'2 недели',value:2},{title:'4 недели',value:4},{title:'12 недель',value:12}]"
-          label="Период"
-          variant="outlined" density="compact"
-          style="max-width:200px"
-        />
-        <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-magnify" :loading="reportLoading" @click="loadReport">Сформировать</v-btn>
-      </div>
-
-      <div v-if="reportLoading" class="d-flex justify-center py-12">
-        <v-progress-circular indeterminate color="primary" size="48" />
-      </div>
-
-      <template v-else-if="reportData">
-        <!-- Summary KPIs -->
-        <div class="d-flex ga-3 mb-4 flex-wrap">
-          <v-card variant="outlined" class="pa-4 text-center" style="min-width:150px;flex:1">
-            <div class="text-h4 font-weight-bold text-success">{{ reportData.summary.total_done }}</div>
-            <div class="text-caption text-medium-emphasis">Выполнено</div>
-          </v-card>
-          <v-card variant="outlined" class="pa-4 text-center" style="min-width:150px;flex:1">
-            <div class="text-h4 font-weight-bold text-primary">{{ reportData.summary.total_in_progress }}</div>
-            <div class="text-caption text-medium-emphasis">В работе</div>
-          </v-card>
-          <v-card variant="outlined" class="pa-4 text-center" style="min-width:150px;flex:1">
-            <div class="text-h4 font-weight-bold text-warning">{{ reportData.summary.total_todo }}</div>
-            <div class="text-caption text-medium-emphasis">Планируется</div>
-          </v-card>
-          <v-card variant="outlined" class="pa-4 text-center" style="min-width:150px;flex:1">
-            <div class="text-h4 font-weight-bold text-error">{{ reportData.summary.total_overdue }}</div>
-            <div class="text-caption text-medium-emphasis">Просрочено</div>
-          </v-card>
-        </div>
-
-        <!-- Per-department breakdown -->
-        <v-card v-for="dept in reportData.departments" :key="dept.department" variant="outlined" class="mb-4">
-          <v-card-title class="d-flex align-center ga-2 px-4 pt-3 pb-1">
-            <v-icon icon="mdi-account-group" size="20" />
-            {{ dept.department }}
-            <v-spacer />
-            <v-chip color="success" size="small" variant="tonal">{{ dept.done_count }} выполнено</v-chip>
-            <v-chip color="primary" size="small" variant="tonal">{{ dept.in_progress_count }} в работе</v-chip>
-            <v-chip color="warning" size="small" variant="tonal">{{ dept.todo_count }} план</v-chip>
-            <v-chip v-if="dept.overdue_count" color="error" size="small" variant="tonal">{{ dept.overdue_count }} просрочено</v-chip>
+      <!-- ═══ PURCHASES TAB ═══ -->
+      <template v-if="activeTab === 'purchases'">
+        <!-- Pending approvals -->
+        <v-card v-if="pendingApprovals.length" variant="outlined" class="mb-4" style="border-color:#059669">
+          <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center ga-2">
+            <v-icon icon="mdi-check-decagram" color="green-darken-2" size="20" />
+            Ожидают моего согласования
+            <v-chip color="orange" size="small" variant="tonal">{{ pendingApprovals.length }}</v-chip>
           </v-card-title>
-
-          <v-card-text class="pa-2">
-            <div class="d-flex ga-3" style="overflow-x:auto">
-              <!-- Mini kanban per department -->
-              <div v-for="sec in [{key:'in_progress',label:'В работе',color:'#3B82F6'},{key:'todo',label:'Планируется',color:'#F59E0B'},{key:'done',label:'Выполнено',color:'#22C55E'}]" :key="sec.key" style="min-width:200px;flex:1">
-                <div class="text-caption font-weight-medium mb-1" :style="{color:sec.color}">{{ sec.label }} ({{ dept[sec.key].length }})</div>
-                <div v-for="t in dept[sec.key].slice(0,5)" :key="t.id" class="report-task-item">
-                  <div class="d-flex align-center ga-1">
-                    <v-chip :color="PRIORITY_COLOR[t.priority]||'grey'" size="x-small" variant="flat" style="min-width:0">{{ PRIORITY_LABEL[t.priority]?.[0] || '?' }}</v-chip>
-                    <span class="text-body-2 font-weight-medium text-truncate" style="max-width:160px">{{ t.title }}</span>
-                  </div>
-                  <div class="d-flex align-center ga-1 mt-1">
-                    <span v-if="t.assigned_user" class="text-caption text-medium-emphasis"><v-icon icon="mdi-account" size="10"/>{{ t.assigned_user }}</span>
-                    <v-chip v-if="t.due_date" :color="deadlineColor(t.due_date)" size="x-small" variant="tonal">{{ formatDate(t.due_date.split('T')[0]) }}</v-chip>
-                  </div>
-                </div>
-                <div v-if="dept[sec.key].length > 5" class="text-caption text-medium-emphasis mt-1">+ ещё {{ dept[sec.key].length - 5 }}</div>
-                <div v-if="dept[sec.key].length === 0" class="text-caption text-medium-emphasis" style="opacity:.5">—</div>
-              </div>
-            </div>
-          </v-card-text>
+          <v-list density="compact">
+            <v-list-item v-for="pa in pendingApprovals" :key="pa.approval.id"
+              :to="`/orders/${pa.approval.purchase_id}/edit`"
+              prepend-icon="mdi-file-sign">
+              <v-list-item-title>
+                Закупка #{{ pa.purchase.purchase_number }} — {{ pa.purchase.subject || pa.purchase.item_name || 'Без названия' }}
+              </v-list-item-title>
+              <v-list-item-subtitle>
+                {{ pa.approval.role_name }}: {{ pa.approval.approver_full_name }}
+              </v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
         </v-card>
 
-        <div v-if="reportData.departments.length === 0" class="text-center py-8 text-medium-emphasis">
-          Нет данных. Убедитесь, что сотрудники привязаны к отделам.
+        <!-- Loading -->
+        <div v-if="loading && tasks.length === 0" class="d-flex justify-center py-12">
+          <v-progress-circular indeterminate color="primary" size="48" />
         </div>
+
+        <!-- Empty state -->
+        <div v-else-if="!loading && tasks.length === 0 && !showArchive" class="text-center py-12">
+          <v-icon icon="mdi-clipboard-check-outline" size="64" color="grey-lighten-2" />
+          <div class="text-h6 text-medium-emphasis mt-4">Нет назначенных задач</div>
+          <div class="text-body-2 text-medium-emphasis mt-1">Попросите администратора назначить вам закупки</div>
+        </div>
+
+        <!-- Kanban View -->
+        <PurchasesKanban
+          v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'"
+          :purchases="tasks"
+          :archive-purchases="archiveTasks"
+          :selected-org-id="selectedOrgId"
+          :show-archive="showArchive"
+          @open-purchase="openTask"
+          @update-kanban-status="handleUpdateKanbanStatus"
+        />
+
+        <!-- List View -->
+        <PurchasesTable
+          v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'"
+          :purchases="filteredTasks"
+          :selected-org-id="selectedOrgId"
+          :loading="loading"
+          @open-purchase="openTask"
+        />
       </template>
-    </template>
+
+      <!-- ═══ GENERAL TASKS TAB ═══ -->
+      <template v-if="activeTab === 'general'">
+        <!-- Link purchase banner -->
+        <v-alert v-if="linkPurchaseId" type="info" variant="tonal" closable class="mb-3"
+          @click:close="linkPurchaseId = null; $router.replace({ query: {} })">
+          <div class="d-flex align-center ga-2">
+            <v-icon>mdi-link-variant</v-icon>
+            <span>Выберите задачу для привязки к закупке <b>#{{ linkPurchaseId }}</b></span>
+            <v-btn size="small" variant="text" @click="linkPurchaseId = null; $router.replace({ query: {} })">Отмена</v-btn>
+          </div>
+        </v-alert>
+
+        <div v-if="loading && generalTasks.length === 0" class="d-flex justify-center py-12">
+          <v-progress-circular indeterminate color="primary" size="48" />
+        </div>
+        <div v-else-if="generalTasks.length === 0" class="text-center py-12">
+          <v-icon icon="mdi-clipboard-plus-outline" size="64" color="grey-lighten-2" />
+          <div class="text-h6 text-medium-emphasis mt-4">Нет задач</div>
+          <div class="text-body-2 text-medium-emphasis mt-1">Создайте первую задачу</div>
+          <v-btn color="primary" class="mt-4" prepend-icon="mdi-plus" @click="openNewTask">Новая задача</v-btn>
+        </div>
+
+        <!-- LIST VIEW -->
+        <TasksTable
+          v-else-if="taskViewMode === 'list'"
+          :tasks="filteredGeneralTasks"
+          :current-user-id="currentUserId"
+          :link-purchase-id="linkPurchaseId"
+          @open-task="editGeneralTask"
+          @link-purchase="doLinkPurchase"
+          @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
+          @confirm-done="confirmTaskDone"
+          @reject-done="rejectTaskDone"
+        />
+
+        <!-- KANBAN VIEW -->
+        <TasksKanban
+          v-else
+          :tasks="filteredGeneralTasks"
+          :current-user-id="currentUserId"
+          :link-purchase-id="linkPurchaseId"
+          @open-task="editGeneralTask"
+          @update-status="handleUpdateTaskStatus"
+          @link-purchase="doLinkPurchase"
+          @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
+          @confirm-done="confirmTaskDone"
+          @reject-done="rejectTaskDone"
+        />
+      </template>
+
+      <!-- ═══ REPORT TAB ═══ -->
+      <template v-if="activeTab === 'report'">
+        <TasksReport :departments="departments" />
+      </template>
 
     </div><!-- end v-show org content -->
 
-    <!-- General Task Dialog (create/edit) -->
-    <v-dialog v-model="showTaskDialog" max-width="680">
-      <v-card>
-        <v-card-title class="d-flex align-center justify-space-between">
-          <span>{{ editingTask ? 'Задача' : 'Новая задача' }}</span>
-          <div class="d-flex ga-1 align-center">
-            <v-chip v-if="editingTask && editingTask.created_by_name" size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-arrow-right">
-              Поставил: {{ editingTask.created_by_name }}
-            </v-chip>
-            <v-chip v-if="editingTask && isTaskReadonly" size="small" variant="tonal" color="warning" prepend-icon="mdi-lock-outline">
-              Только статус
-            </v-chip>
-          </div>
-        </v-card-title>
-        <v-card-text>
-          <div :class="isFieldUnseen('title') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('title')">
-            <v-text-field v-model="taskForm.title" label="Название *" variant="outlined" density="compact" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
-          </div>
-          <div :class="isFieldUnseen('description') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('description')">
-            <v-textarea v-model="taskForm.description" label="Описание" variant="outlined" density="compact" rows="2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
-          </div>
-          <div class="d-flex ga-2 mb-2">
-            <div :class="isFieldUnseen('priority') ? 'field-changed' : ''" style="max-width:200px;flex:0 0 auto" @click="dismissField('priority')">
-              <v-select v-model="taskForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" :disabled="isTaskReadonly" />
-            </div>
-            <v-combobox v-model="taskForm.category" :items="taskCategories" label="Категория" variant="outlined" density="compact" clearable :disabled="isTaskReadonly" />
-          </div>
-          <div :class="isFieldUnseen('due_date') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('due_date')">
-            <v-text-field v-model="taskForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
-          </div>
-          <div class="mb-2">
-            <v-select
-              v-model="taskForm.org_id"
-              :items="orgSummary.filter(o => o.org_id !== null).map(o => ({ title: o.org_name, value: o.org_id }))"
-              label="Организация"
-              variant="outlined"
-              density="compact"
-              clearable
-              prepend-inner-icon="mdi-domain"
-              :disabled="isTaskReadonly"
-            />
-          </div>
-          <div :class="isFieldUnseen('assignees') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('assignees')">
-          <v-autocomplete v-if="!editingTask || !isTaskReadonly" v-model="taskForm.assignee_ids" :items="userItems" label="Исполнители" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2">
-            <template #item="{ item, props }">
-              <v-list-item v-bind="props">
-                <template #append>
-                  <v-chip v-if="item.raw.value !== currentUserId && !subordinateIds.has(item.raw.value) && !managedOrgUserIds.has(item.raw.value)" size="x-small" color="orange" variant="tonal">нужно согласие</v-chip>
-                </template>
-              </v-list-item>
-            </template>
-          </v-autocomplete>
-          </div>
-
-          <!-- Linked purchase -->
-          <div class="mb-2 d-flex align-center ga-1 flex-wrap">
-            <template v-if="editingTask?.purchase_id">
-              <v-chip color="deep-purple" variant="tonal" prepend-icon="mdi-cart-outline"
-                @click="$router.push(`/orders/${editingTask.purchase_id}/edit`); showTaskDialog = false">
-                {{ editingTask.purchase_subject || `Закупка #${editingTask.purchase_number || editingTask.purchase_id}` }}
-                <v-icon end size="14">mdi-open-in-new</v-icon>
-              </v-chip>
-              <v-chip v-if="editingTask.purchase_status" size="x-small" variant="tonal">
-                {{ editingTask.purchase_status }}
-              </v-chip>
-              <v-btn v-if="!isTaskReadonly" icon="mdi-link-variant-off" size="x-small" variant="text"
-                color="grey" title="Отвязать закупку" @click="unlinkPurchaseFromTask" />
-            </template>
-            <v-btn v-else-if="editingTask && !isTaskReadonly" size="small" variant="tonal" color="deep-purple"
-              prepend-icon="mdi-cart-plus" @click="showTaskDialog = false; $router.push(`/orders?link_task=${editingTask.id}`)">
-              Привязать закупку
-            </v-btn>
-          </div>
-
-          <!-- Диалог привязки закупки -->
-          <v-dialog v-model="linkPurchaseDialog" max-width="520">
-            <v-card>
-              <v-card-title class="text-subtitle-1 pt-4 px-4">
-                <v-icon class="mr-1" size="20">mdi-cart-plus</v-icon>
-                Привязать закупку
-              </v-card-title>
-              <v-card-text>
-                <v-text-field v-model="linkPurchaseSearch" label="Поиск по названию / номеру"
-                  variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable autofocus
-                  @update:model-value="searchPurchases" />
-                <div v-if="linkPurchaseSearching" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
-                <v-list v-else-if="linkPurchaseResults.length" density="compact" class="border rounded"
-                  style="max-height:300px;overflow-y:auto">
-                  <v-list-item v-for="p in linkPurchaseResults" :key="p.id" @click="linkPurchaseToTask(p.id)">
-                    <v-list-item-title class="text-body-2">
-                      {{ p.subject || p.item_name || `Закупка #${p.purchase_number || p.id}` }}
-                    </v-list-item-title>
-                    <v-list-item-subtitle class="text-caption">
-                      {{ p.status }} · {{ p.contractor_name || '' }}
-                    </v-list-item-subtitle>
-                  </v-list-item>
-                </v-list>
-                <div v-else-if="linkPurchaseSearch" class="text-caption text-medium-emphasis text-center py-4">
-                  Не найдено
-                </div>
-                <div v-else class="text-caption text-medium-emphasis text-center py-4">
-                  Введите текст для поиска
-                </div>
-              </v-card-text>
-              <v-card-actions>
-                <v-spacer />
-                <v-btn variant="text" @click="linkPurchaseDialog = false">Закрыть</v-btn>
-              </v-card-actions>
-            </v-card>
-          </v-dialog>
-
-          <!-- Subtasks (delegated) -->
-          <template v-if="editingTask && taskSubtasks.length">
-            <v-divider class="my-2" />
-            <div class="text-subtitle-2 font-weight-medium mb-1 d-flex align-center ga-1">
-              <v-icon icon="mdi-sitemap-outline" size="16" color="teal" />
-              Делегировано ({{ taskSubtasks.length }})
-            </div>
-            <v-list density="compact" class="border rounded mb-2">
-              <v-list-item v-for="st in taskSubtasks" :key="st.id"
-                :prepend-icon="'mdi-circle-small'"
-                :subtitle="`${st.assignees?.map((a:any)=>a.user_name?.split(' ')[0]).join(', ') || '—'} · ${st.due_date ? st.due_date.split('T')[0] : 'без срока'}`"
-                @click="openSubtask(st)">
-                <template #title>
-                  <span class="text-body-2">{{ st.title }}</span>
-                  <v-chip :color="PRIORITY_COLOR[st.priority]||'grey'" size="x-small" variant="flat" class="ml-1">{{ PRIORITY_LABEL[st.priority] }}</v-chip>
-                  <v-chip :color="st.status==='done'?'success':st.status==='in_progress'?'primary':'warning'" size="x-small" variant="tonal" class="ml-1">{{ {todo:'К выполнению',in_progress:'В работе',done:'Готово'}[st.status]||st.status }}</v-chip>
-                </template>
-              </v-list-item>
-            </v-list>
-          </template>
-
-          <!-- Chat section (only for existing tasks) -->
-          <template v-if="editingTask">
-            <v-divider class="my-3" />
-            <div class="d-flex align-center mb-2">
-              <v-icon icon="mdi-chat-outline" size="18" class="mr-1" />
-              <span class="text-subtitle-2 font-weight-medium">Чат</span>
-            </div>
-            <ChatEmbed
-              :entity-type="'task'"
-              :entity-id="editingTask.id"
-              :title="editingTask.title"
-              :participant-ids="[
-                editingTask.created_by_id,
-                ...(editingTask.assignees || []).map((a: any) => a.user_id)
-              ].filter((id: any) => id != null)"
-            />
-          </template>
-        </v-card-text>
-        <v-card-actions>
-          <v-btn v-if="editingTask && !isTaskReadonly" color="error" variant="text" @click="deleteGeneralTask">Удалить</v-btn>
-          <v-btn v-if="editingTask" color="teal" variant="tonal" prepend-icon="mdi-account-arrow-right-outline" size="small" @click="openDelegateDialog">
-            Делегировать
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="closeTaskDialog">Отмена</v-btn>
-          <v-btn v-if="!editingTask || !isTaskReadonly" color="primary" :disabled="!taskForm.title" @click="saveGeneralTask">{{ editingTask ? 'Сохранить' : 'Создать' }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Delegation dialog -->
-    <v-dialog v-model="showDelegateDialog" max-width="520">
-      <v-card>
-        <v-card-title>Делегировать подзадачу</v-card-title>
-        <v-card-text>
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            Создаётся подзадача на основе текущей. Вы устанавливаете исполнителя, сроки и приоритет сами.
-          </v-alert>
-          <v-text-field v-model="delegateForm.title" label="Название задачи *" variant="outlined" density="compact" class="mb-2" />
-          <v-textarea v-model="delegateForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mb-2" />
-          <div class="d-flex ga-2 mb-2">
-            <v-select v-model="delegateForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" style="max-width:200px" />
-            <v-text-field v-model="delegateForm.due_date" label="Срок" variant="outlined" density="compact" type="date" :min="todayStr" />
-          </div>
-          <v-autocomplete v-model="delegateForm.assignee_ids" :items="subordinateItems" label="Исполнители (подчинённые) *" variant="outlined" density="compact" multiple chips closable-chips item-title="text" item-value="value" class="mb-2" />
-          <v-switch v-model="delegateForm.import_to_parent" label="Показывать в родительской задаче" color="teal" density="compact" hide-details />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="showDelegateDialog = false">Отмена</v-btn>
-          <v-btn color="teal" :disabled="!delegateForm.title || !delegateForm.assignee_ids.length" :loading="delegateSaving" @click="saveDelegate">Делегировать</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Task Edit Dialog -->
+    <TaskEditDialog
+      v-model:show="showTaskDialog"
+      :editing-task="editingTask"
+      :task-form="taskForm"
+      :org-summary="orgSummary"
+      :current-user-id="currentUserId"
+      :user-items="userItems"
+      :subordinate-ids="subordinateIds"
+      :managed-org-user-ids="managedOrgUserIds"
+      :task-categories="taskCategories"
+      @task-saved="onTaskSaved"
+      @task-deleted="onTaskDeleted"
+      @subtask-added="onSubtaskAdded"
+    />
 
     <!-- Purchase comment dialog -->
     <v-dialog v-model="commentDialog" max-width="500">
@@ -429,43 +175,6 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <!-- Broadcast dialog -->
-    <v-dialog v-model="broadcastDialog" max-width="480" persistent>
-      <v-card>
-        <v-card-title class="d-flex align-center gap-2 pt-4">
-          <v-icon color="orange">mdi-bullhorn</v-icon>
-          Рассылка из задачи
-        </v-card-title>
-        <v-card-text>
-          <div class="text-caption text-medium-emphasis mb-3">
-            Сообщение будет отправлено каждому сотруднику индивидуально в Telegram
-          </div>
-          <v-radio-group v-model="broadcastScope" class="mb-3">
-            <v-radio value="department" label="Отдел" />
-            <v-radio value="organization" label="Организация" />
-            <v-radio v-if="broadcastOrgs.length > 1" value="all" label="Все организации" />
-          </v-radio-group>
-          <v-select v-if="broadcastScope === 'department'" v-model="broadcastScopeId"
-            :items="broadcastDepts" item-title="name" item-value="id"
-            label="Выберите отдел" variant="outlined" density="compact" class="mb-3" />
-          <v-select v-if="broadcastScope === 'organization'" v-model="broadcastScopeId"
-            :items="broadcastOrgs" item-title="name" item-value="id"
-            label="Выберите организацию" variant="outlined" density="compact" class="mb-3" />
-          <v-textarea v-model="broadcastText" label="Текст сообщения" variant="outlined"
-            density="compact" rows="3" autofocus />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="broadcastDialog = false">Отмена</v-btn>
-          <v-btn color="orange" variant="tonal" :loading="broadcastSending"
-            :disabled="!broadcastText.trim() || (broadcastScope !== 'all' && !broadcastScopeId)"
-            @click="sendBroadcast">
-            Отправить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </v-container>
 </template>
 
@@ -473,37 +182,109 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
-import ChatEmbed from '@/components/ChatEmbed.vue'
 import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
 import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'
 import TasksTable from '@/components/my-tasks/TasksTable.vue'
 import TasksKanban from '@/components/my-tasks/TasksKanban.vue'
 import PurchasesTable from '@/components/my-tasks/PurchasesTable.vue'
 import PurchasesKanban from '@/components/my-tasks/PurchasesKanban.vue'
+import TaskEditDialog from '@/components/my-tasks/TaskEditDialog.vue'
+import TasksReport from '@/components/my-tasks/TasksReport.vue'
 
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const selectedOrgId = ref<number | null>(null)
-const orgCardsOpen = ref<boolean>(true) // true = show org picker; false = org was selected
+const orgCardsOpen = ref<boolean>(true)
 const orgSummary = ref<{org_id: number | null, org_name: string, task_count: number, purchase_count: number, unseen_count: number}[]>([])
 const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
 const currentUserRole = localStorage.getItem('user_role') || 'employee'
-const chatContainer = ref<HTMLElement | null>(null)
-const commentInput = ref<any>(null)
 const viewMode = ref<'kanban' | 'list'>('kanban')
 const taskViewMode = ref<'kanban' | 'list'>('kanban')
 const showArchive = ref(false)
-
-// Link purchase mode (from ?link_purchase=ID)
 const linkPurchaseId = ref<number | null>(null)
 
-const taskListHeaders = [
-  { title: '№', key: 'task_number', width: 60 }, { title: 'Название', key: 'title', minWidth: 200 },
-  { title: 'Приоритет', key: 'priority', width: 100 }, { title: 'Статус', key: 'status', width: 120 },
-  { title: 'Исполнители', key: 'assignees', width: 160, sortable: false }, { title: 'Срок', key: 'due_date', width: 110 },
-  { title: 'Закупка', key: 'purchase_subject', width: 150, sortable: false }, { title: '', key: 'actions', width: 80, sortable: false },
-]
+// ── Purchases state ──
+const tasks = ref<any[]>([])
+const archiveTasks = ref<any[]>([])
+const pendingApprovals = ref<any[]>([])
+const filteredTasks = computed(() => [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])])
+
+const activeTab = ref<'purchases' | 'general' | 'report'>('general')
+const commentDialog = ref(false)
+const commentText = ref('')
+const commentTaskId = ref<number | null>(null)
+
+// ── General tasks ──
+const generalTasks = ref<any[]>([])
+const filteredGeneralTasks = computed(() =>
+  selectedOrgId.value === null ? generalTasks.value : generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
+)
+const visibleActiveTasksCount = computed(() =>
+  filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length
+)
+const pageTitle = computed(() => {
+  const BASE = { general: 'Мои задачи', purchases: 'Мои закупки', report: 'Мои задачи и закупки' }
+  const base = BASE[activeTab.value] ?? 'Мои задачи'
+  const org = selectedOrgId.value !== null ? orgSummary.value.find(o => o.org_id === selectedOrgId.value) : null
+  return org ? `${base} — ${org.org_name}` : base
+})
+
+// ── Consent ──
+const pendingConsentTasks = ref<any[]>([])
+const consentLoading = ref<string | null>(null)
+const consentDeclines = ref<any[]>([])
+const declineNotifs = computed(() => consentDeclines.value.filter((d: any) => !d.is_accepted))
+const acceptNotifs = computed(() => consentDeclines.value.filter((d: any) => d.is_accepted))
+const ackLoading = ref<number | null>(null)
+
+// ── Task dialog ──
+const showTaskDialog = ref(false)
+const editingTask = ref<any>(null)
+const taskCategories = ref<string[]>([])
+const userItems = ref<{text:string, value:number}[]>([])
+const subordinateIds = ref<Set<number>>(new Set())
+const managedOrgUserIds = ref<Set<number>>(new Set())
+const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '', org_id: null as number | null })
+const departments = ref<string[]>([])
+
+// ── Task dialog handlers ──
+function openNewTask() {
+  editingTask.value = null
+  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [], category: '', org_id: selectedOrgId.value }
+  showTaskDialog.value = true
+}
+
+function editGeneralTask(t: any) {
+  editingTask.value = t
+  taskForm.value = {
+    title: t.title, description: t.description || '', priority: t.priority,
+    due_date: t.due_date ? t.due_date.split('T')[0] : '',
+    assignee_ids: (t.assignees || []).map((a: any) => a.user_id),
+    category: t.category || '',
+    org_id: t.org_id ?? null,
+  }
+  showTaskDialog.value = true
+}
+
+function onTaskSaved(task: any, isNew: boolean) {
+  if (isNew) {
+    generalTasks.value.push(task)
+  } else {
+    const idx = generalTasks.value.findIndex(t => t.id === task.id)
+    if (idx >= 0) generalTasks.value[idx] = { ...generalTasks.value[idx], ...task }
+  }
+}
+
+function onTaskDeleted(taskId: number) {
+  generalTasks.value = generalTasks.value.filter(t => t.id !== taskId)
+}
+
+function onSubtaskAdded(task: any, parentId: number) {
+  generalTasks.value.push(task)
+  const parentCard = generalTasks.value.find(t => t.id === parentId)
+  if (parentCard) parentCard.subtask_count = (parentCard.subtask_count || 0) + 1
+}
 
 async function doLinkPurchase(taskId: number) {
   if (!linkPurchaseId.value) return
@@ -518,141 +299,14 @@ async function doLinkPurchase(taskId: number) {
     alert(e?.detail || 'Ошибка привязки')
   }
 }
-const tasks = ref<any[]>([])
-const archiveTasks = ref<any[]>([])
-const pendingApprovals = ref<any[]>([])
 
-const activeTab = ref<'purchases' | 'general' | 'report'>('general')
-const commentDialog = ref(false)
-const commentText = ref('')
-const commentTaskId = ref<number | null>(null)
-
-const todayStr = new Date().toISOString().split('T')[0]
-const dueDateRule = (v: string) => !v || v >= todayStr || 'Срок не может быть раньше сегодня'
-
-// ── General tasks ──
-const generalTasks = ref<any[]>([])
-const filteredGeneralTasks = computed(() =>
-  selectedOrgId.value === null ? generalTasks.value : generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
-)
-
-// Active tasks count — excludes done/cancelled to match org-summary card counts.
-const visibleActiveTasksCount = computed(() =>
-  filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length
-)
-
-const pageTitle = computed(() => {
-  const BASE = { general: 'Мои задачи', purchases: 'Мои закупки', report: 'Мои задачи и закупки' }
-  let base = BASE[activeTab.value] ?? 'Мои задачи'
-  const org = selectedOrgId.value !== null ? orgSummary.value.find(o => o.org_id === selectedOrgId.value) : null
-  return org ? `${base} — ${org.org_name}` : base
-})
-const pendingConsentTasks = ref<any[]>([])
-const consentLoading = ref<string | null>(null)
-const consentDeclines = ref<any[]>([])
-const declineNotifs = computed(() => consentDeclines.value.filter((d: any) => !d.is_accepted))
-const acceptNotifs = computed(() => consentDeclines.value.filter((d: any) => d.is_accepted))
-const ackLoading = ref<number | null>(null)
-const showTaskDialog = ref(false)
-const editingTask = ref<any>(null)
-const taskCategories = ref<string[]>([])
-const userItems = ref<{text:string, value:number}[]>([])
-const subordinateIds = ref<Set<number>>(new Set())
-const managedOrgUserIds = ref<Set<number>>(new Set())
-const canAssignWithoutConsent = computed(() => {
-  const role = localStorage.getItem('user_role') || ''
-  return ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager'].includes(role)
-})
-const taskForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], category: '', org_id: null as number | null })
-
-// Task comments
-const taskComments = ref<any[]>([])
-const commentsLoading = ref(false)
-const newCommentText = ref('')
-const commentSaving = ref(false)
-
-// Subtasks and delegation
-const taskSubtasks = ref<any[]>([])
-const showDelegateDialog = ref(false)
-const delegateSaving = ref(false)
-const subordinateItems = ref<{text:string, value:number}[]>([])
-const delegateForm = ref({ title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [] as number[], import_to_parent: true })
-
-const isTaskReadonly = computed(() => {
-  if (!editingTask.value) return false
-  if (['superadmin', 'org_admin', 'admin'].includes(localStorage.getItem('user_role') || '')) return false
-  const t = editingTask.value
-  return (t.assignees || []).some((a: any) => a.user_id === currentUserId) && t.created_by_id !== currentUserId
-})
-
-// Report
-const departments = ref<string[]>([])
-const reportDept = ref<string | null>(null)
-const reportWeeks = ref(1)
-const reportLoading = ref(false)
-const reportData = ref<any>(null)
-
-const GT_COLUMNS = [
-  { status: 'todo', label: 'К выполнению', color: '#F59E0B' },
-  { status: 'in_progress', label: 'В работе', color: '#3B82F6' },
-  { status: 'review', label: 'На проверке', color: '#8B5CF6' },
-  { status: 'done', label: 'Архив', color: '#22C55E' },
-]
-const archiveExpanded = ref(false)
-const PRIORITY_LABEL: Record<string,string> = { low:'Низкий', medium:'Средний', high:'Высокий', urgent:'Срочно' }
-const PRIORITY_COLOR: Record<string,string> = { low:'grey', medium:'blue', high:'orange', urgent:'red' }
-const priorityItems = [
-  { title:'Низкий', value:'low' }, { title:'Средний', value:'medium' },
-  { title:'Высокий', value:'high' }, { title:'Срочно', value:'urgent' },
-]
-
-const generalByStatus = (status: string) => filteredGeneralTasks.value.filter(t => t.status === status)
-
-// ── Deadline urgency for card background ──
-function gtCardStyle(gt: any): Record<string, string> {
-  if (gt.status === 'done') {
-    if (!gt.due_date) return { background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.3)' }
-    const completedAt = gt.updated_at ? new Date(gt.updated_at) : new Date()
-    const dueDate = new Date(gt.due_date)
-    const diffDays = (dueDate.getTime() - completedAt.getTime()) / 86400000
-    if (diffDays < 0) return { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)' }   // просрочена
-    if (diffDays < 1) return { background: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.45)' } // впритык
-    return { background: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.45)' }                    // заранее
-  }
-  if (!gt.due_date) return {}
-  const diff = (new Date(gt.due_date).getTime() - Date.now()) / 86400000
-  if (diff < 0) return { background: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.4)' }
-  if (diff <= 1) return { background: 'rgba(239,68,68,0.10)', borderColor: 'rgba(239,68,68,0.3)' }
-  if (diff <= 3) return { background: 'rgba(249,115,22,0.10)', borderColor: 'rgba(249,115,22,0.3)' }
-  if (diff <= 7) return { background: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.25)' }
-  return { background: 'rgba(34,197,94,0.06)', borderColor: 'rgba(34,197,94,0.2)' }
-}
-
-// ── General task drag & drop (inline — kept for purchases kanban) ──
-let draggedGeneral: any = null
-function onDragStartGeneral(e: DragEvent, task: any) {
-  draggedGeneral = task
-  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(task.id)) }
-}
-async function onDropGeneral(e: DragEvent, targetStatus: string) {
-  e.preventDefault()
-  if (!draggedGeneral || draggedGeneral.status === targetStatus) return
-  const t = draggedGeneral; draggedGeneral = null
-  const old = t.status; t.status = targetStatus
-  try { await apiFetch(`/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ status: targetStatus }) }) }
-  catch { t.status = old }
-}
-
-// ── Handler for TasksKanban 'update-status' emit ──
 async function handleUpdateTaskStatus(taskId: number, newStatus: string) {
   const t = generalTasks.value.find((task: any) => task.id === taskId)
   if (!t) return
   const oldStatus = t.status
-  // Optimistic update already applied by TasksKanban; just persist
   try {
     await apiFetch(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) })
   } catch {
-    // Rollback optimistic update
     t.status = oldStatus
   }
 }
@@ -662,458 +316,51 @@ async function confirmTaskDone(taskId: number) {
   const t = generalTasks.value.find(task => task.id === taskId)
   if (t) t.status = 'done'
 }
+
 async function rejectTaskDone(taskId: number) {
   await apiFetch(`/tasks/${taskId}/review-complete`, { method: 'POST', body: JSON.stringify({ confirm: false }) })
   const t = generalTasks.value.find(t => t.id === taskId)
   if (t) t.status = 'in_progress'
 }
 
-function openNewTask() {
-  editingTask.value = null
-  taskForm.value = { title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [], category: '', org_id: selectedOrgId.value }
-  taskComments.value = []
-  newCommentText.value = ''
-  showTaskDialog.value = true
-}
-
-function isFieldUnseen(fieldName: string): boolean {
-  return (editingTask.value?.unseen_fields || []).includes(fieldName)
-}
-
-async function dismissField(fieldName: string) {
-  if (!editingTask.value) return
-  if (!isFieldUnseen(fieldName)) return
-  try {
-    await apiFetch(`/tasks/${editingTask.value.id}/dismiss-field`, {
-      method: 'POST',
-      body: { field_name: fieldName } as any,
-    })
-    editingTask.value.unseen_fields = (editingTask.value.unseen_fields || []).filter((f: string) => f !== fieldName)
-    editingTask.value.unseen_changes_count = Math.max(0, (editingTask.value.unseen_changes_count || 0) - 1)
-    // Sync to the task list
-    const idx = generalTasks.value.findIndex((t: any) => t.id === editingTask.value.id)
-    if (idx >= 0) {
-      generalTasks.value[idx] = { ...generalTasks.value[idx], unseen_fields: editingTask.value.unseen_fields, unseen_changes_count: editingTask.value.unseen_changes_count }
-    }
-  } catch { /* best-effort */ }
-}
-
-function editGeneralTask(t: any) {
-  editingTask.value = t
-  taskForm.value = {
-    title: t.title, description: t.description || '', priority: t.priority,
-    due_date: t.due_date ? t.due_date.split('T')[0] : '',
-    assignee_ids: (t.assignees || []).map((a: any) => a.user_id),
-    category: t.category || '',
-    org_id: t.org_id ?? null,
+// ── Purchases handlers ──
+async function handleUpdateKanbanStatus(purchaseId: number, newStatus: string) {
+  const task = [...tasks.value, ...archiveTasks.value].find(t => t.id === purchaseId)
+  if (!task) return
+  const oldStatus = task.status
+  task.status = newStatus
+  if (newStatus === 'paid') {
+    tasks.value = tasks.value.filter(t => t.id !== purchaseId)
+    archiveTasks.value.unshift(task)
+  } else if (oldStatus === 'paid') {
+    archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
+    tasks.value.push(task)
   }
-  taskSubtasks.value = []
-  newCommentText.value = ''
-  showTaskDialog.value = true
-  loadComments(t.id)
-  if (t.subtask_count > 0 || t.import_to_parent) loadSubtasks(t.id)
-}
-
-async function loadSubtasks(taskId: number) {
   try {
-    taskSubtasks.value = await apiFetch<any[]>(`/tasks/${taskId}/subtasks`)
-  } catch { taskSubtasks.value = [] }
-}
-
-function openSubtask(st: any) {
-  closeTaskDialog()
-  setTimeout(() => editGeneralTask(st), 100)
-}
-
-async function openDelegateDialog() {
-  if (!editingTask.value) return
-  // Load subordinates of current user
-  try {
-    const subs = await apiFetch<any[]>(`/users/${currentUserId}/subordinates`)
-    subordinateItems.value = subs.map((u: any) => ({ text: u.full_name || u.username, value: u.id }))
+    await apiFetch(`/purchases/${purchaseId}/kanban-status?status=${newStatus}`, { method: 'PATCH' })
   } catch {
-    subordinateItems.value = userItems.value
-  }
-  delegateForm.value = {
-    title: editingTask.value.title,
-    description: editingTask.value.description || '',
-    priority: editingTask.value.priority || 'medium',
-    due_date: editingTask.value.due_date ? editingTask.value.due_date.split('T')[0] : '',
-    assignee_ids: [],
-    import_to_parent: true,
-  }
-  showDelegateDialog.value = true
-}
-
-async function saveDelegate() {
-  if (!editingTask.value || !delegateForm.value.assignee_ids.length) return
-  delegateSaving.value = true
-  try {
-    const body: any = {
-      ...delegateForm.value,
-      parent_task_id: editingTask.value.id,
-    }
-    if (body.due_date) body.due_date = body.due_date + 'T23:59:59Z'
-    else delete body.due_date
-    const created = await apiFetch<any>('/tasks/', { method: 'POST', body: JSON.stringify(body) })
-    generalTasks.value.push(created)
-    // Update subtask count on parent card
-    const parentCard = generalTasks.value.find(t => t.id === editingTask.value!.id)
-    if (parentCard) parentCard.subtask_count = (parentCard.subtask_count || 0) + 1
-    taskSubtasks.value.push(created)
-    showDelegateDialog.value = false
-  } catch (e: any) {
-    alert(e?.detail || 'Ошибка делегирования')
-  } finally {
-    delegateSaving.value = false
-  }
-}
-
-// Auto-refresh comments every 5s when dialog is open
-let _commentsPollTimer: ReturnType<typeof setInterval> | null = null
-
-function closeTaskDialog() {
-  showTaskDialog.value = false
-  editingTask.value = null
-  taskComments.value = []
-  taskSubtasks.value = []
-  if (_commentsPollTimer) { clearInterval(_commentsPollTimer); _commentsPollTimer = null }
-}
-
-async function loadComments(taskId: number) {
-  commentsLoading.value = true
-  try {
-    taskComments.value = await apiFetch<any[]>(`/tasks/${taskId}/comments`)
-    await nextTick()
-    scrollChatToBottom()
-  } catch { taskComments.value = [] }
-  finally { commentsLoading.value = false }
-
-  // Start polling for new comments
-  if (_commentsPollTimer) clearInterval(_commentsPollTimer)
-  _commentsPollTimer = setInterval(async () => {
-    if (!showTaskDialog.value || !editingTask.value) {
-      if (_commentsPollTimer) { clearInterval(_commentsPollTimer); _commentsPollTimer = null }
-      return
-    }
-    try {
-      const fresh = await apiFetch<any[]>(`/tasks/${taskId}/comments`)
-      if (fresh.length !== taskComments.value.length) {
-        taskComments.value = fresh
-        await nextTick()
-        scrollChatToBottom()
-      }
-    } catch { /* ignore */ }
-  }, 5000)
-}
-
-async function addComment() {
-  if (!editingTask.value || !newCommentText.value.trim()) return
-  commentSaving.value = true
-  mentionOpen.value = false
-  try {
-    const c = await apiFetch<any>(`/tasks/${editingTask.value.id}/comments`, {
-      method: 'POST', body: JSON.stringify({ text: newCommentText.value.trim() }),
-    })
-    taskComments.value.push(c)
-    newCommentText.value = ''
-    // Update preview on card
-    const gt = generalTasks.value.find(t => t.id === editingTask.value.id)
-    if (gt) {
-      gt.last_comment = c.text.slice(0, 100)
-      gt.last_comment_user = c.user_name
-      gt.last_comment_at = c.created_at
-      gt.comment_count = (gt.comment_count || 0) + 1
-    }
-    await nextTick()
-    scrollChatToBottom()
-  } catch(e) { console.error(e) }
-  finally { commentSaving.value = false }
-}
-
-function scrollChatToBottom() {
-  if (chatContainer.value) chatContainer.value.scrollTop = chatContainer.value.scrollHeight
-}
-
-// ── @ Mentions ──
-const mentionOpen = ref(false)
-const mentionQuery = ref('')
-const mentionFromButton = ref(false)  // true when opened via @ button
-const enterToSend = ref(localStorage.getItem('chat_enter_to_send') !== 'false')  // default: true
-
-function saveSendMode() {
-  localStorage.setItem('chat_enter_to_send', String(enterToSend.value))
-}
-
-const mentionableUsers = computed(() => {
-  // Users in current task (assignees + creator)
-  if (!editingTask.value) return userItems.value
-  const taskUsers = new Set<number>()
-  if (editingTask.value.assignees) {
-    for (const a of editingTask.value.assignees) taskUsers.add(a.user_id)
-  }
-  if (editingTask.value.created_by_id) taskUsers.add(editingTask.value.created_by_id)
-  // Show task participants first, then others
-  const inTask = userItems.value.filter(u => taskUsers.has(u.value))
-  const others = userItems.value.filter(u => !taskUsers.has(u.value))
-  return [...inTask, ...others]
-})
-
-const filteredMentionUsers = computed(() => {
-  const q = mentionQuery.value.toLowerCase()
-  if (mentionFromButton.value && !q) {
-    // Show task participants when opened via button
-    return mentionableUsers.value.slice(0, 8)
-  }
-  return mentionableUsers.value.filter(u => u.text.toLowerCase().includes(q)).slice(0, 6)
-})
-
-function openMentionPicker() {
-  mentionFromButton.value = true
-  mentionQuery.value = ''
-  // Add @ to text if not already there
-  const text = newCommentText.value
-  if (!text.endsWith('@')) {
-    newCommentText.value = text + (text && !text.endsWith(' ') ? ' @' : '@')
-  }
-  mentionOpen.value = true
-}
-
-function onCommentInput() {
-  mentionFromButton.value = false
-  const text = newCommentText.value
-  // Find if cursor is after a @ trigger
-  const atIdx = text.lastIndexOf('@')
-  if (atIdx >= 0) {
-    const afterAt = text.slice(atIdx + 1)
-    // Only show if no space after the query part (still typing)
-    if (!afterAt.includes('\n') && afterAt.length <= 30) {
-      mentionQuery.value = afterAt
-      mentionOpen.value = true
-      return
-    }
-  }
-  mentionOpen.value = false
-}
-
-function onCommentKeydown(e: KeyboardEvent) {
-  if (mentionOpen.value) {
-    if (e.key === 'Escape') {
-      mentionOpen.value = false
-      e.preventDefault()
-      return
-    }
-    if (e.key === 'Tab' || e.key === 'Enter') {
-      if (filteredMentionUsers.value.length > 0) {
-        e.preventDefault()
-        insertMention(filteredMentionUsers.value[0])
-        return
-      }
-    }
-  }
-
-  if (e.key === 'Enter') {
-    const ctrlOrMeta = e.ctrlKey || e.metaKey
-    if (enterToSend.value) {
-      // Enter = send, Ctrl+Enter = newline
-      if (ctrlOrMeta) {
-        // Insert newline manually
-        e.preventDefault()
-        const ta = (commentInput.value as any)?.$el?.querySelector('textarea')
-        if (ta) {
-          const start = ta.selectionStart
-          newCommentText.value = newCommentText.value.slice(0, start) + '\n' + newCommentText.value.slice(ta.selectionEnd)
-          nextTick(() => { ta.selectionStart = ta.selectionEnd = start + 1 })
-        }
-        return
-      }
-      if (!e.shiftKey) {
-        e.preventDefault()
-        addComment()
-      }
-    } else {
-      // Ctrl+Enter = send, Enter = newline (default textarea behavior)
-      if (ctrlOrMeta) {
-        e.preventDefault()
-        addComment()
-      }
+    task.status = oldStatus
+    if (newStatus === 'paid') {
+      archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
+      tasks.value.push(task)
+    } else if (oldStatus === 'paid') {
+      tasks.value = tasks.value.filter(t => t.id !== purchaseId)
+      archiveTasks.value.unshift(task)
     }
   }
 }
 
-function insertMention(user: { text: string; value: number }) {
-  const text = newCommentText.value
-  const atIdx = text.lastIndexOf('@')
-  if (atIdx >= 0) {
-    newCommentText.value = text.slice(0, atIdx) + `@${user.text} `
-  }
-  mentionOpen.value = false
-  mentionFromButton.value = false
-  // Focus back on input
-  nextTick(() => {
-    const el = (commentInput.value as any)?.$el?.querySelector('textarea')
-    if (el) el.focus()
-  })
+function openTask(id: number) { router.push(`/orders/${id}/edit`) }
+
+async function saveComment() {
+  if (commentTaskId.value === null) return
+  await apiFetch(`/purchases/${commentTaskId.value}/comment?comment=${encodeURIComponent(commentText.value)}`, { method: 'PATCH' })
+  const task = [...tasks.value, ...archiveTasks.value].find(t => t.id === commentTaskId.value)
+  if (task) task.task_comment = commentText.value
+  commentDialog.value = false
 }
 
-// ── Link purchase to task ──
-const linkPurchaseDialog = ref(false)
-const linkPurchaseSearch = ref('')
-const linkPurchaseResults = ref<any[]>([])
-const linkPurchaseSearching = ref(false)
-let _purchaseSearchTimer: ReturnType<typeof setTimeout> | null = null
-
-function openLinkPurchase() {
-  linkPurchaseSearch.value = ''
-  linkPurchaseResults.value = []
-  linkPurchaseDialog.value = true
-}
-
-function searchPurchases(q: string | null) {
-  if (_purchaseSearchTimer) clearTimeout(_purchaseSearchTimer)
-  if (!q || q.length < 2) { linkPurchaseResults.value = []; return }
-  _purchaseSearchTimer = setTimeout(async () => {
-    linkPurchaseSearching.value = true
-    try {
-      linkPurchaseResults.value = await apiFetch<any[]>(`/purchases/?search=${encodeURIComponent(q)}&limit=20`)
-    } catch { linkPurchaseResults.value = [] }
-    finally { linkPurchaseSearching.value = false }
-  }, 300)
-}
-
-async function linkPurchaseToTask(purchaseId: number) {
-  if (!editingTask.value) return
-  try {
-    const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, {
-      method: 'PATCH', body: JSON.stringify({ purchase_id: purchaseId }),
-    })
-    editingTask.value = { ...editingTask.value, ...updated }
-    const idx = generalTasks.value.findIndex(t => t.id === editingTask.value.id)
-    if (idx >= 0) generalTasks.value[idx] = editingTask.value
-    linkPurchaseDialog.value = false
-  } catch (e: any) {
-    alert(e?.detail || 'Ошибка привязки')
-  }
-}
-
-async function unlinkPurchaseFromTask() {
-  if (!editingTask.value) return
-  try {
-    const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, {
-      method: 'PATCH', body: JSON.stringify({ purchase_id: null }),
-    })
-    editingTask.value = { ...editingTask.value, ...updated, purchase_id: null, purchase_subject: null, purchase_number: null, purchase_status: null }
-    const idx = generalTasks.value.findIndex(t => t.id === editingTask.value.id)
-    if (idx >= 0) generalTasks.value[idx] = editingTask.value
-  } catch (e: any) {
-    alert(e?.detail || 'Ошибка')
-  }
-}
-
-// ── Broadcast ──
-const broadcastDialog = ref(false)
-const broadcastScope = ref<'department' | 'organization' | 'all'>('organization')
-const broadcastScopeId = ref<number | null>(null)
-const broadcastText = ref('')
-const broadcastSending = ref(false)
-const broadcastOrgs = ref<{ id: number; name: string }[]>([])
-const broadcastDepts = ref<{ id: number; name: string }[]>([])
-
-async function openBroadcastDialog() {
-  broadcastText.value = newCommentText.value || ''
-  broadcastScopeId.value = null
-  broadcastDialog.value = true
-  // Load scopes
-  try {
-    const data = await apiFetch<any>('/tasks/broadcast/scopes')
-    broadcastOrgs.value = data.organizations || []
-    broadcastDepts.value = data.departments || []
-    // Auto-select first org if only one
-    if (broadcastOrgs.value.length === 1) broadcastScopeId.value = broadcastOrgs.value[0].id
-  } catch {}
-}
-
-async function sendBroadcast() {
-  if (!editingTask.value || !broadcastText.value.trim()) return
-  broadcastSending.value = true
-  try {
-    const res = await apiFetch<any>(`/tasks/${editingTask.value.id}/broadcast`, {
-      method: 'POST',
-      body: JSON.stringify({
-        text: broadcastText.value.trim(),
-        scope: broadcastScope.value,
-        scope_id: broadcastScope.value !== 'all' ? broadcastScopeId.value : undefined,
-      }),
-    })
-    broadcastDialog.value = false
-    newCommentText.value = ''
-    alert(`Отправлено: ${res.sent} из ${res.total_users} сотрудников`)
-    await loadComments(editingTask.value.id)
-  } catch (e: any) {
-    alert(e?.detail || 'Ошибка рассылки')
-  } finally {
-    broadcastSending.value = false
-  }
-}
-
-function renderMentions(text: string): string {
-  if (!text) return ''
-  // Escape HTML first
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  // Highlight @mentions
-  return escaped.replace(/@([A-Za-zА-Яа-яёЁ\s]+?)(\s|$)/g, '<span class="chat-mention">@$1</span>$2')
-}
-
-async function deleteComment(commentId: number) {
-  if (!editingTask.value) return
-  try {
-    await apiFetch(`/tasks/${editingTask.value.id}/comments/${commentId}`, { method: 'DELETE' })
-    taskComments.value = taskComments.value.filter(c => c.id !== commentId)
-    const gt = generalTasks.value.find(t => t.id === editingTask.value.id)
-    if (gt) {
-      gt.comment_count = Math.max(0, (gt.comment_count || 1) - 1)
-      if (taskComments.value.length > 0) {
-        const last = taskComments.value[taskComments.value.length - 1]
-        gt.last_comment = last.text.slice(0, 100)
-        gt.last_comment_user = last.user_name
-      } else {
-        gt.last_comment = null; gt.last_comment_user = null
-      }
-    }
-  } catch(e) { console.error(e) }
-}
-
-async function saveGeneralTask() {
-  const body: any = { ...taskForm.value }
-  if (body.due_date) body.due_date = body.due_date + 'T23:59:59Z'
-  else delete body.due_date
-  if (!body.category) delete body.category
-  if (!body.assignee_ids?.length) body.assignee_ids = []
-  try {
-    if (editingTask.value) {
-      const updated = await apiFetch<any>(`/tasks/${editingTask.value.id}`, { method: 'PATCH', body: JSON.stringify(body) })
-      const idx = generalTasks.value.findIndex(t => t.id === editingTask.value.id)
-      if (idx >= 0) generalTasks.value[idx] = { ...generalTasks.value[idx], ...updated }
-    } else {
-      const created = await apiFetch<any>('/tasks/', { method: 'POST', body: JSON.stringify(body) })
-      generalTasks.value.push(created)
-    }
-  } catch(e: any) {
-    if (e?.detail) alert(e.detail)
-    else console.error(e)
-    return
-  }
-  closeTaskDialog()
-}
-
-async function deleteGeneralTask() {
-  if (!editingTask.value) return
-  try { await apiFetch(`/tasks/${editingTask.value.id}`, { method: 'DELETE' }) }
-  catch(e) { console.error(e); return }
-  generalTasks.value = generalTasks.value.filter(t => t.id !== editingTask.value.id)
-  closeTaskDialog()
-}
-
+// ── Consent ──
 async function acknowledgeDecline(declineId: number) {
   ackLoading.value = declineId
   try {
@@ -1130,168 +377,15 @@ async function respondConsent(taskId: number, accept: boolean) {
   try {
     await apiFetch(`/tasks/${taskId}/consent?accept=${accept}`, { method: 'POST' })
     pendingConsentTasks.value = pendingConsentTasks.value.filter(t => t.id !== taskId)
-    if (accept) {
-      // Reload my tasks to include the accepted task
-      generalTasks.value = await apiFetch<any[]>('/tasks/my')
-    }
-  } catch(e: any) {
+    if (accept) generalTasks.value = await apiFetch<any[]>('/tasks/my')
+  } catch (e: any) {
     alert(e?.detail || 'Ошибка')
   } finally {
     consentLoading.value = null
   }
 }
 
-// ── Report ──
-async function loadReport() {
-  reportLoading.value = true
-  try {
-    const params = new URLSearchParams()
-    if (reportDept.value) params.set('department', reportDept.value)
-    params.set('weeks', String(reportWeeks.value))
-    reportData.value = await apiFetch<any>(`/tasks/report/by-department?${params}`)
-  } catch(e) { console.error(e); reportData.value = null }
-  finally { reportLoading.value = false }
-}
-
-// ── Purchases kanban ──
-interface KanbanColumn { status: string; label: string; color: string }
-
-const COLUMNS: KanbanColumn[] = [
-  { status: 'wishes', label: 'Желания сотрудников', color: '#F59E0B' },
-  { status: 'plan_schedule', label: 'План-график', color: '#FB923C' },
-  { status: 'confirmed', label: 'Подтверждено', color: '#3B82F6' },
-  { status: 'work_in_progress', label: 'Ведётся работа', color: '#14B8A6' },
-  { status: 'contracted', label: 'Договор', color: '#6366F1' },
-  { status: 'delivered', label: 'Поставлено', color: '#8B5CF6' },
-]
-const ARCHIVE_COLUMN: KanbanColumn = { status: 'paid', label: 'Оплачено (архив)', color: '#22C55E' }
-
-const STATUS_LABELS: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
-}
-const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
-function purchaseStatusLabel(task: any): string {
-  if (task.status === 'contracted' && FRAMEWORK_TYPES.has(task.purchase_contract_type || '')) return 'Заказ'
-  return STATUS_LABELS[task.status] || task.status
-}
-const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формируется ТЗ', kp_collecting: 'Сбор КП', on_platform: 'На площадке',
-}
-
-const kanbanSubsidyFilter = ref<number | null>(null)
-const subsidyItems = computed(() => {
-  const all = [...tasks.value, ...archiveTasks.value]
-  const seen = new Map<number, string>()
-  for (const t of all) {
-    if (t.subsidy_id && !seen.has(t.subsidy_id)) {
-      seen.set(t.subsidy_id, t.subsidy_name || `Субсидия #${t.subsidy_id}`)
-    }
-  }
-  return [{ title: 'Все субсидии', value: null }, ...Array.from(seen.entries()).map(([v, title]) => ({ title, value: v }))]
-})
-const visibleColumns = computed(() => showArchive.value ? [...COLUMNS, ARCHIVE_COLUMN] : COLUMNS)
-const filteredTasks = computed(() => [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])])
-const tasksByStatus = (status: string) => {
-  const base = status === 'paid' ? archiveTasks.value : tasks.value.filter((t: any) => t.status === status)
-  if (kanbanSubsidyFilter.value === null) return base
-  return base.filter((t: any) => t.subsidy_id === kanbanSubsidyFilter.value)
-}
-
-let draggedTask: any = null
-function onDragStart(e: DragEvent, task: any) {
-  draggedTask = task
-  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(task.id)) }
-}
-async function onDrop(e: DragEvent, targetStatus: string) {
-  e.preventDefault()
-  if (!draggedTask || draggedTask.status === targetStatus) return
-  const task = draggedTask; draggedTask = null
-  const oldStatus = task.status; task.status = targetStatus
-  if (targetStatus === 'paid') { tasks.value = tasks.value.filter(t => t.id !== task.id); archiveTasks.value.unshift(task) }
-  else if (oldStatus === 'paid') { archiveTasks.value = archiveTasks.value.filter(t => t.id !== task.id); tasks.value.push(task) }
-  try { await apiFetch(`/purchases/${task.id}/kanban-status?status=${targetStatus}`, { method: 'PATCH' }) }
-  catch {
-    task.status = oldStatus
-    if (targetStatus === 'paid') { archiveTasks.value = archiveTasks.value.filter(t => t.id !== task.id); tasks.value.push(task) }
-    else if (oldStatus === 'paid') { tasks.value = tasks.value.filter(t => t.id !== task.id); archiveTasks.value.unshift(task) }
-  }
-}
-
-function openTask(id: number) { router.push(`/orders/${id}/edit`) }
-
-// ── Handler for PurchasesKanban 'update-kanban-status' emit ──────────────────
-async function handleUpdateKanbanStatus(purchaseId: number, newStatus: string) {
-  const task = [...tasks.value, ...archiveTasks.value].find(t => t.id === purchaseId)
-  if (!task) return
-  const oldStatus = task.status
-  // Optimistic update
-  task.status = newStatus
-  if (newStatus === 'paid') {
-    tasks.value = tasks.value.filter(t => t.id !== purchaseId)
-    archiveTasks.value.unshift(task)
-  } else if (oldStatus === 'paid') {
-    archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
-    tasks.value.push(task)
-  }
-  try {
-    await apiFetch(`/purchases/${purchaseId}/kanban-status?status=${newStatus}`, { method: 'PATCH' })
-  } catch {
-    // Rollback
-    task.status = oldStatus
-    if (newStatus === 'paid') {
-      archiveTasks.value = archiveTasks.value.filter(t => t.id !== purchaseId)
-      tasks.value.push(task)
-    } else if (oldStatus === 'paid') {
-      tasks.value = tasks.value.filter(t => t.id !== purchaseId)
-      archiveTasks.value.unshift(task)
-    }
-  }
-}
-
-function statusColor(s: string): string {
-  const map: Record<string, string> = {
-    wishes: 'amber', plan_schedule: 'orange', confirmed: 'primary',
-    work_in_progress: 'teal', contracted: 'indigo', delivered: 'deep-purple', paid: 'success',
-  }
-  return map[s] || 'grey'
-}
-
-function deadlineColor(d: string): string {
-  const diff = (new Date(d).getTime() - Date.now()) / 86400000
-  if (diff < 0) return 'error'
-  if (diff <= 7) return 'warning'
-  return 'success'
-}
-
-function formatDate(d: string): string {
-  if (!d) return ''
-  const [y, m, day] = d.split('-')
-  return `${day}.${m}.${y}`
-}
-
-function formatDatetime(d: string): string {
-  if (!d) return ''
-  const dt = new Date(d)
-  return dt.toLocaleDateString('ru-RU') + ' ' + dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-}
-
-function formatMoney(v?: number): string {
-  if (!v) return '0 ₽'
-  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + ' млн ₽'
-  if (v >= 1_000) return (v / 1_000).toFixed(0) + ' тыс ₽'
-  return v.toLocaleString('ru-RU') + ' ₽'
-}
-
-async function saveComment() {
-  if (commentTaskId.value === null) return
-  await apiFetch(`/purchases/${commentTaskId.value}/comment?comment=${encodeURIComponent(commentText.value)}`, { method: 'PATCH' })
-  const task = [...tasks.value, ...archiveTasks.value].find(t => t.id === commentTaskId.value)
-  if (task) task.task_comment = commentText.value
-  commentDialog.value = false
-}
-
+// ── Data loading ──
 async function loadOrgSummary() {
   try {
     orgSummary.value = await apiFetch<any[]>('/tasks/org-summary')
@@ -1304,16 +398,11 @@ async function loadOrgSummary() {
 async function selectOrg(orgId: number | null) {
   selectedOrgId.value = orgId
   orgCardsOpen.value = false
-  // Clear lists BEFORE awaiting new data — prevents flash of stale/unfiltered rows
   generalTasks.value = []
   tasks.value = []
   archiveTasks.value = []
-  if (orgId !== null) {
-    localStorage.setItem('active_org_id', String(orgId))
-  } else {
-    localStorage.removeItem('active_org_id')
-  }
-  // Reload tasks and purchases for the selected org
+  if (orgId !== null) localStorage.setItem('active_org_id', String(orgId))
+  else localStorage.removeItem('active_org_id')
   await loadOrgData()
 }
 
@@ -1347,7 +436,6 @@ async function load() {
   loading.value = true
   try {
     await Promise.all([
-      // 1. All task data in ONE request (my + pending + declines + categories + departments)
       apiFetch<any>('/tasks/init').then(data => {
         generalTasks.value = data.my_tasks || []
         pendingConsentTasks.value = data.pending_consent || []
@@ -1355,37 +443,31 @@ async function load() {
         taskCategories.value = data.categories || []
         departments.value = data.departments || []
       }).catch(() => { generalTasks.value = [] }),
-      // 2. Purchases active
       apiFetch<any[]>('/purchases/my-tasks')
         .then(active => { tasks.value = active.filter(t => t.status !== 'paid') })
         .catch(e => console.error('Load purchases error:', e)),
-      // 3. Purchases archive
       apiFetch<any[]>('/purchases/my-tasks?include_archive=true')
         .then(archived => { archiveTasks.value = archived.filter(t => t.status === 'paid') })
         .catch(() => {}),
-      // 4. Approvals
       apiFetch<any[]>('/approvals/my-pending')
         .then(r => { pendingApprovals.value = r })
         .catch(() => { pendingApprovals.value = [] }),
     ])
   } catch (e) { console.error('Load error:', e) }
   finally { loading.value = false }
-  // Load users lazily after paint (needed only for task create/edit dialog)
+  // Load users lazily after paint
   apiFetch<any[]>('/users/').then(users => {
     userItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
   }).catch(() => {})
   apiFetch<any[]>(`/users/${currentUserId}/subordinates`).then(subs => {
     subordinateIds.value = new Set((subs as any[]).map((u: any) => u.id))
   }).catch(() => {})
-  // Load users managed via hierarchy (org edges + dept edges)
   apiFetch<any>(`/hierarchy/graph`).then((graph: any) => {
     const ids = new Set<number>()
-    // Users in orgs managed by current user
     const myManagedOrgIds = new Set((graph.user_org_edges || []).filter((e: any) => e.manager_user_id === currentUserId).map((e: any) => e.org_id))
     for (const u of (graph.users || [])) {
       if (myManagedOrgIds.has(u.org_id)) ids.add(u.id)
     }
-    // Users in depts managed by current user
     const myManagedDeptIds = new Set((graph.user_dept_edges || []).filter((e: any) => e.manager_user_id === currentUserId).map((e: any) => e.dept_id))
     for (const dept of (graph.departments || [])) {
       if (myManagedDeptIds.has(dept.id)) {
@@ -1396,7 +478,7 @@ async function load() {
   }).catch(() => {})
 }
 
-// ── Real-time polling: refresh tasks every 30 seconds ──
+// ── Real-time polling ──
 async function pollTasks() {
   try {
     const [myTasks, pending, declines] = await Promise.all([
@@ -1420,317 +502,32 @@ onMounted(async () => {
   }
   _pollInterval = setInterval(pollTasks, 30_000)
 
-  // Link purchase mode: ?link_purchase=ID
   if (route.query.link_purchase) {
     linkPurchaseId.value = Number(route.query.link_purchase)
     activeTab.value = 'general'
     taskViewMode.value = 'list'
   }
 
-  // Deep link: ?task={id} — open specific task
   const taskIdParam = route.query.task
   if (taskIdParam) {
     const taskId = Number(taskIdParam)
     if (taskId) {
       activeTab.value = 'general'
       await nextTick()
-      // Try to find in loaded tasks
       let found = generalTasks.value.find((t: any) => t.id === taskId)
       if (!found) {
-        // Load individually
-        try {
-          found = await apiFetch<any>(`/tasks/${taskId}`)
-        } catch {}
+        try { found = await apiFetch<any>(`/tasks/${taskId}`) } catch {}
       }
-      if (found) {
-        editGeneralTask(found)
-      }
-      // Clean up URL
+      if (found) editGeneralTask(found)
       router.replace({ query: {} })
     }
   }
 })
 onUnmounted(() => {
   if (_pollInterval) clearInterval(_pollInterval)
-  if (_commentsPollTimer) clearInterval(_commentsPollTimer)
 })
 </script>
 
 <style scoped>
-.kanban-board {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 12px;
-  min-height: 400px;
-}
-
-.kanban-column {
-  min-width: 240px;
-  max-width: 280px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: var(--crm-surface-alt);
-  border-radius: 12px;
-  border: 1px solid var(--crm-border);
-}
-
-.kanban-column--collapsed {
-  min-width: 48px;
-  max-width: 48px;
-  flex: 0 0 48px;
-}
-
-.kanban-column-collapsed-body {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 12px 6px;
-  height: 100%;
-  cursor: pointer;
-  border-radius: 12px;
-  border: 2px solid;
-  transition: opacity 0.2s;
-  opacity: 0.7;
-  background: var(--crm-surface-alt);
-}
-.kanban-column-collapsed-body:hover {
-  opacity: 1;
-}
-.kanban-collapsed-label {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  transform: rotate(180deg);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--crm-text-secondary);
-  margin: 4px 0;
-}
-
-.kanban-column-header {
-  padding: 12px 14px;
-  border-top: 3px solid;
-  border-radius: 12px 12px 0 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--crm-surface);
-}
-
-.kanban-column-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--crm-text-secondary);
-}
-
-.kanban-column-body {
-  flex: 1;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 100px;
-}
-
-.kanban-card {
-  background: var(--crm-surface);
-  border-radius: 8px;
-  padding: 12px;
-  border: 1px solid var(--crm-border);
-  cursor: grab;
-  transition: box-shadow 0.15s, transform 0.1s, background 0.3s, border-color 0.3s;
-}
-.kanban-card:hover {
-  box-shadow: 0 2px 8px var(--crm-shadow-hover);
-  transform: translateY(-1px);
-}
-.kanban-card:active {
-  cursor: grabbing;
-  opacity: 0.8;
-}
-
-.kanban-card-header { margin-bottom: 6px; }
-.kanban-card-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--crm-text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.kanban-card-meta {
-  font-size: 11px;
-  color: var(--crm-text-muted);
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-}
-
-.kanban-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-.kanban-card-amount {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--crm-text-secondary);
-}
-
-.kanban-card-comment {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--crm-border);
-  font-size: 11px;
-  color: var(--crm-text-muted);
-  display: flex;
-  align-items: flex-start;
-}
-
-.kanban-empty {
-  text-align: center;
-  color: var(--crm-text-faint);
-  font-size: 12px;
-  padding: 20px 8px;
-}
-
-.report-task-item {
-  padding: 6px 8px;
-  border-radius: 6px;
-  margin-bottom: 4px;
-  background: rgba(0,0,0,0.02);
-  border: 1px solid rgba(0,0,0,0.05);
-}
-
-/* Chat styles */
-.chat-container {
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 8px;
-  background: rgba(0,0,0,0.02);
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.chat-msg {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  position: relative;
-}
-.chat-msg--mine {
-  align-self: flex-end;
-  background: rgb(var(--v-theme-primary));
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-.chat-msg--other {
-  align-self: flex-start;
-  background: rgba(0,0,0,0.06);
-  border-bottom-left-radius: 4px;
-}
-
-.chat-msg-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 2px;
-}
-.chat-msg-author {
-  font-size: 11px;
-  font-weight: 600;
-  opacity: 0.85;
-}
-.chat-msg-time {
-  font-size: 10px;
-  opacity: 0.6;
-  margin-left: auto;
-}
-.chat-msg-delete {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.chat-msg:hover .chat-msg-delete {
-  opacity: 0.7;
-}
-.chat-msg-text {
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: pre-line;
-  word-break: break-word;
-}
-
-/* Mention dropdown */
-.mention-dropdown {
-  background: var(--crm-surface, #fff);
-  border: 1px solid rgba(0,0,0,0.12);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  max-height: 180px;
-  overflow-y: auto;
-  margin-bottom: 4px;
-}
-.mention-item {
-  padding: 8px 12px;
-  cursor: pointer;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-}
-.mention-item:hover {
-  background: rgba(var(--v-theme-primary), 0.08);
-}
-
-/* Mention highlight in messages */
-:deep(.chat-mention) {
-  color: rgb(var(--v-theme-primary));
-  font-weight: 600;
-  background: rgba(var(--v-theme-primary), 0.1);
-  border-radius: 3px;
-  padding: 0 2px;
-}
-.chat-msg--mine :deep(.chat-mention) {
-  color: white;
-  background: rgba(255,255,255,0.25);
-}
-.send-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: #aaa;
-  cursor: pointer;
-  user-select: none;
-  padding: 2px 0;
-}
-.send-mode-toggle span.active {
-  color: #1976d2;
-  font-weight: 500;
-}
-.send-mode-toggle .sep {
-  color: #ddd;
-}
-.send-mode-toggle:hover {
-  color: #666;
-}
-/* Field change highlight — click to dismiss */
-.field-changed {
-  border-radius: 6px;
-  outline: 2px solid #F59E0B;
-  outline-offset: 2px;
-  cursor: pointer;
-  transition: outline-color 0.2s;
-}
-.field-changed:hover {
-  outline-color: #D97706;
-}
-
-/* org-cards-grid, org-sel-card, osc-* CSS moved to OrgSelector.vue <style scoped> */
+/* All layout CSS lives in child component scoped styles */
 </style>

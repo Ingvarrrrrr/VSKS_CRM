@@ -4,7 +4,6 @@ from sqlalchemy import select, or_, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
-from app.models.task_decline import TaskConsentDecline
 from app.models.task_comment import TaskComment
 from app.models.task_change import TaskChange
 from app.models.user import User
@@ -22,17 +21,9 @@ from app.models.chat_message import ChatMessage
 logger = logging.getLogger(__name__)
 
 from app.routers.task_visibility import _get_visible_user_ids, _enrich_tasks, _create_task_chat_room
+from app.routers.task_delegation import _set_assignees  # noqa: F401 — used by create/update
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
-
-
-async def _set_assignees(task_id: int, assignee_ids: List[int], db: AsyncSession):
-    """Replace all assignees for a task."""
-    await db.execute(
-        __import__("sqlalchemy").delete(TaskAssignee).where(TaskAssignee.task_id == task_id)
-    )
-    for uid in assignee_ids:
-        db.add(TaskAssignee(task_id=task_id, user_id=uid))
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -137,167 +128,6 @@ async def my_tasks(
 
     tasks = (await db.execute(q)).scalars().all()
     return await _enrich_tasks(tasks, db, current_user_id=current_user.id)
-
-
-@router.get("/pending-consent", response_model=List[TaskOut])
-async def pending_consent_tasks(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Задачи, назначенные мне, но ожидающие моего согласия."""
-    pending_ids = select(TaskAssignee.task_id).where(
-        TaskAssignee.user_id == current_user.id,
-        TaskAssignee.consent_pending == True,  # noqa: E712
-    ).scalar_subquery()
-    q = select(Task).where(Task.id.in_(pending_ids)).order_by(Task.created_at.desc())
-    tasks = (await db.execute(q)).scalars().all()
-    return await _enrich_tasks(tasks, db, current_user_id=current_user.id)
-
-
-@router.post("/{task_id}/consent", response_model=TaskOut)
-async def respond_task_consent(
-    task_id: int,
-    accept: bool = Query(..., description="true=принять, false=отклонить"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Принять или отклонить задачу, ожидающую согласия."""
-    import sqlalchemy
-    assignee_row = (await db.execute(
-        select(TaskAssignee).where(
-            TaskAssignee.task_id == task_id,
-            TaskAssignee.user_id == current_user.id,
-            TaskAssignee.consent_pending == True,  # noqa: E712
-        )
-    )).scalar_one_or_none()
-    if not assignee_row:
-        raise HTTPException(404, "Задача не найдена или согласие не требуется")
-
-    if accept:
-        assignee_row.consent_pending = False
-        # Уведомить постановщика о принятии
-        db_task_obj = await db.get(Task, task_id)
-        if db_task_obj:
-            db.add(TaskConsentDecline(
-                task_id=task_id,
-                declined_user_id=current_user.id,
-                creator_id=db_task_obj.created_by_id,
-                is_accepted=True,
-            ))
-            try:
-                from app.notifications import notify_user
-                creator = await db.get(User, db_task_obj.created_by_id)
-                accepter_name = current_user.full_name or current_user.username
-                if creator:
-                    await notify_user(
-                        creator,
-                        f"✅ <b>{accepter_name}</b> принял задачу:\n<b>{db_task_obj.title}</b>"
-                    )
-            except Exception:
-                pass
-
-            # D-18: Create chat room on consent acceptance + WS notification to assignee
-            try:
-                task_title = db_task_obj.title or f"Задача #{task_id}"
-                creator_id = db_task_obj.created_by_id
-                task_org_id = current_user.org_id or 1
-                room_id = await _create_task_chat_room(
-                    db, creator_id, current_user.id, task_org_id,
-                    f"Задача: {task_title}",
-                )
-                await db.commit()
-                await chat_manager.send_to_user(current_user.id, {
-                    "type": "system_notification",
-                    "subtype": "task_assigned",
-                    "task_id": task_id,
-                    "room_id": room_id,
-                    "message": f"[СИСТЕМА] Вам назначена задача: «{task_title}»",
-                    "link": "/my-tasks",
-                })
-            except Exception as exc:
-                logger.error("Chat room/WS error on task consent accept (task_id=%s): %s", task_id, exc)
-
-        await db.commit()
-        db_task = await db.get(Task, task_id)
-        result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
-        return result[0]
-    else:
-        # Отклонено: убрать пользователя из исполнителей
-        await db.execute(
-            sqlalchemy.delete(TaskAssignee).where(
-                TaskAssignee.task_id == task_id,
-                TaskAssignee.user_id == current_user.id,
-            )
-        )
-        # Создать запись об отклонении для постановщика
-        db_task_obj = await db.get(Task, task_id)
-        if db_task_obj:
-            db.add(TaskConsentDecline(
-                task_id=task_id,
-                declined_user_id=current_user.id,
-                creator_id=db_task_obj.created_by_id,
-            ))
-            # Уведомить постановщика
-            try:
-                from app.notifications import notify_user
-                from app.models.user import User as UserModel
-                creator = await db.get(UserModel, db_task_obj.created_by_id)
-                decliner_name = current_user.full_name or current_user.username
-                if creator:
-                    await notify_user(creator,
-                        f"❌ <b>{decliner_name}</b> отклонил назначение на задачу:\n"
-                        f"<b>{db_task_obj.title}</b>\n"
-                        f"Зайдите в CRM → Задачи для подтверждения."
-                    )
-            except Exception:
-                pass
-        await db.commit()
-        db_task = await db.get(Task, task_id)
-        result = await _enrich_tasks([db_task], db, current_user_id=current_user.id)
-        return result[0]
-
-
-@router.get("/consent-declines")
-async def list_consent_declines(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Непрочитанные уведомления об отклонённых назначениях (для постановщика)."""
-    result = await db.execute(
-        select(TaskConsentDecline).where(
-            TaskConsentDecline.creator_id == current_user.id,
-            TaskConsentDecline.acknowledged == False,  # noqa: E712
-        )
-    )
-    declines = result.scalars().all()
-    out = []
-    for d in declines:
-        task = d.task
-        decliner = d.declined_user
-        out.append({
-            "id": d.id,
-            "task_id": d.task_id,
-            "task_title": task.title if task else "—",
-            "declined_by_name": (decliner.full_name or decliner.username) if decliner else "—",
-            "is_accepted": d.is_accepted,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-        })
-    return out
-
-
-@router.post("/consent-declines/{decline_id}/acknowledge")
-async def acknowledge_decline(
-    decline_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Подтвердить получение уведомления об отклонении."""
-    row = await db.get(TaskConsentDecline, decline_id)
-    if not row or row.creator_id != current_user.id:
-        raise HTTPException(404, "Уведомление не найдено")
-    row.acknowledged = True
-    await db.commit()
-    return {"ok": True}
 
 
 @router.get("/categories", response_model=List[str])

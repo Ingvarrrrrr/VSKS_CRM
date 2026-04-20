@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-20T05:57:58.083Z"
+last_updated: "2026-04-20T06:05:58.451Z"
 progress:
   total_phases: 16
   completed_phases: 7
   total_plans: 50
-  completed_plans: 43
+  completed_plans: 44
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 16 (refactor-monoliths) — EXECUTING
-Plan: 13 of 15
+Plan: 14 of 15
 Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
 Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
 
@@ -70,6 +70,7 @@ Recent (parked): Phase 13 (Заявки v3 — авторасспределен�
 - [Phase 16-refactor-monoliths]: tasks.py at 641 lines (not 500): create/update consent logic is dense — splitting requires new service layer (16-12 candidate)
 - [Phase 16-refactor-monoliths]: OrgSummaryBar includes consent banners (D-18 badges scope) enabling required line reduction
 - [Phase 16-refactor-monoliths]: visibleOrgSummary computed moved to OrgSelector child — child owns its own filter logic
+- [Phase 16-refactor-monoliths]: TasksTable+TasksKanban are pure-presentation components; handleUpdateTaskStatus in MyTasksView handles PATCH persistence via update-status emit
 
 ## Blockers
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Any
 from datetime import date, datetime
 from decimal import Decimal
@@ -472,7 +472,7 @@ class ProductCreate(BaseModel):
     name: str
     description: Optional[str] = None
     description_44fz: Optional[str] = None
-    category: Optional[str] = None
+    category: str = Field(..., min_length=1)
     product_type: Optional[str] = None
     item_kind: Optional[str] = "товар"  # "товар" или "услуга"
     is_reusable: Optional[bool] = True

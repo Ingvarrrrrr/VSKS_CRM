@@ -288,10 +288,10 @@ Features delivered from user feedback documents, outside GSD phase tracking:
 **Goal:** Turn WishesView into a kanban auto-distribution tool: user creates a wish with items, system groups items into columns by `product.category` (+ «Не определено» column), user can drag-drop between columns within the wish, then approves all-or-nothing → N purchases created in status=`wishes`; downloadable служебная записка generated directly from a wish.
 **Requirements**: D-01..D-08 from 13-CONTEXT.md (fixed decisions from 2026-04-20 discussion)
 **Depends on:** Phase 15 (PurchaseItemsEditor extraction — done), Phase 16 (router decomposition — in progress; does not block)
-**Plans:** 1/7 plans executed
+**Plans:** 2/7 plans executed
 
 Plans:
-- [ ] 13-01-product-category-not-null-PLAN.md — Alembic migration to backfill NULL → 'Прочее' and flip products.category NOT NULL; pytest for 422 on create without category
+- [x] 13-01-product-category-not-null-PLAN.md — Alembic migration to backfill NULL → 'Прочее' and flip products.category NOT NULL; pytest for 422 on create without category
 - [ ] 13-02-wish-distribution-approve-PLAN.md — WishItem.target_column_key column + PATCH /items/{iid} + POST /approve-distribution atomic transaction + pytest rollback verification
 - [ ] 13-03-wish-service-note-endpoint-PLAN.md — New router wish_documents.py exposing GET /api/wishes/{id}/documents/service_note using existing service_note.docx template
 - [x] 13-04-advanced-product-selector-category-required-PLAN.md — Frontend validation: required category in AdvancedProductSelector + PurchaseItemsEditor full-product dialog

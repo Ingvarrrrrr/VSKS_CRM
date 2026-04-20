@@ -313,6 +313,8 @@ app.include_router(purchase_transitions.router)
 app.include_router(tasks.router)
 from .routers import task_comments
 app.include_router(task_comments.router)
+from .routers import task_badges
+app.include_router(task_badges.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)

@@ -198,12 +198,21 @@
               <v-btn
                 size="small"
                 variant="flat"
+                color="primary"
+                prepend-icon="mdi-view-column-outline"
+                @click="openKanbanDialog(wish)"
+              >
+                Распределить и одобрить
+              </v-btn>
+              <v-btn
+                size="small"
+                variant="tonal"
                 color="success"
                 prepend-icon="mdi-check"
                 :loading="approvingId === wish.id"
                 @click="approveWish(wish)"
               >
-                Одобрить
+                Быстрое одобрение
               </v-btn>
               <v-btn
                 size="small"
@@ -213,6 +222,27 @@
                 @click="openRejectDialog(wish)"
               >
                 Отклонить
+              </v-btn>
+              <v-btn
+                size="small"
+                variant="text"
+                prepend-icon="mdi-file-document-edit-outline"
+                :loading="downloadingServiceNoteId === wish.id"
+                @click="downloadServiceNote(wish)"
+              >
+                Служебная записка
+              </v-btn>
+            </div>
+            <!-- Service note available for any wish (draft/approved/etc) -->
+            <div v-else-if="wish.status !== 'rejected'" class="mt-2">
+              <v-btn
+                size="small"
+                variant="text"
+                prepend-icon="mdi-file-document-edit-outline"
+                :loading="downloadingServiceNoteId === wish.id"
+                @click="downloadServiceNote(wish)"
+              >
+                Скачать служебную записку
               </v-btn>
             </div>
 
@@ -331,7 +361,7 @@
               <v-card-text class="pa-4 pt-2">
                 <PurchaseItemsEditor
                   v-model="wishForm.items"
-                  item-shape="wish"
+                  item-shape="purchase"
                   :purchase-id="null"
                   :default-item-type="'товар'"
                   :default-unit="'шт.'"
@@ -400,6 +430,30 @@
             Отправить на согласование
           </v-btn>
         </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── KANBAN DISTRIBUTION DIALOG (Phase 13) ── -->
+    <v-dialog v-model="kanbanDialog" max-width="1200" scrollable>
+      <v-card>
+        <v-card-title class="pa-4 pb-2">
+          <v-icon class="mr-2" color="primary">mdi-view-column-outline</v-icon>
+          Распределение позиций по закупкам
+          <span v-if="kanbanWish" class="text-subtitle-2 text-medium-emphasis ml-3">
+            · {{ kanbanWish.title || `Заявка #${kanbanWish.id}` }}
+          </span>
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <WishDistributionKanban
+            v-if="kanbanWish"
+            :wish-id="kanbanWish.id"
+            :items="kanbanItems"
+            :readonly="kanbanWish.status === 'approved'"
+            @approved="onKanbanApproved"
+            @cancel="kanbanDialog = false"
+            @error="(m) => showSnack(m, 'error')"
+          />
+        </v-card-text>
       </v-card>
     </v-dialog>
 
@@ -494,6 +548,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
+import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 
 const router = useRouter()
 
@@ -711,6 +766,14 @@ const convertForm = ref({
 // Approve
 const approvingId = ref<number | null>(null)
 
+// Kanban distribution dialog (Phase 13)
+const kanbanDialog = ref(false)
+const kanbanWish = ref<Wish | null>(null)
+const kanbanItems = ref<any[]>([])
+
+// Service note download (Phase 13 / D-07)
+const downloadingServiceNoteId = ref<number | null>(null)
+
 // Snackbar
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -861,6 +924,68 @@ async function approveWish(wish: Wish) {
     showSnack('Ошибка при одобрении', 'error')
   } finally {
     approvingId.value = null
+  }
+}
+
+// ── Kanban distribution (Phase 13) ─────────────────────────────────────
+async function openKanbanDialog(wish: Wish) {
+  kanbanWish.value = wish
+  kanbanItems.value = []
+  kanbanDialog.value = true
+  try {
+    const full = await apiFetch<Wish & { items?: any[] }>(`/wishes/${wish.id}`)
+    const items = Array.isArray(full.items) ? full.items : []
+    const productIds = Array.from(new Set(items.map((i: any) => i.product_id).filter((v: any) => !!v)))
+    let productMap = new Map<number, { category?: string; photo_url?: string | null }>()
+    if (productIds.length) {
+      try {
+        const products = await apiFetch<any[]>(`/products/?limit=10000`)
+        productMap = new Map(products.map((p: any) => [p.id, { category: p.category, photo_url: p.photo_url }]))
+      } catch { /* ignore — enrichment is best-effort */ }
+    }
+    kanbanItems.value = items.map((it: any) => {
+      const prod = it.product_id ? productMap.get(it.product_id) : null
+      return {
+        ...it,
+        _photo_url: prod?.photo_url ?? it._photo_url ?? null,
+        _product_category: prod?.category || it._product_category || '',
+      }
+    })
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки заявки', 'error')
+  }
+}
+
+async function onKanbanApproved(result: { purchase_ids: number[]; count: number }) {
+  showSnack(`Одобрено. Создано закупок: ${result.count}`)
+  kanbanDialog.value = false
+  await loadAllWishes()
+}
+
+// ── Service note download (Phase 13 / D-07) ────────────────────────────
+async function downloadServiceNote(wish: Wish) {
+  downloadingServiceNoteId.value = wish.id
+  try {
+    const token = localStorage.getItem('auth_token') || ''
+    const resp = await fetch(`/api/wishes/${wish.id}/documents/service_note`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `service_note_wish_${wish.id}.docx`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка скачивания служебной записки', 'error')
+  } finally {
+    downloadingServiceNoteId.value = null
   }
 }
 

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-20T05:13:03.568Z"
+last_updated: "2026-04-20T05:18:37.364Z"
 progress:
   total_phases: 16
   completed_phases: 7
   total_plans: 50
-  completed_plans: 36
+  completed_plans: 37
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 16 (refactor-monoliths) — EXECUTING
-Plan: 6 of 15
+Plan: 7 of 15
 Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
 Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
 
@@ -66,6 +66,7 @@ Recent (parked): Phase 13 (Заявки v3 — авторасспределен�
 - [Phase 15]: quickProductEditDialog deleted as dead code (Plan 15-03) — caller button removed with items table; PurchaseItemsEditor has own internal handler
 - [Phase 16]: httpx 0.27.0 already present in requirements.txt — kept existing version
 - [Phase 16]: ASGITransport (in-process) pattern for FastAPI pytest — no port conflicts, < 10s execution
+- [Phase 16-05]: Extracted _create_assignment_chat_room + 5 endpoints into purchase_members.py; cleaned 3 unused imports from purchases.py
 
 ## Blockers
 

@@ -17,6 +17,7 @@ from .routers import (
     tasks, departments, delivery_addresses, hierarchy, billing,
     wishes, purchase_export, purchase_items_import, purchase_members,
 )
+from .routers import wish_documents
 from .routers import org_config
 from .routers import purchase_transitions
 from .routers import feo_planned_items
@@ -326,5 +327,9 @@ app.include_router(billing.router)
 app.include_router(telegram_webhook.router)
 app.include_router(chat_router.router)    # REST: /api/chat/...
 app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
+# Specific sub-router /api/wishes/*/documents/* registered BEFORE wishes.router
+# so the specific path resolves before the catch-all /{wish_id} in wishes.router
+# (same ordering principle as task_badges/task_delegation before tasks.router, commit 3d37cf9)
+app.include_router(wish_documents.router)
 app.include_router(wishes.router)
 app.include_router(push_router.router)

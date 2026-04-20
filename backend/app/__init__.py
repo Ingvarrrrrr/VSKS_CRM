@@ -310,15 +310,14 @@ app.include_router(purchase_export.router)
 app.include_router(purchase_items_import.router)
 app.include_router(purchase_members.router)
 app.include_router(purchase_transitions.router)
-app.include_router(tasks.router)
-from .routers import task_comments
-app.include_router(task_comments.router)
-from .routers import task_badges
+# Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
+# иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
+from .routers import task_badges, task_delegation, task_reports, task_comments
 app.include_router(task_badges.router)
-from .routers import task_delegation
 app.include_router(task_delegation.router)
-from .routers import task_reports
 app.include_router(task_reports.router)
+app.include_router(task_comments.router)
+app.include_router(tasks.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)

@@ -672,7 +672,7 @@ async def list_purchase_tasks(
 ):
     """Get all tasks linked to a purchase."""
     from app.models.task import Task
-    from app.routers.tasks import _enrich_tasks
+    from app.routers.task_visibility import _enrich_tasks
     from app.schemas.schemas import TaskOut
     result = await db.execute(
         select(Task).where(Task.purchase_id == pid).order_by(Task.created_at.desc())

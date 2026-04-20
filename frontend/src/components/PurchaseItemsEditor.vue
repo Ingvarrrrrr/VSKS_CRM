@@ -401,8 +401,11 @@
             <v-col cols="12" md="4">
               <v-combobox v-model="fullProductForm.category"
                 :items="fullProductCategoryOptions"
-                label="Категория" variant="outlined" density="compact" clearable
-                hint="Выберите или введите новую" persistent-hint />
+                label="Категория *"
+                :rules="[v => (!!v && String(v).trim().length > 0) || 'Категория обязательна']"
+                required
+                variant="outlined" density="compact"
+                hint="Выберите или введите новую (обязательное поле)" persistent-hint />
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field v-model.number="fullProductForm.price" label="Цена за ед., ₽" type="number"
@@ -461,7 +464,9 @@
         <v-card-actions class="px-6 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="fullProductSaving" @click="saveFullProduct">Добавить в каталог</v-btn>
+          <v-btn color="primary" :loading="fullProductSaving"
+            :disabled="!fullProductForm.category || !String(fullProductForm.category).trim()"
+            @click="saveFullProduct">Добавить в каталог</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1116,7 +1121,7 @@ async function saveFullProduct() {
   try {
     const body: any = {
       name: nameStr,
-      category: fullProductForm.category || null,
+      category: (fullProductForm.category || '').trim(),
       product_type: fullProductForm.product_type || null,
       item_kind: fullProductForm.item_kind || 'товар',
       price: fullAvgPrice.value ?? fullProductForm.price ?? null,

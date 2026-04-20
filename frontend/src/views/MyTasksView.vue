@@ -219,136 +219,31 @@
       </div>
 
       <!-- LIST VIEW -->
-      <v-card v-else-if="taskViewMode === 'list'" variant="outlined">
-        <v-data-table
-          :headers="taskListHeaders"
-          :items="filteredGeneralTasks"
-          density="compact"
-          hover
-          items-per-page="25"
-          :items-per-page-options="[25,50,100]"
-          @click:row="(_e: any, { item }: any) => linkPurchaseId ? doLinkPurchase(item.id) : editGeneralTask(item)"
-        >
-          <template #item.task_number="{ item }">
-            <span class="text-caption font-weight-medium">{{ item.task_number || '—' }}</span>
-          </template>
-          <template #item.priority="{ item }">
-            <v-chip :color="PRIORITY_COLOR[item.priority]||'grey'" size="x-small" variant="flat">{{ PRIORITY_LABEL[item.priority] }}</v-chip>
-          </template>
-          <template #item.status="{ item }">
-            <v-chip :color="item.status==='done'?'success':item.status==='in_progress'?'primary':item.status==='review'?'purple':'warning'" size="x-small" variant="tonal">
-              {{ {todo:'К выполнению',in_progress:'В работе',review:'На проверке',done:'Готово',cancelled:'Отменена'}[item.status]||item.status }}
-            </v-chip>
-          </template>
-          <template #item.assignees="{ item }">
-            <span class="text-caption">{{ item.assignees?.map((a:any) => a.user_name?.split(' ')[0]).join(', ') || '—' }}</span>
-          </template>
-          <template #item.due_date="{ item }">
-            <v-chip v-if="item.due_date" :color="deadlineColor(item.due_date)" size="x-small" variant="tonal">{{ formatDate(item.due_date.split('T')[0]) }}</v-chip>
-            <span v-else class="text-caption text-medium-emphasis">—</span>
-          </template>
-          <template #item.purchase_subject="{ item }">
-            <v-chip v-if="item.purchase_id" size="x-small" variant="tonal" color="deep-purple"
-              @click.stop="$router.push(`/orders/${item.purchase_id}/edit`)">
-              {{ item.purchase_subject || `#${item.purchase_number || item.purchase_id}` }}
-            </v-chip>
-          </template>
-          <template #item.actions="{ item }">
-            <v-btn v-if="linkPurchaseId" size="x-small" variant="tonal" color="deep-purple"
-              prepend-icon="mdi-link-variant" @click.stop="doLinkPurchase(item.id)">Привязать</v-btn>
-            <template v-else-if="item.status === 'review' && item.created_by_id === currentUserId">
-              <v-btn size="x-small" color="success" variant="tonal" prepend-icon="mdi-check" class="mr-1" @click.stop="confirmTaskDone(item.id)">Подтвердить</v-btn>
-              <v-btn size="x-small" color="warning" variant="tonal" prepend-icon="mdi-undo" @click.stop="rejectTaskDone(item.id)">Вернуть</v-btn>
-            </template>
-            <v-btn v-else icon="mdi-pencil" variant="text" size="small" @click.stop="editGeneralTask(item)" />
-          </template>
-        </v-data-table>
-      </v-card>
+      <TasksTable
+        v-else-if="taskViewMode === 'list'"
+        :tasks="filteredGeneralTasks"
+        :current-user-id="currentUserId"
+        :link-purchase-id="linkPurchaseId"
+        @open-task="editGeneralTask"
+        @link-purchase="doLinkPurchase"
+        @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
+        @confirm-done="confirmTaskDone"
+        @reject-done="rejectTaskDone"
+      />
 
       <!-- KANBAN VIEW -->
-      <div v-else class="kanban-board">
-        <div
-          v-for="col in GT_COLUMNS" :key="col.status"
-          :class="['kanban-column', col.status === 'done' && !archiveExpanded ? 'kanban-column--collapsed' : '']"
-          @dragover.prevent @drop="onDropGeneral($event, col.status)"
-        >
-          <!-- Collapsed archive column -->
-          <div v-if="col.status === 'done' && !archiveExpanded"
-            class="kanban-column-collapsed-body"
-            :style="{ borderColor: col.color }"
-            @click="archiveExpanded = true"
-            title="Развернуть архив"
-          >
-            <v-icon size="16" :color="col.color" class="mb-2">mdi-archive-outline</v-icon>
-            <span class="kanban-collapsed-label">Архив</span>
-            <v-chip size="x-small" :color="col.color" variant="tonal" class="mt-2">{{ generalByStatus(col.status).length }}</v-chip>
-          </div>
-          <template v-else>
-          <div class="kanban-column-header" :style="{ borderTopColor: col.color }">
-            <span class="kanban-column-title">{{ col.label }}</span>
-            <v-chip size="x-small" :color="col.color" variant="tonal">{{ generalByStatus(col.status).length }}</v-chip>
-            <v-btn v-if="col.status === 'done'" icon size="x-small" variant="text" class="ml-1" @click="archiveExpanded = false" title="Свернуть">
-              <v-icon size="16">mdi-chevron-right</v-icon>
-            </v-btn>
-          </div>
-          <div class="kanban-column-body">
-            <div
-              v-for="gt in generalByStatus(col.status)" :key="gt.id"
-              class="kanban-card"
-              :style="gtCardStyle(gt)"
-              draggable="true"
-              @dragstart="onDragStartGeneral($event, gt)"
-              @click="linkPurchaseId ? doLinkPurchase(gt.id) : editGeneralTask(gt)"
-            >
-              <div class="d-flex align-center ga-1 mb-1">
-                <v-chip :color="PRIORITY_COLOR[gt.priority] || 'grey'" size="x-small" variant="flat">{{ PRIORITY_LABEL[gt.priority] || gt.priority }}</v-chip>
-                <v-chip v-if="gt.category" size="x-small" variant="outlined">{{ gt.category }}</v-chip>
-                <v-chip v-if="gt.parent_task_id" size="x-small" variant="tonal" color="indigo" title="Подзадача">
-                  <v-icon icon="mdi-subdirectory-arrow-right" size="10" class="mr-1" />Подзадача
-                </v-chip>
-                <v-spacer />
-                <v-chip v-if="gt.unseen_changes_count" size="x-small" variant="flat" color="warning" :title="`${gt.unseen_changes_count} новых изменений`">
-                  <v-icon icon="mdi-bell-ring" size="10" class="mr-1" />{{ gt.unseen_changes_count }}
-                </v-chip>
-                <v-chip v-if="gt.subtask_count" size="x-small" variant="tonal" color="teal" :title="`${gt.subtask_count} делегировано`">
-                  <v-icon icon="mdi-sitemap-outline" size="10" class="mr-1" />{{ gt.subtask_count }}
-                </v-chip>
-                <v-chip v-if="gt.comment_count" size="x-small" variant="tonal" color="blue-grey">
-                  <v-icon icon="mdi-comment-text-outline" size="10" class="mr-1" />{{ gt.comment_count }}
-                </v-chip>
-              </div>
-              <!-- Linked purchase -->
-              <div v-if="gt.purchase_id" class="mb-1">
-                <v-chip size="x-small" variant="tonal" color="deep-purple" prepend-icon="mdi-cart-outline"
-                  @click.stop="$router.push(`/orders/${gt.purchase_id}/edit`)">
-                  {{ gt.purchase_subject || `Закупка #${gt.purchase_number || gt.purchase_id}` }}
-                </v-chip>
-              </div>
-              <div class="kanban-card-title"><span v-if="gt.task_number" class="text-caption text-medium-emphasis mr-1">#{{ gt.task_number }}</span>{{ gt.title }}</div>
-              <div v-if="gt.description" class="kanban-card-meta" style="font-size:11px;opacity:.7">{{ gt.description.length > 80 ? gt.description.slice(0,80)+'…' : gt.description }}</div>
-              <!-- Last comment preview -->
-              <div v-if="gt.last_comment" class="kanban-card-comment">
-                <v-icon icon="mdi-comment-text-outline" size="12" class="mr-1" />
-                <span><strong>{{ gt.last_comment_user }}:</strong> {{ gt.last_comment }}</span>
-              </div>
-              <div class="kanban-card-footer mt-1">
-                <span v-if="gt.assignees?.length" class="kanban-card-meta">
-                  <v-icon icon="mdi-account-multiple" size="12" class="mr-1"/>
-                  {{ gt.assignees.map((a: any) => a.user_name?.split(' ')[0] || '?').join(', ') }}
-                </span>
-                <v-chip v-if="gt.due_date" :color="deadlineColor(gt.due_date)" size="x-small" variant="tonal">{{ formatDate(gt.due_date.split('T')[0]) }}</v-chip>
-              </div>
-              <!-- Review confirmation buttons for task creator -->
-              <div v-if="gt.status === 'review' && gt.created_by_id === currentUserId" class="d-flex ga-1 mt-2" @click.stop>
-                <v-btn size="x-small" color="success" variant="tonal" prepend-icon="mdi-check" @click.stop="confirmTaskDone(gt.id)">Подтвердить</v-btn>
-                <v-btn size="x-small" color="warning" variant="tonal" prepend-icon="mdi-undo" @click.stop="rejectTaskDone(gt.id)">Вернуть</v-btn>
-              </div>
-            </div>
-            <div v-if="generalByStatus(col.status).length === 0" class="kanban-empty">Нет задач</div>
-          </div>
-          </template>
-        </div>
-      </div>
+      <TasksKanban
+        v-else
+        :tasks="filteredGeneralTasks"
+        :current-user-id="currentUserId"
+        :link-purchase-id="linkPurchaseId"
+        @open-task="editGeneralTask"
+        @update-status="handleUpdateTaskStatus"
+        @link-purchase="doLinkPurchase"
+        @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
+        @confirm-done="confirmTaskDone"
+        @reject-done="rejectTaskDone"
+      />
     </template>
 
     <!-- ═══ REPORT TAB ═══ -->
@@ -687,6 +582,8 @@ import { apiFetch } from '@/api'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
 import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'
+import TasksTable from '@/components/my-tasks/TasksTable.vue'
+import TasksKanban from '@/components/my-tasks/TasksKanban.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -835,7 +732,7 @@ function gtCardStyle(gt: any): Record<string, string> {
   return { background: 'rgba(34,197,94,0.06)', borderColor: 'rgba(34,197,94,0.2)' }
 }
 
-// ── General task drag & drop ──
+// ── General task drag & drop (inline — kept for purchases kanban) ──
 let draggedGeneral: any = null
 function onDragStartGeneral(e: DragEvent, task: any) {
   draggedGeneral = task
@@ -848,6 +745,20 @@ async function onDropGeneral(e: DragEvent, targetStatus: string) {
   const old = t.status; t.status = targetStatus
   try { await apiFetch(`/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ status: targetStatus }) }) }
   catch { t.status = old }
+}
+
+// ── Handler for TasksKanban 'update-status' emit ──
+async function handleUpdateTaskStatus(taskId: number, newStatus: string) {
+  const t = generalTasks.value.find((task: any) => task.id === taskId)
+  if (!t) return
+  const oldStatus = t.status
+  // Optimistic update already applied by TasksKanban; just persist
+  try {
+    await apiFetch(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) })
+  } catch {
+    // Rollback optimistic update
+    t.status = oldStatus
+  }
 }
 
 async function confirmTaskDone(taskId: number) {

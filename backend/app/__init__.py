@@ -317,6 +317,8 @@ from .routers import task_badges
 app.include_router(task_badges.router)
 from .routers import task_delegation
 app.include_router(task_delegation.router)
+from .routers import task_reports
+app.include_router(task_reports.router)
 app.include_router(departments.router)
 app.include_router(delivery_addresses.router)
 app.include_router(org_config.router)

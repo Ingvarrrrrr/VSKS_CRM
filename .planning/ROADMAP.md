@@ -285,13 +285,34 @@ Features delivered from user feedback documents, outside GSD phase tracking:
 
 ### Phase 13: Заявки v3: авторасспределение позиций по закупкам, drag-drop перекидывание товаров между закупками, одобрение распределения и автосоздание N закупок, генерация служебной записки
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 12
-**Plans:** 0 plans
+**Goal:** Turn WishesView into a kanban auto-distribution tool: user creates a wish with items, system groups items into columns by `product.category` (+ «Не определено» column), user can drag-drop between columns within the wish, then approves all-or-nothing → N purchases created in status=`wishes`; downloadable служебная записка generated directly from a wish.
+**Requirements**: D-01..D-08 from 13-CONTEXT.md (fixed decisions from 2026-04-20 discussion)
+**Depends on:** Phase 15 (PurchaseItemsEditor extraction — done), Phase 16 (router decomposition — in progress; does not block)
+**Plans:** 7 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 13 to break down)
+- [ ] 13-01-product-category-not-null-PLAN.md — Alembic migration to backfill NULL → 'Прочее' and flip products.category NOT NULL; pytest for 422 on create without category
+- [ ] 13-02-wish-distribution-approve-PLAN.md — WishItem.target_column_key column + PATCH /items/{iid} + POST /approve-distribution atomic transaction + pytest rollback verification
+- [ ] 13-03-wish-service-note-endpoint-PLAN.md — New router wish_documents.py exposing GET /api/wishes/{id}/documents/service_note using existing service_note.docx template
+- [ ] 13-04-advanced-product-selector-category-required-PLAN.md — Frontend validation: required category in AdvancedProductSelector + PurchaseItemsEditor full-product dialog
+- [ ] 13-05-wish-distribution-kanban-PLAN.md — WishDistributionKanban + WishDistributionCard components with vuedraggable; wire into WishesView with category enrichment + approve flow
+- [ ] 13-06-wish-service-note-button-PLAN.md — "Скачать служебную записку" button + initiator picker dialog in WishesView
+- [ ] 13-07-e2e-and-integration-PLAN.md — Playwright spec e2e/19-wishes-kanban.spec.ts covering happy path + DnD + approve + service note + category validation
+
+**Wave structure (revised 2026-04-20 after checker blocker 1):**
+- Wave 1 (parallel): 13-01 (backend migration — products.category NOT NULL), 13-04 (frontend category validation)
+- Wave 2: 13-02 (backend approve endpoint + wish_items.target_column_key — migration chains on 13-01, so MUST follow Wave 1)
+- Wave 3 (parallel): 13-03 (backend service_note endpoint — after 13-02 for wish shape), 13-05 (kanban UI — depends on 13-02 + 13-04)
+- Wave 4: 13-06 (service note button — depends on 13-03)
+- Wave 5: 13-07 (E2E — depends on all prior plans)
+
+**Success Criteria** (from 13-CONTEXT.md):
+1. При открытии заявки в WishesView видно канбан с N+1 колонками (категории + «Не определено»)
+2. Drag карточки между колонками обновляет target (опт-PATCH), visual reorder мгновенный
+3. Кнопка «Одобрить» создаёт N закупок за один transaction, status=wishes; заявка → status='approved', read-only
+4. `category` в форме создания товара в `AdvancedProductSelector` — обязательное поле с валидацией
+5. Кнопка «Скачать служебную записку» в WishesView открывает диалог выбора инициатора и генерит docx
+6. E2E: создание заявки → распределение → DnD → одобрение → верификация N закупок в БД
 
 ### Phase 14: Risk Radar — альтернативный визуал Dashboard (Neon Telemetry стиль)
 

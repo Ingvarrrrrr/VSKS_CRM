@@ -3,20 +3,20 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-20T06:12:31.227Z"
+last_updated: "2026-04-20T12:44:11.826Z"
 progress:
   total_phases: 16
-  completed_phases: 7
-  total_plans: 50
-  completed_plans: 45
+  completed_phases: 8
+  total_plans: 57
+  completed_plans: 47
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 16 (refactor-monoliths) — EXECUTING
-Plan: 15 of 15
+Phase: 13 (v3-drag-drop-n) — EXECUTING
+Plan: 2 of 7
 Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
 Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
 
@@ -71,6 +71,8 @@ Recent (parked): Phase 13 (Заявки v3 — авторасспределен�
 - [Phase 16-refactor-monoliths]: OrgSummaryBar includes consent banners (D-18 badges scope) enabling required line reduction
 - [Phase 16-refactor-monoliths]: visibleOrgSummary computed moved to OrgSelector child — child owns its own filter logic
 - [Phase 16-refactor-monoliths]: TasksTable+TasksKanban are pure-presentation components; handleUpdateTaskStatus in MyTasksView handles PATCH persistence via update-status emit
+- [Phase 13-v3-drag-drop-n]: AdvancedProductSelector delegates product creation to AddProductDialog — validation applied in AddProductDialog, not inline
+- [Phase 13-v3-drag-drop-n]: Category payload uses .trim() instead of || null since field is now required (matches DB NOT NULL from plan 13-01)
 
 ## Blockers
 

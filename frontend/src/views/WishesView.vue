@@ -32,7 +32,7 @@
 
       <v-row v-else dense>
         <v-col v-for="wish in myWishes" :key="wish.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="pa-3 h-100">
+          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
                 <div class="d-flex align-center ga-1 mb-1 flex-wrap">
@@ -64,7 +64,7 @@
                   variant="text"
                   color="error"
                   :loading="deletingId === wish.id"
-                  @click="deleteWish(wish)"
+                  @click.stop="deleteWish(wish)"
                 />
               </div>
             </div>
@@ -91,7 +91,7 @@
                 color="purple"
                 prepend-icon="mdi-cart-arrow-right"
                 :href="`/orders/${wish.purchase_id}/edit`"
-                @click.prevent="$router.push(`/orders/${wish.purchase_id}/edit`)"
+                @click.stop.prevent="$router.push(`/orders/${wish.purchase_id}/edit`)"
               >
                 Перейти к закупке
               </v-btn>
@@ -99,7 +99,7 @@
 
             <!-- Actions for draft wishes -->
             <div v-if="wish.status === 'draft'" class="d-flex ga-2 mt-2">
-              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-pencil" @click="openEditDialog(wish)">
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-pencil" @click.stop="openEditDialog(wish)">
                 Изменить
               </v-btn>
               <v-btn
@@ -108,7 +108,7 @@
                 color="success"
                 prepend-icon="mdi-send"
                 :loading="submittingId === wish.id"
-                @click="submitWish(wish)"
+                @click.stop="submitWish(wish)"
               >
                 Отправить
               </v-btn>
@@ -153,7 +153,7 @@
 
       <v-row v-else dense>
         <v-col v-for="wish in allWishes" :key="wish.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="pa-3 h-100">
+          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
             <div class="d-flex align-start justify-space-between mb-2">
               <div class="flex-grow-1 mr-2">
                 <div class="d-flex align-center ga-1 mb-1 flex-wrap">
@@ -200,7 +200,7 @@
                 variant="flat"
                 color="primary"
                 prepend-icon="mdi-view-column-outline"
-                @click="openKanbanDialog(wish)"
+                @click.stop="openKanbanDialog(wish)"
               >
                 Распределить и одобрить
               </v-btn>
@@ -210,7 +210,7 @@
                 color="success"
                 prepend-icon="mdi-check"
                 :loading="approvingId === wish.id"
-                @click="approveWish(wish)"
+                @click.stop="approveWish(wish)"
               >
                 Быстрое одобрение
               </v-btn>
@@ -219,7 +219,7 @@
                 variant="tonal"
                 color="error"
                 prepend-icon="mdi-close"
-                @click="openRejectDialog(wish)"
+                @click.stop="openRejectDialog(wish)"
               >
                 Отклонить
               </v-btn>
@@ -228,7 +228,7 @@
                 variant="text"
                 prepend-icon="mdi-file-document-edit-outline"
                 :loading="downloadingServiceNoteId === wish.id"
-                @click="downloadServiceNote(wish)"
+                @click.stop="downloadServiceNote(wish)"
               >
                 Служебная записка
               </v-btn>
@@ -240,7 +240,7 @@
                 variant="text"
                 prepend-icon="mdi-file-document-edit-outline"
                 :loading="downloadingServiceNoteId === wish.id"
-                @click="downloadServiceNote(wish)"
+                @click.stop="downloadServiceNote(wish)"
               >
                 Скачать служебную записку
               </v-btn>
@@ -253,7 +253,7 @@
                 variant="flat"
                 color="primary"
                 prepend-icon="mdi-cart-plus"
-                @click="openConvertDialog(wish)"
+                @click.stop="openConvertDialog(wish)"
               >
                 Создать закупку
               </v-btn>
@@ -1083,3 +1083,14 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.wish-card-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.wish-card-clickable:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  transform: translateY(-1px);
+}
+</style>

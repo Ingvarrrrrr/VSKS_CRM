@@ -15,6 +15,7 @@ from app.models.wish_item import WishItem
 from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
 
@@ -405,8 +406,8 @@ async def approve_distribution(
             p = Purchase(
                 subsidy_id=wish.subsidy_id,
                 feo_category_id=wish.feo_category_id,
-                item_name=wish.title or f"Заявка #{wish.id}",
-                subject=f"{wish.title or 'Заявка'} — {display_key}",
+                item_name=(wish.title or "").strip() or f"Заявка #{wish.id}",
+                subject=f"{(wish.title or '').strip() or f'Заявка #{wish.id}'} — {display_key}",
                 planned_total_price=total_nmck,
                 total_nmck=total_nmck,
                 nmck=total_nmck,
@@ -432,6 +433,26 @@ async def approve_distribution(
                     country_origin=wi.country_origin,
                 )
                 db.add(pi)
+            await db.flush()
+
+            # Add wish author as purchase member (viewer role) so they can see the purchase
+            if wish.created_by and wish.created_by != current_user.id:
+                db.add(PurchaseMember(
+                    purchase_id=p.id,
+                    user_id=wish.created_by,
+                    role="viewer",
+                    added_by_id=current_user.id,
+                    consent_pending=False,
+                ))
+            # Also add assigned_to as member if different from author and current_user
+            if wish.assigned_to and wish.assigned_to not in (wish.created_by, current_user.id):
+                db.add(PurchaseMember(
+                    purchase_id=p.id,
+                    user_id=wish.assigned_to,
+                    role="viewer",
+                    added_by_id=current_user.id,
+                    consent_pending=False,
+                ))
             await db.flush()
 
             # Create chat room per purchase if there is an assignee different from current user

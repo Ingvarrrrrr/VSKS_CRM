@@ -863,7 +863,7 @@ function openCreateDialog() {
   wishDialog.value = true
 }
 
-function openEditDialog(wish: Wish) {
+async function openEditDialog(wish: Wish) {
   editingWishId.value = wish.id
   resetForm()
   wishForm.value.subsidy_id = wish.subsidy_id ?? null
@@ -873,6 +873,36 @@ function openEditDialog(wish: Wish) {
   wishForm.value.priority = wish.priority || 'medium'
   wishForm.value.desired_date = wish.desired_date || ''
   wishForm.value.status = wish.status || 'draft'
+  // Load items from wish (support both array on wish object AND lazy-load from API if missing)
+  if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
+    wishForm.value.items = (wish as any).items.map((i: any) => ({
+      product_id: i.product_id ?? null,
+      item_name: i.item_name || '',
+      item_type: i.item_type || 'товар',
+      quantity: i.quantity != null ? Number(i.quantity) : null,
+      unit: i.unit || 'шт.',
+      unit_price: i.unit_price != null ? Number(i.unit_price) : null,
+      total_price: i.total_price != null ? Number(i.total_price) : null,
+      country_origin: i.country_origin || 'Российская Федерация',
+    })) as any
+  } else {
+    // Fallback: fetch wish detail if items weren't embedded
+    try {
+      const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
+      if (Array.isArray(fresh?.items)) {
+        wishForm.value.items = fresh.items.map((i: any) => ({
+          product_id: i.product_id ?? null,
+          item_name: i.item_name || '',
+          item_type: i.item_type || 'товар',
+          quantity: i.quantity != null ? Number(i.quantity) : null,
+          unit: i.unit || 'шт.',
+          unit_price: i.unit_price != null ? Number(i.unit_price) : null,
+          total_price: i.total_price != null ? Number(i.total_price) : null,
+          country_origin: i.country_origin || 'Российская Федерация',
+        })) as any
+      }
+    } catch {}
+  }
   wishDialog.value = true
 }
 

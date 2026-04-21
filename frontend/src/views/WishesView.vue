@@ -264,7 +264,7 @@
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
-    <v-dialog v-model="wishDialog" max-width="900" scrollable>
+    <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable>
       <v-card>
         <v-card-title class="pa-4 pb-2">
           {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
@@ -363,15 +363,13 @@
                   v-model="wishForm.items"
                   item-shape="purchase"
                   :purchase-id="null"
-                  :default-item-type="'товар'"
                   :default-unit="'шт.'"
-                  :default-country="'Россия'"
+                  :default-country="'Российская Федерация'"
                   :allowed-item-types="['товар','услуга','работа']"
                   :supports-excel-import="true"
                   :supports-smart-import="true"
                   :supports-full-product-dialog="true"
                   :supports-photo-upload="true"
-                  :readonly="false"
                 />
               </v-card-text>
             </v-card>

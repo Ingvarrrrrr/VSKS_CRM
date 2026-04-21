@@ -486,6 +486,10 @@ class ProductCreate(BaseModel):
 
 class ProductOut(ProductCreate):
     id: int
+    # Override: in the DB old rows may still have category=NULL until the
+    # n1o2p3q4r5s6 backfill migration is applied. ProductCreate enforces
+    # non-empty on input, but responses must tolerate legacy NULLs.
+    category: Optional[str] = None
     contract_price: Optional[Decimal] = None
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None

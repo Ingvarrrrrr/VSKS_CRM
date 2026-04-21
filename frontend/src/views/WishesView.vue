@@ -270,6 +270,15 @@
           {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
         </v-card-title>
         <v-card-text class="pa-4">
+          <v-alert
+            v-if="!isWishEditable"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Заявка в статусе «{{ wishForm.status }}» — редактирование недоступно. Редактировать можно только черновик или отклонённую заявку.
+          </v-alert>
           <v-form ref="wishFormRef" @submit.prevent>
 
             <!-- Section 1: Основная информация -->
@@ -290,6 +299,7 @@
                       density="compact"
                       :rules="[v => !!v || 'Выберите субсидию']"
                       clearable
+                      :readonly="!isWishEditable"
                       @update:model-value="onSubsidyChange"
                     />
                   </v-col>
@@ -304,6 +314,7 @@
                       density="compact"
                       clearable
                       :disabled="!wishForm.subsidy_id"
+                      :readonly="!isWishEditable"
                       @update:model-value="onFeo1Change"
                     />
                   </v-col>
@@ -318,6 +329,7 @@
                       density="compact"
                       clearable
                       :disabled="!selectedFeo1"
+                      :readonly="!isWishEditable"
                       @update:model-value="onFeo2Change"
                     />
                   </v-col>
@@ -332,6 +344,7 @@
                       density="compact"
                       clearable
                       :disabled="!selectedFeo2"
+                      :readonly="!isWishEditable"
                     />
                   </v-col>
                   <v-col cols="12">
@@ -345,6 +358,7 @@
                       density="compact"
                       clearable
                       :disabled="!wishForm.subsidy_id"
+                      :readonly="!isWishEditable"
                       hint="Сотрудник, которому адресована заявка"
                       persistent-hint
                     />
@@ -370,6 +384,7 @@
                   :supports-smart-import="true"
                   :supports-full-product-dialog="true"
                   :supports-photo-upload="true"
+                  :readonly="!isWishEditable"
                 />
               </v-card-text>
             </v-card>
@@ -391,6 +406,7 @@
                       :rules="[v => !!v || 'Обязательное поле']"
                       hint="Почему это необходимо для работы"
                       persistent-hint
+                      :readonly="!isWishEditable"
                     />
                   </v-col>
                   <v-col cols="12" md="6">
@@ -400,6 +416,7 @@
                       label="Приоритет"
                       variant="outlined"
                       density="compact"
+                      :readonly="!isWishEditable"
                     />
                   </v-col>
                   <v-col cols="12" md="6">
@@ -409,6 +426,7 @@
                       type="date"
                       variant="outlined"
                       density="compact"
+                      :readonly="!isWishEditable"
                     />
                   </v-col>
                 </v-row>
@@ -419,14 +437,16 @@
         </v-card-text>
 
         <v-card-actions class="px-4 pb-4">
-          <v-btn variant="text" @click="wishDialog = false">Отмена</v-btn>
+          <v-btn variant="text" @click="wishDialog = false">Закрыть</v-btn>
           <v-spacer />
-          <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
-            Сохранить черновик
-          </v-btn>
-          <v-btn color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
-            Отправить на согласование
-          </v-btn>
+          <template v-if="isWishEditable">
+            <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
+              Сохранить черновик
+            </v-btn>
+            <v-btn color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
+              Отправить на согласование
+            </v-btn>
+          </template>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -708,6 +728,10 @@ const editingWishId = ref<number | null>(null)
 const wishFormRef = ref<any>(null)
 const saving = ref(false)
 
+const isWishEditable = computed(() =>
+  !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
+)
+
 const wishForm = ref({
   subsidy_id: null as number | null,
   feo_category_id: null as number | null,
@@ -716,6 +740,7 @@ const wishForm = ref({
   priority: 'medium' as string,
   desired_date: '',
   items: [] as any[],
+  status: 'draft' as string,
 })
 
 // Items computed total
@@ -825,6 +850,7 @@ function resetForm() {
     priority: 'medium',
     desired_date: '',
     items: [],
+    status: 'draft',
   }
   selectedFeo1.value = null
   selectedFeo2.value = null
@@ -846,6 +872,7 @@ function openEditDialog(wish: Wish) {
   wishForm.value.justification = wish.justification || ''
   wishForm.value.priority = wish.priority || 'medium'
   wishForm.value.desired_date = wish.desired_date || ''
+  wishForm.value.status = wish.status || 'draft'
   wishDialog.value = true
 }
 

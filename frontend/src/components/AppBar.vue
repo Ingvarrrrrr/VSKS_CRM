@@ -32,14 +32,14 @@
       label="Субсидия"
       variant="solo-filled" density="compact" clearable hide-details
       style="max-width: 240px; min-width: 160px"
-      class="ml-3"
+      class="ml-3 d-none d-md-flex"
       bg-color="rgba(255,255,255,0.15)"
       flat
     />
 
     <v-spacer />
 
-    <global-search class="mr-3" />
+    <global-search class="mr-3 d-none d-sm-flex" />
 
     <v-btn
       :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'"
@@ -93,11 +93,11 @@
       <template v-slot:activator="{ props }">
         <v-btn v-bind="props" variant="text">
           <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="32" class="mr-2" />
-          <div class="text-left">
+          <div class="text-left d-none d-sm-block">
             <div>{{ userName }}</div>
             <div v-if="userOrgName && !isSuperadmin" class="text-caption opacity-70" style="line-height:1.1">{{ userOrgName }}</div>
           </div>
-          <v-icon icon="mdi-chevron-down" class="ml-2" />
+          <v-icon icon="mdi-chevron-down" class="ml-2 d-none d-sm-inline" />
         </v-btn>
       </template>
       <v-list>

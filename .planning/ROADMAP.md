@@ -398,6 +398,66 @@ Plans:
 
 ---
 
+### Phase 17: Permission System — матрица ролей + индивидуальные override'ы
+
+**Directory:** `.planning/phases/17-permission-system/` (TBD)
+
+**Goal:** Заменить хардкод роль→вкладка на конфигурируемую матрицу. Админ задаёт доступные вкладки per-role, и отдельно умеет точечно выдавать/забирать доступ конкретному пользователю (галочки). При override роль в карточке пользователя превращается в `Индивидуально`.
+
+**Контекст (из фидбека 2026-04-21):**
+- Любарец (employee) видит вкладку «Персонал», но редактировать её не может — значит и показывать не нужно. Сейчас правило `allNavShortcuts[].roles` и `menuItems[].roles` хардкодом в `AppBar.vue:373-471`.
+- По умолчанию новый user создаётся с ролью `Пользователь` (= `employee`).
+- Нужна страница «Роли» (админка) + галочки в карточке пользователя.
+
+**Scope (черновой):**
+1. **Backend:**
+   - Миграция: таблица `role_permissions (role_name, tab_key)` + `user_permission_overrides (user_id, tab_key, granted bool)`
+   - Список `tab_key` — справочник всех вкладок (enum или seed-таблица)
+   - API: `GET /api/permissions/tabs`, `GET/PUT /api/permissions/roles/{role}`, `GET/PUT /api/users/{id}/permissions`
+   - `/api/users/me` возвращает effective permission list (merge role + overrides)
+   - Guard в роутерах — Depends(require_tab("staff")) вместо require_role
+2. **Frontend:**
+   - Страница «Роли» (ADMIN_ROLES) — список ролей × список вкладок, галочки
+   - В карточке пользователя секция «Доступ» — роль + индивидуальные галочки (при любом override роль → `Индивидуально`)
+   - `AppBar.vue` читает effective tabs из `/users/me` вместо хардкода `.roles`
+
+**Success Criteria:**
+1. Админ может убрать «Персонал» у employee-ролей через UI — изменение применяется без передеплоя
+2. Индивидуальный override для одного user сохраняется и переживает смену роли (пока override не снят)
+3. Не видит вкладку в сайдбаре = не может достучаться до API (backend guard)
+4. Миграция seed'ит текущие маппинги `ADMIN_ROLES/MANAGER_ROLES/ALL_ROLES` → нулевая регрессия для существующих пользователей
+
+**Plans:** TBD
+- [ ] TBD
+
+---
+
+### Phase 18: Staff Directory — справочник сотрудников внутри своих организаций
+
+**Directory:** `.planning/phases/18-staff-directory/` (TBD)
+
+**Goal:** Read-only справочник «Сотрудники»: ФИО, должность, телефон, email — виден всем сотрудникам внутри своих организаций. Отдельная вкладка, отличная от админской «Персонал» (где идёт редактирование).
+
+**Контекст (из фидбека 2026-04-21):**
+- Сейчас вкладка «Персонал» (`/staff`) — только для ADMIN_ROLES, с редактированием. Обычный сотрудник не видит контакты коллег.
+- Нужен второй read-only экран «Сотрудники» / «Контакты» с фильтром по `org_id ∈ my_org_ids`.
+
+**Scope:**
+1. **Backend:** `GET /api/staff-directory` — возвращает `[{id, full_name, position, phone, email, org_name, photo_url}]` отфильтровано по `get_org_filter(current_user)`
+2. **Frontend:** `views/StaffDirectoryView.vue` — таблица + поиск + клик на строку → mini-card с контактами; роут `/directory` доступен всем ролям (ALL_ROLES)
+3. **Navigation:** пункт меню «Сотрудники» в AppBar
+
+**Success Criteria:**
+1. Employee видит всех коллег из всех своих организаций (не только primary), но не видит сотрудников других организаций
+2. Поиск по ФИО/должности/телефону/email
+3. Нет кнопок редактирования — только read-only
+4. Мобильная адаптация — карточный вид на XS
+
+**Plans:** TBD
+- [ ] TBD
+
+---
+
 ### Post-Phase 8: Untracked Additional Work ✅ DELIVERED
 
 Features delivered after Phase 8 completion, outside GSD tracking:

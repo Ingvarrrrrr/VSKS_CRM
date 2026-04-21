@@ -5,7 +5,7 @@ milestone_name: milestone
 status: Ready to execute
 last_updated: "2026-04-20T12:54:28.010Z"
 progress:
-  total_phases: 16
+  total_phases: 18
   completed_phases: 8
   total_plans: 57
   completed_plans: 49
@@ -93,6 +93,8 @@ _нет активных блокеров_
 - Phase 13 added: Заявки v3 — авторасспределение позиций по закупкам, drag-drop, автосоздание N закупок, служебная записка
 - Phase 14 added: Risk Radar — альтернативный визуал Dashboard (Neon Telemetry стиль) с toggle classic/radar, без модификации DashboardView.vue
 - Phase 16 added (2026-04-19): Refactor Monoliths — декомпозиция purchases.py (3200), tasks.py (1639), MyTasksView.vue (2155) в тематические модули ≤800 строк по принципу «один процесс — один модуль». Директория `.planning/phases/16-refactor-monoliths/`.
+- Phase 17 added (2026-04-21): Permission System — конфигурируемая матрица ролей + индивидуальные override'ы (галочки в карточке пользователя → роль `Индивидуально`). Триггер: Любарец видит «Персонал» но редактировать не может. Директория TBD.
+- Phase 18 added (2026-04-21): Staff Directory — read-only справочник коллег (ФИО, должность, телефон, email) фильтрованный по своим организациям, отдельно от админской вкладки «Персонал». Директория TBD.
 
 ## Pending from Feedback
 

@@ -16,6 +16,7 @@ from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, Wish
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.routers.purchase_members import _create_assignment_chat_room
+from app.models.chat_message import ChatMessage
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
@@ -147,8 +148,8 @@ async def update_wish(
 
     if wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
-    if wish.status != "draft":
-        raise HTTPException(status_code=400, detail="Можно редактировать только черновик")
+    if wish.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Можно редактировать только черновик или отклонённую заявку")
 
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():
@@ -181,17 +182,33 @@ async def submit_wish(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Submit a draft wish for approval (creator only, draft -> submitted)."""
+    """Submit a draft wish for approval (creator only, draft/rejected -> submitted)."""
     wish = await _load_wish(wish_id, db)
 
     if wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Только автор может подать заявку")
-    if wish.status != "draft":
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft'")
+    if wish.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft' или 'rejected'")
 
     wish.status = "submitted"
+    await db.flush()
+
+    # Notify approver
+    if wish.assigned_to and wish.assigned_to != current_user.id:
+        org_id = getattr(current_user, 'org_id', None) or wish.org_id
+        room_id = await _create_assignment_chat_room(
+            db, current_user.id, wish.assigned_to,
+            org_id,
+            f"Заявка №{wish.id}: {wish.title or 'без названия'}",
+        )
+        db.add(ChatMessage(
+            room_id=room_id,
+            sender_id=current_user.id,
+            content=f"📋 Заявка отправлена на согласование: {wish.title or '(без названия)'}",
+        ))
+        await db.flush()
+
     await db.commit()
-    await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
 

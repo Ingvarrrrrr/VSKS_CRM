@@ -3137,20 +3137,32 @@ const canSplitPurchase = computed(() => {
 })
 
 async function openSplitKanban() {
-  const rawItems = items.value || []
-  // Enrich with _product_category by fetching products
-  let products: any[] = []
-  try { products = await apiFetch<any[]>('/products/?limit=10000') } catch {}
-  const byId = new Map<number, any>(products.map((p: any) => [p.id, p]))
-  const byName = new Map<string, any>(products.map((p: any) => [(p.name || '').trim().toLowerCase(), p]))
+  // items.value в CreateOrderView НЕ содержит item.id (см. mapping @4025),
+  // а канбану нужны настоящие pk для DnD и payload. Фетчим closedly.
+  const pid = Number(route.params.id)
+  let fresh: any = null
+  try { fresh = await apiFetch<any>(`/purchases/${pid}`) } catch {}
+  const rawItems: any[] = (fresh?.items || []).filter((it: any) => it && it.id != null)
+
+  let productsList: any[] = []
+  try { productsList = await apiFetch<any[]>('/products/?limit=10000') } catch {}
+  const byId = new Map<number, any>(productsList.map((p: any) => [p.id, p]))
+  const byName = new Map<string, any>(productsList.map((p: any) => [(p.name || '').trim().toLowerCase(), p]))
+
   splitKanbanItems.value = rawItems.map((it: any) => {
     let prod = it.product_id ? byId.get(it.product_id) : null
     if (!prod && it.item_name) prod = byName.get(it.item_name.trim().toLowerCase()) || null
+    const category = (prod?.category || '').trim()
     return {
-      ...it,
+      id: it.id,
       product_id: it.product_id ?? prod?.id ?? null,
+      item_name: it.item_name,
+      quantity: Number(it.quantity) || 0,
+      unit: it.unit || 'шт',
+      total_price: Number(it.total_price) || 0,
       _photo_url: prod?.photo_url ?? null,
-      _product_category: prod?.category || '',
+      _product_category: category,
+      _column: category || '__uncategorized__',
     }
   })
   splitKanbanDialog.value = true

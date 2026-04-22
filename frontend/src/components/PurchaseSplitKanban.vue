@@ -77,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive } from 'vue'
+import { computed, ref, watch } from 'vue'
 // @ts-ignore - vuedraggable types are loose
 import draggable from 'vuedraggable'
 import { apiFetch } from '@/api'
@@ -92,6 +92,7 @@ interface PurchaseItemLike {
   product_id?: number | null
   _photo_url?: string | null
   _product_category?: string
+  _column?: string
 }
 
 const props = defineProps<{
@@ -109,16 +110,17 @@ const emit = defineEmits<{
 const UNCAT_KEY = '__uncategorized__'
 const groupName = computed(() => `purchase-split-${props.purchaseId}`)
 
-// Seed per-item column mapping from _product_category (or UNCAT)
-function seedKey(it: PurchaseItemLike): string {
-  if (it._product_category && it._product_category.trim()) return it._product_category
-  return UNCAT_KEY
+// Ensure every item has _column seeded (idempotent)
+function seedColumns() {
+  for (const it of props.items) {
+    if (!it._column) {
+      const cat = (it._product_category || '').trim()
+      it._column = cat || UNCAT_KEY
+    }
+  }
 }
-
-const itemColumn = reactive<Record<number, string>>({})
-for (const it of props.items) {
-  itemColumn[it.id] = seedKey(it)
-}
+seedColumns()
+watch(() => props.items, seedColumns, { deep: false })
 
 function labelOf(key: string): string {
   return key === UNCAT_KEY ? 'Не определено' : key
@@ -128,7 +130,7 @@ const columns = computed(() => {
   const groups = new Map<string, PurchaseItemLike[]>()
   groups.set(UNCAT_KEY, [])
   for (const it of props.items) {
-    const k = itemColumn[it.id] || UNCAT_KEY
+    const k = it._column || UNCAT_KEY
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(it)
   }
@@ -169,7 +171,7 @@ function onDragEnd(ev: any, colKey: string) {
   if (props.readonly) return
   const item = ev?.item?.__draggable_context?.element as PurchaseItemLike | undefined
   if (!item) return
-  itemColumn[item.id] = colKey
+  item._column = colKey
 }
 
 const splitting = ref(false)

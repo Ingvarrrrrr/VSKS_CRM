@@ -11,7 +11,7 @@
 
     <div class="split-kanban-columns">
       <div
-        v-for="col in columns"
+        v-for="(col, idx) in columns"
         :key="col.key"
         class="split-kanban-col"
       >
@@ -19,10 +19,35 @@
           <div class="split-kanban-col-title">
             <v-icon v-if="col.key === UNCAT_KEY" size="16" class="mr-1" color="grey">mdi-help-circle-outline</v-icon>
             <v-icon v-else size="16" class="mr-1" color="primary">mdi-tag-outline</v-icon>
-            {{ col.label }}
+            <template v-if="!col.editing">
+              <span class="flex-grow-1">{{ col.label }}</span>
+              <v-btn
+                v-if="!readonly && col.key !== UNCAT_KEY"
+                icon="mdi-pencil-outline"
+                size="x-small"
+                variant="text"
+                @click="col.editing = true"
+              />
+              <v-btn
+                v-if="!readonly && !col.items.length && col.key !== UNCAT_KEY"
+                icon="mdi-close"
+                size="x-small"
+                variant="text"
+                color="error"
+                @click="removeColumn(idx)"
+              />
+            </template>
+            <template v-else>
+              <input
+                v-model="col.label"
+                class="split-kanban-col-input"
+                @keyup.enter="finishEditColumn(col)"
+                @blur="finishEditColumn(col)"
+              />
+            </template>
           </div>
           <div class="split-kanban-col-meta">
-            {{ col.items.length }} шт · {{ formatMoney(col.sum) }}
+            {{ col.items.length }} шт · {{ formatMoney(sumOf(col.items)) }}
           </div>
         </div>
         <draggable
@@ -33,12 +58,16 @@
           :animation="150"
           ghost-class="split-kanban-ghost"
           class="split-kanban-drop"
-          @end="onDragEnd($event, col.key)"
         >
           <template #item="{ element }">
             <WishDistributionCard :item="element" :readonly="readonly" />
           </template>
         </draggable>
+      </div>
+
+      <div v-if="!readonly" class="split-kanban-col split-kanban-col-add" @click="addColumn">
+        <v-icon size="28" color="primary">mdi-plus</v-icon>
+        <div class="text-caption text-primary mt-1">Новая колонка</div>
       </div>
     </div>
 
@@ -110,41 +139,37 @@ const emit = defineEmits<{
 const UNCAT_KEY = '__uncategorized__'
 const groupName = computed(() => `purchase-split-${props.purchaseId}`)
 
-// Ensure every item has _column seeded (idempotent)
-function seedColumns() {
-  for (const it of props.items) {
-    if (!it._column) {
-      const cat = (it._product_category || '').trim()
-      it._column = cat || UNCAT_KEY
-    }
-  }
-}
-seedColumns()
-watch(() => props.items, seedColumns, { deep: false })
-
-function labelOf(key: string): string {
-  return key === UNCAT_KEY ? 'Не определено' : key
+interface ColumnState {
+  key: string
+  label: string
+  items: PurchaseItemLike[]
+  editing: boolean
 }
 
-const columns = computed(() => {
+// Real ref state — не computed — чтобы vuedraggable мог мутировать массив
+// при drop между колонками и mutation persist'ился.
+const columns = ref<ColumnState[]>([])
+
+function rebuildFromProps() {
   const groups = new Map<string, PurchaseItemLike[]>()
-  groups.set(UNCAT_KEY, [])
   for (const it of props.items) {
-    const k = it._column || UNCAT_KEY
+    const cat = (it._product_category || '').trim()
+    const k = cat || UNCAT_KEY
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(it)
   }
-  const entries: { key: string; label: string; items: PurchaseItemLike[]; sum: number }[] = []
+  const out: ColumnState[] = []
   const uncat = groups.get(UNCAT_KEY) || []
-  if (uncat.length > 0) {
-    entries.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat, sum: sumOf(uncat) })
-  }
+  if (uncat.length) out.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat, editing: false })
   for (const [k, arr] of groups.entries()) {
     if (k === UNCAT_KEY) continue
-    entries.push({ key: k, label: labelOf(k), items: arr, sum: sumOf(arr) })
+    out.push({ key: k, label: k, items: arr, editing: false })
   }
-  return entries
-})
+  columns.value = out
+}
+
+rebuildFromProps()
+watch(() => props.items, rebuildFromProps, { deep: false })
 
 function sumOf(items: PurchaseItemLike[]): number {
   return items.reduce((s, it) => s + (Number(it.total_price) || 0), 0)
@@ -167,11 +192,34 @@ function pluralPurchases(n: number): string {
   return 'закупок'
 }
 
-function onDragEnd(ev: any, colKey: string) {
+function addColumn() {
   if (props.readonly) return
-  const item = ev?.item?.__draggable_context?.element as PurchaseItemLike | undefined
-  if (!item) return
-  item._column = colKey
+  let n = columns.value.filter(c => c.key !== UNCAT_KEY).length + 1
+  let key = `Новая колонка ${n}`
+  while (columns.value.some(c => c.key === key)) {
+    n += 1
+    key = `Новая колонка ${n}`
+  }
+  columns.value.push({ key, label: key, items: [], editing: true })
+}
+
+function removeColumn(idx: number) {
+  if (props.readonly) return
+  const col = columns.value[idx]
+  if (!col || col.key === UNCAT_KEY) return
+  if (col.items.length) return
+  columns.value.splice(idx, 1)
+}
+
+function finishEditColumn(col: ColumnState) {
+  const newLabel = (col.label || '').trim()
+  if (!newLabel) {
+    col.label = col.key
+  } else {
+    col.key = newLabel
+    col.label = newLabel
+  }
+  col.editing = false
 }
 
 const splitting = ref(false)
@@ -256,5 +304,34 @@ async function onSplit() {
 }
 .split-kanban-ghost {
   opacity: 0.4;
+}
+.split-kanban-col-add {
+  flex: 0 0 160px;
+  min-width: 160px;
+  max-width: 160px;
+  resize: none;
+  border-style: dashed;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.65;
+  transition: opacity 0.15s;
+}
+.split-kanban-col-add:hover {
+  opacity: 1;
+}
+.split-kanban-col-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid rgba(var(--v-border-color), 0.6);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: inherit;
+  font-size: inherit;
+  font-family: inherit;
+  outline: none;
+}
+.split-kanban-col-input:focus {
+  border-color: rgb(var(--v-theme-primary));
 }
 </style>

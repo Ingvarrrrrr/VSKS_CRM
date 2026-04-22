@@ -434,12 +434,30 @@ async def approve_distribution(
     )
     items_full = res.scalars().all()
 
+    # Backfill product_id + category by item_name for legacy wish_items
+    # (created before product_id was persisted on wish_items).
+    from app.models.product import Product
+    missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
+    name_to_product: dict[str, Product] = {}
+    if missing:
+        names = list({(it.item_name or "").strip() for it in missing})
+        pres = await db.execute(select(Product).where(Product.name.in_(names)))
+        for p in pres.scalars().all():
+            name_to_product[(p.name or "").strip().lower()] = p
+        for it in missing:
+            hit = name_to_product.get((it.item_name or "").strip().lower())
+            if hit:
+                it.product_id = hit.id
+
     def _resolve_key(it: WishItem) -> str:
-        """target_column_key → product.category → '__uncategorized__'"""
+        """target_column_key → product.category → name-matched product.category → '__uncategorized__'"""
         if it.target_column_key:
             return it.target_column_key
         if it.product_id and it.product and it.product.category:
             return it.product.category
+        hit = name_to_product.get((it.item_name or "").strip().lower())
+        if hit and hit.category:
+            return hit.category
         return "__uncategorized__"
 
     groups: dict[str, list] = {}

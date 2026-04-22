@@ -1009,36 +1009,45 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.priority = wish.priority || 'medium'
   wishForm.value.desired_date = wish.desired_date || ''
   wishForm.value.status = wish.status || 'draft'
-  // Load items from wish (support both array on wish object AND lazy-load from API if missing)
+
+  let rawItems: any[] = []
   if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
-    wishForm.value.items = (wish as any).items.map((i: any) => ({
-      product_id: i.product_id ?? null,
-      item_name: i.item_name || '',
-      item_type: i.item_type || 'товар',
-      quantity: i.quantity != null ? Number(i.quantity) : null,
-      unit: i.unit || 'шт.',
-      unit_price: i.unit_price != null ? Number(i.unit_price) : null,
-      total_price: i.total_price != null ? Number(i.total_price) : null,
-      country_origin: i.country_origin || 'Российская Федерация',
-    })) as any
+    rawItems = (wish as any).items
   } else {
-    // Fallback: fetch wish detail if items weren't embedded
     try {
       const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
-      if (Array.isArray(fresh?.items)) {
-        wishForm.value.items = fresh.items.map((i: any) => ({
-          product_id: i.product_id ?? null,
-          item_name: i.item_name || '',
-          item_type: i.item_type || 'товар',
-          quantity: i.quantity != null ? Number(i.quantity) : null,
-          unit: i.unit || 'шт.',
-          unit_price: i.unit_price != null ? Number(i.unit_price) : null,
-          total_price: i.total_price != null ? Number(i.total_price) : null,
-          country_origin: i.country_origin || 'Российская Федерация',
-        })) as any
+      if (Array.isArray(fresh?.items)) rawItems = fresh.items
+    } catch {}
+  }
+
+  // Backfill product_id by matching item_name against catalog — handles legacy
+  // wish_items saved before product_id was persisted on backend.
+  const needsBackfill = rawItems.some((i: any) => !i.product_id && i.item_name)
+  if (needsBackfill) {
+    try {
+      const products = await apiFetch<any[]>('/products/?limit=10000')
+      const byName = new Map<string, any>(
+        (products || []).map((p: any) => [(p.name || '').trim().toLowerCase(), p])
+      )
+      for (const it of rawItems) {
+        if (!it.product_id && it.item_name) {
+          const hit = byName.get(it.item_name.trim().toLowerCase())
+          if (hit) it.product_id = hit.id
+        }
       }
     } catch {}
   }
+
+  wishForm.value.items = rawItems.map((i: any) => ({
+    product_id: i.product_id ?? null,
+    item_name: i.item_name || '',
+    item_type: i.item_type || 'товар',
+    quantity: i.quantity != null ? Number(i.quantity) : null,
+    unit: i.unit || 'шт.',
+    unit_price: i.unit_price != null ? Number(i.unit_price) : null,
+    total_price: i.total_price != null ? Number(i.total_price) : null,
+    country_origin: i.country_origin || 'Российская Федерация',
+  })) as any
   wishDialog.value = true
 }
 
@@ -1125,19 +1134,25 @@ async function openKanbanDialog(wish: Wish) {
   kanbanDialog.value = true
   try {
     const full = await apiFetch<Wish & { items?: any[] }>(`/wishes/${wish.id}`)
-    const items = Array.isArray(full.items) ? full.items : []
-    const productIds = Array.from(new Set(items.map((i: any) => i.product_id).filter((v: any) => !!v)))
-    let productMap = new Map<number, { category?: string; photo_url?: string | null }>()
-    if (productIds.length) {
-      try {
-        const products = await apiFetch<any[]>(`/products/?limit=10000`)
-        productMap = new Map(products.map((p: any) => [p.id, { category: p.category, photo_url: p.photo_url }]))
-      } catch { /* ignore — enrichment is best-effort */ }
-    }
+    const items: any[] = Array.isArray(full.items) ? full.items : []
+
+    // Always fetch products — we need them for both id→category enrichment
+    // AND name→id backfill for legacy wish_items without product_id.
+    let products: any[] = []
+    try { products = await apiFetch<any[]>('/products/?limit=10000') } catch {}
+    const byId = new Map<number, any>(products.map((p: any) => [p.id, p]))
+    const byName = new Map<string, any>(
+      products.map((p: any) => [(p.name || '').trim().toLowerCase(), p])
+    )
+
     kanbanItems.value = items.map((it: any) => {
-      const prod = it.product_id ? productMap.get(it.product_id) : null
+      let prod = it.product_id ? byId.get(it.product_id) : null
+      if (!prod && it.item_name) {
+        prod = byName.get(it.item_name.trim().toLowerCase()) || null
+      }
       return {
         ...it,
+        product_id: it.product_id ?? prod?.id ?? null,
         _photo_url: prod?.photo_url ?? it._photo_url ?? null,
         _product_category: prod?.category || it._product_category || '',
       }

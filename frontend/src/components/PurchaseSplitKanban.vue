@@ -215,13 +215,22 @@ async function onSplit() {
   padding-bottom: 8px;
 }
 .split-kanban-col {
-  flex: 0 0 280px;
+  flex: 0 0 220px;
+  min-width: 180px;
+  max-width: 520px;
+  resize: horizontal;
+  overflow: hidden auto;
   display: flex;
   flex-direction: column;
   background: rgba(var(--v-theme-surface-variant), 0.35);
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 8px;
   padding: 10px;
+}
+.split-kanban :deep(.wish-card-name) {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
 }
 .split-kanban-col-head {
   margin-bottom: 8px;

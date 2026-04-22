@@ -86,6 +86,22 @@ async def list_wishes(
     return [_enrich(w) for w in wishes]
 
 
+@router.get("/{wish_id}", response_model=WishOut)
+async def get_wish(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get single wish with items. Creator, assignee, or manager/admin of same org."""
+    wish = await _load_wish(wish_id, db)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    return _enrich(wish)
+
+
 @router.post("/", response_model=WishOut, status_code=201)
 async def create_wish(
     body: WishCreate,

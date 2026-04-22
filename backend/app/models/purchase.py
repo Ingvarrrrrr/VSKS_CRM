@@ -93,6 +93,9 @@ class Purchase(Base):
     # Основание для оплаты: 'contract' | 'invoice' | 'invoice_contract'
     payment_basis_type = Column(String(30), nullable=True, default="contract")
 
+    # Ссылка на родительскую закупку — если эту создали разбиением другой
+    parent_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
+
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")
     contract = relationship("Contract", back_populates="purchases")

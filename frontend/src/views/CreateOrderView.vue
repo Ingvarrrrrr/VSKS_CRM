@@ -294,6 +294,16 @@
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
           <span>{{ formMode === 'service_note_delivery' ? 'Оборудование для выдачи' : 'Позиции закупки' }}</span>
           <div class="d-flex align-center ga-2">
+            <v-btn
+              v-if="canSplitPurchase"
+              size="small"
+              variant="tonal"
+              color="primary"
+              prepend-icon="mdi-call-split"
+              @click="openSplitKanban"
+            >
+              Разбить на закупки
+            </v-btn>
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" :title="`Зафиксирована при заключении ${contractWordGen}`">
               НМЦД (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
@@ -1682,6 +1692,29 @@
       </template>
     </v-snackbar>
 
+    <!-- Split purchase kanban dialog -->
+    <v-dialog v-model="splitKanbanDialog" max-width="1200" scrollable>
+      <v-card>
+        <v-card-title class="pa-4 pb-2">
+          <v-icon class="mr-2" color="primary">mdi-call-split</v-icon>
+          Разбить закупку на несколько
+          <span class="text-caption text-medium-emphasis ml-3">
+            · Перетащите позиции по колонкам, затем «Разбить на N закупок»
+          </span>
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <PurchaseSplitKanban
+            v-if="splitKanbanDialog && splitKanbanItems.length && purchaseId"
+            :purchase-id="purchaseId"
+            :items="splitKanbanItems"
+            @split="onPurchaseSplit"
+            @cancel="splitKanbanDialog = false"
+            @error="(m: string) => showSnack(m, 'error')"
+          />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- File preview dialog -->
     <v-dialog v-model="previewDialog" max-width="900" scrollable>
       <v-card>
@@ -2250,6 +2283,7 @@ import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
+import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -3081,6 +3115,53 @@ async function removePurchaseMember(userId: number) {
     await apiFetch(`/purchases/${purchaseId.value}/members/${userId}`, { method: 'DELETE' })
     await loadPurchaseMembers()
   } catch {}
+}
+
+// ── Split purchase feature ───────────────────────────────────────────────────
+const splitKanbanDialog = ref(false)
+const splitKanbanItems = ref<any[]>([])
+
+const ADMIN_ROLES_FE = ['superadmin', 'account_owner', 'org_admin', 'admin']
+const LOCKED_SPLIT_STATUSES = ['contracted', 'delivered', 'paid']
+
+const canSplitPurchase = computed(() => {
+  if (!isEdit.value) return false
+  const st = (form.status || '').toString()
+  if (st === 'split') return false
+  if ((items.value?.length || 0) < 2) return false
+  if (LOCKED_SPLIT_STATUSES.includes(st)) {
+    const role = localStorage.getItem('user_role') || ''
+    return ADMIN_ROLES_FE.includes(role)
+  }
+  return true
+})
+
+async function openSplitKanban() {
+  const rawItems = items.value || []
+  // Enrich with _product_category by fetching products
+  let products: any[] = []
+  try { products = await apiFetch<any[]>('/products/?limit=10000') } catch {}
+  const byId = new Map<number, any>(products.map((p: any) => [p.id, p]))
+  const byName = new Map<string, any>(products.map((p: any) => [(p.name || '').trim().toLowerCase(), p]))
+  splitKanbanItems.value = rawItems.map((it: any) => {
+    let prod = it.product_id ? byId.get(it.product_id) : null
+    if (!prod && it.item_name) prod = byName.get(it.item_name.trim().toLowerCase()) || null
+    return {
+      ...it,
+      product_id: it.product_id ?? prod?.id ?? null,
+      _photo_url: prod?.photo_url ?? null,
+      _product_category: prod?.category || '',
+    }
+  })
+  splitKanbanDialog.value = true
+}
+
+async function onPurchaseSplit(result: { purchase_ids: number[]; count: number; source_purchase_id: number }) {
+  splitKanbanDialog.value = false
+  showSnack(`Создано ${result.count} закупок. Исходная разбита.`, 'success')
+  if (result.purchase_ids?.[0]) {
+    router.push(`/orders/${result.purchase_ids[0]}/edit`)
+  }
 }
 
 // ── Purchase chat ────────────────────────────────────────────────────────────

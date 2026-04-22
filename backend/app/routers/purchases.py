@@ -233,6 +233,9 @@ async def list_purchases(
         q = q.where(Purchase.purchase_method == purchase_method)
     if purchase_basis:
         q = q.where(Purchase.purchase_basis == purchase_basis)
+    # Hide purchases that were split into children unless explicitly requested
+    if status != "split":
+        q = q.where(Purchase.status != "split")
     if search:
         like = f"%{search}%"
         from sqlalchemy import cast, String as SAString
@@ -978,3 +981,140 @@ async def broadcast_from_purchase(
     await db.commit()
 
     return {"ok": True, "sent": sent, "total_users": len(users)}
+
+
+@router.post("/{pid}/split")
+async def split_purchase(
+    pid: int,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Разбить закупку на N дочерних по группам позиций.
+
+    Body: {"groups": [{"column_key": "str", "item_ids": [int, ...]}, ...]}
+    - N <= 1 → 400.
+    - До status in (contracted, delivered, paid) — разрешено всем, кто имеет доступ.
+    - В этих статусах — только ADMIN_ROLES.
+    - Наследует subsidy_id, feo_category_id, assigned_user_id, service_note_*, members.
+    - Копирует PurchaseItem по item_ids в соответствующие дочерние.
+    - Исходная помечается status='split'.
+    """
+    from app.models.purchase_event import PurchaseMember
+
+    # Load purchase with items
+    res = await db.execute(
+        select(Purchase)
+        .options(selectinload(Purchase.items))
+        .where(Purchase.id == pid)
+    )
+    purchase = res.scalar_one_or_none()
+    if purchase is None:
+        raise HTTPException(404, "Закупка не найдена")
+
+    # Org isolation
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        subsidy_res = await db.execute(select(Subsidy).where(Subsidy.id == purchase.subsidy_id))
+        subsidy = subsidy_res.scalar_one_or_none()
+        if subsidy and subsidy.org_id not in org_ids:
+            raise HTTPException(403, "Нет доступа к закупке")
+
+    LOCKED_STATUSES = {"contracted", "delivered", "paid"}
+    if purchase.status in LOCKED_STATUSES and current_user.role not in ADMIN_ROLES:
+        raise HTTPException(403, "Перераспределять закупку в статусе 'Договор' и далее могут только администраторы")
+    if purchase.status == "split":
+        raise HTTPException(400, "Закупка уже разбита")
+
+    groups = body.get("groups") or []
+    groups = [g for g in groups if g.get("item_ids")]
+    if len(groups) < 2:
+        raise HTTPException(400, "Разбиение требует минимум 2 непустые группы")
+
+    # Validate all item_ids belong to this purchase and are unique + complete
+    own_item_ids = {it.id for it in purchase.items}
+    all_supplied_ids: list[int] = []
+    for g in groups:
+        for iid in g["item_ids"]:
+            if iid not in own_item_ids:
+                raise HTTPException(400, f"Позиция {iid} не принадлежит закупке {pid}")
+            all_supplied_ids.append(iid)
+    if len(all_supplied_ids) != len(set(all_supplied_ids)):
+        raise HTTPException(400, "Одна позиция указана в нескольких группах")
+    if set(all_supplied_ids) != own_item_ids:
+        raise HTTPException(400, "Не все позиции распределены по группам")
+
+    # Load members of source
+    mem_res = await db.execute(
+        select(PurchaseMember).where(PurchaseMember.purchase_id == pid)
+    )
+    source_members = mem_res.scalars().all()
+
+    items_by_id = {it.id: it for it in purchase.items}
+    created_ids: list[int] = []
+
+    try:
+        for g in groups:
+            column_key = (g.get("column_key") or "").strip() or "__uncategorized__"
+            display_key = "Не определено" if column_key == "__uncategorized__" else column_key
+            group_items = [items_by_id[iid] for iid in g["item_ids"]]
+            total = sum(float(it.total_price or 0) for it in group_items)
+
+            base_subject = (purchase.subject or purchase.item_name or "").strip()
+            new_subject = f"{base_subject} — {display_key}".strip(" —") if base_subject else display_key
+
+            new_p = Purchase(
+                subsidy_id=purchase.subsidy_id,
+                feo_category_id=purchase.feo_category_id,
+                item_name=purchase.item_name or f"Закупка #{purchase.id}",
+                subject=new_subject,
+                planned_total_price=total,
+                total_nmck=total,
+                nmck=total,
+                status="wishes" if purchase.status == "wishes" else "planned",
+                assigned_user_id=purchase.assigned_user_id,
+                service_note_text=purchase.service_note_text,
+                service_note_by=purchase.service_note_by,
+                parent_purchase_id=purchase.id,
+            )
+            db.add(new_p)
+            await db.flush()
+            created_ids.append(new_p.id)
+
+            # Copy items into new purchase
+            for src_it in group_items:
+                db.add(PurchaseItem(
+                    purchase_id=new_p.id,
+                    product_id=src_it.product_id,
+                    item_name=src_it.item_name,
+                    item_type=src_it.item_type,
+                    quantity=src_it.quantity,
+                    unit=src_it.unit,
+                    unit_price=src_it.unit_price,
+                    total_price=src_it.total_price,
+                    country_origin=src_it.country_origin,
+                    feo_planned_item_id=src_it.feo_planned_item_id,
+                ))
+            # Copy members
+            for m in source_members:
+                db.add(PurchaseMember(
+                    purchase_id=new_p.id,
+                    user_id=m.user_id,
+                    role=m.role,
+                    added_by_id=current_user.id,
+                    consent_pending=False,
+                ))
+            await db.flush()
+
+        # Delete original items (explicit — keeps source row stable with status='split')
+        await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
+        purchase.status = "split"
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(500, f"Ошибка разбиения закупки: {e}")
+
+    return {"source_purchase_id": pid, "purchase_ids": created_ids, "count": len(created_ids)}

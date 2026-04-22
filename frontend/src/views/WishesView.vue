@@ -5,7 +5,7 @@
       <div>
         <h1 class="text-h5 font-weight-bold">Заявки</h1>
         <span class="text-body-2 text-medium-emphasis">
-          {{ isManagerOrAdmin ? activeTab === 'my' ? 'Мои заявки' : 'Заявки сотрудников' : 'Мои заявки' }}
+          {{ activeTab === 'my' ? 'Мои заявки' : activeTab === 'incoming' ? 'На согласование мне' : 'Заявки сотрудников' }}
         </span>
       </div>
       <v-spacer />
@@ -14,14 +14,15 @@
       </v-btn>
     </div>
 
-    <!-- Tabs (manager/admin only) -->
-    <v-tabs v-if="isManagerOrAdmin" v-model="activeTab" class="mb-4">
+    <!-- Tabs (visible to all authenticated users) -->
+    <v-tabs v-model="activeTab" class="mb-4">
       <v-tab value="my">Мои заявки</v-tab>
-      <v-tab value="all">Заявки сотрудников</v-tab>
+      <v-tab value="incoming">На согласование мне</v-tab>
+      <v-tab v-if="isManagerOrAdmin" value="all">Заявки сотрудников</v-tab>
     </v-tabs>
 
     <!-- ── MY WISHES TAB ── -->
-    <div v-if="!isManagerOrAdmin || activeTab === 'my'">
+    <div v-if="activeTab === 'my'">
       <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
 
       <div v-if="!loading && myWishes.length === 0" class="text-center py-12">
@@ -128,6 +129,72 @@
       />
     </div>
 
+    <!-- ── INCOMING FOR APPROVAL TAB ── -->
+    <div v-if="activeTab === 'incoming'">
+      <v-progress-linear v-if="loadingIncoming" indeterminate color="primary" class="mb-2" />
+
+      <div v-if="!loadingIncoming && incomingWishes.length === 0" class="text-center py-12">
+        <v-icon icon="mdi-hand-heart-outline" size="64" color="grey-lighten-1" class="mb-3" />
+        <div class="text-h6 text-medium-emphasis">Нет заявок на согласование</div>
+        <div class="text-body-2 text-medium-emphasis mt-1">Здесь появятся заявки, где вы указаны как согласующий</div>
+      </div>
+
+      <v-row v-else dense>
+        <v-col v-for="wish in incomingWishes" :key="wish.id" cols="12" md="6" lg="4">
+          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
+            <div class="d-flex align-start justify-space-between mb-2">
+              <div class="flex-grow-1 mr-2">
+                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
+                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
+                    {{ priorityLabel[wish.priority] }}
+                  </v-chip>
+                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
+                    {{ wish.subsidy_name }}
+                  </v-chip>
+                </div>
+                <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
+                <div class="text-caption text-medium-emphasis mt-0.5">
+                  <v-icon icon="mdi-account" size="12" class="mr-1" />{{ wish.creator_name || 'Неизвестно' }}
+                </div>
+                <div class="text-caption text-medium-emphasis mt-1">
+                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
+                  <span v-if="wish.items_count && wish.total_amount"> · </span>
+                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
+                </div>
+              </div>
+              <v-chip :color="statusColor[wish.status]" size="small" variant="tonal">
+                {{ statusLabel[wish.status] }}
+              </v-chip>
+            </div>
+
+            <div v-if="wish.justification" class="text-caption text-medium-emphasis mb-2">
+              <b>Обоснование:</b> {{ wish.justification }}
+            </div>
+
+            <!-- Actions for submitted wishes assigned to me -->
+            <div v-if="wish.status === 'submitted'" class="d-flex ga-2 mt-2 flex-wrap">
+              <v-btn size="small" variant="flat" color="primary" prepend-icon="mdi-view-column-outline"
+                     @click.stop="openKanbanDialog(wish)">
+                Распределить и одобрить
+              </v-btn>
+              <v-btn size="small" variant="tonal" color="success" prepend-icon="mdi-check"
+                     :loading="approvingId === wish.id" @click.stop="approveWish(wish)">
+                Быстрое одобрение
+              </v-btn>
+              <v-btn size="small" variant="tonal" color="error" prepend-icon="mdi-close"
+                     @click.stop="openRejectDialog(wish)">
+                Отклонить
+              </v-btn>
+              <v-btn size="small" variant="text" prepend-icon="mdi-file-document-edit-outline"
+                     :loading="downloadingServiceNoteId === wish.id" @click.stop="downloadServiceNote(wish)">
+                Служебная записка
+              </v-btn>
+            </div>
+          </v-card>
+        </v-col>
+      </v-row>
+    </div>
+
     <!-- ── ALL WISHES TAB (manager/admin) ── -->
     <div v-if="isManagerOrAdmin && activeTab === 'all'">
       <!-- Status filter chips -->
@@ -148,7 +215,7 @@
 
       <div v-if="!loadingAll && allWishes.length === 0" class="text-center py-12">
         <v-icon icon="mdi-hand-heart-outline" size="64" color="grey-lighten-1" class="mb-3" />
-        <div class="text-h6 text-medium-emphasis">Нет заявок</div>
+        <div class="text-h6 text-medium-emphasis">Нет заявок от подчинённых</div>
       </div>
 
       <v-row v-else dense>
@@ -562,7 +629,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -677,10 +744,14 @@ const activeTab = ref('my')
 const myWishes = ref<Wish[]>([])
 const loading = ref(false)
 
-// All wishes (manager/admin)
+// All wishes (manager/admin — subordinates)
 const allWishes = ref<Wish[]>([])
 const loadingAll = ref(false)
 const allFilter = ref('submitted')
+
+// Incoming for approval (assigned_to = me)
+const incomingWishes = ref<Wish[]>([])
+const loadingIncoming = ref(false)
 const allFilters = [
   { value: 'all', label: 'Все' },
   { value: 'submitted', label: 'Отправленные' },
@@ -832,13 +903,31 @@ async function loadWishes() {
 async function loadAllWishes() {
   loadingAll.value = true
   try {
-    const params = allFilter.value === 'all' ? '' : `?status=${allFilter.value}`
-    allWishes.value = await apiFetch<Wish[]>(`/wishes${params}`)
+    const statusParam = allFilter.value && allFilter.value !== 'all' ? `&status=${allFilter.value}` : ''
+    allWishes.value = await apiFetch<Wish[]>(`/wishes/?subordinates_only=true${statusParam}`)
   } catch {
     showSnack('Ошибка загрузки заявок', 'error')
   } finally {
     loadingAll.value = false
   }
+}
+
+async function loadIncoming() {
+  loadingIncoming.value = true
+  try {
+    const data = await apiFetch<Wish[]>('/wishes/?assigned_to_me=true')
+    incomingWishes.value = data || []
+  } catch {
+    incomingWishes.value = []
+  } finally {
+    loadingIncoming.value = false
+  }
+}
+
+async function reloadActiveTab() {
+  if (activeTab.value === 'my') await loadWishes()
+  else if (activeTab.value === 'incoming') await loadIncoming()
+  else if (activeTab.value === 'all') await loadAllWishes()
 }
 
 function resetForm() {
@@ -974,7 +1063,7 @@ async function approveWish(wish: Wish) {
   try {
     await apiFetch(`/wishes/${wish.id}/approve`, { method: 'POST' })
     showSnack('Заявка одобрена')
-    await loadAllWishes()
+    await reloadActiveTab()
   } catch {
     showSnack('Ошибка при одобрении', 'error')
   } finally {
@@ -1014,7 +1103,7 @@ async function openKanbanDialog(wish: Wish) {
 async function onKanbanApproved(result: { purchase_ids: number[]; count: number }) {
   showSnack(`Одобрено. Создано закупок: ${result.count}`)
   kanbanDialog.value = false
-  await loadAllWishes()
+  await reloadActiveTab()
 }
 
 // ── Service note download (Phase 13 / D-07) ────────────────────────────
@@ -1060,7 +1149,7 @@ async function rejectWish() {
     })
     showSnack('Заявка отклонена')
     rejectDialog.value = false
-    await loadAllWishes()
+    await reloadActiveTab()
   } catch {
     showSnack('Ошибка при отклонении', 'error')
   } finally {
@@ -1101,6 +1190,12 @@ async function convertWish() {
   }
 }
 
+watch(activeTab, (v) => {
+  if (v === 'my') loadWishes()
+  else if (v === 'incoming') loadIncoming()
+  else if (v === 'all') loadAllWishes()
+})
+
 onMounted(async () => {
   await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/').then(r => { subsidies.value = r }).catch(() => {}),
@@ -1108,6 +1203,7 @@ onMounted(async () => {
     apiFetch<User[]>('/users/').then(r => { users.value = r }).catch(() => {}),
   ])
   await loadWishes()
+  await loadIncoming()
   if (isManagerOrAdmin.value) {
     await loadAllWishes()
   }

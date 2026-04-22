@@ -59,12 +59,19 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
 async def list_wishes(
     status: Optional[str] = None,
     mine_only: bool = False,
+    assigned_to_me: bool = False,
+    subordinates_only: bool = False,
     skip: int = 0,
     limit: int = Query(50, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List wishes. Employee sees only own; manager/admin sees all in org."""
+    """List wishes. Employee sees only own; manager/admin sees all in org.
+    assigned_to_me=true: wishes where current user is the assignee.
+    subordinates_only=true: wishes created by direct subordinates (not current user).
+    """
+    from app.models.user_hierarchy import UserHierarchy
+
     org_ids = get_org_filter(current_user)
     q = select(Wish).options(
         selectinload(Wish.creator),
@@ -75,10 +82,28 @@ async def list_wishes(
     )
     if org_ids is not None:
         q = q.where(Wish.org_id.in_(org_ids))
-    # Employee: always own only
-    if current_user.role == 'employee' or mine_only:
+
+    if assigned_to_me:
+        # Wishes where I am the designated approver
+        q = q.where(Wish.assigned_to == current_user.id)
+    elif mine_only or current_user.role == 'employee':
+        # Employee always sees only own; or explicit mine_only flag
         q = q.where(Wish.created_by == current_user.id)
-    if status:
+    elif subordinates_only:
+        # Wishes created by direct subordinates (manager sees their team)
+        hier_res = await db.execute(
+            select(UserHierarchy.subordinate_id).where(UserHierarchy.manager_id == current_user.id)
+        )
+        subordinate_ids = [r[0] for r in hier_res.all()]
+        if not subordinate_ids:
+            # No subordinates — return empty list
+            return []
+        q = q.where(
+            Wish.created_by.in_(subordinate_ids),
+            Wish.created_by != current_user.id,
+        )
+
+    if status and status != 'all':
         q = q.where(Wish.status == status)
     q = q.order_by(Wish.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)
@@ -234,9 +259,9 @@ async def submit_wish(
 async def approve_wish(
     wish_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(get_current_user),
 ):
-    """Approve a submitted wish (manager+ roles, submitted -> approved)."""
+    """Approve a submitted wish (manager+ roles OR assigned approver, submitted -> approved)."""
     wish = await _load_wish(wish_id, db)
 
     if wish.status != "submitted":
@@ -246,6 +271,9 @@ async def approve_wish(
     org_ids = get_org_filter(current_user)
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    if current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
     wish.status = "approved"
     wish.approved_by = current_user.id
@@ -260,9 +288,9 @@ async def reject_wish(
     wish_id: int,
     body: WishReject,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(get_current_user),
 ):
-    """Reject a submitted wish with reason (manager+ roles, submitted -> rejected)."""
+    """Reject a submitted wish with reason (manager+ roles OR assigned approver, submitted -> rejected)."""
     wish = await _load_wish(wish_id, db)
 
     if wish.status != "submitted":
@@ -272,6 +300,9 @@ async def reject_wish(
     org_ids = get_org_filter(current_user)
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    if current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Отклонить заявку может менеджер+ или назначенный согласующий")
 
     wish.status = "rejected"
     wish.rejection_reason = body.rejection_reason
@@ -372,7 +403,7 @@ async def patch_wish_item(
 async def approve_distribution(
     wish_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(get_current_user),
 ):
     """D-05/D-06: Atomic all-or-nothing approve. Creates N purchases (status='wishes'),
     one per distinct resolved column key group, copies wish items to purchase_items,
@@ -388,6 +419,8 @@ async def approve_distribution(
         raise HTTPException(status_code=400, detail="Заявка уже одобрена")
     if wish.status not in ("draft", "submitted"):
         raise HTTPException(status_code=400, detail=f"Нельзя одобрить заявку в статусе {wish.status}")
+    if current_user.role not in ADMIN_ROLES and wish.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Распределять заявку может админ или назначенный согласующий")
     if not wish.items:
         raise HTTPException(status_code=400, detail="Заявка пустая — нечего одобрять")
 

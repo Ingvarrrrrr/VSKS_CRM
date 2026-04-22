@@ -6,6 +6,7 @@ from decimal import Decimal
 
 class WishItemOut(BaseModel):
     id: int
+    product_id: Optional[int] = None
     item_name: str
     item_type: Optional[str] = "товар"
     quantity: Optional[float] = 1

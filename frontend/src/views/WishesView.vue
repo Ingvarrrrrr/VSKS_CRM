@@ -338,13 +338,31 @@
         </v-card-title>
         <v-card-text class="pa-4">
           <v-alert
-            v-if="!isWishEditable"
+            v-if="!isWishEditable && canAssigneeAct"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Вы согласующий. Проверьте позиции и используйте кнопки ниже — «Распределить и одобрить», «Быстрое одобрение» или «Отклонить».
+          </v-alert>
+          <v-alert
+            v-else-if="!isWishEditable && isDialogCreator && wishForm.status === 'submitted'"
             type="info"
             variant="tonal"
             density="compact"
             class="mb-3"
           >
-            Заявка в статусе «{{ wishForm.status }}» — редактирование недоступно. Редактировать можно только черновик или отклонённую заявку.
+            Заявка отправлена на согласование — редактирование недоступно. Вернуть можно, только если согласующий отклонит её.
+          </v-alert>
+          <v-alert
+            v-else-if="!isWishEditable"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            Заявка в статусе «{{ statusLabel[wishForm.status] || wishForm.status }}» — редактирование недоступно. Редактировать можно только черновик или отклонённую заявку.
           </v-alert>
           <v-form ref="wishFormRef" @submit.prevent>
 
@@ -503,7 +521,7 @@
           </v-form>
         </v-card-text>
 
-        <v-card-actions class="px-4 pb-4">
+        <v-card-actions class="px-4 pb-4 flex-wrap">
           <v-btn variant="text" @click="wishDialog = false">Закрыть</v-btn>
           <v-spacer />
           <template v-if="isWishEditable">
@@ -512,6 +530,19 @@
             </v-btn>
             <v-btn color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
               Отправить на согласование
+            </v-btn>
+          </template>
+          <template v-else-if="canAssigneeAct && editingWish">
+            <v-btn color="error" variant="tonal" prepend-icon="mdi-close" @click="openRejectDialog(editingWish); wishDialog = false">
+              Отклонить
+            </v-btn>
+            <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="approvingId === editingWish.id"
+                   @click="approveWish(editingWish).then(() => wishDialog = false)">
+              Быстрое одобрение
+            </v-btn>
+            <v-btn color="primary" variant="flat" prepend-icon="mdi-view-column-outline"
+                   @click="openKanbanDialog(editingWish); wishDialog = false">
+              Распределить и одобрить
             </v-btn>
           </template>
         </v-card-actions>
@@ -693,6 +724,7 @@ interface User {
 
 // Role detection
 const userRole = localStorage.getItem('user_role') || ''
+const currentUserId = Number(localStorage.getItem('user_id') || '0')
 
 const ADMIN_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin']
 const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager']
@@ -796,11 +828,24 @@ const orgUsers = computed(() => {
 // Create/edit dialog
 const wishDialog = ref(false)
 const editingWishId = ref<number | null>(null)
+const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
 const saving = ref(false)
 
 const isWishEditable = computed(() =>
   !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
+)
+
+const isDialogAssignee = computed(() =>
+  !!editingWish.value && editingWish.value.assigned_to === currentUserId
+)
+const isDialogCreator = computed(() =>
+  !!editingWish.value && editingWish.value.created_by === currentUserId
+)
+const canAssigneeAct = computed(() =>
+  !!editingWish.value
+  && editingWish.value.status === 'submitted'
+  && (isDialogAssignee.value || isAdmin.value)
 )
 
 const wishForm = ref({
@@ -948,12 +993,14 @@ function resetForm() {
 
 function openCreateDialog() {
   editingWishId.value = null
+  editingWish.value = null
   resetForm()
   wishDialog.value = true
 }
 
 async function openEditDialog(wish: Wish) {
   editingWishId.value = wish.id
+  editingWish.value = wish
   resetForm()
   wishForm.value.subsidy_id = wish.subsidy_id ?? null
   wishForm.value.feo_category_id = wish.feo_category_id ?? null

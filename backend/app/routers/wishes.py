@@ -162,6 +162,7 @@ async def create_wish(
         for item_data in body.items:
             wi = WishItem(
                 wish_id=wish.id,
+                product_id=item_data.get('product_id'),
                 item_name=item_data.get('item_name', ''),
                 item_type=item_data.get('item_type', 'товар'),
                 quantity=item_data.get('quantity', 1),
@@ -202,6 +203,7 @@ async def update_wish(
         for item_data in body.items:
             wi = WishItem(
                 wish_id=wish.id,
+                product_id=item_data.get('product_id'),
                 item_name=item_data.get('item_name', ''),
                 item_type=item_data.get('item_type', 'товар'),
                 quantity=item_data.get('quantity', 1),

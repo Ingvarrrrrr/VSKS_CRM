@@ -1,13 +1,14 @@
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
-from app.schemas.schemas import UserCreate, UserUpdate, UserOut
+from app.schemas.schemas import UserCreate, UserUpdate, UserOut, PermissionsOut
+from app.auth.permissions import get_effective_tabs, get_effective_actions
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -78,9 +79,35 @@ async def create_user(
 
 
 @router.get("/me", response_model=UserOut)
-async def get_me(current_user: User = Depends(get_current_user)):
-    """Текущий пользователь (для синхронизации role/name в localStorage)."""
-    return UserOut.model_validate(current_user)
+async def get_me(
+    org_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Текущий пользователь. С org_id возвращает effective tabs+actions для этой орг (D-08)."""
+    out = UserOut.model_validate(current_user)
+    # D-08: resolve permissions for the given org_id (or active org from JWT)
+    effective_org_id = org_id or getattr(current_user, "_active_org_id", None) or current_user.org_id
+    if effective_org_id is not None:
+        if current_user.role == "superadmin":
+            # D-05.3: superadmin sees all tabs + actions
+            from app.models.permission import PermissionTab, PermissionAction
+            tabs_rows = await db.execute(select(PermissionTab.tab_key))
+            actions_rows = await db.execute(select(PermissionAction.action_key))
+            tabs = sorted(r for r, in tabs_rows)
+            actions = sorted(r for r, in actions_rows)
+        else:
+            effective = await get_effective_tabs(current_user, db, effective_org_id)
+            # Split effective keys back into tabs vs actions using dictionary tables
+            from app.models.permission import PermissionTab, PermissionAction
+            tabs_rows = await db.execute(select(PermissionTab.tab_key))
+            all_tab_keys = {r for r, in tabs_rows}
+            actions_rows = await db.execute(select(PermissionAction.action_key))
+            all_action_keys = {r for r, in actions_rows}
+            tabs = sorted(effective & all_tab_keys)
+            actions = sorted(effective & all_action_keys)
+        out.permissions = PermissionsOut(tabs=tabs, actions=actions)
+    return out
 
 
 @router.get("/{user_id}", response_model=UserOut)

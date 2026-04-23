@@ -52,6 +52,13 @@ class UserUpdate(BaseModel):
     avatar: Optional[str] = None
     inn: Optional[str] = None
 
+class PermissionsOut(BaseModel):
+    tabs: List[str] = []
+    actions: List[str] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserOut(BaseModel):
     id: int
     username: str
@@ -71,6 +78,7 @@ class UserOut(BaseModel):
     has_signature: bool = False
     can_publish: bool = False
     inn: Optional[str] = None
+    permissions: Optional[PermissionsOut] = None
 
     @classmethod
     def from_orm_with_signature(cls, user):

@@ -932,6 +932,7 @@ function openEdit(c: ContractorWithStats) {
     bank_name:            c.bank_name            || '',
     bik:                  c.bik                  || '',
     correspondent_account: c.correspondent_account || '',
+    org_type:             c.org_type             || '',
     manual_product_categories: mergeCategories(c.manual_product_categories || [], c.product_categories || []),
   }
   dialog.value = true

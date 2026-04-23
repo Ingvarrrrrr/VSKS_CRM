@@ -2,7 +2,12 @@
 
 ## Overview
 
-7 phases | 57 requirements | Brownfield (existing codebase: auth, CRUD, dashboard, SubsidiesView, 390 purchases, 612 contractors)
+18 phases | 57+ requirements | Brownfield (existing codebase: auth, CRUD, dashboard, SubsidiesView, 390 purchases, 612 contractors)
+
+**Status snapshot (2026-04-23):**
+- ✅ Complete (13): 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 16
+- 🟡 In progress (2): 10 (3/4 plans), 14 (3/4 plans)
+- ⏳ Not started (3): 12 (4 plans ready), 17 (TBD), 18 (TBD)
 
 ---
 
@@ -137,7 +142,7 @@ Plans:
 
 ---
 
-### Phase 7: Roles + Wishes Workflow ⚠️ PARTIAL
+### Phase 7: Roles + Wishes Workflow ✅ COMPLETED
 
 **Goal:** Enforce role-based navigation and API access, and implement the full Wishes lifecycle from employee submission to purchase conversion.
 
@@ -150,8 +155,8 @@ Plans:
 - Multi-org membership (UserOrganization model, org switching): done
 - `org_admin` role fix (commit a5bf274): done
 - Tasks BFF endpoint + review status: done
-- Wishes lifecycle (submit → approve → convert): NOT done
-- "Мои заявки" / "Заявки сотрудников" views: NOT done
+- Wishes lifecycle (submit → approve → convert): done (изначальный flow в 07-02/07-03, расширен в Phase 13 до канбана авто-распределения)
+- "Мои заявки" / "Заявки сотрудников" views: done (WishesView.vue + role-based вкладки)
 
 **Plans:** 5/5 plans complete
 
@@ -283,7 +288,7 @@ Features delivered from user feedback documents, outside GSD phase tracking:
 | Visual enhancements (glassmorphism, animations, transitions) | 2254e1f |
 | Markitdown document import pipeline | e6c147f |
 
-### Phase 13: Заявки v3: авторасспределение позиций по закупкам, drag-drop перекидывание товаров между закупками, одобрение распределения и автосоздание N закупок, генерация служебной записки
+### Phase 13: Заявки v3: авторасспределение позиций по закупкам, drag-drop перекидывание товаров между закупками, одобрение распределения и автосоздание N закупок, генерация служебной записки ✅ COMPLETED (2026-04-23)
 
 **Goal:** Turn WishesView into a kanban auto-distribution tool: user creates a wish with items, system groups items into columns by `product.category` (+ «Не определено» column), user can drag-drop between columns within the wish, then approves all-or-nothing → N purchases created in status=`wishes`; downloadable служебная записка generated directly from a wish.
 **Requirements**: D-01..D-08 from 13-CONTEXT.md (fixed decisions from 2026-04-20 discussion)
@@ -344,7 +349,7 @@ Plans:
 
 ---
 
-### Phase 16: Refactor Monoliths — рефакторить код, чтобы не было огромного файла на 4000 строк
+### Phase 16: Refactor Monoliths — рефакторить код, чтобы не было огромного файла на 4000 строк ✅ COMPLETED
 
 **Directory:** `.planning/phases/16-refactor-monoliths/`
 
@@ -391,16 +396,16 @@ Plans:
 4. Frontend билд зелёный; MyTasksView рендерится идентично визуально (до/после — скриншот-diff).
 5. Каждый коммит рефакторинга атомарный: «extract X from Y» — удалил здесь, добавил там, build зелёный.
 
-**Plans:** 15/15 plans complete
+**Plans:** 15/15 plans complete (16-15-UAT.md pass)
 
 Plans:
-- [ ] TBD
+- [x] 16-01..16-15 — декомпозиция purchases.py (3200→<800) + tasks.py (1639→<800) + MyTasksView.vue (2155→<800); backend тесты + E2E smoke зелёные
 
 ---
 
 ### Phase 17: Permission System — матрица ролей + индивидуальные override'ы
 
-**Directory:** `.planning/phases/17-permission-system/` (TBD)
+**Directory:** `.planning/phases/17-permission-system-override/`
 
 **Goal:** Заменить хардкод роль→вкладка на конфигурируемую матрицу. Админ задаёт доступные вкладки per-role, и отдельно умеет точечно выдавать/забирать доступ конкретному пользователю (галочки). При override роль в карточке пользователя превращается в `Индивидуально`.
 
@@ -427,8 +432,16 @@ Plans:
 3. Не видит вкладку в сайдбаре = не может достучаться до API (backend guard)
 4. Миграция seed'ит текущие маппинги `ADMIN_ROLES/MANAGER_ROLES/ALL_ROLES` → нулевая регрессия для существующих пользователей
 
-**Plans:** TBD
-- [ ] TBD
+**Plans:** 2/9 plans executed
+- [x] 17-01-PLAN.md - permission models + alembic migration + seed from hardcode + can_publish data migration (D-02/05/07/08)
+- [x] 17-02-PLAN.md - Wave 0 validation: conftest fixtures + 5 backend test files + e2e/20-permissions.spec.ts scaffolding
+- [ ] 17-03-PLAN.md - require_tab/require_action factories + get_effective_tabs + /users/me permissions field (D-01b/02/08)
+- [ ] 17-04-PLAN.md - migrate 78 require_role call-sites to require_tab/require_action across 21 routers (D-01b/06)
+- [ ] 17-05-PLAN.md - permissions router (CRUD matrix + overrides) + self-lockout + superadmin filter on list_users (D-03/05/09)
+- [ ] 17-06-PLAN.md - Pinia stores/auth.ts + AppBar nav filter by hasTab + login/org-switch wiring (D-01a)
+- [ ] 17-07-PLAN.md - AdminRolesView.vue matrix 5xN with debounced save + self-lockout disable + checkpoint (D-03/05)
+- [ ] 17-08-PLAN.md - UserPermissionsSection.vue (per-org overrides + Individual badge) integrated into StaffView (D-04/08)
+- [ ] 17-09-PLAN.md - router guards meta.tab_key + E2E regression + phase sign-off checkpoint (D-01a/05/09)
 
 ---
 

@@ -3,40 +3,47 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-20T12:54:28.010Z"
+last_updated: "2026-04-23T09:24:17.331Z"
 progress:
   total_phases: 18
-  completed_phases: 8
-  total_plans: 57
-  completed_plans: 49
+  completed_phases: 9
+  total_plans: 66
+  completed_plans: 55
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 13 (v3-drag-drop-n) — EXECUTING
-Plan: 4 of 7
-Phase 16 (Refactor Monoliths) — 📝 CONTEXT.md captured (2026-04-19), 0 plans yet
-Next action: `/gsd:plan-phase 16` (will create PLAN.md files from CONTEXT decisions)
+Phase: 17 (permission-system-override) — EXECUTING
+Plan: 3 of 9
+Next action: `/gsd:plan-phase 17` — создать PLAN.md файлы из CONTEXT решений
+Resume file: None
 
-Recent (parked): Phase 13 (Заявки v3 — авторасспределение) — unblocked by Phase 15, waiting after Phase 16.
+Recently closed:
+
+- Phase 13 — Заявки v3 канбан + split purchase kanban (7/7 планов, commits 9ae0202, c2312f8, f40546c, d1b3cb9, fcbed67)
+- Phase 16 — Refactor monoliths (15/15, 16-15-UAT pass)
+- Phase 15 — PurchaseItemsEditor extraction (5/5)
 
 - **Milestone:** v1.0
-- **Last Completed Phase:** 15
-- **Previous Phase:** 14.1 (Risk Radar — nav + formulas dialog)
+- **Last Completed Phase:** 16 → 13 (в порядке закрытия)
 - **Profile:** balanced (Opus plans, Sonnet executes)
 
 ## Status
 
-- Phases 1-9, 11, 14, 15: ✅ Complete
-- Phase 10: 🟡 3/4 plans done (1 remaining: AppBar chat integration)
-- Phase 12: 📋 4 plans ready, 0 executed
-- Phase 13: 📋 ready to plan (Phase 15 unblocks it)
+- ✅ Complete (13): Phases 1–9, 11, 13, 15, 16
+- 🟡 In progress (2): Phase 10 (3/4 — осталось 10-04 AppBar chat nav+badge), Phase 14 (3/4 — осталось 14-04 polish+UAT)
+- ⏳ Not started (3): Phase 12 (4 плана ready), Phase 17 Permission System (TBD), Phase 18 Staff Directory (TBD)
 - Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2, Суперадмин-3)
 
 ## Recent Activity (April 2026)
 
+- 2026-04-23: Purchase Split Kanban — DnD-редистрибуция позиций в существующей закупке, N дочерних закупок, блокируется после статуса «Договор» (не-админам). commits: 40b9d98, 17ec94b, 6a13456, 06ef867, 60379f7, fbb6169. Bugfix цепочка: id-propagation → column width/wrap → ref-state DnD.
+- 2026-04-23: Wishes edit dialog — product_id persistence в WishItem schema + 3-layer name-fallback (openEditDialog, openKanbanDialog, approve_distribution) + assignee action banners по ролям.
+- 2026-04-23: Knowledge graph updated — targeted AST-refresh для 14 файлов Phase 13/15/Split scope, pruned 83 VAULT ghost nodes. Final: 1645 nodes / 4843 edges / 234 communities.
+- 2026-04-23: STATE.md + ROADMAP.md sync с реальностью — Phase 7 PARTIAL→✅, Phase 13 ✅, Phase 16 "в работе"→✅.
+- 2026-04-23: Phase 17 context gathered — 9 решений (D-01..D-09) через опросник. Scope = 3 уровня (nav + API + sub-actions). Override = boolean flip. Admin UI = матрица роль×вкладка. Badge = «Индивидуально». Per-org structure (role per-org + overrides per-org). Superadmin полностью невидим для не-superadmin (SaaS-сотрудник).
 - 2026-04-19: Phase 16 context gathered — CONTEXT.md + DISCUSSION-LOG.md for Refactor Monoliths (faaa12d). Auto-mode picked 6 gray-area defaults: backend-first order, 6 modules for purchases.py (added items_import), 5 for tasks.py, orchestrator+5 components for MyTasksView, helpers stay in originating modules, strict URL preservation, E2E + smoke gates.
 - 2026-04-19: Autodeploy hardened (2d04e4e) — ThreadingHTTPServer в webhook.py, always-restart в autodeploy.sh, /healthz endpoint. Root cause предыдущего падения: single-threaded HTTPServer завис в accept loop, systemd репортил active, но всё таймаутило. 2 дня push'ей были silently dropped.
 - 2026-04-19: Phase 11 reopened+fixed — 4 UX бага на /my-tasks под employee: закупки без org/member фильтра (ce90039), flash unfiltered tasks + "Все организации" не кликалось + счётчик header считал done/cancelled (f3cf2cc).
@@ -76,6 +83,9 @@ Recent (parked): Phase 13 (Заявки v3 — авторасспределен�
 - [Phase 13-v3-drag-drop-n]: Backfill NULL products.category to 'Прочее' before NOT NULL constraint (D-03); downgrade reverts constraint only
 - [Phase 13-v3-drag-drop-n]: ProductCreate.category required via Pydantic Field(..., min_length=1) — empty string also rejected at API layer
 - [Phase 13-v3-drag-drop-n]: 409 for approved-wish edit (not 403): resource state conflict. 404 for cross-wish PATCH: item not in that wish. Explicit db.rollback() in approve-distribution for atomicity. product relationship added to WishItem for category resolution.
+- [Phase 17-permission-system-override]: FK user_org_access_id (not user_id+org_id pair) per D-08 — UserOrgAccess already enforces uniqueness
+- [Phase 17-permission-system-override]: publication.create NOT seeded into role_permissions — per-user override via can_publish migration (Step E)
+- [Phase 17]: Wave 0 test scaffolding uses deferred imports in fixtures to prevent collection errors while Plan 17-01 models exist on disk but DB migration not yet run
 
 ## Blockers
 

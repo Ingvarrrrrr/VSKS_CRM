@@ -47,7 +47,7 @@
             </div>
             <div v-else class="overflow-x-auto">
               <PermissionTable
-                :rows="visibleRoles"
+                :roles="visibleRoles"
                 :columns="tabs"
                 :granted="tabsGranted"
                 :current-role="currentRole"
@@ -63,7 +63,7 @@
             </div>
             <div v-else class="overflow-x-auto">
               <PermissionTable
-                :rows="visibleRoles"
+                :roles="visibleRoles"
                 :columns="visibleActions"
                 :granted="actionsGranted"
                 :current-role="currentRole"

@@ -2,16 +2,16 @@
   <v-table density="compact" class="permission-matrix">
     <thead>
       <tr>
-        <th class="role-col">Роль</th>
-        <th v-for="col in columns" :key="colKey(col)" class="perm-col">
-          {{ colTitle(col) }}
+        <th class="key-col">Право</th>
+        <th v-for="role in roles" :key="role" class="role-col">
+          {{ roleLabel(role) }}
         </th>
       </tr>
     </thead>
     <tbody>
-      <tr v-for="role in rows" :key="role">
-        <td class="role-col">{{ roleLabel(role) }}</td>
-        <td v-for="col in columns" :key="colKey(col)">
+      <tr v-for="col in columns" :key="colKey(col)">
+        <td class="key-col">{{ colTitle(col) }}</td>
+        <td v-for="role in roles" :key="role" class="role-col">
           <v-tooltip
             :text="isLocked(role, colKey(col)) ? 'Нельзя снять с себя доступ к Ролям/Персоналу' : ''"
             location="top"
@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 const props = defineProps<{
-  rows: string[]
+  roles: string[]
   columns: any[]
   granted: Record<string, Set<string>>
   currentRole: string
@@ -71,23 +71,31 @@ function roleLabel(role: string): string {
 </script>
 
 <style scoped>
-.permission-matrix :deep(th.perm-col) {
-  min-width: 110px;
+.permission-matrix :deep(th.role-col),
+.permission-matrix :deep(td.role-col) {
+  min-width: 130px;
   text-align: center;
-  font-size: 0.72rem;
+  vertical-align: middle;
+  padding: 2px !important;
+}
+.permission-matrix :deep(th.role-col) {
+  font-size: 0.78rem;
   white-space: normal;
   word-break: break-word;
   vertical-align: bottom;
-  padding-bottom: 6px;
+  padding-bottom: 6px !important;
 }
-.permission-matrix :deep(td) {
-  text-align: center;
-  padding: 2px !important;
-  vertical-align: middle;
-}
-.permission-matrix :deep(.role-col) {
-  min-width: 160px;
+.permission-matrix :deep(th.key-col),
+.permission-matrix :deep(td.key-col) {
+  min-width: 280px;
   text-align: left;
   font-weight: 500;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: rgb(var(--v-theme-surface));
+}
+.permission-matrix :deep(th.key-col) {
+  z-index: 2;
 }
 </style>

@@ -144,7 +144,7 @@ async def department_tree(
             user_ids.add(d.head_user_id)
     users_map = {}
     if user_ids:
-        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():
+        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for enrichment
             users_map[u.id] = {"id": u.id, "name": u.full_name or u.username, "role": u.role, "position": u.position}
 
     # Load org names
@@ -285,7 +285,7 @@ async def list_members(
     user_ids = {m.user_id for m in members}
     users_map = {}
     if user_ids:
-        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():
+        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for department member enrichment
             users_map[u.id] = u
     out = []
     for m in members:
@@ -464,7 +464,7 @@ async def list_delegates(
         user_ids.add(r.delegate_user_id)
     users_map = {}
     if user_ids:
-        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():
+        for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for delegate enrichment
             users_map[u.id] = u.full_name or u.username
     return [
         DelegateOut(
@@ -669,7 +669,7 @@ async def import_departments_excel(
     org_id = get_single_org_id(current_user) or current_user.org_id
 
     # Load existing users by full_name for matching
-    users_res = await db.execute(select(User).where(User.org_id == org_id))
+    users_res = await db.execute(select(User).where(User.org_id == org_id))  # superadmin-bypass-ok: Excel import lookup by name, not a user-list endpoint
     users_by_name = {}
     for u in users_res.scalars().all():
         if u.full_name:

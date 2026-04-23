@@ -13,6 +13,7 @@ from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.auth.permissions import require_tab
 from app.models.user import User
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
@@ -316,7 +317,7 @@ async def kanban_all(
     purchases = result.scalars().all()
 
     # Group by user
-    users_result = await db.execute(select(User))
+    users_result = await db.execute(select(User))  # superadmin-bypass-ok: internal enrichment map by ID, not a user-list endpoint
     users_map = {u.id: u.full_name or u.username for u in users_result.scalars().all()}
 
     grouped = {}
@@ -609,7 +610,7 @@ async def update_purchase(
 async def bulk_delete_purchases(
     ids: List[int] = Body(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('purchases')),
 ):
     deleted, failed = [], []
     for pid in ids:
@@ -631,7 +632,7 @@ async def bulk_delete_purchases(
 
 
 @router.delete("/{pid}")
-async def delete_purchase(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
+async def delete_purchase(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_tab('purchases'))):
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
@@ -870,7 +871,7 @@ async def add_purchase_comment(
         from app.notifications import notify_user, _esc, _purchase_url
         mentions = _re.findall(r'@(\S+)', text)
         if mentions:
-            all_users = (await db.execute(select(User))).scalars().all()
+            all_users = (await db.execute(select(User))).scalars().all()  # superadmin-bypass-ok: @mention lookup for notifications
             clean_text = _re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', text).strip()
             clean_text = _re.sub(r'\s{2,}', ' ', clean_text) or text
             preview = _esc(clean_text[:150])
@@ -942,7 +943,7 @@ async def broadcast_from_purchase(
     scope = body.get("scope", "")
     scope_id = body.get("scope_id")
 
-    q = select(User).where(User.id != current_user.id)
+    q = select(User).where(User.id != current_user.id)  # superadmin-bypass-ok: broadcast notifications, not a user-list endpoint returned to client
     if scope == "department" and scope_id:
         member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))
         q = q.where(User.id.in_(member_uids))

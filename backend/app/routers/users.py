@@ -16,6 +16,9 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("/", response_model=List[UserOut])
 async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_role(*ALL_ROLES))):
     q = select(User).order_by(User.full_name)
+    # D-09: hide superadmin from non-superadmin callers
+    if current_user.role != "superadmin":
+        q = q.where(User.role != "superadmin")
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.where(User.org_id.in_(org_ids))

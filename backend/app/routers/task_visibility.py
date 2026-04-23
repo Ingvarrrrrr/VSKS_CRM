@@ -87,7 +87,11 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
     )
     managed_org_ids = [r[0] for r in mo_res.all()]
     if managed_org_ids:
-        org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
+        # D-09: hide superadmin from non-superadmin callers
+        org_user_q = select(User.id).where(User.org_id.in_(managed_org_ids))
+        if current_user.role != "superadmin":
+            org_user_q = org_user_q.where(User.role != "superadmin")
+        org_users = await db.execute(org_user_q)
         visible.update(r[0] for r in org_users.all())
 
     return visible
@@ -135,7 +139,7 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
         user_ids.add(t.created_by_id)
     users_map = {}
     if user_ids:
-        res = await db.execute(select(User).where(User.id.in_(user_ids)))
+        res = await db.execute(select(User).where(User.id.in_(user_ids)))  # superadmin-bypass-ok: lookup by ID for enrichment, not a user-list endpoint
         for u in res.scalars().all():
             users_map[u.id] = u.full_name or u.username
 
@@ -151,7 +155,7 @@ async def _enrich_tasks(tasks: list, db: AsyncSession, current_user_id: int = 0)
         assignee_user_ids.add(a.user_id)
     # load assignee user names
     if assignee_user_ids:
-        res2 = await db.execute(select(User).where(User.id.in_(assignee_user_ids)))
+        res2 = await db.execute(select(User).where(User.id.in_(assignee_user_ids)))  # superadmin-bypass-ok: lookup by ID for enrichment, not a user-list endpoint
         for u in res2.scalars().all():
             users_map[u.id] = u.full_name or u.username
 

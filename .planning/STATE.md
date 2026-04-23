@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-23T09:28:25.476Z"
+last_updated: "2026-04-23T09:35:58.125Z"
 progress:
   total_phases: 18
   completed_phases: 9
   total_plans: 66
-  completed_plans: 56
+  completed_plans: 57
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 17 (permission-system-override) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Next action: `/gsd:plan-phase 17` — создать PLAN.md файлы из CONTEXT решений
 Resume file: None
 
@@ -88,6 +88,7 @@ Recently closed:
 - [Phase 17]: Wave 0 test scaffolding uses deferred imports in fixtures to prevent collection errors while Plan 17-01 models exist on disk but DB migration not yet run
 - [Phase 17]: require_tab/require_action import directly from app.auth.permissions at call-sites (no jwt.py re-export needed)
 - [Phase 17]: Split effective key set into tabs vs actions using PermissionTab/PermissionAction dictionary tables at /me endpoint
+- [Phase 17]: Pinia auth store (stores/auth.ts) uses tab_key filter via authStore.hasTab() replacing hardcoded roles arrays in AppBar.vue; fail-open pattern on loadPermissions errors
 
 ## Blockers
 

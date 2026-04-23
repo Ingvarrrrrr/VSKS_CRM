@@ -96,7 +96,7 @@ async def add_comment(
         mentions = _re.findall(r'@(\S+)', body.text)
         mentioned_users = []
         if mentions:
-            all_users_r = await db.execute(select(User))
+            all_users_r = await db.execute(select(User))  # superadmin-bypass-ok: @mention lookup for notifications, not a user-list endpoint
             all_users = all_users_r.scalars().all()
             for u in all_users:
                 for m in mentions:
@@ -167,7 +167,7 @@ async def broadcast_from_task(
     scope_id = body.get("scope_id")  # department_id or org_id
 
     # Build user query
-    q = select(User).where(User.id != current_user.id)
+    q = select(User).where(User.id != current_user.id)  # superadmin-bypass-ok: broadcast notifications, not a user-list endpoint returned to client
 
     if scope == "department" and scope_id:
         member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))

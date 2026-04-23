@@ -151,6 +151,9 @@ async def get_hierarchy_graph(
     q_users = select(User)
     if org_ids is not None:
         q_users = q_users.where(User.org_id.in_(org_ids))
+    # D-09: hide superadmin from non-superadmin callers
+    if current_user.role != "superadmin":
+        q_users = q_users.where(User.role != "superadmin")
     users = (await db.execute(q_users)).scalars().all()
 
     # Load extra org memberships (user_organizations) with salary
@@ -605,9 +608,11 @@ async def get_task_authority(
     )).scalars().all()
     if mo_rows:
         mo_org_ids = [r.org_id for r in mo_rows]
-        org_users = (await db.execute(
-            select(User).where(User.org_id.in_(mo_org_ids))
-        )).scalars().all()
+        # D-09: task authority endpoint, hide superadmin from non-superadmin callers
+        _org_user_q = select(User).where(User.org_id.in_(mo_org_ids))
+        if current_user.role != "superadmin":
+            _org_user_q = _org_user_q.where(User.role != "superadmin")
+        org_users = (await db.execute(_org_user_q)).scalars().all()
         for u in org_users:
             if u.id != uid:
                 sub_ids.add(u.id)
@@ -621,7 +626,7 @@ async def get_task_authority(
 
     can_assign_to = []
     if sub_ids:
-        users = (await db.execute(select(User).where(User.id.in_(sub_ids)))).scalars().all()
+        users = (await db.execute(select(User).where(User.id.in_(sub_ids)))).scalars().all()  # superadmin-bypass-ok: lookup by pre-computed IDs from hierarchy
         can_assign_to = [{"id": u.id, "full_name": u.full_name, "username": u.username, "role": u.role} for u in users]
 
     # Who can assign tasks to uid (uid is their subordinate)
@@ -632,7 +637,7 @@ async def get_task_authority(
 
     can_receive_from = []
     if mgr_ids:
-        mgrs = (await db.execute(select(User).where(User.id.in_(mgr_ids)))).scalars().all()
+        mgrs = (await db.execute(select(User).where(User.id.in_(mgr_ids)))).scalars().all()  # superadmin-bypass-ok: lookup by pre-computed manager IDs
         can_receive_from = [{"id": u.id, "full_name": u.full_name, "username": u.username, "role": u.role} for u in mgrs]
 
     return {

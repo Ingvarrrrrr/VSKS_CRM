@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.department import Department, DepartmentMember
 from app.models.manager_department import ManagerDepartment
@@ -245,7 +246,7 @@ async def get_hierarchy_graph(
 async def create_edge(
     body: EdgeCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     if body.type == "user_user":
         # Prevent self-loop
@@ -340,7 +341,7 @@ async def delete_edge(
     edge_id: int,
     type: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     if type == "user_user":
         row = await db.get(UserHierarchy, edge_id)
@@ -424,7 +425,7 @@ async def add_user_to_organization(
     org_id: int,
     body: OrgMembershipBody = OrgMembershipBody(),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     """Add user to an extra organization (or update position if already a member)."""
     org = await db.get(Organization, org_id)
@@ -454,7 +455,7 @@ async def update_user_org_position(
     org_id: int,
     body: OrgMembershipBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     """Update user's position in a specific extra organization."""
     row = (await db.execute(
@@ -542,7 +543,7 @@ async def remove_user_from_organization(
     uid: int,
     org_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     """Remove user from an organization (extra or primary)."""
     user = await db.get(User, uid)

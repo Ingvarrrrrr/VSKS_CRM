@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from app.auth.jwt import get_current_user, require_role
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.user import User
 from app.models.user_hierarchy import UserHierarchy
@@ -87,7 +88,7 @@ async def add_subordinate(
     uid: int,
     body: AddSubordinateBody,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin")),
+    _=Depends(require_tab('staff')),
 ):
     if uid == body.subordinate_id:
         raise HTTPException(400, "Пользователь не может быть подчинённым самого себя")
@@ -119,7 +120,7 @@ async def remove_subordinate(
     uid: int,
     sid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin")),
+    _=Depends(require_tab('staff')),
 ):
     h = (await db.execute(
         select(UserHierarchy).where(

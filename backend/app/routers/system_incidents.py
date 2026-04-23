@@ -5,6 +5,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import require_role, ADMIN_ROLES
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.system_incident import SystemIncident
 
@@ -17,7 +18,7 @@ async def list_incidents(
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('system_incidents')),
 ):
     q = select(SystemIncident).order_by(desc(SystemIncident.created_at))
     if search:
@@ -56,7 +57,7 @@ async def list_incidents(
 async def delete_incident(
     incident_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('system_incidents')),
 ):
     r = (await db.execute(select(SystemIncident).where(SystemIncident.id == incident_id))).scalar_one_or_none()
     if r:
@@ -67,7 +68,7 @@ async def delete_incident(
 @router.delete("/", status_code=204)
 async def clear_incidents(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('system_incidents')),
 ):
     rows = (await db.execute(select(SystemIncident))).scalars().all()
     for r in rows:

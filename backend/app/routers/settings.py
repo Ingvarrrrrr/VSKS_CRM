@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import require_role, ADMIN_ROLES
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.system_setting import SystemSetting
 
@@ -52,7 +53,7 @@ class SmtpSettingsOut(BaseModel):
 @router.get("/smtp", response_model=SmtpSettingsOut)
 async def get_smtp_settings(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('admin.settings')),
 ):
     host = await get_setting(db, "smtp_host") or ""
     port = int(await get_setting(db, "smtp_port") or 587)
@@ -71,7 +72,7 @@ async def get_smtp_settings(
 async def update_smtp_settings(
     data: SmtpSettingsIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('admin.settings')),
 ):
     await set_setting(db, "smtp_host", data.smtp_host)
     await set_setting(db, "smtp_port", str(data.smtp_port))
@@ -89,7 +90,7 @@ async def update_smtp_settings(
 async def test_smtp(
     to_email: str,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('admin.settings')),
 ):
     host = await get_setting(db, "smtp_host") or ""
     port = int(await get_setting(db, "smtp_port") or 587)

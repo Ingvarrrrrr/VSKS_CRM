@@ -11,6 +11,7 @@ from app.auth.jwt import (
     get_current_user, require_role, get_org_filter, get_single_org_id,
     ADMIN_ROLES, MANAGER_ROLES,
 )
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.department import Department, DepartmentMember, TaskEditDelegate
 from app.models.organization import Organization
@@ -191,7 +192,7 @@ async def department_tree(
 async def create_department(
     data: DepartmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     # Superadmin can assign to any org via body.org_id; others use their org
     if data.org_id and current_user.role in ('superadmin', 'account_owner'):
@@ -215,7 +216,7 @@ async def update_department(
     dept_id: int,
     data: DepartmentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     dept = await db.get(Department, dept_id)
     if not dept:
@@ -248,7 +249,7 @@ async def update_department(
 async def delete_department(
     dept_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     dept = await db.get(Department, dept_id)
     if not dept:
@@ -303,7 +304,7 @@ async def add_member(
     dept_id: int,
     data: MemberAdd,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     dept = await db.get(Department, dept_id)
     if not dept:
@@ -384,7 +385,7 @@ async def update_member(
     user_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     m = (await db.execute(
         select(DepartmentMember).where(
@@ -405,7 +406,7 @@ async def remove_member(
     dept_id: int,
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     m = (await db.execute(
         select(DepartmentMember).where(
@@ -481,7 +482,7 @@ async def list_delegates(
 async def add_delegate(
     data: DelegateAdd,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     org_id = get_single_org_id(current_user) or current_user.org_id
     existing = (await db.execute(
@@ -518,7 +519,7 @@ async def add_delegate(
 async def remove_delegate(
     delegate_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     d = await db.get(TaskEditDelegate, delegate_id)
     if not d:
@@ -602,7 +603,7 @@ async def can_edit_task_of_user(
 # ── Excel import ─────────────────────────────────────────────────────────────
 
 @router.get("/import/template")
-async def dept_import_template(_=Depends(require_role(*ADMIN_ROLES))):
+async def dept_import_template(_=Depends(require_tab('staff'))):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -650,7 +651,7 @@ async def dept_import_template(_=Depends(require_role(*ADMIN_ROLES))):
 async def import_departments_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('staff')),
 ):
     """Import department tree from Excel."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, ADMIN_ROLES, require_role, get_single_org_id, get_org_filter
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.event import Event
 from app.schemas.schemas import EventCreate, EventOut
@@ -32,7 +33,7 @@ async def list_events(
 async def create_event(
     data: EventCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*ADMIN_ROLES)),
+    current_user=Depends(require_tab('admin.settings')),
 ):
     ev = Event(
         subsidy_id=data.subsidy_id,
@@ -60,7 +61,7 @@ async def update_event(
     event_id: int,
     data: EventCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('admin.settings')),
 ):
     ev = (await db.execute(select(Event).where(Event.id == event_id))).scalar_one_or_none()
     if not ev:
@@ -86,7 +87,7 @@ async def update_event(
 async def delete_event(
     event_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('admin.settings')),
 ):
     ev = (await db.execute(select(Event).where(Event.id == event_id))).scalar_one_or_none()
     if not ev:

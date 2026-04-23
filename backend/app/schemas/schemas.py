@@ -98,6 +98,7 @@ class OrganizationCreate(BaseModel):
     ogrn: Optional[str] = None
     address: Optional[str] = None
     signatory: Optional[str] = None
+    contractor_id: Optional[int] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -113,6 +114,11 @@ class OrganizationOut(BaseModel):
     user_count: int = 0
     root_org_id: Optional[int] = None
     owner_user_id: Optional[int] = None
+    # Phase 17.1-03 — link to Contractor as single source of truth for legal requisites
+    contractor_id: Optional[int] = None
+    # Extra enrichment fields (optional) populated from linked Contractor
+    org_phone: Optional[str] = None
+    org_email: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):

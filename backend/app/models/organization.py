@@ -20,6 +20,9 @@ class Organization(Base):
     # Multi-org / contour support
     root_org_id   = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     owner_user_id = Column(Integer, ForeignKey("users.id",         ondelete="SET NULL"), nullable=True)
+    # Phase 17.1-03 — single-entity link to Contractor (source of truth for legal requisites)
+    contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True, index=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")
+    contractor = relationship("Contractor", foreign_keys="Organization.contractor_id", lazy="joined")

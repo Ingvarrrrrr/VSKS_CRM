@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.feo_category import FeoCategory
@@ -32,7 +33,7 @@ async def list_planned_items(
 async def create_planned_item(
     data: FeoPlannedItemCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     cat = (await db.execute(
         select(FeoCategory).where(FeoCategory.id == data.feo_category_id)
@@ -60,7 +61,7 @@ async def update_planned_item(
     item_id: int,
     data: FeoPlannedItemCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
@@ -82,7 +83,7 @@ async def update_planned_item(
 async def delete_planned_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
@@ -99,7 +100,7 @@ async def map_purchase_item_to_planned(
     purchase_item_id: int,
     planned_item_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Сопоставить purchase_item с плановой позицией. planned_item_id=null — снять сопоставление."""
     pi = (await db.execute(

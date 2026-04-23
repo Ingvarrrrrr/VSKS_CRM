@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, ALL_ROLES
+from app.auth.permissions import require_tab
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Sum of planned_total_price per feo_category_id for a given subsidy."""
     from app.models.purchase import Purchase
@@ -48,7 +49,7 @@ async def list_categories(
     appendix: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*ALL_ROLES)),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     from app.models.subsidy import Subsidy
     q = select(FeoCategory)
@@ -73,7 +74,7 @@ async def list_categories(
 async def category_tree(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*ALL_ROLES)),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     from app.models.subsidy import Subsidy
     q = select(FeoCategory)
@@ -106,7 +107,7 @@ async def category_tree(
 async def create_category(
     category_data: FeoCategoryCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     if category_data.parent_id:
         parent_result = await db.execute(
@@ -235,7 +236,7 @@ async def download_feo_template():
 @router.post("/import-preview")
 async def feo_import_preview(
     file: UploadFile = File(...),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Read Excel/DOCX file and return headers + sample rows for column mapping."""
     fname = (file.filename or "").lower()
@@ -581,7 +582,7 @@ async def _do_feo_import(
 async def import_feo_from_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Импорт категорий ФЭО из Excel.
     Формат: Субсидия | Уровень 2 | Уровень 3 | Уровень 4 | Код | Приложение | Финансирование | Активна
@@ -674,7 +675,7 @@ async def import_feo_mapped(
     col_amt_lvl3: int = Query(-1),
     col_amt_lvl4: int = Query(-1),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Импорт категорий ФЭО с пользовательским маппингом столбцов."""
     if col_subsidy < 0 or col_lvl2 < 0:
@@ -766,7 +767,7 @@ async def import_feo_mapped(
 async def export_feo_to_excel(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Экспорт дерева категорий ФЭО в Excel."""
     if Workbook is None:
@@ -885,7 +886,7 @@ async def update_category(
     cat_id: int,
     category_data: FeoCategoryCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     result = await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))
     cat = result.scalar_one_or_none()
@@ -929,7 +930,7 @@ async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession
 async def delete_category(
     cat_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
@@ -993,7 +994,7 @@ async def move_category(
     cat_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('feo_categories')),
 ):
     """Move category to a new parent. Set parent_id=null to make root."""
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()

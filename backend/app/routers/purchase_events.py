@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.auth.jwt import get_current_user, require_role
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.purchase import Purchase
 from app.models.purchase_event import PurchaseMember, PurchaseEvent
@@ -103,7 +104,7 @@ async def add_member(
     pid: int,
     body: AddMemberBody,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role("admin", "manager")),
+    current_user=Depends(require_tab('purchases')),
 ):
     purchase = (await db.execute(select(Purchase).where(Purchase.id == pid))).scalar_one_or_none()
     if not purchase:
@@ -139,7 +140,7 @@ async def remove_member(
     pid: int,
     uid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    _=Depends(require_tab('purchases')),
 ):
     m = (await db.execute(
         select(PurchaseMember).where(

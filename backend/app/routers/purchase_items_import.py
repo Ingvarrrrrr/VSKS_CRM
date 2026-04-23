@@ -29,6 +29,7 @@ from app.models.product import Product
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.auth.jwt import get_current_user, require_role, get_single_org_id, MANAGER_ROLES
+from app.auth.permissions import require_tab
 from app.models.user import User
 
 try:
@@ -186,7 +187,7 @@ async def _upsert_product_to_catalog(db, item_name: str, item_type: str, unit_pr
 # ---------------------------------------------------------------------------
 
 @router.get("/items/import/template")
-async def items_import_template(_=Depends(require_role(*MANAGER_ROLES))):
+async def items_import_template(_=Depends(require_tab('purchases'))):
     """Download xlsx template for bulk purchase items import."""
     if not Workbook:
         raise HTTPException(500, "openpyxl не установлен")
@@ -938,7 +939,7 @@ def _feo_find_header_row(rows: list) -> int:
 
 
 @router.get("/import/feo-format/template")
-async def download_feo_template(_=Depends(require_role(*MANAGER_ROLES))):
+async def download_feo_template(_=Depends(require_tab('purchases'))):
     """Скачать шаблон Excel в ФЭО-формате (57 колонок, заголовки в строке 6)."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -1015,7 +1016,7 @@ async def download_feo_template(_=Depends(require_role(*MANAGER_ROLES))):
 async def import_feo_format(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(require_tab('purchases')),
 ):
     """Импорт закупок из ФЭО-формата (57 колонок, заголовки в строке 6).
     Субсидия определяется автоматически через feo_category.subsidy_id.

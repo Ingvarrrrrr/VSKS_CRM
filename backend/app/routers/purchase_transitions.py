@@ -20,6 +20,7 @@ from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.user import User
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_ROLES
+from app.auth.permissions import require_action
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.routers.purchases import _purchase_to_full, _item_to_out, STATUS_ORDER
@@ -236,7 +237,7 @@ async def transition_status(
 async def convert_service_note_to_order(
     pid: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_action('purchase.transition_status')),
 ):
     """Конвертировать служебную записку на выдачу в закупку (меняет purchase_basis на plan_schedule)."""
     result = await db.execute(

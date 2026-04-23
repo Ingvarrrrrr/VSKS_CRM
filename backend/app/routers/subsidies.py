@@ -18,6 +18,7 @@ from app.schemas.schemas import (
     SubsidyContractorOverrideCreate, SubsidyContractorOverrideOut,
 )
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES, ALL_ROLES
+from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from typing import List
 
@@ -64,7 +65,7 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
 @router.get("/", response_model=List[SubsidyOut])
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ALL_ROLES)),
+    current_user: User = Depends(require_tab('subsidies')),
 ):
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
     org_ids = get_org_filter(current_user)
@@ -139,7 +140,7 @@ async def get_subsidy(
 async def create_subsidy(
     subsidy: SubsidyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(require_tab('subsidies')),
 ):
     data = subsidy.dict()
     data['org_id'] = get_single_org_id(current_user) or current_user.org_id
@@ -166,7 +167,7 @@ async def update_subsidy(
     subsidy_id: int,
     subsidy: SubsidyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_action('subsidy.edit')),
 ):
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
@@ -213,7 +214,7 @@ async def update_subsidy(
 async def delete_subsidy(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner")),
+    current_user: User = Depends(require_tab('subsidies')),
 ):
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
@@ -347,7 +348,7 @@ SUPPORTED_DOC_TYPES = {
 @router.get("/{subsidy_id}/templates")
 async def list_subsidy_templates(
     subsidy_id: int,
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('subsidies')),
 ):
     """List which doc types have a subsidy-specific template override."""
     result = []
@@ -447,7 +448,7 @@ async def upload_subsidy_template(
     subsidy_id: int,
     doc_type: str,
     file: UploadFile = File(...),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('subsidies')),
 ):
     """Upload a .docx template override for a specific subsidy and doc type."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -470,7 +471,7 @@ async def upload_subsidy_template(
 async def download_subsidy_template(
     subsidy_id: int,
     doc_type: str,
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('subsidies')),
 ):
     """Download the current subsidy-specific template (or global if no override)."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -499,7 +500,7 @@ async def download_subsidy_template(
 async def delete_subsidy_template(
     subsidy_id: int,
     doc_type: str,
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('subsidies')),
 ):
     """Delete subsidy-specific template override (falls back to global)."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -519,7 +520,7 @@ async def delete_subsidy_template(
 async def upload_global_template(
     doc_type: str,
     file: UploadFile = File(...),
-    current_user=Depends(require_role(*ADMIN_ROLES)),
+    current_user=Depends(require_action('subsidy.edit')),
 ):
     """Upload a global .docx template (superadmin/account_owner only)."""
     if doc_type not in SUPPORTED_DOC_TYPES:
@@ -541,7 +542,7 @@ async def get_budget_history(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*MANAGER_ROLES)),
+    current_user: User = Depends(require_tab('subsidies')),
 ):
     from app.models.budget_history import BudgetHistory as BudgetHistoryModel
     from sqlalchemy import func as safunc

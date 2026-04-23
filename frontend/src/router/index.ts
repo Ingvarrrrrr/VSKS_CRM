@@ -21,6 +21,7 @@ import OrganizationsView from '../views/OrganizationsView.vue'
 import ServiceNotesView from '../views/ServiceNotesView.vue'
 import AdvanceReportsView from '../views/AdvanceReportsView.vue'
 import OrgSettingsView from '../views/OrgSettingsView.vue'
+import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -41,85 +42,85 @@ const router = createRouter({
       path: '/dashboard',
       name: 'dashboard',
       component: DashboardView,
-      meta: { requiresAuth: false, title: 'Дашборд' }
+      meta: { requiresAuth: true, title: 'Дашборд', tab_key: 'dashboard' }
     },
     {
       path: '/dashboard/radar',
       name: 'radar-dashboard',
       component: () => import('../views/RiskRadarView.vue'),
-      meta: { requiresAuth: false, title: 'Risk Radar' }
+      meta: { requiresAuth: true, title: 'Risk Radar', tab_key: 'dashboard.radar' }
     },
     {
       path: '/subsidies',
       name: 'subsidies',
       component: SubsidiesView,
-      meta: { requiresAuth: false, title: 'Субсидии' }
+      meta: { requiresAuth: true, title: 'Субсидии', tab_key: 'subsidies' }
     },
     {
       path: '/orders',
       name: 'orders',
       component: OrdersView,
-      meta: { requiresAuth: false, title: 'Закупки' }
+      meta: { requiresAuth: true, title: 'Закупки', tab_key: 'purchases' }
     },
     {
       path: '/create-order',
       name: 'create-order',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Новый заказ' }
+      meta: { requiresAuth: true, title: 'Новый заказ', tab_key: 'purchases' }
     },
     {
       path: '/orders/:id/edit',
       name: 'edit-order',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Редактировать закупку' }
+      meta: { requiresAuth: true, title: 'Редактировать закупку', tab_key: 'purchases' }
     },
     {
       path: '/orders/:id',
       name: 'view-order',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Закупка' }
+      meta: { requiresAuth: true, title: 'Закупка', tab_key: 'purchases' }
     },
     {
       path: '/contractors',
       name: 'contractors',
       component: ContractorsView,
-      meta: { requiresAuth: false, title: 'Контрагенты' }
+      meta: { requiresAuth: true, title: 'Контрагенты', tab_key: 'contractors' }
     },
     {
       path: '/contracts',
       name: 'contracts',
       component: () => import('../views/ContractsView.vue'),
-      meta: { requiresAuth: false, title: 'Договоры' }
+      meta: { requiresAuth: true, title: 'Договоры', tab_key: 'contracts' }
     },
     {
       path: '/feo-categories',
       name: 'feo-categories',
       component: FeoCategoriesView,
-      meta: { requiresAuth: false, title: 'Категории ФЭО' }
+      meta: { requiresAuth: true, title: 'Категории ФЭО', tab_key: 'feo_categories' }
     },
     {
       path: '/products',
       name: 'products',
       component: ProductsView,
-      meta: { requiresAuth: false, title: 'Каталог товаров' }
+      meta: { requiresAuth: true, title: 'Каталог товаров', tab_key: 'products' }
     },
     {
       path: '/products-summary',
       name: 'products-summary',
       component: () => import('../views/ProductSummaryView.vue'),
-      meta: { requiresAuth: false, title: 'Сводная по продукции' }
+      meta: { requiresAuth: true, title: 'Сводная по продукции', tab_key: 'products.summary' }
     },
     {
       path: '/plan',
       name: 'plan',
       component: PlanView,
-      meta: { requiresAuth: false, title: 'План-график' }
+      meta: { requiresAuth: true, title: 'План-график', tab_key: 'plan' }
     },
     {
       path: '/commercial-requests',
       name: 'commercial-requests',
       component: CommercialRequestsView,
-      meta: { requiresAuth: false, title: 'Запросы КП' }
+      meta: { requiresAuth: true, title: 'Запросы КП', tab_key: 'commercial_requests' }
     },
     {
       path: '/analytics',
@@ -129,25 +130,26 @@ const router = createRouter({
       path: '/my-tasks',
       name: 'my-tasks',
       component: MyTasksView,
-      meta: { requiresAuth: false, title: 'Мои задачи и закупки' }
+      meta: { requiresAuth: true, title: 'Мои задачи и закупки', tab_key: 'my_tasks' }
     },
     {
       path: '/reports',
       name: 'reports',
       component: ReportsView,
-      meta: { requiresAuth: false, title: 'Отчёты' }
+      meta: { requiresAuth: true, title: 'Отчёты', tab_key: 'reports' }
     },
     {
       path: '/staff',
       name: 'staff',
       component: () => import('../views/StaffView.vue'),
-      meta: { requiresAuth: false, title: 'Персонал' }
+      meta: { requiresAuth: true, title: 'Персонал', tab_key: 'staff' }
     },
     {
       path: '/hierarchy',
       name: 'hierarchy',
       component: () => import('../views/HierarchyView.vue'),
-      meta: { requiresAuth: false, title: 'Иерархия' }
+      // Sub-view of /staff — shares tab_key
+      meta: { requiresAuth: true, title: 'Иерархия', tab_key: 'staff' }
     },
     {
       path: '/users',
@@ -157,13 +159,14 @@ const router = createRouter({
       path: '/suppliers',
       name: 'suppliers',
       component: SuppliersView,
-      meta: { requiresAuth: false, title: 'Поставщики' }
+      // Sub-view of /contractors — shares tab_key
+      meta: { requiresAuth: true, title: 'Поставщики', tab_key: 'contractors' }
     },
     {
       path: '/system-incidents',
       name: 'system-incidents',
       component: SystemIncidentsView,
-      meta: { requiresAuth: false, title: 'Системные инциденты' }
+      meta: { requiresAuth: true, title: 'Системные инциденты', tab_key: 'system_incidents' }
     },
     {
       path: '/departments',
@@ -191,73 +194,73 @@ const router = createRouter({
       path: '/organizations',
       name: 'organizations',
       component: OrganizationsView,
-      meta: { requiresAuth: false, title: 'Организации' }
+      meta: { requiresAuth: true, title: 'Организации', tab_key: 'admin.organizations' }
     },
     // Service notes
     {
       path: '/service-notes',
       name: 'service-notes',
       component: ServiceNotesView,
-      meta: { requiresAuth: false, title: 'Служебные записки' }
+      meta: { requiresAuth: true, title: 'Служебные записки', tab_key: 'service_notes' }
     },
     {
       path: '/service-notes/create',
       name: 'create-service-note',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Новая служебная записка', formMode: 'service_note_delivery' }
+      meta: { requiresAuth: true, title: 'Новая служебная записка', formMode: 'service_note_delivery', tab_key: 'service_notes' }
     },
     {
       path: '/service-notes/:id/edit',
       name: 'edit-service-note',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Служебная записка', formMode: 'service_note_delivery' }
+      meta: { requiresAuth: true, title: 'Служебная записка', formMode: 'service_note_delivery', tab_key: 'service_notes' }
     },
     // Advance reports
     {
       path: '/advance-reports',
       name: 'advance-reports',
       component: AdvanceReportsView,
-      meta: { requiresAuth: false, title: 'Авансовые отчёты' }
+      meta: { requiresAuth: true, title: 'Авансовые отчёты', tab_key: 'advance_reports' }
     },
     {
       path: '/advance-reports/create',
       name: 'create-advance-report',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Новый авансовый отчёт', formMode: 'advance_report' }
+      meta: { requiresAuth: true, title: 'Новый авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports' }
     },
     {
       path: '/advance-reports/:id/edit',
       name: 'edit-advance-report',
       component: CreateOrderView,
-      meta: { requiresAuth: false, title: 'Авансовый отчёт', formMode: 'advance_report' }
+      meta: { requiresAuth: true, title: 'Авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports' }
     },
     // Billing
     {
       path: '/billing',
       name: 'billing',
       component: () => import('../views/BillingView.vue'),
-      meta: { requiresAuth: false, title: 'Биллинг' }
+      meta: { requiresAuth: true, title: 'Биллинг', tab_key: 'admin.billing' }
     },
     // Org settings
     {
       path: '/org-settings',
       name: 'org-settings',
       component: OrgSettingsView,
-      meta: { requiresAuth: false, title: 'Настройки организации' }
+      meta: { requiresAuth: true, title: 'Настройки организации', tab_key: 'admin.settings' }
     },
     // Wishes
     {
       path: '/wishes',
       name: 'wishes',
       component: () => import('../views/WishesView.vue'),
-      meta: { requiresAuth: true, title: 'Заявки' }
+      meta: { requiresAuth: true, title: 'Заявки', tab_key: 'wishes' }
     },
     // Internal chat
     {
       path: '/chat',
       name: 'chat',
       component: () => import('../views/ChatView.vue'),
-      meta: { requiresAuth: true, title: 'Чат' }
+      meta: { requiresAuth: true, title: 'Чат', tab_key: 'chat' }
     },
     // Admin roles matrix
     {
@@ -269,11 +272,12 @@ const router = createRouter({
   ]
 })
 
-// Разрешённые маршруты для employee
-const EMPLOYEE_ALLOWED = ['/my-tasks', '/wishes', '/orders/', '/login', '/register', '/', '/verify-email', '/reset-password']
+// Phase 17: Public paths allow-list replaces legacy EMPLOYEE_ALLOWED hardcoded array.
+// Route-level gating now runs via meta.tab_key + authStore.hasTab() in beforeEach below.
+const PUBLIC_PATHS = ['/', '/login', '/register', '/verify-email', '/reset-password']
 
-// Навигационные хуки для проверки авторизации
-router.beforeEach((to, _, next) => {
+// Навигационные хуки для проверки авторизации + tab_key permission gate (Phase 17)
+router.beforeEach(async (to, _, next) => {
   const token = localStorage.getItem('auth_token')
   const isAuthenticated = token !== null && token.startsWith('eyJ')
   const role = localStorage.getItem('user_role')
@@ -283,28 +287,31 @@ router.beforeEach((to, _, next) => {
     return next(role === 'employee' ? '/my-tasks' : '/dashboard')
   }
 
+  // Публичные маршруты доступны без токена
+  if (PUBLIC_PATHS.includes(to.path) || to.meta.public) {
+    return next()
+  }
+
   // Не авторизован + закрытый маршрут → лендинг
-  if (!isAuthenticated && !to.meta.public) {
+  if (!isAuthenticated) {
     return next('/')
   }
 
-  // Employee guard: ограниченный доступ
-  if (isAuthenticated && role === 'employee') {
-    const path = to.path
-    const allowed = path === '/my-tasks'
-      || path === '/wishes'           // D-11
-      || path === '/products'
-      || path === '/contractors'
-      || path === '/orders'
-      || path === '/create-order'
-      || path === '/chat'
-      || path.startsWith('/orders/')
-      || path.startsWith('/service-notes')
-      || path.startsWith('/advance-reports')
-      || to.meta.public
-    if (!allowed) {
-      return next('/my-tasks')
-    }
+  // Superadmin bypass (D-05.3)
+  if (role === 'superadmin') {
+    return next()
+  }
+
+  // Ensure permissions are loaded before enforcing tab_key guard
+  const authStore = useAuthStore()
+  if (!authStore.loaded) {
+    await authStore.loadPermissions(localStorage.getItem('active_org_id'))
+  }
+
+  // D-01(a): route-level enforcement — if route declares a tab_key, user must have it
+  const tabKey = to.meta.tab_key as string | undefined
+  if (tabKey && !authStore.hasTab(tabKey)) {
+    return next('/my-tasks')
   }
 
   next()

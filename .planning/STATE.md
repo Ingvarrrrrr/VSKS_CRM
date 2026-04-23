@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-23T09:39:29.503Z"
+last_updated: "2026-04-23T18:06:52.837Z"
 progress:
   total_phases: 18
   completed_phases: 9
   total_plans: 66
-  completed_plans: 59
+  completed_plans: 60
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 17 (permission-system-override) — EXECUTING
-Plan: 7 of 9
+Plan: 2 of 9
 Next action: `/gsd:plan-phase 17` — создать PLAN.md файлы из CONTEXT решений
 Resume file: None
 
@@ -94,6 +94,7 @@ Recently closed:
 - [Phase 17-permission-system-override]: purchases.py bulk_delete → require_tab('purchases') — no separate delete action seeded for purchases
 - [Phase 17-permission-system-override]: publications.py can_publish inline check already absent; declarative require_action('publication.create') added on POST endpoint per D-06
 - [Phase 17-permission-system-override]: users.py GET /users/ stays require_role(*ALL_ROLES) — 17-05 handles superadmin filter there
+- [Phase 17]: [Phase 17-07]: AdminRolesView uses 300ms debounced per-role PUT with optimistic UI and server-truth revert on error; publication.create filtered out of matrix via PER_USER_ONLY_ACTIONS (per-user only, handled in 17-08)
 
 ## Blockers
 

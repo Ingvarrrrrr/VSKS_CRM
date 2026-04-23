@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-23T09:37:52.918Z"
+last_updated: "2026-04-23T09:39:29.503Z"
 progress:
   total_phases: 18
   completed_phases: 9
   total_plans: 66
-  completed_plans: 58
+  completed_plans: 59
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 17 (permission-system-override) — EXECUTING
-Plan: 6 of 9
+Plan: 7 of 9
 Next action: `/gsd:plan-phase 17` — создать PLAN.md файлы из CONTEXT решений
 Resume file: None
 
@@ -91,6 +91,9 @@ Recently closed:
 - [Phase 17]: Pinia auth store (stores/auth.ts) uses tab_key filter via authStore.hasTab() replacing hardcoded roles arrays in AppBar.vue; fail-open pattern on loadPermissions errors
 - [Phase 17]: D-09 superadmin filter applied in 4 user-listing locations: list_users, _get_visible_user_ids, hierarchy graph, task authority; all other select(User) sites annotated superadmin-bypass-ok
 - [Phase 17]: permissions.router prefix /api/permissions in constructor; org_id as Query(...) param in override endpoints; self-lockout returns 403 on admin.roles+staff keys for own role
+- [Phase 17-permission-system-override]: purchases.py bulk_delete → require_tab('purchases') — no separate delete action seeded for purchases
+- [Phase 17-permission-system-override]: publications.py can_publish inline check already absent; declarative require_action('publication.create') added on POST endpoint per D-06
+- [Phase 17-permission-system-override]: users.py GET /users/ stays require_role(*ALL_ROLES) — 17-05 handles superadmin filter there
 
 ## Blockers
 

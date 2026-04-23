@@ -61,20 +61,63 @@
     </v-card>
 
     <!-- Edit org dialog -->
-    <v-dialog v-model="editOrgDialog" max-width="540" scrollable>
-      <v-card>
+    <v-dialog v-model="editOrgDialog" max-width="640" scrollable>
+      <v-card class="org-dialog-card">
         <v-card-title class="pa-4">Реквизиты организации</v-card-title>
         <v-card-text class="pa-4 pt-0" style="max-height:75vh">
-          <v-text-field v-model="editOrgItem.name" label="Краткое название *" variant="outlined" density="compact" class="mb-2" />
-          <v-text-field v-model="editOrgItem.full_name" label="Полное наименование" variant="outlined" density="compact" class="mb-2" />
+          <v-alert
+            v-if="editOrgItem.contractor_id"
+            type="info" density="compact" variant="tonal" class="mb-3"
+            icon="mdi-link-variant"
+          >
+            <div class="d-flex align-center flex-wrap" style="gap:8px">
+              <span class="text-caption">
+                Данные автоматически берутся из карточки контрагента.
+                Редактируйте реквизиты в разделе «Контрагенты».
+              </span>
+              <v-btn
+                size="x-small" variant="tonal" color="primary"
+                prepend-icon="mdi-open-in-new"
+                @click="goToContractor(editOrgItem.contractor_id)"
+              >
+                Открыть контрагента
+              </v-btn>
+            </div>
+          </v-alert>
+
+          <v-text-field
+            v-model="editOrgItem.name" label="Краткое название *"
+            variant="outlined" density="compact" class="mb-2"
+          />
+          <v-text-field
+            v-model="editOrgItem.full_name" label="Полное наименование"
+            variant="outlined" density="compact" class="mb-2"
+            :readonly="!!editOrgItem.contractor_id"
+            :hint="editOrgItem.contractor_id ? 'Поле берётся из контрагента' : ''"
+            :persistent-hint="!!editOrgItem.contractor_id"
+          />
 
           <div class="d-flex gap-2 align-start mb-1">
-            <v-text-field v-model="editOrgItem.inn" label="ИНН" variant="outlined" density="compact" style="flex:1" hint="10 (юр.лицо) или 12 (ИП) цифр" persistent-hint />
-            <v-text-field v-model="editOrgItem.kpp" label="КПП" variant="outlined" density="compact" style="max-width:130px" hide-details />
-            <v-text-field v-model="editOrgItem.ogrn" label="ОГРН" variant="outlined" density="compact" style="max-width:150px" hide-details />
+            <v-text-field
+              v-model="editOrgItem.inn" label="ИНН"
+              variant="outlined" density="compact" style="flex:1"
+              hint="10 (юр.лицо) или 12 (ИП) цифр" persistent-hint
+              :readonly="!!editOrgItem.contractor_id"
+            />
+            <v-text-field
+              v-model="editOrgItem.kpp" label="КПП"
+              variant="outlined" density="compact" style="max-width:130px" hide-details
+              :readonly="!!editOrgItem.contractor_id"
+            />
+            <v-text-field
+              v-model="editOrgItem.ogrn" label="ОГРН"
+              variant="outlined" density="compact" style="max-width:150px" hide-details
+              :readonly="!!editOrgItem.contractor_id"
+            />
           </div>
 
           <v-btn
+            v-if="!editOrgItem.contractor_id"
             variant="tonal" color="primary" size="small" class="mt-3 mb-2"
             prepend-icon="mdi-database-search-outline"
             :loading="egrulLoading"
@@ -88,8 +131,16 @@
             {{ egrulMessage }}
           </v-alert>
 
-          <v-text-field v-model="editOrgItem.address" label="Адрес" variant="outlined" density="compact" class="mb-2" />
-          <v-text-field v-model="editOrgItem.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-2" />
+          <v-text-field
+            v-model="editOrgItem.address" label="Адрес"
+            variant="outlined" density="compact" class="mb-2"
+            :readonly="!!editOrgItem.contractor_id"
+          />
+          <v-text-field
+            v-model="editOrgItem.signatory" label="Подписант (ФИО, должность)"
+            variant="outlined" density="compact" class="mb-2"
+            :readonly="!!editOrgItem.contractor_id"
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -149,6 +200,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
 interface Org {
@@ -163,6 +215,7 @@ interface Org {
   is_active: boolean
   created_at: string
   user_count: number
+  contractor_id?: number | null
 }
 
 const EGRUL_FIELDS = [
@@ -174,6 +227,7 @@ const EGRUL_FIELDS = [
   { key: 'signatory', label: 'Подписант' },
 ]
 
+const router = useRouter()
 const orgs = ref<Org[]>([])
 const loading = ref(false)
 const search = ref('')
@@ -190,7 +244,17 @@ const deleteDialog = reactive({ show: false, item: null as Org | null, deleting:
 
 const editOrgDialog = ref(false)
 const editOrgSaving = ref(false)
-const editOrgItem = ref({ id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '' })
+const editOrgItem = ref({
+  id: 0,
+  name: '',
+  full_name: '',
+  inn: '',
+  kpp: '',
+  ogrn: '',
+  address: '',
+  signatory: '',
+  contractor_id: null as number | null,
+})
 const egrulLoading = ref(false)
 const egrulMessage = ref('')
 const egrulMessageType = ref<'success' | 'info' | 'error'>('info')
@@ -248,7 +312,7 @@ function applyEgrulDiff() {
   egrulMessageType.value = 'success'
 }
 
-function openEditOrg(org: Org) {
+async function openEditOrg(org: Org) {
   editOrgItem.value = {
     id: org.id,
     name: org.name || '',
@@ -258,9 +322,36 @@ function openEditOrg(org: Org) {
     ogrn: org.ogrn || '',
     address: org.address || '',
     signatory: org.signatory || '',
+    contractor_id: org.contractor_id ?? null,
   }
   egrulMessage.value = ''
   editOrgDialog.value = true
+
+  // Phase 17.1-03: if org is not yet linked to a contractor but has an INN —
+  // prefill empty fields from the matching Contractor (if any).
+  if (!org.contractor_id && org.inn) {
+    try {
+      const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${org.inn.trim()}`)
+      // Only fill fields that are still empty — never overwrite existing values.
+      const fill = (key: keyof typeof editOrgItem.value, value: any) => {
+        if (!((editOrgItem.value as any)[key] || '').toString().trim() && value) {
+          ;(editOrgItem.value as any)[key] = value
+        }
+      }
+      fill('full_name', data.full_name)
+      fill('kpp', data.kpp)
+      fill('ogrn', data.ogrn)
+      fill('address', data.address)
+      fill('signatory', data.signatory)
+    } catch {
+      // silent — prefill is best-effort
+    }
+  }
+}
+
+function goToContractor(contractorId: number) {
+  editOrgDialog.value = false
+  router.push({ path: '/contractors', query: { id: String(contractorId) } })
 }
 
 async function saveOrg() {
@@ -276,6 +367,7 @@ async function saveOrg() {
         ogrn: editOrgItem.value.ogrn || null,
         address: editOrgItem.value.address || null,
         signatory: editOrgItem.value.signatory || null,
+        contractor_id: editOrgItem.value.contractor_id ?? null,
       }
     })
     editOrgDialog.value = false
@@ -346,3 +438,12 @@ async function doDelete() {
 
 onMounted(loadOrgs)
 </script>
+
+<style scoped>
+/* Phase 17.1-03 — fix label truncation for «Краткое название» and similar long labels
+   inside the narrow Organization edit dialog */
+.org-dialog-card :deep(.v-field-label) {
+  white-space: nowrap;
+  overflow: visible;
+}
+</style>

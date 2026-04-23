@@ -432,7 +432,7 @@ Plans:
 3. Не видит вкладку в сайдбаре = не может достучаться до API (backend guard)
 4. Миграция seed'ит текущие маппинги `ADMIN_ROLES/MANAGER_ROLES/ALL_ROLES` → нулевая регрессия для существующих пользователей
 
-**Plans:** 7/9 plans executed
+**Plans:** 8/9 plans executed
 - [x] 17-01-PLAN.md - permission models + alembic migration + seed from hardcode + can_publish data migration (D-02/05/07/08)
 - [x] 17-02-PLAN.md - Wave 0 validation: conftest fixtures + 5 backend test files + e2e/20-permissions.spec.ts scaffolding
 - [x] 17-03-PLAN.md - require_tab/require_action factories + get_effective_tabs + /users/me permissions field (D-01b/02/08)
@@ -440,7 +440,7 @@ Plans:
 - [x] 17-05-PLAN.md - permissions router (CRUD matrix + overrides) + self-lockout + superadmin filter on list_users (D-03/05/09)
 - [x] 17-06-PLAN.md - Pinia stores/auth.ts + AppBar nav filter by hasTab + login/org-switch wiring (D-01a)
 - [x] 17-07-PLAN.md - AdminRolesView.vue matrix 5xN with debounced save + self-lockout disable + checkpoint (D-03/05)
-- [ ] 17-08-PLAN.md - UserPermissionsSection.vue (per-org overrides + Individual badge) integrated into StaffView (D-04/08)
+- [x] 17-08-PLAN.md - UserPermissionsSection.vue (per-org overrides + Individual badge) integrated into StaffView (D-04/08)
 - [ ] 17-09-PLAN.md - router guards meta.tab_key + E2E regression + phase sign-off checkpoint (D-01a/05/09)
 
 ---

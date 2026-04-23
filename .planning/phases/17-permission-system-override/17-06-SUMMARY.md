@@ -124,6 +124,21 @@ None — `loadPermissions` makes a real API call to `/users/me?org_id=...`. When
 - Plan 17-09 (Router guards): `authStore.loaded` ref is available to block navigation until permissions loaded.
 - Foundation complete: sidebar visibility is now dynamic, driven by backend permission matrix seeded in 17-01.
 
+## Self-Check: PASSED
+
+- stores/auth.ts: FOUND
+- main.ts: FOUND
+- AppBar.vue: FOUND
+- LoginView.vue: FOUND
+- App.vue: FOUND
+- commit c520cbc (Task 1 — 17-05 executor): FOUND
+- commit e1d1441 (Task 2 — AppBar migration): FOUND
+- tab_key entries in AppBar.vue: 33 (expected 23+) PASS
+- authStore.hasTab in AppBar.vue: 2 occurrences PASS
+- authStore.clear in AppBar.vue: 1 occurrence PASS
+- authStore.loadPermissions in AppBar.vue: 2 occurrences PASS
+- pinia before mount in main.ts: PASS (awk check)
+
 ---
 *Phase: 17-permission-system-override*
 *Completed: 2026-04-23*

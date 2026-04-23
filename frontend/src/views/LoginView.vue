@@ -84,9 +84,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
@@ -127,6 +129,12 @@ const login = async () => {
     if (data.org_id) localStorage.setItem('user_org_id', String(data.org_id))
     if (data.org_name) localStorage.setItem('user_org_name', data.org_name)
     localStorage.setItem('can_publish', data.can_publish ? 'true' : 'false')
+    try {
+      await authStore.loadPermissions(localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id'))
+    } catch (e) {
+      console.error('[login] loadPermissions failed, fail-open', e)
+      authStore.loaded = true
+    }
     window.location.href = '/'
   } catch (err: any) {
     error.value = err.message || 'Ошибка авторизации'

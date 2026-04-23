@@ -7,8 +7,9 @@ import VueApexCharts from 'vue3-apexcharts'
 import { vResizableColumns } from './directives/resizable-columns'
 
 const app = createApp(App)
+const pinia = createPinia()
 
-app.use(createPinia())
+app.use(pinia)      // MUST be before app.use(router) so router guards can use the store
 app.use(vuetify)
 app.use(router)
 app.use(VueApexCharts)

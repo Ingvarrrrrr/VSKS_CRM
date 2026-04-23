@@ -57,9 +57,11 @@ import ApiErrorDialog from './components/ApiErrorDialog.vue'
 import { initTableResize } from './composables/useTableResize'
 import { totalUnread } from './composables/useChat'
 import ToastContainer from './components/ToastContainer.vue'
+import { useAuthStore } from './stores/auth'
 
 const route = useRoute()
 const theme = useTheme()
+const authStore = useAuthStore()
 
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password']
 
@@ -94,6 +96,14 @@ onMounted(async () => {
         window.location.href = '/'
       }
     } catch {}
+
+    // Load effective permissions from /users/me
+    try {
+      await authStore.loadPermissions(localStorage.getItem('active_org_id') || localStorage.getItem('user_org_id'))
+    } catch (e) {
+      console.error('[app] loadPermissions failed on mount, fail-open', e)
+      authStore.loaded = true
+    }
   }
 })
 </script>

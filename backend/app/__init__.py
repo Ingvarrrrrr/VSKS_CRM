@@ -16,6 +16,7 @@ from .routers import (
     system_incidents, organizations, reports, events, purchase_approvals,
     tasks, departments, delivery_addresses, hierarchy, billing,
     wishes, purchase_export, purchase_items_import, purchase_members,
+    permissions as permissions_router,
 )
 from .routers import wish_documents
 from .routers import org_config
@@ -333,3 +334,4 @@ app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
 app.include_router(wish_documents.router)
 app.include_router(wishes.router)
 app.include_router(push_router.router)
+app.include_router(permissions_router.router)

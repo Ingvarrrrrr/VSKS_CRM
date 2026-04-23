@@ -348,8 +348,10 @@ import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch } from '@/api'
 import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
+import { useAuthStore } from '../stores/auth'
 
 const { globalSubsidyId } = useGlobalSubsidy()
+const authStore = useAuthStore()
 
 const router = useRouter()
 const $route = useRoute()
@@ -371,18 +373,18 @@ const ALL_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager
 const isEmployee = computed(() => userRoleRaw.value === 'employee')
 
 const allNavShortcuts = [
-  { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
-  { label: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', roles: MANAGER_ROLES },
-  { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
-  { label: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
-  { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
-  { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: MANAGER_ROLES },
-  { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
-  { label: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: MANAGER_ROLES },
-  { label: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', roles: MANAGER_ROLES },
+  { label: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', tab_key: 'dashboard' },
+  { label: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', tab_key: 'dashboard.radar' },
+  { label: 'Задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', tab_key: 'my_tasks' },
+  { label: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', tab_key: 'wishes' },
+  { label: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', tab_key: 'subsidies' },
+  { label: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', tab_key: 'purchases' },
+  { label: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', tab_key: 'contracts' },
+  { label: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', tab_key: 'contractors' },
+  { label: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', tab_key: 'reports' },
 ]
 const navShortcuts = computed(() =>
-  allNavShortcuts.filter(n => n.roles.includes(userRoleRaw.value))
+  allNavShortcuts.filter(n => authStore.hasTab(n.tab_key))
 )
 // ── Sidebar badges ──
 const badgeNewTasks = ref(0)
@@ -441,35 +443,35 @@ const quickSubsidies = computed(() =>
     .filter(Boolean)
 )
 
-const menuItems = computed(() => {
-  const role = userRoleRaw.value
-  const items = [
-    { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', roles: MANAGER_ROLES },
-    { title: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', roles: MANAGER_ROLES },
-    { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', roles: ALL_ROLES },
-    { title: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', roles: ALL_ROLES },
-    { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', roles: ADMIN_ROLES },
-    { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', roles: ALL_ROLES },
-    { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', roles: ALL_ROLES },
-    { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', roles: ALL_ROLES },
-    { title: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', roles: MANAGER_ROLES },
-    { title: 'Товары', icon: 'mdi-package-variant', route: '/products', roles: ALL_ROLES },
-    { title: 'Сводная по продукции', icon: 'mdi-chart-box-outline', route: '/products-summary', roles: MANAGER_ROLES },
-    { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', roles: ADMIN_ROLES },
-    { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', roles: MANAGER_ROLES },
-    { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', roles: ADMIN_ROLES },
-    { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', roles: MANAGER_ROLES },
-    { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', roles: MANAGER_ROLES },
-    { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', roles: ADMIN_ROLES },
-    { title: 'Организации', icon: 'mdi-domain', route: '/organizations', roles: ['superadmin'] },
-    { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', roles: ['superadmin', 'org_admin'] },
-    { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', roles: ALL_ROLES },
-    { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', roles: ALL_ROLES },
-    { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', roles: ADMIN_ROLES },
-    { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', roles: ALL_ROLES },
-  ]
-  return items.filter(i => i.roles.includes(role))
-})
+const _allMenuItems = [
+  { title: 'Дашборд', icon: 'mdi-view-dashboard', route: '/dashboard', tab_key: 'dashboard' },
+  { title: 'Radar', icon: 'mdi-radar', route: '/dashboard/radar', tab_key: 'dashboard.radar' },
+  { title: 'Мои задачи и закупки', icon: 'mdi-clipboard-account', route: '/my-tasks', tab_key: 'my_tasks' },
+  { title: 'Заявки', icon: 'mdi-hand-heart-outline', route: '/wishes', tab_key: 'wishes' },
+  { title: 'Субсидии', icon: 'mdi-cash-multiple', route: '/subsidies', tab_key: 'subsidies' },
+  { title: 'Закупки', icon: 'mdi-clipboard-list', route: '/orders', tab_key: 'purchases' },
+  { title: 'Новый заказ', icon: 'mdi-plus-circle', route: '/create-order', tab_key: 'purchases' },
+  { title: 'Контрагенты', icon: 'mdi-account-group', route: '/contractors', tab_key: 'contractors' },
+  { title: 'Договоры', icon: 'mdi-file-document-multiple', route: '/contracts', tab_key: 'contracts' },
+  { title: 'Товары', icon: 'mdi-package-variant', route: '/products', tab_key: 'products' },
+  { title: 'Сводная по продукции', icon: 'mdi-chart-box-outline', route: '/products-summary', tab_key: 'products.summary' },
+  { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', tab_key: 'feo_categories' },
+  { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', tab_key: 'commercial_requests' },
+  { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', tab_key: 'staff' },
+  { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', tab_key: 'reports' },
+  { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', tab_key: 'plan' },
+  { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', tab_key: 'system_incidents' },
+  { title: 'Организации', icon: 'mdi-domain', route: '/organizations', tab_key: 'admin.organizations' },
+  { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', tab_key: 'admin.billing' },
+  { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', tab_key: 'service_notes' },
+  { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
+  { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
+  { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
+  { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },
+]
+const menuItems = computed(() =>
+  _allMenuItems.filter(i => authStore.hasTab(i.tab_key))
+)
 
 // ── Sidebar drag-and-drop reorder ──
 const SIDEBAR_ORDER_KEY = 'sidebar_menu_order'
@@ -587,6 +589,7 @@ function onPhotoSaved(photoUrl: string | null) {
 }
 
 const logout = () => {
+  authStore.clear()
   localStorage.removeItem('auth_token')
   localStorage.removeItem('user_role')
   localStorage.removeItem('user_name')
@@ -655,6 +658,12 @@ const switchOrgSingle = async (org: {id: number; name: string}) => {
       localStorage.setItem('auth_token', data.access_token)
       localStorage.setItem('user_org_id', String(data.org_id))
       localStorage.setItem('user_org_name', data.org_name)
+      try {
+        await authStore.loadPermissions(data.org_id)
+      } catch (e) {
+        console.error('[org-switch] loadPermissions failed, fail-open', e)
+        authStore.loaded = true
+      }
       window.location.reload()
     }
   } catch (e) {
@@ -738,6 +747,13 @@ async function applyOrgSelection() {
       localStorage.setItem('selected_org_names', JSON.stringify(data.org_names))
       selectedOrgIds.value = data.org_ids
       orgPickerDialog.value = false
+      try {
+        const primaryOrgId = data.org_ids?.[0] ?? null
+        await authStore.loadPermissions(primaryOrgId)
+      } catch (e) {
+        console.error('[org-select] loadPermissions failed, fail-open', e)
+        authStore.loaded = true
+      }
       window.location.reload()
     }
   } catch (e) {

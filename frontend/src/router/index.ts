@@ -259,6 +259,13 @@ const router = createRouter({
       component: () => import('../views/ChatView.vue'),
       meta: { requiresAuth: true, title: 'Чат' }
     },
+    // Admin roles matrix
+    {
+      path: '/admin/roles',
+      name: 'admin-roles',
+      component: () => import('../views/AdminRolesView.vue'),
+      meta: { requiresAuth: true, title: 'Роли и права', tab_key: 'admin.roles' }
+    },
   ]
 })
 

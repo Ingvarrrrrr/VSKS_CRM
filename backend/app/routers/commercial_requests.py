@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES, ALL_ROLES, get_org_filter
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.commercial_request import CommercialRequest, CommercialRequestRecipient
 from app.models.contractor import Contractor
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api/commercial-requests", tags=["commercial_requests
 async def create_commercial_request(
     data: CommercialRequestCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*ALL_ROLES)),
+    current_user=Depends(require_tab('commercial_requests')),
 ):
     purchase = (await db.execute(select(Purchase).where(Purchase.id == data.purchase_id))).scalar_one_or_none()
     if not purchase:
@@ -109,7 +110,7 @@ async def update_commercial_request(
     request_id: int,
     data: CommercialRequestUpdate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES)),
+    _=Depends(require_tab('commercial_requests')),
 ):
     """Обновить тему, текст, срок КП запроса."""
     req = (await db.execute(
@@ -132,7 +133,7 @@ async def update_commercial_request_status(
     request_id: int,
     data: CommercialRequestStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES)),
+    _=Depends(require_tab('commercial_requests')),
 ):
     req = (await db.execute(
         select(CommercialRequest)
@@ -152,7 +153,7 @@ async def update_recipient_status(
     recipient_id: int,
     data: CommercialRequestRecipientStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*MANAGER_ROLES)),
+    _=Depends(require_tab('commercial_requests')),
 ):
     recipient = (await db.execute(
         select(CommercialRequestRecipient).where(CommercialRequestRecipient.id == recipient_id)
@@ -180,7 +181,7 @@ class KpSendRequest(BaseModel):
 async def send_kp_emails(
     data: KpSendRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES)),
+    _=Depends(require_tab('commercial_requests')),
 ):
     """Отправить КП напрямую через SMTP (настройки из БД)."""
     from app.routers.settings import get_setting

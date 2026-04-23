@@ -9,6 +9,7 @@ from app.models.purchase import Purchase
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.auth.permissions import require_tab, require_action
 from app.models.subsidy import Subsidy
 from typing import List, Optional
 from decimal import Decimal
@@ -35,7 +36,7 @@ async def list_contracts(
     status: Optional[str] = Query(None),
     contractor_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*ALL_ROLES)),
+    current_user=Depends(require_tab('contracts')),
 ):
     q = select(Contract).options(
         selectinload(Contract.contractor),
@@ -104,7 +105,7 @@ async def list_contracts(
 async def create_contract(
     data: ContractCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('contracts')),
 ):
     # Duplicate check: same number + contractor + subsidy (org) + date
     if data.contractor_id and data.number:
@@ -146,7 +147,7 @@ async def create_contract(
     return d
 
 @router.put("/{cid}", response_model=ContractOut)
-async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(require_role(*MANAGER_ROLES))):
+async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(require_tab('contracts'))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
@@ -200,7 +201,7 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     return d
 
 @router.delete("/{cid}")
-async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
+async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_action('contract.delete'))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
@@ -211,7 +212,7 @@ async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depend
 
 
 @router.post("/{cid}/merge/{target_id}")
-async def merge_contracts(cid: int, target_id: int, db: AsyncSession = Depends(get_db), _=Depends(require_role(*ADMIN_ROLES))):
+async def merge_contracts(cid: int, target_id: int, db: AsyncSession = Depends(get_db), _=Depends(require_tab('contracts'))):
     """Merge contract cid INTO target_id: move all purchases, then delete cid."""
     if cid == target_id:
         raise HTTPException(400, "Нельзя объединить договор сам с собой")
@@ -233,7 +234,7 @@ async def merge_contracts(cid: int, target_id: int, db: AsyncSession = Depends(g
 @router.post("/migrate-from-purchases")
 async def migrate_contracts_from_purchases(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("superadmin", "account_owner", "admin")),
+    _=Depends(require_tab('contracts')),
 ):
     """Create Contract records from purchases.contract_number strings (skip existing)."""
     # Get all purchases with a contract_number set but no contract_id
@@ -473,7 +474,7 @@ def _parse_amount(val) -> Optional[Decimal]:
 @router.post("/import/preview")
 async def contracts_import_preview(
     file: UploadFile = File(...),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('contracts')),
 ):
     """Parse uploaded file and return headers + sample rows for column mapping UI."""
     fname = (file.filename or '').lower()
@@ -503,7 +504,7 @@ async def contracts_import_preview(
 async def contracts_import_mapped(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(*MANAGER_ROLES)),
+    current_user=Depends(require_tab('contracts')),
     col_number: Optional[int] = Query(None),
     col_date: Optional[int] = Query(None),
     col_contractor: Optional[int] = Query(None),

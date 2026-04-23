@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id
+from app.auth.permissions import require_tab
 from app.models.user import User
 from app.database import get_db
 from app.models.supplier import Supplier, SupplierProduct
@@ -37,7 +38,7 @@ async def list_suppliers(
 async def create_supplier(
     data: SupplierCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner", "manager")),
+    current_user: User = Depends(require_tab('contractors')),
 ):
     d = data.model_dump()
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
@@ -56,7 +57,7 @@ async def update_supplier(
     supplier_id: int,
     data: SupplierCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    _=Depends(require_tab('contractors')),
 ):
     s = (await db.execute(select(Supplier).where(Supplier.id == supplier_id))).scalar_one_or_none()
     if not s:
@@ -74,7 +75,7 @@ async def update_supplier(
 async def delete_supplier(
     supplier_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    _=Depends(require_tab('contractors')),
 ):
     s = (await db.execute(select(Supplier).where(Supplier.id == supplier_id))).scalar_one_or_none()
     if not s:
@@ -88,7 +89,7 @@ async def add_supplier_product(
     supplier_id: int,
     data: SupplierProductCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    _=Depends(require_tab('contractors')),
 ):
     s = (await db.execute(select(Supplier).where(Supplier.id == supplier_id))).scalar_one_or_none()
     if not s:
@@ -117,7 +118,7 @@ async def remove_supplier_product(
     supplier_id: int,
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role("admin", "manager")),
+    _=Depends(require_tab('contractors')),
 ):
     sp = (await db.execute(
         select(SupplierProduct).where(

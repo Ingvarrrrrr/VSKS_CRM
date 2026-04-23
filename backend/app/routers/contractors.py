@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractorCreate, ContractorOut
 from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.auth.permissions import require_tab
 from app.models.user import User
 from typing import List, Optional
 from io import BytesIO
@@ -548,7 +549,7 @@ async def lookup_inn(
 async def enrich_contractor_from_fns(
     contractor_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES, *MANAGER_ROLES)),
+    _=Depends(require_tab('contractors')),
 ):
     """Fetch data from FNS by contractor's INN and fill empty fields."""
     res = await db.execute(select(Contractor).where(Contractor.id == contractor_id))
@@ -580,7 +581,7 @@ async def enrich_contractor_from_fns(
 @router.post("/enrich-all-fns")
 async def enrich_all_contractors_from_fns(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role("superadmin", "account_owner")),
+    current_user=Depends(require_tab('contractors')),
 ):
     """Bulk-enrich all contractors that have a Russian INN (10 or 12 digits) from FNS."""
     import asyncio
@@ -724,7 +725,7 @@ async def get_contractor(
 async def create_contractor(
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ALL_ROLES)),
+    current_user: User = Depends(require_tab('contractors')),
 ):
     d = data.model_dump()
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
@@ -740,7 +741,7 @@ async def patch_contractor_email(
     cid: int,
     email: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES)),
+    _=Depends(require_tab('contractors')),
 ):
     c = (await db.execute(select(Contractor).where(Contractor.id == cid))).scalar_one_or_none()
     if not c:
@@ -756,7 +757,7 @@ async def update_contractor(
     cid: int,
     data: ContractorCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES))
+    _=Depends(require_tab('contractors'))
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
@@ -773,7 +774,7 @@ async def update_contractor(
 async def bulk_delete_contractors(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES))
+    _=Depends(require_tab('contractors'))
 ):
     from app.models.purchase import Purchase
     ids = payload.get("ids", [])
@@ -805,7 +806,7 @@ async def bulk_delete_contractors(
 async def delete_contractor(
     cid: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES))
+    _=Depends(require_tab('contractors'))
 ):
     result = await db.execute(select(Contractor).where(Contractor.id == cid))
     c = result.scalar_one_or_none()
@@ -817,7 +818,7 @@ async def delete_contractor(
 
 
 @router.get("/import/template")
-async def contractors_import_template(_=Depends(require_role(*MANAGER_ROLES))):
+async def contractors_import_template(_=Depends(require_tab('contractors'))):
     """Download xlsx template for bulk contractor import."""
     try:
         from openpyxl import Workbook
@@ -879,7 +880,7 @@ async def contractors_import_template(_=Depends(require_role(*MANAGER_ROLES))):
 async def import_contractors_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ALL_ROLES))
+    _=Depends(require_tab('contractors'))
 ):
     """Bulk import contractors from Excel. First row must be headers."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):
@@ -1023,7 +1024,7 @@ async def import_contractors_excel(
 @router.post("/import/preview")
 async def contractors_import_preview(
     file: UploadFile = File(...),
-    _=Depends(require_role(*ALL_ROLES)),
+    _=Depends(require_tab('contractors')),
 ):
     """Parse uploaded file and return headers + sample rows for column mapping UI."""
     fname = (file.filename or '').lower()
@@ -1062,7 +1063,7 @@ async def contractors_import_preview(
 async def contractors_import_mapped(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ALL_ROLES)),
+    current_user: User = Depends(require_tab('contractors')),
     col_name: Optional[int] = Query(None),
     col_inn: Optional[int] = Query(None),
     col_kpp: Optional[int] = Query(None),

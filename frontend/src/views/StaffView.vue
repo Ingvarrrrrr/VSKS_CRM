@@ -478,6 +478,18 @@
               </div>
             </div>
           </div>
+          <!-- 17-08: «Доступ» section — per-user per-org permission overrides (D-04/D-05.2/D-08) -->
+          <UserPermissionsSection
+            v-if="editDialog.userId && allOrgEntries.length"
+            :user-id="editDialog.userId"
+            :current-user-id="currentUserId"
+            :user-role="editDialog.role"
+            :org-access-list="allOrgEntries.map(oa => ({
+              org_id: oa.org_id,
+              org_name: oa.org_name || `Org ${oa.org_id}`,
+              role: editDialog.role,
+            }))"
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-account-convert" @click="syncToContractor(editDialog.userId)">
@@ -774,6 +786,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
+import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -844,6 +857,7 @@ watch(activeTab, (val) => {
 
 // ── Auth ──
 const currentRole = localStorage.getItem('user_role') || ''
+const currentUserId = Number(localStorage.getItem('user_id') || 0)
 const isAdmin = computed(() => ['admin', 'org_admin', 'superadmin'].includes(currentRole))
 
 // ── Snackbar ──
@@ -866,6 +880,8 @@ const userDropdownItems = computed(() =>
 
 const filteredUsers = computed(() => {
   let list = users.value
+  // D-09: non-superadmin viewers don't see superadmin rows (defence-in-depth; backend also filters)
+  if (currentRole !== 'superadmin') list = list.filter(u => u.role !== 'superadmin')
   if (filterUserRole.value) list = list.filter(u => u.role === filterUserRole.value)
   if (filterUserOrgId.value) list = list.filter(u => (u as any).org_id === filterUserOrgId.value)
   return list

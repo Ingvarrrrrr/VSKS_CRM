@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut, PermissionsOut
-from app.auth.permissions import get_effective_tabs, get_effective_actions
+from app.auth.permissions import get_effective_tabs, get_effective_actions, require_action
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -29,7 +29,7 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
 async def create_user(
     data: UserCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner")),
+    current_user: User = Depends(require_action('user.manage')),
 ):
     # Email uniqueness check
     existing_email = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()
@@ -130,7 +130,7 @@ async def update_user(
     user_id: int,
     data: UserUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner", "admin")),
+    current_user: User = Depends(require_action('user.manage')),
 ):
     user = await db.get(User, user_id)
     if not user:
@@ -239,7 +239,7 @@ async def _sync_head_hierarchy(dept, db: AsyncSession):
 async def sync_user_to_contractor(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_action('user.manage')),
 ):
     """Create or update a Contractor record from user data (same org, filtered accordingly)."""
     user = await db.get(User, user_id)
@@ -361,7 +361,7 @@ async def delete_my_photo(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner")),
+    current_user: User = Depends(require_action('user.manage')),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -435,7 +435,7 @@ VALID_ROLES = ("employee", "manager", "admin", "account_owner")
 
 
 @router.get("/import/template")
-async def users_import_template(_=Depends(require_role("superadmin", "account_owner"))):
+async def users_import_template(_=Depends(require_action('user.manage'))):
     """Download xlsx template for bulk user import."""
     try:
         from openpyxl import Workbook
@@ -489,7 +489,7 @@ async def users_import_template(_=Depends(require_role("superadmin", "account_ow
 async def import_users_excel(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("superadmin", "account_owner")),
+    current_user: User = Depends(require_action('user.manage')),
 ):
     """Bulk import users from Excel file."""
     if not (file.filename or '').lower().endswith(('.xlsx', '.xls')):

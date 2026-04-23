@@ -9,6 +9,7 @@ from app.auth.jwt import (
     get_current_user, get_org_filter, require_role,
     ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES,
 )
+from app.auth.permissions import require_tab
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -319,7 +320,7 @@ async def convert_wish(
     wish_id: int,
     body: WishConvert,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+    current_user: User = Depends(require_tab('wishes')),
 ):
     """Convert an approved wish to a purchase (org_admin+, approved -> converted)."""
     from app.models.purchase import Purchase

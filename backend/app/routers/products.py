@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, get_org_filter, require_role, ADMIN_ROLES
+from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
@@ -651,7 +652,7 @@ async def import_products_from_excel(
 @router.post("/deduplicate")
 async def deduplicate_products(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_role(*ADMIN_ROLES)),
+    _=Depends(require_tab('products')),
 ):
     """Удалить дубликаты товаров по ключу name+description. Оставить приоритетную запись."""
     result = await db.execute(select(Product))

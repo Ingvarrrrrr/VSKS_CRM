@@ -26,6 +26,7 @@ from app.models.subsidy import Subsidy
 from app.models.organization import Organization
 from app.schemas.schemas import PublishRequest, PublicationOut, PublicationStatusUpdate
 from app.auth.jwt import get_current_user
+from app.auth.permissions import require_action
 
 router = APIRouter(prefix="/api/publications", tags=["publications"])
 
@@ -553,7 +554,7 @@ async def publish_purchase(
     body: PublishRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_action('publication.create')),
 ):
     if body.platform not in SUPPORTED_PLATFORMS:
         raise HTTPException(400, f"Неизвестная площадка: {body.platform}")

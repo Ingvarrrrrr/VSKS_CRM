@@ -3,42 +3,43 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-04-23T18:08:02.515Z"
+last_updated: "2026-04-23T18:13:58.344Z"
 progress:
   total_phases: 18
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 66
-  completed_plans: 61
+  completed_plans: 62
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 17 (permission-system-override) — EXECUTING
-Plan: 3 of 9
-Next action: `/gsd:plan-phase 17` — создать PLAN.md файлы из CONTEXT решений
+Phase: 17 (permission-system-override) — ✅ COMPLETE (9/9)
+Next action: `/gsd:verify-work 17` — full regression + three-role manual smoke + override roundtrip
 Resume file: None
 
 Recently closed:
 
+- Phase 17 — Permission System Override (9/9 planов, commits 1622167, f733aca + per-plan commits; 9 decisions D-01..D-09 delivered)
 - Phase 13 — Заявки v3 канбан + split purchase kanban (7/7 планов, commits 9ae0202, c2312f8, f40546c, d1b3cb9, fcbed67)
 - Phase 16 — Refactor monoliths (15/15, 16-15-UAT pass)
 - Phase 15 — PurchaseItemsEditor extraction (5/5)
 
 - **Milestone:** v1.0
-- **Last Completed Phase:** 16 → 13 (в порядке закрытия)
+- **Last Completed Phase:** 17 → 16 → 13 (в порядке закрытия)
 - **Profile:** balanced (Opus plans, Sonnet executes)
 
 ## Status
 
-- ✅ Complete (13): Phases 1–9, 11, 13, 15, 16
+- ✅ Complete (14): Phases 1–9, 11, 13, 15, 16, 17
 - 🟡 In progress (2): Phase 10 (3/4 — осталось 10-04 AppBar chat nav+badge), Phase 14 (3/4 — осталось 14-04 polish+UAT)
-- ⏳ Not started (3): Phase 12 (4 плана ready), Phase 17 Permission System (TBD), Phase 18 Staff Directory (TBD)
+- ⏳ Not started (2): Phase 12 (4 плана ready), Phase 18 Staff Directory (TBD)
 - Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2, Суперадмин-3)
 
 ## Recent Activity (April 2026)
 
+- 2026-04-23: **Phase 17 CLOSED** — Permission System Override, 9/9 planов. 17-09: router guards migrated to `meta.tab_key` + `authStore.hasTab()` (32 routes, commit 1622167); E2E spec 20-permissions.spec.ts unskipped with 7 tests (commit f733aca). EMPLOYEE_ALLOWED removed. All 9 decisions D-01..D-09 delivered. Ready for `/gsd:verify-work 17`.
 - 2026-04-23: Purchase Split Kanban — DnD-редистрибуция позиций в существующей закупке, N дочерних закупок, блокируется после статуса «Договор» (не-админам). commits: 40b9d98, 17ec94b, 6a13456, 06ef867, 60379f7, fbb6169. Bugfix цепочка: id-propagation → column width/wrap → ref-state DnD.
 - 2026-04-23: Wishes edit dialog — product_id persistence в WishItem schema + 3-layer name-fallback (openEditDialog, openKanbanDialog, approve_distribution) + assignee action banners по ролям.
 - 2026-04-23: Knowledge graph updated — targeted AST-refresh для 14 файлов Phase 13/15/Split scope, pruned 83 VAULT ghost nodes. Final: 1645 nodes / 4843 edges / 234 communities.
@@ -96,6 +97,9 @@ Recently closed:
 - [Phase 17-permission-system-override]: users.py GET /users/ stays require_role(*ALL_ROLES) — 17-05 handles superadmin filter there
 - [Phase 17]: [Phase 17-07]: AdminRolesView uses 300ms debounced per-role PUT with optimistic UI and server-truth revert on error; publication.create filtered out of matrix via PER_USER_ONLY_ACTIONS (per-user only, handled in 17-08)
 - [Phase 17-permission-system-override]: Plan 17-08: «Доступ» section uses allOrgEntries (not rebuilt orgAccessList) and editDialog.userId (actual shape) per PLAN's adaptation clause
+- [Phase 17-permission-system-override]: Plan 17-09: EMPLOYEE_ALLOWED removed outright (no fallback) — authStore.loaded fail-opens on API failure (17-06) + 17-01 seed grants employee defaults; double-gating would regress
+- [Phase 17-permission-system-override]: Plan 17-09: Sub-routes share parent tab_key (/hierarchy→staff, /suppliers→contractors, /orders/*→purchases, service-notes/advance-reports sub-paths) — matches RESEARCH Open-Question 2
+- [Phase 17-permission-system-override]: Plan 17-09: E2E uses inline loginAs(page,user,pwd) helper — existing helpers.ts login() is hardcoded to admin/admin123; keeps plan scope to two declared files
 
 ## Blockers
 

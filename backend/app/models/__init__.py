@@ -38,3 +38,4 @@ from app.models.chat_message import ChatMessage, MessageRead  # noqa: F401
 from app.models.wish import Wish  # noqa: F401
 from app.models.wish_item import WishItem  # noqa: F401
 from app.models.push_subscription import PushSubscription  # noqa: F401
+from app.models.permission import PermissionTab, PermissionAction, RolePermission, UserOrgPermissionOverride  # noqa: F401

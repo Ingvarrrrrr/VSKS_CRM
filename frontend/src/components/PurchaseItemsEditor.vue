@@ -326,7 +326,7 @@
                 style="cursor:pointer" @click="selectFromPicker(p)">
                 <td>
                   <v-avatar size="36" rounded="sm" class="my-1" style="overflow:hidden">
-                    <img v-if="productPhotoSrc(p)" :src="productPhotoSrc(p)!" style="width:36px;height:36px;object-fit:cover;display:block" @error="($event.target as HTMLImageElement).style.display='none'" />
+                    <img v-if="p.photo_url || p.photo_link" :src="(p.photo_url || p.photo_link)!" style="width:36px;height:36px;object-fit:cover;display:block" />
                     <v-icon v-else icon="mdi-package-variant" color="grey" size="20" />
                   </v-avatar>
                 </td>
@@ -764,17 +764,8 @@ interface Product {
   avg_price?: number | null
   photo_url?: string | null
   photo_link?: string | null
-  has_photo?: boolean
   contract_price?: number | null
   description_44fz?: string
-}
-
-// Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
-// when the backend has a cached copy; fall back to external photo_url/link.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
 }
 
 interface PriceLink {
@@ -995,7 +986,7 @@ function onItemProductSelect(idx: number, val: any) {
     item.item_name = val.name || ''
     item.product_id = val.id
     item._selectedProduct = val
-    item._photo_url = productPhotoSrc(val)
+    item._photo_url = val.photo_url || val.photo_link || undefined
     item._description = val.description || undefined
     item._description_44fz = val.description_44fz || undefined
     if (val.product_type && !item.item_type) item.item_type = val.product_type

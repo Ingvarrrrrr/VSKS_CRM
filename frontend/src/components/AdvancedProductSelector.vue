@@ -23,8 +23,8 @@
       <template v-slot:item="{ props, item }">
         <v-list-item v-bind="props">
           <template v-slot:prepend>
-            <v-avatar v-if="productPhotoSrc(item.raw)" size="90" class="mr-2">
-              <v-img :src="productPhotoSrc(item.raw)" cover />
+            <v-avatar v-if="item.raw.photo_url" size="90" class="mr-2">
+              <v-img :src="item.raw.photo_url" cover />
             </v-avatar>
             <v-avatar v-else color="grey-lighten-2" size="90" class="mr-2">
               <v-icon icon="mdi-package-variant" color="grey-darken-1" />
@@ -84,8 +84,8 @@
       <div class="d-flex justify-space-between align-start">
         <div class="d-flex gap-4">
           <!-- Фото товара -->
-          <v-avatar v-if="productPhotoSrc(selectedProduct)" size="225" rounded="lg">
-            <v-img :src="productPhotoSrc(selectedProduct)" cover />
+          <v-avatar v-if="selectedProduct.photo_url" size="225" rounded="lg">
+            <v-img :src="selectedProduct.photo_url" cover />
           </v-avatar>
           <v-avatar v-else color="grey-lighten-2" size="225" rounded="lg">
             <v-icon icon="mdi-package-variant" size="90" color="grey-darken-1" />
@@ -274,17 +274,9 @@ interface Product {
   is_reusable?: boolean
   photo_url?: string
   photo_link?: string
-  has_photo?: boolean
   clarification_link?: string
   feo_category_id?: number
   price?: string | number  // Цена из Google Sheets
-}
-
-// Phase 17.1-08: prefer DB bytea endpoint when a cached copy exists.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
 }
 
 const props = defineProps<{

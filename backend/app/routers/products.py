@@ -193,16 +193,13 @@ async def serve_product_photo_legacy(filename: str):
 async def serve_product_photo_bytea(
     product_id: int,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """Return the photo bytes stored in products.photo_data.
 
     Phase 17.1-08 — canonical photo serving path. Returns 404 if the product
     has no cached bytes yet (frontend should fall back to the external
     photo_url in that case).
-
-    No auth dep: <img src> cannot send Authorization headers, and the legacy
-    /api/products/photos/{filename} endpoint was already unauthenticated.
-    Photo bytes are not sensitive — the product list itself requires auth.
     """
     product = await db.get(Product, product_id)
     if not product or not product.photo_data:

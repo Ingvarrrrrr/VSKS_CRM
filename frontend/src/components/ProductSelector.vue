@@ -22,8 +22,8 @@
       <template v-slot:item="{ props, item }">
         <v-list-item v-bind="props" class="py-2">
           <template v-slot:prepend>
-            <v-avatar v-if="productPhotoSrc(item.raw)" size="48" class="mr-3">
-              <v-img :src="productPhotoSrc(item.raw)" cover />
+            <v-avatar v-if="item.raw.photo_url" size="48" class="mr-3">
+              <v-img :src="item.raw.photo_url" cover />
             </v-avatar>
             <v-avatar v-else color="grey-lighten-2" size="48" class="mr-3">
               <v-icon icon="mdi-package-variant" color="grey-darken-1" />
@@ -151,8 +151,8 @@
           class="py-3"
         >
           <template v-slot:prepend>
-            <v-avatar v-if="productPhotoSrc(product)" size="56" class="mr-4">
-              <v-img :src="productPhotoSrc(product)" cover />
+            <v-avatar v-if="product.photo_url" size="56" class="mr-4">
+              <v-img :src="product.photo_url" cover />
             </v-avatar>
             <v-avatar v-else color="grey-lighten-2" size="56" class="mr-4">
               <v-icon icon="mdi-package-variant" size="28" color="grey-darken-1" />
@@ -214,8 +214,8 @@
     <!-- Информация о выбранном товаре -->
     <v-card v-if="selectedProduct" variant="outlined" class="mt-6 pa-4">
       <div class="d-flex align-start">
-        <v-avatar v-if="productPhotoSrc(selectedProduct)" size="80" class="mr-4">
-          <v-img :src="productPhotoSrc(selectedProduct)" cover />
+        <v-avatar v-if="selectedProduct.photo_url" size="80" class="mr-4">
+          <v-img :src="selectedProduct.photo_url" cover />
         </v-avatar>
         <v-avatar v-else color="primary-lighten-1" size="80" class="mr-4">
           <v-icon icon="mdi-package-variant" size="40" color="white" />
@@ -285,16 +285,8 @@ interface Product {
   is_reusable?: boolean
   photo_url?: string
   photo_link?: string
-  has_photo?: boolean
   clarification_link?: string
   feo_category_id?: number
-}
-
-// Phase 17.1-08: prefer DB bytea endpoint when a cached copy exists.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
 }
 
 const props = defineProps<{

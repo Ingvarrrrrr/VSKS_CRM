@@ -28,11 +28,12 @@ TEMPLATES_DIR = "/app/templates"
 SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 
 DOC_TYPES = {
-    "service_note":          ("service_note.docx",          "SZ_Organizaciya"),
     "service_note_delivery": ("service_note_delivery.docx", "SZ_Vydacha"),
     "service_note_payment":  ("service_note_payment.docx",  "SZ_Oplata"),
     # Phase 19.05: dedicated SZ for procurement (distinct from generic service_note)
     "service_note_procurement": ("service_note_procurement.docx", "SZ_Zakupka"),
+    # Phase 19.07: СЗ на аванс
+    "service_note_advance":  ("service_note_advance.docx",  "SZ_Avans"),
     # Legacy — kept for backwards compat with existing uploaded subsidy overrides.
     "contract_tz":           ("contract_tz.docx",           "Contract_TZ"),
     # tech_spec falls back to contract_tz.docx — separation kept for future
@@ -45,7 +46,6 @@ DOC_TYPES = {
     "tech_spec_request":     ("tech_spec_request.docx",     "TZ_Zapros_Cen"),
     "tech_spec_contract":    ("tech_spec_contract.docx",    "TZ_Dogovor"),
     "contract":              ("contract.docx",              "Contract"),
-    "contract_fadm":         ("contract_fadm.docx",         "Contract_FADM"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
 }
@@ -55,6 +55,9 @@ DOC_TYPES = {
 # upload per-subsidy overrides.
 DOC_TYPE_FALLBACK_FILES = {
     "service_note_procurement": "service_note.docx",
+    # Phase 19.07: fall back to generic service_note until a dedicated
+    # advance template is uploaded (per-subsidy or globally).
+    "service_note_advance":     "service_note.docx",
     "tech_spec_request":        "contract_tz.docx",
     "tech_spec_contract":       "contract_tz.docx",
 }
@@ -558,15 +561,6 @@ async def generate_document(
 
     c = p.contractor
 
-    # Validate required fields for contract_fadm
-    if doc_type == "contract_fadm":
-        missing = _validate_contract_fields(p, c)
-        if missing:
-            raise HTTPException(
-                422,
-                f"Для генерации договора необходимо заполнить: {'; '.join(missing)}"
-            )
-
     # ── Contract-specific context helpers ────────────────────────────────────
     def _contract_date_parts():
         d = p.contract_date
@@ -704,7 +698,7 @@ async def generate_document(
         # Служебные
         "today": _fmt_date(date.today()),
         "today_iso": date.today().isoformat(),
-        # ── Поля для contract_fadm шаблона ───────────────────────────────────
+        # ── Расширенные поля для договорных шаблонов ─────────────────────────
         # Дата по частям
         "contract_date_day":   cd_day,
         "contract_date_month": cd_month,
@@ -718,8 +712,7 @@ async def generate_document(
         # Срок оказания услуг
         # Phase 19: service_start_date / service_end_date now prefer the real
         # Purchase columns (used by 'range' mode). If those are empty we fall
-        # back to the legacy mapping (contract_date / execution_term) so old
-        # contract_fadm templates keep rendering correctly.
+        # back to the legacy mapping (contract_date / execution_term).
         "period_type": p.service_period_type or "period",
         "service_start_date": _fmt_date(p.service_start_date) or _fmt_date(p.contract_date),
         "service_end_date":   _fmt_date(p.service_end_date)   or _fmt_date(p.execution_term),
@@ -847,7 +840,7 @@ async def generate_document(
         raise HTTPException(500, f"Ошибка генерации документа: {e}")
 
     # For contract docs: append ТЗ table with items
-    if doc_type in ("contract", "contract_fadm") and items_list:
+    if doc_type == "contract" and items_list:
         try:
             from docx import Document as _DocxDoc
             from docx.shared import Pt, Cm, RGBColor

@@ -293,6 +293,7 @@ async def generate_document(
     initiator_id: Optional[int] = Query(default=None, description="ID инициатора служебной записки"),
     responsible_name: Optional[str] = Query(default=None, description="ФИО ответственного исполнителя (переопределяет поле закупки)"),
     tz_override_mode: Optional[str] = Query(default=None, description="Переопределить режим ТЗ: 'exact' или '44fz'"),
+    merge: Optional[str] = Query(default=None, description="Phase 19.06: merge with another doc_type (e.g. 'tech_spec_contract') — appends its paragraphs/tables as a new section after the primary doc"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -963,6 +964,59 @@ async def generate_document(
             # Don't fail the whole request if ТЗ append fails — just log
             import traceback
             print(f"ТЗ append error: {tz_err}\n{traceback.format_exc()}")
+
+    # ── Phase 19.06: merge with secondary doc ──────────────────────────────
+    # When ?merge=<doc_type> is passed, render the secondary template against
+    # the same context and append its paragraphs/tables after a page break.
+    if merge and merge in DOC_TYPES and merge != doc_type:
+        try:
+            from docxtpl import DocxTemplate as _Tpl
+            from docx import Document as _Docx
+            from copy import deepcopy
+
+            secondary_file, secondary_base = DOC_TYPES[merge]
+            secondary_path = os.path.join(TEMPLATES_DIR, secondary_file)
+            # subsidy override for secondary
+            if p.subsidy_id:
+                sub_override = os.path.join(
+                    SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{merge}.docx"
+                )
+                if os.path.exists(sub_override):
+                    secondary_path = sub_override
+            # fallback if the dedicated secondary file is missing
+            if not os.path.exists(secondary_path):
+                fb = DOC_TYPE_FALLBACK_FILES.get(merge)
+                if fb:
+                    fb_path = os.path.join(TEMPLATES_DIR, fb)
+                    if os.path.exists(fb_path):
+                        secondary_path = fb_path
+
+            if os.path.exists(secondary_path):
+                sec_tpl = _Tpl(secondary_path)
+                sec_tpl.render(context)
+                sec_buf = BytesIO()
+                sec_tpl.save(sec_buf)
+                sec_buf.seek(0)
+
+                # Append secondary into primary
+                buf.seek(0)
+                main_doc = _Docx(buf)
+                sec_doc = _Docx(sec_buf)
+
+                main_doc.add_page_break()
+                # Copy every top-level element (paragraphs, tables, etc.) from body
+                for element in sec_doc.element.body:
+                    main_doc.element.body.append(deepcopy(element))
+
+                merged_buf = BytesIO()
+                main_doc.save(merged_buf)
+                merged_buf.seek(0)
+                buf = merged_buf
+                # Update filename to reflect merge
+                filename_base = f"{filename_base}_i_{secondary_base}"
+        except Exception as merge_err:
+            import traceback
+            print(f"Doc merge error ({doc_type} + {merge}): {merge_err}\n{traceback.format_exc()}")
 
     safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
     encoded_name = quote(safe_name, safe="-_.~")

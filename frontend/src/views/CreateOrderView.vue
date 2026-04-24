@@ -352,17 +352,17 @@
                   color="primary"
                   prepend-icon="mdi-file-word-outline"
                   append-icon="mdi-chevron-down"
-                  :loading="docLoading === 'contract_tz'"
+                  :loading="!!docLoading && docLoading.startsWith('tech_spec')"
                 >
                   Скачать ТЗ (.docx)
                 </v-btn>
               </template>
               <v-list density="compact">
-                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=exact')">
-                  <v-list-item-title>Точное ТЗ</v-list-item-title>
+                <v-list-item prepend-icon="mdi-file-search-outline" @click="downloadDoc('tech_spec_request')">
+                  <v-list-item-title>ТЗ для запроса цен</v-list-item-title>
                 </v-list-item>
-                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=44fz')">
-                  <v-list-item-title>ТЗ для 44-ФЗ</v-list-item-title>
+                <v-list-item prepend-icon="mdi-file-sign" @click="downloadDoc('tech_spec_contract')">
+                  <v-list-item-title>ТЗ для договора</v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -1316,17 +1316,17 @@
                   variant="tonal"
                   color="blue-darken-2"
                   size="small"
-                  :loading="docLoading === 'contract_tz'"
+                  :loading="!!docLoading && docLoading.startsWith('tech_spec')"
                 >
                   ТЗ
                 </v-btn>
               </template>
               <v-list density="compact">
-                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=exact')">
-                  <v-list-item-title>Точное ТЗ</v-list-item-title>
+                <v-list-item prepend-icon="mdi-file-search-outline" @click="downloadDoc('tech_spec_request')">
+                  <v-list-item-title>ТЗ для запроса цен</v-list-item-title>
                 </v-list-item>
-                <v-list-item prepend-icon="mdi-file-word-outline" @click="downloadDoc('contract_tz', '?tz_override_mode=44fz')">
-                  <v-list-item-title>ТЗ для 44-ФЗ</v-list-item-title>
+                <v-list-item prepend-icon="mdi-file-sign" @click="downloadDoc('tech_spec_contract')">
+                  <v-list-item-title>ТЗ для договора</v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -1339,6 +1339,17 @@
               @click="downloadDoc('contract')"
             >
               {{ contractWord }}
+            </v-btn>
+            <v-btn v-if="isSectionVisible('contractor')"
+              prepend-icon="mdi-file-multiple-outline"
+              variant="tonal"
+              color="indigo-darken-2"
+              size="small"
+              :loading="docLoading === 'contract_merge'"
+              @click="downloadDoc('contract', '?merge=tech_spec_contract', 'contract_merge')"
+              title="Скачать Договор и ТЗ одним файлом"
+            >
+              {{ contractWord }} + ТЗ
             </v-btn>
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-edit-outline"
@@ -4603,9 +4614,9 @@ const deleteFile = async (fid: number) => {
   }
 }
 
-const downloadDoc = async (docType: string, extraParams = '') => {
+const downloadDoc = async (docType: string, extraParams = '', loadingKey?: string) => {
   if (!purchaseId.value) return
-  docLoading.value = docType
+  docLoading.value = loadingKey || docType
   try {
     const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/purchases/${purchaseId.value}/documents/${docType}${extraParams}`, {
@@ -4618,8 +4629,15 @@ const downloadDoc = async (docType: string, extraParams = '') => {
     }
     const blob = await res.blob()
     const disposition = res.headers.get('Content-Disposition') || ''
-    const match = disposition.match(/filename="?([^"]+)"?/)
-    const filename = match ? match[1] : `${docType}.docx`
+    // RFC 5987 filename*=UTF-8''... or plain filename="..."
+    let filename = `${docType}.docx`
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (utf8Match) {
+      try { filename = decodeURIComponent(utf8Match[1]) } catch { filename = utf8Match[1] }
+    } else {
+      const plain = disposition.match(/filename="?([^";]+)"?/)
+      if (plain) filename = plain[1]
+    }
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = filename; a.click()

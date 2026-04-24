@@ -173,6 +173,9 @@ async def generate_wish_service_note(
         "item_names": ", ".join(i["name"] for i in items_list if i["name"]),
         "item_categories": item_categories_str,
         # Totals
+        # Phase 19: total_nmcd is the new canonical name; total_nmck kept
+        # as a deprecated alias so legacy templates keep rendering.
+        "total_nmcd": _fmt_money(total_nmck),
         "total_nmck": _fmt_money(total_nmck),
         "nmck": _fmt_money(total_nmck),
         # Approvers (empty — no signatures yet, wish is pre-approval)
@@ -226,6 +229,19 @@ async def generate_wish_service_note(
         "service_start_date": "",
         "service_end_date": "",
         "service_date": "",
+        # Phase 19: extended service-term / submission / delivery / agreement
+        # Wish stage has none of these — emit empty strings so templates don't error.
+        "service_term": "",
+        "service_term_mode": "",
+        "service_term_days": "",
+        "service_term_type": "",
+        "service_term_type_name": "",
+        "service_deadline_date": "",
+        "submission_deadline_date": "",
+        "submission_deadline_time": "",
+        "submission_deadline_datetime": "",
+        "delivery_location": "",
+        "subsidy_agreement_text": (w.subsidy.agreement_text if (w.subsidy and w.subsidy.agreement_text) else ""),
         "third_party_involved": False,
         # VAT fields (not applicable pre-purchase)
         "vat_applicable": False,

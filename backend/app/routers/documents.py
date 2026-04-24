@@ -97,6 +97,31 @@ def _fmt_money_plain(v) -> str:
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
+def _format_service_term(p) -> str:
+    """Build the human-readable service-term string for docx templates.
+
+    Phase 19 — three modes:
+      - range:    "с 01.05.2026 по 31.05.2026"
+      - duration: "в течение 30 календарных дней после заключения договора"
+      - deadline: "до 30.06.2026 включительно"
+    """
+    mode = getattr(p, "service_term_mode", None)
+    if mode == "range" and p.service_start_date and p.service_end_date:
+        return (
+            f"с {p.service_start_date.strftime('%d.%m.%Y')} "
+            f"по {p.service_end_date.strftime('%d.%m.%Y')}"
+        )
+    if mode == "duration" and getattr(p, "service_term_days", None):
+        type_name = {
+            "calendar": "календарных",
+            "working":  "рабочих",
+        }.get(getattr(p, "service_term_type", None) or "calendar", "календарных")
+        return f"в течение {p.service_term_days} {type_name} дней после заключения договора"
+    if mode == "deadline" and getattr(p, "service_deadline_date", None):
+        return f"до {p.service_deadline_date.strftime('%d.%m.%Y')} включительно"
+    return ""
+
+
 _ONES = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять",
          "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать",
          "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"]
@@ -609,6 +634,11 @@ async def generate_document(
         "feo_level_2": feo_level_2,
         "feo_level_3": feo_level_3,
         # Финансы
+        # Phase 19: total_nmcd is the new canonical name (НМЦД — начальная
+        # максимальная цена договора). total_nmck is kept as a deprecated
+        # alias so existing templates keep rendering. Use total_nmcd in new
+        # templates.
+        "total_nmcd": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
         "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
         "nmck": _fmt_money(p.nmck or p.total_nmck),
         "contract_price": _fmt_money(p.contract_price),
@@ -659,10 +689,29 @@ async def generate_document(
         # Предмет (сервисное имя)
         "service_name": p.subject or "",
         # Срок оказания услуг
+        # Phase 19: service_start_date / service_end_date now prefer the real
+        # Purchase columns (used by 'range' mode). If those are empty we fall
+        # back to the legacy mapping (contract_date / execution_term) so old
+        # contract_fadm templates keep rendering correctly.
         "period_type": p.service_period_type or "period",
-        "service_start_date": _fmt_date(p.contract_date),
-        "service_end_date":   _fmt_date(p.execution_term),
+        "service_start_date": _fmt_date(p.service_start_date) or _fmt_date(p.contract_date),
+        "service_end_date":   _fmt_date(p.service_end_date)   or _fmt_date(p.execution_term),
         "service_date":       _fmt_date(p.execution_term),
+        # Phase 19: extended service-term context
+        "service_term":            _format_service_term(p),
+        "service_term_mode":       p.service_term_mode or "",
+        "service_term_days":       p.service_term_days or "",
+        "service_term_type":       p.service_term_type or "",
+        "service_term_type_name":  {"calendar": "календарных", "working": "рабочих"}.get(p.service_term_type or "", ""),
+        "service_deadline_date":   _fmt_date(p.service_deadline_date),
+        # Phase 19: submission deadline (дата+время завершения приёма заявок)
+        "submission_deadline_date":     p.submission_deadline.date().isoformat() if p.submission_deadline else "",
+        "submission_deadline_time":     p.submission_deadline.strftime("%H:%M") if p.submission_deadline else "",
+        "submission_deadline_datetime": p.submission_deadline.strftime("%d.%m.%Y %H:%M") if p.submission_deadline else "",
+        # Phase 19: delivery location
+        "delivery_location": p.delivery_location or "",
+        # Phase 19: agreement text from subsidy
+        "subsidy_agreement_text": (subsidy.agreement_text if (subsidy and subsidy.agreement_text) else ""),
         # Третьи лица
         "third_party_involved": bool(p.third_party_involved),
         # НДС
@@ -1053,7 +1102,8 @@ TEMPLATE_VARIABLES = [
     ("{{contractor_correspondent_account}}", "Корреспондентский счёт"),
     # ── Финансы ──
     ("", "ФИНАНСЫ"),
-    ("{{total_nmck}}", "НМЦК итого (например: 135 000,00 ₽)"),
+    ("{{total_nmcd}}", "НМЦД — начальная максимальная цена договора (рекомендуется)"),
+    ("{{total_nmck}}", "НМЦК — устаревшее, используйте total_nmcd"),
     ("{{nmck}}", "НМЦК (синоним total_nmck)"),
     ("{{contract_price}}", "Цена договора (например: 130 000,00 ₽)"),
     ("{{contract_price_num}}", "Цена без валюты (130 000,00)"),
@@ -1081,10 +1131,29 @@ TEMPLATE_VARIABLES = [
     ("{{country_origin}}", "Страна происхождения (Российская Федерация)"),
     ("{{service_name}}", "Предмет (синоним subject)"),
     ("{{period_type}}", "Тип срока (period / date)"),
-    ("{{service_start_date}}", "Начало оказания услуг"),
-    ("{{service_end_date}}", "Конец оказания услуг"),
+    ("{{service_start_date}}", "Начало оказания услуг (Phase 19 real column, fallback: contract_date)"),
+    ("{{service_end_date}}", "Конец оказания услуг (Phase 19 real column, fallback: execution_term)"),
     ("{{service_date}}", "Дата оказания (разовая)"),
     ("{{third_party_involved}}", "Привлечение третьих лиц (true / false)"),
+    # ── Phase 19: срок услуг расширенный ──
+    ("", "СРОК УСЛУГ (Phase 19)"),
+    ("{{service_term}}", "Готовая строка срока (range / duration / deadline)"),
+    ("{{service_term_mode}}", "Режим: range | duration | deadline"),
+    ("{{service_term_days}}", "Кол-во дней (для mode=duration)"),
+    ("{{service_term_type}}", "Тип дней: calendar | working (для mode=duration)"),
+    ("{{service_term_type_name}}", "Тип дней прописью: календарных | рабочих"),
+    ("{{service_deadline_date}}", "Срок \"до даты\" (для mode=deadline)"),
+    # ── Phase 19: приём заявок ──
+    ("", "ПРИЁМ ЗАЯВОК (Phase 19)"),
+    ("{{submission_deadline_date}}", "Дата завершения приёма заявок (ISO)"),
+    ("{{submission_deadline_time}}", "Время завершения приёма заявок (HH:MM)"),
+    ("{{submission_deadline_datetime}}", "Дата+время завершения (dd.mm.YYYY HH:MM)"),
+    # ── Phase 19: место доставки ──
+    ("", "МЕСТО ДОСТАВКИ / ОКАЗАНИЯ УСЛУГ (Phase 19)"),
+    ("{{delivery_location}}", "Место оказания услуг / доставки"),
+    # ── Phase 19: соглашение субсидии ──
+    ("", "СОГЛАШЕНИЕ ПО СУБСИДИИ (Phase 19)"),
+    ("{{subsidy_agreement_text}}", "Большой текст соглашения (федеральный бюджет / Росмолодёжь)"),
     # ── Акт приёмки ──
     ("", "АКТ ПРИЁМКИ"),
     ("{{acceptance_doc_name}}", "Наименование акта"),

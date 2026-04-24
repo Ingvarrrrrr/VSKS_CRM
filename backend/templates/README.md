@@ -12,14 +12,20 @@
 
 | Файл шаблона | Код (doc_type) | Документ |
 |---|---|---|
-| `service_note.docx` | `service_note` | Служебная записка на согласование закупки |
-| `service_note_delivery.docx` | `service_note_delivery` | Служебная записка на выдачу товара |
-| `service_note_payment.docx` | `service_note_payment` | Служебная записка на оплату |
+| `service_note_procurement.docx` | `service_note_procurement` | СЗ на закупку |
+| `service_note_delivery.docx` | `service_note_delivery` | СЗ на выдачу |
+| `service_note_payment.docx` | `service_note_payment` | СЗ на оплату |
+| `service_note_advance.docx` | `service_note_advance` | СЗ на аванс (Phase 19.07) |
 | `contract.docx` | `contract` | Договор (стандартный) |
 | `contract_tz.docx` | `contract_tz` | Договор + Техническое задание |
-| `contract_fadm.docx` | `contract_fadm` | Договор ФАДМ (с проверкой обязательных полей) |
+| `tech_spec_request.docx` | `tech_spec_request` | ТЗ для запроса цен |
+| `tech_spec_contract.docx` | `tech_spec_contract` | ТЗ для договора |
 | `approval_sheet.docx` | `approval_sheet` | Лист согласования |
 | `order_purchase.docx` | `order_purchase` | Приказ о закупке |
+
+> Phase 19.07: `contract_fadm` и generic `service_note` удалены как doc_type;
+> `service_note.docx` остаётся как fallback-шаблон для `service_note_procurement`
+> и `service_note_advance`, пока не загружен выделенный файл.
 
 Можно загрузить свой шаблон для конкретной субсидии — он будет использоваться вместо глобального.
 Путь: `templates/subsidies/{subsidy_id}/{doc_type}.docx`
@@ -132,9 +138,11 @@
 
 ---
 
-### 4. Договор ФАДМ (`contract_fadm`)
+### 4. Расширенные переменные договора (для любого договорного шаблона)
 
-Всё из стандартного договора плюс дополнительные переменные:
+Эти переменные доступны всем шаблонам — используйте по мере необходимости
+в `contract`, `contract_tz` или собственных шаблонах. (Phase 19.07: секция
+переименована — отдельный `contract_fadm` doc_type упразднён.)
 
 | Переменная | Описание | Пример |
 |---|---|---|

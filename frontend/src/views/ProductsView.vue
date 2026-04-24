@@ -111,7 +111,18 @@
         <!-- Photo -->
         <template #item.photo="{ item }">
           <v-avatar size="40" rounded="sm" class="my-1" style="overflow:hidden">
-            <img v-if="item.photo_url || item.photo_link" :src="item.photo_url || item.photo_link" style="width:40px;height:40px;object-fit:cover;display:block" />
+            <img
+              v-if="item.has_photo"
+              :src="`/api/products/${item.id}/photo`"
+              style="width:40px;height:40px;object-fit:cover;display:block"
+              @error="($event.target as HTMLImageElement).style.display='none'"
+            />
+            <img
+              v-else-if="item.photo_url || item.photo_link"
+              :src="(item.photo_url || item.photo_link) as string"
+              style="width:40px;height:40px;object-fit:cover;display:block"
+              @error="($event.target as HTMLImageElement).style.display='none'"
+            />
             <v-icon v-else icon="mdi-package-variant" color="grey" />
           </v-avatar>
         </template>
@@ -345,16 +356,16 @@
             <!-- Фото -->
             <v-col cols="12">
               <div class="text-subtitle-2 mb-2">Фото товара</div>
-              <div v-if="photoPreview || form.photo_url || form.photo_link" class="mb-3">
+              <div v-if="photoPreview || (editingId && form.has_photo) || form.photo_url || form.photo_link" class="mb-3">
                 <img
-                  :src="photoPreview || form.photo_url || form.photo_link"
+                  :src="photoPreview || ((editingId && form.has_photo) ? `/api/products/${editingId}/photo?v=${photoCacheBuster}` : (form.photo_url || form.photo_link))"
                   style="max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5"
                 />
                 <v-btn
                   v-if="form.photo_url?.startsWith('/api/products/photos/')"
                   size="x-small" variant="text" color="error" class="mt-1"
                   @click="form.photo_url = ''"
-                >Удалить загруженное фото</v-btn>
+                >Удалить устаревшую ссылку</v-btn>
               </div>
               <v-file-input
                 v-model="photoFileList"
@@ -657,6 +668,8 @@ interface Product {
   contract_price?: number; contract_number?: string; contract_date?: string; contract_org_id?: number; price_shared?: boolean
   tz_verified_at?: string; tz_verified_by?: string
   tz_44fz_verified_at?: string; tz_44fz_verified_by?: string
+  has_photo?: boolean; photo_size?: number; photo_mime?: string
+  country_origin?: string
 }
 
 const userRole = localStorage.getItem('user_role') || ''
@@ -742,8 +755,11 @@ const emptyForm = () => ({
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
   country_origin: 'Россия' as string,
+  has_photo: false as boolean,
 })
 const form = reactive(emptyForm())
+// Bumped when we re-download / re-upload so the <img> bypasses browser cache.
+const photoCacheBuster = ref(0)
 const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null })
 
 // Name autocomplete + duplicate detection
@@ -925,7 +941,9 @@ function openEdit(p: Product) {
     feo_category_id: p.feo_category_id ?? null,
     priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
     country_origin: p.country_origin || 'Россия',
+    has_photo: !!p.has_photo,
   })
+  photoCacheBuster.value = Date.now()
   resetPhotoState()
   editingId.value = p.id
   editMeta.updated_at = (p as any).updated_at || null
@@ -1090,8 +1108,10 @@ async function downloadSinglePhoto() {
   if (!editingId.value) return
   downloadingPhoto.value = true
   try {
-    const updated = await apiFetch<{ photo_url: string }>(`/products/${editingId.value}/download-photo`, { method: 'POST' })
-    form.photo_url = updated.photo_url
+    const updated = await apiFetch<Product>(`/products/${editingId.value}/download-photo`, { method: 'POST' })
+    form.photo_url = updated.photo_url || form.photo_url
+    form.has_photo = !!updated.has_photo
+    photoCacheBuster.value = Date.now()
     showSnack('Фото скачано и сохранено')
     await load()
   } catch (e: any) {

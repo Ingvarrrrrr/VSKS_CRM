@@ -885,6 +885,90 @@
               />
             </v-col>
           </v-row>
+
+          <!-- Phase 19: template-specific fields (submission deadline, delivery location, service term) -->
+          <v-divider class="my-3" />
+          <div class="text-caption text-medium-emphasis mb-2">
+            Дополнительные поля для шаблонов (приём заявок, место и срок оказания услуг)
+          </div>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="form.submission_deadline"
+                label="Дата и время завершения приёма заявок"
+                variant="outlined" density="compact"
+                type="datetime-local"
+                hint="Подставляется в шаблоны как {{submission_deadline_datetime}}"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="8">
+              <v-text-field
+                v-model="form.delivery_location"
+                label="Место оказания услуг / доставки"
+                variant="outlined" density="compact"
+                placeholder="напр. г. Москва, ул. Ленина, д. 1"
+                hint="Переменная шаблона {{delivery_location}}"
+                persistent-hint
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12">
+              <div class="text-body-2 mb-1">Срок оказания услуг (для шаблонов)</div>
+              <v-radio-group
+                v-model="form.service_term_mode"
+                inline density="compact" hide-details class="mt-0"
+              >
+                <v-radio label="Не указано" value="" />
+                <v-radio label="Конкретные даты (с… по…)" value="range" />
+                <v-radio label="В течение N дней" value="duration" />
+                <v-radio label="До даты" value="deadline" />
+              </v-radio-group>
+            </v-col>
+          </v-row>
+          <v-row v-if="form.service_term_mode === 'range'">
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.service_start_date"
+                label="Начало" type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.service_end_date"
+                label="Конец" type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
+          <v-row v-if="form.service_term_mode === 'duration'">
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model.number="form.service_term_days"
+                label="Количество дней" type="number" min="1"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-select
+                v-model="form.service_term_type"
+                :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'working'}]"
+                item-title="title" item-value="value"
+                label="Тип дней" variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
+          <v-row v-if="form.service_term_mode === 'deadline'">
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.service_deadline_date"
+                label="До какой даты" type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
         </v-card-text>
       </v-card>
 
@@ -2456,6 +2540,13 @@ const form = reactive({
   service_period_type: 'date' as string,
   service_start_date: '' as string,
   service_end_date: '' as string,
+  // Phase 19: template-specific fields
+  submission_deadline: '' as string,              // ISO datetime-local (YYYY-MM-DDTHH:mm)
+  delivery_location: '' as string,
+  service_term_mode: '' as string,                // '' | 'range' | 'duration' | 'deadline'
+  service_term_days: null as number | null,       // mode='duration'
+  service_term_type: 'calendar' as string,        // 'calendar' | 'working' (mode='duration')
+  service_deadline_date: '' as string,            // mode='deadline'
   description_mode: 'exact' as string,
   event_id: null as number | null,
   approval_status: null as string | null,
@@ -3998,6 +4089,15 @@ const loadPurchase = async () => {
     service_period_type: data.service_period_type || 'date',
     service_start_date: data.service_start_date || '',
     service_end_date: data.service_end_date || '',
+    // Phase 19: template-specific fields
+    submission_deadline: data.submission_deadline
+      ? String(data.submission_deadline).slice(0, 16)  // ISO → datetime-local input value
+      : '',
+    delivery_location: data.delivery_location || '',
+    service_term_mode: data.service_term_mode || '',
+    service_term_days: data.service_term_days ?? null,
+    service_term_type: data.service_term_type || 'calendar',
+    service_deadline_date: data.service_deadline_date || '',
     description_mode: data.description_mode || 'exact',
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
@@ -4244,6 +4344,13 @@ const doSave = async (adminOverride: boolean) => {
       execution_term_changed: form.execution_term_changed || null,
       service_start_date: form.service_start_date || null,
       service_end_date: form.service_end_date || null,
+      // Phase 19: template-specific fields
+      submission_deadline: form.submission_deadline || null,
+      delivery_location: form.delivery_location || null,
+      service_term_mode: form.service_term_mode || null,
+      service_term_days: form.service_term_days ?? null,
+      service_term_type: form.service_term_mode === 'duration' ? (form.service_term_type || 'calendar') : null,
+      service_deadline_date: form.service_deadline_date || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
       acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
       payment_doc_date: form.payment_doc_date || null,

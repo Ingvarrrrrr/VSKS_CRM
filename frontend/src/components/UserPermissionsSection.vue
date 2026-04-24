@@ -9,7 +9,7 @@
         size="small"
         prepend-icon="mdi-account-cog"
       >Индивидуально</v-chip>
-      <v-chip v-else color="primary" size="small">{{ roleLabel(userRole) }}</v-chip>
+      <v-chip v-else color="primary" size="small">{{ roleLabel(selectedRole || userRole) }}</v-chip>
     </v-card-title>
 
     <v-card-text class="pa-4 pt-0">
@@ -25,6 +25,23 @@
         hide-details
         @update:model-value="onOrgChange"
       />
+
+      <v-select
+        v-model="selectedRole"
+        :items="roleOptions"
+        item-title="label"
+        item-value="value"
+        label="Роль в этой организации"
+        density="compact"
+        variant="outlined"
+        :disabled="isRoleChangeBlocked"
+        hide-details
+        class="mb-3"
+        @update:model-value="onRoleChange"
+      />
+      <div v-if="isRoleChangeBlocked" class="text-caption text-medium-emphasis mb-2">
+        Нельзя менять собственную роль в своей организации.
+      </div>
 
       <v-tabs v-model="activeTab" density="compact" class="mb-2">
         <v-tab value="tabs">Листы ({{ tabs.length }})</v-tab>
@@ -155,17 +172,33 @@ const tabs = ref<{ tab_key: string; title: string }[]>([])
 const actions = ref<{ action_key: string; description: string }[]>([])
 const roleDefaults = ref<Record<string, Set<string>>>({})
 const overrides = ref<Record<string, boolean>>({})
+const orgRoles = ref<Record<number, string | null>>({})
 const selectedOrgId = ref<number | null>(props.orgAccessList[0]?.org_id ?? null)
+const selectedRole = ref<string>('')
 const activeTab = ref('tabs')
 const loading = ref(false)
 const saving = ref(false)
 const saved = ref(false)
+
+const roleOptions = [
+  { value: 'account_owner', label: 'Владелец аккаунта' },
+  { value: 'admin',         label: 'Администратор' },
+  { value: 'org_admin',     label: 'Админ организации' },
+  { value: 'manager',       label: 'Менеджер' },
+  { value: 'employee',      label: 'Сотрудник' },
+]
+
+const isRoleChangeBlocked = computed(() => props.userId === props.currentUserId)
 
 const orgOptions = computed(() =>
   props.orgAccessList.map(o => ({ value: o.org_id, label: o.org_name }))
 )
 
 const currentOrgRole = computed(() => {
+  // Prefer the per-org role from the dedicated endpoint (fresh source of truth)
+  if (selectedOrgId.value != null && orgRoles.value[selectedOrgId.value] != null) {
+    return orgRoles.value[selectedOrgId.value] as string
+  }
   const rec = props.orgAccessList.find(o => o.org_id === selectedOrgId.value)
   return rec?.role ?? props.userRole
 })
@@ -199,6 +232,48 @@ function roleLabel(role: string): string {
     employee: 'Сотрудник',
   }
   return labels[role] ?? role
+}
+
+async function loadOrgRoles() {
+  try {
+    const rows = await apiFetch<{ org_id: number; role: string | null }[]>(
+      `/permissions/users/${props.userId}/org-roles`
+    )
+    const map: Record<number, string | null> = {}
+    for (const r of rows) map[r.org_id] = r.role
+    orgRoles.value = map
+  } catch (e) {
+    console.warn('[UserPermissionsSection] loadOrgRoles failed', e)
+  }
+}
+
+async function onRoleChange(newRole: string) {
+  if (!selectedOrgId.value) return
+  saving.value = true
+  saved.value = false
+  try {
+    await apiFetch(
+      `/permissions/users/${props.userId}/role?org_id=${selectedOrgId.value}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+      }
+    )
+    orgRoles.value = { ...orgRoles.value, [selectedOrgId.value]: newRole }
+    saved.value = true
+    setTimeout(() => { saved.value = false }, 1500)
+    // Effective base changed — re-fetch overrides so chips reflect new defaults
+    await loadForOrg()
+  } catch (e: any) {
+    alert(`Не удалось изменить роль: ${e?.message ?? e}`)
+    // Revert selector
+    selectedRole.value =
+      (selectedOrgId.value != null ? orgRoles.value[selectedOrgId.value] : null) ??
+      props.userRole
+  } finally {
+    saving.value = false
+  }
 }
 
 async function loadCatalogs() {
@@ -297,13 +372,31 @@ async function removeOverride(key: string) {
 
 onMounted(async () => {
   await loadCatalogs()
+  await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()
 })
 
 // Re-fetch overrides when userId changes (dialog re-used for different users)
 watch(() => props.userId, async () => {
   overrides.value = {}
+  orgRoles.value = {}
   selectedOrgId.value = props.orgAccessList[0]?.org_id ?? null
+  await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()
 })
+
+// Keep selectedRole in sync with the cached per-org role for the active org
+watch(
+  [orgRoles, selectedOrgId],
+  () => {
+    if (selectedOrgId.value == null) {
+      selectedRole.value = ''
+      return
+    }
+    selectedRole.value =
+      orgRoles.value[selectedOrgId.value] ??
+      (props.orgAccessList.find(o => o.org_id === selectedOrgId.value)?.role ?? props.userRole)
+  },
+  { immediate: true, deep: true }
+)
 </script>

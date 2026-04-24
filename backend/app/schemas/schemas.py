@@ -630,16 +630,22 @@ class ProductOut(ProductCreate):
     @classmethod
     def _compute_has_photo(cls, data):
         # Derive `has_photo` from ORM object / dict so callers don't need to
-        # set it manually. Avoid touching photo_data bytes in the response.
+        # set it manually. Phase 17.1-08 perf: check `photo_size` (cheap scalar)
+        # instead of `photo_data` (bytea — triggers lazy load when deferred on
+        # the list query). `photo_size` is populated whenever bytes are cached
+        # (see _download_and_save_photo / upload_product_photo).
         try:
-            if hasattr(data, 'photo_data'):
-                has_photo_val = getattr(data, 'photo_data', None) is not None
+            if hasattr(data, 'photo_size'):
+                has_photo_val = getattr(data, 'photo_size', None) is not None
                 try:
                     object.__setattr__(data, 'has_photo', has_photo_val)
                 except Exception:
                     pass
             elif isinstance(data, dict) and 'has_photo' not in data:
-                data['has_photo'] = data.get('photo_data') is not None
+                data['has_photo'] = (
+                    data.get('photo_size') is not None
+                    or data.get('photo_data') is not None
+                )
         except Exception:
             pass
         return data

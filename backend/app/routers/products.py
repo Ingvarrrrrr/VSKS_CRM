@@ -3,6 +3,7 @@ import shutil
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Body
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from sqlalchemy import select
+from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, get_org_filter, require_role, ADMIN_ROLES
 from app.auth.permissions import require_tab
@@ -62,7 +63,10 @@ async def list_products(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = select(Product)
+    # Phase 17.1-08 perf: defer photo_data (bytea, up to 10MB per row).
+    # The list endpoint must stay small (~1-2MB); clients fetch bytes via
+    # GET /{product_id}/photo when has_photo=True.
+    q = select(Product).options(defer(Product.photo_data))
     # Products are global — no org_id filter
     if feo_category_id is not None:
         q = q.where(Product.feo_category_id == feo_category_id)
@@ -219,7 +223,13 @@ async def get_product(
     product_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(Product).where(Product.id == product_id))
+    # Phase 17.1-08 perf: defer photo_data — detail endpoint doesn't return
+    # bytes; frontend uses GET /{product_id}/photo for raw image.
+    result = await db.execute(
+        select(Product)
+        .options(defer(Product.photo_data))
+        .where(Product.id == product_id)
+    )
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")

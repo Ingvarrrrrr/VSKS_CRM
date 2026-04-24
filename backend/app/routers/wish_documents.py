@@ -6,9 +6,13 @@ Separate from documents.py to keep contracts clean:
 
 Endpoint: GET /api/wishes/{wish_id}/documents/service_note
   - Builds docxtpl context from Wish + WishItem directly (not from Purchase)
-  - Re-uses the existing service_note.docx template
+  - Phase 19.07: primary template is service_note_procurement.docx (СЗ на закупку),
+    with fallback to legacy service_note.docx if the procurement template is
+    not yet uploaded (globally or per-subsidy)
   - Defensive: fills empty strings for all purchase-only keys so render never crashes
   - Returns .docx as StreamingResponse with Content-Disposition filename
+  - NOTE: Endpoint URL kept as /service_note (not /service_note_procurement)
+    for backwards compat with frontend callers.
 """
 import os
 from io import BytesIO
@@ -53,7 +57,9 @@ async def generate_wish_service_note(
     """Generate a Служебная Записка .docx from Wish data (pre-approval, no purchase required).
 
     D-07 requirement: download button in WishesView available BEFORE approve.
-    Re-uses the same service_note.docx template used by documents.py for purchases.
+    Phase 19.07: uses service_note_procurement.docx as the primary template
+    (СЗ на закупку — the natural wish-stage SZ). Falls back to legacy
+    service_note.docx if the procurement template hasn't been uploaded yet.
     """
     # ── Load wish with eager relations ──────────────────────────────────────
     result = await db.execute(
@@ -70,18 +76,33 @@ async def generate_wish_service_note(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
 
     # ── Resolve template path (subsidy-specific override supported) ─────────
-    template_file = "service_note.docx"
-    template_path = os.path.join(TEMPLATES_DIR, template_file)
+    # Phase 19.07: prefer service_note_procurement.docx, fall back to legacy
+    # service_note.docx so existing deployments keep working.
+    PRIMARY_FILE = "service_note_procurement.docx"
+    FALLBACK_FILE = "service_note.docx"
+
+    template_path = None
     if w.subsidy_id:
-        subsidy_override = os.path.join(
-            SUBSIDY_TEMPLATES_DIR, "subsidies", str(w.subsidy_id), "service_note.docx"
-        )
-        if os.path.exists(subsidy_override):
-            template_path = subsidy_override
-    if not os.path.exists(template_path):
+        for fname in (PRIMARY_FILE, FALLBACK_FILE):
+            candidate = os.path.join(
+                SUBSIDY_TEMPLATES_DIR, "subsidies", str(w.subsidy_id), fname
+            )
+            if os.path.exists(candidate):
+                template_path = candidate
+                break
+    if template_path is None:
+        for fname in (PRIMARY_FILE, FALLBACK_FILE):
+            candidate = os.path.join(TEMPLATES_DIR, fname)
+            if os.path.exists(candidate):
+                template_path = candidate
+                break
+    if template_path is None or not os.path.exists(template_path):
         raise HTTPException(
             status_code=404,
-            detail=f"Шаблон {template_file} не найден. Поместите файл в backend/templates/{template_file}",
+            detail=(
+                f"Шаблон {PRIMARY_FILE} (или {FALLBACK_FILE}) не найден. "
+                f"Поместите файл в backend/templates/{PRIMARY_FILE}"
+            ),
         )
 
     # ── Load initiator if provided (same pattern as documents.py line 314) ──

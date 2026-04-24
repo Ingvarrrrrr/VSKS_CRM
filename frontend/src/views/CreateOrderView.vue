@@ -1289,9 +1289,9 @@
               <v-list density="compact">
                 <v-list-item
                   prepend-icon="mdi-file-document-outline"
-                  @click="openDocPicker('service_note')"
+                  @click="openDocPicker('service_note_procurement')"
                 >
-                  <v-list-item-title>На организацию закупки</v-list-item-title>
+                  <v-list-item-title>На закупку</v-list-item-title>
                 </v-list-item>
                 <v-list-item
                   prepend-icon="mdi-truck-delivery-outline"
@@ -1304,6 +1304,12 @@
                   @click="openDocPicker('service_note_payment')"
                 >
                   <v-list-item-title>На оплату поставленного</v-list-item-title>
+                </v-list-item>
+                <v-list-item
+                  prepend-icon="mdi-cash-fast"
+                  @click="openDocPicker('service_note_advance')"
+                >
+                  <v-list-item-title>На аванс</v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -1350,16 +1356,6 @@
               title="Скачать Договор и ТЗ одним файлом"
             >
               {{ contractWord }} + ТЗ
-            </v-btn>
-            <v-btn v-if="isSectionVisible('contractor')"
-              prepend-icon="mdi-file-document-edit-outline"
-              variant="tonal"
-              color="deep-purple"
-              size="small"
-              :loading="docLoading === 'contract_fadm'"
-              @click="downloadDoc('contract_fadm')"
-            >
-              {{ contractWord }} ФАДМ
             </v-btn>
             <v-btn
               prepend-icon="mdi-file-word-outline"
@@ -2611,7 +2607,7 @@ const docLoading = ref<string | null>(null)
 // ── Doc picker (approver selection before download) ──
 interface DocApprover { id: number; role_name: string; full_name: string; order_num: number; is_default: boolean; can_initiate: boolean }
 const docPickerDialog      = ref(false)
-const docPickerType        = ref<'service_note' | 'service_note_delivery' | 'service_note_payment' | 'approval_sheet'>('approval_sheet')
+const docPickerType        = ref<'service_note_procurement' | 'service_note_delivery' | 'service_note_payment' | 'service_note_advance' | 'approval_sheet'>('approval_sheet')
 const loadingDocApprovers  = ref(false)
 const docApprovers         = ref<DocApprover[]>([])
 const pickerApproverIds    = ref<number[]>([])
@@ -2740,7 +2736,7 @@ async function saveNewResponsible() {
   finally { savingResponsible.value = false }
 }
 
-async function openDocPicker(type: 'service_note' | 'service_note_delivery' | 'service_note_payment' | 'approval_sheet') {
+async function openDocPicker(type: 'service_note_procurement' | 'service_note_delivery' | 'service_note_payment' | 'service_note_advance' | 'approval_sheet') {
   if (!purchaseId.value || !form.subsidy_id) {
     downloadDoc(type)
     return

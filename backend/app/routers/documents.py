@@ -31,15 +31,32 @@ DOC_TYPES = {
     "service_note":          ("service_note.docx",          "SZ_Organizaciya"),
     "service_note_delivery": ("service_note_delivery.docx", "SZ_Vydacha"),
     "service_note_payment":  ("service_note_payment.docx",  "SZ_Oplata"),
+    # Phase 19.05: dedicated SZ for procurement (distinct from generic service_note)
+    "service_note_procurement": ("service_note_procurement.docx", "SZ_Zakupka"),
+    # Legacy — kept for backwards compat with existing uploaded subsidy overrides.
     "contract_tz":           ("contract_tz.docx",           "Contract_TZ"),
     # tech_spec falls back to contract_tz.docx — separation kept for future
     # when a dedicated tech_spec template is uploaded, but both resolve to
     # the same file today so there is no confusing "empty ТЗ slot" in UI.
     "tech_spec":             ("contract_tz.docx",           "Tech_Spec"),
+    # Phase 19.05: split ТЗ into request-of-prices and contract-appendix variants.
+    # Default template file is a copy of contract_tz.docx; admins upload
+    # per-subsidy overrides via SubsidiesView.
+    "tech_spec_request":     ("tech_spec_request.docx",     "TZ_Zapros_Cen"),
+    "tech_spec_contract":    ("tech_spec_contract.docx",    "TZ_Dogovor"),
     "contract":              ("contract.docx",              "Contract"),
     "contract_fadm":         ("contract_fadm.docx",         "Contract_FADM"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
+}
+
+# Phase 19.05: fallback map — if a dedicated template file is missing,
+# fall back to the legacy file so the endpoint still works before admins
+# upload per-subsidy overrides.
+DOC_TYPE_FALLBACK_FILES = {
+    "service_note_procurement": "service_note.docx",
+    "tech_spec_request":        "contract_tz.docx",
+    "tech_spec_contract":       "contract_tz.docx",
 }
 
 # Fields required to generate a FADM contract; maps field_path → label
@@ -289,6 +306,15 @@ async def generate_document(
     # (loaded after purchase is fetched below, but we need subsidy_id from the purchase)
     # We'll resolve the path after loading the purchase — placeholder here
 
+    # Phase 19.05: for new split doc_types, fall back to legacy template file
+    # if the dedicated one hasn't been uploaded yet.
+    if not os.path.exists(template_path):
+        fallback = DOC_TYPE_FALLBACK_FILES.get(doc_type)
+        if fallback:
+            fallback_path = os.path.join(TEMPLATES_DIR, fallback)
+            if os.path.exists(fallback_path):
+                template_path = fallback_path
+                template_file = fallback
     if not os.path.exists(template_path):
         raise HTTPException(
             404,

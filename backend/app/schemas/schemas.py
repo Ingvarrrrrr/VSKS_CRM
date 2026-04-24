@@ -619,7 +619,30 @@ class ProductOut(ProductCreate):
     tz_44fz_verified_by: Optional[str] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[str] = None
+    # Phase 17.1-08 — photo bytea storage. We expose only metadata here,
+    # never the raw bytes (would bloat API responses to MBs per product).
+    has_photo: bool = False
+    photo_size: Optional[int] = None
+    photo_mime: Optional[str] = None
     model_config = {"from_attributes": True}
+
+    @model_validator(mode='before')
+    @classmethod
+    def _compute_has_photo(cls, data):
+        # Derive `has_photo` from ORM object / dict so callers don't need to
+        # set it manually. Avoid touching photo_data bytes in the response.
+        try:
+            if hasattr(data, 'photo_data'):
+                has_photo_val = getattr(data, 'photo_data', None) is not None
+                try:
+                    object.__setattr__(data, 'has_photo', has_photo_val)
+                except Exception:
+                    pass
+            elif isinstance(data, dict) and 'has_photo' not in data:
+                data['has_photo'] = data.get('photo_data') is not None
+        except Exception:
+            pass
+        return data
 
 # Product Summary (сводная по продукции)
 class ProductSummaryItem(BaseModel):

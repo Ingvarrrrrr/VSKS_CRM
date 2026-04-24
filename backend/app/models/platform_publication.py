@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -21,4 +21,14 @@ class PlatformPublication(Base):
     request_type = Column(String(50), nullable=True)       # auction / competition / price_request / monitoring
     auction_date = Column(DateTime(timezone=True), nullable=True)  # дата розыгрыша
 
-    purchase = relationship("Purchase", backref="publications")
+    # Phase 17.1-07 hotfix: cascade delete + passive_deletes so SQLAlchemy does not
+    # try to NULL-out purchase_id on Purchase deletion (FK is NOT NULL).
+    # DB-level CASCADE handles row removal.
+    purchase = relationship(
+        "Purchase",
+        backref=backref(
+            "publications",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+        ),
+    )

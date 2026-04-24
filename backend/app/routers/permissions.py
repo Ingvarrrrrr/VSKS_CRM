@@ -20,7 +20,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.schemas.schemas import (
     PermissionTabOut, PermissionActionOut, RoleMatrixRow,
-    PermissionUpdate, OverrideOut,
+    PermissionUpdate, OverrideOut, RoleUpdate,
 )
 
 router = APIRouter(prefix="/api/permissions", tags=["permissions"])
@@ -180,6 +180,65 @@ async def update_overrides(
             ))
     await db.commit()
     return {"status": "ok", "updated": len(updates)}
+
+
+@router.get("/users/{user_id}/org-roles")
+async def get_user_org_roles(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    """Return per-org role (uoa.role) for each org the user is attached to."""
+    rows = (await db.execute(
+        select(UserOrgAccess).where(UserOrgAccess.user_id == user_id)
+    )).scalars().all()
+    return [{"org_id": r.org_id, "role": r.role} for r in rows]
+
+
+@router.patch("/users/{user_id}/role")
+async def update_user_org_role(
+    user_id: int,
+    body: RoleUpdate,
+    org_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("staff")),
+):
+    """Change user_org_access.role for a single (user, org) pair.
+
+    D-09: superadmin is never assignable via API.
+    D-05.2: self-lockout — cannot demote self to a role lacking admin.roles/staff.
+    """
+    # D-09: only the 5 visible roles are allowed (no superadmin)
+    if body.role not in ("account_owner", "admin", "org_admin", "manager", "employee"):
+        raise HTTPException(400, "Недопустимая роль")
+
+    # D-05.2: self-lockout — cannot demote self below admin-level in own org
+    if user_id == current_user.id:
+        res = await db.execute(
+            select(RolePermission.key).where(
+                RolePermission.role_name == body.role,
+                RolePermission.granted == True,  # noqa: E712
+            )
+        )
+        new_role_keys = {r for r, in res.all()}
+        if "admin.roles" not in new_role_keys or "staff" not in new_role_keys:
+            raise HTTPException(
+                403,
+                "Нельзя понизить себе роль в этой организации (самоблокировка)",
+            )
+
+    uoa = (await db.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user_id,
+            UserOrgAccess.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if uoa is None:
+        raise HTTPException(404, "Пользователь не привязан к организации")
+
+    uoa.role = body.role
+    await db.commit()
+    return {"status": "ok", "role": body.role}
 
 
 @router.delete("/users/{user_id}/overrides/{key}")

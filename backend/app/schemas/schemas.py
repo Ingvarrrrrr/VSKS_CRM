@@ -885,6 +885,10 @@ class PermissionUpdate(BaseModel):
     granted: bool
 
 
+class RoleUpdate(BaseModel):
+    role: str
+
+
 class OverrideOut(BaseModel):
     key: str
     granted: bool

@@ -8,7 +8,12 @@ from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut, PermissionsOut
-from app.auth.permissions import get_effective_tabs, get_effective_actions, require_action
+from app.auth.permissions import (
+    get_effective_tabs,
+    get_effective_actions,
+    require_action,
+    ensure_user_org_access,
+)
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -75,6 +80,10 @@ async def create_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    # Phase 17.1-05: sync primary org access entry
+    if user.org_id:
+        await ensure_user_org_access(user.id, user.org_id, user.role, db)
+        await db.commit()
     # Sync to department if set
     if user.department:
         await _sync_user_department(user, db)
@@ -160,6 +169,11 @@ async def update_user(
 
     await db.commit()
     await db.refresh(user)
+
+    # Phase 17.1-05: sync primary org access when org/role changes
+    if ("org_id" in update_data or "role" in update_data) and user.org_id:
+        await ensure_user_org_access(user.id, user.org_id, user.role, db)
+        await db.commit()
 
     # Sync department membership
     if "department" in update_data or "position" in update_data:

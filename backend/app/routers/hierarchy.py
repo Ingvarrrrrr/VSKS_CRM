@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, ensure_user_org_access, remove_user_org_access
 from app.database import get_db
 from app.models.department import Department, DepartmentMember
 from app.models.manager_department import ManagerDepartment
@@ -444,11 +444,19 @@ async def add_user_to_organization(
         if body.position is not None:
             existing.position = body.position
             await db.commit()
+        # Phase 17.1-05: mirror to user_org_access (role defaults to user.role)
+        u = await db.get(User, uid)
+        await ensure_user_org_access(uid, org_id, u.role if u else None, db)
+        await db.commit()
         return {"id": existing.id, "ok": True}
     row = UserOrganization(user_id=uid, org_id=org_id, position=body.position)
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    # Phase 17.1-05: mirror to user_org_access (role defaults to user.role)
+    u = await db.get(User, uid)
+    await ensure_user_org_access(uid, org_id, u.role if u else None, db)
+    await db.commit()
     return {"id": row.id, "ok": True}
 
 
@@ -566,6 +574,11 @@ async def remove_user_from_organization(
     if is_primary:
         user.org_id = None
     await db.commit()
+    # Phase 17.1-05: remove uoa only for extra orgs; primary uoa is managed via
+    # user.org_id changes in users.update_user to avoid accidental revocation.
+    if not is_primary:
+        await remove_user_org_access(uid, org_id, db)
+        await db.commit()
     return {"ok": True}
 
 

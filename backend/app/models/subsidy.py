@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -10,6 +10,8 @@ class Subsidy(Base):
     budget = Column(Float, nullable=False)
     calculated_budget = Column(Float, nullable=True)
     description = Column(String(2000), nullable=True)
+    # Phase 19: large free-text agreement clause (федеральный бюджет / Росмолодёжь)
+    agreement_text = Column(Text, nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

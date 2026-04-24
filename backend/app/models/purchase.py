@@ -96,6 +96,15 @@ class Purchase(Base):
     # Ссылка на родительскую закупку — если эту создали разбиением другой
     parent_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
 
+    # Phase 19: template fields for docx context ---------------------------
+    submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
+    delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки
+    service_term_mode = Column(String(20), nullable=True)           # 'range' | 'duration' | 'deadline'
+    # service_start_date / service_end_date already declared above (Phase 1) — reused for mode='range'
+    service_term_days = Column(Integer, nullable=True)              # N дней для mode='duration'
+    service_term_type = Column(String(20), nullable=True)           # 'calendar' | 'working' для mode='duration'
+    service_deadline_date = Column(Date, nullable=True)             # до даты включительно для mode='deadline'
+
     feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor")
     contract = relationship("Contract", back_populates="purchases")

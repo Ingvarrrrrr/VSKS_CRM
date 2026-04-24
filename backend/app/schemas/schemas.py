@@ -136,6 +136,19 @@ class SubsidyCreate(BaseModel):
     budget: float
     description: Optional[str] = None
     contractor_id: Optional[int] = None
+    # Phase 19: large agreement-text clause for docx templates
+    agreement_text: Optional[str] = None
+
+
+class SubsidyUpdate(BaseModel):
+    """Partial update — all fields optional."""
+    name: Optional[str] = None
+    year: Optional[int] = None
+    budget: Optional[float] = None
+    description: Optional[str] = None
+    contractor_id: Optional[int] = None
+    agreement_text: Optional[str] = None
+
 
 class SubsidyOut(BaseModel):
     id: int
@@ -151,6 +164,8 @@ class SubsidyOut(BaseModel):
     org_inn: Optional[str] = None
     feo_filled: bool = False
     feo_budget_total: float = 0.0
+    # Phase 19
+    agreement_text: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -447,8 +462,97 @@ class PurchaseCreate(BaseModel):
     service_note_text: Optional[str] = None
     service_note_by: Optional[int] = None
     service_note_at: Optional[datetime] = None
+    # Phase 19: template fields for docx context
+    submission_deadline: Optional[datetime] = None
+    delivery_location: Optional[str] = None
+    service_term_mode: Optional[str] = None         # 'range' | 'duration' | 'deadline'
+    service_term_days: Optional[int] = None         # mode='duration'
+    service_term_type: Optional[str] = None         # 'calendar' | 'working' (mode='duration')
+    service_deadline_date: Optional[date] = None    # mode='deadline'
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
+
+
+class PurchaseUpdate(BaseModel):
+    """Partial update — all fields optional. Accepts any known Purchase field."""
+    row_number: Optional[int] = None
+    purchase_number: Optional[int] = None
+    order_number: Optional[str] = None
+    feo_category_id: Optional[int] = None
+    item_type: Optional[str] = None
+    item_name: Optional[str] = None
+    contractor_id: Optional[int] = None
+    planned_quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    planned_unit_price: Optional[Decimal] = None
+    planned_total_price: Optional[Decimal] = None
+    confirmed: Optional[bool] = None
+    final_unit_price: Optional[Decimal] = None
+    final_total_amount: Optional[Decimal] = None
+    delivery_payment_amount: Optional[Decimal] = None
+    contract_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
+    status: Optional[str] = None
+    substatus: Optional[str] = None
+    is_monthly_payment: Optional[bool] = None
+    monthly_payment_count: Optional[int] = None
+    monthly_payment_amount: Optional[Decimal] = None
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+    registry_number: Optional[str] = None
+    purchase_method: Optional[str] = None
+    purchase_basis: Optional[str] = None
+    responsible_person: Optional[str] = None
+    nmck: Optional[Decimal] = None
+    contract_price: Optional[Decimal] = None
+    economy: Optional[Decimal] = None
+    price_increase: Optional[Decimal] = None
+    execution_term: Optional[date] = None
+    execution_term_changed: Optional[date] = None
+    delivery_date: Optional[date] = None
+    delivery_address: Optional[str] = None
+    procurement_planned_date: Optional[date] = None
+    country_origin: Optional[str] = None
+    subject: Optional[str] = None
+    acceptance_doc_name: Optional[str] = None
+    acceptance_doc_date: Optional[date] = None
+    acceptance_doc_number: Optional[str] = None
+    acceptance_doc_amount: Optional[Decimal] = None
+    acceptance_docs: Optional[list] = None
+    payment_doc_number: Optional[str] = None
+    payment_doc_date: Optional[date] = None
+    payment_amount: Optional[Decimal] = None
+    payment_federal: Optional[Decimal] = None
+    total_nmck: Optional[Decimal] = None
+    purchase_contract_type: Optional[str] = None
+    framework_seq: Optional[int] = None
+    vat_applicable: Optional[bool] = None
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
+    third_party_involved: Optional[bool] = None
+    contract_end_date: Optional[date] = None
+    service_period_type: Optional[str] = None
+    service_start_date: Optional[date] = None
+    service_end_date: Optional[date] = None
+    description_mode: Optional[str] = None
+    event_id: Optional[int] = None
+    approval_status: Optional[str] = None
+    approval_mode: Optional[str] = None
+    approval_sign_type: Optional[str] = None
+    treasury_code: Optional[str] = None
+    has_pretension: Optional[bool] = None
+    payment_basis_type: Optional[str] = None
+    service_note_text: Optional[str] = None
+    service_note_by: Optional[int] = None
+    service_note_at: Optional[datetime] = None
+    # Phase 19
+    submission_deadline: Optional[datetime] = None
+    delivery_location: Optional[str] = None
+    service_term_mode: Optional[str] = None
+    service_term_days: Optional[int] = None
+    service_term_type: Optional[str] = None
+    service_deadline_date: Optional[date] = None
+
 
 class PurchaseOut(PurchaseCreate):
     id: int

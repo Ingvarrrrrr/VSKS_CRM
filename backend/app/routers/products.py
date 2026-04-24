@@ -770,6 +770,25 @@ def _fetch_photo_bytes(url: str) -> tuple[bytes, str]:
     return raw, ct
 
 
+def _pick_external_url(p: Product) -> Optional[str]:
+    """Return the best external http(s) URL to download from.
+
+    Priority: photo_url (if http/https) → photo_link (if http/https) → None.
+
+    `photo_link` acts as the "backup external link" — admin maintains it as a
+    source of truth, while `photo_url` can get overwritten with legacy local
+    `/api/products/photos/...` paths or other non-http values. Local paths and
+    any non-http values are treated as invalid sources and skipped.
+    """
+    def _is_http(v: Optional[str]) -> bool:
+        return bool(v and (v.startswith("http://") or v.startswith("https://")))
+    if _is_http(p.photo_url):
+        return p.photo_url
+    if _is_http(p.photo_link):
+        return p.photo_link
+    return None
+
+
 async def _download_and_save_photo(product_id: int, url: str, db: AsyncSession) -> tuple[bool, Optional[str]]:
     """Download external URL and persist bytes to product.photo_data.
 
@@ -813,11 +832,9 @@ async def download_all_photos(
             skipped += 1
             continue
         # Find source URL: prefer photo_url (external), fallback to photo_link.
-        src = None
-        if p.photo_url and (p.photo_url.startswith("http://") or p.photo_url.startswith("https://")):
-            src = p.photo_url
-        elif p.photo_link and (p.photo_link.startswith("http://") or p.photo_link.startswith("https://")):
-            src = p.photo_link
+        # Legacy local `/api/products/photos/...` paths are filtered out by the
+        # http(s) prefix check inside _pick_external_url.
+        src = _pick_external_url(p)
         if not src:
             skipped += 1
             continue
@@ -840,13 +857,9 @@ async def download_single_photo(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(404, "Товар не найден")
-    src = None
-    if product.photo_url and (product.photo_url.startswith("http://") or product.photo_url.startswith("https://")):
-        src = product.photo_url
-    elif product.photo_link and (product.photo_link.startswith("http://") or product.photo_link.startswith("https://")):
-        src = product.photo_link
+    src = _pick_external_url(product)
     if not src:
-        raise HTTPException(400, "Нет URL для скачивания фото")
+        raise HTTPException(400, "Нет внешней ссылки для скачивания")
     ok, err = await _download_and_save_photo(product.id, src, db)
     if not ok:
         raise HTTPException(500, f"Ошибка скачивания: {err}")

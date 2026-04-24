@@ -1,7 +1,7 @@
 import os
 import shutil
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Body
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, get_org_filter, require_role, ADMIN_ROLES
@@ -177,11 +177,38 @@ async def product_summary(
 
 
 @router.get("/photos/{filename}")
-async def serve_product_photo(filename: str):
+async def serve_product_photo_legacy(filename: str):
+    """Legacy filesystem endpoint. Phase 17.1-08 moved photos to bytea in DB;
+    any surviving files on the volume are still served, but most will 404 now
+    (prod volume lost its contents). Frontends should prefer the bytea
+    endpoint GET /api/products/{product_id}/photo via `has_photo`.
+    """
     filepath = os.path.join(PRODUCT_UPLOAD_DIR, filename)
     if not os.path.exists(filepath):
-        raise HTTPException(404, "Файл не найден")
+        raise HTTPException(404, "Фото не найдено (хранение перенесено в БД)")
     return FileResponse(filepath)
+
+
+@router.get("/{product_id}/photo")
+async def serve_product_photo_bytea(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Return the photo bytes stored in products.photo_data.
+
+    Phase 17.1-08 — canonical photo serving path. Returns 404 if the product
+    has no cached bytes yet (frontend should fall back to the external
+    photo_url in that case).
+    """
+    product = await db.get(Product, product_id)
+    if not product or not product.photo_data:
+        raise HTTPException(404, "Фото не найдено")
+    return Response(
+        content=product.photo_data,
+        media_type=product.photo_mime or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/{product_id}", response_model=ProductOut)
@@ -670,7 +697,7 @@ async def deduplicate_products(
 
     def priority_score(p) -> tuple:
         has_price_links = bool(p.price_links)
-        has_photo = bool(p.photo_url or p.photo_link)
+        has_photo = bool(p.photo_data is not None or p.photo_url or p.photo_link)
         contract_date_ts = p.contract_date.toordinal() if p.contract_date else 0
         return (has_price_links, has_photo, contract_date_ts, p.id)
 
@@ -699,51 +726,80 @@ async def deduplicate_products(
     return {"deleted": deleted, "kept": len(all_products) - deleted}
 
 
-def _download_and_save_photo(product_id: int, url: str) -> str:
-    """Download image from URL, save locally, return local path like /api/products/photos/..."""
-    import urllib.request as _ur, tempfile, io as _io
-    SUPPORTED = ("image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/tiff")
-    os.makedirs(PRODUCT_UPLOAD_DIR, exist_ok=True)
-    with _ur.urlopen(url, timeout=10) as r:
-        ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+def _fetch_photo_bytes(url: str) -> tuple[bytes, str]:
+    """Download image from URL, return (raw_bytes, mime_type).
+
+    Blocking — meant to be called via asyncio.to_thread. Converts webp to jpeg
+    when possible. Enforces a 10MB size cap.
+    """
+    import urllib.request as _ur, io as _io
+    SUPPORTED = ("image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/tiff", "image/webp")
+    req = _ur.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with _ur.urlopen(req, timeout=15) as r:
+        ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower() or "image/jpeg"
         raw = r.read()
     is_webp = "webp" in ct or url.lower().endswith(".webp")
     if is_webp:
-        from PIL import Image as _Img
-        img = _Img.open(_io.BytesIO(raw)).convert("RGB")
-        buf = _io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        raw = buf.getvalue()
-        ext = ".jpg"
-    elif ct in SUPPORTED:
-        ext_map = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
-                   "image/gif": ".gif", "image/bmp": ".bmp", "image/tiff": ".tiff"}
-        ext = ext_map.get(ct, ".jpg")
-    else:
+        try:
+            from PIL import Image as _Img
+            img = _Img.open(_io.BytesIO(raw)).convert("RGB")
+            buf = _io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            raw = buf.getvalue()
+            ct = "image/jpeg"
+        except Exception:
+            # Pillow unavailable / broken webp — fall through, keep bytes + mime.
+            ct = "image/webp"
+    elif ct not in SUPPORTED:
         raise ValueError(f"Неподдерживаемый формат: {ct}")
-    filename = f"product_{product_id}{ext}"
-    dest = os.path.join(PRODUCT_UPLOAD_DIR, filename)
-    with open(dest, "wb") as f:
-        f.write(raw)
-    return f"/api/products/photos/{filename}"
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError("Файл > 10MB")
+    return raw, ct
+
+
+async def _download_and_save_photo(product_id: int, url: str, db: AsyncSession) -> tuple[bool, Optional[str]]:
+    """Download external URL and persist bytes to product.photo_data.
+
+    Returns (success, error_msg). The existing `photo_url` field is NOT cleared —
+    it remains the source of truth for re-downloading the photo later.
+    """
+    import asyncio
+    try:
+        raw, mime = await asyncio.to_thread(_fetch_photo_bytes, url)
+    except Exception as e:
+        return False, str(e)
+    product = await db.get(Product, product_id)
+    if not product:
+        return False, "Товар не найден"
+    product.photo_data = raw
+    product.photo_mime = mime
+    product.photo_size = len(raw)
+    # Do NOT clear photo_url — external URL stays as source of truth.
+    await db.commit()
+    return True, None
 
 
 @router.post("/download-photos")
 async def download_all_photos(
     db: AsyncSession = Depends(get_db),
 ):
-    """Скачать и сохранить локально фото для всех товаров с URL-ссылками (без локального фото)."""
-    import asyncio
+    """Скачать фото для всех активных товаров с внешней ссылкой, ещё не
+    закэшированных в БД.
+
+    Phase 17.1-08: cached copies live in `products.photo_data`. The correct
+    guard is therefore "no photo_data yet" — NOT "no local filesystem URL"
+    (old `/api/products/photos/*` URLs all point to a now-empty volume).
+    """
     result = await db.execute(select(Product).where(Product.is_active == True))
     all_products = result.scalars().all()
 
     updated, skipped, errors = 0, 0, []
     for p in all_products:
-        # Skip if already has local photo
-        if p.photo_url and p.photo_url.startswith("/api/products/photos/"):
+        # Already cached in DB → skip (idempotent re-runs are cheap).
+        if p.photo_data is not None:
             skipped += 1
             continue
-        # Find source URL: photo_url (if http) or photo_link
+        # Find source URL: prefer photo_url (external), fallback to photo_link.
         src = None
         if p.photo_url and (p.photo_url.startswith("http://") or p.photo_url.startswith("https://")):
             src = p.photo_url
@@ -752,15 +808,12 @@ async def download_all_photos(
         if not src:
             skipped += 1
             continue
-        try:
-            local_url = await asyncio.to_thread(_download_and_save_photo, p.id, src)
-            p.photo_url = local_url
+        ok, err = await _download_and_save_photo(p.id, src, db)
+        if ok:
             updated += 1
-        except Exception as e:
-            errors.append({"id": p.id, "name": p.name, "error": str(e)})
+        else:
+            errors.append({"id": p.id, "name": p.name, "error": err})
 
-    if updated:
-        await db.commit()
     return {"updated": updated, "skipped": skipped, "errors": errors}
 
 
@@ -769,8 +822,7 @@ async def download_single_photo(
     product_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Скачать фото одного товара по его URL-ссылке."""
-    import asyncio
+    """Скачать фото одного товара по его внешней URL-ссылке в БД."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:
@@ -782,14 +834,11 @@ async def download_single_photo(
         src = product.photo_link
     if not src:
         raise HTTPException(400, "Нет URL для скачивания фото")
-    try:
-        local_url = await asyncio.to_thread(_download_and_save_photo, product.id, src)
-        product.photo_url = local_url
-        await db.commit()
-        await db.refresh(product)
-        return product
-    except Exception as e:
-        raise HTTPException(500, f"Ошибка скачивания: {e}")
+    ok, err = await _download_and_save_photo(product.id, src, db)
+    if not ok:
+        raise HTTPException(500, f"Ошибка скачивания: {err}")
+    await db.refresh(product)
+    return product
 
 
 @router.post("/{product_id}/photo", response_model=ProductOut)
@@ -798,19 +847,22 @@ async def upload_product_photo(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
+    """Загрузка фото товара пользователем. Phase 17.1-08 — сохраняем в БД
+    (bytea), не в файловую систему."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(404, "Product not found")
     if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
-    os.makedirs(PRODUCT_UPLOAD_DIR, exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1] or ".jpg"
-    filename = f"product_{product_id}{ext}"
-    dest = os.path.join(PRODUCT_UPLOAD_DIR, filename)
-    with open(dest, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-    product.photo_url = f"/api/products/photos/{filename}"
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Файл > 10MB")
+    product.photo_data = raw
+    product.photo_mime = file.content_type or "image/jpeg"
+    product.photo_size = len(raw)
+    # photo_url is left untouched — user-uploaded photo doesn't need an
+    # external source URL, but any pre-existing one stays as-is.
     await db.commit()
     await db.refresh(product)
     return product

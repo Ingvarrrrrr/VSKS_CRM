@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric, Date, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numeric, Date, DateTime, LargeBinary
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -14,9 +14,13 @@ class Product(Base):
     product_type = Column(String(200), nullable=True)  # Вид
     item_kind = Column(String(20), default="товар")  # "товар" или "услуга"
     is_reusable = Column(Boolean, default=True)  # Многоразовое или одноразовое
-    photo_url = Column(String(1000), nullable=True)
-    photo_link = Column(String(1000), nullable=True)  # Ссылка на фото
+    photo_url = Column(String(1000), nullable=True)  # Внешняя ссылка (маркетплейс) — источник правды для повторного скачивания
+    photo_link = Column(String(1000), nullable=True)  # Альтернативная ссылка на фото
     clarification_link = Column(String(1000), nullable=True)  # Уточнющая ссылка
+    # Бинарное хранение фото в БД (Phase 17.1-08). Один бэкап БД = все фото в сохранности.
+    photo_data = Column(LargeBinary, nullable=True)
+    photo_mime = Column(String(50), nullable=True)
+    photo_size = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True)
     price = Column(Numeric(10, 2), nullable=True)
     price_links = Column(JSONB, default=list, nullable=True)  # [{url, price}] — ссылки для сравнения цен

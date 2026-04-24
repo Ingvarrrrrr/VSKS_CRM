@@ -2457,7 +2457,14 @@ const SUBSTATUS_OPTIONS = [
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
-interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string }
+interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string; has_photo?: boolean }
+
+// Phase 17.1-08: prefer bytea endpoint when DB has a cached copy.
+function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
+  if (!p) return undefined
+  if (p.has_photo) return `/api/products/${p.id}/photo`
+  return p.photo_url || p.photo_link || undefined
+}
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; remaining_ordered?: number; remaining_delivered?: number; remaining_paid?: number; total_ordered?: number; status?: string; purchase_method?: string; end_date?: string }
 interface OrderItem {
   product_id: number | null
@@ -3262,7 +3269,7 @@ async function openSplitKanban() {
       quantity: Number(it.quantity) || 0,
       unit: it.unit || 'шт',
       total_price: Number(it.total_price) || 0,
-      _photo_url: prod?.photo_url ?? null,
+      _photo_url: productPhotoSrc(prod) ?? null,
       _product_category: category,
       _column: category || '__uncategorized__',
     }
@@ -4159,7 +4166,7 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
         _selectedProduct: prod ?? (i.item_name || null),
-        _photo_url: prod?.photo_url || prod?.photo_link || undefined,
+        _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }

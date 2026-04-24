@@ -1153,7 +1153,7 @@ async function openKanbanDialog(wish: Wish) {
       return {
         ...it,
         product_id: it.product_id ?? prod?.id ?? null,
-        _photo_url: prod?.photo_url ?? it._photo_url ?? null,
+        _photo_url: (prod?.has_photo ? `/api/products/${prod.id}/photo` : (prod?.photo_url ?? prod?.photo_link)) ?? it._photo_url ?? null,
         _product_category: prod?.category || it._product_category || '',
       }
     })

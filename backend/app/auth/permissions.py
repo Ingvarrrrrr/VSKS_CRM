@@ -15,16 +15,73 @@ from app.models.permission import RolePermission, UserOrgPermissionOverride
 from app.auth.jwt import get_current_user
 
 
+async def ensure_user_org_access(
+    user_id: int, org_id: int, role: Optional[str], db: AsyncSession
+) -> int:
+    """Idempotent UPSERT into user_org_access.
+
+    Returns the uoa.id. If row exists, updates role only if new role is provided
+    and differs from existing. Creates row with given role if missing.
+    Caller is responsible for committing the session.
+    """
+    existing = (await db.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user_id,
+            UserOrgAccess.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        if role is not None and existing.role != role:
+            existing.role = role
+        return existing.id
+    new = UserOrgAccess(user_id=user_id, org_id=org_id, role=role)
+    db.add(new)
+    await db.flush()
+    return new.id
+
+
+async def remove_user_org_access(
+    user_id: int, org_id: int, db: AsyncSession
+) -> None:
+    """Idempotent DELETE from user_org_access.
+
+    Cascades to user_org_permission_overrides via FK ON DELETE CASCADE.
+    Caller is responsible for committing the session.
+    """
+    existing = (await db.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user_id,
+            UserOrgAccess.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+
+
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
     """Return effective key set (tabs + actions, undifferentiated).
 
-    Boolean-flip: base = {key for RP where role_name=user.role and granted=True};
+    Role resolution: if user_org_access.role is set for (user_id, org_id) it takes
+    precedence over user.role; otherwise fallback to user.role.
+    Boolean-flip: base = {key for RP where role_name=effective_role and granted=True};
     then for each override row: granted=True -> add; granted=False -> discard.
     """
-    # Step 1: base from role matrix
+    # Step 0: resolve effective role (per-org override takes precedence)
+    effective_role = user.role
+    if org_id:
+        uoa = (await db.execute(
+            select(UserOrgAccess).where(
+                UserOrgAccess.user_id == user.id,
+                UserOrgAccess.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if uoa and uoa.role:
+            effective_role = uoa.role
+
+    # Step 1: base from role matrix with resolved role
     rp_rows = await db.execute(
         select(RolePermission).where(
-            RolePermission.role_name == user.role,
+            RolePermission.role_name == effective_role,
             RolePermission.granted == True,  # noqa: E712
         )
     )

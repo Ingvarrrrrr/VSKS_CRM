@@ -806,10 +806,66 @@
           <v-alert type="info" variant="tonal" density="compact" class="mb-3 mt-2 text-caption">
             Чек — кассовый или товарный чек. Используется для мелких закупок за наличный расчёт или по карте.
           </v-alert>
+
+          <!-- Multi-receipts list (Phase 21) — shown only when purchase already saved -->
+          <template v-if="formMode === 'advance_report' && isEdit && purchaseId">
+            <v-card variant="outlined" class="mb-3">
+              <v-card-title class="d-flex align-center pa-3 text-subtitle-2">
+                <v-icon start>mdi-receipt-text-outline</v-icon>
+                <span>Чеки ({{ receipts.length }})</span>
+                <v-spacer />
+                <v-btn size="small" variant="tonal" @click="$refs.jsonReceiptInput.click()">
+                  <v-icon start>mdi-file-upload</v-icon>JSON чека
+                </v-btn>
+                <input ref="jsonReceiptInput" type="file" accept=".json" multiple
+                  style="display:none" @change="onJsonReceiptUpload" />
+                <v-btn size="small" variant="tonal" class="ml-2" @click="openQrScanner">
+                  <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
+                </v-btn>
+                <v-btn size="small" variant="tonal" class="ml-2" @click="openManualReceiptDialog">
+                  <v-icon start>mdi-plus</v-icon>Вручную
+                </v-btn>
+              </v-card-title>
+              <v-card-text v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4">
+                Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или отсканируйте QR
+              </v-card-text>
+              <v-table v-else density="compact">
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Продавец</th>
+                    <th>ИНН</th>
+                    <th class="text-right">Сумма ₽</th>
+                    <th>Источник</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in receipts" :key="r.id">
+                    <td>{{ r.receipt_datetime ? new Date(r.receipt_datetime).toLocaleString('ru-RU') : '—' }}</td>
+                    <td>{{ r.seller_name || '—' }}</td>
+                    <td>{{ r.seller_inn || '—' }}</td>
+                    <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
+                    <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
+                    <td>
+                      <v-btn size="x-small" variant="text" color="error"
+                        icon="mdi-delete" @click="deleteReceipt(r.id)" />
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+          </template>
+          <v-alert
+            v-else-if="formMode === 'advance_report' && !isEdit"
+            type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
+            Сохраните авансовый отчёт, чтобы добавить чеки.
+          </v-alert>
+
           <v-row>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_number" label="Номер чека" variant="outlined" density="compact"
-                hint="Номер фискального документа" persistent-hint />
+                hint="Можно оставить пустым при использовании списка чеков выше" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" label="Дата чека" variant="outlined"
@@ -2361,6 +2417,80 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Phase 21: QR scanner dialog -->
+    <v-dialog v-model="qrDialog.show" max-width="520" @update:model-value="(v: boolean) => !v && closeQrScanner()">
+      <v-card>
+        <v-card-title>Сканирование QR-кода чека</v-card-title>
+        <v-card-text>
+          <video ref="qrVideoEl" style="width:100%;max-height:400px;background:#000;border-radius:6px"
+            autoplay playsinline muted></video>
+          <canvas ref="qrCanvasEl" style="display:none"></canvas>
+          <div v-if="qrDialog.error" class="text-error mt-2 text-caption">{{ qrDialog.error }}</div>
+          <v-text-field v-model="qrDialog.manual" label="Или вставьте строку QR вручную"
+            placeholder="t=20260422T1129&s=13450.00&fn=...&i=...&fp=..."
+            variant="outlined" density="compact" class="mt-3" hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="closeQrScanner">Отмена</v-btn>
+          <v-btn color="primary" variant="tonal" @click="submitManualQr"
+            :disabled="!qrDialog.manual.trim()">Применить вручную</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Phase 21: Manual receipt dialog -->
+    <v-dialog v-model="manualReceiptDialog.show" max-width="700">
+      <v-card>
+        <v-card-title>Чек — ручной ввод</v-card-title>
+        <v-card-text>
+          <v-row dense>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="manualReceiptDialog.form.fiscal_drive_number"
+                label="ФН (fiscal_drive_number)" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model.number="manualReceiptDialog.form.fiscal_document_number"
+                label="ФД" type="number" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="manualReceiptDialog.form.fiscal_sign"
+                label="ФП" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field v-model="manualReceiptDialog.form.receipt_datetime"
+                label="Дата/время" type="datetime-local" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field v-model.number="manualReceiptDialog.form.total_sum"
+                label="Сумма, ₽" type="number" variant="outlined" density="compact" suffix="₽" />
+            </v-col>
+            <v-col cols="12" md="8">
+              <v-text-field v-model="manualReceiptDialog.form.seller_name"
+                label="Продавец" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="manualReceiptDialog.form.seller_inn"
+                label="ИНН продавца" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="manualReceiptDialog.form.retail_place"
+                label="Место расчётов" variant="outlined" density="compact" />
+            </v-col>
+          </v-row>
+          <div v-if="manualReceiptDialog.error" class="text-error text-caption mt-2">
+            {{ manualReceiptDialog.error }}
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="manualReceiptDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" variant="tonal" :loading="manualReceiptDialog.saving"
+            @click="saveManualReceipt">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -2368,6 +2498,7 @@
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import jsQR from 'jsqr'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
@@ -4225,6 +4356,220 @@ const loadPurchase = async () => {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 21: multi-receipts on advance report
+// ---------------------------------------------------------------------------
+interface Receipt {
+  id: number
+  purchase_id: number
+  fiscal_drive_number?: string | null
+  fiscal_document_number?: number | null
+  fiscal_sign?: string | null
+  receipt_datetime?: string | null
+  total_sum?: number | string | null
+  seller_name?: string | null
+  seller_inn?: string | null
+  retail_place?: string | null
+  operator?: string | null
+  source?: string | null
+  created_at?: string | null
+}
+
+const receipts = ref<Receipt[]>([])
+const jsonReceiptInput = ref<HTMLInputElement | null>(null)
+const qrVideoEl = ref<HTMLVideoElement | null>(null)
+const qrCanvasEl = ref<HTMLCanvasElement | null>(null)
+
+const qrDialog = reactive({
+  show: false,
+  manual: '',
+  error: '',
+  stream: null as MediaStream | null,
+})
+
+const manualReceiptDialog = reactive({
+  show: false,
+  saving: false,
+  error: '',
+  form: {
+    fiscal_drive_number: '',
+    fiscal_document_number: null as number | null,
+    fiscal_sign: '',
+    receipt_datetime: '',
+    total_sum: null as number | null,
+    seller_name: '',
+    seller_inn: '',
+    retail_place: '',
+  },
+})
+
+function sourceLabel(s?: string | null) {
+  if (!s) return '—'
+  return ({ json_import: 'JSON', qr_scan: 'QR', manual: 'Вручную' } as Record<string, string>)[s] || s
+}
+
+async function loadReceipts() {
+  if (!purchaseId.value) return
+  try {
+    receipts.value = await apiFetch<Receipt[]>(`/purchases/${purchaseId.value}/receipts`)
+  } catch {
+    /* silent — no receipts is fine */
+  }
+}
+
+async function onJsonReceiptUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (!files.length || !purchaseId.value) {
+    if (input) input.value = ''
+    return
+  }
+  let imported = 0
+  for (const f of files) {
+    const fd = new FormData()
+    fd.append('file', f)
+    try {
+      const res = await apiFetch<Receipt[]>(
+        `/purchases/${purchaseId.value}/receipts/import-json`,
+        { method: 'POST', body: fd as any }
+      )
+      imported += (res?.length || 0)
+    } catch (err: any) {
+      showSnack(err?.message || `Ошибка импорта ${f.name}`, 'error')
+    }
+  }
+  input.value = ''
+  await loadReceipts()
+  // Items были автосозданы в backend — перезагрузим закупку чтобы их увидеть
+  if (isEdit.value && purchaseId.value) await loadPurchase()
+  if (imported > 0) showSnack(`Импортировано чеков: ${imported}`)
+}
+
+async function openQrScanner() {
+  qrDialog.error = ''
+  qrDialog.manual = ''
+  qrDialog.show = true
+  await nextTick()
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+    })
+    qrDialog.stream = stream
+    const video = qrVideoEl.value
+    if (video) {
+      video.srcObject = stream
+      await video.play().catch(() => {})
+    }
+    requestAnimationFrame(scanQrLoop)
+  } catch {
+    qrDialog.error = 'Камера недоступна. Введите строку QR вручную или загрузите JSON.'
+  }
+}
+
+function scanQrLoop() {
+  if (!qrDialog.show) return
+  const video = qrVideoEl.value
+  const canvas = qrCanvasEl.value
+  if (video && canvas && video.readyState === 4 && video.videoWidth > 0) {
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const code = jsQR(img.data, img.width, img.height)
+      if (code && code.data) {
+        submitQrString(code.data)
+        return
+      }
+    }
+  }
+  requestAnimationFrame(scanQrLoop)
+}
+
+async function submitManualQr() {
+  if (!qrDialog.manual.trim()) return
+  await submitQrString(qrDialog.manual.trim())
+}
+
+async function submitQrString(qr: string) {
+  if (!purchaseId.value) return
+  try {
+    await apiFetch(
+      `/purchases/${purchaseId.value}/receipts/from-qr`,
+      { method: 'POST', body: JSON.stringify({ qr }) as any }
+    )
+    closeQrScanner()
+    await loadReceipts()
+    showSnack('Чек добавлен')
+  } catch (e: any) {
+    qrDialog.error = e?.message || 'Не удалось распознать QR'
+  }
+}
+
+function closeQrScanner() {
+  qrDialog.show = false
+  if (qrDialog.stream) {
+    qrDialog.stream.getTracks().forEach(t => t.stop())
+    qrDialog.stream = null
+  }
+}
+
+function openManualReceiptDialog() {
+  manualReceiptDialog.error = ''
+  manualReceiptDialog.form = {
+    fiscal_drive_number: '',
+    fiscal_document_number: null,
+    fiscal_sign: '',
+    receipt_datetime: '',
+    total_sum: null,
+    seller_name: '',
+    seller_inn: '',
+    retail_place: '',
+  }
+  manualReceiptDialog.show = true
+}
+
+async function saveManualReceipt() {
+  if (!purchaseId.value) return
+  manualReceiptDialog.saving = true
+  manualReceiptDialog.error = ''
+  try {
+    const payload: any = { source: 'manual' }
+    const f = manualReceiptDialog.form
+    if (f.fiscal_drive_number) payload.fiscal_drive_number = f.fiscal_drive_number
+    if (f.fiscal_document_number != null) payload.fiscal_document_number = f.fiscal_document_number
+    if (f.fiscal_sign) payload.fiscal_sign = f.fiscal_sign
+    if (f.receipt_datetime) payload.receipt_datetime = f.receipt_datetime
+    if (f.total_sum != null) payload.total_sum = f.total_sum
+    if (f.seller_name) payload.seller_name = f.seller_name
+    if (f.seller_inn) payload.seller_inn = f.seller_inn
+    if (f.retail_place) payload.retail_place = f.retail_place
+    await apiFetch(`/purchases/${purchaseId.value}/receipts`, {
+      method: 'POST',
+      body: JSON.stringify(payload) as any,
+    })
+    manualReceiptDialog.show = false
+    await loadReceipts()
+    showSnack('Чек добавлен')
+  } catch (e: any) {
+    manualReceiptDialog.error = e?.message || 'Ошибка сохранения'
+  } finally {
+    manualReceiptDialog.saving = false
+  }
+}
+
+async function deleteReceipt(id: number) {
+  if (!purchaseId.value) return
+  if (!confirm('Удалить чек? Связанные позиции в закупке останутся.')) return
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/receipts/${id}`, { method: 'DELETE' })
+    await loadReceipts()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка удаления', 'error')
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Autosave draft for new purchases
 // ---------------------------------------------------------------------------
 const DRAFT_KEY = 'purchase_form_draft'
@@ -4295,6 +4640,7 @@ onMounted(async () => {
     await loadPurchaseMembers()
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
+    if (formMode.value === 'advance_report') await loadReceipts()
   } else {
     await loadDraft()
     // formMode overrides — these are always enforced regardless of draft

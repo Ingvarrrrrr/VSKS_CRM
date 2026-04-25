@@ -1027,3 +1027,58 @@ class OverrideOut(BaseModel):
     granted: bool
     model_config = ConfigDict(from_attributes=True)
     changed_at: Optional[datetime] = None
+
+
+# ── Phase 21: purchase receipts ──────────────────────────────────────────────
+class ReceiptItemIn(BaseModel):
+    name: str
+    quantity: Optional[Decimal] = Decimal('1')
+    price: Optional[Decimal] = None   # ₽ already
+    sum: Optional[Decimal] = None     # ₽ already
+    nds: Optional[int] = None
+
+
+class ReceiptCreate(BaseModel):
+    fiscal_drive_number: Optional[str] = None
+    fiscal_document_number: Optional[int] = None
+    fiscal_sign: Optional[str] = None
+    kkt_reg_id: Optional[str] = None
+    receipt_datetime: Optional[datetime] = None
+    total_sum: Optional[Decimal] = None
+    cash_sum: Optional[Decimal] = None
+    ecash_sum: Optional[Decimal] = None
+    prepaid_sum: Optional[Decimal] = None
+    nds_sum: Optional[Decimal] = None
+    seller_name: Optional[str] = None
+    seller_inn: Optional[str] = None
+    retail_place: Optional[str] = None
+    retail_place_address: Optional[str] = None
+    operator: Optional[str] = None
+    operator_inn: Optional[str] = None
+    taxation_type: Optional[int] = None
+    source: Optional[str] = 'manual'
+    items: Optional[List[ReceiptItemIn]] = None
+
+
+class ReceiptOut(BaseModel):
+    id: int
+    purchase_id: int
+    fiscal_drive_number: Optional[str] = None
+    fiscal_document_number: Optional[int] = None
+    fiscal_sign: Optional[str] = None
+    kkt_reg_id: Optional[str] = None
+    receipt_datetime: Optional[datetime] = None
+    total_sum: Optional[Decimal] = None
+    cash_sum: Optional[Decimal] = None
+    ecash_sum: Optional[Decimal] = None
+    nds_sum: Optional[Decimal] = None
+    seller_name: Optional[str] = None
+    seller_inn: Optional[str] = None
+    retail_place: Optional[str] = None
+    retail_place_address: Optional[str] = None
+    operator: Optional[str] = None
+    operator_inn: Optional[str] = None
+    taxation_type: Optional[int] = None
+    source: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)

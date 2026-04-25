@@ -26,6 +26,7 @@ from .routers import telegram_webhook
 from .routers import settings as settings_router
 from .routers import chat as chat_router
 from .routers import push as push_router
+from .routers import purchase_receipts
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -286,6 +287,7 @@ app.include_router(users.router)
 app.include_router(contractors.router)
 app.include_router(contracts.router)
 app.include_router(purchases.router)
+app.include_router(purchase_receipts.router)
 app.include_router(payments.router)
 app.include_router(feo_categories.router)
 app.include_router(feo_planned_items.router)

@@ -361,11 +361,19 @@
                   :src="photoPreview || ((editingId && form.has_photo) ? `/api/products/${editingId}/photo?v=${photoCacheBuster}` : (form.photo_url || form.photo_link))"
                   style="max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5"
                 />
-                <v-btn
-                  v-if="form.photo_url?.startsWith('/api/products/photos/')"
-                  size="x-small" variant="text" color="error" class="mt-1"
-                  @click="form.photo_url = ''"
-                >Удалить устаревшую ссылку</v-btn>
+                <div class="d-flex gap-2 mt-1">
+                  <v-btn
+                    v-if="editingId && form.has_photo"
+                    size="x-small" variant="text" color="error"
+                    :loading="deletingPhoto"
+                    @click="clearUploadedPhoto"
+                  >Удалить загруженное фото</v-btn>
+                  <v-btn
+                    v-if="form.photo_url?.startsWith('/api/products/photos/')"
+                    size="x-small" variant="text" color="error"
+                    @click="form.photo_url = ''"
+                  >Удалить устаревшую ссылку</v-btn>
+                </div>
               </div>
               <v-file-input
                 v-model="photoFileList"
@@ -1081,6 +1089,29 @@ async function bulkToggleActive(active: boolean) {
 
 // Download photos
 const downloadingPhoto = ref(false)
+const deletingPhoto = ref(false)
+
+async function clearUploadedPhoto() {
+  if (!editingId.value) return
+  deletingPhoto.value = true
+  try {
+    await apiFetch(`/products/${editingId.value}/photo`, { method: 'DELETE' })
+    form.photo_url = ''
+    form.has_photo = false
+    form.photo_size = undefined
+    form.photo_mime = undefined
+    photoPreview.value = null
+    photoFile.value = null
+    photoFileList.value = []
+    photoCacheBuster.value = Date.now()
+    showSnack('Фото удалено', 'success')
+  } catch (e: any) {
+    showSnack(e?.detail || 'Не удалось удалить фото', 'error')
+  } finally {
+    deletingPhoto.value = false
+  }
+}
+
 const dlPhotoDialog = reactive({
   show: false,
   loading: false,

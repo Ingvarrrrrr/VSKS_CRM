@@ -218,6 +218,29 @@ async def serve_product_photo_bytea(
     )
 
 
+@router.delete("/{product_id}/photo")
+async def delete_product_photo(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Clear the stored photo bytea + metadata + legacy local photo_url.
+
+    Does NOT touch photo_link (the backup external URL the admin maintains
+    as source of truth for re-download).
+    """
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    product.photo_data = None
+    product.photo_mime = None
+    product.photo_size = None
+    if product.photo_url and product.photo_url.startswith('/api/products/photos/'):
+        product.photo_url = None
+    await db.commit()
+    return {"status": "ok", "product_id": product_id}
+
+
 @router.get("/{product_id}", response_model=ProductOut)
 async def get_product(
     product_id: int,

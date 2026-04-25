@@ -848,6 +848,10 @@
                     <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
                     <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
                     <td>
+                      <v-btn size="x-small" variant="text" color="primary"
+                        icon="mdi-file-pdf-box"
+                        :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
+                        target="_blank" rel="noopener" />
                       <v-btn size="x-small" variant="text" color="error"
                         icon="mdi-delete" @click="deleteReceipt(r.id)" />
                     </td>

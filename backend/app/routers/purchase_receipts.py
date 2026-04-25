@@ -11,11 +11,13 @@ Idempotent on (fiscal_drive_number, fiscal_document_number, fiscal_sign):
 re-importing the same receipt returns the existing row, items not duplicated.
 """
 import json
+import os
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 from typing import List
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -319,3 +321,218 @@ async def delete_receipt(
     await db.delete(r)
     await db.commit()
     return {"status": "ok"}
+
+
+# ── PDF render ──────────────────────────────────────────────────────────────
+@router.get("/{purchase_id}/receipts/{receipt_id}/pdf")
+async def receipt_pdf(
+    purchase_id: int,
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate PDF on-the-fly from receipt raw_json. No auth — fiscal receipts
+    are not sensitive (already public on ФНС side via the QR code). Stable URL
+    allows embedding as hyperlinks in Excel exports."""
+    r = await db.get(PurchaseReceipt, receipt_id)
+    if not r or r.purchase_id != purchase_id:
+        raise HTTPException(404, "Чек не найден")
+    try:
+        pdf_bytes = _render_receipt_pdf(r)
+    except Exception:
+        pdf_bytes = _render_fallback_pdf(r)
+    filename = f"Cheque_{r.fiscal_drive_number or 'unknown'}_{r.fiscal_document_number or r.id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+def _register_cyrillic_font() -> str:
+    """Register a Cyrillic-capable TTF font. Returns the registered font name
+    (or "Helvetica" as a fallback). Idempotent — safe to call multiple times."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # If we've already registered DejaVu in a previous call, reuse it.
+    try:
+        if "DejaVu" in pdfmetrics.getRegisteredFontNames():
+            return "DejaVu"
+    except Exception:
+        pass
+
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVu", path))
+            bold_path = path.replace("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
+            if os.path.exists(bold_path):
+                pdfmetrics.registerFont(TTFont("DejaVu-Bold", bold_path))
+            else:
+                # No bold available — register the regular face under the bold name
+                pdfmetrics.registerFont(TTFont("DejaVu-Bold", path))
+            return "DejaVu"
+        except Exception:
+            continue
+    return "Helvetica"
+
+
+def _extract_items(raw) -> list:
+    """Pull items out of the raw_json regardless of FNS shape variant."""
+    if not isinstance(raw, dict):
+        return []
+    items_src = None
+    ticket = raw.get('ticket')
+    if isinstance(ticket, dict):
+        doc = ticket.get('document')
+        if isinstance(doc, dict):
+            rcpt = doc.get('receipt')
+            if isinstance(rcpt, dict):
+                items_src = rcpt.get('items')
+    if items_src is None:
+        rcpt = raw.get('receipt')
+        if isinstance(rcpt, dict):
+            items_src = rcpt.get('items')
+    if items_src is None:
+        items_src = raw.get('items')
+    if not isinstance(items_src, list):
+        return []
+    out = []
+    for it in items_src:
+        if not isinstance(it, dict):
+            continue
+        try:
+            qty = float(it.get('quantity') or 1)
+        except Exception:
+            qty = 1.0
+        try:
+            price = float(it.get('price') or 0) / 100.0
+        except Exception:
+            price = 0.0
+        try:
+            sm = float(it.get('sum') or 0) / 100.0
+        except Exception:
+            sm = 0.0
+        out.append({
+            'name': str(it.get('name') or '').strip(),
+            'qty': qty,
+            'price': price,
+            'sum': sm,
+        })
+    return out
+
+
+def _render_fallback_pdf(r) -> bytes:
+    """Minimal PDF when raw_json is missing or rendering threw."""
+    from reportlab.lib.pagesizes import A6
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    font_name = _register_cyrillic_font()
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A6)
+    c.setFont(font_name, 10)
+    w, h = A6
+    c.drawString(8 * mm, h - 12 * mm, f"Чек #{r.id} — данные недоступны")
+    if r.fiscal_drive_number:
+        c.drawString(8 * mm, h - 20 * mm, f"ФН: {r.fiscal_drive_number}")
+    if r.fiscal_document_number:
+        c.drawString(8 * mm, h - 26 * mm, f"ФД: {r.fiscal_document_number}")
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _render_receipt_pdf(r) -> bytes:
+    """Render a fiscal receipt as a narrow thermal-cheque-style PDF."""
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    font_name = _register_cyrillic_font()
+    bold_name = "DejaVu-Bold" if font_name == "DejaVu" else "Helvetica-Bold"
+
+    items_data = _extract_items(r.raw_json)
+
+    width = 80 * mm
+    # Rough dynamic height: header + items + footer
+    height = (60 + max(1, len(items_data)) * 4 + 80) * mm
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=(width, height))
+    state = {"y": height - 6 * mm}
+
+    def text(s, size=8, bold=False, x=4 * mm, dy=4):
+        c.setFont(bold_name if bold else font_name, size)
+        c.drawString(x, state["y"], str(s)[:80])
+        state["y"] -= dy * mm
+
+    def hr():
+        c.setLineWidth(0.3)
+        c.line(2 * mm, state["y"], width - 2 * mm, state["y"])
+        state["y"] -= 2 * mm
+
+    text("КАССОВЫЙ ЧЕК", 11, bold=True, dy=5)
+    hr()
+    if r.seller_name:
+        text(r.seller_name, 8, bold=True)
+    if r.seller_inn:
+        text(f"ИНН {r.seller_inn}", 7)
+    if r.retail_place:
+        text(str(r.retail_place)[:70], 7)
+    if r.retail_place_address:
+        text(str(r.retail_place_address)[:80], 6)
+    if r.operator:
+        text(f"Кассир: {r.operator}", 7)
+    hr()
+
+    if r.receipt_datetime:
+        try:
+            text(f"Дата: {r.receipt_datetime.strftime('%d.%m.%Y %H:%M')}", 7)
+        except Exception:
+            text(f"Дата: {r.receipt_datetime}", 7)
+
+    hr()
+    text(f"{'№':<3}{'Наименование':<28}{'Кол':>4}{'Цена':>8}{'Сумма':>9}", 6)
+    hr()
+
+    for i, it in enumerate(items_data, 1):
+        name = (it['name'] or '')[:28]
+        line = f"{i:<3}{name:<28}{it['qty']:>4.0f}{it['price']:>8.2f}{it['sum']:>9.2f}"
+        text(line, 6, dy=3)
+
+    if not items_data:
+        text("(позиции не указаны)", 6, dy=3)
+
+    hr()
+    if r.total_sum is not None:
+        text(f"ИТОГО: {float(r.total_sum):.2f} \u20bd", 9, bold=True, dy=5)
+    if r.nds_sum is not None:
+        text(f"в т.ч. НДС: {float(r.nds_sum):.2f} \u20bd", 7)
+    if r.cash_sum is not None and float(r.cash_sum) > 0:
+        text(f"Наличными: {float(r.cash_sum):.2f} \u20bd", 7)
+    if r.ecash_sum is not None and float(r.ecash_sum) > 0:
+        text(f"Безналичными: {float(r.ecash_sum):.2f} \u20bd", 7)
+
+    hr()
+    text("ФН:  " + (r.fiscal_drive_number or "—"), 6)
+    text("ФД:  " + str(r.fiscal_document_number or "—"), 6)
+    text("ФПД: " + (r.fiscal_sign or "—"), 6)
+    if r.kkt_reg_id:
+        text("ККТ: " + str(r.kkt_reg_id), 6)
+    if r.taxation_type is not None:
+        sno = {1: "ОСН", 2: "УСН доход", 4: "УСН доход-расход",
+               8: "ЕНВД", 16: "ЕСХН", 32: "Патент"}.get(r.taxation_type, str(r.taxation_type))
+        text(f"СНО: {sno}", 6)
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()

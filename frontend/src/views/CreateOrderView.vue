@@ -819,15 +819,12 @@
                 </v-btn>
                 <input ref="jsonReceiptInput" type="file" accept=".json" multiple
                   style="display:none" @change="onJsonReceiptUpload" />
-                <v-btn size="small" variant="tonal" class="ml-2" @click="openQrScanner">
-                  <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
-                </v-btn>
                 <v-btn size="small" variant="tonal" class="ml-2" @click="openManualReceiptDialog">
                   <v-icon start>mdi-plus</v-icon>Вручную
                 </v-btn>
               </v-card-title>
               <v-card-text v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4">
-                Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или отсканируйте QR
+                Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или введите данные вручную
               </v-card-text>
               <v-table v-else density="compact">
                 <thead>
@@ -851,6 +848,10 @@
                       <v-btn size="x-small" variant="text" color="primary"
                         icon="mdi-file-pdf-box"
                         :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
+                        target="_blank" rel="noopener" />
+                      <v-btn size="x-small" variant="text" color="primary"
+                        icon="mdi-file-image"
+                        :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
                         target="_blank" rel="noopener" />
                       <v-btn size="x-small" variant="text" color="error"
                         icon="mdi-delete" @click="deleteReceipt(r.id)" />
@@ -2422,28 +2423,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Phase 21: QR scanner dialog -->
-    <v-dialog v-model="qrDialog.show" max-width="520" @update:model-value="(v: boolean) => !v && closeQrScanner()">
-      <v-card>
-        <v-card-title>Сканирование QR-кода чека</v-card-title>
-        <v-card-text>
-          <video ref="qrVideoEl" style="width:100%;max-height:400px;background:#000;border-radius:6px"
-            autoplay playsinline muted></video>
-          <canvas ref="qrCanvasEl" style="display:none"></canvas>
-          <div v-if="qrDialog.error" class="text-error mt-2 text-caption">{{ qrDialog.error }}</div>
-          <v-text-field v-model="qrDialog.manual" label="Или вставьте строку QR вручную"
-            placeholder="t=20260422T1129&s=13450.00&fn=...&i=...&fp=..."
-            variant="outlined" density="compact" class="mt-3" hide-details />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="closeQrScanner">Отмена</v-btn>
-          <v-btn color="primary" variant="tonal" @click="submitManualQr"
-            :disabled="!qrDialog.manual.trim()">Применить вручную</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
     <!-- Phase 21: Manual receipt dialog -->
     <v-dialog v-model="manualReceiptDialog.show" max-width="700">
       <v-card>
@@ -2502,7 +2481,6 @@
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
-import jsQR from 'jsqr'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
@@ -4380,15 +4358,6 @@ interface Receipt {
 
 const receipts = ref<Receipt[]>([])
 const jsonReceiptInput = ref<HTMLInputElement | null>(null)
-const qrVideoEl = ref<HTMLVideoElement | null>(null)
-const qrCanvasEl = ref<HTMLCanvasElement | null>(null)
-
-const qrDialog = reactive({
-  show: false,
-  manual: '',
-  error: '',
-  stream: null as MediaStream | null,
-})
 
 const manualReceiptDialog = reactive({
   show: false,
@@ -4446,76 +4415,6 @@ async function onJsonReceiptUpload(e: Event) {
   // Items были автосозданы в backend — перезагрузим закупку чтобы их увидеть
   if (isEdit.value && purchaseId.value) await loadPurchase()
   if (imported > 0) showSnack(`Импортировано чеков: ${imported}`)
-}
-
-async function openQrScanner() {
-  qrDialog.error = ''
-  qrDialog.manual = ''
-  qrDialog.show = true
-  await nextTick()
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-    })
-    qrDialog.stream = stream
-    const video = qrVideoEl.value
-    if (video) {
-      video.srcObject = stream
-      await video.play().catch(() => {})
-    }
-    requestAnimationFrame(scanQrLoop)
-  } catch {
-    qrDialog.error = 'Камера недоступна. Введите строку QR вручную или загрузите JSON.'
-  }
-}
-
-function scanQrLoop() {
-  if (!qrDialog.show) return
-  const video = qrVideoEl.value
-  const canvas = qrCanvasEl.value
-  if (video && canvas && video.readyState === 4 && video.videoWidth > 0) {
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const code = jsQR(img.data, img.width, img.height)
-      if (code && code.data) {
-        submitQrString(code.data)
-        return
-      }
-    }
-  }
-  requestAnimationFrame(scanQrLoop)
-}
-
-async function submitManualQr() {
-  if (!qrDialog.manual.trim()) return
-  await submitQrString(qrDialog.manual.trim())
-}
-
-async function submitQrString(qr: string) {
-  if (!purchaseId.value) return
-  try {
-    await apiFetch(
-      `/purchases/${purchaseId.value}/receipts/from-qr`,
-      { method: 'POST', body: JSON.stringify({ qr }) as any }
-    )
-    closeQrScanner()
-    await loadReceipts()
-    showSnack('Чек добавлен')
-  } catch (e: any) {
-    qrDialog.error = e?.message || 'Не удалось распознать QR'
-  }
-}
-
-function closeQrScanner() {
-  qrDialog.show = false
-  if (qrDialog.stream) {
-    qrDialog.stream.getTracks().forEach(t => t.stop())
-    qrDialog.stream = null
-  }
 }
 
 function openManualReceiptDialog() {

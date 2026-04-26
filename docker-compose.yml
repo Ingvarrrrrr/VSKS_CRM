@@ -33,6 +33,7 @@ services:
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

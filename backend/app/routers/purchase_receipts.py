@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import List
 
+import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,6 +302,67 @@ async def import_receipt_qr(
 
     return await _create_receipt_with_items(
         purchase_id, data, 'qr_scan', {'qr': qr}, db,
+    )
+
+
+@router.post("/{purchase_id}/receipts/from-qr-fetch", response_model=ReceiptOut)
+async def import_receipt_qr_fetch(
+    purchase_id: int,
+    qr: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Fetch full receipt (with items) from proverkacheka.com API by QR string.
+
+    Requires PROVERKACHEKA_TOKEN in env. Returns the same shape as JSON-import:
+    fiscal data + items auto-matched against the catalog (match_confirmed=False).
+    """
+    purchase = await db.get(Purchase, purchase_id)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    qr = (qr or '').strip()
+    if not qr:
+        raise HTTPException(400, "Пустая QR-строка")
+
+    token = os.getenv("PROVERKACHEKA_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(503, "PROVERKACHEKA_TOKEN не настроен на сервере")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://proverkacheka.com/api/v1/check/get",
+                data={"qrraw": qr, "token": token},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Ошибка запроса к proverkacheka.com: {e}")
+    except ValueError:
+        raise HTTPException(502, "Не удалось распарсить ответ proverkacheka.com")
+
+    if not isinstance(payload, dict) or payload.get("code") != 1:
+        msg = (payload or {}).get("data") if isinstance(payload, dict) else None
+        if isinstance(msg, str):
+            raise HTTPException(400, f"Чек не найден: {msg}")
+        raise HTTPException(400, "Чек не найден в ФНС (proverkacheka.com)")
+
+    body = payload.get("data") or {}
+    receipt_obj = body.get("json") if isinstance(body, dict) else None
+    if not isinstance(receipt_obj, dict):
+        raise HTTPException(502, "Ответ proverkacheka.com без данных чека")
+
+    data = _parse_fns_json_receipt(receipt_obj)
+    if not data.get("fiscal_drive_number"):
+        # fall back to QR fields if proverkacheka returned partial data
+        qr_data = _parse_qr_string(qr)
+        for k, v in qr_data.items():
+            if v and not data.get(k):
+                data[k] = v
+
+    return await _create_receipt_with_items(
+        purchase_id, data, 'qr_scan', {"qr": qr, "proverkacheka": payload}, db,
     )
 
 

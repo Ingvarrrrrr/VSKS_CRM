@@ -305,7 +305,10 @@
           <span>Чеки ({{ receipts.length }})</span>
           <v-spacer />
           <template v-if="isEdit && purchaseId">
-            <v-btn size="small" variant="tonal" @click="$refs.advJsonReceiptInput.click()">
+            <v-btn size="small" variant="tonal" color="primary" @click="qrScanShow = true">
+              <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
+            </v-btn>
+            <v-btn size="small" variant="tonal" class="ml-2" @click="$refs.advJsonReceiptInput.click()">
               <v-icon start>mdi-file-upload</v-icon>JSON чека
             </v-btn>
             <input ref="advJsonReceiptInput" type="file" accept=".json" multiple
@@ -2548,6 +2551,8 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <QrScannerDialog v-model="qrScanShow" @detected="onQrDetected" />
   </v-container>
 </template>
 
@@ -2562,6 +2567,7 @@ import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
+import QrScannerDialog from '@/components/QrScannerDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -4462,6 +4468,26 @@ async function loadReceipts() {
     receipts.value = await apiFetch<Receipt[]>(`/purchases/${purchaseId.value}/receipts`)
   } catch {
     /* silent — no receipts is fine */
+  }
+}
+
+const qrScanShow = ref(false)
+async function onQrDetected(qr: string) {
+  qrScanShow.value = false
+  if (!purchaseId.value) {
+    showSnack('Сначала сохраните авансовый отчёт', 'error')
+    return
+  }
+  try {
+    await apiFetch(
+      `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
+      { method: 'POST', body: { qr } as any },
+    )
+    await loadReceipts()
+    if (isEdit.value) await loadPurchase()
+    showSnack('Чек получен из ФНС')
+  } catch (e: any) {
+    showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
   }
 }
 

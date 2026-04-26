@@ -29,6 +29,7 @@ services:
       BASE_URL: ${BASE_URL:-http://localhost}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

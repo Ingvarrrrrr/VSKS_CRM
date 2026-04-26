@@ -39,7 +39,7 @@
       </template>
     </v-alert>
 
-    <v-form ref="formRef" @submit.prevent="save">
+    <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">
@@ -117,11 +117,10 @@
                 </template>
               </v-text-field>
             </v-col>
-            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
+            <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12" md="2">
               <v-select v-model="form.purchase_method"
-                :items="formMode === 'advance_report' ? [{value:'advance',title:'Авансовый отчёт'}] : [{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
+                :items="[{value:'single',title:'Единственный поставщик'},{value:'competitive',title:'Конкурсная процедура'},{value:'advance',title:'Авансовый отчёт'}]"
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
-                :readonly="formMode === 'advance_report'"
                 hint="Как выбирается поставщик" persistent-hint />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
@@ -195,7 +194,7 @@
                 prepend-inner-icon="mdi-file-document-outline"
               />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col v-if="!(formMode === 'advance_report' && isNew)" cols="12" md="4">
               <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
                 variant="outlined" density="compact"
                 :readonly="!isAdminLevel || isNew"
@@ -5434,4 +5433,14 @@ async function downloadKpXlsx() {
   font-size: 13px;
 }
 .purchase-mention-dropdown .mention-item:hover { background: var(--crm-table-stripe); }
+
+/* Mobile compact mode for advance reports — drops hint rows + reduces gaps */
+@media (max-width: 768px) {
+  .compact-mobile :deep(.v-messages) { display: none; }
+  .compact-mobile :deep(.v-input__details) { padding-top: 0; min-height: 0; }
+  .compact-mobile :deep(.v-row) { row-gap: 0; }
+  .compact-mobile :deep(.v-col) { padding-top: 4px; padding-bottom: 4px; }
+  .compact-mobile :deep(.v-card-title) { font-size: 0.95rem; padding: 12px 16px 8px; }
+  .compact-mobile :deep(.v-card-text) { padding: 8px 12px; }
+}
 </style>

@@ -12,10 +12,10 @@
           {{ error }}
         </v-alert>
         <v-alert v-else-if="!hasCamera" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
-          Камера недоступна. Откройте сайт по HTTPS и разрешите доступ к камере.
+          Камера недоступна. Сделайте снимок чека через камеру телефона и нажмите «Загрузить фото QR» ниже — распознаем без камеры.
         </v-alert>
         <v-alert v-else type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-          Наведите камеру на QR-код чека. Данные подтянутся из ФНС автоматически.
+          Наведите камеру на QR-код чека. Или нажмите «Загрузить фото QR» — выберите снимок из галереи или сделайте новый.
         </v-alert>
 
         <div v-show="hasCamera && !error" class="qr-frame">
@@ -126,6 +126,42 @@ function close() {
   show.value = false
 }
 
+async function loadBitmap(file: File): Promise<{ bitmap: ImageBitmap | HTMLImageElement, width: number, height: number }> {
+  // Prefer createImageBitmap with imageOrientation:'from-image' to respect EXIF
+  // (iPhone snaps come rotated). Fallback: HTMLImageElement.
+  if ('createImageBitmap' in window) {
+    try {
+      const bm = await createImageBitmap(file, { imageOrientation: 'from-image' as any })
+      return { bitmap: bm, width: bm.width, height: bm.height }
+    } catch { /* fallback below */ }
+  }
+  const url = URL.createObjectURL(file)
+  try {
+    const img = new Image()
+    img.src = url
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+    return { bitmap: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height }
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+}
+
+function decodeFromBitmap(bm: ImageBitmap | HTMLImageElement, w: number, h: number, rotate: 0 | 90 | 180 | 270 = 0): string | null {
+  const MAX = 1600
+  const scale = Math.min(1, MAX / Math.max(w, h))
+  const dw = Math.max(1, Math.round(w * scale))
+  const dh = Math.max(1, Math.round(h * scale))
+  const c = document.createElement('canvas')
+  if (rotate === 90 || rotate === 270) { c.width = dh; c.height = dw } else { c.width = dw; c.height = dh }
+  const ctx = c.getContext('2d', { willReadFrequently: true })!
+  ctx.translate(c.width / 2, c.height / 2)
+  ctx.rotate((rotate * Math.PI) / 180)
+  ctx.drawImage(bm as any, -dw / 2, -dh / 2, dw, dh)
+  const data = ctx.getImageData(0, 0, c.width, c.height)
+  const code = jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' })
+  return code?.data || null
+}
+
 async function onFilePick(e: Event) {
   const input = e.target as HTMLInputElement
   const f = input.files?.[0]
@@ -134,25 +170,19 @@ async function onFilePick(e: Event) {
   busy.value = true
   error.value = ''
   try {
-    const url = URL.createObjectURL(f)
-    const img = new Image()
-    img.src = url
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
-    const c = document.createElement('canvas')
-    c.width = img.width
-    c.height = img.height
-    const ctx = c.getContext('2d', { willReadFrequently: true })!
-    ctx.drawImage(img, 0, 0)
-    const data = ctx.getImageData(0, 0, c.width, c.height)
-    const code = jsQR(data.data, data.width, data.height)
-    URL.revokeObjectURL(url)
-    if (code && code.data) {
-      lastQr.value = code.data
-      emit('detected', code.data)
+    const { bitmap, width, height } = await loadBitmap(f)
+    let result: string | null = null
+    for (const r of [0, 90, 180, 270] as const) {
+      result = decodeFromBitmap(bitmap, width, height, r)
+      if (result) break
+    }
+    if (result) {
+      lastQr.value = result
+      emit('detected', result)
       stop()
       show.value = false
     } else {
-      error.value = 'QR не распознан на фото. Попробуйте другое.'
+      error.value = 'QR не распознан. Сфотографируйте чек ровно, без бликов, чтобы QR занимал большую часть кадра.'
     }
   } catch (e: any) {
     error.value = e?.message || 'Не удалось обработать файл'

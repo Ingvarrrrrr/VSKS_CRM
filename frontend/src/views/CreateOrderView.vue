@@ -309,9 +309,9 @@
             <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
           </v-btn>
           <v-btn size="small" variant="tonal" @click="onJsonBtnClick">
-            <v-icon start>mdi-file-upload</v-icon>JSON чека
+            <v-icon start>mdi-file-upload</v-icon>Загрузить чек
           </v-btn>
-          <input ref="advJsonReceiptInput" type="file" accept=".json" multiple
+          <input ref="advJsonReceiptInput" type="file" accept="image/*,.json" multiple
             style="display:none" @change="onJsonReceiptUpload" />
           <v-btn size="small" variant="tonal" @click="onManualBtnClick">
             <v-icon start>mdi-plus</v-icon>Вручную
@@ -319,14 +319,14 @@
         </v-card-title>
         <v-card-text>
           <v-alert v-if="!isEdit || !purchaseId" type="info" variant="tonal" density="compact" class="mb-0 text-caption">
-            При сканировании QR / загрузке JSON отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
+            При сканировании QR или загрузке фото/JSON чека отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
           </v-alert>
           <template v-else>
             <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-              Загрузите JSON из приложения «Проверка чека» (ФНС) — позиции из чеков попадут в «Позиции закупки» ниже. Для каждой позиции укажите товар из каталога (или создайте новый).
+              Сканируйте QR с чека или загрузите его фото / JSON — данные подтянутся из ФНС, позиции попадут в «Позиции закупки» ниже. Для каждой позиции укажите товар из каталога (или создайте новый).
             </v-alert>
             <div v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4 text-caption">
-              Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или внесите данные вручную
+              Чеков нет — отсканируйте QR, загрузите фото чека (PNG/JPG) или JSON
             </div>
             <v-table v-else density="compact">
               <thead>
@@ -2567,6 +2567,7 @@ import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
+import { decodeQrFromImageFile } from '@/utils/qrDecode'
 
 const route = useRoute()
 const router = useRouter()
@@ -4493,7 +4494,7 @@ async function onScanQrClick() {
 
 async function onJsonBtnClick() {
   if (!(await ensureSavedThen('upload_json'))) return
-  document.querySelector<HTMLInputElement>('input[type=file][accept=".json"]')?.click()
+  document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
 }
 
 async function onManualBtnClick() {
@@ -4508,7 +4509,7 @@ function consumePostSaveAction() {
   sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
   if (pending === 'scan_qr') qrScanShow.value = true
   else if (pending === 'upload_json') {
-    document.querySelector<HTMLInputElement>('input[type=file][accept=".json"]')?.click()
+    document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
   }
   else if (pending === 'manual_receipt') openManualReceiptDialog()
 }
@@ -4547,28 +4548,45 @@ async function onJsonReceiptUpload(e: Event) {
   const existingIds = new Set(receipts.value.map(r => r.id))
   let added = 0
   let dups = 0
+  let qrFails = 0
   for (const f of files) {
-    const fd = new FormData()
-    fd.append('file', f)
+    const isImage = (f.type || '').startsWith('image/') || /\.(png|jpe?g|webp|heic|heif)$/i.test(f.name)
     try {
-      const res = await apiFetch<Receipt[]>(
-        `/purchases/${purchaseId.value}/receipts/import-json`,
-        { method: 'POST', body: fd as any }
-      )
-      for (const r of (res || [])) {
-        if (existingIds.has(r.id)) dups++
-        else { added++; existingIds.add(r.id) }
+      if (isImage) {
+        const qr = await decodeQrFromImageFile(f)
+        if (!qr) { qrFails++; continue }
+        const r = await apiFetch<Receipt>(
+          `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
+          { method: 'POST', body: { qr } as any },
+        )
+        if (r?.id != null) {
+          if (existingIds.has(r.id)) dups++
+          else { added++; existingIds.add(r.id) }
+        }
+      } else {
+        const fd = new FormData()
+        fd.append('file', f)
+        const res = await apiFetch<Receipt[]>(
+          `/purchases/${purchaseId.value}/receipts/import-json`,
+          { method: 'POST', body: fd as any }
+        )
+        for (const r of (res || [])) {
+          if (existingIds.has(r.id)) dups++
+          else { added++; existingIds.add(r.id) }
+        }
       }
     } catch (err: any) {
-      showSnack(err?.message || `Ошибка импорта ${f.name}`, 'error')
+      showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
     }
   }
   input.value = ''
   await loadReceipts()
   if (isEdit.value && purchaseId.value) await loadPurchase()
-  if (added && dups) showSnack(`Добавлено: ${added}, уже было: ${dups}`)
-  else if (added) showSnack(`Импортировано чеков: ${added}`)
-  else if (dups) showSnack(`Эти чеки уже были загружены ранее (${dups})`, 'warning')
+  const parts: string[] = []
+  if (added) parts.push(`добавлено: ${added}`)
+  if (dups) parts.push(`уже было: ${dups}`)
+  if (qrFails) parts.push(`QR не распознан: ${qrFails}`)
+  if (parts.length) showSnack(parts.join(', '), qrFails && !added ? 'warning' : 'success')
 }
 
 function openManualReceiptDialog() {

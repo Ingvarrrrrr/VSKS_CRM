@@ -171,7 +171,14 @@ async def _create_receipt_with_items(
             )
         )).scalar_one_or_none()
         if existing:
-            return existing
+            if existing.purchase_id == purchase_id:
+                return existing
+            other = await db.get(Purchase, existing.purchase_id)
+            ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing.purchase_id}"
+            raise HTTPException(
+                409,
+                f"Этот чек уже привязан к авансовому отчёту {ref}. Добавьте другой чек.",
+            )
 
     items_data = data.pop('items', None) or []
 
@@ -269,6 +276,7 @@ async def import_receipt_json(
         payload = [payload]
 
     results: List[PurchaseReceipt] = []
+    conflicts: List[str] = []
     for entry in payload:
         if not isinstance(entry, dict):
             continue
@@ -278,9 +286,17 @@ async def import_receipt_json(
                 purchase_id, data, 'json_import', entry, db
             )
             results.append(r)
-        except Exception:
-            # Skip malformed entries — others should still import.
+        except HTTPException as he:
+            # Conflict (409) = receipt linked to another purchase — surface to user.
+            if he.status_code == 409:
+                conflicts.append(str(he.detail))
+            # Other HTTP errors and malformed entries are skipped.
             continue
+        except Exception:
+            continue
+    if not results and conflicts:
+        # All entries conflicted — bubble first message up so the user sees it.
+        raise HTTPException(409, conflicts[0])
     return results
 
 

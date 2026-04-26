@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Numeric, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, Text, Numeric, ForeignKey, text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -19,6 +19,7 @@ class PurchaseItem(Base):
     final_total = Column(Numeric(15, 2))
     country_origin = Column(String(100), nullable=True)
     feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True)
+    match_confirmed = Column(Boolean, nullable=False, default=True, server_default=text("TRUE"))
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

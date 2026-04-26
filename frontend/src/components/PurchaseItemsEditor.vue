@@ -96,6 +96,14 @@
                         @click.stop="openQuickProductEdit(item)" />
                     </template>
                   </v-tooltip>
+                  <v-tooltip v-if="item.match_confirmed === false && item.product_id"
+                    text="Подтвердить, что товар из каталога определён правильно" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
+                        color="warning" class="flex-shrink-0 ml-1" :disabled="props.readonly"
+                        @click.stop="confirmMatch(idx)" />
+                    </template>
+                  </v-tooltip>
                 </div>
               </td>
               <td>
@@ -743,6 +751,7 @@ interface EditorItem {
   unit_price: number | null
   total_price: number | null
   country_origin: string
+  match_confirmed?: boolean
   // Purchase-only (undefined when itemShape === 'wish'):
   final_unit_price?: number | null
   final_total?: number | null
@@ -911,6 +920,14 @@ function clearItem(idx: number) {
   emitUpdate()
 }
 
+function confirmMatch(idx: number) {
+  const item = localItems.value[idx]
+  if (item) {
+    item.match_confirmed = true
+    emitUpdate()
+  }
+}
+
 function calcItemTotal(idx: number) {
   const item = localItems.value[idx]
   if (item.quantity != null && item.unit_price != null) {
@@ -1007,6 +1024,8 @@ function onItemProductSelect(idx: number, val: any) {
       }
     }
   }
+  // Any explicit user action on the product field counts as confirmation.
+  ;(item as any).match_confirmed = true
   emitUpdate()
 }
 

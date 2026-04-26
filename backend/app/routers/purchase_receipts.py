@@ -18,11 +18,12 @@ from io import BytesIO
 from typing import List
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user
 from app.database import get_db
+from app.models.product import Product
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
@@ -197,14 +198,29 @@ async def _create_receipt_with_items(
                 total = (qty * Decimal(str(price))).quantize(Decimal('0.01'))
             except Exception:
                 total = Decimal('0')
+        raw_name = (it.get('name') or f'Позиция {idx}')[:5000]
+        # Phase 21.06: try to auto-match a catalog product by case-insensitive
+        # exact name. The match is always marked unconfirmed — the user must
+        # explicitly approve each linked item before the report can be saved.
+        norm = raw_name.strip().lower()
+        matched_id = None
+        if norm:
+            mp = (await db.execute(
+                select(Product.id)
+                .where(func.lower(Product.name) == norm)
+                .limit(1)
+            )).scalar_one_or_none()
+            if mp:
+                matched_id = mp
         db.add(PurchaseItem(
             purchase_id=purchase_id,
-            product_id=None,
-            item_name=(it.get('name') or f'Позиция {idx}')[:5000],
+            product_id=matched_id,
+            item_name=raw_name,
             quantity=qty,
             unit='шт.',
             unit_price=price,
             total_price=total,
+            match_confirmed=False,
         ))
 
     await db.commit()

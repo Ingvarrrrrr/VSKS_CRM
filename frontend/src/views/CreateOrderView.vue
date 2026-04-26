@@ -2659,6 +2659,7 @@ interface OrderItem {
   total_price: number | null
   final_unit_price: number | null
   final_total: number | null
+  match_confirmed?: boolean
   // UI-only: not sent to backend
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -4348,6 +4349,7 @@ const loadPurchase = async () => {
         final_unit_price: i.final_unit_price ? Number(i.final_unit_price) : null,
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
+        match_confirmed: i.match_confirmed !== false,
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
@@ -4650,6 +4652,14 @@ const save = async () => {
     if (unlinked.length) {
       showSnack(
         `Позиций не привязано к каталогу: ${unlinked.length}. Откройте позицию, выберите товар из каталога или создайте новый (с категорией и типом).`,
+        'error',
+      )
+      return
+    }
+    const unconfirmed = items.value.filter(i => i.item_name?.trim() && i.match_confirmed === false)
+    if (unconfirmed.length) {
+      showSnack(
+        `Подтвердите ${unconfirmed.length} позицию(й) из чека: товар, тип и категория должны быть проверены вручную.`,
         'error',
       )
       return

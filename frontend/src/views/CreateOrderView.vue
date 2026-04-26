@@ -4809,7 +4809,8 @@ const doSave = async (adminOverride: boolean) => {
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
       clearDraft()
-      showSnack('Закупка создана')
+      const hasPostSaveAction = !!sessionStorage.getItem(POST_SAVE_ACTION_KEY)
+      if (!hasPostSaveAction) showSnack('Закупка создана')
       const editPath = formMode.value === 'advance_report'
         ? `/advance-reports/${created.id}/edit`
         : formMode.value === 'service_note_delivery'

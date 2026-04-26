@@ -130,12 +130,6 @@
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
                 hint="Выберите тип закупки" persistent-hint />
             </v-col>
-            <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
-              <v-select v-model="form.purchase_basis" clearable
-                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
-                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
-                hint="Документ-основание для закупки" persistent-hint />
-            </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
               <v-text-field
                 v-model="form.subject"
@@ -284,6 +278,21 @@
                   </tr>
                 </tbody>
               </v-table>
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 1.5. Основание закупки -->
+      <v-card v-if="formMode !== 'service_note_delivery'" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основание закупки</v-card-title>
+        <v-card-text>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-select v-model="form.purchase_basis" clearable
+                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
+                item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
+                hint="Документ-основание для закупки" persistent-hint />
             </v-col>
           </v-row>
         </v-card-text>
@@ -2621,7 +2630,7 @@ function fileTypeColor(t?: string): string {
 
 const form = reactive({
   purchase_method: '',
-  purchase_basis: '' as string,
+  purchase_basis: 'service_note' as string,
   item_type: 'товар' as string,
   subsidy_id: null as number | null,
   contractor_id: null as number | null,

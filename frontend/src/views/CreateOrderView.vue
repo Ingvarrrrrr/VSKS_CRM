@@ -300,27 +300,27 @@
 
       <!-- 1.7. Чеки (только для авансовых отчётов) -->
       <v-card v-if="formMode === 'advance_report'" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
-          <v-icon start>mdi-receipt-text-outline</v-icon>
-          <span>Чеки ({{ receipts.length }})</span>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
+          <span class="d-flex align-center">
+            <v-icon start>mdi-receipt-text-outline</v-icon>
+            <span>Чеки ({{ receipts.length }})</span>
+          </span>
           <v-spacer />
-          <template v-if="isEdit && purchaseId">
-            <v-btn size="small" variant="tonal" color="primary" @click="qrScanShow = true">
-              <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
-            </v-btn>
-            <v-btn size="small" variant="tonal" class="ml-2" @click="$refs.advJsonReceiptInput.click()">
-              <v-icon start>mdi-file-upload</v-icon>JSON чека
-            </v-btn>
-            <input ref="advJsonReceiptInput" type="file" accept=".json" multiple
-              style="display:none" @change="onJsonReceiptUpload" />
-            <v-btn size="small" variant="tonal" class="ml-2" @click="openManualReceiptDialog">
-              <v-icon start>mdi-plus</v-icon>Вручную
-            </v-btn>
-          </template>
+          <v-btn size="small" variant="tonal" color="primary" @click="onScanQrClick">
+            <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
+          </v-btn>
+          <v-btn size="small" variant="tonal" @click="onJsonBtnClick">
+            <v-icon start>mdi-file-upload</v-icon>JSON чека
+          </v-btn>
+          <input ref="advJsonReceiptInput" type="file" accept=".json" multiple
+            style="display:none" @change="onJsonReceiptUpload" />
+          <v-btn size="small" variant="tonal" @click="onManualBtnClick">
+            <v-icon start>mdi-plus</v-icon>Вручную
+          </v-btn>
         </v-card-title>
         <v-card-text>
-          <v-alert v-if="!isEdit || !purchaseId" type="warning" variant="tonal" density="compact" class="mb-0 text-caption">
-            Сохраните авансовый отчёт, чтобы загружать чеки. Позиции из JSON-чеков подтянутся автоматически.
+          <v-alert v-if="!isEdit || !purchaseId" type="info" variant="tonal" density="compact" class="mb-0 text-caption">
+            При сканировании QR / загрузке JSON отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
           </v-alert>
           <template v-else>
             <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
@@ -4472,6 +4472,48 @@ async function loadReceipts() {
 }
 
 const qrScanShow = ref(false)
+const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
+
+async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt') {
+  if (purchaseId.value) return true
+  if (!form.subsidy_id) {
+    showSnack('Сначала выберите субсидию (вверху страницы)', 'warning')
+    return false
+  }
+  sessionStorage.setItem(POST_SAVE_ACTION_KEY, action)
+  await save()
+  // save() либо успешно перенаправит (тогда после loadPurchase сработает action),
+  // либо покажет snack с ошибкой валидации (FEO/etc) — флаг останется до следующей попытки.
+  return false
+}
+
+async function onScanQrClick() {
+  if (!(await ensureSavedThen('scan_qr'))) return
+  qrScanShow.value = true
+}
+
+async function onJsonBtnClick() {
+  if (!(await ensureSavedThen('upload_json'))) return
+  document.querySelector<HTMLInputElement>('input[type=file][accept=".json"]')?.click()
+}
+
+async function onManualBtnClick() {
+  if (!(await ensureSavedThen('manual_receipt'))) return
+  openManualReceiptDialog()
+}
+
+function consumePostSaveAction() {
+  if (formMode.value !== 'advance_report' || !purchaseId.value) return
+  const pending = sessionStorage.getItem(POST_SAVE_ACTION_KEY)
+  if (!pending) return
+  sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
+  if (pending === 'scan_qr') qrScanShow.value = true
+  else if (pending === 'upload_json') {
+    document.querySelector<HTMLInputElement>('input[type=file][accept=".json"]')?.click()
+  }
+  else if (pending === 'manual_receipt') openManualReceiptDialog()
+}
+
 async function onQrDetected(qr: string) {
   qrScanShow.value = false
   if (!purchaseId.value) {
@@ -4645,7 +4687,10 @@ onMounted(async () => {
     await loadPurchaseMembers()
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
-    if (formMode.value === 'advance_report') await loadReceipts()
+    if (formMode.value === 'advance_report') {
+      await loadReceipts()
+      consumePostSaveAction()
+    }
   } else {
     await loadDraft()
     // formMode overrides — these are always enforced regardless of draft
@@ -4755,7 +4800,12 @@ const doSave = async (adminOverride: boolean) => {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
       clearDraft()
       showSnack('Закупка создана')
-      router.push(`/orders/${created.id}/edit`)
+      const editPath = formMode.value === 'advance_report'
+        ? `/advance-reports/${created.id}/edit`
+        : formMode.value === 'service_note_delivery'
+          ? `/service-notes/${created.id}/edit`
+          : `/orders/${created.id}/edit`
+      router.push(editPath)
     }
   } catch (e: any) {
     showSnack(e?.detail || 'Ошибка сохранения', 'error')

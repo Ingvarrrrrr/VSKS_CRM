@@ -12,15 +12,10 @@
           Удалить ({{ selectedItemIdxs.length }})
         </v-btn>
         <slot name="toolbar-actions" />
-        <v-btn v-if="props.supportsExcelImport && !props.readonly"
+        <v-btn v-if="(props.supportsExcelImport || props.supportsSmartImport) && !props.readonly"
           variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
-          @click="openImportDialog">
-          Импорт из файла
-        </v-btn>
-        <v-btn v-if="props.supportsSmartImport && !props.readonly"
-          variant="outlined" prepend-icon="mdi-brain" size="small" color="indigo"
           @click="openSmartImportDialog">
-          Умный импорт
+          Импорт из файла
         </v-btn>
       </div>
     </div>
@@ -289,11 +284,6 @@
         variant="outlined" prepend-icon="mdi-package-variant-plus" size="small" color="primary"
         @click="openFullProduct(-1)">
         Добавить товар в каталог
-      </v-btn>
-      <v-btn v-if="props.supportsExcelImport"
-        variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
-        @click="openImportDialog">
-        Импорт из файла
       </v-btn>
     </div>
 

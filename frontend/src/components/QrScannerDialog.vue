@@ -18,9 +18,18 @@
           Наведите камеру на QR-код чека. Данные подтянутся из ФНС автоматически.
         </v-alert>
 
-        <div class="qr-frame">
+        <div v-show="hasCamera && !error" class="qr-frame">
           <video ref="video" autoplay playsinline muted />
           <div class="qr-overlay" />
+        </div>
+
+        <div class="d-flex flex-wrap ga-2 mt-3">
+          <v-btn variant="tonal" color="primary" prepend-icon="mdi-image-multiple"
+            @click="$refs.fileInput.click()">
+            Загрузить фото QR
+          </v-btn>
+          <input ref="fileInput" type="file" accept="image/*" style="display:none"
+            @change="onFilePick" />
         </div>
 
         <v-progress-linear v-if="busy" indeterminate color="primary" class="mt-3" />
@@ -115,6 +124,41 @@ function stop() {
 function close() {
   stop()
   show.value = false
+}
+
+async function onFilePick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = ''
+  if (!f) return
+  busy.value = true
+  error.value = ''
+  try {
+    const url = URL.createObjectURL(f)
+    const img = new Image()
+    img.src = url
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    const ctx = c.getContext('2d', { willReadFrequently: true })!
+    ctx.drawImage(img, 0, 0)
+    const data = ctx.getImageData(0, 0, c.width, c.height)
+    const code = jsQR(data.data, data.width, data.height)
+    URL.revokeObjectURL(url)
+    if (code && code.data) {
+      lastQr.value = code.data
+      emit('detected', code.data)
+      stop()
+      show.value = false
+    } else {
+      error.value = 'QR не распознан на фото. Попробуйте другое.'
+    }
+  } catch (e: any) {
+    error.value = e?.message || 'Не удалось обработать файл'
+  } finally {
+    busy.value = false
+  }
 }
 
 onBeforeUnmount(stop)

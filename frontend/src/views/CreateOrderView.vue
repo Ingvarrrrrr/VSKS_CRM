@@ -4520,13 +4520,18 @@ async function onQrDetected(qr: string) {
     return
   }
   try {
-    await apiFetch(
+    const existingIds = new Set(receipts.value.map(r => r.id))
+    const created = await apiFetch<{ id: number }>(
       `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
       { method: 'POST', body: { qr } as any },
     )
     await loadReceipts()
     if (isEdit.value) await loadPurchase()
-    showSnack('Чек получен из ФНС')
+    if (created?.id && existingIds.has(created.id)) {
+      showSnack('Этот чек уже был загружен ранее', 'warning')
+    } else {
+      showSnack('Чек получен из ФНС, позиции добавлены')
+    }
   } catch (e: any) {
     showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
   }
@@ -4539,7 +4544,9 @@ async function onJsonReceiptUpload(e: Event) {
     if (input) input.value = ''
     return
   }
-  let imported = 0
+  const existingIds = new Set(receipts.value.map(r => r.id))
+  let added = 0
+  let dups = 0
   for (const f of files) {
     const fd = new FormData()
     fd.append('file', f)
@@ -4548,16 +4555,20 @@ async function onJsonReceiptUpload(e: Event) {
         `/purchases/${purchaseId.value}/receipts/import-json`,
         { method: 'POST', body: fd as any }
       )
-      imported += (res?.length || 0)
+      for (const r of (res || [])) {
+        if (existingIds.has(r.id)) dups++
+        else { added++; existingIds.add(r.id) }
+      }
     } catch (err: any) {
       showSnack(err?.message || `Ошибка импорта ${f.name}`, 'error')
     }
   }
   input.value = ''
   await loadReceipts()
-  // Items были автосозданы в backend — перезагрузим закупку чтобы их увидеть
   if (isEdit.value && purchaseId.value) await loadPurchase()
-  if (imported > 0) showSnack(`Импортировано чеков: ${imported}`)
+  if (added && dups) showSnack(`Добавлено: ${added}, уже было: ${dups}`)
+  else if (added) showSnack(`Импортировано чеков: ${added}`)
+  else if (dups) showSnack(`Эти чеки уже были загружены ранее (${dups})`, 'warning')
 }
 
 function openManualReceiptDialog() {

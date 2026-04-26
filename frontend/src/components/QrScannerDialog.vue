@@ -11,12 +11,6 @@
         <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3 text-caption">
           {{ error }}
         </v-alert>
-        <v-alert v-else-if="!hasCamera" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
-          Камера недоступна. Сделайте снимок чека через камеру телефона и нажмите «Загрузить фото QR» ниже — распознаем без камеры.
-        </v-alert>
-        <v-alert v-else type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-          Наведите камеру на QR-код чека. Или нажмите «Загрузить фото QR» — выберите снимок из галереи или сделайте новый.
-        </v-alert>
 
         <div v-show="hasCamera && !error" class="qr-frame">
           <video ref="video" autoplay playsinline muted />
@@ -26,7 +20,7 @@
         <div class="d-flex flex-wrap ga-2 mt-3">
           <v-btn variant="tonal" color="primary" prepend-icon="mdi-image-multiple"
             @click="$refs.fileInput.click()">
-            Загрузить фото QR
+            Загрузить QR
           </v-btn>
           <input ref="fileInput" type="file" accept="image/*" style="display:none"
             @change="onFilePick" />

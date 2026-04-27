@@ -200,14 +200,83 @@
 
     <!-- Edit org dialog -->
     <Teleport to="body">
-      <v-dialog v-model="editOrgDialog.show" max-width="420" :z-index="9999">
+      <v-dialog v-model="editOrgDialog.show" max-width="640" :z-index="9999" scrollable>
         <v-card>
           <v-card-title class="pa-4 text-body-1">
             <v-icon icon="mdi-domain" class="mr-2" />Редактировать организацию
           </v-card-title>
-          <v-card-text class="pa-4 pt-0">
-            <v-text-field v-model="editOrgDialog.name" label="Название" variant="outlined" density="compact" class="mb-3" />
-            <v-text-field v-model="editOrgDialog.inn" label="ИНН" variant="outlined" density="compact" />
+          <v-card-text class="pa-4 pt-0" style="max-height:75vh">
+            <v-alert
+              v-if="editOrgDialog.contractor_id"
+              type="info" density="compact" variant="tonal" class="mb-3"
+              icon="mdi-link-variant"
+            >
+              <span class="text-caption">
+                Данные берутся из карточки контрагента. Редактируйте реквизиты в разделе «Контрагенты».
+              </span>
+            </v-alert>
+
+            <v-text-field
+              v-model="editOrgDialog.name" label="Краткое название *"
+              variant="outlined" density="compact" class="mb-2"
+            />
+            <v-text-field
+              v-model="editOrgDialog.full_name" label="Полное наименование"
+              variant="outlined" density="compact" class="mb-2"
+              :readonly="!!editOrgDialog.contractor_id"
+              :hint="editOrgDialog.contractor_id ? 'Поле берётся из контрагента' : ''"
+              :persistent-hint="!!editOrgDialog.contractor_id"
+            />
+
+            <div class="d-flex gap-2 align-start mb-1">
+              <v-text-field
+                v-model="editOrgDialog.inn" label="ИНН"
+                variant="outlined" density="compact" style="flex:1"
+                hint="10 (юр.лицо) или 12 (ИП) цифр" persistent-hint
+                :readonly="!!editOrgDialog.contractor_id"
+              />
+              <v-text-field
+                v-model="editOrgDialog.kpp" label="КПП"
+                variant="outlined" density="compact" style="max-width:130px" hide-details
+                :readonly="!!editOrgDialog.contractor_id"
+              />
+              <v-text-field
+                v-model="editOrgDialog.ogrn" label="ОГРН"
+                variant="outlined" density="compact" style="max-width:150px" hide-details
+                :readonly="!!editOrgDialog.contractor_id"
+              />
+            </div>
+
+            <v-btn
+              v-if="!editOrgDialog.contractor_id"
+              variant="tonal" color="primary" size="small" class="mt-3 mb-2"
+              prepend-icon="mdi-database-search-outline"
+              :loading="editOrgEgrulLoading"
+              :disabled="!editOrgDialog.inn || editOrgDialog.inn.length < 10"
+              @click="enrichEditOrgFromEgrul"
+            >
+              Заполнить на основании ИНН из ЕГРЮЛ
+            </v-btn>
+
+            <v-alert
+              v-if="editOrgEgrulMessage"
+              :type="editOrgEgrulMessageType" density="compact" variant="tonal"
+              class="mb-2 text-caption" closable
+              @click:close="editOrgEgrulMessage = ''"
+            >
+              {{ editOrgEgrulMessage }}
+            </v-alert>
+
+            <v-text-field
+              v-model="editOrgDialog.address" label="Адрес"
+              variant="outlined" density="compact" class="mb-2"
+              :readonly="!!editOrgDialog.contractor_id"
+            />
+            <v-text-field
+              v-model="editOrgDialog.signatory" label="Подписант (ФИО, должность)"
+              variant="outlined" density="compact" class="mb-2"
+              :readonly="!!editOrgDialog.contractor_id"
+            />
           </v-card-text>
           <v-card-actions class="pa-4 pt-0">
             <v-spacer />
@@ -306,25 +375,68 @@
     </v-dialog>
 
     <!-- New org dialog (superadmin only) -->
-    <v-dialog v-model="newOrgDialog.show" max-width="420">
+    <v-dialog v-model="newOrgDialog.show" max-width="640" scrollable>
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-domain" color="deep-purple" class="mr-2" />
           Новая организация
         </v-card-title>
-        <v-card-text class="pa-4 pt-0">
+        <v-card-text class="pa-4 pt-0" style="max-height:75vh">
           <v-text-field
             v-model="newOrgDialog.name"
-            label="Название организации"
+            label="Краткое название *"
             prepend-inner-icon="mdi-domain"
             autofocus
-            class="mb-3"
-            @keydown.enter="createNewOrg"
+            variant="outlined" density="compact" class="mb-2"
           />
           <v-text-field
-            v-model="newOrgDialog.inn"
-            label="ИНН (необязательно)"
-            prepend-inner-icon="mdi-identifier"
+            v-model="newOrgDialog.full_name"
+            label="Полное наименование"
+            variant="outlined" density="compact" class="mb-2"
+          />
+
+          <div class="d-flex gap-2 align-start mb-1">
+            <v-text-field
+              v-model="newOrgDialog.inn" label="ИНН"
+              variant="outlined" density="compact" style="flex:1"
+              hint="10 (юр.лицо) или 12 (ИП) цифр" persistent-hint
+            />
+            <v-text-field
+              v-model="newOrgDialog.kpp" label="КПП"
+              variant="outlined" density="compact" style="max-width:130px" hide-details
+            />
+            <v-text-field
+              v-model="newOrgDialog.ogrn" label="ОГРН"
+              variant="outlined" density="compact" style="max-width:150px" hide-details
+            />
+          </div>
+
+          <v-btn
+            variant="tonal" color="deep-purple" size="small" class="mt-3 mb-2"
+            prepend-icon="mdi-database-search-outline"
+            :loading="newOrgEgrulLoading"
+            :disabled="!newOrgDialog.inn || newOrgDialog.inn.length < 10"
+            @click="enrichNewOrgFromEgrul"
+          >
+            Заполнить на основании ИНН из ЕГРЮЛ
+          </v-btn>
+
+          <v-alert
+            v-if="newOrgEgrulMessage"
+            :type="newOrgEgrulMessageType" density="compact" variant="tonal"
+            class="mb-2 text-caption" closable
+            @click:close="newOrgEgrulMessage = ''"
+          >
+            {{ newOrgEgrulMessage }}
+          </v-alert>
+
+          <v-text-field
+            v-model="newOrgDialog.address" label="Адрес"
+            variant="outlined" density="compact" class="mb-2"
+          />
+          <v-text-field
+            v-model="newOrgDialog.signatory" label="Подписант (ФИО, должность)"
+            variant="outlined" density="compact" class="mb-2"
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -430,7 +542,10 @@ const isSuperadmin = localStorage.getItem('user_role') === 'superadmin'
 const isAccountOwner = localStorage.getItem('user_role') === 'account_owner'
 
 const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
-const newOrgDialog = ref({ show: false, name: '', inn: '', loading: false })
+const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', loading: false })
+const newOrgEgrulLoading = ref(false)
+const newOrgEgrulMessage = ref('')
+const newOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
 const graphOrgs = ref<{ id: number; name: string }[]>([])
 const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
   show: false, deptId: null, available: [],
@@ -580,7 +695,10 @@ const defaultEdgeOptions = { type: 'smoothstep' }
 // ── VueFlow composable ─────────────────────────────────────────────────────────
 const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick } = useVueFlow()
 
-const editOrgDialog = ref({ show: false, id: 0, name: '', inn: '' })
+const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', contractor_id: null as number | null })
+const editOrgEgrulLoading = ref(false)
+const editOrgEgrulMessage = ref('')
+const editOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
 
 const userInfoDialog = ref({ show: false, userId: 0, userName: '', orgs: [] as any[], saving: false })
 async function openUserInfo(userId: number) {
@@ -632,16 +750,49 @@ onNodeDoubleClick(({ node }) => {
     const orgId = parseInt(node.id.replace('org-', ''))
     const org = _lastGraphData.value?.orgs.find(o => o.id === orgId)
     if (org) {
-      editOrgDialog.value = { show: true, id: orgId, name: (org as any).name || '', inn: (org as any).inn || '' }
+      const o = org as any
+      editOrgDialog.value = {
+        show: true, id: orgId,
+        name: o.name || '', full_name: o.full_name || '',
+        inn: o.inn || '', kpp: o.kpp || '', ogrn: o.ogrn || '',
+        address: o.address || '', signatory: o.signatory || '',
+        contractor_id: o.contractor_id ?? null,
+      }
+      editOrgEgrulMessage.value = ''
+      // Best-effort prefill empty fields via lookup-inn (no force_egrul)
+      if (!o.contractor_id && o.inn) {
+        apiFetch<Record<string, any>>(`/contractors/lookup-inn/${o.inn.trim()}`).then(data => {
+          const fill = (key: keyof typeof editOrgDialog.value, value: any) => {
+            if (!((editOrgDialog.value as any)[key] || '').toString().trim() && value) {
+              ;(editOrgDialog.value as any)[key] = value
+            }
+          }
+          fill('full_name', data.full_name)
+          fill('kpp', data.kpp)
+          fill('ogrn', data.ogrn)
+          fill('address', data.address)
+          fill('signatory', data.signatory)
+        }).catch(() => { /* silent best-effort */ })
+      }
     }
   }
 })
 
 async function saveOrg() {
   try {
-    await apiFetch(`/organizations/${editOrgDialog.value.id}`, {
+    const d = editOrgDialog.value
+    await apiFetch(`/organizations/${d.id}`, {
       method: 'PUT',
-      body: { name: editOrgDialog.value.name, inn: editOrgDialog.value.inn },
+      body: {
+        name: d.name,
+        full_name: d.full_name || null,
+        inn: d.inn || null,
+        kpp: d.kpp || null,
+        ogrn: d.ogrn || null,
+        address: d.address || null,
+        signatory: d.signatory || null,
+        contractor_id: d.contractor_id ?? null,
+      },
     })
     editOrgDialog.value.show = false
     showSnack('Организация обновлена')
@@ -1279,16 +1430,73 @@ async function createNewOrg() {
   if (!name) return
   newOrgDialog.value.loading = true
   try {
-    const body: any = { name }
-    if (newOrgDialog.value.inn.trim()) body.inn = newOrgDialog.value.inn.trim()
+    const d = newOrgDialog.value
+    const body: any = {
+      name,
+      full_name: d.full_name.trim() || null,
+      inn: d.inn.trim() || null,
+      kpp: d.kpp.trim() || null,
+      ogrn: d.ogrn.trim() || null,
+      address: d.address.trim() || null,
+      signatory: d.signatory.trim() || null,
+      contractor_id: null,
+    }
     await apiFetch('/organizations/', { method: 'POST', body })
     showSnack(`Организация "${name}" создана`)
-    newOrgDialog.value = { show: false, name: '', inn: '', loading: false }
+    newOrgDialog.value = { show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', loading: false }
+    newOrgEgrulMessage.value = ''
     await loadGraph()
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка создания организации', 'error')
   } finally {
     newOrgDialog.value.loading = false
+  }
+}
+
+async function enrichNewOrgFromEgrul() {
+  const inn = newOrgDialog.value.inn.trim()
+  if (!inn || inn.length < 10) return
+  newOrgEgrulLoading.value = true
+  newOrgEgrulMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    const d = newOrgDialog.value
+    if (data.name && !d.name.trim()) d.name = data.name
+    if (data.full_name) d.full_name = data.full_name
+    if (data.kpp) d.kpp = data.kpp
+    if (data.ogrn) d.ogrn = data.ogrn
+    if (data.address) d.address = data.address
+    if (data.signatory) d.signatory = data.signatory
+    newOrgEgrulMessage.value = 'Данные заполнены из ЕГРЮЛ'
+    newOrgEgrulMessageType.value = 'success'
+  } catch (e: any) {
+    newOrgEgrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
+    newOrgEgrulMessageType.value = 'error'
+  } finally {
+    newOrgEgrulLoading.value = false
+  }
+}
+
+async function enrichEditOrgFromEgrul() {
+  const inn = editOrgDialog.value.inn.trim()
+  if (!inn || inn.length < 10) return
+  editOrgEgrulLoading.value = true
+  editOrgEgrulMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    const d = editOrgDialog.value
+    if (data.full_name) d.full_name = data.full_name
+    if (data.kpp) d.kpp = data.kpp
+    if (data.ogrn) d.ogrn = data.ogrn
+    if (data.address) d.address = data.address
+    if (data.signatory) d.signatory = data.signatory
+    editOrgEgrulMessage.value = 'Данные обновлены из ЕГРЮЛ'
+    editOrgEgrulMessageType.value = 'success'
+  } catch (e: any) {
+    editOrgEgrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
+    editOrgEgrulMessageType.value = 'error'
+  } finally {
+    editOrgEgrulLoading.value = false
   }
 }
 

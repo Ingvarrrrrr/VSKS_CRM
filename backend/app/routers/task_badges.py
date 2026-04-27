@@ -187,14 +187,13 @@ async def tasks_init(
     q_categories = select(Task.category).where(Task.category.isnot(None)).distinct()
     q_departments = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
 
-    # Execute all queries
-    [r_my, r_pending, r_declines, r_cats, r_depts] = await asyncio.gather(
-        db.execute(q_my),
-        db.execute(q_pending),
-        db.execute(q_declines),
-        db.execute(q_categories),
-        db.execute(q_departments),
-    )
+    # Execute all queries sequentially — AsyncSession is NOT concurrent-safe;
+    # asyncio.gather on shared session causes asyncpg "another operation in progress" → 502.
+    r_my = await db.execute(q_my)
+    r_pending = await db.execute(q_pending)
+    r_declines = await db.execute(q_declines)
+    r_cats = await db.execute(q_categories)
+    r_depts = await db.execute(q_departments)
 
     my_tasks_rows = r_my.scalars().all()
     pending_rows = r_pending.scalars().all()
@@ -202,11 +201,9 @@ async def tasks_init(
     categories = sorted([r[0] for r in r_cats.all()])
     departments = sorted([r[0] for r in r_depts.all()])
 
-    # Enrich tasks
-    [my_tasks_out, pending_out] = await asyncio.gather(
-        _enrich_tasks(my_tasks_rows, db, current_user_id=current_user.id),
-        _enrich_tasks(pending_rows, db, current_user_id=current_user.id),
-    )
+    # Enrich tasks sequentially — same shared session constraint.
+    my_tasks_out = await _enrich_tasks(my_tasks_rows, db, current_user_id=current_user.id)
+    pending_out = await _enrich_tasks(pending_rows, db, current_user_id=current_user.id)
 
     # Format declines
     declines_out = []

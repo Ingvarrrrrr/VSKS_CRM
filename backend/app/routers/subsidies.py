@@ -65,8 +65,12 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
 @router.get("/", response_model=List[SubsidyOut])
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab('subsidies')),
+    current_user: User = Depends(get_current_user),
 ):
+    # GET list is intentionally open to all authenticated users (incl. employee) so
+    # that WishesView can populate the subsidy selector. Org-filter below already
+    # limits visible subsidies to the user's own organisations. Write operations
+    # (POST/PUT/DELETE/templates) remain gated by require_tab('subsidies').
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:

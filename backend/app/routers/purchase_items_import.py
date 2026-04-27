@@ -572,13 +572,25 @@ async def import_items_preview(
                     logger.warning("BeautifulSoup HTML fallback failed: %s", e)
             if not raw_tables:
                 raise HTTPException(400, "В HTML-файле не найдено таблиц с данными.")
-            # Pick the largest table by row count (often the items table is the biggest)
-            all_rows = max(raw_tables, key=len)
-            hdr_idx = _detect_hdr(all_rows)
-            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
-            data = all_rows[hdr_idx + 1:]
-            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
-            return {"sheets": [{"name": "HTML", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+            # Return ALL tables as separate "sheets" so user can pick which one to import
+            sheets_html = []
+            for ti, tbl_rows in enumerate(raw_tables, start=1):
+                if len(tbl_rows) < 2:
+                    continue  # skip tables with no data
+                hdr_idx = _detect_hdr(tbl_rows)
+                headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(tbl_rows[hdr_idx])]
+                data = tbl_rows[hdr_idx + 1:]
+                sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+                sheets_html.append({
+                    "name": f"Таблица {ti}",
+                    "headers": headers,
+                    "sample": sample,
+                    "total_rows": len(data),
+                    "header_row_offset": hdr_idx,
+                })
+            if not sheets_html:
+                raise HTTPException(400, "В HTML-файле не найдено таблиц с достаточным количеством строк.")
+            return {"sheets": sheets_html}
 
         # ── Excel ──
         if fname.endswith('.xls'):
@@ -692,6 +704,35 @@ async def import_items_mapped(
             pdf.close()
             skip = header_row_offset + 1
             data_iter = all_rows_pdf[skip:] if len(all_rows_pdf) > skip else []
+        elif fname.endswith(('.html', '.htm')):
+            # HTML — extract table rows via BeautifulSoup
+            try:
+                from bs4 import BeautifulSoup
+            except ImportError:
+                raise HTTPException(500, "beautifulsoup4 не установлен")
+            soup = BeautifulSoup(content, 'html.parser')
+            # sheet_name in HTML preview = "Таблица 1", "Таблица 2", ... (fallback: largest)
+            tables = soup.find_all('table')
+            if not tables:
+                raise HTTPException(400, "В HTML не найдено таблиц")
+            chosen = None
+            if sheet_name and sheet_name.lower().startswith('таблица'):
+                try:
+                    idx = int(sheet_name.split()[-1]) - 1
+                    if 0 <= idx < len(tables):
+                        chosen = tables[idx]
+                except (ValueError, IndexError):
+                    pass
+            if chosen is None:
+                # Fallback: pick largest table
+                chosen = max(tables, key=lambda t: len(t.find_all('tr')))
+            all_rows_html = []
+            for tr in chosen.find_all('tr'):
+                cells = tuple(td.get_text(strip=True) for td in tr.find_all(['td', 'th']))
+                if any(c for c in cells):
+                    all_rows_html.append(cells)
+            skip = header_row_offset + 1
+            data_iter = all_rows_html[skip:] if len(all_rows_html) > skip else []
         elif fname.endswith('.xls'):
             try:
                 import xlrd as _xlrd_mod
@@ -756,6 +797,9 @@ async def import_items_mapped(
     matched_catalog = 0
     new_in_catalog = 0
     errors_list = []
+    skipped_empty = 0      # row[col_item_name] is None/empty
+    skipped_junk = 0       # _is_junk_row matched
+    total_data_rows = 0    # счётчик прошедших data_iter
 
     # Keywords that indicate non-product rows (totals, footers, signatures)
     _SKIP_KEYWORDS = {
@@ -782,12 +826,15 @@ async def import_items_mapped(
 
     for row_idx, row in enumerate(data_iter):
         try:
+            total_data_rows += 1
             item_name = _cell(row, col_item_name)
             if not item_name:
+                skipped_empty += 1
                 continue
 
             # Skip junk rows (totals, footers, signatures)
             if _is_junk_row(item_name):
+                skipped_junk += 1
                 continue
 
             description = _cell(row, col_description) if col_description >= 0 else None
@@ -845,7 +892,19 @@ async def import_items_mapped(
         await db.commit()
     except Exception as e:
         raise HTTPException(500, f"Ошибка сохранения: {e}")
-    return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
+    return {
+        "added": added,
+        "matched_catalog": matched_catalog,
+        "new_in_catalog": new_in_catalog,
+        "errors": errors_list,
+        "debug": {
+            "total_rows_after_header": len(data_iter),
+            "rows_processed": total_data_rows,
+            "skipped_empty_name": skipped_empty,
+            "skipped_junk_row": skipped_junk,
+            "first_3_rows_sample": [list(r)[:8] for r in data_iter[:3]],
+        },
+    }
 
 
 @router.post("/{pid}/items/import-smart")

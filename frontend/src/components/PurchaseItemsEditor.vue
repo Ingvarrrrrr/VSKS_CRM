@@ -1467,6 +1467,16 @@ async function doMappedImport() {
         emit('reload-requested')
       } else {
         importError.value = 'Не удалось импортировать ни одной позиции. Проверьте маппинг столбцов.'
+        if (data.debug) {
+          const d = data.debug
+          showSnack(
+            `Импортировано 0 позиций. Обработано строк: ${d.rows_processed}. ` +
+            `Пустое наименование: ${d.skipped_empty_name}. ` +
+            `Отброшено как «итого/подпись»: ${d.skipped_junk_row}. ` +
+            `Первые строки данных: ${JSON.stringify(d.first_3_rows_sample)}`,
+            'warning'
+          )
+        }
       }
     } else {
       // Wish / no-pid context — build rows client-side

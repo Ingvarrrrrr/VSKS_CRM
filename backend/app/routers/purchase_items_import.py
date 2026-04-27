@@ -144,6 +144,79 @@ def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
     return all_rows, None
 
 
+def _ocrmypdf_then_extract_tables(content: bytes) -> list[list[list[str]]]:
+    """Run ocrmypdf on scanned PDF (adds invisible OCR text layer),
+    then extract tables via pdfplumber from the OCR'd PDF.
+    Returns list of tables (each = list of rows). Empty list on failure.
+    """
+    try:
+        import ocrmypdf
+        import pdfplumber as _pp
+    except ImportError as e:
+        logger.warning("ocrmypdf or pdfplumber not installed: %s", e)
+        return []
+    import tempfile, os
+    in_path = out_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as fin:
+            fin.write(content)
+            in_path = fin.name
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as fout:
+            out_path = fout.name
+        # force_ocr=True even if pdf has some text — scans often have garbage text layer
+        # skip_text=False ensures all pages get OCR'd
+        try:
+            ocrmypdf.ocr(
+                in_path, out_path,
+                language='rus+eng',
+                force_ocr=True,
+                deskew=True,
+                clean=True,
+                progress_bar=False,
+                output_type='pdf',
+            )
+        except Exception as e:
+            logger.warning("ocrmypdf failed: %s", e)
+            return []
+        # Now extract tables from the OCR'd PDF
+        tables_out: list[list[list[str]]] = []
+        try:
+            with _pp.open(out_path) as pdf:
+                for page in pdf.pages:
+                    for tbl in (page.extract_tables() or []):
+                        if tbl:
+                            cleaned = [[str(c).strip() if c else "" for c in row] for row in tbl]
+                            if any(any(c for c in row) for row in cleaned):
+                                tables_out.append(cleaned)
+                    # If no tables detected, fall back to text lines as virtual table
+                    if not tables_out:
+                        text = page.extract_text() or ""
+                        if text.strip():
+                            import re
+                            rows = []
+                            for line in text.split('\n'):
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                cells = re.split(r'  {2,}|\t', line)
+                                cells = [c.strip() for c in cells if c.strip()]
+                                if cells:
+                                    rows.append(cells)
+                            if rows:
+                                tables_out.append(rows)
+        except Exception as e:
+            logger.warning("pdfplumber on OCR'd PDF failed: %s", e)
+            return []
+        return tables_out
+    finally:
+        for p in (in_path, out_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+
 def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> list[list[list[str]]]:
     """Fallback table extraction using original libraries (pdfplumber, python-docx, openpyxl)."""
     raw_tables: list[list[list[str]]] = []
@@ -163,6 +236,12 @@ def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> lis
                         if tbl:
                             raw_tables.append([[str(c) if c is not None else "" for c in row] for row in tbl])
         if not raw_tables:
+            # Try ocrmypdf — adds OCR layer, then pdfplumber extracts tables natively
+            ocr_tables = _ocrmypdf_then_extract_tables(content)
+            if ocr_tables:
+                raw_tables.extend(ocr_tables)
+        if not raw_tables:
+            # Last resort: raw OCR via image_to_data
             ocr_rows, _ = _ocr_pdf_to_rows(content)
             if ocr_rows:
                 raw_tables.append(ocr_rows)
@@ -499,21 +578,20 @@ async def import_items_preview(
                     parts = re.split(r'\t|  +', line)
                     all_rows.append([p.strip() for p in parts if p.strip()])
             if not all_rows:
-                if not text_lines:
-                    # Scanned PDF — try OCR
-                    all_rows, ocr_error = _ocr_pdf_to_rows(content)
-                    if not all_rows:
-                        detail = ocr_error or "OCR не смог распознать таблицу."
-                        raise HTTPException(
-                            400,
-                            f"Этот PDF — скан (изображение). {detail} "
-                            "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
-                        )
-                else:
+                # Try ocrmypdf — adds OCR text layer, then pdfplumber reads tables natively
+                ocr_tables = _ocrmypdf_then_extract_tables(content)
+                if ocr_tables:
+                    for tbl in ocr_tables:
+                        all_rows.extend(tbl)
+            if not all_rows:
+                # Last resort: raw pixel OCR
+                all_rows, ocr_error = _ocr_pdf_to_rows(content)
+                if not all_rows:
+                    detail = ocr_error or "OCR не смог распознать таблицу."
                     raise HTTPException(
                         400,
-                        "В PDF найден текст, но не удалось распознать таблицу с данными. "
-                        "Попробуйте сохранить данные в Excel (.xlsx) и загрузить его."
+                        f"Этот PDF — скан (изображение). {detail} "
+                        "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
                     )
             hdr_idx = _detect_hdr(all_rows)
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]

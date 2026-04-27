@@ -693,6 +693,13 @@
               @click="doImportPreview">
               Далее
             </v-btn>
+            <v-btn v-if="importStep === 2 && (importPreviewData?.sheets?.length ?? 0) > 1"
+              color="success" variant="tonal"
+              :loading="itemsImportLoading"
+              prepend-icon="mdi-table-multiple"
+              @click="doImportAllTables">
+              Импортировать ВСЕ таблицы ({{ importPreviewData?.sheets?.length }})
+            </v-btn>
             <v-btn v-if="importStep === 2" color="success" variant="flat"
               :loading="itemsImportLoading"
               :disabled="!mappingHasName"
@@ -1501,6 +1508,66 @@ async function doMappedImport() {
     importError.value = e?.message ?? 'Ошибка импорта'
     importStep.value = 3
     showSnack('Ошибка импорта', 'error')
+  } finally {
+    itemsImportLoading.value = false
+  }
+}
+
+async function doImportAllTables() {
+  if (!importPreviewData.value?.sheets?.length) return
+  if (!props.purchaseId) {
+    showSnack('Множественный импорт доступен только для существующей закупки', 'warning')
+    return
+  }
+  itemsImportLoading.value = true
+  let totalAdded = 0
+  let totalErrors: any[] = []
+  try {
+    for (const sheet of importPreviewData.value.sheets) {
+      const detected = autoDetectMapping(sheet.headers)
+      // Skip tables where we couldn't find item_name column
+      if (detected['item_name'] === null || detected['item_name'] === undefined) {
+        totalErrors.push({ sheet: sheet.name, reason: 'не найден столбец Наименование' })
+        continue
+      }
+      const params = new URLSearchParams()
+      if (sheet.name) params.set('sheet_name', sheet.name)
+      params.set('header_row_offset', String(sheet.header_row_offset ?? 0))
+      params.set('col_item_name', String(detected['item_name']))
+      if (detected['quantity'] !== null) params.set('col_quantity', String(detected['quantity']))
+      if (detected['unit_price'] !== null) params.set('col_unit_price', String(detected['unit_price']))
+      if (detected['total_price'] !== null) params.set('col_total_price', String(detected['total_price']))
+      if (detected['unit'] !== null) params.set('col_unit', String(detected['unit']))
+      const fd = new FormData()
+      fd.append('file', itemsImportFile.value as File)
+      const token = localStorage.getItem('auth_token')
+      try {
+        const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params.toString()}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+          body: fd,
+        })
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}))
+          totalErrors.push({ sheet: sheet.name, reason: err.detail || `HTTP ${resp.status}` })
+          continue
+        }
+        const r = await resp.json()
+        totalAdded += (r.added || 0)
+      } catch (e: any) {
+        totalErrors.push({ sheet: sheet.name, reason: e.message || 'network error' })
+      }
+    }
+    if (totalAdded > 0) {
+      showSnack(`Импортировано ${totalAdded} позиций из ${importPreviewData.value.sheets.length} таблиц${totalErrors.length ? ` (с ошибками в ${totalErrors.length})` : ''}`)
+      emit('reload-requested')
+      itemsImportDialog.value = false
+    } else {
+      const summary = totalErrors.length
+        ? `Все таблицы пропущены. Причины: ${totalErrors.map(e => `${e.sheet}: ${e.reason}`).join('; ')}`
+        : 'Ни одной позиции не импортировано'
+      showSnack(summary, 'warning')
+    }
   } finally {
     itemsImportLoading.value = false
   }

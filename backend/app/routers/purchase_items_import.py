@@ -49,6 +49,11 @@ try:
 except ImportError:
     _DocxDocument = None
 
+try:
+    from bs4 import BeautifulSoup as _BeautifulSoup
+except ImportError:
+    _BeautifulSoup = None
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
@@ -123,6 +128,19 @@ def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> lis
                 rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
                 if rows:
                     raw_tables.append(rows)
+    elif file_type == "html":
+        if _BeautifulSoup:
+            soup = _BeautifulSoup(content, 'html.parser')
+            for tbl in soup.find_all('table'):
+                rows = []
+                for tr in tbl.find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                    if cells:
+                        rows.append(cells)
+                if rows:
+                    raw_tables.append(rows)
+        else:
+            logger.warning("BeautifulSoup not installed, skipping HTML fallback parsing")
     return raw_tables
 
 
@@ -391,8 +409,8 @@ async def import_items_preview(
 ):
     """Read Excel/PDF/DOCX file and return sheets, headers, and sample rows for column mapping."""
     fname = (file.filename or '').lower()
-    if not fname.endswith(('.xlsx', '.xls', '.pdf', '.docx', '.doc')):
-        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .pdf, .docx")
+    if not fname.endswith(('.xlsx', '.xls', '.pdf', '.docx', '.doc', '.html', '.htm')):
+        raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .pdf, .docx, .html")
 
     content = await file.read()
 
@@ -481,6 +499,41 @@ async def import_items_preview(
             data = all_rows[hdr_idx + 1:]
             sample = [[str(c) if c else "" for c in r] for r in data[:5]]
             return {"sheets": [{"name": "Document", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+
+        # ── HTML ──
+        if fname.endswith(('.html', '.htm')):
+            try:
+                from app.utils.document_to_markdown import file_to_markdown, parse_markdown_tables
+                md_text = file_to_markdown(content, file.filename or fname)
+                raw_tables = parse_markdown_tables(md_text)
+            except Exception as e:
+                logger.warning("markitdown HTML parse failed: %s", e)
+                raw_tables = []
+            if not raw_tables:
+                # Fallback: BeautifulSoup
+                try:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(content, 'html.parser')
+                    raw_tables = []
+                    for tbl in soup.find_all('table'):
+                        rows = []
+                        for tr in tbl.find_all('tr'):
+                            cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                            if cells:
+                                rows.append(cells)
+                        if rows:
+                            raw_tables.append(rows)
+                except Exception as e:
+                    logger.warning("BeautifulSoup HTML fallback failed: %s", e)
+            if not raw_tables:
+                raise HTTPException(400, "В HTML-файле не найдено таблиц с данными.")
+            # Pick the largest table by row count (often the items table is the biggest)
+            all_rows = max(raw_tables, key=len)
+            hdr_idx = _detect_hdr(all_rows)
+            headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
+            data = all_rows[hdr_idx + 1:]
+            sample = [[str(c) if c else "" for c in r] for r in data[:5]]
+            return {"sheets": [{"name": "HTML", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
 
         # ── Excel ──
         if fname.endswith('.xls'):
@@ -769,11 +822,18 @@ async def import_items_smart(
     content = await file.read()
     filename = (file.filename or "").lower()
 
-    allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls")
+    allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".html", ".htm")
     if not any(filename.endswith(ext) for ext in allowed_ext):
-        raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS")
+        raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS, HTML")
 
-    file_type = "pdf" if filename.endswith(".pdf") else "excel" if filename.endswith((".xlsx", ".xls")) else "docx"
+    if filename.endswith(".pdf"):
+        file_type = "pdf"
+    elif filename.endswith((".xlsx", ".xls")):
+        file_type = "excel"
+    elif filename.endswith((".html", ".htm")):
+        file_type = "html"
+    else:
+        file_type = "docx"
 
     # --- Stage 1: Convert to Markdown via markitdown ---
     from app.utils.document_to_markdown import (

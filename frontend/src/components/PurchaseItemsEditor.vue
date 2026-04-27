@@ -503,8 +503,8 @@
               </div>
             </v-alert>
             <FileDropZone v-model="itemsImportFile"
-              accept=".xlsx,.xls,.pdf,.docx,.doc"
-              hint="Excel, PDF, Word — перетащите или нажмите"
+              accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm"
+              hint="Excel, PDF, Word, HTML — перетащите или нажмите"
               class="mb-2" />
           </template>
 
@@ -595,14 +595,14 @@
             <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
               <div class="text-body-2">
                 <strong>Умный импорт</strong> — автоматически распознаёт наименования, количество и цены из файла.<br>
-                Поддерживаются Excel, Word, PDF. Распознавание производится без LLM, на основе эвристик.
+                Поддерживаются Excel, Word, PDF, HTML. Распознавание производится без LLM, на основе эвристик.
               </div>
             </v-alert>
             <div class="mb-4">
               <v-file-input
                 v-model="smartImportFileList"
                 label="Выберите файл для умного импорта"
-                accept=".xlsx,.xls,.pdf,.docx,.doc"
+                accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm"
                 variant="outlined" density="compact" prepend-icon="mdi-file-document-outline"
                 show-size clearable
                 @update:model-value="onSmartFileChange"

@@ -64,36 +64,81 @@ router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
 # ---------------------------------------------------------------------------
 
 def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
-    """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
-    Returns (rows, error_message). error_message is None on success."""
+    """Convert scanned PDF to rows via OCR with layout awareness.
+    Uses pytesseract image_to_data (TSV) — gives bounding boxes per word.
+    Group words into rows by y-coordinate, then split into columns by
+    x-gaps within each row. Returns (rows, error_message).
+    """
     try:
         from pdf2image import convert_from_bytes
         import pytesseract
     except ImportError:
         return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
     try:
-        images = convert_from_bytes(content, dpi=300)
+        # 400 DPI gives noticeably better recognition on receipts/invoices than 300
+        images = convert_from_bytes(content, dpi=400)
     except Exception as e:
-        return [], f"Не удалось преобразовать PDF в изображения для OCR: {e}"
+        return [], f"Не удалось преобразовать PDF в изображения для OCR (poppler установлен?): {e}"
     if not images:
         return [], "PDF не содержит страниц для распознавания."
-    import re
-    all_rows = []
+
+    all_rows: list[list[str]] = []
     for img in images:
         try:
-            text = pytesseract.image_to_string(img, lang='rus+eng')
+            # PSM 6 = "Assume a single uniform block of text" — best for tables/lists
+            data = pytesseract.image_to_data(
+                img, lang='rus+eng', config='--psm 6',
+                output_type=pytesseract.Output.DICT,
+            )
         except Exception as e:
-            return [], f"Ошибка OCR-распознавания: {e}"
-        if not text:
-            continue
-        for line in text.strip().split('\n'):
-            line = line.strip()
-            if not line:
+            return [], f"Ошибка OCR-распознавания (tesseract установлен?): {e}"
+
+        # Group words by (block_num, par_num, line_num) → one OCR line each
+        n = len(data.get('text', []))
+        line_buckets: dict[tuple, list] = {}
+        for i in range(n):
+            word = (data['text'][i] or '').strip()
+            if not word:
                 continue
-            cells = re.split(r'\t|  {2,}', line)
+            try:
+                conf = int(data['conf'][i])
+            except (ValueError, TypeError):
+                conf = -1
+            if conf < 0:
+                continue
+            key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+            line_buckets.setdefault(key, []).append({
+                'text': word,
+                'left': int(data['left'][i]),
+                'right': int(data['left'][i]) + int(data['width'][i]),
+                'top': int(data['top'][i]),
+            })
+
+        # Sort lines top-to-bottom by mean y-coord of their words
+        sorted_lines = sorted(
+            line_buckets.values(),
+            key=lambda ws: sum(w['top'] for w in ws) / len(ws),
+        )
+
+        for words in sorted_lines:
+            words.sort(key=lambda w: w['left'])
+            # Split into cells: gap > 40px between adjacent words = new column
+            GAP_PX = 40
+            cells: list[str] = []
+            current = words[0]['text']
+            prev_right = words[0]['right']
+            for w in words[1:]:
+                if w['left'] - prev_right > GAP_PX:
+                    cells.append(current)
+                    current = w['text']
+                else:
+                    current += ' ' + w['text']
+                prev_right = w['right']
+            cells.append(current)
             cells = [c.strip() for c in cells if c.strip()]
             if cells:
                 all_rows.append(cells)
+
     if not all_rows:
         return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
     return all_rows, None

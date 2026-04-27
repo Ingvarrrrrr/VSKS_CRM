@@ -36,7 +36,7 @@ async def list_contracts(
     status: Optional[str] = Query(None),
     contractor_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_tab('contracts')),
+    current_user=Depends(get_current_user),
 ):
     q = select(Contract).options(
         selectinload(Contract.contractor),

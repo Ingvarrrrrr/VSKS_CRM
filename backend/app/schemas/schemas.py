@@ -579,6 +579,8 @@ class PaymentCreate(BaseModel):
 
 class PaymentOut(PaymentCreate):
     id: int
+    bank_payment_id: Optional[int] = None
+    matched_confirmed: bool = False
     model_config = {"from_attributes": True}
 
 # Product

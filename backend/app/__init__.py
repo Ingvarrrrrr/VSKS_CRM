@@ -37,6 +37,7 @@ from .models.task_decline import TaskConsentDecline  # ensure task_consent_decli
 from .models.manager_department import ManagerDepartment  # ensure manager_departments table is created
 from .models.org_billing import OrgBillingPaid  # ensure org_billing_paid table is created
 from .models.purchase_comment import PurchaseComment  # ensure purchase_comments table is created
+from .models import bank_statement  # ensure bank_statement_imports / bank_payments tables registered
 from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 

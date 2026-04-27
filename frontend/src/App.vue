@@ -45,6 +45,7 @@
       <v-icon v-else icon="mdi-chat" />
     </v-btn>
     <toast-container />
+    <install-pwa-banner />
   </v-app>
 </template>
 
@@ -57,6 +58,7 @@ import ApiErrorDialog from './components/ApiErrorDialog.vue'
 import { initTableResize } from './composables/useTableResize'
 import { totalUnread } from './composables/useChat'
 import ToastContainer from './components/ToastContainer.vue'
+import InstallPwaBanner from './components/InstallPwaBanner.vue'
 import { useAuthStore } from './stores/auth'
 
 const route = useRoute()

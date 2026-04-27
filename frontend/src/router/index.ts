@@ -276,13 +276,6 @@ const router = createRouter({
       component: () => import('../views/PaymentImportView.vue'),
       meta: { requiresAuth: true, title: 'Импорт платёжных реестров', tab_key: 'payment_registry' }
     },
-    // Payment registry (Phase 22-06)
-    {
-      path: '/payments/registry',
-      name: 'payment-registry',
-      component: () => import('../views/PaymentRegistryView.vue'),
-      meta: { requiresAuth: true, title: 'Реестр платежей', tab_key: 'payment_registry' }
-    },
   ]
 })
 

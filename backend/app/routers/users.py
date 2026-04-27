@@ -96,28 +96,34 @@ async def get_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Текущий пользователь. С org_id возвращает effective tabs+actions для этой орг (D-08)."""
+    """Текущий пользователь. С org_id возвращает effective tabs+actions для этой орг (D-08).
+
+    Superadmin (D-05.3) всегда получает полный набор tabs+actions, даже если у него
+    нет org_id — иначе фронтенд гейтит все вкладки через authStore.hasTab() = false.
+    """
     out = UserOut.model_validate(current_user)
+    from app.models.permission import PermissionTab, PermissionAction
+
+    if current_user.role == "superadmin":
+        # D-05.3: superadmin sees all tabs + actions, независимо от org_id
+        tabs_rows = await db.execute(select(PermissionTab.tab_key))
+        actions_rows = await db.execute(select(PermissionAction.action_key))
+        tabs = sorted(r for r, in tabs_rows)
+        actions = sorted(r for r, in actions_rows)
+        out.permissions = PermissionsOut(tabs=tabs, actions=actions)
+        return out
+
     # D-08: resolve permissions for the given org_id (or active org from JWT)
     effective_org_id = org_id or getattr(current_user, "_active_org_id", None) or current_user.org_id
     if effective_org_id is not None:
-        if current_user.role == "superadmin":
-            # D-05.3: superadmin sees all tabs + actions
-            from app.models.permission import PermissionTab, PermissionAction
-            tabs_rows = await db.execute(select(PermissionTab.tab_key))
-            actions_rows = await db.execute(select(PermissionAction.action_key))
-            tabs = sorted(r for r, in tabs_rows)
-            actions = sorted(r for r, in actions_rows)
-        else:
-            effective = await get_effective_tabs(current_user, db, effective_org_id)
-            # Split effective keys back into tabs vs actions using dictionary tables
-            from app.models.permission import PermissionTab, PermissionAction
-            tabs_rows = await db.execute(select(PermissionTab.tab_key))
-            all_tab_keys = {r for r, in tabs_rows}
-            actions_rows = await db.execute(select(PermissionAction.action_key))
-            all_action_keys = {r for r, in actions_rows}
-            tabs = sorted(effective & all_tab_keys)
-            actions = sorted(effective & all_action_keys)
+        effective = await get_effective_tabs(current_user, db, effective_org_id)
+        # Split effective keys back into tabs vs actions using dictionary tables
+        tabs_rows = await db.execute(select(PermissionTab.tab_key))
+        all_tab_keys = {r for r, in tabs_rows}
+        actions_rows = await db.execute(select(PermissionAction.action_key))
+        all_action_keys = {r for r, in actions_rows}
+        tabs = sorted(effective & all_tab_keys)
+        actions = sorted(effective & all_action_keys)
         out.permissions = PermissionsOut(tabs=tabs, actions=actions)
     return out
 

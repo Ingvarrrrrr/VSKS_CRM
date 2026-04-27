@@ -481,6 +481,15 @@
           </v-chip>
         </v-card-title>
         <v-divider />
+        <v-card-text class="pa-4 pb-0">
+          <v-btn-toggle :model-value="isSmartMode" @update:model-value="switchImportMode" density="compact" mandatory color="primary" class="mb-2">
+            <v-btn :value="true" prepend-icon="mdi-brain">Авто (умный)</v-btn>
+            <v-btn :value="false" prepend-icon="mdi-tune-vertical">Вручную (выбор листа и колонок)</v-btn>
+          </v-btn-toggle>
+          <div class="text-caption text-medium-emphasis mb-2">
+            Если автоматический режим не распознал позиции (например, mojibake-кодировка или скан PDF без OCR) — переключитесь в ручной режим.
+          </div>
+        </v-card-text>
         <v-card-text class="pa-4">
           <!-- Excel import: Step 1 - Upload file -->
           <template v-if="!isSmartMode && importStep === 1">
@@ -1319,6 +1328,21 @@ function openSmartImportDialog() {
   smartImportFile.value = null
   smartImportFileList.value = []
   itemsImportDialog.value = true
+}
+
+function switchImportMode(smart: boolean) {
+  isSmartMode.value = smart
+  // Reset state on mode switch
+  smartImportFile.value = null
+  smartImportFileList.value = []
+  smartImportPreview.value = null
+  smartImportColumns.value = null
+  smartImportResult.value = null
+  importStep.value = 1
+  importPreviewData.value = null
+  itemsImportFile.value = null
+  importError.value = ''
+  columnMappingApplied.value = false
 }
 
 function closeImportDialog() {

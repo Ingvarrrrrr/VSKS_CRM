@@ -276,6 +276,38 @@ def _ocrmypdf_then_extract_tables(content: bytes) -> list[list[list[str]]]:
                     pass
 
 
+def _extract_html_tables(content: bytes, filename: str = "doc.html") -> list[list[list[str]]]:
+    """Single source of truth for HTML→tables extraction.
+
+    Used by BOTH /items/import-preview AND /items/import-mapped so that table
+    indices ("Таблица 1", "Таблица 2"...) refer to the same tables in both
+    endpoints. Order: markitdown → parse_markdown_tables, fallback BeautifulSoup.
+    """
+    raw_tables: list[list[list[str]]] = []
+    try:
+        from app.utils.document_to_markdown import file_to_markdown, parse_markdown_tables
+        md_text = file_to_markdown(content, filename)
+        raw_tables = parse_markdown_tables(md_text)
+    except Exception as e:
+        logger.warning("markitdown HTML parse failed: %s", e)
+        raw_tables = []
+    if not raw_tables:
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(content, 'html.parser')
+            for tbl in soup.find_all('table'):
+                rows = []
+                for tr in tbl.find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                    if cells:
+                        rows.append(cells)
+                if rows:
+                    raw_tables.append(rows)
+        except Exception as e:
+            logger.warning("BeautifulSoup HTML fallback failed: %s", e)
+    return raw_tables
+
+
 def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> list[list[list[str]]]:
     """Fallback table extraction using original libraries (pdfplumber, python-docx, openpyxl)."""
     raw_tables: list[list[list[str]]] = []
@@ -684,32 +716,12 @@ async def import_items_preview(
 
         # ── HTML ──
         if fname.endswith(('.html', '.htm')):
-            try:
-                from app.utils.document_to_markdown import file_to_markdown, parse_markdown_tables
-                md_text = file_to_markdown(content, file.filename or fname)
-                raw_tables = parse_markdown_tables(md_text)
-            except Exception as e:
-                logger.warning("markitdown HTML parse failed: %s", e)
-                raw_tables = []
-            if not raw_tables:
-                # Fallback: BeautifulSoup
-                try:
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(content, 'html.parser')
-                    raw_tables = []
-                    for tbl in soup.find_all('table'):
-                        rows = []
-                        for tr in tbl.find_all('tr'):
-                            cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                            if cells:
-                                rows.append(cells)
-                        if rows:
-                            raw_tables.append(rows)
-                except Exception as e:
-                    logger.warning("BeautifulSoup HTML fallback failed: %s", e)
+            raw_tables = _extract_html_tables(content, file.filename or fname)
             if not raw_tables:
                 raise HTTPException(400, "В HTML-файле не найдено таблиц с данными.")
-            # Return ALL tables as separate "sheets" so user can pick which one to import
+            # Return ALL tables as separate "sheets" so user can pick which one to import.
+            # IMPORTANT: numbering MUST match _extract_html_tables — same helper is used
+            # in /items/import-mapped to look up the table by name "Таблица N".
             sheets_html = []
             for ti, tbl_rows in enumerate(raw_tables, start=1):
                 if len(tbl_rows) < 2:
@@ -842,32 +854,23 @@ async def import_items_mapped(
             skip = header_row_offset + 1
             data_iter = all_rows_pdf[skip:] if len(all_rows_pdf) > skip else []
         elif fname.endswith(('.html', '.htm')):
-            # HTML — extract table rows via BeautifulSoup
-            try:
-                from bs4 import BeautifulSoup
-            except ImportError:
-                raise HTTPException(500, "beautifulsoup4 не установлен")
-            soup = BeautifulSoup(content, 'html.parser')
-            # sheet_name in HTML preview = "Таблица 1", "Таблица 2", ... (fallback: largest)
-            tables = soup.find_all('table')
-            if not tables:
+            # Use SAME extraction as preview so "Таблица N" indices match.
+            raw_tables = _extract_html_tables(content, file.filename or fname)
+            if not raw_tables:
                 raise HTTPException(400, "В HTML не найдено таблиц")
-            chosen = None
+            chosen_rows: list = []
             if sheet_name and sheet_name.lower().startswith('таблица'):
                 try:
                     idx = int(sheet_name.split()[-1]) - 1
-                    if 0 <= idx < len(tables):
-                        chosen = tables[idx]
+                    if 0 <= idx < len(raw_tables):
+                        chosen_rows = raw_tables[idx]
                 except (ValueError, IndexError):
                     pass
-            if chosen is None:
-                # Fallback: pick largest table
-                chosen = max(tables, key=lambda t: len(t.find_all('tr')))
-            all_rows_html = []
-            for tr in chosen.find_all('tr'):
-                cells = tuple(td.get_text(strip=True) for td in tr.find_all(['td', 'th']))
-                if any(c for c in cells):
-                    all_rows_html.append(cells)
+            if not chosen_rows:
+                # Fallback: pick the table with the most rows
+                chosen_rows = max(raw_tables, key=len)
+            # Convert to tuples for uniform downstream handling
+            all_rows_html = [tuple(row) for row in chosen_rows]
             skip = header_row_offset + 1
             data_iter = all_rows_html[skip:] if len(all_rows_html) > skip else []
         elif fname.endswith('.xls'):

@@ -84,7 +84,7 @@
                     @click="openProductPicker(idx)"
                     @click:clear.stop="clearItem(idx)"
                   />
-                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
+                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
                     <template #activator="{ props: tip }">
                       <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
                         color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
@@ -217,7 +217,7 @@
                     @click="openProductPicker(idx)"
                     @click:clear.stop="clearItem(idx)"
                   />
-                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Обновить цену / ссылки в каталоге' : 'Обновить цену'" location="top">
+                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
                     <template #activator="{ props: tip }">
                       <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
                         color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
@@ -360,7 +360,9 @@
     <!-- ===== Full product card dialog ===== -->
     <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="700" scrollable>
       <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Добавить товар / услугу в каталог</v-card-title>
+        <v-card-title class="text-h6 pt-4 px-6">
+          {{ fullProductEditingId ? 'Редактировать товар / услугу' : 'Добавить товар / услугу в каталог' }}
+        </v-card-title>
         <v-card-text class="px-6">
           <v-row dense>
             <v-col cols="12">
@@ -464,7 +466,9 @@
           <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
           <v-btn color="primary" :loading="fullProductSaving"
             :disabled="!fullProductForm.category || !String(fullProductForm.category).trim()"
-            @click="saveFullProduct">Добавить в каталог</v-btn>
+            @click="saveFullProduct">
+            {{ fullProductEditingId ? 'Сохранить изменения' : 'Добавить в каталог' }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1064,6 +1068,7 @@ function createProductFromPicker() {
 const fullProductDialog = ref(false)
 const fullProductSaving = ref(false)
 const fullProductIdx = ref(-1)
+const fullProductEditingId = ref<number | null>(null)
 const fullProductPhotoFile = ref<File | null>(null)
 const fullProductPhotoFileList = ref<File[]>([])
 const fullProductPhotoPreview = ref<string | null>(null)
@@ -1123,8 +1128,7 @@ function onFullPhotoFileChange(files: File[] | File | null) {
   fullProductPhotoPreview.value = f ? URL.createObjectURL(f) : null
 }
 
-function openFullProduct(idx: number, prefill?: string) {
-  fullProductIdx.value = idx
+function resetFullProductForm(prefill?: string) {
   Object.assign(fullProductForm, {
     name: prefill || '',
     category: '',
@@ -1140,12 +1144,46 @@ function openFullProduct(idx: number, prefill?: string) {
   fullProductPhotoFile.value = null
   fullProductPhotoFileList.value = []
   fullProductPhotoPreview.value = null
+}
+
+function openFullProduct(idx: number, prefill?: string, productId?: number | null) {
+  fullProductIdx.value = idx
+  fullProductEditingId.value = null
+  resetFullProductForm(prefill)
   fullProductDialog.value = true
+
+  if (productId) {
+    // Try cache first, then refetch fresh data so any backend-only fields are loaded
+    const cached = products.value.find(p => p.id === productId)
+    if (cached) populateFullProductFromProduct(cached)
+    apiFetch<Product>(`/products/${productId}`)
+      .then(p => populateFullProductFromProduct(p))
+      .catch(() => { /* keep cached/prefill values */ })
+  }
+}
+
+function populateFullProductFromProduct(p: Product) {
+  fullProductEditingId.value = p.id
+  Object.assign(fullProductForm, {
+    name: p.name || '',
+    category: p.category || '',
+    product_type: p.product_type || '',
+    item_kind: (p as any).item_kind || 'товар',
+    price: p.price != null ? Number(p.price) : null,
+    description: p.description || '',
+    photo_url: p.photo_url || '',
+    photo_link: p.photo_link || '',
+    is_active: (p as any).is_active !== false,
+    priceLinks: Array.isArray((p as any).price_links)
+      ? (p as any).price_links.map((l: any) => ({ url: l.url || '', price: l.price ?? null }))
+      : [],
+  })
+  fullProductPhotoPreview.value = productPhotoSrc(p) || null
 }
 
 function openQuickProductEdit(item: EditorItem) {
   const idx = localItems.value.indexOf(item)
-  openFullProduct(idx, item.item_name)
+  openFullProduct(idx, item.item_name, item.product_id || undefined)
 }
 
 async function saveFullProduct() {
@@ -1164,25 +1202,28 @@ async function saveFullProduct() {
       is_active: fullProductForm.is_active,
       price_links: fullProductForm.priceLinks.filter(l => l.url),
     }
-    const created = await apiFetch<Product>('/products/', { method: 'POST', body })
-    // Upload photo if selected
+    const isEdit = fullProductEditingId.value != null
+    const saved = isEdit
+      ? await apiFetch<Product>(`/products/${fullProductEditingId.value}`, { method: 'PUT', body })
+      : await apiFetch<Product>('/products/', { method: 'POST', body })
+    // Upload photo if selected (works for both create and edit)
     if (fullProductPhotoFile.value) {
       const fd = new FormData()
       fd.append('file', fullProductPhotoFile.value)
       const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/products/${created.id}/photo`, {
+      const res = await fetch(`/api/products/${saved.id}/photo`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       })
-      if (res.ok) Object.assign(created, await res.json())
+      if (res.ok) Object.assign(saved, await res.json())
     }
     products.value = await apiFetch<Product[]>('/products/')
     if (fullProductIdx.value >= 0) {
-      onItemProductSelect(fullProductIdx.value, created)
+      onItemProductSelect(fullProductIdx.value, saved)
     }
-    emit('product-created', created)
-    showSnack(`Товар "${created.name}" добавлен в каталог`)
+    emit('product-created', saved)
+    showSnack(isEdit ? `Товар "${saved.name}" обновлён` : `Товар "${saved.name}" добавлен в каталог`)
     fullProductDialog.value = false
     fullProductPhotoFile.value = null
     fullProductPhotoFileList.value = []

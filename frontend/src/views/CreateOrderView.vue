@@ -2037,6 +2037,47 @@
       </v-card>
     </v-dialog>
 
+    <!-- ЕГРЮЛ diff dialog -->
+    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent>
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-database-sync-outline" color="primary" class="mr-2" />
+          Данные из ЕГРЮЛ отличаются
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <p class="text-body-2 text-medium-emphasis mb-3">
+            По каждому полю выберите — обновить значение или оставить текущее.
+          </p>
+          <v-table density="compact">
+            <thead>
+              <tr><th>Поле</th><th>Сейчас</th><th>Из ЕГРЮЛ</th><th style="width:90px">Обновить</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in egrulDiffItems" :key="d.key">
+                <td class="text-caption font-weight-medium">{{ d.label }}</td>
+                <td class="text-caption text-medium-emphasis" style="max-width:200px;word-break:break-word">{{ d.old }}</td>
+                <td class="text-caption" style="color:#4caf50;max-width:200px;word-break:break-word">{{ d.new }}</td>
+                <td>
+                  <v-checkbox
+                    :model-value="egrulDiffPending[d.key] !== undefined"
+                    density="compact" hide-details
+                    @update:model-value="(v) => v ? (egrulDiffPending[d.key] = d.new) : (delete egrulDiffPending[d.key])"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="egrulDiffDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" @click="applyEgrulDiff" :disabled="Object.keys(egrulDiffPending).length === 0">
+            Применить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Framework contracts dialog -->
     <v-dialog v-model="frameworkDialog" max-width="860" scrollable>
       <v-card>
@@ -4097,6 +4138,9 @@ const addContractorForm = reactive({
 const addContractorSaving = ref(false)
 const addContractorFile = ref<File | null>(null)
 const addContractorImporting = ref(false)
+const egrulDiffDialog = ref(false)
+const egrulDiffItems = ref<{ key: string; label: string; old: string; new: string }[]>([])
+const egrulDiffPending = ref<Record<string, string>>({})
 
 function openAddContractor() {
   Object.assign(addContractorForm, { name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '', contact_person: '', signatory: '', org_type: 'Юридическое лицо', bank_name: '', bik: '', settlement_account: '', correspondent_account: '' })
@@ -4161,14 +4205,49 @@ async function lookupContractorInn() {
   const inn = addContractorForm.inn?.trim()
   if (!inn || inn.length < 10) return
   try {
-    const data = await apiFetch<any>(`/contractors/lookup-inn/${inn}`)
-    if (data.name && !addContractorForm.name) addContractorForm.name = data.name
-    if (data.kpp && !addContractorForm.kpp) addContractorForm.kpp = data.kpp
-    if (data.ogrn && !addContractorForm.ogrn) addContractorForm.ogrn = data.ogrn
-    if (data.address && !addContractorForm.address) addContractorForm.address = data.address
-    if (data.signatory && !addContractorForm.signatory) addContractorForm.signatory = data.signatory
-    showSnack('Данные подтянуты из ЕГРЮЛ', 'success')
-  } catch {}
+    const data = await apiFetch<any>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    const FIELDS = [
+      { key: 'name', label: 'Наименование' },
+      { key: 'full_name', label: 'Полное наименование' },
+      { key: 'kpp', label: 'КПП' },
+      { key: 'ogrn', label: 'ОГРН' },
+      { key: 'address', label: 'Адрес' },
+      { key: 'signatory', label: 'Подписант' },
+      { key: 'phone', label: 'Телефон' },
+      { key: 'email', label: 'Email' },
+      { key: 'bank_name', label: 'Банк' },
+      { key: 'bik', label: 'БИК' },
+      { key: 'settlement_account', label: 'Расчётный счёт' },
+      { key: 'correspondent_account', label: 'Корр. счёт' },
+    ]
+    const diffs: { key: string; label: string; old: string; new: string }[] = []
+    const pending: Record<string, string> = {}
+    for (const f of FIELDS) {
+      const newVal = (data?.[f.key] || '').toString().trim()
+      const curVal = ((addContractorForm as any)[f.key] || '').toString().trim()
+      if (newVal && newVal !== curVal) {
+        diffs.push({ key: f.key, label: f.label, old: curVal || '—', new: newVal })
+        pending[f.key] = newVal
+      }
+    }
+    if (diffs.length === 0) {
+      showSnack('Данные ЕГРЮЛ совпадают с текущими', 'info')
+      return
+    }
+    egrulDiffItems.value = diffs
+    egrulDiffPending.value = pending
+    egrulDiffDialog.value = true
+  } catch (e: any) {
+    showSnack(e?.message || 'ИНН не найден в ЕГРЮЛ', 'error')
+  }
+}
+
+function applyEgrulDiff() {
+  for (const k of Object.keys(egrulDiffPending.value)) {
+    (addContractorForm as any)[k] = egrulDiffPending.value[k]
+  }
+  egrulDiffDialog.value = false
+  showSnack('Данные обновлены из ЕГРЮЛ', 'success')
 }
 
 let _addContractorInnTimeout: any = null

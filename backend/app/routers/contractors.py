@@ -289,15 +289,27 @@ def _try_parse_paragraphs_docx(doc) -> tuple[list, int] | None:
         ('kpp',    r'КПП[\s:№]+(\d{9})\b'),
         ('ogrn',   r'ОГРН(?:ИП)?[\s:№]+(\d{13,15})\b'),
         ('bik',    r'БИК[\s:№]+(\d{9})\b'),
-        ('settlement_account',  r'(?:расч[её]тн\w*|р/?с|расч\.\s*сч[её]т)[\s:№]+(\d{20})'),
-        ('correspondent_account', r'(?:корр\w*|к/?с|кор\.?\s*сч[её]т)[\s:№]+(\d{20})'),
     ]
     for field, pat in PATTERNS:
         if field in fields:
             continue
         m = _re.search(pat, full_text, _re.IGNORECASE)
         if m:
-            fields[field] = _digits(m.group(1)) if 'счёт' in pat or 'счет' in pat or 'с' == pat[-1:] else m.group(1)
+            fields[field] = m.group(1)
+
+    # Bank accounts: collect ALL 20-digit numbers, classify by prefix.
+    # 30101... → correspondent (к/с), 4xxxxx → settlement (р/с).
+    # This is more robust than label-matching ("р/счёт", "р/с", "расч/сч." etc).
+    accounts_seen: set[str] = set()
+    for m in _re.finditer(r'\b(\d{20})\b', full_text):
+        acc = m.group(1)
+        if acc in accounts_seen:
+            continue
+        accounts_seen.add(acc)
+        if acc.startswith('30101') and 'correspondent_account' not in fields:
+            fields['correspondent_account'] = acc
+        elif acc.startswith('4') and 'settlement_account' not in fields:
+            fields['settlement_account'] = acc
 
     # Name — first quoted phrase or first paragraph if it looks like an org name
     m = _re.search(r'((?:ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|ОООО|АНО)\s*["«»]?[^"\n«»]+["»]?)', full_text)

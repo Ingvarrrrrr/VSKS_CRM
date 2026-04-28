@@ -251,6 +251,108 @@ def _try_parse_kv_docx(doc) -> tuple[list, int] | None:
     return all_rows, 0  # hdr_idx = 0
 
 
+def _try_parse_paragraphs_docx(doc) -> tuple[list, int] | None:
+    """Parse plain-paragraph requisites card (no tables).
+
+    Scans paragraph text via regex patterns for ИНН, КПП, ОГРН, БИК,
+    р/с, к/с, name, address, email, phone, signatory.
+    Returns (all_rows, 0) — header row + value row — or None if too few fields found.
+    """
+    import re as _re
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    if not paragraphs:
+        return None
+    # Also scan paragraphs inside tables (some docs use 1-cell layout-tables)
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    t = p.text.strip()
+                    if t:
+                        paragraphs.append(t)
+    full_text = "\n".join(paragraphs)
+
+    fields: dict[str, str] = {}
+
+    def _digits(s: str) -> str:
+        return _re.sub(r'\D', '', s)
+
+    # Compact "ИНН/КПП:" combo (e.g. "ИНН/КПП: 7731178803/772901001")
+    m = _re.search(r'ИНН\s*/?\s*КПП\s*[:№]?\s*(\d{10,12})\s*/\s*(\d{9})', full_text, _re.IGNORECASE)
+    if m:
+        fields['inn'] = m.group(1)
+        fields['kpp'] = m.group(2)
+
+    # Individual labelled fields
+    PATTERNS = [
+        ('inn',    r'ИНН[\s:№]+(\d{10,12})\b'),
+        ('kpp',    r'КПП[\s:№]+(\d{9})\b'),
+        ('ogrn',   r'ОГРН(?:ИП)?[\s:№]+(\d{13,15})\b'),
+        ('bik',    r'БИК[\s:№]+(\d{9})\b'),
+        ('settlement_account',  r'(?:расч[её]тн\w*|р/?с|расч\.\s*сч[её]т)[\s:№]+(\d{20})'),
+        ('correspondent_account', r'(?:корр\w*|к/?с|кор\.?\s*сч[её]т)[\s:№]+(\d{20})'),
+    ]
+    for field, pat in PATTERNS:
+        if field in fields:
+            continue
+        m = _re.search(pat, full_text, _re.IGNORECASE)
+        if m:
+            fields[field] = _digits(m.group(1)) if 'счёт' in pat or 'счет' in pat or 'с' == pat[-1:] else m.group(1)
+
+    # Name — first quoted phrase or first paragraph if it looks like an org name
+    m = _re.search(r'((?:ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|ОООО|АНО)\s*["«»]?[^"\n«»]+["»]?)', full_text)
+    if m:
+        fields['name'] = m.group(1).strip().strip(',').strip()
+    elif paragraphs:
+        # First non-trivial paragraph as name
+        for p in paragraphs:
+            if len(p) >= 5 and not _re.fullmatch(r'[\d\s\-+\(\)]+', p):
+                fields['name'] = p.strip()
+                break
+
+    # Email
+    m = _re.search(r'\b([\w.+-]+@[\w-]+\.[\w.-]+)\b', full_text)
+    if m:
+        fields['email'] = m.group(1)
+
+    # Phone
+    m = _re.search(r'(\+?7?\s*\(?\d{3,4}\)?[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2})', full_text)
+    if m:
+        fields['phone'] = m.group(1).strip()
+
+    # Address — line containing "г. " or 6-digit postal code + comma
+    for p in paragraphs:
+        clean = _re.sub(r'^(?:Юр\.?\s*адрес|Адрес|Юридический\s+адрес|Фактический\s+адрес|Местонахождение)[\s:]+', '', p, flags=_re.IGNORECASE)
+        if _re.search(r'\b\d{6}\b', clean) or _re.search(r'\bг\.\s', clean):
+            if 10 < len(clean) < 250 and 'address' not in fields:
+                fields['address'] = clean.strip()
+                break
+
+    # Bank name — line starting with "Банк:" / "в банке" etc, or following BIK
+    m = _re.search(r'(?:Банк|в\s+банке)[\s:]+([^\n]+?)(?=\s*БИК|\s*к/?с|\s*$|\n)', full_text, _re.IGNORECASE)
+    if m:
+        fields['bank_name'] = m.group(1).strip().strip(',').strip()
+
+    # Signatory — "Подписант: ..." or "Генеральный директор ФИО"
+    m = _re.search(r'(?:Подписант|Уполномоченное\s+лицо|Представитель)[\s:]+([^\n]+)', full_text, _re.IGNORECASE)
+    if m:
+        fields['signatory'] = m.group(1).strip()
+    else:
+        m = _re.search(r'((?:Генеральный\s+директор|Директор|Председатель|Президент|Главный\s+бухгалтер|Управляющий)\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.?\s*[А-ЯЁ]\.?)', full_text)
+        if m:
+            fields['signatory'] = m.group(1).strip()
+
+    if len(fields) < 2:
+        return None  # too little extracted — not a requisites card
+
+    # Build header/value rows in stable order
+    order = ['name', 'inn', 'kpp', 'ogrn', 'address', 'phone', 'email',
+             'settlement_account', 'correspondent_account', 'bik', 'bank_name', 'signatory']
+    headers = [_FIELD_TO_HEADER.get(f, f) for f in order if f in fields]
+    values = [fields[f] for f in order if f in fields]
+    return [headers, values], 0
+
+
 def _parse_file_to_rows(fname: str, content: bytes):
     """Parse xlsx/xls/docx/doc/pdf and return (all_rows, hdr_idx)."""
     fname = fname.lower()
@@ -287,15 +389,24 @@ def _parse_file_to_rows(fname: str, content: bytes):
             doc = Document(BytesIO(content))
         except Exception as e:
             raise HTTPException(400, f"Не удалось прочитать .docx файл: {e}")
-        if not doc.tables:
-            raise HTTPException(400, "В документе .docx не найдено таблиц")
 
-        # Try key-value card format first (карточка реквизитов):
-        # All tables scanned; rows with 2 non-empty cells are treated as key→value pairs.
-        kv_result = _try_parse_kv_docx(doc)
-        if kv_result is not None:
-            # kv_result is already (all_rows, hdr_idx) ready for return
-            return kv_result
+        # Try key-value card format from tables (карточка реквизитов в таблице)
+        if doc.tables:
+            kv_result = _try_parse_kv_docx(doc)
+            if kv_result is not None:
+                return kv_result
+
+        # Fallback: parse paragraphs via regex (карточка-абзацы без таблиц)
+        para_result = _try_parse_paragraphs_docx(doc)
+        if para_result is not None:
+            return para_result
+
+        if not doc.tables:
+            raise HTTPException(
+                400,
+                "В документе .docx не найдено ни таблиц, ни узнаваемых полей "
+                "(ИНН/КПП/ОГРН/название). Проверьте что документ содержит реквизиты."
+            )
 
         tbl = doc.tables[0]
         all_rows = [[cell.text.strip() for cell in row.cells] for row in tbl.rows]

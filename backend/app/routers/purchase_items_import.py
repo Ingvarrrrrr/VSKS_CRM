@@ -359,28 +359,97 @@ def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> lis
     return raw_tables
 
 
+def _detect_upd_layout(row: list[str]) -> dict | None:
+    """Detect УПД (Универсальный передаточный документ) numeric label row.
+
+    УПД standard column layout (Постановление Правительства РФ № 1137):
+      1   — № п/п
+      1а  — код товара/работ/услуг (артикул)
+      1б  — Наименование товара (описание выполненных работ, оказанных услуг)
+      1в  — код вида товара
+      2   — единица измерения, код
+      2а  — единица измерения, условное обозначение
+      3   — Количество (объем)
+      4   — Цена (тариф) за единицу
+      5   — Стоимость без налога
+      6   — В т.ч. сумма акциза
+      7   — Налоговая ставка
+      8   — Сумма налога
+      9   — Стоимость С НАЛОГОМ - всего
+      10  — Страна происхождения - код
+      10а — Страна происхождения - название
+      11  — Регистрационный номер декларации
+
+    Returns column mapping dict or None if row doesn't match УПД pattern.
+    Match rule: ≥4 of {'1а','1б','2','2а','3','4','5','9'} present.
+    """
+    LABELS = {'1а', '1б', '2', '2а', '3', '4', '5', '9'}
+    found = {}
+    for i, h in enumerate(row):
+        h_s = h.strip().lower().replace(' ', '')
+        if h_s in LABELS or h_s in {'1', '6', '7', '8', '10', '10а', '11', '12', '12а', '13'}:
+            found[h_s] = i
+    if len(LABELS & set(found.keys())) < 4:
+        return None
+    col: dict = {}
+    if '1б' in found:
+        col['item_name'] = found['1б']
+    if '3' in found:
+        col['quantity'] = found['3']
+    if '4' in found:
+        col['unit_price'] = found['4']
+    # Prefer total WITH tax (col 9), fallback to without-tax (col 5)
+    if '9' in found:
+        col['total_price'] = found['9']
+    elif '5' in found:
+        col['total_price'] = found['5']
+    if '2а' in found:
+        col['unit'] = found['2а']
+    elif '2' in found:
+        col['unit'] = found['2']
+    return col if 'item_name' in col else None
+
+
 def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
     """Fallback column detection on raw tables."""
     def _detect_columns_legacy(header_row: list[str]) -> dict:
         col: dict = {}
         for i, h in enumerate(header_row):
             h_s = h.strip().lower()
-            if any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг")):
+            # УПД precise headers (priority)
+            if 'наименование товара' in h_s or 'описание выполненных' in h_s or 'описание оказанных' in h_s:
+                col.setdefault("item_name", i)
+            elif any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг", "работ")):
                 col.setdefault("item_name", i)
             elif any(x in h_s for x in ("тип", "type", "вид")):
                 col.setdefault("item_type", i)
-            elif any(x in h_s for x in ("кол", "количеств", "qty", "quantity")):
+            elif any(x in h_s for x in ("количество (объем)", "кол-во", "количеств", "qty", "quantity")) or h_s.startswith("кол"):
                 col.setdefault("quantity", i)
-            elif any(x in h_s for x in ("ед.", "единиц", "unit", "изм")):
+            elif "ед. изм" in h_s or "единиц" in h_s or "ед.изм" in h_s or h_s == "ед." or h_s == "unit":
                 col.setdefault("unit", i)
-            elif any(x in h_s for x in ("цена ед", "цена за", "стоимость ед", "price")):
+            elif "цена" in h_s or "тариф" in h_s or "price" in h_s:
                 col.setdefault("unit_price", i)
-            elif any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
-                col.setdefault("total_price", i)
+            # Total: prefer "с налогом", else "без налога"/"стоимость"/"сумма"
+            elif "с налогом" in h_s and "всего" in h_s:
+                col["total_price"] = i  # always overwrite — highest priority
+            elif "total_price" not in col and any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
+                col["total_price"] = i
         return col
+
     best_table: list[list[str]] = []
     best_col: dict = {}
     best_header_row = 0
+    # First pass: try УПД numeric-label detection (positional mapping)
+    for table in raw_tables:
+        for r_idx, row in enumerate(table[:8]):
+            upd_col = _detect_upd_layout(row)
+            if upd_col and len(upd_col) > len(best_col):
+                best_col = upd_col
+                best_table = table
+                best_header_row = r_idx
+    if best_col:
+        return best_table, best_col, best_header_row
+    # Second pass: keyword-based detection (legacy)
     for table in raw_tables:
         for r_idx, row in enumerate(table[:6]):
             col = _detect_columns_legacy(row)

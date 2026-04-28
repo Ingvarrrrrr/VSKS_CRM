@@ -1293,16 +1293,47 @@ function ignoreColumn(idx: number) {
 function autoDetectMapping(headers: string[]): Record<string, number | null> {
   const mapping: Record<string, number | null> = {}
   TARGET_FIELDS.forEach(f => { mapping[f.value] = null })
-  const keywords: Record<string, string[]> = {
-    item_name:   ['наименован', 'назван', 'товар', 'предмет', 'name', 'продукц'],
-    description: ['описан', 'характерист', 'тз', 'спецификац', 'specification'],
-    quantity:    ['кол-во', 'количеств', 'qty', 'кол.'],
-    unit_price:  ['цена', 'price', 'за единиц', 'за ед'],
-    total_price: ['сумм', 'итого', 'total', 'стоимость'],
-    unit:        ['ед.', 'единиц', 'изм', 'unit'],
+
+  // УПД numeric-label detection (Постановление Правительства РФ № 1137):
+  // Если хедеры — это сабметки УПД '1а','1б','2','2а','3','4','5','9' — мапим позиционно.
+  const normalizedHeaders = headers.map(h => h.trim().toLowerCase().replace(/\s/g, ''))
+  const UPD_LABELS = ['1а', '1б', '2', '2а', '3', '4', '5', '9']
+  const updMatches = UPD_LABELS.filter(l => normalizedHeaders.includes(l)).length
+  if (updMatches >= 4) {
+    const idx = (label: string) => normalizedHeaders.indexOf(label)
+    if (idx('1б') >= 0) mapping.item_name = idx('1б')
+    if (idx('3')  >= 0) mapping.quantity  = idx('3')
+    if (idx('4')  >= 0) mapping.unit_price = idx('4')
+    // Prefer "с налогом — всего" (col 9), fallback на "без налога" (col 5)
+    if      (idx('9') >= 0) mapping.total_price = idx('9')
+    else if (idx('5') >= 0) mapping.total_price = idx('5')
+    if      (idx('2а') >= 0) mapping.unit = idx('2а')
+    else if (idx('2')  >= 0) mapping.unit = idx('2')
+    return mapping
   }
+
+  // Keyword fallback. Учитываем УПД headers ("Наименование товара (описание выполненных работ...)",
+  // "Цена (тариф) за единицу", "Стоимость... с налогом - всего") + общие случаи.
   const used = new Set<number>()
+
+  // First pass: total_price priority — "с налогом" over plain "стоимость"
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i].toLowerCase()
+    if (h.includes('с налогом') && (h.includes('всего') || h.includes('итог'))) {
+      mapping.total_price = i; used.add(i); break
+    }
+  }
+
+  const keywords: Record<string, string[]> = {
+    item_name:   ['наименован', 'назван', 'описание выполн', 'описание оказ', 'товара', 'товар', 'предмет', 'name', 'продукц', 'описан'],
+    description: ['характерист', 'тз', 'спецификац', 'specification'],
+    quantity:    ['кол-во', 'количеств', 'объем', 'qty', 'кол.', 'кол '],
+    unit_price:  ['цена (тариф)', 'цена', 'price', 'за единиц', 'за ед', 'тариф'],
+    total_price: ['всего', 'сумм', 'итого', 'total', 'стоимость'],
+    unit:        ['ед. изм', 'единиц', 'ед.изм', 'изм', 'unit', 'ед.'],
+  }
   for (const [field, kws] of Object.entries(keywords)) {
+    if (mapping[field] !== null) continue  // already set (e.g. total_price by с налогом)
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue
       const h = headers[i].toLowerCase()

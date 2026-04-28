@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse, StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.jwt import get_current_user, get_org_filter, require_role, ADMIN_ROLES
+from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id, require_role, ADMIN_ROLES
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.product import Product
@@ -284,8 +284,29 @@ def _apply_price_links(data: dict, target: object) -> None:
 @router.post("/", response_model=ProductOut)
 async def create_product(
     product: ProductCreate,
-    db: AsyncSession = Depends(get_db)
+    force: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    # Phase 21.x: prevent catalog clutter — if a similar product already exists,
+    # return 409 with the suggestion. Frontend asks the user "use existing?"
+    # and either links to it or retries with ?force=true.
+    if not force and (product.name or '').strip():
+        from app.product_matcher import find_matching_product
+        org_id = get_single_org_id(current_user) or current_user.org_id
+        existing = await find_matching_product(
+            db, product.name, org_id=org_id, threshold=0.7,
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_product",
+                    "message": f'Похожий товар уже есть в каталоге: "{existing.name}"',
+                    "existing": ProductOut.model_validate(existing).model_dump(mode='json'),
+                },
+            )
+
     data = product.model_dump()
     _apply_price_links(data, None)
     db_product = Product(**data)

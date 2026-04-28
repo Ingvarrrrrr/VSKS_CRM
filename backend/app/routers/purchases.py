@@ -17,6 +17,7 @@ from app.auth.permissions import require_tab
 from app.models.user import User
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
+from app.product_matcher import find_matching_product
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime, date
@@ -437,18 +438,16 @@ async def create_purchase(
     for item_d in items_data:
         d = item_d.model_dump()
         if not d.get("product_id") and d.get("item_name"):
-            from app.models.product import Product as _Prod
-            existing = (await db.execute(
-                select(_Prod).where(_Prod.name == d["item_name"].strip()).limit(1)
-            )).scalar_one_or_none()
+            org_id_for_match = get_single_org_id(current_user) or current_user.org_id
+            existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
             if existing:
                 d["product_id"] = existing.id
             else:
-                new_prod = _Prod(
+                new_prod = Product(
                     name=d["item_name"].strip(),
                     product_type=d.get("item_type"),
                     price=d.get("unit_price"),
-                    org_id=get_single_org_id(current_user) or current_user.org_id,
+                    org_id=org_id_for_match,
                 )
                 db.add(new_prod)
                 await db.flush()
@@ -545,25 +544,21 @@ async def update_purchase(
         p.framework_seq = None  # force re-assignment below
     await _assign_framework_seq(p, db, exclude_id=pid)
 
-    # Replace items (auto-link to catalog if product_id is missing)
+    # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
     for item_d in items_data:
         d = item_d.model_dump()
         if not d.get("product_id") and d.get("item_name"):
-            # Try to find existing product by exact name
-            from app.models.product import Product as _Prod
-            existing = (await db.execute(
-                select(_Prod).where(_Prod.name == d["item_name"].strip()).limit(1)
-            )).scalar_one_or_none()
+            org_id_for_match = get_single_org_id(current_user) or current_user.org_id
+            existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
             if existing:
                 d["product_id"] = existing.id
             else:
-                # Auto-create product in catalog
-                new_prod = _Prod(
+                new_prod = Product(
                     name=d["item_name"].strip(),
                     product_type=d.get("item_type"),
                     price=d.get("unit_price"),
-                    org_id=get_single_org_id(current_user) or current_user.org_id,
+                    org_id=org_id_for_match,
                 )
                 db.add(new_prod)
                 await db.flush()

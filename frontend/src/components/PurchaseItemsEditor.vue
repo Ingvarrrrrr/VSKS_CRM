@@ -1203,9 +1203,31 @@ async function saveFullProduct() {
       price_links: fullProductForm.priceLinks.filter(l => l.url),
     }
     const isEdit = fullProductEditingId.value != null
-    const saved = isEdit
-      ? await apiFetch<Product>(`/products/${fullProductEditingId.value}`, { method: 'PUT', body })
-      : await apiFetch<Product>('/products/', { method: 'POST', body })
+    let saved: Product
+    if (isEdit) {
+      saved = await apiFetch<Product>(`/products/${fullProductEditingId.value}`, { method: 'PUT', body })
+    } else {
+      try {
+        saved = await apiFetch<Product>('/products/', { method: 'POST', body })
+      } catch (err: any) {
+        // Backend detected a near-duplicate name → ask the user.
+        // FastAPI's HTTPException(detail={...}) is wrapped by api.ts: the original
+        // dict ends up at err.payload.message (apiFetch puts parsed.detail there).
+        const detail = err?.payload?.message
+        const existing = (err?.status === 409 && typeof detail === 'object' && detail?.code === 'duplicate_product')
+          ? detail.existing : null
+        if (existing) {
+          const msg = `Похожий товар уже есть в каталоге:\n«${existing.name}»\n\nИспользовать его (ОК) или всё равно создать новый (Отмена)?`
+          if (confirm(msg)) {
+            saved = existing
+          } else {
+            saved = await apiFetch<Product>('/products/?force=true', { method: 'POST', body })
+          }
+        } else {
+          throw err
+        }
+      }
+    }
     // Upload photo if selected (works for both create and edit)
     if (fullProductPhotoFile.value) {
       const fd = new FormData()

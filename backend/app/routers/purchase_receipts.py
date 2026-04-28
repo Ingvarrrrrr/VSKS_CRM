@@ -29,6 +29,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
+from app.product_matcher import find_matching_product
 from app.schemas.schemas import ReceiptCreate, ReceiptOut
 
 
@@ -207,19 +208,12 @@ async def _create_receipt_with_items(
             except Exception:
                 total = Decimal('0')
         raw_name = (it.get('name') or f'Позиция {idx}')[:5000]
-        # Phase 21.06: try to auto-match a catalog product by case-insensitive
-        # exact name. The match is always marked unconfirmed — the user must
-        # explicitly approve each linked item before the report can be saved.
-        norm = raw_name.strip().lower()
-        matched_id = None
-        if norm:
-            mp = (await db.execute(
-                select(Product.id)
-                .where(func.lower(Product.name) == norm)
-                .limit(1)
-            )).scalar_one_or_none()
-            if mp:
-                matched_id = mp
+        # Phase 21.06+: token-set fuzzy match against catalog. Catches names
+        # like "Карабин Ozone..." vs "Ozone..." (where the type is stored in
+        # Product.product_type, not in the name itself). Matched items are
+        # marked unconfirmed so the user verifies each one.
+        matched = await find_matching_product(db, raw_name)
+        matched_id = matched.id if matched else None
         db.add(PurchaseItem(
             purchase_id=purchase_id,
             product_id=matched_id,

@@ -662,27 +662,51 @@ async def import_items_preview(
                     if line:
                         text_lines.append(line)
             pdf.close()
-            if not all_rows and text_lines:
-                # Split text lines by tabs/multiple spaces to detect columns
-                import re
+
+            # Heuristic: detect "garbage text layer" from scanner OCR.
+            # Sharp/Xerox scanners often embed a low-quality OCR layer that pdfplumber
+            # reads as text but the result is unparseable. Skip text_lines and force
+            # ocrmypdf if no line has ≥10 chars with a meaningful Russian/English word.
+            import re
+            def _looks_like_real_text(lines: list[str]) -> bool:
+                for ln in lines:
+                    # Strip non-letter chars, count alphabetic runs of length ≥4
+                    words = re.findall(r"[А-Яа-яA-Za-z]{4,}", ln)
+                    if len(words) >= 2 and len(ln) >= 10:
+                        return True
+                return False
+
+            text_layer_usable = bool(all_rows) or _looks_like_real_text(text_lines)
+
+            if not all_rows and text_layer_usable and text_lines:
+                # Real text PDF without explicit tables — split lines by gaps
                 for line in text_lines:
                     parts = re.split(r'\t|  +', line)
                     all_rows.append([p.strip() for p in parts if p.strip()])
-            if not all_rows:
-                # Try ocrmypdf — adds OCR text layer, then pdfplumber reads tables natively
+
+            # If no tables AND text layer is missing or garbage → ocrmypdf
+            if not all_rows or not text_layer_usable:
+                if not all_rows:
+                    logger.info("PDF preview: pdfplumber found no tables, trying ocrmypdf")
+                else:
+                    logger.info("PDF preview: text layer looks like garbage, forcing ocrmypdf")
+                    all_rows = []  # discard garbage rows
                 ocr_tables = _ocrmypdf_then_extract_tables(content)
                 if ocr_tables:
                     for tbl in ocr_tables:
                         all_rows.extend(tbl)
+
             if not all_rows:
-                # Last resort: raw pixel OCR
+                # Last resort: raw pixel OCR via image_to_data
+                logger.info("PDF preview: ocrmypdf returned nothing, trying raw pytesseract OCR")
                 all_rows, ocr_error = _ocr_pdf_to_rows(content)
                 if not all_rows:
                     detail = ocr_error or "OCR не смог распознать таблицу."
                     raise HTTPException(
                         400,
                         f"Этот PDF — скан (изображение). {detail} "
-                        "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx)."
+                        "Попробуйте сохранить данные в Excel (.xlsx) или Word (.docx) "
+                        "или конвертировать PDF→HTML через Adobe Acrobat."
                     )
             hdr_idx = _detect_hdr(all_rows)
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]

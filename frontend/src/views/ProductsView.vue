@@ -656,6 +656,77 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dedup preview dialog -->
+    <v-dialog v-model="dupDialog.show" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pt-4 px-6">
+          <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />
+          Найденные дубликаты
+          <v-spacer />
+          <v-chip color="warning" variant="tonal" size="small">
+            Групп: {{ dupDialog.groups.length }} · Будет удалено: {{ totalDupsToDelete }}
+          </v-chip>
+        </v-card-title>
+        <v-card-text class="px-6">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            Из каждой группы остаётся <strong>один эталон</strong> (с фото / описанием / ссылками — приоритет автоматический). Остальные товары удаляются, но все их позиции в закупках перепривязываются к эталону. Снимите галочку с дубликата, если он на самом деле не дубликат.
+          </v-alert>
+          <v-expansion-panels variant="accordion">
+            <v-expansion-panel v-for="(grp, idx) in dupDialog.groups" :key="idx">
+              <v-expansion-panel-title>
+                <div class="d-flex align-center w-100 ga-2">
+                  <v-icon icon="mdi-trophy" color="success" size="20" />
+                  <span class="text-body-2 font-weight-medium">{{ grp.winner.name }}</span>
+                  <v-chip v-if="grp.winner.product_type" size="x-small" color="grey" variant="tonal">{{ grp.winner.product_type }}</v-chip>
+                  <v-spacer />
+                  <v-chip size="x-small" color="warning" variant="tonal">{{ grp.duplicates.length }} дубл.</v-chip>
+                </div>
+              </v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <div class="text-caption text-medium-emphasis mb-2">Останется (эталон):</div>
+                <v-list-item class="bg-grey-lighten-4 mb-2 rounded">
+                  <template #prepend><v-icon icon="mdi-check-circle" color="success" /></template>
+                  <v-list-item-title>{{ grp.winner.name }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ grp.winner.category || '—' }}
+                    <span v-if="grp.winner.has_photo">· фото</span>
+                    <span v-if="grp.winner.has_description">· описание</span>
+                  </v-list-item-subtitle>
+                </v-list-item>
+                <div class="text-caption text-medium-emphasis mb-2 mt-2">Удалится (дубликаты):</div>
+                <v-list density="compact">
+                  <v-list-item v-for="dup in grp.duplicates" :key="dup.id">
+                    <template #prepend>
+                      <v-checkbox
+                        :model-value="!dupDialog.skipIds.has(dup.id)"
+                        density="compact" hide-details
+                        @update:model-value="toggleSkip(dup.id)"
+                      />
+                    </template>
+                    <v-list-item-title :class="{ 'text-decoration-line-through text-medium-emphasis': !dupDialog.skipIds.has(dup.id) }">
+                      {{ dup.name }}
+                    </v-list-item-title>
+                    <v-list-item-subtitle>
+                      {{ dup.category || '—' }}
+                      <span v-if="dup.has_photo">· фото</span>
+                      <span v-if="dup.has_description">· описание</span>
+                    </v-list-item-subtitle>
+                  </v-list-item>
+                </v-list>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="dupDialog.show = false">Отмена</v-btn>
+          <v-btn color="warning" variant="flat" :loading="deduplicating" :disabled="totalDupsToDelete === 0" @click="confirmDeduplicate">
+            Удалить {{ totalDupsToDelete }} дубл.
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
@@ -714,18 +785,60 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
 const deduplicating = ref(false)
+interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean }
+interface DupGroup { winner: DupProduct; duplicates: DupProduct[] }
+const dupDialog = reactive({
+  show: false,
+  groups: [] as DupGroup[],
+  skipIds: new Set<number>(),
+})
+
 async function deduplicateProducts() {
-  if (!confirm('Удалить дублирующиеся товары? (совпадение по Наименованию + ТЗ)')) return
   deduplicating.value = true
   try {
-    const result = await apiFetch<{ deleted: number; kept: number }>('/products/deduplicate', { method: 'POST' })
+    const result = await apiFetch<{ groups: DupGroup[]; total_groups: number; total_to_delete: number }>(
+      '/products/deduplicate?dry_run=true', { method: 'POST' },
+    )
+    if (!result.total_groups) {
+      showSnack('Дубликатов не найдено')
+      return
+    }
+    dupDialog.groups = result.groups
+    dupDialog.skipIds = new Set()
+    dupDialog.show = true
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка поиска дубликатов', 'error')
+  } finally {
+    deduplicating.value = false
+  }
+}
+
+const totalDupsToDelete = computed(() =>
+  dupDialog.groups.reduce(
+    (sum, g) => sum + g.duplicates.filter(d => !dupDialog.skipIds.has(d.id)).length,
+    0,
+  ),
+)
+
+async function confirmDeduplicate() {
+  deduplicating.value = true
+  try {
+    const skipCsv = Array.from(dupDialog.skipIds).join(',')
+    const url = `/products/deduplicate${skipCsv ? `?skip_ids=${skipCsv}` : ''}`
+    const result = await apiFetch<{ deleted: number; kept: number }>(url, { method: 'POST' })
     showSnack(`Удалено дублей: ${result.deleted}, оставлено: ${result.kept}`)
+    dupDialog.show = false
     if (result.deleted > 0) await load()
   } catch (e: any) {
     showSnack(e.message || 'Ошибка дедупликации', 'error')
   } finally {
     deduplicating.value = false
   }
+}
+
+function toggleSkip(id: number) {
+  if (dupDialog.skipIds.has(id)) dupDialog.skipIds.delete(id)
+  else dupDialog.skipIds.add(id)
 }
 
 const tzVerifying = ref<string | null>(null)

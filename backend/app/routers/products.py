@@ -735,52 +735,137 @@ async def import_products_from_excel(
 
 @router.post("/deduplicate")
 async def deduplicate_products(
+    dry_run: bool = False,
+    threshold: float = 0.7,
+    skip_ids: Optional[str] = None,  # CSV: дубликаты, которые пользователь снял с галочкой
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('products')),
 ):
-    """Удалить дубликаты товаров по ключу name+description. Оставить приоритетную запись."""
-    result = await db.execute(select(Product))
-    all_products = result.scalars().all()
+    """Удалить дубликаты товаров. Группировка через fuzzy-матчинг по имени
+    (token-set + char-ratio, то же что и при импорте). Группируем только в
+    пределах одной организации.
 
-    # Group by dedup key — normalise \r\n → \n so Windows/Unix line endings match
+    `dry_run=true` — вернуть найденные группы без удаления (для preview UI).
+    `threshold` — порог сходства (по умолчанию 0.7, как при auto-link чека).
+    `skip_ids` — CSV id'шников, которые пользователь снял с галочкой и НЕ хочет удалять.
+    """
+    from app.product_matcher import name_similarity
     from collections import defaultdict
-    def _norm(s: str) -> str:
-        return (s or '').replace('\r\n', '\n').replace('\r', '\n').strip().lower()
-
-    groups: dict[str, list] = defaultdict(list)
-    for p in all_products:
-        key = _norm(p.name) + '|' + _norm(p.description)
-        groups[key].append(p)
-
-    def priority_score(p) -> tuple:
-        has_price_links = bool(p.price_links)
-        has_photo = bool(p.photo_data is not None or p.photo_url or p.photo_link)
-        contract_date_ts = p.contract_date.toordinal() if p.contract_date else 0
-        return (has_price_links, has_photo, contract_date_ts, p.id)
-
     from sqlalchemy import update as sa_update
     from app.models.purchase_item import PurchaseItem
 
-    deleted = 0
-    for key, products in groups.items():
-        if len(products) < 2:
+    skipped_ids = set()
+    if skip_ids:
+        try:
+            skipped_ids = {int(x) for x in skip_ids.split(',') if x.strip()}
+        except ValueError:
+            pass
+
+    result = await db.execute(select(Product))
+    all_products: list[Product] = list(result.scalars().all())
+
+    # Группировка по org_id — не сливаем товары разных организаций
+    by_org: dict[int | None, list[Product]] = defaultdict(list)
+    for p in all_products:
+        by_org[p.org_id].append(p)
+
+    def priority_score(p: Product) -> tuple:
+        has_price_links = bool(p.price_links)
+        has_photo = bool(p.photo_data is not None or p.photo_url or p.photo_link)
+        has_desc = bool((p.description or '').strip())
+        contract_date_ts = p.contract_date.toordinal() if p.contract_date else 0
+        return (has_price_links, has_photo, has_desc, contract_date_ts, p.id)
+
+    duplicate_groups: list[dict] = []
+
+    for org_products in by_org.values():
+        n = len(org_products)
+        if n < 2:
             continue
-        # Sort by priority descending — best record first
-        products.sort(key=priority_score, reverse=True)
-        winner_id = products[0].id
-        # Keep first, delete rest
-        for dup in products[1:]:
-            # Repoint any purchase_items referencing the duplicate to the winner
+        # Union-find для транзитивного объединения
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # O(n²) — для каталогов < 10k норм
+        for i in range(n):
+            for j in range(i + 1, n):
+                if name_similarity(org_products[i].name or '', org_products[j].name or '') >= threshold:
+                    union(i, j)
+
+        groups_map: dict[int, list[Product]] = defaultdict(list)
+        for i, p in enumerate(org_products):
+            groups_map[find(i)].append(p)
+
+        for ps in groups_map.values():
+            if len(ps) < 2:
+                continue
+            ps.sort(key=priority_score, reverse=True)
+            winner = ps[0]
+            dups = ps[1:]
+            duplicate_groups.append({
+                "winner": {
+                    "id": winner.id,
+                    "name": winner.name,
+                    "category": winner.category,
+                    "product_type": winner.product_type,
+                    "has_photo": bool(winner.photo_data or winner.photo_url or winner.photo_link),
+                    "has_description": bool((winner.description or '').strip()),
+                },
+                "duplicates": [
+                    {
+                        "id": p.id,
+                        "name": p.name,
+                        "category": p.category,
+                        "product_type": p.product_type,
+                        "has_photo": bool(p.photo_data or p.photo_url or p.photo_link),
+                        "has_description": bool((p.description or '').strip()),
+                    }
+                    for p in dups
+                ],
+            })
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "groups": duplicate_groups,
+            "total_groups": len(duplicate_groups),
+            "total_to_delete": sum(len(g["duplicates"]) for g in duplicate_groups),
+            "kept": len(all_products),
+        }
+
+    deleted = 0
+    for grp in duplicate_groups:
+        winner_id = grp["winner"]["id"]
+        for dup in grp["duplicates"]:
+            if dup["id"] in skipped_ids:
+                continue
             await db.execute(
                 sa_update(PurchaseItem)
-                .where(PurchaseItem.product_id == dup.id)
+                .where(PurchaseItem.product_id == dup["id"])
                 .values(product_id=winner_id)
             )
-            await db.delete(dup)
+            await db.execute(
+                Product.__table__.delete().where(Product.id == dup["id"])
+            )
             deleted += 1
 
     await db.commit()
-    return {"deleted": deleted, "kept": len(all_products) - deleted}
+    return {
+        "dry_run": False,
+        "deleted": deleted,
+        "kept": len(all_products) - deleted,
+        "groups": duplicate_groups,
+    }
 
 
 def _fetch_photo_bytes(url: str) -> tuple[bytes, str]:

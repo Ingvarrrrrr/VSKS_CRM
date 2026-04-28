@@ -59,6 +59,65 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
 
 
+@router.get("/items/import-debug")
+async def import_debug(current_user: User = Depends(get_current_user)):
+    """Diagnostic: report which OCR/parsing libraries are loaded on the server.
+
+    Use to debug 'PDF не распознаётся' issues. Hit GET /api/purchases/items/import-debug
+    after autodeploy completes to verify tesseract/ocrmypdf binaries are installed.
+    """
+    out: dict = {}
+    try:
+        import pdfplumber  # noqa: F401
+        out["pdfplumber"] = "ok"
+    except Exception as e:
+        out["pdfplumber"] = f"FAIL: {e}"
+    try:
+        import pytesseract
+        out["pytesseract_python"] = "ok"
+        try:
+            v = pytesseract.get_tesseract_version()
+            out["tesseract_binary"] = f"ok (v{v})"
+            langs = pytesseract.get_languages()
+            out["tesseract_langs"] = ",".join(sorted(langs))
+            out["has_rus"] = "rus" in langs
+        except Exception as e:
+            out["tesseract_binary"] = f"FAIL: {e}"
+    except Exception as e:
+        out["pytesseract_python"] = f"FAIL: {e}"
+    try:
+        from pdf2image import convert_from_bytes  # noqa: F401
+        out["pdf2image"] = "ok"
+    except Exception as e:
+        out["pdf2image"] = f"FAIL: {e}"
+    try:
+        import ocrmypdf  # noqa: F401
+        out["ocrmypdf"] = "ok"
+    except Exception as e:
+        out["ocrmypdf"] = f"FAIL: {e}"
+    try:
+        from markitdown import MarkItDown  # noqa: F401
+        out["markitdown"] = "ok"
+    except Exception as e:
+        out["markitdown"] = f"FAIL: {e}"
+    try:
+        from bs4 import BeautifulSoup  # noqa: F401
+        out["beautifulsoup4"] = "ok"
+    except Exception as e:
+        out["beautifulsoup4"] = f"FAIL: {e}"
+    try:
+        from openpyxl import load_workbook  # noqa: F401
+        out["openpyxl"] = "ok"
+    except Exception as e:
+        out["openpyxl"] = f"FAIL: {e}"
+    # Check ghostscript (needed by ocrmypdf)
+    import shutil
+    out["ghostscript_bin"] = "ok" if shutil.which("gs") else "MISSING"
+    out["pdftoppm_bin"] = "ok" if shutil.which("pdftoppm") else "MISSING"
+    out["unpaper_bin"] = "ok" if shutil.which("unpaper") else "MISSING"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # OCR / legacy table-extraction helpers
 # ---------------------------------------------------------------------------

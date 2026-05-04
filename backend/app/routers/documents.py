@@ -46,6 +46,8 @@ DOC_TYPES = {
     "tech_spec_request":     ("tech_spec_request.docx",     "TZ_Zapros_Cen"),
     "tech_spec_contract":    ("tech_spec_contract.docx",    "TZ_Dogovor"),
     "contract":              ("contract.docx",              "Contract"),
+    # Phase 23: dedicated services contract template with customer_* variables
+    "contract_services":     ("contract_services.docx",     "Contract_Services"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
 }
@@ -349,6 +351,19 @@ async def generate_document(
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
 
+    # Phase 23: Customer = Organization owning the subsidy. Loads linked Contractor (FK)
+    # for banking details (r/s, bank_name, BIK, k/s).
+    customer_org = None
+    customer_ctr = None  # Contractor linked to org via FK
+    if subsidy and subsidy.org_id:
+        from app.models.organization import Organization
+        org_r = await db.execute(select(Organization).where(Organization.id == subsidy.org_id))
+        customer_org = org_r.scalar_one_or_none()
+        if customer_org and customer_org.contractor_id:
+            from app.models.contractor import Contractor as _CtrCust
+            ctr_r = await db.execute(select(_CtrCust).where(_CtrCust.id == customer_org.contractor_id))
+            customer_ctr = ctr_r.scalar_one_or_none()
+
     # Load event if linked
     event = None
     if p.event_id:
@@ -595,6 +610,74 @@ async def generate_document(
             return parts[0]
         return "Директор"
 
+    # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
+    def _signatory_split(signatory: str) -> dict:
+        """Split 'Position Lastname Firstname Patronymic' into structured dict.
+
+        Returns:
+            position      — all words before the ФИО (last 3 words treated as ФИО)
+            name_full     — last 3 words (ФИО)
+            name_genitive — rough genitive: add '-а'/'-я' to each part where possible
+            name_initials — "Козеев Е.В." (Lastname + Initials)
+        """
+        import re as _re
+        if not signatory:
+            return {"position": "", "name_full": "", "name_genitive": "", "name_initials": ""}
+        parts = signatory.strip().split()
+        if len(parts) <= 1:
+            return {"position": "", "name_full": signatory, "name_genitive": signatory, "name_initials": signatory}
+        # Heuristic: ФИО = last 3 words if ≥4 words total, else last 2
+        if len(parts) >= 4:
+            pos_words = parts[:-3]
+            fio_words = parts[-3:]  # Фамилия Имя Отчество
+        elif len(parts) == 3:
+            # Could be "Иванов Иван Иванович" (no position) or "Директор Иванов Иван"
+            # Heuristic: first word starts with uppercase → probably all ФИО or pos+2
+            pos_words = []
+            fio_words = parts
+        else:
+            pos_words = parts[:1]
+            fio_words = parts[1:]
+
+        position = " ".join(pos_words)
+        name_full = " ".join(fio_words)
+
+        # Rough genitive: Козеев→Козеева, Евгений→Евгения, Викторович→Викторовича
+        def _to_genitive(word: str) -> str:
+            w = word
+            if w.endswith("ич"):  # Иванович → Ивановича
+                return w + "а"
+            if w.endswith("ий"):  # Евгений → Евгения
+                return w[:-2] + "ия"
+            if w.endswith("ья"):  # Илья → Ильи
+                return w[:-2] + "ьи"
+            if w.endswith("а") and len(w) > 2:
+                return w[:-1] + "ы"
+            # Last consonant cluster: add -а
+            vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
+            if w and w[-1] not in vowels and w[-1] not in "ьъ":
+                return w + "а"
+            return w  # fallback: as-is
+
+        genitive_parts = [_to_genitive(w) for w in fio_words]
+        name_genitive = " ".join(genitive_parts)
+
+        # Initials: "Козеев Е.В." — Фамилия + инициалы Имени и Отчества
+        if len(fio_words) >= 3:
+            lastname, firstname, patronymic = fio_words[0], fio_words[1], fio_words[2]
+            name_initials = f"{lastname} {firstname[0]}.{patronymic[0]}."
+        elif len(fio_words) == 2:
+            name_initials = f"{fio_words[0]} {fio_words[1][0]}."
+        else:
+            name_initials = name_full
+
+        return {
+            "position": position,
+            "name_full": name_full,
+            "name_genitive": name_genitive,
+            "name_initials": name_initials,
+        }
+
     # VAT calculations
     vat_app = bool(p.vat_applicable)
     vat_rate_val = p.vat_rate or 20
@@ -744,7 +827,73 @@ async def generate_document(
         # Цена прописью
         "contract_price_num":   _fmt_money_plain(p.contract_price),
         "contract_price_words": _rubles_to_words(p.contract_price),
+        # Phase 23: service_subject alias (same as subject but clearer name in services template)
+        "service_subject": p.subject or "",
     }
+
+    # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
+    def _g(*sources, default=""):
+        """Coalesce — return first non-empty value."""
+        for s in sources:
+            if s:
+                return s
+        return default
+
+    cust_signatory_full = _g(
+        customer_org.signatory if customer_org else None,
+        customer_ctr.signatory if customer_ctr else None,
+    )
+    cust_sig = _signatory_split(cust_signatory_full)
+    cust_signatory_basis = _g(
+        customer_ctr.signatory_basis if customer_ctr else None,
+        "Устава",
+    )
+
+    context.update({
+        "customer_name":         _g(customer_org.name if customer_org else None,
+                                    customer_ctr.name if customer_ctr else None),
+        "customer_full_name":    _g(customer_org.full_name if customer_org else None,
+                                    customer_ctr.name if customer_ctr else None,
+                                    customer_org.name if customer_org else None),
+        "customer_short_name":   _short_name(_g(customer_org.name if customer_org else None,
+                                                 customer_ctr.name if customer_ctr else None)) or "",
+        "customer_address":      _g(customer_org.address if customer_org else None,
+                                    customer_ctr.address if customer_ctr else None),
+        "customer_postal_address": _g(customer_ctr.postal_address if customer_ctr else None,
+                                      customer_org.address if customer_org else None),
+        "customer_inn":          _clean_id(_g(customer_org.inn if customer_org else None,
+                                              customer_ctr.inn if customer_ctr else None)),
+        "customer_kpp":          _clean_id(_g(customer_org.kpp if customer_org else None,
+                                              customer_ctr.kpp if customer_ctr else None)),
+        "customer_ogrn":         _g(customer_org.ogrn if customer_org else None,
+                                    customer_ctr.ogrn if customer_ctr else None),
+        "customer_bank_name":    _g(customer_ctr.bank_name if customer_ctr else None),
+        "customer_settlement_account":    _g(customer_ctr.settlement_account if customer_ctr else None),
+        "customer_correspondent_account": _g(customer_ctr.correspondent_account if customer_ctr else None),
+        "customer_bik":          _g(customer_ctr.bik if customer_ctr else None),
+        "customer_phone":        _g(customer_ctr.phone if customer_ctr else None),
+        "customer_email":        _g(customer_ctr.email if customer_ctr else None),
+        # Подписант Заказчика
+        "customer_signatory":                cust_signatory_full,
+        "customer_signatory_position":       cust_sig["position"],
+        "customer_signatory_name":           cust_sig["name_full"],
+        "customer_signatory_name_genitive":  cust_sig["name_genitive"],
+        "customer_signatory_initials":       cust_sig["name_initials"],
+        "customer_signatory_basis":          cust_signatory_basis,
+        # Город заключения (default Москва; будущая настройка per-org)
+        "contract_city": "Москва",
+    })
+
+    # Phase 23: расширенные поля подписанта Исполнителя (name_genitive, initials, ogrnip)
+    ctr_sig = _signatory_split(c.signatory if c else "")
+    context.update({
+        "contractor_signatory_name":          ctr_sig["name_full"],
+        "contractor_signatory_name_genitive": ctr_sig["name_genitive"],
+        "contractor_signatory_initials":      ctr_sig["name_initials"],
+        "contractor_ogrnip":                  (c.ogrn or "") if (c and (c.org_type or "").lower().startswith("ип")) else "",
+        # contractor_full_name — полное официальное название (fallback на name)
+        "contractor_full_name":               (c.full_name or c.name or "") if c else "",
+    })
 
     try:
         tpl.render(context)

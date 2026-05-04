@@ -16,12 +16,32 @@
 | `service_note_delivery.docx` | `service_note_delivery` | СЗ на выдачу |
 | `service_note_payment.docx` | `service_note_payment` | СЗ на оплату |
 | `service_note_advance.docx` | `service_note_advance` | СЗ на аванс (Phase 19.07) |
-| `contract.docx` | `contract` | Договор (стандартный) |
+| `contract.docx` | `contract` | Договор (стандартный, поставка) |
+| `contract_services.docx` | `contract_services` | **Договор оказания услуг (Phase 23)** |
 | `contract_tz.docx` | `contract_tz` | Договор + Техническое задание |
 | `tech_spec_request.docx` | `tech_spec_request` | ТЗ для запроса цен |
 | `tech_spec_contract.docx` | `tech_spec_contract` | ТЗ для договора |
 | `approval_sheet.docx` | `approval_sheet` | Лист согласования |
 | `order_purchase.docx` | `order_purchase` | Приказ о закупке |
+
+---
+
+## Шаблон «Договор услуг» (contract_services.docx)
+
+Создан в Phase 23. Содержит переменные:
+
+- `{{customer_*}}` — реквизиты организации Заказчика (через `subsidy.org_id → Organization → contractor_id → Contractor`)
+- `{{contractor_*}}` — реквизиты Исполнителя (контрагент закупки)
+- `{{service_term}}`, `{{contract_price_*}}`, `{{vat_*}}`, `{{third_party_involved}}`
+- `{{service_subject}}` — предмет услуг (из поля `subject` закупки)
+- Условный блок ИП vs. Юр.лицо: `{%- if contractor_org_type == 'ИП' %}...{%- endif %}`
+
+Полный список переменных — **[PLACEHOLDERS.md](PLACEHOLDERS.md)**.
+
+Регенерация шаблона:
+```
+py backend/templates/make_contract_services.py
+```
 
 > Phase 19.07: `contract_fadm` и generic `service_note` удалены как doc_type;
 > `service_note.docx` остаётся как fallback-шаблон для `service_note_procurement`

@@ -464,6 +464,13 @@ async def create_purchase(
                 amount=alloc.amount,
             ))
 
+    # Contract price: для разовых (single) и авансовых (advance) — авто-пересчёт из items
+    _items_sum_create = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+    _is_single_contract_create = not p.purchase_contract_type or p.purchase_contract_type == "single"
+    _is_advance_create = p.purchase_method == "advance"
+    if (_is_single_contract_create or _is_advance_create) and _items_sum_create:
+        p.contract_price = _items_sum_create
+
     # Budget history write hook — record initial planned_total_price
     if p.subsidy_id and p.planned_total_price:
         from app.models.budget_history import BudgetHistory as _BH
@@ -536,9 +543,10 @@ async def update_purchase(
             continue
         setattr(p, k, v)
 
-    # Contract price: for single purchases = sum of current item prices
-    is_single = not p.purchase_contract_type or p.purchase_contract_type == "single"
-    if is_single and items_sum:
+    # Contract price: для разовых (single) и авансовых (advance) — авто-пересчёт из items
+    is_single_contract = not p.purchase_contract_type or p.purchase_contract_type == "single"
+    is_advance = p.purchase_method == "advance"
+    if (is_single_contract or is_advance) and items_sum:
         p.contract_price = items_sum
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below

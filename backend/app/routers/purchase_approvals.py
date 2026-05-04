@@ -9,8 +9,11 @@ from app.models.subsidy_approver import SubsidyApprover
 from app.schemas.schemas import PurchaseApprovalOut, ApprovalDecisionRequest
 from app.auth.jwt import get_current_user, ADMIN_ROLES, MANAGER_ROLES
 from app.models.user import User
+from app.models.task import Task, TaskAssignee, TaskStatus, TaskPriority
+from app.models.chat_message import ChatMessage
+from app.routers.purchase_members import _create_assignment_chat_room
 from typing import List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
 
 router = APIRouter(prefix="/api", tags=["approvals"])
 
@@ -133,6 +136,47 @@ async def start_approval(
         event_type="approval_started",
         data={"approver_count": len(created), "mode": approval_mode, "sign_type": approval_sign_type},
     ))
+
+    # Create Task + ChatRoom for each approver with user_id (best-effort, same transaction)
+    purchase_label = f"Согласование закупки № {p.purchase_number or p.id}"
+    org_id = p.org_id or current_user.org_id
+    for pa in created:
+        if not pa.user_id:
+            continue
+        try:
+            # Convert deadline date → datetime if needed
+            task_due: datetime | None = None
+            if approval_deadline is not None:
+                task_due = datetime.combine(approval_deadline, time(23, 59, 59), tzinfo=timezone.utc)
+            task = Task(
+                title=purchase_label,
+                description=f"Роль: {pa.role_name}. Принять решение по закупке.",
+                status=TaskStatus.todo,
+                priority=TaskPriority.medium,
+                due_date=task_due,
+                assigned_user_id=pa.user_id,
+                created_by_id=current_user.id,
+                org_id=org_id,
+                purchase_id=p.id,
+                category="Согласование",
+            )
+            db.add(task)
+            await db.flush()
+            db.add(TaskAssignee(task_id=task.id, user_id=pa.user_id, consent_pending=False))
+            await db.flush()
+            # ChatRoom (skip if approver is current user)
+            if pa.user_id != current_user.id:
+                room_id = await _create_assignment_chat_room(
+                    db, current_user.id, pa.user_id, org_id, purchase_label,
+                )
+                db.add(ChatMessage(
+                    room_id=room_id,
+                    sender_id=current_user.id,
+                    content=f"📋 Запущено согласование: {p.subject or ''}\nВаша роль: {pa.role_name}",
+                ))
+                await db.flush()
+        except Exception:
+            pass  # best-effort: not breaking the approval start
 
     await db.commit()
     for pa in created:
@@ -285,6 +329,23 @@ async def decide_approval(
                 },
             ))
 
+    # Close Task for this approver (best-effort)
+    if body.action in ("approve", "reject") and approval.user_id:
+        try:
+            task_res = await db.execute(
+                select(Task).where(
+                    Task.purchase_id == pid,
+                    Task.assigned_user_id == approval.user_id,
+                    Task.category == "Согласование",
+                    Task.status == TaskStatus.todo,
+                )
+            )
+            task_to_close = task_res.scalars().first()
+            if task_to_close:
+                task_to_close.status = TaskStatus.done if body.action == "approve" else TaskStatus.cancelled
+        except Exception:
+            pass  # best-effort
+
     await db.commit()
     await db.refresh(approval)
 
@@ -358,6 +419,20 @@ async def reset_approvals(
         event_type="approval_reset",
         data={},
     ))
+
+    # Cancel all pending approval Tasks for this purchase (best-effort)
+    try:
+        tasks_res = await db.execute(
+            select(Task).where(
+                Task.purchase_id == pid,
+                Task.category == "Согласование",
+                Task.status == TaskStatus.todo,
+            )
+        )
+        for t in tasks_res.scalars().all():
+            t.status = TaskStatus.cancelled
+    except Exception:
+        pass  # best-effort
 
     await db.commit()
     return {"ok": True}

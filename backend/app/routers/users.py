@@ -462,14 +462,29 @@ DEFAULT_POSITIONS = [
 
 @router.get("/dictionaries/departments")
 async def get_department_names(
+    org_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Default + custom departments used in this org."""
-    org_ids = get_org_filter(current_user)
-    q = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
-    if org_ids is not None:
-        q = q.where(User.org_id.in_(org_ids))
+    """Default + custom departments used in this org (optionally filtered by ?org_id=N)."""
+    from app.models.user_org_access import UserOrgAccess
+    if org_id is not None:
+        # Users whose primary org is org_id OR who have access via user_org_access
+        q = (
+            select(User.department)
+            .outerjoin(UserOrgAccess, UserOrgAccess.user_id == User.id)
+            .where(
+                User.department.isnot(None),
+                User.department != "",
+                (User.org_id == org_id) | (UserOrgAccess.org_id == org_id),
+            )
+            .distinct()
+        )
+    else:
+        org_ids = get_org_filter(current_user)
+        q = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
+        if org_ids is not None:
+            q = q.where(User.org_id.in_(org_ids))
     result = await db.execute(q)
     custom = {r[0] for r in result.all()}
     all_depts = sorted(set(DEFAULT_DEPARTMENTS) | custom)
@@ -478,14 +493,29 @@ async def get_department_names(
 
 @router.get("/dictionaries/positions")
 async def get_position_names(
+    org_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Default + custom positions used in this org."""
-    org_ids = get_org_filter(current_user)
-    q = select(User.position).where(User.position.isnot(None), User.position != "").distinct()
-    if org_ids is not None:
-        q = q.where(User.org_id.in_(org_ids))
+    """Default + custom positions used in this org (optionally filtered by ?org_id=N)."""
+    from app.models.user_org_access import UserOrgAccess
+    if org_id is not None:
+        # Users whose primary org is org_id OR who have access via user_org_access
+        q = (
+            select(User.position)
+            .outerjoin(UserOrgAccess, UserOrgAccess.user_id == User.id)
+            .where(
+                User.position.isnot(None),
+                User.position != "",
+                (User.org_id == org_id) | (UserOrgAccess.org_id == org_id),
+            )
+            .distinct()
+        )
+    else:
+        org_ids = get_org_filter(current_user)
+        q = select(User.position).where(User.position.isnot(None), User.position != "").distinct()
+        if org_ids is not None:
+            q = q.where(User.org_id.in_(org_ids))
     result = await db.execute(q)
     custom = {r[0] for r in result.all()}
     all_positions = sorted(set(DEFAULT_POSITIONS) | custom)

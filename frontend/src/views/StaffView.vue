@@ -377,10 +377,10 @@
             label="Роль"
             variant="outlined" density="compact" class="mb-3"
           />
-          <v-combobox v-model="createDialog.department" :items="knownDepartments" label="Отдел" variant="outlined" density="compact" clearable class="mb-3"
+          <v-combobox v-model="createDialog.department" :items="getDepartmentsForOrg(createDialog.org_id)" label="Отдел" variant="outlined" density="compact" clearable class="mb-3"
             hint="Введите новый отдел или выберите из списка" persistent-hint
             no-data-text="Введите название нового отдела" prepend-inner-icon="mdi-office-building-outline" />
-          <v-combobox v-model="createDialog.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" clearable class="mb-3"
+          <v-combobox v-model="createDialog.position" :items="getPositionsForOrg(createDialog.org_id)" label="Должность" variant="outlined" density="compact" clearable class="mb-3"
             hint="Введите новую должность или выберите из списка" persistent-hint
             no-data-text="Введите название новой должности" prepend-inner-icon="mdi-briefcase-outline" />
           <v-autocomplete v-model="createDialog.subsidy_id" :items="subsidies" item-title="name" item-value="id"
@@ -508,7 +508,7 @@
                       prepend-inner-icon="mdi-office-building-outline" hint="Отдел меняется через Иерархию" />
                   </v-col>
                   <v-col cols="12" md="6">
-                    <v-combobox v-model="entry.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" hide-details clearable
+                    <v-combobox v-model="entry.position" :items="getPositionsForOrg(entry.org_id)" label="Должность" variant="outlined" density="compact" hide-details clearable
                       prepend-inner-icon="mdi-briefcase-outline" />
                   </v-col>
                   <v-col cols="6">
@@ -724,7 +724,7 @@
             <v-select v-model="memberForm.user_id" :items="userDropdownItems" item-title="text" item-value="value"
               label="Сотрудник *" variant="outlined" density="compact" class="mb-3"
               hint="Список пользователей вашей организации" persistent-hint />
-            <v-combobox v-model="memberForm.position" :items="knownPositions" label="Должность в отделе" variant="outlined" density="compact"
+            <v-combobox v-model="memberForm.position" :items="getPositionsForOrg(selectedDept?.org_id)" label="Должность в отделе" variant="outlined" density="compact"
               hint="Выберите из списка или введите свою" persistent-hint />
           </template>
 
@@ -749,7 +749,7 @@
               :error-messages="newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm ? 'Пароли не совпадают' : ''" />
             <v-select v-model="newMemberForm.role" :items="roleItems" item-title="label" item-value="value"
               label="Роль" variant="outlined" density="compact" class="mb-2" />
-            <v-combobox v-model="newMemberForm.position" :items="knownPositions" label="Должность" variant="outlined" density="compact" class="mb-2"
+            <v-combobox v-model="newMemberForm.position" :items="getPositionsForOrg(selectedDept?.org_id)" label="Должность" variant="outlined" density="compact" class="mb-2"
               hint="Выберите из списка или введите свою" persistent-hint />
             <v-text-field v-model="newMemberForm.city" label="Город" variant="outlined" density="compact" />
           </template>
@@ -988,6 +988,35 @@ const usersLoading = ref(false)
 const subsidies = ref<any[]>([])
 const knownDepartments = ref<string[]>([])
 const knownPositions = ref<string[]>([])
+// Per-org dict cache: orgId → { departments, positions }
+const dictsCache = ref<Record<number, { departments: string[]; positions: string[] }>>({})
+
+async function loadDicts(orgId?: number | null) {
+  const suffix = orgId ? `?org_id=${orgId}` : ''
+  if (orgId && dictsCache.value[orgId]) return // already cached
+  try {
+    const [depts, positions] = await Promise.all([
+      apiFetch<string[]>(`/users/dictionaries/departments${suffix}`),
+      apiFetch<string[]>(`/users/dictionaries/positions${suffix}`),
+    ])
+    if (orgId) {
+      dictsCache.value[orgId] = { departments: depts, positions: positions }
+    } else {
+      knownDepartments.value = depts
+      knownPositions.value = positions
+    }
+  } catch {}
+}
+
+function getDepartmentsForOrg(orgId?: number | null): string[] {
+  if (!orgId) return knownDepartments.value
+  return dictsCache.value[orgId]?.departments ?? knownDepartments.value
+}
+
+function getPositionsForOrg(orgId?: number | null): string[] {
+  if (!orgId) return knownPositions.value
+  return dictsCache.value[orgId]?.positions ?? knownPositions.value
+}
 
 // Dropdown items for user select components
 const userDropdownItems = computed(() =>
@@ -1076,6 +1105,8 @@ const createDialog = reactive({
   role: 'employee', city: '', department: '', position: '', phone: '', telegram_id: '', avatar: '', saving: false,
   org_id: null as number | null, subsidy_id: null as number | null,
 })
+// Pre-load dicts when superadmin picks an org in createDialog
+watch(() => createDialog.org_id, (id) => { if (id) loadDicts(id) })
 const organizations = ref<any[]>([])
 const currentOrgId = parseInt(localStorage.getItem('user_org_id') || '0') || null
 const currentOrgName = localStorage.getItem('user_org_name') || ''
@@ -1114,6 +1145,12 @@ const userImportDialog = reactive({
 
 // All org entries from salary API (one per dept membership)
 const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; _idx: number }[]>([])
+// Pre-load dicts whenever allOrgEntries changes (new orgs may appear in editDialog)
+watch(
+  () => allOrgEntries.value.map(e => e.org_id),
+  (orgIds) => { for (const id of orgIds) if (id) loadDicts(id) },
+  { deep: true },
+)
 
 // ── TAB 3: HIERARCHY STATE ──
 const treeLoading = ref(false)
@@ -1949,8 +1986,7 @@ onMounted(async () => {
   loadDeptTree()
   loadHierarchyTree()
   try { subsidies.value = await apiFetch<any[]>('/subsidies/') } catch { subsidies.value = [] }
-  try { knownDepartments.value = await apiFetch<string[]>('/users/dictionaries/departments') } catch {}
-  try { knownPositions.value = await apiFetch<string[]>('/users/dictionaries/positions') } catch {}
+  await loadDicts()
   try { organizations.value = await apiFetch<any[]>('/organizations/') } catch { organizations.value = [] }
 })
 </script>

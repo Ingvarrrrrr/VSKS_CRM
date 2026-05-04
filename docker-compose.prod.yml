@@ -37,6 +37,11 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/app/uploads
+      # Bind-mount глобальных шаблонов из репозитория — изменения в backend/templates/
+      # видны контейнеру сразу после git pull (без rebuild backend image).
+      # Subsidy-specific шаблоны лежат в named volume uploads (/app/uploads/templates/)
+      # и сохраняются между deployments.
+      - ./backend/templates:/app/templates
 
   frontend:
     build: ./frontend

@@ -584,6 +584,7 @@ async def lookup_inn(
     """Lookup company data by INN: first local DB (unless force_egrul=1), then FNS EGRUL/EGRIP API."""
     import httpx
     import logging
+    import re as _re_lookup
     logger = logging.getLogger(__name__)
 
     inn = inn.strip()
@@ -599,6 +600,16 @@ async def lookup_inn(
     else:
         local_contractor = None
     if local_contractor:
+        # Defensive filter: if phone field contains the INN (data entry error) — suppress it
+        raw_phone = local_contractor.phone
+        _lc_phone = (raw_phone or '').lower().strip()
+        if raw_phone and (
+            _lc_phone == inn
+            or _lc_phone.startswith('инн')
+            or _re_lookup.sub(r'\D', '', raw_phone) == inn
+        ):
+            raw_phone = None
+            logger.warning("lookup_inn: phone field contained INN for contractor %s, suppressed", inn)
         return {
             "name": local_contractor.name,
             "inn": local_contractor.inn,
@@ -610,7 +621,7 @@ async def lookup_inn(
             "signatory": local_contractor.signatory,
             "signatory_basis": local_contractor.signatory_basis,
             "contact_person": local_contractor.contact_person,
-            "phone": local_contractor.phone,
+            "phone": raw_phone,
             "email": local_contractor.email,
             "org_phone": local_contractor.org_phone,
             "org_email": local_contractor.org_email,

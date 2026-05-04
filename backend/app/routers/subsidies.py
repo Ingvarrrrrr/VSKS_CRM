@@ -225,15 +225,25 @@ async def delete_subsidy(
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
-    # Check for linked purchases
+    # Pre-check FK references to avoid 500 ForeignKeyViolationError
     from app.models.purchase import Purchase
+    from app.models.contract import Contract
+
     p_count = await db.scalar(
-        select(Purchase).where(Purchase.subsidy_id == subsidy_id).limit(1)
+        select(func.count()).select_from(Purchase).where(Purchase.subsidy_id == subsidy_id)
     )
-    if p_count:
+    c_count = await db.scalar(
+        select(func.count()).select_from(Contract).where(Contract.subsidy_id == subsidy_id)
+    )
+    if p_count or c_count:
+        parts = []
+        if p_count:
+            parts.append(f"{p_count} закупок")
+        if c_count:
+            parts.append(f"{c_count} контрактов")
         raise HTTPException(
             status_code=409,
-            detail="Нельзя удалить субсидию: есть связанные закупки. Сначала удалите или перенесите их."
+            detail=f"Нельзя удалить субсидию: связано {' и '.join(parts)}. Сначала удалите или перепривяжите их."
         )
 
     # Cascade delete FEO categories (all levels, bottom-up by level desc)

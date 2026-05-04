@@ -288,9 +288,9 @@
     </div>
 
     <!-- ===== Product picker dialog ===== -->
-    <v-dialog v-model="productPickerDialog" max-width="720" scrollable>
+    <v-dialog v-model="productPickerDialog" max-width="720" :fullscreen="display.smAndDown" scrollable>
       <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center justify-space-between">
+        <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
           <span>Выбрать товар из каталога</span>
           <v-btn icon="mdi-close" variant="text" size="small" @click="productPickerDialog = false" />
         </v-card-title>
@@ -298,7 +298,8 @@
           <v-text-field
             v-model="productPickerSearch"
             prepend-inner-icon="mdi-magnify"
-            label="Поиск по наименованию / описанию / типу"
+            label="Поиск"
+            placeholder="Наименование, описание или тип"
             variant="outlined" density="compact" clearable hide-details autofocus
             class="mb-3"
           />
@@ -307,7 +308,7 @@
             <div>Ничего не найдено</div>
             <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
               @click="createProductFromPicker">
-              Добавить «{{ productPickerSearch }}» в каталог
+              Добавить в каталог{{ productPickerSearch.length <= 30 ? ': «' + productPickerSearch + '»' : '' }}
             </v-btn>
           </div>
           <v-table v-else density="compact" hover>
@@ -345,25 +346,26 @@
             </tbody>
           </v-table>
         </v-card-text>
-        <v-card-actions class="px-6 pb-3">
+        <v-card-actions class="px-4 pb-3 d-flex flex-wrap" style="gap:6px">
           <v-btn v-if="props.supportsFullProductDialog"
-            variant="tonal" color="teal" size="small" prepend-icon="mdi-plus" @click="createProductFromPicker">
-            Новый товар/услуга
+            variant="tonal" color="teal" size="small" prepend-icon="mdi-plus"
+            @click="createProductFromPicker" class="flex-grow-0">
+            Новый товар
           </v-btn>
-          <span class="text-caption text-medium-emphasis ml-2">{{ productPickerResults.length }} позиций</span>
+          <span class="text-caption text-medium-emphasis">{{ productPickerResults.length }} позиций</span>
           <v-spacer />
-          <v-btn variant="text" @click="productPickerDialog = false">Отмена</v-btn>
+          <v-btn variant="text" size="small" @click="productPickerDialog = false">Отмена</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <!-- ===== Full product card dialog ===== -->
-    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="700" scrollable>
+    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="700" :fullscreen="display.smAndDown" scrollable>
       <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">
+        <v-card-title class="text-h6 pt-4 px-4 px-sm-6">
           {{ fullProductEditingId ? 'Редактировать товар / услугу' : 'Добавить товар / услугу в каталог' }}
         </v-card-title>
-        <v-card-text class="px-6">
+        <v-card-text class="px-4 px-sm-6">
           <v-row dense>
             <v-col cols="12">
               <v-combobox
@@ -461,13 +463,13 @@
             </v-col>
           </v-row>
         </v-card-text>
-        <v-card-actions class="px-6 pb-4">
+        <v-card-actions class="px-4 pb-4 d-flex flex-wrap" style="gap:8px">
           <v-spacer />
           <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
           <v-btn color="primary" :loading="fullProductSaving"
             :disabled="!fullProductForm.category || !String(fullProductForm.category).trim()"
             @click="saveFullProduct">
-            {{ fullProductEditingId ? 'Сохранить изменения' : 'Добавить в каталог' }}
+            {{ fullProductEditingId ? 'Сохранить' : 'Добавить в каталог' }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -747,6 +749,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 
@@ -848,6 +851,7 @@ const emit = defineEmits<{
 
 // ── Local state ──────────────────────────────────────────────────────────────
 
+const display = useDisplay()
 const localItems = ref<EditorItem[]>([...props.modelValue])
 
 watch(
@@ -1060,7 +1064,10 @@ function selectFromPicker(prod: Product) {
 
 function createProductFromPicker() {
   productPickerDialog.value = false
-  openFullProduct(productPickerIdx.value, productPickerSearch.value)
+  const idx = productPickerIdx.value
+  const row = idx >= 0 ? localItems.value[idx] : null
+  const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
+  openFullProduct(idx, productPickerSearch.value, undefined, price)
 }
 
 // ── Full product dialog ───────────────────────────────────────────────────────
@@ -1146,10 +1153,13 @@ function resetFullProductForm(prefill?: string) {
   fullProductPhotoPreview.value = null
 }
 
-function openFullProduct(idx: number, prefill?: string, productId?: number | null) {
+function openFullProduct(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
   fullProductIdx.value = idx
   fullProductEditingId.value = null
   resetFullProductForm(prefill)
+  if (!productId && prefillPrice != null && Number.isFinite(prefillPrice) && prefillPrice > 0) {
+    fullProductForm.price = prefillPrice
+  }
   fullProductDialog.value = true
 
   if (productId) {
@@ -1183,7 +1193,8 @@ function populateFullProductFromProduct(p: Product) {
 
 function openQuickProductEdit(item: EditorItem) {
   const idx = localItems.value.indexOf(item)
-  openFullProduct(idx, item.item_name, item.product_id || undefined)
+  const price = !item.product_id && item.unit_price != null && Number(item.unit_price) > 0 ? Number(item.unit_price) : undefined
+  openFullProduct(idx, item.item_name, item.product_id || undefined, price)
 }
 
 async function saveFullProduct() {

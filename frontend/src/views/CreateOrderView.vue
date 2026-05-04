@@ -1521,6 +1521,18 @@
             >
               Договор услуг
             </v-btn>
+            <!-- Phase 23: Договор поставки товаров (contract_goods) -->
+            <v-btn v-if="isSectionVisible('contractor')"
+              prepend-icon="mdi-package-variant-closed"
+              variant="tonal"
+              color="orange-darken-2"
+              size="small"
+              :loading="docLoading === 'contract_goods'"
+              @click="downloadDoc('contract_goods')"
+              title="Договор поставки товаров — Покупатель/Поставщик, Спецификация"
+            >
+              Договор поставки
+            </v-btn>
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-multiple-outline"
               variant="tonal"
@@ -2924,6 +2936,13 @@ watch(() => form.subsidy_id, async (sid) => {
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
 const placeholderGroups = [
+  {
+    title: '🎯 Два типа договора',
+    items: [
+      { var: 'contract_services.docx', desc: 'Договор оказания услуг (Заказчик/Исполнитель, ТЗ)', ex: 'Кнопка «Договор услуг»' },
+      { var: 'contract_goods.docx', desc: 'Договор поставки товаров (Покупатель/Поставщик, Спецификация)', ex: 'Кнопка «Договор поставки»' },
+    ],
+  },
   {
     title: '📑 Договор (общее)',
     items: [

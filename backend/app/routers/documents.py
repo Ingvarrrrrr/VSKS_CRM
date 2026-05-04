@@ -48,6 +48,8 @@ DOC_TYPES = {
     "contract":              ("contract.docx",              "Contract"),
     # Phase 23: dedicated services contract template with customer_* variables
     "contract_services":     ("contract_services.docx",     "Contract_Services"),
+    # Phase 23: goods supply contract template (Покупатель/Поставщик, Спецификация)
+    "contract_goods":        ("contract_goods.docx",        "Contract_Goods"),
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
 }
@@ -1280,6 +1282,11 @@ async def download_kp_xlsx(
 # ── Template markup guide ────────────────────────────────────────────────────
 
 TEMPLATE_VARIABLES = [
+    # ── Выбор шаблона ──
+    ("", "ВЫБОР ШАБЛОНА"),
+    ("", "  contract_services.docx — договор оказания услуг (Заказчик/Исполнитель, ТЗ)"),
+    ("", "  contract_goods.docx    — договор поставки товаров (Покупатель/Поставщик, Спецификация)"),
+    ("", "  Оба шаблона используют одинаковые переменные ниже."),
     # ── Закупка ──
     ("", "ЗАКУПКА"),
     ("{{purchase_number}}", "Номер закупки (например: 42)"),

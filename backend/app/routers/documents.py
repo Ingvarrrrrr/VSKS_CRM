@@ -997,7 +997,72 @@ async def generate_document(
             buf.seek(0)
     except Exception as e:
         logger.exception("Document generation error for purchase %s, doc_type=%s, template=%s", pid, doc_type, template_path)
-        raise HTTPException(500, f"Ошибка генерации документа: {e}")
+
+        # Phase 23.2: human-friendly error explanations for Jinja/docxtpl errors
+        import re as _re
+        err_class = type(e).__name__
+        err_msg = str(e)
+        template_name = os.path.basename(template_path) if template_path else f"{doc_type}.docx"
+        is_custom = bool(template_path and template_path.startswith(SUBSIDY_TEMPLATES_DIR))
+
+        detail = {
+            "code": "TEMPLATE_RENDER_ERROR",
+            "message": f"Не удалось сгенерировать «{template_name}»",
+            "template": template_name,
+            "template_source": "Шаблон субсидии (загруженный пользователем)" if is_custom else "Глобальный шаблон",
+            "error_class": err_class,
+            "error_raw": err_msg,
+            "hint": None,
+        }
+
+        # Pattern: Jinja2 UndefinedError ('X' is undefined)
+        m = _re.match(r"'([a-zA-Z_][a-zA-Z0-9_]*)' is undefined", err_msg)
+        if m:
+            var_name = m.group(1)
+            detail["message"] = f"В шаблоне «{template_name}» используется переменная {{{{{var_name}.…}}}} вне цикла"
+            loop_hints = {
+                "a": "{% tr for a in approvers %}…{{a.full_name}}…{% tr endfor %}  — переменная для согласующих (approval_sheet, лист согласования)",
+                "item": "{% tr for item in items %}…{{item.name}}…{% tr endfor %}  — переменная для позиций закупки",
+            }
+            if var_name in loop_hints:
+                detail["hint"] = (
+                    f"Переменная «{var_name}» доступна только внутри цикла. "
+                    f"Оберните строки/ячейки таблицы в:\n  {loop_hints[var_name]}\n\n"
+                    f"Либо удалите кастомный шаблон в UI «Субсидии → Шаблоны → {template_name} → 🗑» и используйте глобальный."
+                )
+            else:
+                detail["hint"] = (
+                    f"В словаре переменных нет «{var_name}». Возможно, переменная переименована или удалена. "
+                    f"См. справочник «Руководство по переменным» в Subsidies → Шаблоны."
+                )
+
+        # Pattern: 'X' has no attribute 'Y'
+        m2 = _re.match(r"'(\w+)' (?:object )?has no attribute '(\w+)'", err_msg)
+        if not m and m2:
+            obj_name = m2.group(1)
+            attr = m2.group(2)
+            detail["message"] = f"В шаблоне «{template_name}» используется {{{{{obj_name}.{attr}}}}} но поле «{attr}» отсутствует"
+            detail["hint"] = (
+                f"Возможные причины:\n"
+                f"• опечатка в имени переменной — см. «Руководство по переменным»\n"
+                f"• данные ещё не заполнены в закупке (например, попытка использовать {{{{{obj_name}.{attr}}}}} когда поле пустое)"
+            )
+
+        # Pattern: TemplateSyntaxError
+        if err_class == "TemplateSyntaxError":
+            detail["message"] = f"Синтаксическая ошибка в шаблоне «{template_name}»: {err_msg}"
+            detail["hint"] = (
+                "Проверьте парные теги в Word: `{% if ... %}` ↔ `{% endif %}`, "
+                "`{% for ... %}` ↔ `{% endfor %}`. Откройте шаблон в Word и убедитесь, "
+                "что все условные блоки закрыты."
+            )
+
+        # Pattern: file not found / permission
+        if isinstance(e, FileNotFoundError) or "no such file" in err_msg.lower():
+            detail["message"] = f"Файл шаблона не найден: {template_name}"
+            detail["hint"] = "Загрузите шаблон через UI «Субсидии → Шаблоны → Загрузить свой шаблон»."
+
+        raise HTTPException(500, detail=detail)
 
     # For contract docs: append ТЗ table with items
     if doc_type == "contract" and items_list:

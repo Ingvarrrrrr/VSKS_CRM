@@ -2669,6 +2669,46 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Phase 23.2: диалог ошибки генерации документа -->
+    <v-dialog v-model="docErrorDialog" max-width="640">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 bg-error-lighten-5">
+          <v-icon icon="mdi-alert-circle" color="error" class="mr-2" />
+          <span class="text-error">Ошибка генерации документа</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="docErrorDialog = false" />
+        </v-card-title>
+        <v-card-text class="pt-4" v-if="docErrorInfo">
+          <div class="text-body-1 font-weight-medium mb-2">{{ docErrorInfo.message }}</div>
+          <div class="text-caption text-medium-emphasis mb-3">
+            <v-icon size="14" class="mr-1">mdi-file-document-outline</v-icon>
+            {{ docErrorInfo.template_source }}: <code>{{ docErrorInfo.template }}</code>
+          </div>
+          <v-alert v-if="docErrorInfo.hint" type="info" variant="tonal" density="compact" class="mb-3">
+            <div class="text-body-2" style="white-space: pre-line">{{ docErrorInfo.hint }}</div>
+          </v-alert>
+          <v-expansion-panels variant="accordion" class="mt-2">
+            <v-expansion-panel>
+              <v-expansion-panel-title class="text-caption">
+                Технические детали ({{ docErrorInfo.error_class }})
+              </v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ docErrorInfo.error_raw }}</pre>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-btn variant="tonal" color="primary" prepend-icon="mdi-book-open-variant"
+            href="/subsidies" target="_self" @click="docErrorDialog = false">
+            Открыть «Шаблоны»
+          </v-btn>
+          <v-spacer />
+          <v-btn @click="docErrorDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -2921,6 +2961,9 @@ watch(() => form.subsidy_id, async (sid) => {
 
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
+// Phase 23.2: диалог ошибки генерации документа
+const docErrorDialog = ref(false)
+const docErrorInfo = ref<any>(null)
 // Vue parser ломается на inline-выражении { '{{' + x + '}}' } (видит '}}' как конец интерполяции),
 // поэтому формирование плейсхолдер-строки вынесено в функцию.
 function formatPlaceholder(name: string): string {
@@ -5364,8 +5407,14 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Ошибка генерации документа' }))
-      showSnack(err.detail || 'Ошибка генерации документа', 'error')
+      const err = await res.json().catch(() => null)
+      const d = err?.detail
+      if (d && typeof d === 'object' && d.code === 'TEMPLATE_RENDER_ERROR') {
+        docErrorInfo.value = d
+        docErrorDialog.value = true
+      } else {
+        showSnack(typeof d === 'string' ? d : (d?.message || 'Ошибка генерации документа'), 'error')
+      }
       return
     }
     const blob = await res.blob()

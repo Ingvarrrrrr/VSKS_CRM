@@ -179,6 +179,38 @@
           <span class="text-body-2">{{ itemDisplayName(item) }}</span>
         </template>
 
+        <!-- № — для авансовых дублируем реестровый номер -->
+        <template #item.purchase_number="{ item }">
+          <div>
+            <span>{{ item.purchase_number ?? '—' }}</span>
+            <div v-if="item.purchase_method === 'advance' && item.registry_number" class="text-caption text-purple-darken-2">
+              {{ item.registry_number }}
+            </div>
+          </div>
+        </template>
+
+        <!-- Тип закупки -->
+        <template #item.purchase_type="{ item }">
+          <v-chip :color="purchaseTypeColor(item)" size="x-small" variant="tonal">
+            {{ purchaseTypeLabel(item) }}
+          </v-chip>
+        </template>
+
+        <!-- Контрагент / Подотчётное лицо -->
+        <template #item.contractor_name="{ item }">
+          <template v-if="item.purchase_method === 'advance'">
+            <div class="text-body-2 text-truncate" style="max-width:160px">
+              <v-icon size="x-small" color="purple" class="mr-1">mdi-account-cash</v-icon>
+              {{ advancePersonLabel(item) }}
+            </div>
+          </template>
+          <template v-else>
+            <span class="text-body-2 text-truncate" style="max-width:160px;display:inline-block">
+              {{ item.contractor_name || '—' }}
+            </span>
+          </template>
+        </template>
+
         <template #item.status="{ item }">
           <div class="d-flex align-center ga-1 flex-wrap">
             <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="small" variant="tonal">
@@ -587,6 +619,11 @@ interface Purchase {
   planned_total_price?: number
   total_nmck?: number
   purchase_method?: string
+  purchase_basis?: string
+  purchase_contract_type?: string
+  registry_number?: string
+  responsible_person?: string
+  assigned_user_id?: number
   contract_price?: number
   delivery_payment_amount?: number
   status: string
@@ -605,12 +642,29 @@ interface Purchase {
   items?: PurchaseItem[]
   approval_status?: string
   execution_term?: string
-  purchase_contract_type?: string
-  registry_number?: string
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 function isItemFramework(item: Purchase) { return FRAMEWORK_TYPES.has(item.purchase_contract_type || '') }
+
+function purchaseTypeLabel(item: Purchase): string {
+  if (item.purchase_method === 'advance') return 'Авансовый'
+  if (isItemFramework(item)) return 'Рамочный'
+  if (item.purchase_basis === 'invoice') return 'По счёту'
+  if (item.purchase_method === 'single' || item.purchase_contract_type === 'single') return 'Разовый'
+  if (item.purchase_method === 'competitive') return 'Конкурентный'
+  return 'Разовый'
+}
+function purchaseTypeColor(item: Purchase): string {
+  if (item.purchase_method === 'advance') return 'purple'
+  if (isItemFramework(item)) return 'indigo'
+  if (item.purchase_basis === 'invoice') return 'grey'
+  if (item.purchase_method === 'competitive') return 'cyan'
+  return 'green'
+}
+function advancePersonLabel(item: Purchase): string {
+  return item.responsible_person || `#${item.assigned_user_id}` || '—'
+}
 
 const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
@@ -671,6 +725,7 @@ const headers = [
   { title: 'Цена', key: 'effective_price', align: 'end' as const, minWidth: 120, sortable: false },
   { title: '№ договора', key: 'contract_number', minWidth: 120 },
   { title: 'Дата договора', key: 'contract_date', minWidth: 120 },
+  { title: 'Тип', key: 'purchase_type', width: 110, sortable: false },
   { title: 'Статус', key: 'status', width: 130 },
   { title: 'Согласование', key: 'approval_status', width: 130, sortable: true },
   { title: 'Действия', key: 'actions', sortable: false, width: 200 },

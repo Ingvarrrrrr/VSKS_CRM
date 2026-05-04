@@ -346,7 +346,7 @@ TEMPLATES_BASE = "/app/templates"
 SUBSIDY_TEMPLATES_BASE = "/app/uploads/templates"
 SUPPORTED_DOC_TYPES = {
     "contract":                 "Договор",
-    "contract_tz":              "Договор с ТЗ",
+    "contract_tz":              "ТЗ (общий шаблон)",
     # tech_spec slot removed from SubsidiesView UI 2026-04-21 — the endpoint
     # still resolves to contract_tz.docx (see documents.py DOC_TYPES fallback)
     # for any client that requests /documents/tech_spec directly.

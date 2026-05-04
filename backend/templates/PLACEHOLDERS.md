@@ -229,7 +229,7 @@ deadline: "до 30.06.2026 включительно"
 |---|---|---|
 | `contract_services.docx` | `contract_services` | Договор оказания услуг (Phase 23) |
 | `contract.docx` | `contract` | Договор поставки |
-| `contract_tz.docx` | `contract_tz` | Договор + ТЗ (старый) |
+| `contract_tz.docx` | `contract_tz` | ТЗ (общий шаблон; договор отдельно через contract.docx) |
 | `approval_sheet.docx` | `approval_sheet` | Лист согласования |
 | `service_note_procurement.docx` | `service_note_procurement` | СЗ на закупку |
 | `tech_spec_request.docx` | `tech_spec_request` | ТЗ для запроса цен |

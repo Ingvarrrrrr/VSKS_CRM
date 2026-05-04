@@ -477,7 +477,7 @@ docker compose restart backend
 
 **Что осталось для полноценной работы:** положить `.docx` файлы в `backend/templates/`:
 - `service_note.docx` — Служебная записка
-- `contract_tz.docx` — Договор + ТЗ
+- `contract_tz.docx` — ТЗ (общий шаблон; договор отдельно через contract.docx начиная с Phase 23)
 - `approval_sheet.docx` — Лист согласования
 
 ---

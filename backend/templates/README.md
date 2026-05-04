@@ -18,7 +18,7 @@
 | `service_note_advance.docx` | `service_note_advance` | СЗ на аванс (Phase 19.07) |
 | `contract.docx` | `contract` | Договор (стандартный, поставка) |
 | `contract_services.docx` | `contract_services` | **Договор оказания услуг (Phase 23)** |
-| `contract_tz.docx` | `contract_tz` | Договор + Техническое задание |
+| `contract_tz.docx` | `contract_tz` | ТЗ (общий шаблон) |
 | `tech_spec_request.docx` | `tech_spec_request` | ТЗ для запроса цен |
 | `tech_spec_contract.docx` | `tech_spec_contract` | ТЗ для договора |
 | `approval_sheet.docx` | `approval_sheet` | Лист согласования |
@@ -125,7 +125,7 @@ py backend/templates/make_contract_services.py
 
 ---
 
-### 3. Договор стандартный (`contract`, `contract_tz`)
+### 3. Договор стандартный (`contract`) и ТЗ-шаблон (`contract_tz`)
 
 | Переменная | Описание | Пример |
 |---|---|---|
@@ -154,7 +154,7 @@ py backend/templates/make_contract_services.py
 | `{{ event_name }}` | Мероприятие | Всероссийский форум |
 | `{{ subsidy_name }}` | Субсидия | ФАДМ_2026 |
 
-Для `contract_tz` — автоматически добавляется страница «Техническое задание» с таблицей позиций (фото, описание, количество, цена).
+Для `contract_tz` (ТЗ — общий шаблон) — автоматически добавляется страница «Техническое задание» с таблицей позиций (фото, описание, количество, цена). Договор теперь формируется отдельно через `contract.docx` (Phase 23 auto-switch services/goods).
 
 ---
 

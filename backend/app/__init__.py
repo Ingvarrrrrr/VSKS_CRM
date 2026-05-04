@@ -237,12 +237,23 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
-    payload = {
-        "code": f"HTTP_{exc.status_code}",
-        "message": exc.detail if isinstance(exc.detail, str) else "Ошибка запроса",
-        "details": None,
-        "correlation_id": correlation_id,
-    }
+    # Phase 23.2: support structured dict-detail (e.g. TEMPLATE_RENDER_ERROR with hint).
+    # Если HTTPException(detail=<dict>) — пробрасываем поля dict'а в payload (code из dict
+    # перекрывает HTTP_<status>, message/details берутся из dict). Иначе fallback на старое поведение.
+    if isinstance(exc.detail, dict):
+        payload = {
+            "code": exc.detail.get("code") or f"HTTP_{exc.status_code}",
+            "message": exc.detail.get("message") or "Ошибка запроса",
+            "details": exc.detail,
+            "correlation_id": correlation_id,
+        }
+    else:
+        payload = {
+            "code": f"HTTP_{exc.status_code}",
+            "message": exc.detail if isinstance(exc.detail, str) else "Ошибка запроса",
+            "details": None,
+            "correlation_id": correlation_id,
+        }
     if exc.status_code >= 500:
         await _save_incident(request, payload["message"], repr(exc.detail),
                              payload["code"], correlation_id)

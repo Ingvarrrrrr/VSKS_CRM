@@ -5408,12 +5408,14 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
     })
     if (!res.ok) {
       const err = await res.json().catch(() => null)
-      const d = err?.detail
-      if (d && typeof d === 'object' && d.code === 'TEMPLATE_RENDER_ERROR') {
+      // Backend exception handler возвращает: {code, message, details, correlation_id}
+      // где details = оригинальный dict-detail из HTTPException(detail={...})
+      const d = err?.details || err?.detail  // fallback на err.detail если handler не пробросил
+      if (err?.code === 'TEMPLATE_RENDER_ERROR' && d && typeof d === 'object') {
         docErrorInfo.value = d
         docErrorDialog.value = true
       } else {
-        showSnack(typeof d === 'string' ? d : (d?.message || 'Ошибка генерации документа'), 'error')
+        showSnack(err?.message || (typeof d === 'string' ? d : (d?.message || 'Ошибка генерации документа')), 'error')
       }
       return
     }

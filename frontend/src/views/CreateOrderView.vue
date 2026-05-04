@@ -2652,7 +2652,7 @@
               </thead>
               <tbody>
                 <tr v-for="item in grp.items" :key="item.var">
-                  <td><code style="font-size:11px">{{ '{{' + item.var + '}}' }}</code></td>
+                  <td><code style="font-size:11px">{{ formatPlaceholder(item.var) }}</code></td>
                   <td class="text-body-2">{{ item.desc }}</td>
                   <td class="text-caption text-medium-emphasis">{{ item.ex }}</td>
                 </tr>
@@ -2921,6 +2921,11 @@ watch(() => form.subsidy_id, async (sid) => {
 
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
+// Vue parser ломается на inline-выражении { '{{' + x + '}}' } (видит '}}' как конец интерполяции),
+// поэтому формирование плейсхолдер-строки вынесено в функцию.
+function formatPlaceholder(name: string): string {
+  return '{' + '{' + name + '}' + '}'
+}
 const placeholderGroups = [
   {
     title: '🎯 Универсальный договор (auto-switch)',

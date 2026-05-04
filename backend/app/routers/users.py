@@ -12,6 +12,7 @@ from app.auth.permissions import (
     get_effective_tabs,
     get_effective_actions,
     require_action,
+    require_tab,
     ensure_user_org_access,
 )
 from typing import List, Optional

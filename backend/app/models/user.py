@@ -27,6 +27,7 @@ class User(Base):
     inn = Column(String(12), nullable=True)          # ИНН физ. лица
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     can_publish = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на публикацию закупок
+    exclude_from_directory = Column(Boolean, default=False, nullable=False, server_default="false")  # Не включать в справочник сотрудников
 
     organization = relationship("Organization", back_populates="users", foreign_keys=[org_id])
 

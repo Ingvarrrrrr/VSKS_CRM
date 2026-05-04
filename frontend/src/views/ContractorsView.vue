@@ -138,7 +138,7 @@
             <td class="text-mono">{{ c.kpp || '—' }}</td>
             <td class="text-sm">{{ c.address || '—' }}</td>
             <td>
-              <div class="text-sm">{{ c.phone || '—' }}</div>
+              <div class="text-sm">{{ formatPhoneRu(c.phone) || '—' }}</div>
               <div class="text-caption text-medium-emphasis">{{ c.email || '' }}</div>
             </td>
             <td class="text-sm">{{ c.contact_person || '—' }}</td>
@@ -297,7 +297,12 @@
             <div class="section-label mt-4">Контакты</div>
             <v-row dense class="mb-3">
               <v-col cols="6">
-                <v-text-field v-model="form.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details />
+                <v-text-field
+                  :model-value="formatPhoneRu(form.org_phone)"
+                  @update:model-value="form.org_phone = unformatPhone($event)"
+                  label="Телефон организации" variant="outlined" density="compact" hide-details
+                  placeholder="8-999-999-99-99"
+                />
               </v-col>
               <v-col cols="6">
                 <v-text-field v-model="form.org_email" label="Email организации" variant="outlined" density="compact" hide-details />
@@ -306,7 +311,12 @@
             <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
             <v-row dense>
               <v-col cols="6">
-                <v-text-field v-model="form.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
+                <v-text-field
+                  :model-value="formatPhoneRu(form.phone)"
+                  @update:model-value="form.phone = unformatPhone($event)"
+                  label="Телефон контактного лица" variant="outlined" density="compact" hide-details
+                  placeholder="8-999-999-99-99"
+                />
               </v-col>
               <v-col cols="6">
                 <v-text-field v-model="form.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
@@ -585,6 +595,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 
 interface ContractorWithStats {
   id: number

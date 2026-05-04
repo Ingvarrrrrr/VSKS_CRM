@@ -37,6 +37,7 @@ class UserCreate(BaseModel):
     avatar: Optional[str] = None
     org_id: Optional[int] = None
     inn: Optional[str] = None
+    exclude_from_directory: bool = False
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -51,6 +52,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     avatar: Optional[str] = None
     inn: Optional[str] = None
+    exclude_from_directory: Optional[bool] = None
 
 class PermissionsOut(BaseModel):
     tabs: List[str] = []
@@ -78,6 +80,7 @@ class UserOut(BaseModel):
     has_signature: bool = False
     can_publish: bool = False
     inn: Optional[str] = None
+    exclude_from_directory: bool = False
     permissions: Optional[PermissionsOut] = None
 
     @classmethod

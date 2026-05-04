@@ -224,6 +224,23 @@
           </v-btn>
         </div>
 
+        <!-- B6: кнопка дубликатов по ИНН -->
+        <v-alert
+          v-if="isAdmin && duplicateInnGroups.length > 0"
+          type="warning"
+          variant="tonal"
+          density="compact"
+          class="mb-3"
+          icon="mdi-account-multiple-outline"
+        >
+          <div class="d-flex align-center flex-wrap" style="gap:8px">
+            <span class="text-body-2">Найдены дубликаты по ИНН: <strong>{{ duplicateInnGroups.length }}</strong> группы</span>
+            <v-btn size="x-small" variant="tonal" color="warning" @click="innDupDialog = true">
+              Просмотреть
+            </v-btn>
+          </div>
+        </v-alert>
+
         <v-card variant="outlined">
           <v-data-table
             v-resizable-columns="'staff-users'"
@@ -330,9 +347,13 @@
           <v-text-field v-model="createDialog.email" label="Email *" variant="outlined" density="compact" class="mb-3"
             hint="Используется для входа в систему" persistent-hint prepend-inner-icon="mdi-email-outline"
             type="email" :rules="[v => !!v || 'Email обязателен', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
-          <v-text-field v-model="createDialog.phone" label="Телефон" variant="outlined" density="compact" class="mb-3"
-            prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67"
-            hint="Для связи и интеграции с Telegram" persistent-hint />
+          <v-text-field
+            :model-value="formatPhoneRu(createDialog.phone)"
+            @update:model-value="createDialog.phone = $event"
+            label="Телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone" placeholder="8-999-999-99-99"
+            hint="Формат: 8-999-999-99-99. Для связи и интеграции с Telegram" persistent-hint
+          />
           <v-text-field v-model="createDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-send" placeholder="123456789"
             hint="Числовой ID чата Telegram (узнать: написать боту @userinfobot)" persistent-hint />
@@ -434,8 +455,13 @@
             prepend-inner-icon="mdi-card-account-details-outline" placeholder="12 цифр"
             hint="ИНН физ. лица — 12 цифр" persistent-hint maxlength="12" />
           <v-text-field v-model="editDialog.city" label="Город" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field v-model="editDialog.phone" label="Телефон" variant="outlined" density="compact" class="mb-3"
-            prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67" />
+          <v-text-field
+            :model-value="formatPhoneRu(editDialog.phone)"
+            @update:model-value="editDialog.phone = $event"
+            label="Телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone" placeholder="8-999-999-99-99"
+            hint="Формат: 8-999-999-99-99" persistent-hint
+          />
           <v-text-field v-model="editDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-send" placeholder="123456789"
             hint="Числовой ID — узнать: написать @userinfobot в Telegram" persistent-hint />
@@ -495,6 +521,15 @@
               </div>
             </div>
           </div>
+          <!-- F3-checkbox: Не включать в справочник сотрудников -->
+          <v-checkbox
+            v-model="editDialog.exclude_from_directory"
+            label="Не включать в справочник сотрудников"
+            density="compact"
+            hide-details
+            class="mb-3"
+          />
+
           <!-- 17-08: «Доступ» section — per-user per-org permission overrides (D-04/D-05.2/D-08) -->
           <UserPermissionsSection
             v-if="editDialog.userId && allOrgEntries.length"
@@ -700,9 +735,13 @@
             <v-text-field v-model="newMemberForm.email" label="Email *" variant="outlined" density="compact" class="mb-2"
               type="email" prepend-inner-icon="mdi-email-outline"
               :rules="[v => !!v || 'Обязательное поле', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
-            <v-text-field v-model="newMemberForm.phone" label="Телефон" variant="outlined" density="compact" class="mb-2"
-              prepend-inner-icon="mdi-phone" placeholder="+7 (999) 123-45-67"
-              hint="Для связи и интеграции с Telegram" persistent-hint />
+            <v-text-field
+              :model-value="formatPhoneRu(newMemberForm.phone)"
+              @update:model-value="newMemberForm.phone = $event"
+              label="Телефон" variant="outlined" density="compact" class="mb-2"
+              prepend-inner-icon="mdi-phone" placeholder="8-999-999-99-99"
+              hint="Формат: 8-999-999-99-99" persistent-hint
+            />
             <v-text-field v-model="newMemberForm.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-2"
               :rules="[v => !!v || 'Обязательное поле', v => v.length >= 6 || 'Минимум 6 символов']" />
             <v-text-field v-model="newMemberForm.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-2"
@@ -793,6 +832,64 @@
       </v-card>
     </v-dialog>
 
+    <!-- B6. INN duplicates dialog (просмотр, merge — backend TBD) -->
+    <v-dialog v-model="innDupDialog" max-width="640" scrollable>
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon icon="mdi-account-multiple-outline" color="warning" class="mr-2" />
+          Дубликаты пользователей по ИНН
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="innDupDialog = false" />
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4 text-caption">
+            Показаны пользователи с одинаковым ИНН. Объединение (merge) будет доступно после реализации backend-эндпоинта
+            <code>PATCH /api/users/{'{id}'}/merge</code> — это отдельная задача.
+            Пока вы можете открыть карточку каждого и разобраться вручную.
+          </v-alert>
+          <div v-for="{ inn, group } in duplicateInnGroups" :key="inn" class="mb-5">
+            <div class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center">
+              <v-icon icon="mdi-card-account-details-outline" size="16" class="mr-1" color="warning" />
+              ИНН: {{ inn }}
+              <v-chip size="x-small" color="warning" variant="tonal" class="ml-2">{{ group.length }} записи</v-chip>
+            </div>
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>ФИО</th>
+                  <th>Логин</th>
+                  <th>Роль</th>
+                  <th>Организация</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="u in group" :key="u.id">
+                  <td class="text-caption text-medium-emphasis">{{ u.id }}</td>
+                  <td class="text-body-2">{{ u.full_name || '—' }}</td>
+                  <td class="text-caption">{{ u.username }}</td>
+                  <td><v-chip size="x-small" :color="roleColor(u.role)" variant="tonal">{{ ROLE_LABELS[u.role] || u.role }}</v-chip></td>
+                  <td class="text-caption">{{ (u as any).org_id || '—' }}</td>
+                  <td>
+                    <v-btn size="x-small" variant="text" color="primary" icon="mdi-pencil"
+                      @click="innDupDialog = false; openEditUser(u)" title="Открыть карточку" />
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+          <div v-if="duplicateInnGroups.length === 0" class="text-center py-6 text-medium-emphasis">
+            Дубликатов не найдено
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="flat" color="primary" @click="innDupDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
   </v-container>
 </template>
@@ -801,6 +898,7 @@
 import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
@@ -905,6 +1003,23 @@ const filteredUsers = computed(() => {
   return list
 })
 
+// B6: дедуп пользователей по ИНН
+const duplicateInnGroups = computed(() => {
+  const byInn: Record<string, UserItem[]> = {}
+  for (const u of users.value) {
+    const inn = (u as any).inn
+    if (!inn || String(inn).trim().length < 10) continue
+    const key = String(inn).trim()
+    if (!byInn[key]) byInn[key] = []
+    byInn[key].push(u)
+  }
+  return Object.entries(byInn)
+    .filter(([, group]) => group.length >= 2)
+    .map(([inn, group]) => ({ inn, group }))
+})
+
+const innDupDialog = ref(false)
+
 // Users not in any department
 const unassignedUsers = computed(() => users.value.filter(u => !u.department))
 const unassignedExpanded = ref(true)
@@ -971,6 +1086,7 @@ const editDialog = reactive({
   department: '', position: '', phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
+  exclude_from_directory: false,
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
@@ -1244,7 +1360,7 @@ async function saveUser() {
         city: createDialog.city || null,
         department: normalizeDepartment(createDialog.department) || null,
         position: createDialog.position || null,
-        phone: createDialog.phone || null,
+        phone: unformatPhone(createDialog.phone) || null,
         telegram_id: createDialog.telegram_id || null,
         avatar: createDialog.avatar || randomAvatarId(),
         org_id: isSuperadmin.value ? createDialog.org_id : null,
@@ -1281,6 +1397,7 @@ async function openEditUser(item: UserItem) {
   editDialog.phone = (item as any).phone || ''
   editDialog.telegram_id = (item as any).telegram_id || ''
   editDialog.max_chat_id = (item as any).max_chat_id || ''
+  editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
   editDialog.extraOrgIds = []
   // Resolve dept ID from deptTree by matching name
   const allDepts = flatDepts(deptTree.value)
@@ -1400,9 +1517,10 @@ async function saveEditUser() {
       email: editDialog.email || null,
       avatar: editDialog.avatar || null,
       inn: editDialog.inn || null,
-      phone: editDialog.phone || null,
+      phone: unformatPhone(editDialog.phone) || null,
       telegram_id: editDialog.telegram_id || null,
       max_chat_id: editDialog.max_chat_id || null,
+      exclude_from_directory: editDialog.exclude_from_directory,
     }
     if (editDialog.password) body.password = editDialog.password
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
@@ -1703,7 +1821,7 @@ async function createAndAddMember() {
         full_name: newMemberForm.value.full_name,
         role: newMemberForm.value.role,
         city: newMemberForm.value.city || null,
-        phone: newMemberForm.value.phone || null,
+        phone: unformatPhone(newMemberForm.value.phone) || null,
         department: selectedDept.value.name,
         position: newMemberForm.value.position || null,
       }),
@@ -1714,7 +1832,7 @@ async function createAndAddMember() {
       body: JSON.stringify({ user_id: user.id, position: newMemberForm.value.position || null }),
     })
     addMemberDialog.value = false
-    newMemberForm.value = { email: '', full_name: '', password: '', role: 'employee', position: '', city: '' }
+    newMemberForm.value = { email: '', full_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' }
     // Refresh all
     await Promise.all([loadUsers(), loadDeptMembers(selectedDept.value.id), loadDeptTree()])
     showSnack(`Сотрудник ${user.full_name || user.username} создан и добавлен в отдел`)

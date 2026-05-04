@@ -1171,14 +1171,28 @@
             hide-details
             @update:model-value="onApproverRoleChange"
           />
-          <v-text-field
-            v-model="approverForm.full_name"
-            label="ФИО *"
+          <v-autocomplete
+            v-model="approverForm.selectedUser"
+            :items="approverUsersList"
+            item-title="full_name"
+            item-value="id"
+            label="Сотрудник *"
             variant="outlined"
             density="compact"
-            class="mb-3"
-            hide-details
+            class="mb-1"
+            clearable
+            return-object
+            @update:model-value="onApproverUserSelect"
           />
+          <v-alert
+            v-if="approverEditTarget && !approverForm.selectedUser"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+            text="Старая запись без привязки к сотруднику. Выберите сотрудника для сохранения."
+          />
+          <div v-if="!approverEditTarget || approverForm.selectedUser" class="mb-3" />
           <v-checkbox
             v-model="approverForm.is_default"
             label="Выбирать по умолчанию при генерации документов"
@@ -1206,7 +1220,7 @@
           <v-btn
             color="teal"
             :loading="savingApprover"
-            :disabled="!approverForm.role_name || !approverForm.full_name"
+            :disabled="!approverForm.role_name || !approverForm.selectedUser"
             @click="saveApprover"
           >
             {{ approverEditTarget ? 'Сохранить' : 'Добавить' }}
@@ -1759,6 +1773,7 @@ interface SubsidyApprover {
   is_default: boolean
   can_initiate: boolean
   show_feo_path: boolean
+  user_id?: number | null
 }
 
 const ROLE_SUGGESTIONS = [
@@ -1811,7 +1826,26 @@ const savingApprover         = ref(false)
 const approversSubsidy       = ref<SubsidyRow | null>(null)
 const approversList          = ref<SubsidyApprover[]>([])
 const approverEditTarget     = ref<SubsidyApprover | null>(null)
-const approverForm = ref({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false })
+const approverForm = ref<{
+  role_name: string
+  full_name: string
+  order_num: number
+  is_default: boolean
+  can_initiate: boolean
+  show_feo_path: boolean
+  user_id: number | null
+  selectedUser: { id: number; full_name: string } | null
+}>({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null })
+
+const approverUsersList = ref<Array<{ id: number; full_name: string }>>([])
+
+async function loadApproverUsers() {
+  if (approverUsersList.value.length) return
+  try {
+    const data = await apiFetch<any[]>('/users/')
+    approverUsersList.value = data
+  } catch { approverUsersList.value = [] }
+}
 
 // Template management state
 const showTemplateDialog  = ref(false)
@@ -3159,15 +3193,42 @@ function onApproverRoleChange(role: string) {
   }
 }
 
+function onApproverUserSelect(user: { id: number; full_name: string } | null) {
+  if (user) {
+    approverForm.value.full_name = user.full_name
+    approverForm.value.user_id = user.id
+  } else {
+    approverForm.value.full_name = ''
+    approverForm.value.user_id = null
+  }
+}
+
 function startAddApprover() {
   approverEditTarget.value = null
-  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false, show_feo_path: false }
+  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null }
+  loadApproverUsers()
   showApproverFormDialog.value = true
 }
 
 function startEditApprover(a: SubsidyApprover) {
   approverEditTarget.value = a
-  approverForm.value = { role_name: a.role_name, full_name: a.full_name, order_num: a.order_num, is_default: a.is_default, can_initiate: a.can_initiate, show_feo_path: a.show_feo_path ?? false }
+  const foundUser = a.user_id ? (approverUsersList.value.find(u => u.id === a.user_id) ?? null) : null
+  approverForm.value = {
+    role_name: a.role_name,
+    full_name: a.full_name,
+    order_num: a.order_num,
+    is_default: a.is_default,
+    can_initiate: a.can_initiate,
+    show_feo_path: a.show_feo_path ?? false,
+    user_id: a.user_id ?? null,
+    selectedUser: foundUser,
+  }
+  loadApproverUsers().then(() => {
+    // re-resolve after load in case list was empty when dialog opened
+    if (a.user_id && !approverForm.value.selectedUser) {
+      approverForm.value.selectedUser = approverUsersList.value.find(u => u.id === a.user_id) ?? null
+    }
+  })
   showApproverFormDialog.value = true
 }
 
@@ -3175,18 +3236,19 @@ async function saveApprover() {
   if (!approversSubsidy.value) return
   savingApprover.value = true
   const sid = approversSubsidy.value.id
+  const { selectedUser: _su, ...formData } = approverForm.value
   try {
     if (approverEditTarget.value) {
       const updated = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers/${approverEditTarget.value.id}`, {
         method: 'PUT',
-        body: JSON.stringify(approverForm.value),
+        body: JSON.stringify(formData),
       })
       const idx = approversList.value.findIndex(a => a.id === updated.id)
       if (idx >= 0) approversList.value[idx] = updated
     } else {
       const created = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers`, {
         method: 'POST',
-        body: JSON.stringify(approverForm.value),
+        body: JSON.stringify(formData),
       })
       approversList.value.push(created)
     }

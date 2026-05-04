@@ -46,10 +46,8 @@ DOC_TYPES = {
     "tech_spec_request":     ("tech_spec_request.docx",     "TZ_Zapros_Cen"),
     "tech_spec_contract":    ("tech_spec_contract.docx",    "TZ_Dogovor"),
     "contract":              ("contract.docx",              "Contract"),
-    # Phase 23: dedicated services contract template with customer_* variables
-    "contract_services":     ("contract_services.docx",     "Contract_Services"),
-    # Phase 23: goods supply contract template (Покупатель/Поставщик, Спецификация)
-    "contract_goods":        ("contract_goods.docx",        "Contract_Goods"),
+    # Phase 23.1: contract_services / contract_goods merged into universal contract.docx
+    # (removed — subject_kind auto-detected from purchase_items.product.item_kind)
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
 }
@@ -501,12 +499,21 @@ async def generate_document(
                 if item.product else ""
             ) or "",
             "type": item.item_type or "",
+            "item_kind": (item.product.item_kind if item.product else None) or "товар",
             "quantity": float(item.quantity) if item.quantity else "",
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(item.total_price),
             "photo": _resolve_photo(photo_url),
         })
+
+    # Phase 23.1: auto-detect subject_kind for universal contract.docx
+    # 'services' if ALL items have item_kind='услуга', otherwise 'goods' (default)
+    subject_kind = "goods"
+    if items_list:
+        kinds = {it.get("item_kind", "товар").lower() for it in items_list}
+        if kinds == {"услуга"}:
+            subject_kind = "services"
 
     # Load existing PurchaseApproval records (electronic signatures)
     from app.models.purchase_approval import PurchaseApproval
@@ -831,6 +838,8 @@ async def generate_document(
         "contract_price_words": _rubles_to_words(p.contract_price),
         # Phase 23: service_subject alias (same as subject but clearer name in services template)
         "service_subject": p.subject or "",
+        # Phase 23.1: subject_kind for universal contract.docx auto-switch
+        "subject_kind": subject_kind,
     }
 
     # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
@@ -1284,9 +1293,9 @@ async def download_kp_xlsx(
 TEMPLATE_VARIABLES = [
     # ── Выбор шаблона ──
     ("", "ВЫБОР ШАБЛОНА"),
-    ("", "  contract_services.docx — договор оказания услуг (Заказчик/Исполнитель, ТЗ)"),
-    ("", "  contract_goods.docx    — договор поставки товаров (Покупатель/Поставщик, Спецификация)"),
-    ("", "  Оба шаблона используют одинаковые переменные ниже."),
+    ("", "  contract.docx — универсальный договор (Phase 23.1): subject_kind определяется автоматически."),
+    ("", "  Все позиции 'услуга' → договор оказания услуг; иначе → договор поставки."),
+    ("{{subject_kind}}", "Тип договора (auto): 'services' или 'goods' — вычисляется из позиций закупки"),
     # ── Закупка ──
     ("", "ЗАКУПКА"),
     ("{{purchase_number}}", "Номер закупки (например: 42)"),

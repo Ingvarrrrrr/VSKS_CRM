@@ -1499,6 +1499,7 @@
                 </v-list-item>
               </v-list>
             </v-menu>
+            <!-- Phase 23.1: Единый «Договор» — auto-switch услуги/поставка по item_kind позиций -->
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
@@ -1506,33 +1507,18 @@
               size="small"
               :loading="docLoading === 'contract'"
               @click="downloadDoc('contract')"
+              title="Договор (универсальный) — тип определяется автоматически по позициям закупки"
             >
               {{ contractWord }}
             </v-btn>
-            <!-- Phase 23: Договор услуг (contract_services) -->
-            <v-btn v-if="isSectionVisible('contractor')"
-              prepend-icon="mdi-file-document-edit-outline"
-              variant="tonal"
-              color="deep-purple"
-              size="small"
-              :loading="docLoading === 'contract_services'"
-              @click="downloadDoc('contract_services')"
-              title="Договор оказания услуг — включает реквизиты Заказчика и Исполнителя"
-            >
-              Договор услуг
-            </v-btn>
-            <!-- Phase 23: Договор поставки товаров (contract_goods) -->
-            <v-btn v-if="isSectionVisible('contractor')"
-              prepend-icon="mdi-package-variant-closed"
-              variant="tonal"
-              color="orange-darken-2"
-              size="small"
-              :loading="docLoading === 'contract_goods'"
-              @click="downloadDoc('contract_goods')"
-              title="Договор поставки товаров — Покупатель/Поставщик, Спецификация"
-            >
-              Договор поставки
-            </v-btn>
+            <div v-if="isSectionVisible('contractor')" class="text-caption text-medium-emphasis ml-2 d-flex align-center">
+              Тип определяется автоматически по типу позиций
+              <v-tooltip text="Все позиции 'услуга' → договор оказания услуг. Иначе → договор поставки." location="top">
+                <template #activator="{ props: tip }">
+                  <v-icon v-bind="tip" icon="mdi-information-outline" size="14" class="ml-1" />
+                </template>
+              </v-tooltip>
+            </div>
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-multiple-outline"
               variant="tonal"
@@ -2937,10 +2923,11 @@ watch(() => form.subsidy_id, async (sid) => {
 const showPlaceholdersDialog = ref(false)
 const placeholderGroups = [
   {
-    title: '🎯 Два типа договора',
+    title: '🎯 Универсальный договор (auto-switch)',
     items: [
-      { var: 'contract_services.docx', desc: 'Договор оказания услуг (Заказчик/Исполнитель, ТЗ)', ex: 'Кнопка «Договор услуг»' },
-      { var: 'contract_goods.docx', desc: 'Договор поставки товаров (Покупатель/Поставщик, Спецификация)', ex: 'Кнопка «Договор поставки»' },
+      { var: 'subject_kind', desc: 'Тип договора: services (если все позиции услуги) | goods (если есть товары или нет позиций)', ex: 'goods' },
+      { var: '{% if subject_kind == \'goods\' %}', desc: 'Условный блок для договора поставки (Покупатель/Поставщик, Спецификация)', ex: 'Покупатель/Поставщик/Спецификация' },
+      { var: '{% else %}', desc: 'Альтернативная ветка — договор услуг (Заказчик/Исполнитель, ТЗ)', ex: 'Заказчик/Исполнитель/ТЗ' },
     ],
   },
   {

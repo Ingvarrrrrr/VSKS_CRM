@@ -15,13 +15,23 @@ git pull origin claude >> "$LOG" 2>&1
 
 WEBHOOK_HASH_AFTER=$(sha256sum webhook.py 2>/dev/null | cut -d' ' -f1)
 
-# Rebuild & restart backend (picks up code + model changes)
+# Rebuild backend image (picks up code + model changes)
 docker compose build backend >> "$LOG" 2>&1
+
+# Apply schema migrations BEFORE starting backend container.
+# Reason: if a migration adds a column, SQLAlchemy first request will
+# crash with UndefinedColumn → backend Exited → docker exec fails →
+# `|| true` swallows the error → site stays 502.
+# Use `docker compose run --rm` to spawn an ephemeral container on the
+# fresh image, apply schema, then exit. Only after that we start the
+# long-running backend container.
+echo "[$(ts)] applying schema migrations (pre-start)" >> "$LOG"
+docker compose run --rm --no-deps backend python /app/check_schema.py --apply >> "$LOG" 2>&1 || \
+    echo "[$(ts)] WARN: check_schema.py --apply failed (see above)" >> "$LOG"
+
+# Now safe to start backend
 docker compose up -d backend >> "$LOG" 2>&1
 sleep 8
-# Apply any new columns via check_schema.py
-docker cp /opt/vsks-crm/backend/check_schema.py vsks-crm-backend-1:/app/check_schema.py >> "$LOG" 2>&1
-docker exec vsks-crm-backend-1 python /app/check_schema.py --apply >> "$LOG" 2>&1 || true
 
 # Rebuild & restart frontend
 docker compose build frontend >> "$LOG" 2>&1

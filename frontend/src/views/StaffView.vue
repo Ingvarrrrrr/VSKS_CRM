@@ -399,6 +399,17 @@
       <v-card>
         <v-card-title class="pa-4">Редактировать: {{ editDialog.full_name || editDialog.email }}</v-card-title>
         <v-card-text class="pa-4 pt-0">
+          <div v-if="editDialog.userId" class="d-flex flex-column align-center mb-4">
+            <div class="text-caption text-medium-emphasis mb-2">Фотография сотрудника</div>
+            <div class="staff-photo-rect" @click="openStaffPhotoUpload">
+              <img v-if="editDialog.profile_photo" :src="editDialog.profile_photo" alt="фото" />
+              <v-icon v-else icon="mdi-account" size="80" color="grey-lighten-1" />
+              <div class="staff-photo-overlay">
+                <v-icon icon="mdi-camera" size="22" color="white" />
+              </div>
+            </div>
+          </div>
+          <ProfilePhotoUpload ref="staffPhotoUploadRef" format="rectangle" :user-id="editDialog.userId || undefined" @saved="onStaffPhotoSaved" />
           <v-text-field v-model="editDialog.email" label="Email (логин)" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-email-outline" />
           <v-text-field v-model="editDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
@@ -457,8 +468,14 @@
                 <v-icon size="12" class="mr-1">mdi-briefcase-outline</v-icon>
                 Организации, должности, оклад:
               </div>
-              <div v-for="(entry, ei) in allOrgEntries" :key="ei" class="mb-4 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0">
-                <v-chip size="small" color="purple" variant="tonal" class="mb-2">{{ entry.org_name }}</v-chip>
+              <div v-for="(entry, ei) in allOrgEntries" :key="ei" class="mb-4 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0;position:relative">
+                <div class="d-flex align-center mb-2">
+                  <v-chip size="small" color="purple" variant="tonal">{{ entry.org_name }}{{ entry.dept_name ? ' · ' + entry.dept_name : '' }}</v-chip>
+                  <v-spacer />
+                  <v-btn v-if="entry.id" icon size="x-small" variant="text" color="error" @click="confirmDeleteOrgEntry(entry)" :title="'Удалить из ' + (entry.dept_name || entry.org_name)">
+                    <v-icon size="18">mdi-delete</v-icon>
+                  </v-btn>
+                </div>
                 <v-row dense>
                   <v-col cols="12" md="6">
                     <v-text-field :model-value="entry.dept_name" label="Отдел" variant="outlined" density="compact" hide-details readonly
@@ -787,6 +804,7 @@ import { apiFetch } from '@/api'
 import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
+import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -952,6 +970,7 @@ const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
   department: '', position: '', phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
   telegram_id: '', max_chat_id: '',
+  profile_photo: '',
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
@@ -966,13 +985,19 @@ const editDialog = reactive({
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
 
+const staffPhotoUploadRef = ref<InstanceType<typeof ProfilePhotoUpload> | null>(null)
+function openStaffPhotoUpload() { staffPhotoUploadRef.value?.open() }
+function onStaffPhotoSaved(url: string | null) {
+  editDialog.profile_photo = url || ''
+}
+
 const userImportDialog = reactive({
   show: false, file: null as File | null, loading: false,
   result: null as { created: number; skipped: number; errors: { row: number; error: string }[] } | null,
 })
 
 // All org entries from salary API (one per dept membership)
-const allOrgEntries = ref<{ org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; _idx: number }[]>([])
+const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; _idx: number }[]>([])
 
 // ── TAB 3: HIERARCHY STATE ──
 const treeLoading = ref(false)
@@ -1297,6 +1322,7 @@ async function openEditUser(item: UserItem) {
     editDialog.orgPercent = pct
     // Fill all org entries for the bottom block
     allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
+      id: s.id ?? null, dept_id: s.dept_id ?? null,
       org_id: s.org_id, org_name: s.org_name || '', dept_name: s.dept_name || '',
       position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
     }))
@@ -1307,6 +1333,13 @@ async function openEditUser(item: UserItem) {
   } catch { /* ignore */ } finally {
     editDialog.extraOrgsLoading = false
   }
+
+  // Load photo best-effort
+  editDialog.profile_photo = ''
+  try {
+    const photoRes = await apiFetch<{ photo_url: string | null }>(`/users/${item.id}/photo`)
+    editDialog.profile_photo = photoRes.photo_url || ''
+  } catch { /* ignore */ }
 }
 
 async function openEditUserById(userId: number) {
@@ -1330,6 +1363,28 @@ async function syncToContractor(userId: number) {
     showSnack(result.action === 'created' ? 'Контрагент создан' : 'Контрагент обновлён')
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка синхронизации', 'error')
+  }
+}
+
+async function confirmDeleteOrgEntry(entry: any) {
+  if (!editDialog.userId || !entry.id) return
+  if (!confirm(`Удалить «${entry.org_name}${entry.dept_name ? ' · ' + entry.dept_name : ''}» из карточки?\nКарточка пропадёт из этого отдела на канвасе иерархии.`)) return
+  try {
+    await apiFetch(`/users/${editDialog.userId}/org-memberships/${entry.id}`, { method: 'DELETE' })
+    showSnack('Запись удалена')
+    // Reload allOrgEntries
+    const salaryRes = await apiFetch<any[]>(`/users/${editDialog.userId}/salary`).catch(() => [])
+    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
+      id: s.id ?? null, dept_id: s.dept_id ?? null,
+      org_id: s.org_id, org_name: s.org_name || '', dept_name: s.dept_name || '',
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+    }))
+    // Also update extraOrgIds list to drop this org if no entries left
+    if (!allOrgEntries.value.some(e => e.org_id === entry.org_id)) {
+      editDialog.extraOrgIds = (editDialog.extraOrgIds || []).filter((id: number) => id !== entry.org_id)
+    }
+  } catch (e: any) {
+    showSnack('Не удалось удалить: ' + (e?.message || ''), 'error')
   }
 }
 
@@ -1853,4 +1908,17 @@ onMounted(async () => {
 .avatar-pick { cursor: pointer; border-radius: 50%; padding: 2px; border: 2px solid transparent; transition: all 0.2s; }
 .avatar-pick:hover { border-color: rgba(var(--v-theme-primary), 0.3); transform: scale(1.1); }
 .avatar-pick-active { border-color: rgb(var(--v-theme-primary)); box-shadow: 0 0 8px rgba(var(--v-theme-primary), 0.4); }
+
+/* Staff photo block in edit dialog */
+.staff-photo-rect {
+  width: 160px; height: 200px; border-radius: 12px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.04); border: 2px solid rgba(0,0,0,0.08);
+  cursor: pointer; position: relative;
+}
+.staff-photo-rect img { width: 100%; height: 100%; object-fit: cover; }
+.staff-photo-overlay {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 32px;
+  background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+}
 </style>

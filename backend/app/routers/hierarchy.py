@@ -142,6 +142,19 @@ async def get_hierarchy_graph(
                 members_map[m.department_id].append(m.user_id)
             if m.position:
                 user_position_map[m.user_id] = m.position
+    # Also include dept memberships from user_organizations.dept_id (mirror with department_members)
+    if dept_ids:
+        uo_dept_rows = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.dept_id.in_(dept_ids),
+            )
+        )).scalars().all()
+        for r in uo_dept_rows:
+            if r.dept_id in members_map and r.user_id not in members_map[r.dept_id]:
+                members_map[r.dept_id].append(r.user_id)
+            if r.position and r.user_id not in user_position_map:
+                user_position_map[r.user_id] = r.position
+
     # Also ensure dept head is always in member_ids
     for d in depts:
         if d.head_user_id and d.head_user_id not in members_map.get(d.id, []):
@@ -525,6 +538,8 @@ async def get_user_salary(
 
     result = [
         {
+            "id": r.id,
+            "dept_id": r.dept_id,
             "org_id": r.org_id,
             "org_name": r.organization.name if r.organization else "",
             "dept_name": dept_names.get(r.dept_id, "") if r.dept_id else "",
@@ -540,6 +555,8 @@ async def get_user_salary(
         from app.models.organization import Organization
         org = await db.get(Organization, user.org_id)
         result.insert(0, {
+            "id": None,
+            "dept_id": None,
             "org_id": user.org_id,
             "org_name": org.name if org else "",
             "position": user.position or "",
@@ -579,6 +596,61 @@ async def remove_user_from_organization(
     if not is_primary:
         await remove_user_org_access(uid, org_id, db)
         await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/users/{uid}/org-memberships/{row_id}")
+async def remove_user_org_membership_row(
+    uid: int,
+    row_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    """Удалить конкретную строку user_organizations (адресуется по PK).
+    Mirror: если у строки задан dept_id — удалить и DepartmentMember(dept_id,user_id),
+    если у user'а в этом dept'е больше нет других строк user_organizations.
+    """
+    row = await db.get(UserOrganization, row_id)
+    if not row or row.user_id != uid:
+        raise HTTPException(404, "Запись не найдена")
+
+    dept_id = row.dept_id
+    org_id = row.org_id
+    await db.delete(row)
+    await db.flush()
+
+    # Mirror в department_members: удалить если в user_organizations не осталось этого юзера в этом dept'е
+    if dept_id is not None:
+        from app.models.department import DepartmentMember
+        remaining = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == uid,
+                UserOrganization.dept_id == dept_id,
+            )
+        )).scalar_one_or_none()
+        if remaining is None:
+            dm = (await db.execute(
+                select(DepartmentMember).where(
+                    DepartmentMember.user_id == uid,
+                    DepartmentMember.department_id == dept_id,
+                )
+            )).scalar_one_or_none()
+            if dm:
+                await db.delete(dm)
+
+    # Если у юзера больше нет привязок к этой org — снять primary org_id
+    user = await db.get(User, uid)
+    if user and user.org_id == org_id:
+        any_left = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == uid,
+                UserOrganization.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if any_left is None:
+            user.org_id = None
+
+    await db.commit()
     return {"ok": True}
 
 

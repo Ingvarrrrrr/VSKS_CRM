@@ -377,6 +377,50 @@ async def delete_my_photo(
     return {"ok": True}
 
 
+@router.get("/{user_id}/photo")
+async def get_user_photo(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return {"photo_url": user.profile_photo}
+
+
+@router.put("/{user_id}/photo")
+async def set_user_photo(
+    user_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    photo_url = body.get("photo_url")
+    if not photo_url or not isinstance(photo_url, str):
+        raise HTTPException(422, "photo_url required")
+    user.profile_photo = photo_url
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{user_id}/photo")
+async def delete_user_photo(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    user.profile_photo = None
+    await db.commit()
+    return {"ok": True}
+
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,

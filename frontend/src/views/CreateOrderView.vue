@@ -2749,97 +2749,11 @@ const purchaseId = computed(() => Number(route.params.id) || null)
 // Phase 23.5: флаг загрузки данных закупки — скрывает заголовок до получения данных с сервера
 const purchaseLoaded = ref(false)
 
-// Phase 26: Автосохранение
+// Phase 26: Автосохранение — refs declared early, watch+activation moved BELOW form reactive (~line 3033) to avoid TDZ
 const autosaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const autosaveError = ref<string | null>(null)
 let serverAutosaveTimer: any = null
 let autosaveBaseline = ''
-
-function serializeFormForAutosave() {
-  const f: any = form
-  return JSON.stringify({
-    subject: f.subject,
-    description: f.description,
-    contractor_id: f.contractor_id,
-    feo_category_id: f.feo_category_id,
-    purchase_method: f.purchase_method,
-    purchase_contract_type: f.purchase_contract_type,
-    contract_number: f.contract_number,
-    contract_date: f.contract_date,
-    contract_price: f.contract_price,
-    nmck: f.nmck,
-    planned_total_price: f.planned_total_price,
-    delivery_date: f.delivery_date,
-    delivery_location: f.delivery_location,
-    submission_deadline: f.submission_deadline,
-    service_term_mode: f.service_term_mode,
-    service_start_date: f.service_start_date,
-    service_end_date: f.service_end_date,
-    service_term_days: f.service_term_days,
-    service_term_type: f.service_term_type,
-    service_deadline_date: f.service_deadline_date,
-    third_party_involved: f.third_party_involved,
-    vat_applicable: f.vat_applicable,
-    vat_rate: f.vat_rate,
-    vat_exemption_article: f.vat_exemption_article,
-    acceptance_doc_name: f.acceptance_doc_name,
-    acceptance_doc_date: f.acceptance_doc_date,
-    acceptance_doc_number: f.acceptance_doc_number,
-    acceptance_doc_amount: f.acceptance_doc_amount,
-    payment_doc_number: f.payment_doc_number,
-    payment_doc_date: f.payment_doc_date,
-    payment_amount: f.payment_amount,
-    country_origin: f.country_origin,
-    purchase_basis: f.purchase_basis,
-    responsible_person_id: f.responsible_person_id,
-    initiator_id: f.initiator_id,
-    subject_kind: f.subject_kind,
-    delivery_address: f.delivery_address,
-    execution_term: f.execution_term,
-    contract_end_date: f.contract_end_date,
-    event_id: f.event_id,
-  })
-}
-
-async function performAutosave() {
-  if (!isEdit.value || !purchaseId.value) return
-  const current = serializeFormForAutosave()
-  if (current === autosaveBaseline) return
-  autosaveState.value = 'saving'
-  try {
-    const body = JSON.parse(current)
-    await apiFetch(`/purchases/${purchaseId.value}`, { method: 'PATCH', body })
-    autosaveBaseline = current
-    autosaveState.value = 'saved'
-    setTimeout(() => {
-      if (autosaveState.value === 'saved') autosaveState.value = 'idle'
-    }, 2000)
-  } catch (e: any) {
-    autosaveState.value = 'error'
-    autosaveError.value = e?.message || 'Не удалось сохранить'
-  }
-}
-
-watch(form, () => {
-  if (!isEdit.value || !purchaseId.value) return
-  if (serverAutosaveTimer) clearTimeout(serverAutosaveTimer)
-  serverAutosaveTimer = setTimeout(performAutosave, 1500)
-}, { deep: true })
-
-watch(purchaseLoaded, (v) => {
-  if (v) {
-    setTimeout(() => { autosaveBaseline = serializeFormForAutosave() }, 100)
-  }
-})
-
-onBeforeRouteLeave((_to, _from, next) => {
-  if (autosaveState.value === 'saving' || autosaveState.value === 'error') {
-    if (confirm('Есть несохранённые изменения. Уйти со страницы?')) next()
-    else next(false)
-  } else {
-    next()
-  }
-})
 
 // Role-based visibility
 const userRole = localStorage.getItem('user_role') || 'employee'
@@ -3030,6 +2944,93 @@ const form = reactive({
   has_pretension: false as boolean,
   payment_basis_type: 'contract' as string,
   subsidy_allocations: [] as Array<{subsidy_id: number, amount: number | null}>,
+})
+
+// Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
+function serializeFormForAutosave() {
+  const f: any = form
+  return JSON.stringify({
+    subject: f.subject,
+    description: f.description,
+    contractor_id: f.contractor_id,
+    feo_category_id: f.feo_category_id,
+    purchase_method: f.purchase_method,
+    purchase_contract_type: f.purchase_contract_type,
+    contract_number: f.contract_number,
+    contract_date: f.contract_date,
+    contract_price: f.contract_price,
+    nmck: f.nmck,
+    planned_total_price: f.planned_total_price,
+    delivery_date: f.delivery_date,
+    delivery_location: f.delivery_location,
+    submission_deadline: f.submission_deadline,
+    service_term_mode: f.service_term_mode,
+    service_start_date: f.service_start_date,
+    service_end_date: f.service_end_date,
+    service_term_days: f.service_term_days,
+    service_term_type: f.service_term_type,
+    service_deadline_date: f.service_deadline_date,
+    third_party_involved: f.third_party_involved,
+    vat_applicable: f.vat_applicable,
+    vat_rate: f.vat_rate,
+    vat_exemption_article: f.vat_exemption_article,
+    acceptance_doc_name: f.acceptance_doc_name,
+    acceptance_doc_date: f.acceptance_doc_date,
+    acceptance_doc_number: f.acceptance_doc_number,
+    acceptance_doc_amount: f.acceptance_doc_amount,
+    payment_doc_number: f.payment_doc_number,
+    payment_doc_date: f.payment_doc_date,
+    payment_amount: f.payment_amount,
+    country_origin: f.country_origin,
+    purchase_basis: f.purchase_basis,
+    responsible_person_id: f.responsible_person_id,
+    initiator_id: f.initiator_id,
+    subject_kind: f.subject_kind,
+    delivery_address: f.delivery_address,
+    execution_term: f.execution_term,
+    contract_end_date: f.contract_end_date,
+    event_id: f.event_id,
+  })
+}
+
+async function performAutosave() {
+  if (!isEdit.value || !purchaseId.value) return
+  const current = serializeFormForAutosave()
+  if (current === autosaveBaseline) return
+  autosaveState.value = 'saving'
+  try {
+    const body = JSON.parse(current)
+    await apiFetch(`/purchases/${purchaseId.value}`, { method: 'PATCH', body })
+    autosaveBaseline = current
+    autosaveState.value = 'saved'
+    setTimeout(() => {
+      if (autosaveState.value === 'saved') autosaveState.value = 'idle'
+    }, 2000)
+  } catch (e: any) {
+    autosaveState.value = 'error'
+    autosaveError.value = e?.message || 'Не удалось сохранить'
+  }
+}
+
+watch(form, () => {
+  if (!isEdit.value || !purchaseId.value) return
+  if (serverAutosaveTimer) clearTimeout(serverAutosaveTimer)
+  serverAutosaveTimer = setTimeout(performAutosave, 1500)
+}, { deep: true })
+
+watch(purchaseLoaded, (v) => {
+  if (v) {
+    setTimeout(() => { autosaveBaseline = serializeFormForAutosave() }, 100)
+  }
+})
+
+onBeforeRouteLeave((_to, _from, next) => {
+  if (autosaveState.value === 'saving' || autosaveState.value === 'error') {
+    if (confirm('Есть несохранённые изменения. Уйти со страницы?')) next()
+    else next(false)
+  } else {
+    next()
+  }
 })
 
 function activeDescription(item: OrderItem): string | undefined {

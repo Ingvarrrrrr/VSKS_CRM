@@ -44,4 +44,4 @@ class PurchaseReceipt(Base):
     raw_json = Column(JSONB)
     created_at = Column(DateTime, server_default=func.now())
 
-    purchase = relationship("Purchase", backref="receipts")
+    purchase = relationship("Purchase", backref="receipts", passive_deletes=True)

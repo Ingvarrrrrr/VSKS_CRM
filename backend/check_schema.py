@@ -161,8 +161,42 @@ def _col_to_sql(col) -> str:
     return f"{col.name} {pg_type}{default}{null_clause}"
 
 
+async def _fix_cascade_constraints(conn) -> None:
+    """Ensure critical FK constraints have ON DELETE CASCADE.
+
+    Phase 23.5: applied idempotently at startup (DROP IF EXISTS + ADD).
+    Safe to re-run — DROP IF EXISTS is a no-op when the constraint is already correct.
+    """
+    fixes = [
+        (
+            "purchase_receipts",
+            "purchase_receipts_purchase_id_fkey",
+            "purchase_id",
+            "purchases",
+            "id",
+        ),
+    ]
+    for table, constraint, col, ref_table, ref_col in fixes:
+        try:
+            await conn.execute(text(f"""
+                ALTER TABLE {table}
+                  DROP CONSTRAINT IF EXISTS {constraint};
+                ALTER TABLE {table}
+                  ADD CONSTRAINT {constraint}
+                  FOREIGN KEY ({col}) REFERENCES {ref_table}({ref_col}) ON DELETE CASCADE;
+            """))
+            print(f"  ✅  cascade FK ensured: {table}.{col} → {ref_table}.{ref_col}")
+        except Exception as e:
+            print(f"  ⚠️   cascade FK fix failed for {table}.{constraint}: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
+        # Phase 23.5: ensure critical FK cascades (idempotent)
+        if apply:
+            print("Fixing cascade FK constraints...")
+            await _fix_cascade_constraints(conn)
+
         # Fetch all existing columns from the DB
         result = await conn.execute(text("""
             SELECT table_name, column_name

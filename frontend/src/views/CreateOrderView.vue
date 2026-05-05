@@ -2,9 +2,10 @@
   <v-container fluid class="pa-6" style="max-width:1600px">
     <div class="d-flex align-center justify-space-between mb-6">
       <div>
-        <h1 class="text-h5 font-weight-bold">
+        <h1 class="text-h5 font-weight-bold" v-if="!isEdit || purchaseLoaded">
           {{ pageTitle }}
         </h1>
+        <div v-else class="text-h5 font-weight-bold text-medium-emphasis">…</div>
         <div class="d-flex align-center gap-2 mt-1">
           <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
             {{ STATUS_LABEL[form.status] }}
@@ -69,6 +70,7 @@
                 hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
                 @update:search="onContractorSearch"
                 @update:model-value="onContractorSelect"
+                @click:clear="onContractorClear"
               >
                 <template #item="{ item, props: itemProps }">
                   <v-list-item v-bind="itemProps" :title="undefined">
@@ -2688,7 +2690,7 @@
           <v-alert v-if="docErrorInfo.hint" type="info" variant="tonal" density="compact" class="mb-3">
             <div class="text-body-2" style="white-space: pre-line">{{ docErrorInfo.hint }}</div>
           </v-alert>
-          <v-expansion-panels variant="accordion" class="mt-2">
+          <v-expansion-panels variant="accordion" :model-value="[]" class="mt-2">
             <v-expansion-panel>
               <v-expansion-panel-title class="text-caption">
                 Технические детали ({{ docErrorInfo.error_class }})
@@ -2731,6 +2733,8 @@ const router = useRouter()
 
 const isEdit = computed(() => !!route.params.id)
 const purchaseId = computed(() => Number(route.params.id) || null)
+// Phase 23.5: флаг загрузки данных закупки — скрывает заголовок до получения данных с сервера
+const purchaseLoaded = ref(false)
 
 // Role-based visibility
 const userRole = localStorage.getItem('user_role') || 'employee'
@@ -4398,7 +4402,7 @@ const contractorFilter = (value: string, query: string, item?: any): boolean => 
 const addContractorDialog = ref(false)
 const addContractorForm = reactive({
   name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '',
-  contact_person: '', signatory: '', org_type: 'Юридическое лицо',
+  contact_person: '', signatory: '', org_type: '' as string,
   bank_name: '', bik: '', settlement_account: '', correspondent_account: '',
 })
 const addContractorSaving = ref(false)
@@ -4543,6 +4547,13 @@ function onContractorSearch(query: string) {
       contractorSearchLoading.value = false
     }
   }, 300)
+}
+
+// Phase 23.5: предупреждение при удалении контрагента через X
+function onContractorClear() {
+  if (isEdit.value) {
+    showSnack('Контрагент удалён. Не забудьте нажать «Сохранить» чтобы изменение применилось.', 'warning')
+  }
 }
 
 const contractorFrameworkContracts = ref<FrameworkContract[]>([])
@@ -4762,6 +4773,9 @@ const loadPurchase = async () => {
       nmckManualValue.value = savedNmck.value
     }
   }
+
+  // Phase 23.5: данные загружены — теперь заголовок показывает актуальный номер
+  purchaseLoaded.value = true
 }
 
 // ---------------------------------------------------------------------------

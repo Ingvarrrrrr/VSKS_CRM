@@ -17,6 +17,18 @@ from decimal import Decimal
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
+def _expected_payment_date(p: Purchase):
+    """Когда ожидается фактическая выплата."""
+    if p.status == 'paid' and p.payment_doc_date:
+        return p.payment_doc_date.date() if hasattr(p.payment_doc_date, 'date') else p.payment_doc_date
+    # для остальных — service_end_date > execution_term > service_deadline_date > contract_date
+    for fld in ('service_end_date', 'execution_term', 'service_deadline_date', 'contract_date'):
+        v = getattr(p, fld, None)
+        if v:
+            return v if isinstance(v, date) else v.date()
+    return None
+
+
 def _apply_subsidy_org_filter(query, user: User):
     """Filter subsidies by org_ids."""
     org_ids = get_org_filter(user)
@@ -352,4 +364,55 @@ async def analytics(
         "upcoming_deadlines": upcoming_deadlines,
         "method_distribution": method_distribution,
         "plan_fact": plan_fact,
+    }
+
+
+@router.get("/financial-plan")
+async def get_financial_plan(
+    subsidy_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Возвращает помесячную и поквартальную разбивку ожидаемых выплат с категориями plan/committed."""
+    q = select(Purchase)
+    q = _apply_purchase_org_filter(q, current_user)
+    if subsidy_id:
+        q = q.where(Purchase.subsidy_id == subsidy_id)
+    rows = (await db.execute(q)).scalars().all()
+
+    PLAN_STATUSES = {'planned', 'confirmed', 'wishes', 'plan_schedule'}
+    COMMITTED_STATUSES = {'contracted', 'ordered', 'delivered', 'paid', 'work_in_progress'}
+
+    by_month_plan: dict = {}
+    by_month_committed: dict = {}
+    by_quarter_plan: dict = {}
+    by_quarter_committed: dict = {}
+
+    for p in rows:
+        d = _expected_payment_date(p)
+        if not d:
+            continue
+        amount = float(p.contract_price or p.planned_total_price or 0)
+        if amount == 0:
+            continue
+
+        ym = f"{d.year}-{d.month:02d}"
+        yq = f"{d.year}-Q{(d.month - 1) // 3 + 1}"
+
+        if p.status in PLAN_STATUSES:
+            by_month_plan[ym] = by_month_plan.get(ym, 0) + amount
+            by_quarter_plan[yq] = by_quarter_plan.get(yq, 0) + amount
+        elif p.status in COMMITTED_STATUSES:
+            by_month_committed[ym] = by_month_committed.get(ym, 0) + amount
+            by_quarter_committed[yq] = by_quarter_committed.get(yq, 0) + amount
+
+    return {
+        "by_month": {
+            "plan":      [{"period": k, "amount": v} for k, v in sorted(by_month_plan.items())],
+            "committed": [{"period": k, "amount": v} for k, v in sorted(by_month_committed.items())],
+        },
+        "by_quarter": {
+            "plan":      [{"period": k, "amount": v} for k, v in sorted(by_quarter_plan.items())],
+            "committed": [{"period": k, "amount": v} for k, v in sorted(by_quarter_committed.items())],
+        },
     }

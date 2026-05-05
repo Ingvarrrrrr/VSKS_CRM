@@ -520,6 +520,35 @@
           </div>
         </div>
       </GridItem>
+
+      <!-- ── Financial Plan ── -->
+      <GridItem v-bind="layout.find(l => l.i === 'finplan')" key="finplan">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="16" /> Финансовый план
+          </div>
+          <div class="chart-card" style="height:100%;overflow:auto">
+            <div class="chart-card-header">
+              <v-icon icon="mdi-calendar-clock" size="18" color="primary" class="mr-2" />
+              <span class="chart-card-title">Финансовый план</span>
+              <v-spacer />
+              <v-btn-toggle v-model="finplanGranularity" mandatory size="x-small" density="compact" class="ml-2">
+                <v-btn value="month">По месяцам</v-btn>
+                <v-btn value="quarter">По кварталам</v-btn>
+              </v-btn-toggle>
+            </div>
+            <apexchart
+              v-if="finplanSeries.length"
+              type="bar" height="300"
+              :options="finplanOptions" :series="finplanSeries"
+            />
+            <div v-else class="chart-empty">
+              <v-icon icon="mdi-calendar-clock" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет данных по ожидаемым выплатам</div>
+            </div>
+          </div>
+        </div>
+      </GridItem>
     </GridLayout>
 
     </v-window-item>
@@ -1630,9 +1659,66 @@ watch(selectedSubsidyIds, () => {
   }
 })
 
+// ── Financial Plan Widget ──────────────────────────
+const finplanGranularity = ref<'month' | 'quarter'>('month')
+const finplanData = ref<any>(null)
+
+async function loadFinplan() {
+  try {
+    const sidParam = selectedSubsidyIds.value.length === 1 ? `?subsidy_id=${selectedSubsidyIds.value[0]}` : ''
+    finplanData.value = await apiFetch<any>(`/dashboard/financial-plan${sidParam}`)
+  } catch {
+    finplanData.value = null
+  }
+}
+
+const finplanSeries = computed(() => {
+  if (!finplanData.value) return []
+  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
+  const data = finplanData.value[key]
+  if (!data) return []
+  const allPeriods = [...new Set([
+    ...(data.plan || []).map((d: any) => d.period),
+    ...(data.committed || []).map((d: any) => d.period),
+  ])].sort()
+  if (allPeriods.length === 0) return []
+  const planMap = new Map((data.plan || []).map((d: any) => [d.period, d.amount]))
+  const commMap = new Map((data.committed || []).map((d: any) => [d.period, d.amount]))
+  return [
+    { name: 'Принятые обязательства', data: allPeriods.map(p => Math.round((commMap.get(p) as number) ?? 0)) },
+    { name: 'Плановые', data: allPeriods.map(p => Math.round((planMap.get(p) as number) ?? 0)) },
+  ]
+})
+
+const finplanOptions = computed(() => {
+  if (!finplanData.value) return {}
+  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
+  const data = finplanData.value[key]
+  if (!data) return {}
+  const allPeriods = [...new Set([
+    ...(data.plan || []).map((d: any) => d.period),
+    ...(data.committed || []).map((d: any) => d.period),
+  ])].sort()
+  return {
+    chart: { type: 'bar', stacked: true, background: 'transparent', toolbar: { show: false }, theme: { mode: isDark.value ? 'dark' : 'light' } },
+    plotOptions: { bar: { horizontal: false, columnWidth: '60%' } },
+    dataLabels: { enabled: false },
+    xaxis: { categories: allPeriods, labels: { style: { colors: chartMuted.value, fontSize: '11px' } } },
+    yaxis: { labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '11px' } } },
+    colors: ['#15803D', '#F59E0B'],
+    legend: { position: 'top', fontSize: '12px', labels: { colors: chartText.value } },
+    grid: { borderColor: chartGrid.value },
+    tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } },
+  }
+})
+
+// Reload finplan when subsidy filter changes
+watch(selectedSubsidyIds, () => { loadFinplan() })
+
 onMounted(() => {
   setMode('classic')
   loadAll()
+  loadFinplan()
   if (activeTab.value === 'analytics') {
     loadAnalytics()
   }

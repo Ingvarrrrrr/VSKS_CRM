@@ -21,6 +21,7 @@ const DEFAULT_SUMMARY_LAYOUT: LayoutItem[] = [
   { i: 'bar',        x: 0, y: 30, w: 7,  h: 10, minW: 4,  minH: 7 },
   { i: 'purchases',  x: 7, y: 30, w: 5,  h: 10, minW: 3,  minH: 6 },
   { i: 'table',      x: 0, y: 40, w: 12, h: 12, minW: 6,  minH: 6 },
+  { i: 'finplan',    x: 0, y: 52, w: 12, h: 12, minW: 6,  minH: 8 },
 ]
 
 function getStorageKey(): string {

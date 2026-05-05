@@ -2752,7 +2752,7 @@ const purchaseLoaded = ref(false)
 // Phase 26: Автосохранение
 const autosaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const autosaveError = ref<string | null>(null)
-let autosaveTimer: any = null
+let serverAutosaveTimer: any = null
 let autosaveBaseline = ''
 
 function serializeFormForAutosave() {
@@ -2822,8 +2822,8 @@ async function performAutosave() {
 
 watch(form, () => {
   if (!isEdit.value || !purchaseId.value) return
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  autosaveTimer = setTimeout(performAutosave, 1500)
+  if (serverAutosaveTimer) clearTimeout(serverAutosaveTimer)
+  serverAutosaveTimer = setTimeout(performAutosave, 1500)
 }, { deep: true })
 
 watch(purchaseLoaded, (v) => {

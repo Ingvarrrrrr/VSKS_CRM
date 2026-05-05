@@ -4,8 +4,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps --no-audit --no-fund
 COPY . .
-# heap 768MB не даёт vite/tsc сожрать всю память сервера (Exit 137 OOM)
-ENV NODE_OPTIONS="--max-old-space-size=768"
+# heap 1536MB — Phase 26 раздула CreateOrderView, 768MB перестало хватать
+# (было FATAL ERROR: Reached heap limit Allocation failed). 1536 — компромисс
+# между скоростью OOM-recovery и реальной потребностью vite + Vuetify + ApexCharts.
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 RUN npm run build
 
 # ── Runtime stage — только готовый bundle + server.mjs ────────────

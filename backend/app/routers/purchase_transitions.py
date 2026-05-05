@@ -102,6 +102,14 @@ async def transition_status(
         required_fields = TRANSITION_REQUIRED[target_status]
         if has_acceptance_docs and target_status == "delivered":
             required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
+        # Phase 23.4: для авансовых отчётов с привязанными чеками acceptance_doc не обязательны
+        if target_status == "delivered" and getattr(p, "purchase_method", None) == "advance":
+            from app.models.purchase_receipt import PurchaseReceipt
+            rcpt_result = await db.execute(
+                select(PurchaseReceipt).where(PurchaseReceipt.purchase_id == p.id).limit(1)
+            )
+            if rcpt_result.first() is not None:
+                required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
         missing = [
             f for f in required_fields
             if not getattr(p, f, None)

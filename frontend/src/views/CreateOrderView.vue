@@ -1068,7 +1068,7 @@
             <v-col cols="12" md="8">
               <v-text-field
                 v-model="form.delivery_location"
-                label="Место оказания услуг / доставки"
+                :label="deliveryLabel"
                 variant="outlined" density="compact"
                 placeholder="напр. г. Москва, ул. Ленина, д. 1"
                 hint="Переменная шаблона {{delivery_location}}"
@@ -2938,6 +2938,18 @@ function addAcceptanceDoc() {
   acceptanceDocs.value.push({ name: '', number: '', date: '', amount: null })
 }
 const addressLabel = computed(() => form.item_type === 'услуга' ? 'Адрес оказания услуг' : 'Адрес доставки')
+
+// Phase 23.4: динамический label для delivery_location по типу позиций
+const deliveryLabel = computed(() => {
+  const its = items.value || []
+  if (its.length === 0) return 'Адрес доставки / место оказания услуг'
+  const kinds = new Set(its.map((it: any) => {
+    const k = (it.item_kind || it._selectedProduct?.item_kind || 'товар') as string
+    return k.toLowerCase()
+  }))
+  if (kinds.size === 1 && kinds.has('услуга')) return 'Место оказания услуг'
+  return 'Адрес доставки'
+})
 
 const allEvents = ref<EventItem[]>([])
 const filteredEvents = computed(() =>

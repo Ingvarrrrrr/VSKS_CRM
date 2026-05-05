@@ -1149,13 +1149,15 @@ watch(
 )
 
 // Фикс: дедуп по org_id — при multi-dept (напр. Цыганов с 4 отделами в ВСКС) не дублируем орг в селекте Доступа
+// Используем Number() чтобы избежать несовпадения number vs string при Map.has()
 function dedupOrgAccess(entries: typeof allOrgEntries.value) {
   const map = new Map<number, { org_id: number; org_name: string; role: string }>()
   for (const e of entries) {
-    if (!map.has(e.org_id)) {
-      map.set(e.org_id, {
-        org_id: e.org_id,
-        org_name: e.org_name || `Org ${e.org_id}`,
+    const key = Number(e.org_id)
+    if (!map.has(key)) {
+      map.set(key, {
+        org_id: key,
+        org_name: e.org_name || `Org ${key}`,
         role: editDialog.role,
       })
     }
@@ -1513,11 +1515,20 @@ async function openEditUser(item: UserItem) {
     editDialog.orgSalary = sal
     editDialog.orgPercent = pct
     // Fill all org entries for the bottom block
-    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
-      id: s.id ?? null, dept_id: s.dept_id ?? null,
-      org_id: s.org_id, org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
-    }))
+    // Phase 23.4: дедуп по org_id чтобы сотрудник с несколькими отделами в одной орг не дублировал орг в секции Доступ
+    {
+      const seenOrgIds = new Set<number>()
+      allOrgEntries.value = (salaryRes || []).filter((s: any) => {
+        const key = Number(s.org_id)
+        if (seenOrgIds.has(key)) return false
+        seenOrgIds.add(key)
+        return true
+      }).map((s: any, i: number) => ({
+        id: s.id ?? null, dept_id: s.dept_id ?? null,
+        org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
+        position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+      }))
+    }
     editDialog.orgDepts = {}
     for (const s of (salaryRes || [])) {
       if (s.dept_name) editDialog.orgDepts[s.org_id] = s.dept_name
@@ -1564,13 +1575,21 @@ async function confirmDeleteOrgEntry(entry: any) {
   try {
     await apiFetch(`/users/${editDialog.userId}/org-memberships/${entry.id}`, { method: 'DELETE' })
     showSnack('Запись удалена')
-    // Reload allOrgEntries
+    // Reload allOrgEntries (с дедупом по org_id)
     const salaryRes = await apiFetch<any[]>(`/users/${editDialog.userId}/salary`).catch(() => [])
-    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
-      id: s.id ?? null, dept_id: s.dept_id ?? null,
-      org_id: s.org_id, org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
-    }))
+    {
+      const seenOrgIds2 = new Set<number>()
+      allOrgEntries.value = (salaryRes || []).filter((s: any) => {
+        const key = Number(s.org_id)
+        if (seenOrgIds2.has(key)) return false
+        seenOrgIds2.add(key)
+        return true
+      }).map((s: any, i: number) => ({
+        id: s.id ?? null, dept_id: s.dept_id ?? null,
+        org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
+        position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+      }))
+    }
     // Also update extraOrgIds list to drop this org if no entries left
     if (!allOrgEntries.value.some(e => e.org_id === entry.org_id)) {
       editDialog.extraOrgIds = (editDialog.extraOrgIds || []).filter((id: number) => id !== entry.org_id)

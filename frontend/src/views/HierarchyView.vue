@@ -594,6 +594,13 @@ const DeptNode = markRaw({
   props: ['data'],
   setup(p: any) {
     return () => h('div', { class: 'hnode-dept-header-bar', style: p.data.orgColor ? `background:linear-gradient(135deg, ${p.data.orgColor}, ${p.data.orgColor}aa)` : '' }, [
+      // delete dept button — СЛЕВА от имени отдела (Phase 23.4)
+      h('span', {
+        class: 'mdi mdi-close-circle-outline hnode-dept-del-btn',
+        title: 'Удалить отдел',
+        style: 'color:#f44336;margin-right:4px;',
+        onClick: (e: Event) => { e.stopPropagation(); p.data.onDelete?.(p.data.deptId) },
+      }),
       h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
       h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
       p.data.orgName
@@ -607,12 +614,6 @@ const DeptNode = markRaw({
         class: 'mdi mdi-plus hnode-dept-add-btn',
         title: 'Добавить сотрудника в отдел',
         onClick: (e: Event) => { e.stopPropagation(); p.data.onAddMember?.(p.data.deptId) },
-      }),
-      // delete dept button
-      h('span', {
-        class: 'mdi mdi-delete-outline hnode-dept-del-btn',
-        title: 'Удалить отдел',
-        onClick: (e: Event) => { e.stopPropagation(); p.data.onDelete?.(p.data.deptId) },
       }),
       // Target handle for user→dept "manager of dept" edges
       h(Handle, {
@@ -1677,15 +1678,15 @@ defineExpose({ refresh: loadGraph })
 :deep(.hnode-dept-del-btn) {
   cursor: pointer;
   font-size: 16px;
-  margin-left: 4px;
   flex-shrink: 0;
   padding: 2px 4px;
   border-radius: 4px;
-  opacity: 0.6;
+  opacity: 0.75;
   transition: background 0.15s, opacity 0.15s;
+  color: #f44336;
 }
 :deep(.hnode-dept-del-btn:hover) {
-  background: rgba(244,67,54,0.25);
+  background: rgba(244,67,54,0.2);
   opacity: 1;
 }
 

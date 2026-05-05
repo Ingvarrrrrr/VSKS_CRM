@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, case, extract, and_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
@@ -416,3 +417,57 @@ async def get_financial_plan(
             "committed": [{"period": k, "amount": v} for k, v in sorted(by_quarter_committed.items())],
         },
     }
+
+
+@router.get("/financial-plan/details")
+async def get_financial_plan_details(
+    period: str = Query(..., description="'YYYY-MM' для месяца или 'YYYY-Qn' для квартала"),
+    category: str = Query(..., regex="^(plan|committed)$"),
+    granularity: str = Query("month", regex="^(month|quarter)$"),
+    subsidy_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Список закупок попавших в указанный период+категорию."""
+    PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
+    COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
+    target_statuses = PLAN_STATUSES if category == "plan" else COMMITTED_STATUSES
+
+    q = select(Purchase).where(Purchase.status.in_(target_statuses))
+    if subsidy_id:
+        q = q.where(Purchase.subsidy_id == subsidy_id)
+
+    q = _apply_purchase_org_filter(q, current_user)
+    q = q.options(selectinload(Purchase.contractor))
+
+    rows = (await db.execute(q)).scalars().all()
+
+    result = []
+    for p in rows:
+        d = _expected_payment_date(p)
+        if not d:
+            continue
+        if granularity == "month":
+            row_period = f"{d.year}-{d.month:02d}"
+        else:
+            row_period = f"{d.year}-Q{(d.month - 1) // 3 + 1}"
+        if row_period != period:
+            continue
+
+        amount = float(p.contract_price or p.planned_total_price or 0)
+        if amount == 0:
+            continue
+
+        result.append({
+            "id": p.id,
+            "purchase_number": p.purchase_number,
+            "subject": p.subject or "",
+            "contractor_name": (p.contractor.name if p.contractor else None) or "—",
+            "amount": amount,
+            "status": p.status,
+            "expected_date": d.isoformat(),
+            "contract_number": p.contract_number,
+        })
+
+    result.sort(key=lambda r: (r["expected_date"], -r["amount"]))
+    return {"period": period, "category": category, "granularity": granularity, "items": result}

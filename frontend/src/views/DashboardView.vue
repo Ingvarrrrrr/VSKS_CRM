@@ -532,6 +532,11 @@
               <v-icon icon="mdi-calendar-clock" size="18" color="primary" class="mr-2" />
               <span class="chart-card-title">Финансовый план</span>
               <v-spacer />
+              <v-tooltip text="Кликни по бару чтобы увидеть закупки этой группы" location="top">
+                <template #activator="{ props: tip }">
+                  <v-icon v-bind="tip" icon="mdi-cursor-default-click" size="14" class="ml-1" color="grey" />
+                </template>
+              </v-tooltip>
               <v-btn-toggle v-model="finplanGranularity" mandatory size="x-small" density="compact" class="ml-2">
                 <v-btn value="month">По месяцам</v-btn>
                 <v-btn value="quarter">По кварталам</v-btn>
@@ -820,6 +825,49 @@
           <v-spacer />
           <v-btn @click="drillDownDialog = false">Закрыть</v-btn>
         </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Financial Plan Drill-Down Dialog ── -->
+    <v-dialog v-model="finplanDrilldown.show" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-3">
+          <v-icon icon="mdi-format-list-bulleted" class="mr-2" />
+          <span>{{ finplanDrilldown.category === 'plan' ? 'Плановые' : 'Принятые обязательства' }} — {{ finplanDrilldown.period }}</span>
+          <v-spacer />
+          <v-chip size="small" variant="tonal" :color="finplanDrilldown.category === 'plan' ? 'warning' : 'success'">
+            {{ finplanDrilldown.items.length }} закупок · Σ {{ finplanDrilldownTotal.toLocaleString('ru-RU') }} ₽
+          </v-chip>
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-2" @click="finplanDrilldown.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-0">
+          <v-progress-linear v-if="finplanDrilldown.loading" indeterminate />
+          <v-table density="compact" v-else-if="finplanDrilldown.items.length">
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Предмет</th>
+                <th>Контрагент</th>
+                <th>Дата</th>
+                <th>Статус</th>
+                <th class="text-right">Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in finplanDrilldown.items" :key="row.id"
+                  style="cursor:pointer" @click="goToOrder(row.id)">
+                <td><code>{{ row.purchase_number || row.id }}</code></td>
+                <td>{{ row.subject }}</td>
+                <td>{{ row.contractor_name }}</td>
+                <td>{{ formatDate(row.expected_date) }}</td>
+                <td><v-chip size="x-small" variant="tonal">{{ STATUS_LABELS_FINPLAN[row.status] || row.status }}</v-chip></td>
+                <td class="text-right font-weight-medium">{{ row.amount.toLocaleString('ru-RU') }} ₽</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-else class="text-medium-emphasis text-center py-6">Нет закупок в этой группе</div>
+        </v-card-text>
       </v-card>
     </v-dialog>
   </div>
@@ -1662,6 +1710,54 @@ watch(selectedSubsidyIds, () => {
 // ── Financial Plan Widget ──────────────────────────
 const finplanGranularity = ref<'month' | 'quarter'>('month')
 const finplanData = ref<any>(null)
+const finplanAllPeriods = ref<string[]>([])
+
+const finplanDrilldown = ref({
+  show: false,
+  loading: false,
+  period: '',
+  category: '' as 'plan' | 'committed' | '',
+  items: [] as any[],
+})
+
+async function openFinplanDrilldown(period: string, category: 'plan' | 'committed') {
+  finplanDrilldown.value.show = true
+  finplanDrilldown.value.loading = true
+  finplanDrilldown.value.period = period
+  finplanDrilldown.value.category = category
+  finplanDrilldown.value.items = []
+  try {
+    const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
+    const data = await apiFetch<any>(`/dashboard/financial-plan/details?period=${period}&category=${category}&granularity=${finplanGranularity.value}${sidParam}`)
+    finplanDrilldown.value.items = data.items || []
+  } catch (e) {
+    finplanDrilldown.value.items = []
+  } finally {
+    finplanDrilldown.value.loading = false
+  }
+}
+
+const finplanDrilldownTotal = computed(() =>
+  finplanDrilldown.value.items.reduce((s: number, r: any) => s + (r.amount || 0), 0)
+)
+
+function goToOrder(id: number) {
+  finplanDrilldown.value.show = false
+  router.push(`/orders/${id}/edit`)
+}
+
+function formatDate(iso: string) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-')
+  return `${d}.${m}.${y}`
+}
+
+const STATUS_LABELS_FINPLAN: Record<string, string> = {
+  planned: 'Запланирован', confirmed: 'Подтверждён', wishes: 'Заявка',
+  plan_schedule: 'Запланировано',
+  contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено',
+  paid: 'Оплачено', work_in_progress: 'В работе',
+}
 
 async function loadFinplan() {
   try {
@@ -1682,6 +1778,7 @@ const finplanSeries = computed(() => {
     ...(data.committed || []).map((d: any) => d.period),
   ])].sort()
   if (allPeriods.length === 0) return []
+  finplanAllPeriods.value = allPeriods
   const planMap = new Map((data.plan || []).map((d: any) => [d.period, d.amount]))
   const commMap = new Map((data.committed || []).map((d: any) => [d.period, d.amount]))
   return [
@@ -1700,7 +1797,18 @@ const finplanOptions = computed(() => {
     ...(data.committed || []).map((d: any) => d.period),
   ])].sort()
   return {
-    chart: { type: 'bar', stacked: true, background: 'transparent', toolbar: { show: false }, theme: { mode: isDark.value ? 'dark' : 'light' } },
+    chart: {
+      type: 'bar', stacked: true, background: 'transparent', toolbar: { show: false },
+      theme: { mode: isDark.value ? 'dark' : 'light' },
+      events: {
+        dataPointSelection: (_event: any, _ctx: any, config: any) => {
+          const period = finplanAllPeriods.value[config.dataPointIndex]
+          const seriesName = config.w.config.series[config.seriesIndex]?.name || ''
+          const category: 'plan' | 'committed' = seriesName.toLowerCase().includes('принят') ? 'committed' : 'plan'
+          if (period) openFinplanDrilldown(period, category)
+        },
+      },
+    },
     plotOptions: { bar: { horizontal: false, columnWidth: '60%' } },
     dataLabels: { enabled: false },
     xaxis: { categories: allPeriods, labels: { style: { colors: chartMuted.value, fontSize: '11px' } } },

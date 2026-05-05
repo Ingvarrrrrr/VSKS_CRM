@@ -16,13 +16,17 @@
           </span>
         </div>
         <div class="mb-3 text-body-1">{{ error?.message }}</div>
-        <v-textarea
-          v-if="error?.details"
-          :model-value="error.details"
-          label="Технические детали"
-          readonly auto-grow rows="4" variant="outlined" density="compact"
-          hide-details class="text-caption"
-        />
+        <v-expansion-panels v-if="error?.details" v-model="techExpanded" class="text-caption">
+          <v-expansion-panel value="details">
+            <v-expansion-panel-title class="text-caption">
+              <v-icon icon="mdi-code-tags" size="14" class="mr-1" />
+              Технические детали
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <pre style="white-space: pre-wrap; max-height: 240px; overflow: auto; font-size: 11px; margin: 0">{{ error.details }}</pre>
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
       </v-card-text>
       <v-card-actions>
         <v-btn
@@ -52,11 +56,13 @@ interface ErrorPayload {
 const show = ref(false)
 const error = ref<ErrorPayload | null>(null)
 const copied = ref(false)
+const techExpanded = ref<string | null>(null)  // collapsed by default
 
 function handleApiError(e: Event) {
   error.value = (e as CustomEvent<ErrorPayload>).detail
   show.value = true
   copied.value = false
+  techExpanded.value = null  // reset to collapsed on each error
 }
 
 onMounted(() => window.addEventListener('api-error', handleApiError))

@@ -175,6 +175,15 @@ async def _fix_cascade_constraints(conn) -> None:
             "purchases",
             "id",
         ),
+        # Phase 23.6: payments.purchase_id had NO ACTION → blocked bulk delete of purchases
+        # CASCADE: при удалении закупки платежи уходят вместе (платёж без закупки не имеет смысла)
+        (
+            "payments",
+            "payments_purchase_id_fkey",
+            "purchase_id",
+            "purchases",
+            "id",
+        ),
     ]
     for table, constraint, col, ref_table, ref_col in fixes:
         try:

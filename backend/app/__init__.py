@@ -19,6 +19,7 @@ from .routers import (
     permissions as permissions_router,
 )
 from .routers import wish_documents
+from .routers import user_addresses as user_addresses_router
 from .routers import org_config
 from .routers import purchase_transitions
 from .routers import feo_planned_items
@@ -350,3 +351,4 @@ app.include_router(wish_documents.router)
 app.include_router(wishes.router)
 app.include_router(push_router.router)
 app.include_router(permissions_router.router)
+app.include_router(user_addresses_router.router)

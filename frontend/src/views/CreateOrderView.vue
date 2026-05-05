@@ -1068,12 +1068,11 @@
               />
             </v-col>
             <v-col cols="12" md="8">
-              <v-text-field
+              <AddressAutocomplete
                 v-model="form.delivery_location"
                 :label="deliveryLabel"
-                variant="outlined" density="compact"
-                placeholder="напр. г. Москва, ул. Ленина, д. 1"
-                hint="Переменная шаблона {{delivery_location}}"
+                :customer-address="customerPreview?.address"
+                hint="Подставится в шаблон документа"
                 persistent-hint
               />
             </v-col>
@@ -2727,6 +2726,7 @@ import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
+import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 
 const route = useRoute()
 const router = useRouter()

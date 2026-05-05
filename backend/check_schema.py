@@ -190,12 +190,34 @@ async def _fix_cascade_constraints(conn) -> None:
             print(f"  ⚠️   cascade FK fix failed for {table}.{constraint}: {e}")
 
 
+async def _ensure_user_addresses_table(conn) -> None:
+    """Phase 25: ensure user_addresses table exists (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_addresses (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                address VARCHAR(500) NOT NULL,
+                last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_user_addr UNIQUE (user_id, address)
+            );
+            CREATE INDEX IF NOT EXISTS ix_user_addresses_user_id ON user_addresses (user_id);
+        """))
+        print("  ✅  user_addresses table ensured")
+    except Exception as e:
+        print(f"  ⚠️   user_addresses table ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)
         if apply:
             print("Fixing cascade FK constraints...")
             await _fix_cascade_constraints(conn)
+
+        # Phase 25: ensure user_addresses table exists
+        if apply:
+            await _ensure_user_addresses_table(conn)
 
         # Fetch all existing columns from the DB
         result = await conn.execute(text("""

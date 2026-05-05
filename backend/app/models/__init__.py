@@ -40,3 +40,4 @@ from app.models.wish_item import WishItem  # noqa: F401
 from app.models.push_subscription import PushSubscription  # noqa: F401
 from app.models.permission import PermissionTab, PermissionAction, RolePermission, UserOrgPermissionOverride  # noqa: F401
 from app.models.purchase_receipt import PurchaseReceipt  # noqa: F401
+from app.models.user_address import UserAddress  # noqa: F401

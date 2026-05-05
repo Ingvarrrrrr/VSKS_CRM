@@ -52,6 +52,36 @@
             hide-details
             style="min-width:200px"
           />
+          <v-select
+            v-model="filterTypes"
+            :items="orderTypeOptions"
+            item-title="label"
+            item-value="value"
+            label="Тип договора"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            hide-details
+            style="min-width:220px"
+          />
+          <v-autocomplete
+            v-model="filterContractorIds"
+            :items="contractorsForFilter"
+            item-title="name"
+            item-value="id"
+            label="Контрагент"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            hide-details
+            style="min-width:220px"
+          />
           <v-btn
             size="small" variant="tonal" color="primary"
             prepend-icon="mdi-bookmark-plus-outline"
@@ -606,10 +636,12 @@ const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
 interface PurchaseItem { id: number; item_name: string; item_type?: string; quantity?: number; unit?: string; unit_price?: number; total_price?: number }
 interface Subsidy { id: number; name: string; year: number }
+interface Contractor { id: number; name: string }
 interface Purchase {
   id: number
   purchase_number?: number
   item_name?: string
+  contractor_id?: number
   contractor_name?: string
   feo_category_name?: string
   feo_category_id?: number
@@ -750,6 +782,7 @@ async function doLinkTask(purchaseId: number) {
 
 const orders = ref<Purchase[]>([])
 const subsidies = ref<Subsidy[]>([])
+const contractors = ref<Contractor[]>([])
 const loading = ref(false)
 const transitioning = ref<number | null>(null)
 const filterStatus = ref<string>('')
@@ -759,7 +792,29 @@ const filterMethod   = ref<string>('')
 const filterOverdue  = ref(false)
 const filterDueSoon  = ref(false)
 const filterFeoCategoryName = ref<string>('')
+const filterTypes = ref<string[]>([])
+const filterContractorIds = ref<number[]>([])
 const search = ref('')
+
+const orderTypeOptions = [
+  { label: 'Разовый', value: 'one_time' },
+  { label: 'Рамочный', value: 'framework' },
+  { label: 'Авансовый', value: 'advance' },
+  { label: 'По счёту', value: 'invoice' },
+]
+
+function getOrderTypeKey(o: Purchase): string {
+  if (o.purchase_method === 'advance') return 'advance'
+  if (o.purchase_contract_type === 'single' || o.purchase_method === 'single') return 'one_time'
+  if ((o.purchase_contract_type || '').startsWith('framework')) return 'framework'
+  if (o.purchase_basis === 'invoice') return 'invoice'
+  return 'one_time'
+}
+
+const contractorsForFilter = computed(() => {
+  const ids = new Set(orders.value.map(o => o.contractor_id).filter(Boolean))
+  return contractors.value.filter(c => ids.has(c.id))
+})
 const expanded = ref<string[]>([])
 const selectedOrders = ref<Purchase[]>([])
 
@@ -769,7 +824,7 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 // Saved filter presets
 // ---------------------------------------------------------------------------
 const FILTER_PRESETS_KEY = 'orders_filter_presets'
-interface FilterPreset { name: string; subsidyId: number | null; status: string; search: string }
+interface FilterPreset { name: string; subsidyId: number | null; status: string; search: string; types?: string[]; contractorIds?: number[] }
 
 const savedFilterPresets = ref<FilterPreset[]>([])
 const filterPresetDialog = reactive({ show: false, name: '' })
@@ -789,6 +844,8 @@ function confirmSaveFilterPreset() {
     subsidyId: filterSubsidyId.value,
     status: filterStatus.value,
     search: search.value,
+    types: [...filterTypes.value],
+    contractorIds: [...filterContractorIds.value],
   }
   const existing = savedFilterPresets.value.filter(p => p.name !== name)
   savedFilterPresets.value = [...existing, preset]
@@ -800,6 +857,8 @@ function applyFilterPreset(p: FilterPreset) {
   filterSubsidyId.value = p.subsidyId
   filterStatus.value = p.status
   search.value = p.search
+  filterTypes.value = p.types ?? []
+  filterContractorIds.value = p.contractorIds ?? []
 }
 function removeFilterPreset(name: string) {
   savedFilterPresets.value = savedFilterPresets.value.filter(p => p.name !== name)
@@ -868,6 +927,12 @@ const filteredOrders = computed(() => {
     const in30  = new Date(Date.now() + 30 * 86400 * 1000).toISOString().slice(0, 10)
     r = r.filter(o => o.execution_term && o.execution_term >= today && o.execution_term <= in30 && !['paid', 'delivered'].includes(o.status))
   }
+  if (filterTypes.value.length > 0) {
+    r = r.filter(o => filterTypes.value.includes(getOrderTypeKey(o)))
+  }
+  if (filterContractorIds.value.length > 0) {
+    r = r.filter(o => o.contractor_id != null && filterContractorIds.value.includes(o.contractor_id))
+  }
   return r
 })
 
@@ -888,10 +953,11 @@ const loadSubsidies = async () => {
 
 const ordersTableRef = ref<any>(null)
 
-onMounted(() => {
+onMounted(async () => {
   loadOrders()
   loadSubsidies()
   loadFilterPresets()
+  try { contractors.value = await apiFetch<Contractor[]>('/contractors/') } catch { contractors.value = [] }
   // Link task mode
   if (route.query.link_task) {
     linkTaskId.value = Number(route.query.link_task)

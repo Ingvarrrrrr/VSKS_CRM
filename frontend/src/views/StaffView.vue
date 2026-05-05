@@ -536,11 +536,7 @@
             :user-id="editDialog.userId"
             :current-user-id="currentUserId"
             :user-role="editDialog.role"
-            :org-access-list="allOrgEntries.map(oa => ({
-              org_id: oa.org_id,
-              org_name: oa.org_name || `Org ${oa.org_id}`,
-              role: editDialog.role,
-            }))"
+            :org-access-list="dedupOrgAccess(allOrgEntries)"
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -1150,6 +1146,48 @@ watch(
   () => allOrgEntries.value.map(e => e.org_id),
   (orgIds) => { for (const id of orgIds) if (id) loadDicts(id) },
   { deep: true },
+)
+
+// Фикс: дедуп по org_id — при multi-dept (напр. Цыганов с 4 отделами в ВСКС) не дублируем орг в селекте Доступа
+function dedupOrgAccess(entries: typeof allOrgEntries.value) {
+  const map = new Map<number, { org_id: number; org_name: string; role: string }>()
+  for (const e of entries) {
+    if (!map.has(e.org_id)) {
+      map.set(e.org_id, {
+        org_id: e.org_id,
+        org_name: e.org_name || `Org ${e.org_id}`,
+        role: editDialog.role,
+      })
+    }
+  }
+  return Array.from(map.values())
+}
+
+// Фикс: при добавлении новой org через extraOrgIds — optimistic-push в allOrgEntries
+// чтобы UserPermissionsSection сразу видела её (до сохранения и reload)
+watch(
+  () => editDialog.extraOrgIds,
+  (newIds: number[], oldIds: number[]) => {
+    if (!editDialog.userId) return
+    const added = (newIds || []).filter(id => !(oldIds || []).includes(id))
+    for (const orgId of added) {
+      if (!allOrgEntries.value.some(e => e.org_id === orgId)) {
+        const org = organizations.value.find((o: any) => o.id === orgId)
+        allOrgEntries.value.push({
+          id: null,
+          dept_id: null,
+          org_id: orgId,
+          org_name: org?.name || `Org ${orgId}`,
+          dept_name: '',
+          position: '',
+          salary_amount: null,
+          employment_percent: 100,
+          _idx: allOrgEntries.value.length,
+        })
+      }
+    }
+  },
+  { deep: false },
 )
 
 // ── TAB 3: HIERARCHY STATE ──

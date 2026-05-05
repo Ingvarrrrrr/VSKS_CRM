@@ -408,14 +408,26 @@ async def remove_member(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    m = (await db.execute(
+    from app.models.user_organization import UserOrganization
+    dm_row = (await db.execute(
         select(DepartmentMember).where(
             DepartmentMember.department_id == dept_id,
             DepartmentMember.user_id == user_id,
         )
     )).scalar_one_or_none()
-    if not m:
+
+    # Phase 23.3: graph endpoint UNIONs department_members + user_organizations.dept_id;
+    # user may only be present via user_organizations (e.g. Цыганов with 4 dept_id rows)
+    uo_rows = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == user_id,
+            UserOrganization.dept_id == dept_id,
+        )
+    )).scalars().all()
+
+    if not dm_row and not uo_rows:
         raise HTTPException(404, "Сотрудник не найден в отделе")
+
     # Check for active purchases assigned to this user
     from app.models.purchase import Purchase
     active_count = (await db.execute(
@@ -426,7 +438,13 @@ async def remove_member(
     )).scalar() or 0
     if active_count > 0:
         raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок). Сначала перераспределите задачи.")
-    await db.delete(m)
+
+    if dm_row:
+        await db.delete(dm_row)
+    for uo in uo_rows:
+        # Don't delete UO row — preserve org membership + salary; just unset dept_id
+        uo.dept_id = None
+
     await db.commit()
     # Clear user.department — check if user still has other dept memberships
     other = (await db.execute(

@@ -39,8 +39,7 @@
 
     <v-spacer />
 
-    <global-search class="mr-3 d-none d-sm-flex" />
-
+    <!-- Тёмная тема — приоритет перед остальными иконками, чтобы не обрезалась на узких экранах -->
     <v-btn
       :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'"
       variant="text"
@@ -49,6 +48,8 @@
       :title="isDark ? 'Светлая тема' : 'Тёмная тема'"
       @click="toggleTheme"
     />
+
+    <global-search class="mr-3 d-none d-sm-flex" />
 
     <!-- Superadmin: multi-org picker button -->
     <v-btn

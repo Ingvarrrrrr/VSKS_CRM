@@ -630,7 +630,7 @@
           <!-- ── Договор ── -->
           <v-window-item value="contract">
           <v-row class="mt-1">
-            <v-col cols="12" md="3">
+            <v-col cols="12" md="3" data-field-name="contract_number">
               <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                 :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
                 :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
@@ -638,7 +638,7 @@
                 :readonly="!isNew && !contractNumberEditEnabled"
                 @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
             </v-col>
-            <v-col cols="12" md="3">
+            <v-col cols="12" md="3" data-field-name="contract_date">
               <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
                 density="compact" type="date" :rules="contractDateRules" />
             </v-col>
@@ -1249,14 +1249,14 @@
             </div>
           </div>
           <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="4" data-field-name="payment_doc_number">
               <v-text-field v-model="form.payment_doc_number" label="Номер платёжного поручения" variant="outlined" density="compact"
                 :hint="needsPayment ? 'Обязательно для перехода в статус Оплачено' : ''" persistent-hint />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="4" data-field-name="payment_doc_date">
               <v-text-field v-model="form.payment_doc_date" label="Дата ПП" variant="outlined" density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="4" data-field-name="payment_amount">
               <v-text-field v-model.number="form.payment_amount" label="Сумма платежа" variant="outlined"
                 density="compact" type="number" suffix="₽" />
             </v-col>
@@ -5350,6 +5350,32 @@ const doSave = async (adminOverride: boolean) => {
   }
 }
 
+// Доработка 5 мая: подсветка незаполненных полей при отказе перехода статуса.
+// Бэк возвращает detail.missing_fields = ['contract_date', ...]; ищем элементы с
+// data-field-name=<имя> и подсвечиваем красным border на 6 секунд + scrollIntoView
+// первого. Чистим всё через 6с или при следующей попытке transition.
+const highlightedFields = ref<Set<string>>(new Set())
+function highlightMissingFields(fields: string[]) {
+  highlightedFields.value = new Set(fields)
+  nextTick(() => {
+    let firstEl: HTMLElement | null = null
+    for (const f of fields) {
+      const el = document.querySelector<HTMLElement>(`[data-field-name="${f}"]`)
+      if (el) {
+        el.classList.add('field-missing-highlight')
+        if (!firstEl) firstEl = el
+      }
+    }
+    firstEl?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+  setTimeout(() => {
+    for (const f of fields) {
+      document.querySelector<HTMLElement>(`[data-field-name="${f}"]`)?.classList.remove('field-missing-highlight')
+    }
+    highlightedFields.value = new Set()
+  }, 6000)
+}
+
 const doTransition = async () => {
   if (!nextStatusTarget.value || !purchaseId.value) return
   transitioning.value = true
@@ -5361,6 +5387,10 @@ const doTransition = async () => {
     form.status = updated.status
     showSnack(`Статус → ${STATUS_LABEL.value[updated.status]}`)
   } catch (e: any) {
+    const missing = e?.payload?.details?.missing_fields
+    if (Array.isArray(missing) && missing.length) {
+      highlightMissingFields(missing)
+    }
     showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {
     transitioning.value = false
@@ -5987,5 +6017,23 @@ async function downloadKpXlsx() {
   .compact-mobile :deep(.v-col) { padding-top: 4px; padding-bottom: 4px; }
   .compact-mobile :deep(.v-card-title) { font-size: 0.95rem; padding: 12px 16px 8px; }
   .compact-mobile :deep(.v-card-text) { padding: 8px 12px; }
+}
+
+/* Подсветка обязательных полей, не заполненных на момент перехода статуса.
+   Backend возвращает missing_fields → highlightMissingFields() добавляет этот класс. */
+.field-missing-highlight {
+  position: relative;
+  animation: missingFieldPulse 0.6s ease-in-out 0s 4 alternate;
+}
+.field-missing-highlight :deep(.v-field) {
+  outline: 2px solid #DC2626 !important;
+  outline-offset: 2px;
+  border-radius: 4px;
+  background: rgba(220, 38, 38, 0.05);
+}
+.field-missing-highlight :deep(.v-field__outline) { color: #DC2626 !important; }
+@keyframes missingFieldPulse {
+  from { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  to   { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
 }
 </style>

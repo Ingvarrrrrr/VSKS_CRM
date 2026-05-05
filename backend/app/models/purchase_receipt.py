@@ -2,7 +2,7 @@ from sqlalchemy import (
     Column, Integer, String, ForeignKey, DateTime, Numeric, UniqueConstraint, func
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
 
@@ -44,4 +44,15 @@ class PurchaseReceipt(Base):
     raw_json = Column(JSONB)
     created_at = Column(DateTime, server_default=func.now())
 
-    purchase = relationship("Purchase", backref="receipts", passive_deletes=True)
+    # Phase 23.7: passive_deletes ДОЛЖЕН быть на ОБОИХ сторонах relationship.
+    # Раньше: backref="receipts" + passive_deletes=True (только child-side) →
+    # SQLAlchemy ORM при db.delete(purchase) загружал Purchase.receipts (parent-side
+    # БЕЗ passive_deletes) и пытался UPDATE purchase_receipts SET purchase_id=NULL
+    # → NotNullViolationError, хотя в БД ON DELETE CASCADE.
+    # Теперь backref(...) явно передаёт passive_deletes + cascade — БД делает CASCADE,
+    # ORM не трогает receipts.
+    purchase = relationship(
+        "Purchase",
+        backref=backref("receipts", passive_deletes=True, cascade="all, delete-orphan"),
+        passive_deletes=True,
+    )

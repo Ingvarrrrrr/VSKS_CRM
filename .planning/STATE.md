@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to plan
-last_updated: "2026-04-23T18:21:43.036Z"
+last_updated: "2026-05-04T00:00:00.000Z"
 progress:
-  total_phases: 18
-  completed_phases: 10
-  total_plans: 66
-  completed_plans: 62
+  total_phases: 19
+  completed_phases: 12
+  total_plans: 74
+  completed_plans: 70
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,11 +16,13 @@ progress:
 ## Current Position
 
 Phase: 18
-Next action: `/gsd:verify-work 17` — full regression + three-role manual smoke + override roundtrip
+Next action: применить SQL `y2z3a4b5c6d7_phase22_bank_statements.sql` + `z3a4b5c6d7e8_phase22_permissions.sql` на проде через psql, затем UAT импорта реальной выписки `Config_Full.xlsx`
 Resume file: None
 
 Recently closed:
 
+- Phase 22 — Импорт банковских выписок (8/8 planов, commits 0ec6c22..6af20a8); парсер xlsx (header-based mapping, 20 групп multi-row split, regex contract/КБК/дата); matcher по ИНН+contract_number; auto-paid при SUM≥порога И matched_confirmed=true; UI /payments/import + /payments/registry + PaymentsBlock в карточке закупки; 7 backend endpoints + permission seed (`payment_registry` tab + 3 actions)
+- Phase 21 — Авансовые отчёты + чеки + ФНС (deployed 2026-04-26)
 - Phase 17 — Permission System Override (9/9 planов, commits 1622167, f733aca + per-plan commits; 9 decisions D-01..D-09 delivered)
 - Phase 13 — Заявки v3 канбан + split purchase kanban (7/7 планов, commits 9ae0202, c2312f8, f40546c, d1b3cb9, fcbed67)
 - Phase 16 — Refactor monoliths (15/15, 16-15-UAT pass)
@@ -32,13 +34,16 @@ Recently closed:
 
 ## Status
 
-- ✅ Complete (14): Phases 1–9, 11, 13, 15, 16, 17
+- ✅ Complete (16): Phases 1–9, 11, 13, 15, 16, 17, 21, 22
 - 🟡 In progress (2): Phase 10 (3/4 — осталось 10-04 AppBar chat nav+badge), Phase 14 (3/4 — осталось 14-04 polish+UAT)
 - ⏳ Not started (2): Phase 12 (4 плана ready), Phase 18 Staff Directory (TBD)
 - Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2, Суперадмин-3)
 
-## Recent Activity (April 2026)
+## Recent Activity (April–May 2026)
 
+- 2026-05-04: **Карточка сотрудника — 3 фикса** (`4df1a86`). (1) Фото сотрудника в editDialog StaffView: вертикальный прямоугольник 4:5 (160×200 превью, 240×300 storage), border-radius 12px, новые admin endpoints `GET/PUT/DELETE /users/{user_id}/photo` (require_tab('staff')); `ProfilePhotoUpload.vue` расширен props `format='circle'|'rectangle'` + `userId?` (AppBar остаётся круглым). (2) Кнопка `mdi-delete` у каждой строки `allOrgEntries` в editDialog → новый `DELETE /api/users/{uid}/org-memberships/{row_id}` (по PK строки `user_organizations`, mirror в `department_members`, снимает `user.org_id` если строк к этой org не осталось). `GET /users/{uid}/salary` теперь отдаёт `id` + `dept_id`. (3) `GET /api/hierarchy/graph` `members_map` = UNION(`department_members`, `user_organizations.dept_id`) — Цыганов в 4 отделах ВСКС теперь появляется в каждом на канвасе. UAT: открыть карточку Цыганова, удалить лишние строки, загрузить фото; проверить что на канвасе HierarchyView сотрудник появляется во всех своих отделах.
+- 2026-05-04: **Approval workflow integration** — 3 коммита (`5d2414f`, `7f50475`, `fdb11c2`). (1) `SubsidiesView` диалог approver получил `<v-autocomplete>` сотрудников — выбор `user_id` обязателен, `full_name` авто-подставляется; старые записи без user_id блокируются на сохранении с warning. (2) `purchase_approvals.start_approval` теперь создаёт `Task(category="Согласование", purchase_id, due_date=approval_deadline)` + `TaskAssignee` + `ChatRoom` через `_create_assignment_chat_room` + system-message «📋 Запущено согласование» для каждого approver_user; `decide_approval` закрывает Task (approve→done, reject→cancelled), `reset_approvals` отменяет все pending. (3) `purchases.update_purchase` + `create_purchase` — `contract_price` авто-пересчёт расширен: `(is_single_contract OR is_advance) and items_sum` — раньше авансовые отчёты с `purchase_method='advance'` не пересчитывали contract_price; рамочные не затронуты. Backfill закупки #573 — открыть+сохранить.
+- 2026-04-27: **Phase 22 CLOSED** — Bank Statements Import. 8/8 планов, 8 коммитов (`0ec6c22..6af20a8`) push'нуты в `claude`. Backend: 2 новые таблицы (`bank_statement_imports`, `bank_payments`), парсер xlsx (header-based mapping для разноколоночных выгрузок, 20-групп multi-row split в ScrollerHash формате, regex для contract_number/КБК/parsed_date), matching service (ИНН+contract_number), 7 endpoints, permission seed (`payment_registry` tab + 3 actions). Frontend: /payments/import (DropZone + журнал), /payments/registry + PaymentMatchDialog (ручной матчинг + confirm), PaymentsBlock в CreateOrderView (показывает N платежей закупки + источник). Auto-paid при SUM≥contract_price/planned_total_price И matched_confirmed=true. Pending: применить 2 SQL миграции на проде (alembic chain сломан).
 - 2026-04-23: **Phase 17 CLOSED** — Permission System Override, 9/9 planов. 17-09: router guards migrated to `meta.tab_key` + `authStore.hasTab()` (32 routes, commit 1622167); E2E spec 20-permissions.spec.ts unskipped with 7 tests (commit f733aca). EMPLOYEE_ALLOWED removed. All 9 decisions D-01..D-09 delivered. Ready for `/gsd:verify-work 17`.
 - 2026-04-23: Purchase Split Kanban — DnD-редистрибуция позиций в существующей закупке, N дочерних закупок, блокируется после статуса «Договор» (не-админам). commits: 40b9d98, 17ec94b, 6a13456, 06ef867, 60379f7, fbb6169. Bugfix цепочка: id-propagation → column width/wrap → ref-state DnD.
 - 2026-04-23: Wishes edit dialog — product_id persistence в WishItem schema + 3-layer name-fallback (openEditDialog, openKanbanDialog, approve_distribution) + assignee action banners по ролям.

@@ -16,6 +16,7 @@ from app.database import get_db
 from app.models.department import Department, DepartmentMember, TaskEditDelegate
 from app.models.organization import Organization
 from app.models.user import User
+from app.models.user_organization import UserOrganization
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
 
@@ -279,22 +280,49 @@ async def list_members(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # UNION department_members + user_organizations.dept_id — отдел может быть
+    # привязан к сотруднику и через multi-org membership (UserOrganization.dept_id),
+    # без явной строки в department_members. Раньше второй источник игнорировался,
+    # из-за чего Цыганов в отделах 3/18 ВСКС не показывался в карточке отдела,
+    # хотя в hierarchy graph и StaffView edit-dialog был.
     members = (await db.execute(
         select(DepartmentMember).where(DepartmentMember.department_id == dept_id)
     )).scalars().all()
-    user_ids = {m.user_id for m in members}
-    users_map = {}
+    uo_rows = (await db.execute(
+        select(UserOrganization).where(UserOrganization.dept_id == dept_id)
+    )).scalars().all()
+
+    user_ids = {m.user_id for m in members} | {r.user_id for r in uo_rows}
+    users_map: dict[int, User] = {}
     if user_ids:
         for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for department member enrichment
             users_map[u.id] = u
-    out = []
+
+    out: list[MemberOut] = []
+    seen_users: set[int] = set()
     for m in members:
+        if m.user_id in seen_users:
+            continue
+        seen_users.add(m.user_id)
         u = users_map.get(m.user_id)
         out.append(MemberOut(
             id=m.id, department_id=m.department_id, user_id=m.user_id,
             user_name=(u.full_name or u.username) if u else None,
             user_role=u.role if u else None,
             position=m.position or (u.position if u else None),
+        ))
+    # negative ID для виртуальных строк из user_organizations — фронт их не редактирует
+    # как dept-member; для удаления нужен endpoint org-membership.
+    for r in uo_rows:
+        if r.user_id in seen_users:
+            continue
+        seen_users.add(r.user_id)
+        u = users_map.get(r.user_id)
+        out.append(MemberOut(
+            id=-r.id, department_id=dept_id, user_id=r.user_id,
+            user_name=(u.full_name or u.username) if u else None,
+            user_role=u.role if u else None,
+            position=r.position or (u.position if u else None),
         ))
     return out
 
@@ -309,18 +337,11 @@ async def add_member(
     dept = await db.get(Department, dept_id)
     if not dept:
         raise HTTPException(404, "Отдел не найден")
-    # Remove from other departments of the SAME organization (one dept per org)
-    from app.models.department import Department as _Dept
-    same_org_depts = (await db.execute(
-        select(DepartmentMember).join(_Dept, DepartmentMember.department_id == _Dept.id).where(
-            DepartmentMember.user_id == data.user_id,
-            _Dept.org_id == dept.org_id,
-            DepartmentMember.department_id != dept_id,
-        )
-    )).scalars().all()
-    for old_m in same_org_depts:
-        await db.delete(old_m)
-
+    # Multi-dept-per-org разрешён: сотрудник может состоять одновременно в нескольких
+    # отделах одной и той же организации (Цыганов в Бухгалтерии+Отделе МТО+«1»).
+    # Раньше тут было «удалить все остальные dept того же org» — это противоречило
+    # пользовательскому требованию multi-dept (см. фидбек 5 мая) и удаляло видимые
+    # в карточке сотрудника отделы.
     existing = (await db.execute(
         select(DepartmentMember).where(
             DepartmentMember.department_id == dept_id,

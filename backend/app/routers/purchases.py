@@ -609,6 +609,55 @@ async def update_purchase(
     return p
 
 
+# Phase 26: автосохранение полей карточки закупки.
+# Принимает произвольный частичный JSON; обновляет только переданные поля.
+# Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).
+PATCHABLE_FIELDS = {
+    "subject", "description", "contractor_id", "feo_category_id",
+    "purchase_method", "purchase_contract_type",
+    "contract_number", "contract_date", "contract_price", "contract_end_date",
+    "nmck", "planned_total_price",
+    "delivery_date", "delivery_location", "delivery_address",
+    "submission_deadline", "service_term_mode", "service_start_date",
+    "service_end_date", "service_term_days", "service_term_type",
+    "service_deadline_date", "third_party_involved",
+    "vat_applicable", "vat_rate", "vat_exemption_article",
+    "acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number",
+    "acceptance_doc_amount", "payment_doc_number", "payment_doc_date",
+    "payment_amount", "country_origin", "purchase_basis",
+    "responsible_person_id", "initiator_id", "subject_kind", "execution_term",
+    "event_id", "delivery_location_kind",
+}
+
+
+@router.patch("/{pid}")
+async def patch_purchase(
+    pid: int,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Not found")
+    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
+        raise HTTPException(403, "Insufficient permissions")
+
+    changed: list[str] = []
+    for k, v in (body or {}).items():
+        if k not in PATCHABLE_FIELDS:
+            continue
+        if not hasattr(p, k):
+            continue
+        if getattr(p, k) != v:
+            setattr(p, k, v)
+            changed.append(k)
+    if changed:
+        await db.commit()
+        await db.refresh(p)
+    return {"id": p.id, "changed": changed}
+
+
 @router.delete("/bulk")
 async def bulk_delete_purchases(
     ids: List[int] = Body(...),

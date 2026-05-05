@@ -31,14 +31,22 @@ const props = defineProps<{
   hint?: string
   persistentHint?: boolean
   customerAddress?: string  // юр.адрес организации Заказчика
+  ownOrgAddress?: string    // юр.адрес собственной организации пользователя
 }>()
 const emit = defineEmits<{ 'update:modelValue': [v: string] }>()
 
 const userAddresses = ref<{id: number; address: string}[]>([])
 
 const defaultAddresses = computed(() => {
-  const arr = ['На территории Исполнителя']
-  if (props.customerAddress?.trim()) arr.push(props.customerAddress)
+  // Доработка 5 мая: формулировка из ТЗ заказчика — «По месту нахождения подрядчика»
+  // (плюс юр.адрес заказчика и юр.адрес собственной организации сотрудника).
+  const arr = ['По месту нахождения подрядчика']
+  if (props.ownOrgAddress?.trim() && !arr.includes(props.ownOrgAddress)) {
+    arr.push(props.ownOrgAddress)
+  }
+  if (props.customerAddress?.trim() && !arr.includes(props.customerAddress)) {
+    arr.push(props.customerAddress)
+  }
   return arr
 })
 

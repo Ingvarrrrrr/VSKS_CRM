@@ -886,7 +886,7 @@
           </v-alert>
 
           <!-- Multi-receipts list (Phase 21) — shown only when purchase already saved -->
-          <template v-if="formMode === 'advance_report' && isEdit && purchaseId">
+          <template v-if="(formMode === 'advance_report' || form.purchase_method === 'advance') && isEdit && purchaseId">
             <v-card variant="outlined" class="mb-3">
               <v-card-title class="d-flex align-center pa-3 text-subtitle-2">
                 <v-icon start>mdi-receipt-text-outline</v-icon>
@@ -940,9 +940,9 @@
             </v-card>
           </template>
           <v-alert
-            v-else-if="formMode === 'advance_report' && !isEdit"
+            v-else-if="(formMode === 'advance_report' || form.purchase_method === 'advance') && !isEdit"
             type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
-            Сохраните авансовый отчёт, чтобы добавить чеки.
+            Сохраните закупку, чтобы добавить чеки.
           </v-alert>
 
           <v-row>
@@ -1068,6 +1068,15 @@
               />
             </v-col>
             <v-col cols="12" md="8">
+              <div class="mb-1">
+                <v-btn-toggle
+                  v-model="form.delivery_location_kind"
+                  density="compact" mandatory color="primary" variant="outlined"
+                >
+                  <v-btn value="delivery" size="small">Адрес доставки</v-btn>
+                  <v-btn value="service" size="small">Место оказания услуг</v-btn>
+                </v-btn-toggle>
+              </div>
               <AddressAutocomplete
                 v-model="form.delivery_location"
                 :label="deliveryLabel"
@@ -2727,7 +2736,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useOrgConfig } from '@/composables/useOrgConfig'
@@ -2931,6 +2940,7 @@ const form = reactive({
   // Phase 19: template-specific fields
   submission_deadline: '' as string,              // ISO datetime-local (YYYY-MM-DDTHH:mm)
   delivery_location: '' as string,
+  delivery_location_kind: '' as string,        // '' | 'delivery' | 'service' (ручной тогл лейбла)
   service_term_mode: '' as string,                // '' | 'range' | 'duration' | 'deadline'
   service_term_days: null as number | null,       // mode='duration'
   service_term_type: 'calendar' as string,        // 'calendar' | 'working' (mode='duration')
@@ -2963,6 +2973,7 @@ function serializeFormForAutosave() {
     planned_total_price: f.planned_total_price,
     delivery_date: f.delivery_date,
     delivery_location: f.delivery_location,
+    delivery_location_kind: f.delivery_location_kind,
     submission_deadline: f.submission_deadline,
     service_term_mode: f.service_term_mode,
     service_start_date: f.service_start_date,
@@ -3033,6 +3044,30 @@ onBeforeRouteLeave((_to, _from, next) => {
   }
 })
 
+// Доработка 5 мая: помимо debounce 1500ms нужен немедленный flush при blur поля.
+// Если пользователь переключился на другое поле — сохраняем не дожидаясь таймера.
+function flushAutosaveOnBlur() {
+  if (!isEdit.value || !purchaseId.value) return
+  if (serverAutosaveTimer) {
+    clearTimeout(serverAutosaveTimer)
+    serverAutosaveTimer = null
+  }
+  // Запускаем немедленно (микро-задержка чтобы Vue успел обновить reactive)
+  setTimeout(performAutosave, 50)
+}
+// Глобальный capture-blur на форме (один раз на mount).
+// onUnmounted на верхнем уровне setup — нельзя вкладывать в onMounted (Vue требование).
+const _focusoutHandler = (e: FocusEvent) => {
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const tag = t.tagName?.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+    flushAutosaveOnBlur()
+  }
+}
+onMounted(() => document.addEventListener('focusout', _focusoutHandler, true))
+onUnmounted(() => document.removeEventListener('focusout', _focusoutHandler, true))
+
 function activeDescription(item: OrderItem): string | undefined {
   if (form.description_mode === '44fz') return item._description_44fz || item._description
   return item._description
@@ -3049,8 +3084,13 @@ function addAcceptanceDoc() {
 }
 const addressLabel = computed(() => form.item_type === 'услуга' ? 'Адрес оказания услуг' : 'Адрес доставки')
 
-// Phase 23.4: динамический label для delivery_location по типу позиций
+// Phase 23.4: динамический label для delivery_location по типу позиций.
+// Доработка 5 мая: ручной тогл (form.delivery_location_kind) перекрывает автодетект.
+// Если пользователь выбрал явно — используем выбор; если нет — fallback на item_kind.
 const deliveryLabel = computed(() => {
+  const manual = form.delivery_location_kind
+  if (manual === 'service') return 'Место оказания услуг'
+  if (manual === 'delivery') return 'Адрес доставки'
   const its = items.value || []
   if (its.length === 0) return 'Адрес доставки / место оказания услуг'
   const kinds = new Set(its.map((it: any) => {
@@ -5180,7 +5220,9 @@ onMounted(async () => {
     await loadPurchaseMembers()
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
-    if (formMode.value === 'advance_report') {
+    // Чеки/импорт чека показываются также для обычной закупки c purchase_method='advance'
+    // (фидбек 5 мая: нужна кнопка «Импорт из чека» в карточке закупки, не только в /advance-reports)
+    if (formMode.value === 'advance_report' || form.purchase_method === 'advance') {
       await loadReceipts()
       consumePostSaveAction()
     }

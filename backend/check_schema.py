@@ -186,14 +186,16 @@ async def _fix_cascade_constraints(conn) -> None:
         ),
     ]
     for table, constraint, col, ref_table, ref_col in fixes:
+        # asyncpg НЕ поддерживает multi-statement в одном prepared statement —
+        # DROP и ADD должны идти раздельно, иначе PostgresSyntaxError.
         try:
-            await conn.execute(text(f"""
-                ALTER TABLE {table}
-                  DROP CONSTRAINT IF EXISTS {constraint};
-                ALTER TABLE {table}
-                  ADD CONSTRAINT {constraint}
-                  FOREIGN KEY ({col}) REFERENCES {ref_table}({ref_col}) ON DELETE CASCADE;
-            """))
+            await conn.execute(text(
+                f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}"
+            ))
+            await conn.execute(text(
+                f"ALTER TABLE {table} ADD CONSTRAINT {constraint} "
+                f"FOREIGN KEY ({col}) REFERENCES {ref_table}({ref_col}) ON DELETE CASCADE"
+            ))
             print(f"  ✅  cascade FK ensured: {table}.{col} → {ref_table}.{ref_col}")
         except Exception as e:
             print(f"  ⚠️   cascade FK fix failed for {table}.{constraint}: {e}")
@@ -201,17 +203,19 @@ async def _fix_cascade_constraints(conn) -> None:
 
 async def _ensure_user_addresses_table(conn) -> None:
     """Phase 25: ensure user_addresses table exists (idempotent)."""
+    # asyncpg: multi-statement в одном execute = PostgresSyntaxError.
     try:
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS user_addresses (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                address VARCHAR(500) NOT NULL,
-                last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                CONSTRAINT uq_user_addr UNIQUE (user_id, address)
-            );
-            CREATE INDEX IF NOT EXISTS ix_user_addresses_user_id ON user_addresses (user_id);
-        """))
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS user_addresses ("
+            "id SERIAL PRIMARY KEY,"
+            "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "address VARCHAR(500) NOT NULL,"
+            "last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "CONSTRAINT uq_user_addr UNIQUE (user_id, address))"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_user_addresses_user_id ON user_addresses (user_id)"
+        ))
         print("  ✅  user_addresses table ensured")
     except Exception as e:
         print(f"  ⚠️   user_addresses table ensure failed: {e}")

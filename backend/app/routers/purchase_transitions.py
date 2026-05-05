@@ -141,14 +141,20 @@ async def transition_status(
             if not getattr(p, f, None)
         ]
         if missing:
-            missing_labels = [FIELD_LABELS.get(f, f) for f in missing]
-            status_label = STATUS_LABELS.get(target_status, target_status)
             is_advance = getattr(p, "purchase_method", None) == "advance"
+            # Доработка 5 мая: для авансового «Дата договора» переименовываем
+            # в «Дата документа основания» (чек/УПД) — пользователю иначе непонятно,
+            # что это поле принимает дату чека.
+            field_label_map = dict(FIELD_LABELS)
+            if is_advance:
+                field_label_map["contract_date"] = "Дата документа основания (чек/УПД)"
+                field_label_map["contract_number"] = "Номер документа основания (№ чека/УПД)"
+            missing_labels = [field_label_map.get(f, f) for f in missing]
+            status_label = STATUS_LABELS.get(target_status, target_status)
 
             if is_advance and target_status == "contracted":
                 advance_hint = (
-                    " Для авансового отчёта заполните дату документа основания"
-                    " (дата чека или УПД) в поле «Дата договора»."
+                    " Заполните в карточке закупки дату/номер чека или УПД."
                     " Либо загрузите чек через QR/Файл — тогда поля заполнятся автоматически."
                 )
             elif is_advance and target_status == "delivered":

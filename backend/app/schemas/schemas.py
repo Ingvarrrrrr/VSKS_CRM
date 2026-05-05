@@ -469,6 +469,7 @@ class PurchaseCreate(BaseModel):
     # Phase 19: template fields for docx context
     submission_deadline: Optional[datetime] = None
     delivery_location: Optional[str] = None
+    delivery_location_kind: Optional[str] = None    # '' | 'delivery' | 'service' (фидбек 5 мая, ручной тогл)
     service_term_mode: Optional[str] = None         # 'range' | 'duration' | 'deadline'
     service_term_days: Optional[int] = None         # mode='duration'
     service_term_type: Optional[str] = None         # 'calendar' | 'working' (mode='duration')
@@ -552,6 +553,7 @@ class PurchaseUpdate(BaseModel):
     # Phase 19
     submission_deadline: Optional[datetime] = None
     delivery_location: Optional[str] = None
+    delivery_location_kind: Optional[str] = None
     service_term_mode: Optional[str] = None
     service_term_days: Optional[int] = None
     service_term_type: Optional[str] = None

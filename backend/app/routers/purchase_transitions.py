@@ -29,6 +29,32 @@ from app.schemas.schemas import PurchaseOutFull
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
 
 # G-08: TRANSITION_REQUIRED lives HERE (only transition endpoint uses it)
+
+STATUS_LABELS: dict[str, str] = {
+    "planned":        "Запланирован",
+    "confirmed":      "Подтверждён",
+    "contracted":     "Заключён договор",
+    "ordered":        "Заказано",
+    "delivered":      "Поставлено",
+    "paid":           "Оплачено",
+    "wishes":         "Заявка",
+    "plan_schedule":  "План-график",
+    "work_in_progress": "В работе",
+    "cancelled":      "Отменён",
+}
+
+FIELD_LABELS: dict[str, str] = {
+    "contract_number":       "Номер договора",
+    "contract_date":          "Дата договора",
+    "acceptance_doc_name":     "Наименование акта приёмки",
+    "acceptance_doc_date":     "Дата акта приёмки",
+    "acceptance_doc_number":   "Номер акта приёмки",
+    "acceptance_doc_amount":   "Сумма акта приёмки",
+    "payment_doc_number":      "Номер платёжного поручения",
+    "payment_doc_date":        "Дата платежа",
+    "payment_amount":          "Сумма платежа",
+}
+
 TRANSITION_REQUIRED: dict[str, list[str]] = {
     "contracted": ["contract_number", "contract_date"],
     "delivered": ["acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number", "acceptance_doc_amount"],
@@ -115,21 +141,39 @@ async def transition_status(
             if not getattr(p, f, None)
         ]
         if missing:
-            labels = {
-                "contract_number": "Номер договора",
-                "contract_date": "Дата договора",
-                "acceptance_doc_name": "Наименование закрывающего документа",
-                "acceptance_doc_date": "Дата закрывающего документа",
-                "acceptance_doc_number": "Номер закрывающего документа",
-                "acceptance_doc_amount": "Сумма закрывающего документа",
-                "payment_doc_number": "Номер платёжного поручения",
-                "payment_doc_date": "Дата платёжного поручения",
-                "payment_amount": "Сумма платежа",
-            }
-            missing_labels = [labels.get(f, f) for f in missing]
+            missing_labels = [FIELD_LABELS.get(f, f) for f in missing]
+            status_label = STATUS_LABELS.get(target_status, target_status)
+            is_advance = getattr(p, "purchase_method", None) == "advance"
+
+            if is_advance and target_status == "contracted":
+                advance_hint = (
+                    " Для авансового отчёта заполните дату документа основания"
+                    " (дата чека или УПД) в поле «Дата договора»."
+                    " Либо загрузите чек через QR/Файл — тогда поля заполнятся автоматически."
+                )
+            elif is_advance and target_status == "delivered":
+                advance_hint = (
+                    " Для авансового отчёта добавьте чек через сканирование QR"
+                    " или загрузку JSON/изображения. После добавления чека статус «Поставлено» доступен."
+                )
+            else:
+                advance_hint = (
+                    " Для авансового отчёта рекомендуется загрузить чек через QR —"
+                    " большинство полей заполнятся автоматически."
+                ) if is_advance else ""
+
             raise HTTPException(
                 422,
-                f"Для перехода в статус «{target_status}» заполните: {', '.join(missing_labels)}"
+                detail={
+                    "code": "STATUS_TRANSITION_BLOCKED",
+                    "message": (
+                        f"Для перехода в статус «{status_label}» заполните:"
+                        f" {', '.join(missing_labels)}.{advance_hint}"
+                    ),
+                    "missing_fields": missing,
+                    "status": target_status,
+                    "status_label": status_label,
+                },
             )
 
     old_status = p.status

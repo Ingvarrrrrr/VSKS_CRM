@@ -29,8 +29,13 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     const text = await res.text()
     let parsed: any = null
     try { parsed = JSON.parse(text) } catch {}
-    // FastAPI 422 returns detail as array of validation errors
-    let detailMsg = parsed?.message || parsed?.detail || text || 'Ошибка запроса'
+    // FastAPI 422 returns detail as array of validation errors or structured object
+    let rawDetail = parsed?.detail
+    // If detail is a structured object with a message field (e.g. STATUS_TRANSITION_BLOCKED)
+    if (rawDetail && typeof rawDetail === 'object' && !Array.isArray(rawDetail) && rawDetail.message) {
+      rawDetail = rawDetail.message
+    }
+    let detailMsg = parsed?.message || rawDetail || text || 'Ошибка запроса'
     if (Array.isArray(detailMsg)) {
       detailMsg = detailMsg.map((e: any) => {
         const field = (e.loc || []).filter((l: any) => l !== 'body').join(' → ')

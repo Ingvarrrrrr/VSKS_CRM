@@ -541,6 +541,9 @@
                 <v-btn value="month">По месяцам</v-btn>
                 <v-btn value="quarter">По кварталам</v-btn>
               </v-btn-toggle>
+              <v-btn size="x-small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanXlsx" class="ml-2">
+                Excel
+              </v-btn>
             </div>
             <apexchart
               v-if="finplanSeries.length"
@@ -838,6 +841,9 @@
           <v-chip size="small" variant="tonal" :color="finplanDrilldown.category === 'plan' ? 'warning' : 'success'">
             {{ finplanDrilldown.items.length }} закупок · Σ {{ finplanDrilldownTotal.toLocaleString('ru-RU') }} ₽
           </v-chip>
+          <v-btn size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanDrilldownXlsx" class="ml-2">
+            Excel
+          </v-btn>
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-2" @click="finplanDrilldown.show = false" />
         </v-card-title>
         <v-divider />
@@ -1744,6 +1750,34 @@ const finplanDrilldownTotal = computed(() =>
 function goToOrder(id: number) {
   finplanDrilldown.value.show = false
   router.push(`/orders/${id}/edit`)
+}
+
+async function exportFinplanXlsx() {
+  const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
+  const token = localStorage.getItem('auth_token')
+  const url = `/api/dashboard/financial-plan/export.xlsx?granularity=${finplanGranularity.value}${sidParam}`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) return
+  const blob = await res.blob()
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `finplan_${finplanGranularity.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+async function exportFinplanDrilldownXlsx() {
+  const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
+  const params = `period=${encodeURIComponent(finplanDrilldown.value.period)}&category=${finplanDrilldown.value.category}&granularity=${finplanGranularity.value}${sidParam}`
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch(`/api/dashboard/financial-plan/details/export.xlsx?${params}`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) return
+  const blob = await res.blob()
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `finplan_${finplanDrilldown.value.period}_${finplanDrilldown.value.category}.xlsx`
+  link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 function formatDate(iso: string) {

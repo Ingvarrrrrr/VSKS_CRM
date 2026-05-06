@@ -275,7 +275,7 @@
                 v-if="deliveredNotPaid.amount > 0"
                 class="pipeline-row"
                 style="background: rgba(239,68,68,0.06); border-radius:6px; margin-top:6px"
-                @click="onDeliveredNotPaidClick"
+                @click="onPipelineClick('delivered')"
               >
                 <div class="pipeline-label">
                   <span class="pipeline-dot" style="background:#EF4444" />
@@ -1115,19 +1115,6 @@ function getStatusPurchases(status: string): any[] {
   })
 }
 
-// Cumulative funnel filter: status И все статусы дальше по воронке.
-// Для бара pipeline бара 'Заказано' включает (ordered + delivered + paid).
-function getCumulativeStagePurchases(status: string): any[] {
-  const idx = PIPELINE_ORDER.indexOf(status)
-  if (idx < 0) return getStatusPurchases(status)
-  const stages = new Set(PIPELINE_ORDER.slice(idx))
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  return allPurchases.value.filter((p: any) => {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    return stages.has(p.status)
-  })
-}
-
 const statusDrillPurchases = computed(() => getStatusPurchases(statusDrillStatus.value))
 
 // Status amounts for tooltip
@@ -1415,23 +1402,12 @@ const deliveredNotPaid = computed(() => {
 })
 function onPipelineClick(status: string) {
   statusDrillStatus.value = status
-  const label = `${STATUS_LABELS[status] || status} (и далее)`
-  const items = getCumulativeStagePurchases(status)
+  const label = STATUS_LABELS[status] || status
+  const items = getStatusPurchases(status)
   openPurchasesDrill(label, items, {
     icon: 'mdi-stairs-up',
     color: STATUS_COLORS[status] || 'warning',
     prefix: `pipeline_${status}`,
-  })
-}
-
-// Точный фильтр для метрики «Поставлено, не оплачено» — без cumulative.
-function onDeliveredNotPaidClick() {
-  statusDrillStatus.value = 'delivered'
-  const items = getStatusPurchases('delivered')
-  openPurchasesDrill('Поставлено, не оплачено', items, {
-    icon: 'mdi-truck-delivery-outline',
-    color: '#EF4444',
-    prefix: 'delivered_not_paid',
   })
 }
 
@@ -1761,50 +1737,22 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
-// Возвращает первое значение > 0 (после parseFloat), иначе 0.
-function pickPositive(...vals: any[]): number {
-  for (const v of vals) {
-    const n = parseFloat(v || 0)
-    if (n > 0) return n
-  }
-  return 0
-}
-
 function purchaseEffectivePrice(p: any): number {
   const status = p.status
-  if (status === 'paid') {
-    return pickPositive(
-      p.payment_amount, p.delivery_payment_amount,
-      p.acceptance_doc_amount, p.contract_price, p.planned_total_price,
-    )
-  }
-  if (status === 'delivered') {
-    return pickPositive(
-      p.acceptance_doc_amount, p.delivery_payment_amount,
-      p.contract_price, p.planned_total_price,
-    )
-  }
-  if (status === 'ordered') {
-    return pickPositive(
-      p.contract_price, p.delivery_payment_amount,
-      p.acceptance_doc_amount, p.planned_total_price,
-    )
-  }
+  if (status === 'paid') return parseFloat(p.payment_amount || 0)
+  if (status === 'delivered') return parseFloat(p.acceptance_doc_amount || 0)
+  if (status === 'ordered') return parseFloat(p.contract_price || p.delivery_payment_amount || 0)
   if (status === 'contracted') {
     const isFramework = p.purchase_contract_type === 'framework_cumulative' ||
                         p.purchase_contract_type === 'framework_with_amount'
     if (isFramework) {
-      return pickPositive(
-        p.acceptance_doc_amount, p.delivery_payment_amount,
-        p.contract_price, p.planned_total_price,
-      )
+      return parseFloat(p.acceptance_doc_amount || p.delivery_payment_amount || 0)
     }
-    if (p.purchase_method === 'single') {
-      return pickPositive(p.contract_price, p.delivery_payment_amount, p.planned_total_price)
-    }
-    return pickPositive(p.delivery_payment_amount, p.contract_price, p.planned_total_price)
+    return p.purchase_method === 'single'
+      ? parseFloat(p.contract_price || 0)
+      : parseFloat(p.delivery_payment_amount || 0)
   }
-  return pickPositive(p.total_nmck, p.planned_total_price, p.contract_price)
+  return parseFloat(p.total_nmck || p.planned_total_price || 0)
 }
 
 function statusLabel(s: string): string {

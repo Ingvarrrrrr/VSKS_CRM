@@ -181,6 +181,27 @@ async def _create_receipt_with_items(
                 f"Этот чек уже привязан к авансовому отчёту {ref}. Добавьте другой чек.",
             )
 
+    # Soft duplicate check для ручного ввода (без фискальной тройки).
+    # Связка (seller_inn + receipt_datetime + total_sum) — если уже есть
+    # чек с такой же комбинацией, предупреждаем что данный чек заведён.
+    seller_inn = data.get('seller_inn')
+    receipt_dt = data.get('receipt_datetime')
+    total_sum = data.get('total_sum')
+    if seller_inn and receipt_dt and total_sum is not None:
+        dup_q = select(PurchaseReceipt).where(
+            PurchaseReceipt.seller_inn == seller_inn,
+            PurchaseReceipt.receipt_datetime == receipt_dt,
+            PurchaseReceipt.total_sum == total_sum,
+        )
+        dup = (await db.execute(dup_q)).scalar_one_or_none()
+        if dup:
+            other = await db.get(Purchase, dup.purchase_id)
+            ref = (other and (other.registry_number or other.purchase_number)) or f"#{dup.purchase_id}"
+            raise HTTPException(
+                409,
+                f"Чек с такой же датой, ИНН продавца и суммой уже заведён в авансовом отчёте {ref}.",
+            )
+
     items_data = data.pop('items', None) or []
 
     valid_cols = {c.key for c in PurchaseReceipt.__table__.columns}
@@ -334,6 +355,32 @@ async def import_receipt_qr_fetch(
     qr = (qr or '').strip()
     if not qr:
         raise HTTPException(400, "Пустая QR-строка")
+
+    # Phase 24: pre-check duplicate by fiscal triple BEFORE hitting FNS API.
+    # ФНС режет повторные обращения по тому же чеку → лучше отдать осмысленную
+    # ошибку «уже заведён» чем «Превышено количество обращений».
+    qr_data = _parse_qr_string(qr)
+    fn = qr_data.get('fiscal_drive_number')
+    fd = qr_data.get('fiscal_document_number')
+    fp = qr_data.get('fiscal_sign')
+    if fn and fd and fp:
+        existing = (await db.execute(
+            select(PurchaseReceipt).where(
+                PurchaseReceipt.fiscal_drive_number == fn,
+                PurchaseReceipt.fiscal_document_number == fd,
+                PurchaseReceipt.fiscal_sign == fp,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            other = await db.get(Purchase, existing.purchase_id)
+            ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing.purchase_id}"
+            same = existing.purchase_id == purchase_id
+            msg = (
+                f"Этот чек уже заведён в авансовом отчёте {ref}."
+                if not same
+                else "Этот чек уже добавлен в текущий авансовый отчёт."
+            )
+            raise HTTPException(409, msg)
 
     token = os.getenv("PROVERKACHEKA_TOKEN", "").strip()
     if not token:

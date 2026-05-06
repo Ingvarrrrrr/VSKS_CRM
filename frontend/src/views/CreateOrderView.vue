@@ -299,8 +299,8 @@
         </v-card-text>
       </v-card>
 
-      <!-- 1.7. Чеки (только для авансовых отчётов) -->
-      <v-card v-if="formMode === 'advance_report'" variant="outlined" class="mb-4">
+      <!-- 1.7. Чеки (для авансовых отчётов и обычных закупок — позиции из чека добавляются в закупку) -->
+      <v-card v-if="formMode === 'advance_report' || (formMode === 'order' && isEdit && purchaseId)" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
           <span class="d-flex align-center">
             <v-icon start>mdi-receipt-text-outline</v-icon>
@@ -5118,7 +5118,8 @@ async function onManualBtnClick() {
 }
 
 function consumePostSaveAction() {
-  if (formMode.value !== 'advance_report' || !purchaseId.value) return
+  if (!purchaseId.value) return
+  if (formMode.value !== 'advance_report' && formMode.value !== 'order') return
   const pending = sessionStorage.getItem(POST_SAVE_ACTION_KEY)
   if (!pending) return
   sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
@@ -5132,7 +5133,7 @@ function consumePostSaveAction() {
 async function onQrDetected(qr: string) {
   qrScanShow.value = false
   if (!purchaseId.value) {
-    showSnack('Сначала сохраните авансовый отчёт', 'error')
+    showSnack('Сначала сохраните закупку', 'error')
     return
   }
   try {
@@ -5330,9 +5331,9 @@ onMounted(async () => {
     await loadPurchaseMembers()
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
-    // Чеки/импорт чека показываются также для обычной закупки c purchase_method='advance'
-    // (фидбек 5 мая: нужна кнопка «Импорт из чека» в карточке закупки, не только в /advance-reports)
-    if (formMode.value === 'advance_report' || form.purchase_method === 'advance') {
+    // Чеки/импорт чека: для авансовых, для обычной закупки c purchase_method='advance',
+    // и для любых обычных закупок (позиции добавляются по QR).
+    if (formMode.value === 'advance_report' || formMode.value === 'order' || form.purchase_method === 'advance') {
       await loadReceipts()
       consumePostSaveAction()
     }

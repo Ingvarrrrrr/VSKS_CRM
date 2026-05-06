@@ -545,6 +545,36 @@
                 Excel
               </v-btn>
             </div>
+
+            <!-- No-deadline banner -->
+            <v-alert
+              v-if="finplanNoDeadlineCount > 0"
+              type="warning" variant="tonal" density="compact" class="mx-3 mt-2"
+              :text="`${finplanNoDeadlineCount} закупок без срока исполнения — данные некорректны`"
+            >
+              <template #append>
+                <v-btn size="x-small" variant="tonal" color="warning" @click="openFinplanDrilldown('', 'no_deadline')">
+                  Показать
+                </v-btn>
+              </template>
+            </v-alert>
+
+            <!-- KPI текущего месяца -->
+            <div v-if="finplanCurrentMonthKpi" class="d-flex gap-3 px-3 py-2">
+              <v-card variant="tonal" color="warning" class="pa-2 flex-1 text-center" density="compact">
+                <div class="text-caption text-medium-emphasis">План</div>
+                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.plan) }}</div>
+              </v-card>
+              <v-card variant="tonal" color="error" class="pa-2 flex-1 text-center" density="compact" style="cursor:pointer" @click="openFinplanDrilldown(finplanCurrentMonthKpi.period, 'overdue')">
+                <div class="text-caption text-medium-emphasis">Накопл. долг</div>
+                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.overdue) }}</div>
+              </v-card>
+              <v-card variant="tonal" color="primary" class="pa-2 flex-1 text-center" density="compact">
+                <div class="text-caption text-medium-emphasis">Итого к оплате</div>
+                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.plan + finplanCurrentMonthKpi.overdue) }}</div>
+              </v-card>
+            </div>
+
             <apexchart
               v-if="finplanSeries.length"
               type="bar" height="300"
@@ -832,16 +862,16 @@
     </v-dialog>
 
     <!-- ── Financial Plan Drill-Down Dialog ── -->
-    <v-dialog v-model="finplanDrilldown.show" max-width="900" scrollable>
+    <v-dialog v-model="finplanDrilldown.show" max-width="1100" scrollable>
       <v-card>
         <v-card-title class="d-flex align-center pa-3">
           <v-icon icon="mdi-format-list-bulleted" class="mr-2" />
-          <span>{{ finplanDrilldown.category === 'plan' ? 'Плановые' : 'Принятые обязательства' }} — {{ finplanDrilldown.period }}</span>
+          <span>{{ finplanDrilldownTitle }} — {{ finplanDrilldown.period || 'все периоды' }}</span>
           <v-spacer />
-          <v-chip size="small" variant="tonal" :color="finplanDrilldown.category === 'plan' ? 'warning' : 'success'">
+          <v-chip size="small" variant="tonal" :color="finplanDrilldownChipColor">
             {{ finplanDrilldown.items.length }} закупок · Σ {{ finplanDrilldownTotal.toLocaleString('ru-RU') }} ₽
           </v-chip>
-          <v-btn size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanDrilldownXlsx" class="ml-2">
+          <v-btn v-if="finplanDrilldown.category !== 'no_deadline'" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanDrilldownXlsx" class="ml-2">
             Excel
           </v-btn>
           <v-btn icon="mdi-close" variant="text" size="small" class="ml-2" @click="finplanDrilldown.show = false" />
@@ -855,20 +885,48 @@
                 <th>№</th>
                 <th>Предмет</th>
                 <th>Контрагент</th>
-                <th>Дата</th>
+                <th>Дата обязательства</th>
                 <th>Статус</th>
                 <th class="text-right">Сумма</th>
+                <th class="text-right">Оплачено</th>
+                <th class="text-right">Остаток</th>
+                <th>Метки</th>
+                <th>Понадобится</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in finplanDrilldown.items" :key="row.id"
-                  style="cursor:pointer" @click="goToOrder(row.id)">
+                  :style="{ cursor: 'pointer', opacity: row.is_likely_needed === false ? 0.55 : 1 }"
+                  @click="goToOrder(row.id)">
                 <td><code>{{ row.purchase_number || row.id }}</code></td>
-                <td>{{ row.subject }}</td>
+                <td>
+                  <div>{{ row.subject }}</div>
+                  <div v-if="row.stage_label" class="text-caption text-medium-emphasis">{{ row.stage_label }}</div>
+                </td>
                 <td>{{ row.contractor_name }}</td>
-                <td>{{ formatDate(row.expected_date) }}</td>
+                <td>{{ formatDate(row.obligation_date || row.expected_date) }}</td>
                 <td><v-chip size="x-small" variant="tonal">{{ STATUS_LABELS_FINPLAN[row.status] || row.status }}</v-chip></td>
-                <td class="text-right font-weight-medium">{{ row.amount.toLocaleString('ru-RU') }} ₽</td>
+                <td class="text-right font-weight-medium">{{ (row.amount || 0).toLocaleString('ru-RU') }} ₽</td>
+                <td class="text-right">{{ (row.paid_amount || 0).toLocaleString('ru-RU') }} ₽</td>
+                <td class="text-right">{{ (row.remaining || 0).toLocaleString('ru-RU') }} ₽</td>
+                <td>
+                  <v-chip v-if="row.is_overdue" size="x-small" color="error" variant="tonal" class="mr-1">
+                    Просрочено
+                  </v-chip>
+                  <v-chip v-if="row.missing_deadline" size="x-small" color="warning" variant="tonal" class="mr-1">
+                    Нет срока
+                  </v-chip>
+                  <v-chip v-if="row.is_prepayment" size="x-small" color="info" variant="tonal">
+                    Предоплата
+                  </v-chip>
+                </td>
+                <td @click.stop>
+                  <v-checkbox
+                    :model-value="row.is_likely_needed !== false"
+                    density="compact" hide-details
+                    @update:model-value="patchIsLikelyNeeded(row, $event)"
+                  />
+                </td>
               </tr>
             </tbody>
           </v-table>
@@ -1721,12 +1779,12 @@ const finplanAllPeriods = ref<string[]>([])
 const finplanDrilldown = ref({
   show: false,
   loading: false,
-  period: '',
-  category: '' as 'plan' | 'committed' | '',
+  period: '' as string,
+  category: '' as 'plan' | 'committed' | 'overdue' | 'no_deadline' | '',
   items: [] as any[],
 })
 
-async function openFinplanDrilldown(period: string, category: 'plan' | 'committed') {
+async function openFinplanDrilldown(period: string, category: 'plan' | 'committed' | 'overdue' | 'no_deadline') {
   finplanDrilldown.value.show = true
   finplanDrilldown.value.loading = true
   finplanDrilldown.value.period = period
@@ -1734,7 +1792,8 @@ async function openFinplanDrilldown(period: string, category: 'plan' | 'committe
   finplanDrilldown.value.items = []
   try {
     const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-    const data = await apiFetch<any>(`/dashboard/financial-plan/details?period=${period}&category=${category}&granularity=${finplanGranularity.value}${sidParam}`)
+    const periodParam = period ? `&period=${period}` : ''
+    const data = await apiFetch<any>(`/dashboard/financial-plan/details?category=${category}&granularity=${finplanGranularity.value}${periodParam}${sidParam}`)
     finplanDrilldown.value.items = data.items || []
   } catch (e) {
     finplanDrilldown.value.items = []
@@ -1746,6 +1805,59 @@ async function openFinplanDrilldown(period: string, category: 'plan' | 'committe
 const finplanDrilldownTotal = computed(() =>
   finplanDrilldown.value.items.reduce((s: number, r: any) => s + (r.amount || 0), 0)
 )
+
+const finplanDrilldownTitle = computed(() => {
+  const cat = finplanDrilldown.value.category
+  if (cat === 'plan') return 'Плановые'
+  if (cat === 'committed') return 'Принятые обязательства'
+  if (cat === 'overdue') return 'Накопленный долг'
+  if (cat === 'no_deadline') return 'Без срока исполнения'
+  return 'Закупки'
+})
+
+const finplanDrilldownChipColor = computed(() => {
+  const cat = finplanDrilldown.value.category
+  if (cat === 'plan') return 'warning'
+  if (cat === 'committed') return 'success'
+  if (cat === 'overdue') return 'error'
+  if (cat === 'no_deadline') return 'warning'
+  return 'grey'
+})
+
+async function patchIsLikelyNeeded(row: any, val: boolean) {
+  try {
+    await apiFetch(`/purchases/${row.id}`, { method: 'PATCH', body: { is_likely_needed: val } })
+    row.is_likely_needed = val
+  } catch (e) {
+    console.error('patchIsLikelyNeeded error', e)
+  }
+}
+
+// no_deadline count for banner
+const finplanNoDeadlineCount = computed(() => {
+  if (!finplanData.value) return 0
+  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
+  return finplanData.value[key]?.no_deadline?.items_count ?? 0
+})
+
+// KPI текущего месяца
+const finplanCurrentMonthKpi = computed(() => {
+  if (!finplanData.value) return null
+  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
+  const data = finplanData.value[key]
+  if (!data) return null
+  const now = new Date()
+  const period = finplanGranularity.value === 'month'
+    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    : `${now.getFullYear()}-Q${Math.ceil((now.getMonth() + 1) / 3)}`
+  const planEntry = (data.plan || []).find((d: any) => d.period === period)
+  const overdueEntry = (data.overdue || []).find((d: any) => d.period === period)
+  return {
+    period,
+    plan: planEntry?.amount ?? 0,
+    overdue: overdueEntry?.accumulated ?? 0,
+  }
+})
 
 function goToOrder(id: number) {
   finplanDrilldown.value.show = false
@@ -1810,15 +1922,22 @@ const finplanSeries = computed(() => {
   const allPeriods = [...new Set([
     ...(data.plan || []).map((d: any) => d.period),
     ...(data.committed || []).map((d: any) => d.period),
+    ...(data.overdue || []).map((d: any) => d.period),
   ])].sort()
   if (allPeriods.length === 0) return []
   finplanAllPeriods.value = allPeriods
   const planMap = new Map((data.plan || []).map((d: any) => [d.period, d.amount]))
   const commMap = new Map((data.committed || []).map((d: any) => [d.period, d.amount]))
-  return [
+  const overdueMap = new Map((data.overdue || []).map((d: any) => [d.period, d.accumulated ?? d.amount ?? 0]))
+  const series: any[] = [
     { name: 'Принятые обязательства', data: allPeriods.map(p => Math.round((commMap.get(p) as number) ?? 0)) },
     { name: 'Плановые', data: allPeriods.map(p => Math.round((planMap.get(p) as number) ?? 0)) },
   ]
+  const hasOverdue = (data.overdue || []).length > 0
+  if (hasOverdue) {
+    series.push({ name: 'Накопленный долг', data: allPeriods.map(p => Math.round((overdueMap.get(p) as number) ?? 0)) })
+  }
+  return series
 })
 
 const finplanOptions = computed(() => {
@@ -1838,7 +1957,9 @@ const finplanOptions = computed(() => {
         dataPointSelection: (_event: any, _ctx: any, config: any) => {
           const period = finplanAllPeriods.value[config.dataPointIndex]
           const seriesName = config.w.config.series[config.seriesIndex]?.name || ''
-          const category: 'plan' | 'committed' = seriesName.toLowerCase().includes('принят') ? 'committed' : 'plan'
+          let category: 'plan' | 'committed' | 'overdue' | 'no_deadline' = 'plan'
+          if (seriesName.toLowerCase().includes('принят')) category = 'committed'
+          else if (seriesName.toLowerCase().includes('накопл') || seriesName.toLowerCase().includes('долг')) category = 'overdue'
           if (period) openFinplanDrilldown(period, category)
         },
       },
@@ -1847,7 +1968,7 @@ const finplanOptions = computed(() => {
     dataLabels: { enabled: false },
     xaxis: { categories: allPeriods, labels: { style: { colors: chartMuted.value, fontSize: '11px' } } },
     yaxis: { labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '11px' } } },
-    colors: ['#15803D', '#F59E0B'],
+    colors: ['#15803D', '#F59E0B', '#EF4444'],
     legend: { position: 'top', fontSize: '12px', labels: { colors: chartText.value } },
     grid: { borderColor: chartGrid.value },
     tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } },

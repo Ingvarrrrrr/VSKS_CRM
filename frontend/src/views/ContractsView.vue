@@ -401,12 +401,30 @@
         <v-card-actions class="px-4 pb-3">
           <v-btn v-if="isAdmin && dialog.id" color="error" variant="text" prepend-icon="mdi-delete"
             @click="dialog.show = false; confirmDelete(contracts.find(c => c.id === dialog.id)!)">Удалить</v-btn>
+          <v-btn
+            v-if="dialog.id && dialog.form.contract_type && dialog.form.contract_type.startsWith('framework_')"
+            color="teal" variant="tonal" prepend-icon="mdi-plus"
+            @click="openMonthlyStagesFromDialog"
+          >
+            Создать ежемесячные этапы
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="dialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="tonal" :loading="dialog.saving" @click="saveContract">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Monthly Stages Dialog -->
+    <MonthlyStagesDialog
+      v-model="monthlyStagesDialog.show"
+      :contract-id="monthlyStagesDialog.contractId"
+      :contract-name="monthlyStagesDialog.contractName"
+      :contract-type="monthlyStagesDialog.contractType"
+      :default-subsidy-id="monthlyStagesDialog.subsidyId"
+      :default-amount="monthlyStagesDialog.defaultAmount"
+      @created="onMonthlyStagesCreated"
+    />
 
     <!-- Delete confirm -->
     <v-dialog v-model="deleteDialog.show" max-width="400">
@@ -535,6 +553,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
 import FileDropZone from '@/components/FileDropZone.vue'
+import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 
 const router = useRouter()
 
@@ -1136,6 +1155,33 @@ const saveContract = async () => {
   } finally {
     dialog.saving = false
   }
+}
+
+// ── Monthly Stages ─────────────────────────────────────────────────────────
+const monthlyStagesDialog = reactive({
+  show: false,
+  contractId: 0,
+  contractName: '',
+  contractType: '',
+  subsidyId: null as number | null,
+  defaultAmount: null as number | null,
+})
+
+function openMonthlyStagesFromDialog() {
+  const c = contracts.value.find(x => x.id === dialog.id)
+  monthlyStagesDialog.contractId = dialog.id
+  monthlyStagesDialog.contractName = c?.number || ''
+  monthlyStagesDialog.contractType = dialog.form.contract_type
+  monthlyStagesDialog.subsidyId = dialog.form.subsidy_id
+  monthlyStagesDialog.defaultAmount = dialog.form.planned_monthly
+  dialog.show = false
+  monthlyStagesDialog.show = true
+}
+
+function onMonthlyStagesCreated(res: any) {
+  const created = res.created?.length ?? 0
+  showSnack(`Создано ${created} этапов`)
+  loadContracts()
 }
 
 const deleteDialog = reactive({ show: false, deleting: false, item: null as Contract | null })

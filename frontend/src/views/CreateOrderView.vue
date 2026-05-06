@@ -1141,6 +1141,74 @@
                 variant="outlined" density="compact"
               />
             </v-col>
+            <v-col cols="12" md="4" class="d-flex align-center gap-2">
+              <!-- Конец месяца quick-fill -->
+              <v-menu v-model="endOfMonthMenu" :close-on-content-click="false" location="bottom">
+                <template #activator="{ props: menuProps }">
+                  <v-btn v-bind="menuProps" size="small" variant="tonal" color="teal" prepend-icon="mdi-calendar-end">
+                    Конец месяца
+                  </v-btn>
+                </template>
+                <v-card min-width="260" class="pa-3">
+                  <div class="text-body-2 font-weight-medium mb-2">Выберите период</div>
+                  <v-row dense>
+                    <v-col cols="6">
+                      <v-text-field
+                        v-model.number="endOfMonthYear"
+                        label="Год" type="number" min="2020" max="2040"
+                        variant="outlined" density="compact"
+                      />
+                    </v-col>
+                    <v-col cols="6">
+                      <v-select
+                        v-model="endOfMonthMonth"
+                        :items="endOfMonthMonthItems"
+                        item-title="label" item-value="value"
+                        label="Месяц"
+                        variant="outlined" density="compact"
+                      />
+                    </v-col>
+                  </v-row>
+                  <v-btn color="primary" size="small" block @click="applyEndOfMonth">Применить</v-btn>
+                </v-card>
+              </v-menu>
+            </v-col>
+          </v-row>
+
+          <!-- Новые поля: скорее всего понадобится, предоплата, подпись этапа -->
+          <v-row class="mt-2">
+            <v-col cols="12" md="4">
+              <v-checkbox
+                v-model="form.is_likely_needed"
+                label="Скорее всего понадобится"
+                density="compact" hide-details
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-checkbox
+                v-model="form.is_prepayment"
+                label="Предоплата"
+                density="compact" hide-details
+              />
+            </v-col>
+            <v-col v-if="form.is_prepayment" cols="12" md="4">
+              <v-text-field
+                v-model="form.prepayment_date"
+                label="Дата предоплаты" type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.stage_label"
+                label="Подпись этапа"
+                variant="outlined" density="compact"
+                hint="Например: Февраль 2026"
+                persistent-hint
+              />
+            </v-col>
           </v-row>
         </v-card-text>
       </v-card>
@@ -2954,6 +3022,11 @@ const form = reactive({
   has_pretension: false as boolean,
   payment_basis_type: 'contract' as string,
   subsidy_allocations: [] as Array<{subsidy_id: number, amount: number | null}>,
+  // Phase 25: monthly stages fields
+  is_likely_needed: true as boolean,
+  is_prepayment: false as boolean,
+  prepayment_date: '' as string,
+  stage_label: '' as string,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3001,6 +3074,11 @@ function serializeFormForAutosave() {
     execution_term: f.execution_term,
     contract_end_date: f.contract_end_date,
     event_id: f.event_id,
+    // Phase 25: monthly stages fields
+    is_likely_needed: f.is_likely_needed,
+    is_prepayment: f.is_prepayment,
+    prepayment_date: f.prepayment_date || null,
+    stage_label: f.stage_label || null,
   })
 }
 
@@ -3250,6 +3328,33 @@ const products = ref<Product[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
 const formRef = ref()
 const saving = ref(false)
+
+// ── Конец месяца quick-fill ───────────────────────────────────────────────
+const endOfMonthMenu = ref(false)
+const _now = new Date()
+const endOfMonthYear = ref(_now.getFullYear())
+const endOfMonthMonth = ref(_now.getMonth() + 1)
+const endOfMonthMonthItems = [
+  { value: 1, label: 'Январь' },
+  { value: 2, label: 'Февраль' },
+  { value: 3, label: 'Март' },
+  { value: 4, label: 'Апрель' },
+  { value: 5, label: 'Май' },
+  { value: 6, label: 'Июнь' },
+  { value: 7, label: 'Июль' },
+  { value: 8, label: 'Август' },
+  { value: 9, label: 'Сентябрь' },
+  { value: 10, label: 'Октябрь' },
+  { value: 11, label: 'Ноябрь' },
+  { value: 12, label: 'Декабрь' },
+]
+function applyEndOfMonth() {
+  const lastDay = new Date(endOfMonthYear.value, endOfMonthMonth.value, 0).getDate()
+  const mm = String(endOfMonthMonth.value).padStart(2, '0')
+  const dd = String(lastDay).padStart(2, '0')
+  form.service_deadline_date = `${endOfMonthYear.value}-${mm}-${dd}`
+  endOfMonthMenu.value = false
+}
 const transitioning = ref(false)
 const converting = ref(false)
 const uploading = ref(false)
@@ -4809,6 +4914,11 @@ const loadPurchase = async () => {
     service_term_type: data.service_term_type || 'calendar',
     service_deadline_date: data.service_deadline_date || '',
     description_mode: data.description_mode || 'exact',
+    // Phase 25: monthly stages fields
+    is_likely_needed: data.is_likely_needed !== false,  // default true
+    is_prepayment: !!data.is_prepayment,
+    prepayment_date: data.prepayment_date || '',
+    stage_label: data.stage_label || '',
     event_id: data.event_id ?? null,
     approval_status: data.approval_status ?? null,
     approval_mode: data.approval_mode ?? null,
@@ -5314,6 +5424,11 @@ const doSave = async (adminOverride: boolean) => {
       service_term_days: form.service_term_days ?? null,
       service_term_type: form.service_term_mode === 'duration' ? (form.service_term_type || 'calendar') : null,
       service_deadline_date: form.service_deadline_date || null,
+      // Phase 25: monthly stages fields
+      is_likely_needed: form.is_likely_needed,
+      is_prepayment: form.is_prepayment,
+      prepayment_date: form.prepayment_date || null,
+      stage_label: form.stage_label || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
       acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
       payment_doc_date: form.payment_doc_date || null,

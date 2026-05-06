@@ -799,6 +799,21 @@
       @update:modelValue="v => { if (!v) drillDialogSubsidies.value = [] }"
     />
 
+    <!-- FEO-hierarchical drill для pipeline-этапов -->
+    <StageFeoDrillDialog
+      :visible="stageFeoDrillVisible"
+      :title="stageFeoDrillTitle"
+      :stage-statuses="stageFeoDrillStatuses"
+      :all-purchases="allPurchases"
+      :subsidy-ids="filteredSubsidies.map((s: any) => s.id)"
+      :subsidies="filteredSubsidies"
+      :effective-price="purchaseEffectivePrice"
+      :status-label-map="STATUS_LABELS"
+      :status-color-map="STATUS_COLORS"
+      @close="stageFeoDrillVisible = false"
+      @row-click="(id) => { stageFeoDrillVisible = false; $router.push(`/orders/${id}/edit`) }"
+    />
+
     <!-- Status pie drill-down dialog -->
     <v-dialog v-model="statusDrillDialog" max-width="700" scrollable>
       <v-card>
@@ -967,6 +982,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
+import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
@@ -1133,6 +1149,11 @@ const statusDrillStatus = ref('')
 // Если задан — drill cumulative (пр. pipeline бар Заказано → ordered+delivered+paid).
 // Если пуст — drill exact по statusDrillStatus (pie chart по статусам).
 const statusDrillStatuses = ref<string[]>([])
+
+// FEO-иерархический drill для pipeline-этапов
+const stageFeoDrillVisible = ref(false)
+const stageFeoDrillTitle = ref('')
+const stageFeoDrillStatuses = ref<string[]>([])
 
 // Excel export для status drill-down (клиентский — использует список из computed).
 async function exportStatusDrillXlsx() {
@@ -1421,11 +1442,14 @@ const deliveredNotPaid = computed(() => {
   }
 })
 function onPipelineClick(status: string) {
-  // Cumulative: Заказано → ordered+delivered+paid и т.д. (соответствует тому что показывает бар).
+  // Cumulative: Заказано → ordered+delivered+paid и т.д.
   const idx = PIPELINE_ORDER.indexOf(status)
-  statusDrillStatuses.value = idx >= 0 ? PIPELINE_ORDER.slice(idx) : []
-  statusDrillStatus.value = status
-  statusDrillDialog.value = true
+  const statuses = idx >= 0 ? PIPELINE_ORDER.slice(idx) : [status]
+  const label = STATUS_LABELS[status] || status
+  // Открываем FEO-иерархический drill (Субсидия → ФЭО 1 → ФЭО 2 → ... → закупки)
+  stageFeoDrillTitle.value = `${label} (и далее) — drill по ФЭО`
+  stageFeoDrillStatuses.value = statuses
+  stageFeoDrillVisible.value = true
 }
 
 // Точный фильтр для метрики «Поставлено, не оплачено».

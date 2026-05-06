@@ -177,13 +177,6 @@
                 <span class="chart-card-title">Структура бюджета</span>
                 <span class="text-caption text-medium-emphasis ml-2">(нажмите на сегмент)</span>
               </template>
-              <v-btn
-                v-if="donutView === 'breakdown' && drillDownSegment !== null"
-                size="x-small" variant="tonal" color="primary"
-                prepend-icon="mdi-cart-outline"
-                class="ml-auto"
-                @click="openDonutSegmentPurchases"
-              >Закупки</v-btn>
             </div>
             <Transition name="chart-fade" mode="out-in">
               <div v-if="donutView === 'donut'" key="donut">
@@ -318,8 +311,6 @@
             <div
               v-for="c in monthlyContractsRemaining" :key="c.id"
               class="pipeline-row"
-              style="cursor:pointer"
-              @click="openMonthlyContractDrill(c.id, c.name)"
             >
               <div class="pipeline-label">
                 <span class="pipeline-dot" style="background:#6366F1" />
@@ -355,7 +346,7 @@
               </div>
               <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
             </div>
-            <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row" style="cursor:pointer" @click="openBreakdownTypeDrill(stage.status, stage.label)">
+            <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
               <div class="pipeline-label">
                 <span class="pipeline-dot" :style="{ background: stage.color }" />
                 {{ stage.label }}
@@ -805,29 +796,94 @@
       v-model="showBreakdownDialog"
       :subsidies="drillDialogSubsidies.length ? drillDialogSubsidies : filteredSubsidies"
       :metric="breakdownMetric"
-      :all-purchases="allPurchases"
       @update:modelValue="v => { if (!v) drillDialogSubsidies.value = [] }"
     />
 
-    <!-- Status pie drill-down — delegated to PurchasesDrillDialog (statusDrillDialog/statusDrillStatus kept for computed) -->
+    <!-- Status pie drill-down dialog -->
+    <v-dialog v-model="statusDrillDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
+          <v-icon :icon="'mdi-cart-outline'" :color="STATUS_COLORS[statusDrillStatus] || 'grey'" />
+          {{ STATUS_LABELS[statusDrillStatus] || statusDrillStatus }}
+          <v-chip size="x-small" variant="tonal" class="ml-1">{{ statusDrillPurchases.length }} шт.</v-chip>
+        </v-card-title>
+        <v-card-text class="pa-0">
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th class="px-4">№</th>
+                <th class="px-4">Предмет закупки</th>
+                <th class="text-right px-4">Сумма</th>
+                <th class="px-4">Субсидия</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in statusDrillPurchases" :key="p.id"
+                style="cursor:pointer" @click="$router.push(`/orders/${p.id}/edit`); statusDrillDialog = false">
+                <td class="px-4 text-medium-emphasis">{{ p.purchase_number || p.id }}</td>
+                <td class="px-4 py-2" style="max-width:280px;white-space:normal;font-size:13px">{{ p.subject || p.item_name || '—' }}</td>
+                <td class="text-right px-4 font-weight-medium text-primary">{{ formatCurrency(purchaseEffectivePrice(p)) }}</td>
+                <td class="px-4 text-caption text-medium-emphasis">{{ p.subsidy_name || '—' }}</td>
+              </tr>
+              <tr v-if="statusDrillPurchases.length === 0">
+                <td colspan="4" class="text-center py-6 text-medium-emphasis">Нет закупок</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-btn
+            v-if="statusDrillPurchases.length > 0"
+            color="success" variant="tonal" prepend-icon="mdi-microsoft-excel"
+            @click="exportStatusDrillXlsx"
+          >Скачать Excel</v-btn>
+          <v-spacer /><v-btn @click="statusDrillDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
-    <!-- Generic PurchasesDrillDialog — used by donut/monthly/breakdown/KPI -->
-    <PurchasesDrillDialog
-      :visible="purchasesDrillVisible"
-      :title="purchasesDrillTitle"
-      :title-icon="purchasesDrillIcon"
-      :title-color="purchasesDrillColor"
-      :purchases="purchasesDrillItems"
-      :filename-prefix="purchasesDrillPrefix"
-      :show-framework-seq="purchasesDrillFramework"
-      @close="closePurchasesDrill"
-      @row-click="purchasesDrillRowClick"
-    />
-
-    <!-- Donut drill-down dialog — purchases by segment -->
-    <!-- NOTE: drillDownDialog is still used internally by donut breakdown bar click (opens BudgetDrillDownDialog).
-         For direct segment clicks we now use purchasesDrillVisible via openPurchasesDrill. -->
-    <v-dialog v-model="drillDownDialog" max-width="500" style="display:none" />
+    <!-- Donut drill-down dialog (legacy, kept for direct use) -->
+    <v-dialog v-model="drillDownDialog" max-width="500">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
+          <v-icon :color="['success','primary','warning','grey'][drillDownSegment ?? 0]"
+            :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]" />
+          {{ drillDownSegment !== null ? SEGMENT_LABELS[drillDownSegment] : '' }}
+        </v-card-title>
+        <v-card-subtitle class="px-5 pb-1 text-caption text-medium-emphasis">Разбивка по субсидиям</v-card-subtitle>
+        <v-card-text class="pa-0">
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th class="px-5">Субсидия</th>
+                <th class="text-right px-5">Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in drillDownRows" :key="row.name">
+                <td class="px-5 py-2">{{ row.name }}</td>
+                <td class="text-right px-5 font-weight-medium text-primary">{{ formatCurrency(row.value) }}</td>
+              </tr>
+              <tr v-if="drillDownRows.length === 0">
+                <td colspan="2" class="text-center py-6 text-medium-emphasis">Нет данных</td>
+              </tr>
+            </tbody>
+            <tfoot v-if="drillDownRows.length > 1">
+              <tr style="border-top: 2px solid var(--crm-border-strong)">
+                <td class="px-5 py-2 font-weight-bold">Итого</td>
+                <td class="text-right px-5 font-weight-bold text-primary">
+                  {{ formatCurrency(drillDownRows.reduce((s, r) => s + r.value, 0)) }}
+                </td>
+              </tr>
+            </tfoot>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-spacer />
+          <v-btn @click="drillDownDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- ── Financial Plan Drill-Down Dialog ── -->
     <v-dialog v-model="finplanDrilldown.show" max-width="1100" scrollable>
@@ -910,7 +966,6 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
-import PurchasesDrillDialog from '@/components/PurchasesDrillDialog.vue'
 import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
@@ -1076,46 +1131,38 @@ const drillDialogSubsidies = ref<any[]>([])
 const statusDrillDialog = ref(false)
 const statusDrillStatus = ref('')
 
-// Generic purchases drill dialog (reusable)
-const purchasesDrillVisible = ref(false)
-const purchasesDrillTitle   = ref('Закупки')
-const purchasesDrillIcon    = ref('mdi-cart-outline')
-const purchasesDrillColor   = ref('primary')
-const purchasesDrillItems   = ref<any[]>([])
-const purchasesDrillPrefix  = ref('purchases')
-const purchasesDrillFramework = ref(false)
-
-function openPurchasesDrill(
-  title: string,
-  items: any[],
-  opts?: { icon?: string; color?: string; prefix?: string; framework?: boolean }
-) {
-  purchasesDrillTitle.value     = title
-  purchasesDrillItems.value     = items
-  purchasesDrillIcon.value      = opts?.icon   ?? 'mdi-cart-outline'
-  purchasesDrillColor.value     = opts?.color  ?? 'primary'
-  purchasesDrillPrefix.value    = opts?.prefix ?? 'purchases'
-  purchasesDrillFramework.value = opts?.framework ?? false
-  purchasesDrillVisible.value   = true
+// Excel export для status drill-down (клиентский — использует список из computed).
+async function exportStatusDrillXlsx() {
+  try {
+    const XLSX = await import('xlsx')
+    const rows = statusDrillPurchases.value.map((p: any) => ({
+      '№': p.purchase_number || p.id,
+      'Предмет закупки': p.subject || p.item_name || '',
+      'Сумма': purchaseEffectivePrice(p),
+      'Субсидия': p.subsidy_name || '',
+      'Статус': STATUS_LABELS[p.status] || p.status,
+      'Контрагент': p.contractor_name || '',
+      '№ договора': p.contract_number || '',
+      'Дата договора': p.contract_date || '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    const sheetName = (STATUS_LABELS[statusDrillStatus.value] || statusDrillStatus.value || 'Закупки').slice(0, 31)
+    XLSX.utils.book_append_sheet(wb, ws, sheetName)
+    const fname = `dashboard_${statusDrillStatus.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    XLSX.writeFile(wb, fname)
+  } catch (e: any) {
+    showSnack(e?.message || 'Не удалось сформировать Excel', 'error')
+  }
 }
 
-function closePurchasesDrill() { purchasesDrillVisible.value = false }
-
-function purchasesDrillRowClick(id: number) {
-  purchasesDrillVisible.value = false
-  router.push(`/orders/${id}/edit`)
-}
-
-
-function getStatusPurchases(status: string): any[] {
+const statusDrillPurchases = computed(() => {
   const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
   return allPurchases.value.filter((p: any) => {
     if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    return p.status === status
+    return p.status === statusDrillStatus.value
   })
-}
-
-const statusDrillPurchases = computed(() => getStatusPurchases(statusDrillStatus.value))
+})
 
 // Status amounts for tooltip
 const filteredStatusAmounts = computed(() => {
@@ -1127,34 +1174,6 @@ const filteredStatusAmounts = computed(() => {
   }
   return amounts
 })
-
-// Purchases filtered by donut segment
-const donutSegmentPurchases = computed(() => {
-  const seg = drillDownSegment.value
-  if (seg === null) return []
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  return allPurchases.value.filter((p: any) => {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    if (seg === 0) return p.status === 'paid'
-    if (seg === 1) return ['contracted', 'ordered', 'delivered'].includes(p.status)
-    if (seg === 2) return ['plan_schedule', 'confirmed', 'work_in_progress'].includes(p.status)
-    if (seg === 3) return !['paid', 'contracted', 'ordered', 'delivered', 'plan_schedule', 'confirmed', 'work_in_progress'].includes(p.status)
-    return false
-  })
-})
-
-function openDonutSegmentPurchases() {
-  const seg = drillDownSegment.value
-  if (seg === null) return
-  const label = SEGMENT_LABELS[seg] || 'Сегмент'
-  const icons  = ['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove']
-  const colors = ['success','primary','warning','grey']
-  openPurchasesDrill(label, donutSegmentPurchases.value, {
-    icon: icons[seg],
-    color: colors[seg],
-    prefix: `donut_${label.toLowerCase()}`,
-  })
-}
 
 const drillDownRows = computed(() => {
   if (drillDownSegment.value === null) return []
@@ -1353,13 +1372,7 @@ const statusPieForComponent = computed(() =>
 const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
 function onPieSliceClick(status: string) {
   statusDrillStatus.value = status
-  const label = STATUS_LABELS[status] || status
-  const items = getStatusPurchases(status)
-  openPurchasesDrill(label, items, {
-    icon: 'mdi-chart-pie',
-    color: STATUS_COLORS[status] || 'grey',
-    prefix: `status_${status}`,
-  })
+  statusDrillDialog.value = true
 }
 
 // Pipeline stages (purchase lifecycle funnel)
@@ -1402,13 +1415,7 @@ const deliveredNotPaid = computed(() => {
 })
 function onPipelineClick(status: string) {
   statusDrillStatus.value = status
-  const label = STATUS_LABELS[status] || status
-  const items = getStatusPurchases(status)
-  openPurchasesDrill(label, items, {
-    icon: 'mdi-stairs-up',
-    color: STATUS_COLORS[status] || 'warning',
-    prefix: `pipeline_${status}`,
-  })
+  statusDrillDialog.value = true
 }
 
 // Helper: split purchase amount by товары/услуги using item-level data
@@ -1461,20 +1468,6 @@ const pipelineByType = computed(() => {
     .filter(s => s.total > 0)
 })
 
-function openBreakdownTypeDrill(status: string, label: string) {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const stagesAtOrBeyond = PIPELINE_ORDER.slice(PIPELINE_ORDER.indexOf(status))
-  const items = allPurchases.value.filter((p: any) => {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    return stagesAtOrBeyond.includes(p.status)
-  })
-  openPurchasesDrill(`Товары / Услуги — ${label}`, items, {
-    icon: 'mdi-chart-box',
-    color: 'deep-purple',
-    prefix: `breakdown_${status}`,
-  })
-}
-
 // Monthly payment contracts remaining
 const monthlyContractsRemaining = computed(() => {
   const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
@@ -1514,18 +1507,6 @@ const totalMonthlyRemaining = computed(() =>
   monthlyContractsRemaining.value.reduce((s, c) => s + c.remaining, 0)
 )
 
-function openMonthlyContractDrill(contractPurchaseId: number, contractName: string) {
-  const items = allPurchases.value.filter((p: any) => p.id === contractPurchaseId)
-  // Also look for related framework orders by contract_id if purchase itself has an id
-  // Since monthlyContractsRemaining uses p.id directly, we match by id
-  openPurchasesDrill(contractName, items, {
-    icon: 'mdi-calendar-refresh',
-    color: 'indigo',
-    prefix: `monthly_${contractPurchaseId}`,
-    framework: true,
-  })
-}
-
 const statusPieOptions = computed(() => ({
   chart: {
     type: 'pie', background: 'transparent', toolbar: { show: false },
@@ -1535,14 +1516,8 @@ const statusPieOptions = computed(() => ({
       dataPointSelection: (_e: any, _ctx: any, config: any) => {
         const entry = statusPieEntries.value[config.dataPointIndex]
         if (entry) {
-          const status = entry[0]
-          statusDrillStatus.value = status
-          const items = getStatusPurchases(status)
-          openPurchasesDrill(STATUS_LABELS[status] || status, items, {
-            icon: 'mdi-chart-pie',
-            color: STATUS_COLORS[status] || 'grey',
-            prefix: `status_${status}`,
-          })
+          statusDrillStatus.value = entry[0]
+          statusDrillDialog.value = true
         }
       }
     }
@@ -1671,33 +1646,10 @@ function openBreakdown(metric = 'budget') {
 }
 
 function handleKpiClick(key: string) {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const filtered = allPurchases.value.filter((p: any) =>
-    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-  )
-  const KPI_STATUS_MAP: Record<string, string[]> = {
-    plan_schedule: ['confirmed', 'work_in_progress', 'plan_schedule'],
-    ordered:       ['contracted', 'delivered', 'ordered'],
-    paid:          ['paid'],
-    budget:        [],  // all
-  }
-  const KPI_ICONS: Record<string, string> = {
-    budget: 'mdi-bank-outline', plan_schedule: 'mdi-calendar-clock',
-    ordered: 'mdi-cart-check', paid: 'mdi-cash-check',
-  }
-  const KPI_COLORS: Record<string, string> = {
-    budget: 'primary', plan_schedule: 'warning', ordered: 'blue', paid: 'success',
-  }
-  const statuses = KPI_STATUS_MAP[key] ?? []
-  const items = statuses.length > 0
-    ? filtered.filter((p: any) => statuses.includes(p.status))
-    : filtered
-  const card = kpiCards.value.find(c => c.key === key)
-  openPurchasesDrill(card?.label ?? key, items, {
-    icon: KPI_ICONS[key],
-    color: KPI_COLORS[key],
-    prefix: `kpi_${key}`,
-  })
+  if (key === 'plan_schedule') router.push('/orders?status=confirmed,work_in_progress')
+  else if (key === 'ordered')  router.push('/orders?status=contracted,delivered,paid')
+  else if (key === 'paid')     router.push('/orders?status=paid')
+  else openBreakdown(key)
 }
 
 function goToOrders() {

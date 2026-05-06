@@ -29,49 +29,6 @@
           <v-progress-circular indeterminate color="primary" size="48" />
         </div>
 
-        <!-- Leaf purchases table -->
-        <template v-else-if="isLeafPurchasesView">
-          <div class="text-caption text-medium-emphasis mb-3">
-            <v-icon icon="mdi-cart-outline" size="14" class="mr-1" />
-            Закупки категории · {{ leafPurchases.length }} шт.
-          </div>
-          <v-table density="compact">
-            <thead>
-              <tr>
-                <th>№</th>
-                <th>Предмет закупки</th>
-                <th class="text-right">Сумма</th>
-                <th>Контрагент</th>
-                <th>Статус</th>
-                <th>№ договора</th>
-                <th>Дата договора</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="p in leafPurchases" :key="p.id"
-                style="cursor:pointer"
-                @click="handleLeafPurchaseClick(p.id)"
-              >
-                <td class="text-medium-emphasis">{{ p.purchase_number || p.id }}</td>
-                <td style="max-width:240px;white-space:normal;font-size:13px">{{ p.subject || p.item_name || '—' }}</td>
-                <td class="text-right font-weight-medium text-primary">{{ fmtMoney(purchaseEffectivePrice(p)) }}</td>
-                <td class="text-caption text-medium-emphasis">{{ p.contractor_name || '—' }}</td>
-                <td>
-                  <v-chip size="x-small" :color="purchaseStatusColor(p.status)" variant="flat">
-                    {{ purchaseStatusLabel(p.status) }}
-                  </v-chip>
-                </td>
-                <td class="text-caption">{{ p.contract_number || '—' }}</td>
-                <td class="text-caption">{{ fmtDate(p.contract_date) }}</td>
-              </tr>
-              <tr v-if="leafPurchases.length === 0">
-                <td colspan="7" class="text-center py-6 text-medium-emphasis">Нет закупок в этой категории</td>
-              </tr>
-            </tbody>
-          </v-table>
-        </template>
-
         <div v-else-if="chartItems.length === 0" class="text-center py-12 text-medium-emphasis">
           <v-icon icon="mdi-chart-bar-stacked" size="48" class="mb-3" />
           <div>Нет данных для отображения</div>
@@ -91,18 +48,6 @@
           />
         </template>
       </v-card-text>
-
-      <!-- Footer with Excel button -->
-      <v-card-actions class="px-4 pb-3" style="border-top: 1px solid var(--crm-border); flex-shrink:0">
-        <v-btn
-          color="success" variant="tonal" size="small"
-          prepend-icon="mdi-microsoft-excel"
-          :loading="xlsxLoading"
-          @click="exportXlsx"
-        >Скачать Excel</v-btn>
-        <v-spacer />
-        <v-btn variant="text" size="small" @click="dialog = false">Закрыть</v-btn>
-      </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -110,11 +55,9 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useTheme } from 'vuetify'
-import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
 const theme = useTheme()
-const router = useRouter()
 const isDark = computed(() => theme.global.name.value === 'dark')
 const chartText  = computed(() => isDark.value ? '#E2E8F0' : '#374151')
 const chartMuted = computed(() => isDark.value ? '#94A3B8' : '#6B7280')
@@ -140,7 +83,6 @@ const props = defineProps({
   modelValue: Boolean,
   metric: { type: String, default: 'budget' },
   subsidies: { type: Array as () => any[], default: () => [] },
-  allPurchases: { type: Array as () => any[], default: () => [] },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -150,13 +92,11 @@ const dialog = computed({
 })
 
 // ── State ──────────────────────────────────────────────────────────────────────
-const drillStack     = ref<DrillEntry[]>([])   // navigation history
-const curSubsidyId   = ref<number | null>(null)
-const curNodeId      = ref<number | null>(null)
-const curLeafNodeId  = ref<number | null>(null)  // set when at leaf-purchases level
-const dashTree       = ref<any[]>([])            // dashboard categories roots
-const loading        = ref(false)
-const xlsxLoading    = ref(false)
+const drillStack = ref<DrillEntry[]>([])   // navigation history
+const curSubsidyId = ref<number | null>(null)
+const curNodeId    = ref<number | null>(null)
+const dashTree     = ref<any[]>([])        // dashboard categories roots
+const loading      = ref(false)
 
 // ── Load dashboard tree ─────────────────────────────────────────────────────
 async function loadTree() {
@@ -242,13 +182,7 @@ function handleBarClick(event: any, _ctx: any, config: any) {
   }
 
   const raw = item._raw
-  if (!raw?.children?.length) {
-    // leaf node — show purchases of this feo_category_id
-    drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
-    curNodeId.value    = raw.id
-    curLeafNodeId.value = raw.id
-    return
-  }
+  if (!raw?.children?.length) return  // leaf node, no drill
   drillStack.value.push({ subsidyId: curSubsidyId.value, nodeId: curNodeId.value })
   curNodeId.value = raw.id
 }
@@ -256,12 +190,8 @@ function handleBarClick(event: any, _ctx: any, config: any) {
 function goBack() {
   const prev = drillStack.value.pop()
   if (!prev) return
-  curSubsidyId.value  = prev.subsidyId
-  curNodeId.value     = prev.nodeId
-  // if we were at leaf level, going back means leaving purchases view
-  if (curLeafNodeId.value !== null) {
-    curLeafNodeId.value = null
-  }
+  curSubsidyId.value = prev.subsidyId
+  curNodeId.value    = prev.nodeId
 }
 
 // ── Chart config ────────────────────────────────────────────────────────────
@@ -368,110 +298,11 @@ const breadcrumb = computed(() => {
 
 const hint = computed(() => {
   if (drillStack.value.length === 0) return 'Нажмите на столбец субсидии для детализации по ФЭО категориям'
-  if (isLeafPurchasesView.value) return 'Нажмите на строку для перехода к закупке'
   const hasChildren = chartItems.value.some(i => i._raw?.children?.length > 0)
   return hasChildren
     ? 'Нажмите на столбец категории для перехода на следующий уровень'
-    : 'Нажмите на категорию для просмотра закупок'
+    : 'Последний уровень детализации'
 })
-
-// ── Leaf purchases view ───────────────────────────────────────────────────────
-const isLeafPurchasesView = computed(() => curLeafNodeId.value !== null)
-
-const leafPurchases = computed(() => {
-  if (curLeafNodeId.value === null) return []
-  return (props.allPurchases as any[]).filter(
-    (p: any) => p.feo_category_id === curLeafNodeId.value
-  )
-})
-
-const PURCHASE_STATUS_LABELS: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  planned: 'Планируется', confirmed: 'Подтверждено',
-  in_progress: 'В работе', work_in_progress: 'В работе',
-  contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
-}
-const PURCHASE_STATUS_VUETIFY: Record<string, string> = {
-  planned: 'grey', confirmed: 'primary', in_progress: 'teal', work_in_progress: 'teal',
-  contracted: 'indigo', ordered: 'light-blue', delivered: 'deep-purple', paid: 'success',
-  plan_schedule: 'warning',
-}
-
-function purchaseStatusLabel(s: string): string { return PURCHASE_STATUS_LABELS[s] || s }
-function purchaseStatusColor(s: string): string { return PURCHASE_STATUS_VUETIFY[s] || 'grey' }
-
-function purchaseEffectivePrice(p: any): number {
-  const status = p.status
-  if (status === 'paid')       return parseFloat(p.payment_amount || 0)
-  if (status === 'delivered')  return parseFloat(p.acceptance_doc_amount || 0)
-  if (status === 'ordered')    return parseFloat(p.contract_price || p.delivery_payment_amount || 0)
-  if (status === 'contracted') {
-    const isFramework = p.purchase_contract_type === 'framework_cumulative' ||
-                        p.purchase_contract_type === 'framework_with_amount'
-    if (isFramework) return parseFloat(p.acceptance_doc_amount || p.delivery_payment_amount || 0)
-    return p.purchase_method === 'single'
-      ? parseFloat(p.contract_price || 0)
-      : parseFloat(p.delivery_payment_amount || 0)
-  }
-  return parseFloat(p.total_nmck || p.planned_total_price || 0)
-}
-
-function handleLeafPurchaseClick(id: number) {
-  dialog.value = false
-  router.push(`/orders/${id}/edit`)
-}
-
-function fmtDate(iso: string): string {
-  if (!iso) return '—'
-  const parts = iso.split('-')
-  if (parts.length !== 3) return iso
-  return `${parts[2]}.${parts[1]}.${parts[0]}`
-}
-
-// ── Excel export ──────────────────────────────────────────────────────────────
-async function exportXlsx() {
-  xlsxLoading.value = true
-  try {
-    const XLSX = await import('xlsx')
-    let rows: any[]
-    let sheetName: string
-
-    if (isLeafPurchasesView.value) {
-      // Export leaf purchases
-      rows = leafPurchases.value.map((p: any) => ({
-        '№': p.purchase_number || p.id,
-        'Предмет закупки': p.subject || p.item_name || '',
-        'Сумма': purchaseEffectivePrice(p),
-        'Контрагент': p.contractor_name || '',
-        'Статус': PURCHASE_STATUS_LABELS[p.status] || p.status,
-        '№ договора': p.contract_number || '',
-        'Дата договора': fmtDate(p.contract_date),
-      }))
-      const leafNode = findNode(curLeafNodeId.value!)
-      sheetName = (leafNode?.name || 'Категория').slice(0, 31)
-    } else {
-      // Export categories at current chart level
-      rows = chartItems.value.map(i => ({
-        'Категория': i.name,
-        'НМЦД': Math.round(i.planned),
-        'Законтрактовано': Math.round(i.contracted),
-        'Оплачено': Math.round(i.paid),
-        ...(i.budget > 0 ? { 'Бюджет': Math.round(i.budget) } : {}),
-      }))
-      sheetName = dialogTitle.value.slice(0, 31)
-    }
-
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, sheetName)
-    const fname = `budget_drill_${new Date().toISOString().slice(0, 10)}.xlsx`
-    XLSX.writeFile(wb, fname)
-  } catch (e: any) {
-    console.error('Excel export error', e)
-  } finally {
-    xlsxLoading.value = false
-  }
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtMoney(v: number): string {
@@ -491,10 +322,9 @@ function truncate(s: string, n: number): string {
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 watch(() => props.modelValue, (v) => {
   if (v) {
-    drillStack.value     = []
-    curSubsidyId.value   = null
-    curNodeId.value      = null
-    curLeafNodeId.value  = null
+    drillStack.value    = []
+    curSubsidyId.value  = null
+    curNodeId.value     = null
     loadTree()
   }
 })

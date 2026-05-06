@@ -100,6 +100,9 @@ class Purchase(Base):
     # Ссылка на родительскую закупку — если эту создали разбиением другой
     parent_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
 
+    # Авансовый отчёт: кому возмещать (сотрудник)
+    reimbursement_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки
@@ -115,6 +118,7 @@ class Purchase(Base):
     contract = relationship("Contract", back_populates="purchases")
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
     service_note_author = relationship("User", foreign_keys=[service_note_by])
+    reimbursement_user = relationship("User", foreign_keys=[reimbursement_user_id])
     event = relationship("Event")
     total_nmck = Column(Numeric(15, 2))
     items = relationship("PurchaseItem", back_populates="purchase",

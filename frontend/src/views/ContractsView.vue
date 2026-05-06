@@ -149,13 +149,20 @@
         <span class="text-caption">{{ item.purchase_method ? purchaseMethodLabel(item.purchase_method) : '—' }}</span>
       </template>
       <template #item.contractor_name="{ item }">
-        <div>{{ item.contractor_name || '—' }}</div>
-        <div v-if="item.contractor_inn" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
-        <div v-if="!item.contractor_name || !item.signing_date || !item.max_amount" class="d-flex flex-wrap ga-1 mt-1">
-          <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
-          <v-chip v-if="!item.signing_date" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Дата</v-chip>
-          <v-chip v-if="!item.max_amount" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub">Сумма</v-chip>
-        </div>
+        <template v-if="(item as any)._is_advance_report && (item as any).reimbursement_user_name">
+          <v-chip size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
+            {{ (item as any).reimbursement_user_name }}
+          </v-chip>
+        </template>
+        <template v-else>
+          <div>{{ item.contractor_name || '—' }}</div>
+          <div v-if="item.contractor_inn" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
+          <div v-if="!item.contractor_name || !item.signing_date || !item.max_amount" class="d-flex flex-wrap ga-1 mt-1">
+            <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
+            <v-chip v-if="!item.signing_date" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Дата</v-chip>
+            <v-chip v-if="!item.max_amount" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub">Сумма</v-chip>
+          </div>
+        </template>
       </template>
       <template #item.max_amount="{ item }">
         {{ item.max_amount ? formatMoney(item.max_amount) : '—' }}
@@ -593,6 +600,8 @@ interface Contract {
   contractor_id?: number
   contractor_name?: string
   contractor_inn?: string
+  reimbursement_user_id?: number | null
+  reimbursement_user_name?: string | null
   subsidy_id?: number
   subsidy_name?: string
   extra_subsidies?: ContractSubsidyItem[]
@@ -1077,6 +1086,8 @@ const loadContracts = async () => {
       status: p.status,
       _is_advance_report: true,
       _purchase_id: p.id,
+      reimbursement_user_id: p.reimbursement_user_id,
+      reimbursement_user_name: p.reimbursement_user_name,
     }))
     contracts.value = [...contractsData, ...arAsContracts]
   } catch {

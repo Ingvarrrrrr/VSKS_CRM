@@ -59,7 +59,7 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
     )
 
 
-def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None) -> PurchaseOutFull:
+def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     items = [_item_to_out(i) for i in (p.items or [])]
     files = [
@@ -100,6 +100,7 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         event_name=p.event.name if p.event else None,
         subsidy_allocations=alloc_out,
         last_receipt_date=(receipt_map or {}).get(p.id),
+        reimbursement_user_name=(ru_map or {}).get(p.reimbursement_user_id),
     )
 
 
@@ -267,6 +268,13 @@ async def list_purchases(
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
 
+    # Batch-fetch reimbursement user names
+    ru_ids = [p.reimbursement_user_id for p in purchases if p.reimbursement_user_id]
+    ru_map: dict = {}
+    if ru_ids:
+        res = await db.execute(select(User.id, User.full_name).where(User.id.in_(ru_ids)))
+        ru_map = {uid: name for uid, name in res.all()}
+
     # Batch-fetch last receipt date for advance purchases
     from app.models.purchase_receipt import PurchaseReceipt
     adv_ids = [p.id for p in purchases if p.purchase_method == 'advance']
@@ -279,7 +287,7 @@ async def list_purchases(
         )
         receipt_map = {pid: dt for pid, dt in res.all()}
 
-    return [_purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map) for p in purchases]
+    return [_purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map) for p in purchases]
 
 
 @router.get("/my-tasks")
@@ -397,6 +405,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
             selectinload(Purchase.items).selectinload(PurchaseItem.product),
             selectinload(Purchase.files),
             selectinload(Purchase.event),
+            selectinload(Purchase.reimbursement_user),
         )
         .where(Purchase.id == pid)
     )
@@ -413,7 +422,10 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
         .where(PurchaseSubsidyAllocation.purchase_id == pid)
     )
     allocations = alloc_r.scalars().all()
-    return _purchase_to_full(p, contractors, subsidies, allocations=allocations)
+    single_ru_map: dict = {}
+    if p.reimbursement_user_id and p.reimbursement_user:
+        single_ru_map = {p.reimbursement_user_id: p.reimbursement_user.full_name}
+    return _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map)
 
 
 @router.post("/", response_model=PurchaseOut)
@@ -645,6 +657,8 @@ PATCHABLE_FIELDS = {
     "event_id", "delivery_location_kind",
     # Phase 24: stages + financial plan
     "is_likely_needed", "is_prepayment", "prepayment_date", "stage_label",
+    # Авансовый отчёт: кому возмещать
+    "reimbursement_user_id",
 }
 
 

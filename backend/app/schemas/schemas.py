@@ -479,6 +479,7 @@ class PurchaseCreate(BaseModel):
     service_term_days: Optional[int] = None         # mode='duration'
     service_term_type: Optional[str] = None         # 'calendar' | 'working' (mode='duration')
     service_deadline_date: Optional[date] = None    # mode='deadline'
+    reimbursement_user_id: Optional[int] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -568,6 +569,7 @@ class PurchaseUpdate(BaseModel):
     service_term_days: Optional[int] = None
     service_term_type: Optional[str] = None
     service_deadline_date: Optional[date] = None
+    reimbursement_user_id: Optional[int] = None
 
 
 class PurchaseOut(PurchaseCreate):
@@ -584,6 +586,7 @@ class PurchaseOutFull(PurchaseOut):
     subsidy_name: Optional[str] = None
     event_name: Optional[str] = None
     last_receipt_date: Optional[datetime] = None
+    reimbursement_user_name: Optional[str] = None
 
 # Payment
 class PaymentCreate(BaseModel):

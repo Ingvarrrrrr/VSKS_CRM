@@ -229,7 +229,10 @@
         <!-- Контрагент / Подотчётное лицо -->
         <template #item.contractor_name="{ item }">
           <template v-if="item.purchase_method === 'advance'">
-            <div class="text-body-2 text-truncate" style="max-width:160px">
+            <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
+              {{ item.reimbursement_user_name }}
+            </v-chip>
+            <div v-else class="text-body-2 text-truncate" style="max-width:160px">
               <v-icon size="x-small" color="purple" class="mr-1">mdi-account-cash</v-icon>
               {{ advancePersonLabel(item) }}
             </div>
@@ -643,6 +646,8 @@ interface Purchase {
   item_name?: string
   contractor_id?: number
   contractor_name?: string
+  reimbursement_user_id?: number | null
+  reimbursement_user_name?: string | null
   feo_category_name?: string
   feo_category_id?: number
   subsidy_name?: string

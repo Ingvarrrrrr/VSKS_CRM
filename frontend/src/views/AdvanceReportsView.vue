@@ -96,6 +96,10 @@
           <span class="text-caption">{{ item.contractor_name || '—' }}</span>
         </template>
 
+        <template #item.reimbursement_user_name="{ item }">
+          <span class="text-caption">{{ item.reimbursement_user_name || '—' }}</span>
+        </template>
+
         <template #item.subsidy_name="{ item }">
           <span class="text-caption">{{ item.subsidy_name || '—' }}</span>
         </template>
@@ -193,6 +197,8 @@ interface Purchase {
   contractor_id?: number
   contractor_name?: string
   contractor_inn?: string
+  reimbursement_user_id?: number | null
+  reimbursement_user_name?: string | null
   items?: any[]
 }
 
@@ -248,6 +254,7 @@ const headers = [
   { title: '№', key: 'index', width: 55, sortable: false },
   { title: 'Наименование', key: 'displayName', minWidth: 240 },
   { title: 'Контрагент', key: 'contractor_name', minWidth: 200 },
+  { title: 'Кому возмещать', key: 'reimbursement_user_name', minWidth: 180 },
   { title: 'Субсидия', key: 'subsidy_name', width: 160 },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end' as const },
   { title: 'Дата исполнения', key: 'executionDate', width: 140 },

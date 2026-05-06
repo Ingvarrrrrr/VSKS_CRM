@@ -196,6 +196,16 @@
                 prepend-inner-icon="mdi-file-document-outline"
               />
             </v-col>
+            <v-col v-if="formMode === 'advance_report' || form.purchase_method === 'advance'" cols="12" md="4">
+              <v-autocomplete
+                v-model="form.reimbursement_user_id"
+                :items="reimbursementUserOptions"
+                item-title="full_name"
+                item-value="id"
+                label="Кому возмещать"
+                variant="outlined" density="compact" clearable hide-details
+              />
+            </v-col>
             <v-col v-if="!(formMode === 'advance_report' && isNew)" cols="12" md="4">
               <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
                 variant="outlined" density="compact"
@@ -3027,6 +3037,8 @@ const form = reactive({
   is_prepayment: false as boolean,
   prepayment_date: '' as string,
   stage_label: '' as string,
+  // Авансовый отчёт: кому возмещать
+  reimbursement_user_id: null as number | null,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3387,6 +3399,9 @@ async function loadOrgUsers() {
       .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
   } catch { orgUsersList.value = [] }
 }
+
+// Кому возмещать — список сотрудников из orgUsersList
+const reimbursementUserOptions = computed(() => orgUsersList.value)
 
 // ── Delivery address autocomplete ──
 const deliveryAddressSuggestions = ref<string[]>([])
@@ -4920,6 +4935,7 @@ const loadPurchase = async () => {
     prepayment_date: data.prepayment_date || '',
     stage_label: data.stage_label || '',
     event_id: data.event_id ?? null,
+    reimbursement_user_id: data.reimbursement_user_id ?? null,
     approval_status: data.approval_status ?? null,
     approval_mode: data.approval_mode ?? null,
     country_origin: data.country_origin || '',

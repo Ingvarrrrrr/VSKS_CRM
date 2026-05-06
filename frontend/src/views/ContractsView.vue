@@ -893,19 +893,21 @@ const usedSubsidies = computed(() => {
   const ids = new Set(contracts.value.map(c => c.subsidy_id).filter(Boolean))
   return subsidies.value.filter(s => ids.has(s.id))
 })
+// Дедуп по имени контрагента — для авансовых contractor_id часто пуст,
+// заполнено только contractor_name (через JOIN на бэке).
 const usedContractors = computed(() => {
-  const ids = new Set<number>()
-  for (const c of contracts.value) {
-    if (c.contractor_id) ids.add(c.contractor_id)
-  }
-  // Авансовые отчёты — contractor_inn → найти по ИНН
+  const byName = new Map<string, any>()
   for (const c of contracts.value as any[]) {
-    if (c._is_advance_report && c.contractor_inn) {
-      const m = contractors.value.find(x => x.inn === c.contractor_inn)
-      if (m) ids.add(m.id)
-    }
+    const name = c.contractor_name
+    if (!name || byName.has(name)) continue
+    const real = contractors.value.find(x =>
+      (c.contractor_id && x.id === c.contractor_id) ||
+      (c.contractor_inn && x.inn === c.contractor_inn) ||
+      x.name === name
+    )
+    byName.set(name, real || { id: -byName.size - 1, name, inn: c.contractor_inn || '' })
   }
-  return contractors.value.filter(c => ids.has(c.id))
+  return Array.from(byName.values())
 })
 const usedContractTypes = computed(() => {
   const types = new Set(contracts.value.map(c => c.contract_type))
@@ -969,15 +971,14 @@ const filtered = computed(() => {
   if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
   if (fMethod.value.length)     list = list.filter(c => c.purchase_method != null && fMethod.value.includes(c.purchase_method))
   if (fStatus.value.length)     list = list.filter(c => c.status != null && fStatus.value.includes(c.status))
-  if (fContractor.value.length) list = list.filter(c => {
-    if (c.contractor_id != null && fContractor.value.includes(c.contractor_id)) return true
-    // fallback для авансовых, у которых contractor_id отсутствует
-    if ((c as any)._is_advance_report && (c as any).contractor_inn) {
-      const m = contractors.value.find(x => x.inn === (c as any).contractor_inn)
-      return m ? fContractor.value.includes(m.id) : false
-    }
-    return false
-  })
+  if (fContractor.value.length) {
+    const allowedNames = new Set(
+      usedContractors.value
+        .filter((x: any) => fContractor.value.includes(x.id))
+        .map((x: any) => x.name)
+    )
+    list = list.filter(c => !!c.contractor_name && allowedNames.has(c.contractor_name))
+  }
   if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
   // Product filter

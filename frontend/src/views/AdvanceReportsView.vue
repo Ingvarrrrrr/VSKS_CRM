@@ -254,19 +254,20 @@ const headers = [
   { title: 'Статус', key: 'status', width: 130 },
 ]
 
+// Дедуп по имени контрагента — у авансовых contractor_id часто пуст, есть только contractor_name.
 const usedContractors = computed(() => {
-  const ids = new Set<number>()
+  const byName = new Map<string, any>()
   for (const p of items.value) {
-    if (p.contractor_id) ids.add(p.contractor_id)
+    const name = p.contractor_name
+    if (!name || byName.has(name)) continue
+    const real = contractors.value.find(c =>
+      (p.contractor_id && c.id === p.contractor_id) ||
+      (p.contractor_inn && c.inn === p.contractor_inn) ||
+      c.name === name
+    )
+    byName.set(name, real || { id: -byName.size - 1, name, inn: p.contractor_inn || '' })
   }
-  // fallback по ИНН
-  for (const p of items.value) {
-    if (!p.contractor_id && p.contractor_inn) {
-      const m = contractors.value.find(x => x.inn === p.contractor_inn)
-      if (m) ids.add(m.id)
-    }
-  }
-  return contractors.value.filter(c => ids.has(c.id))
+  return Array.from(byName.values())
 })
 
 const enrichedItems = computed(() => items.value.map(p => ({
@@ -279,14 +280,14 @@ const filteredItems = computed(() => {
   let r = enrichedItems.value
   if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
   if (filterSubsidyId.value) r = r.filter(p => p.subsidy_id === filterSubsidyId.value)
-  if (filterContractorIds.value.length) r = r.filter(p => {
-    if (p.contractor_id != null && filterContractorIds.value.includes(p.contractor_id)) return true
-    if (!p.contractor_id && p.contractor_inn) {
-      const m = contractors.value.find(x => x.inn === p.contractor_inn)
-      return m ? filterContractorIds.value.includes(m.id) : false
-    }
-    return false
-  })
+  if (filterContractorIds.value.length) {
+    const allowedNames = new Set(
+      usedContractors.value
+        .filter((c: any) => filterContractorIds.value.includes(c.id))
+        .map((c: any) => c.name)
+    )
+    r = r.filter(p => !!p.contractor_name && allowedNames.has(p.contractor_name))
+  }
   return r
 })
 

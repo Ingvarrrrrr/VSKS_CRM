@@ -268,7 +268,7 @@
                 v-if="deliveredNotPaid.amount > 0"
                 class="pipeline-row"
                 style="background: rgba(239,68,68,0.06); border-radius:6px; margin-top:6px"
-                @click="onPipelineClick('delivered')"
+                @click="onDeliveredNotPaidClick"
               >
                 <div class="pipeline-label">
                   <span class="pipeline-dot" style="background:#EF4444" />
@@ -804,7 +804,7 @@
       <v-card>
         <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
           <v-icon :icon="'mdi-cart-outline'" :color="STATUS_COLORS[statusDrillStatus] || 'grey'" />
-          {{ STATUS_LABELS[statusDrillStatus] || statusDrillStatus }}
+          {{ STATUS_LABELS[statusDrillStatus] || statusDrillStatus }}<span v-if="statusDrillStatuses.length > 1" class="text-medium-emphasis">&nbsp;(и далее)</span>
           <v-chip size="x-small" variant="tonal" class="ml-1">{{ statusDrillPurchases.length }} шт.</v-chip>
         </v-card-title>
         <v-card-text class="pa-0">
@@ -1130,6 +1130,9 @@ const drillDialogSubsidies = ref<any[]>([])
 // Status pie drill-down
 const statusDrillDialog = ref(false)
 const statusDrillStatus = ref('')
+// Если задан — drill cumulative (пр. pipeline бар Заказано → ordered+delivered+paid).
+// Если пуст — drill exact по statusDrillStatus (pie chart по статусам).
+const statusDrillStatuses = ref<string[]>([])
 
 // Excel export для status drill-down (клиентский — использует список из computed).
 async function exportStatusDrillXlsx() {
@@ -1158,9 +1161,12 @@ async function exportStatusDrillXlsx() {
 
 const statusDrillPurchases = computed(() => {
   const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const cumulative = statusDrillStatuses.value
+  const exact = statusDrillStatus.value
   return allPurchases.value.filter((p: any) => {
     if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    return p.status === statusDrillStatus.value
+    if (cumulative.length > 0) return cumulative.includes(p.status)
+    return p.status === exact
   })
 })
 
@@ -1371,6 +1377,7 @@ const statusPieForComponent = computed(() =>
 )
 const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
 function onPieSliceClick(status: string) {
+  statusDrillStatuses.value = []   // exact mode
   statusDrillStatus.value = status
   statusDrillDialog.value = true
 }
@@ -1414,7 +1421,17 @@ const deliveredNotPaid = computed(() => {
   }
 })
 function onPipelineClick(status: string) {
+  // Cumulative: Заказано → ordered+delivered+paid и т.д. (соответствует тому что показывает бар).
+  const idx = PIPELINE_ORDER.indexOf(status)
+  statusDrillStatuses.value = idx >= 0 ? PIPELINE_ORDER.slice(idx) : []
   statusDrillStatus.value = status
+  statusDrillDialog.value = true
+}
+
+// Точный фильтр для метрики «Поставлено, не оплачено».
+function onDeliveredNotPaidClick() {
+  statusDrillStatuses.value = []   // exact mode
+  statusDrillStatus.value = 'delivered'
   statusDrillDialog.value = true
 }
 
@@ -1689,22 +1706,42 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
+// Возвращает первое значение > 0 (после parseFloat), иначе 0.
+function pickPositive(...vals: any[]): number {
+  for (const v of vals) {
+    const n = parseFloat(v || 0)
+    if (n > 0) return n
+  }
+  return 0
+}
+
 function purchaseEffectivePrice(p: any): number {
   const status = p.status
-  if (status === 'paid') return parseFloat(p.payment_amount || 0)
-  if (status === 'delivered') return parseFloat(p.acceptance_doc_amount || 0)
-  if (status === 'ordered') return parseFloat(p.contract_price || p.delivery_payment_amount || 0)
+  if (status === 'paid') {
+    return pickPositive(p.payment_amount, p.delivery_payment_amount,
+      p.acceptance_doc_amount, p.contract_price, p.planned_total_price)
+  }
+  if (status === 'delivered') {
+    return pickPositive(p.acceptance_doc_amount, p.delivery_payment_amount,
+      p.contract_price, p.planned_total_price)
+  }
+  if (status === 'ordered') {
+    return pickPositive(p.contract_price, p.delivery_payment_amount,
+      p.acceptance_doc_amount, p.planned_total_price)
+  }
   if (status === 'contracted') {
     const isFramework = p.purchase_contract_type === 'framework_cumulative' ||
                         p.purchase_contract_type === 'framework_with_amount'
     if (isFramework) {
-      return parseFloat(p.acceptance_doc_amount || p.delivery_payment_amount || 0)
+      return pickPositive(p.acceptance_doc_amount, p.delivery_payment_amount,
+        p.contract_price, p.planned_total_price)
     }
-    return p.purchase_method === 'single'
-      ? parseFloat(p.contract_price || 0)
-      : parseFloat(p.delivery_payment_amount || 0)
+    if (p.purchase_method === 'single') {
+      return pickPositive(p.contract_price, p.delivery_payment_amount, p.planned_total_price)
+    }
+    return pickPositive(p.delivery_payment_amount, p.contract_price, p.planned_total_price)
   }
-  return parseFloat(p.total_nmck || p.planned_total_price || 0)
+  return pickPositive(p.total_nmck, p.planned_total_price, p.contract_price)
 }
 
 function statusLabel(s: string): string {

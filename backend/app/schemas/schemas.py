@@ -579,9 +579,11 @@ class PurchaseOut(PurchaseCreate):
 
 class PurchaseOutFull(PurchaseOut):
     contractor_name: Optional[str] = None
+    contractor_inn: Optional[str] = None
     feo_category_name: Optional[str] = None
     subsidy_name: Optional[str] = None
     event_name: Optional[str] = None
+    last_receipt_date: Optional[datetime] = None
 
 # Payment
 class PaymentCreate(BaseModel):

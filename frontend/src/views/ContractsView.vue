@@ -894,7 +894,17 @@ const usedSubsidies = computed(() => {
   return subsidies.value.filter(s => ids.has(s.id))
 })
 const usedContractors = computed(() => {
-  const ids = new Set(contracts.value.map(c => c.contractor_id).filter(Boolean))
+  const ids = new Set<number>()
+  for (const c of contracts.value) {
+    if (c.contractor_id) ids.add(c.contractor_id)
+  }
+  // Авансовые отчёты — contractor_inn → найти по ИНН
+  for (const c of contracts.value as any[]) {
+    if (c._is_advance_report && c.contractor_inn) {
+      const m = contractors.value.find(x => x.inn === c.contractor_inn)
+      if (m) ids.add(m.id)
+    }
+  }
   return contractors.value.filter(c => ids.has(c.id))
 })
 const usedContractTypes = computed(() => {
@@ -959,7 +969,15 @@ const filtered = computed(() => {
   if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
   if (fMethod.value.length)     list = list.filter(c => c.purchase_method != null && fMethod.value.includes(c.purchase_method))
   if (fStatus.value.length)     list = list.filter(c => c.status != null && fStatus.value.includes(c.status))
-  if (fContractor.value.length) list = list.filter(c => c.contractor_id != null && fContractor.value.includes(c.contractor_id))
+  if (fContractor.value.length) list = list.filter(c => {
+    if (c.contractor_id != null && fContractor.value.includes(c.contractor_id)) return true
+    // fallback для авансовых, у которых contractor_id отсутствует
+    if ((c as any)._is_advance_report && (c as any).contractor_inn) {
+      const m = contractors.value.find(x => x.inn === (c as any).contractor_inn)
+      return m ? fContractor.value.includes(m.id) : false
+    }
+    return false
+  })
   if (fDateFrom.value)          list = list.filter(c => !c.date || c.date >= fDateFrom.value)
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
   // Product filter
@@ -1071,6 +1089,13 @@ const loadSubsidies = async () => { subsidies.value = await apiFetch<Subsidy[]>(
 const loadContractors = async () => { contractors.value = await apiFetch<Contractor[]>('/contractors/') }
 
 const loadPurchasesForContract = async (contractId: number) => {
+  const c = contracts.value.find(x => x.id === contractId) as any
+  if (c?._is_advance_report) {
+    // Авансовый отчёт = одна Purchase. Грузим её items напрямую.
+    const p = await apiFetch<Purchase>(`/purchases/${c._purchase_id}`)
+    purchasesByContract.value = { ...purchasesByContract.value, [contractId]: [p] }
+    return
+  }
   const items = await apiFetch<Purchase[]>(`/purchases/by-contract/${contractId}`)
   purchasesByContract.value = { ...purchasesByContract.value, [contractId]: items }
 }

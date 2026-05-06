@@ -59,7 +59,7 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
     )
 
 
-def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None) -> PurchaseOutFull:
+def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     items = [_item_to_out(i) for i in (p.items or [])]
     files = [
@@ -94,10 +94,12 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         items=items,
         files=files,
         contractor_name=contractors.get(p.contractor_id),
+        contractor_inn=(contractor_inns or {}).get(p.contractor_id),
         feo_category_name=p.feo_category.name if p.feo_category else None,
         subsidy_name=subsidies.get(p.subsidy_id),
         event_name=p.event.name if p.event else None,
         subsidy_allocations=alloc_out,
+        last_receipt_date=(receipt_map or {}).get(p.id),
     )
 
 
@@ -259,11 +261,25 @@ async def list_purchases(
     purchases = result.scalars().all()
 
     contractors_r = await db.execute(select(Contractor))
-    contractors = {c.id: c.name for c in contractors_r.scalars().all()}
+    contractors_list = contractors_r.scalars().all()
+    contractors = {c.id: c.name for c in contractors_list}
+    contractor_inns = {c.id: c.inn for c in contractors_list}
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
 
-    return [_purchase_to_full(p, contractors, subsidies) for p in purchases]
+    # Batch-fetch last receipt date for advance purchases
+    from app.models.purchase_receipt import PurchaseReceipt
+    adv_ids = [p.id for p in purchases if p.purchase_method == 'advance']
+    receipt_map: dict = {}
+    if adv_ids:
+        res = await db.execute(
+            select(PurchaseReceipt.purchase_id, func.max(PurchaseReceipt.receipt_datetime))
+            .where(PurchaseReceipt.purchase_id.in_(adv_ids))
+            .group_by(PurchaseReceipt.purchase_id)
+        )
+        receipt_map = {pid: dt for pid, dt in res.all()}
+
+    return [_purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map) for p in purchases]
 
 
 @router.get("/my-tasks")

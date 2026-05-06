@@ -3,7 +3,7 @@
     <div class="d-flex align-center justify-space-between mb-6">
       <div>
         <h1 class="text-h5 font-weight-bold">Авансовые отчёты</h1>
-        <span class="text-body-2 text-medium-emphasis">{{ filteredItems.length }} записей</span>
+        <span class="text-body-2 text-medium-emphasis">{{ enrichedItems.length }} записей</span>
       </div>
       <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
     </div>
@@ -23,17 +23,20 @@
             hide-details
             style="min-width:220px"
           />
-          <v-select
-            v-model="filterStatus"
-            :items="statusItems"
-            item-title="label"
-            item-value="value"
-            label="Статус"
+          <v-autocomplete
+            v-model="filterContractorIds"
+            :items="usedContractors"
+            item-title="name"
+            item-value="id"
+            label="Контрагент"
             variant="outlined"
             density="compact"
+            multiple
+            chips
+            closable-chips
             clearable
             hide-details
-            style="min-width:170px"
+            style="min-width:220px"
           />
           <v-text-field
             v-model="search"
@@ -45,6 +48,7 @@
             hide-details
             style="min-width:200px"
           />
+          <v-btn size="small" variant="tonal" @click="clearFilters">Сбросить</v-btn>
         </div>
       </v-card-text>
     </v-card>
@@ -65,19 +69,35 @@
 
     <v-card variant="outlined">
       <v-data-table
+        v-model="selected"
+        v-model:expanded="expandedRows"
         :headers="headers"
         :items="filteredItems"
         :loading="loading"
         :search="search"
+        show-select
+        show-expand
+        :single-expand="false"
         density="compact"
         hover
         items-per-page="25"
         :items-per-page-options="[25, 50, 100, -1]"
-        @click:row="(_e: any, { item }: any) => $router.push(`/advance-reports/${item.id}/edit`)"
-        style="cursor:pointer"
+        item-value="id"
       >
         <template #item.index="{ index }">
           <span class="text-medium-emphasis text-caption">{{ index + 1 }}</span>
+        </template>
+
+        <template #item.displayName="{ item }">
+          <span>{{ item.displayName }}</span>
+        </template>
+
+        <template #item.contractor_name="{ item }">
+          <span class="text-caption">{{ item.contractor_name || '—' }}</span>
+        </template>
+
+        <template #item.subsidy_name="{ item }">
+          <span class="text-caption">{{ item.subsidy_name || '—' }}</span>
         </template>
 
         <template #item.status="{ item }">
@@ -90,8 +110,49 @@
           {{ formatMoney(item.total_nmck ?? item.planned_total_price) }}
         </template>
 
-        <template #item.delivery_date="{ item }">
-          {{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}
+        <template #item.executionDate="{ item }">
+          {{ item.executionDate ? new Date(item.executionDate).toLocaleDateString('ru-RU') : '—' }}
+        </template>
+
+        <!-- Expanded row: состав (items + receipts info) -->
+        <template #expanded-row="{ columns, item }">
+          <tr>
+            <td :colspan="columns.length" class="pa-0">
+              <div class="pa-3 bg-grey-lighten-5">
+                <div class="text-caption font-weight-medium text-medium-emphasis mb-2">
+                  Состав авансового отчёта #{{ item.purchase_number || item.id }}
+                </div>
+                <div v-if="!item.items || !item.items.length" class="text-caption text-medium-emphasis">
+                  Нет позиций
+                </div>
+                <v-table v-else density="compact">
+                  <thead>
+                    <tr>
+                      <th>Наименование</th>
+                      <th class="text-right">Кол-во</th>
+                      <th class="text-right">Цена ед.</th>
+                      <th class="text-right">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(pi, ii) in item.items" :key="ii">
+                      <td class="text-caption">{{ pi.item_name || '—' }}</td>
+                      <td class="text-right text-caption">{{ pi.quantity ?? '—' }}</td>
+                      <td class="text-right text-caption">{{ pi.unit_price ? formatMoney(pi.unit_price) : '—' }}</td>
+                      <td class="text-right text-caption">{{ pi.total_price ? formatMoney(pi.total_price) : '—' }}</td>
+                    </tr>
+                    <tr class="font-weight-bold">
+                      <td colspan="3" class="text-right text-caption">Итого:</td>
+                      <td class="text-right text-caption">{{ formatMoney((item.items as any[]).reduce((s: number, i: any) => s + (Number(i.total_price) || 0), 0)) }}</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+                <div v-if="item.last_receipt_date" class="text-caption text-medium-emphasis mt-2">
+                  Последний чек: {{ new Date(item.last_receipt_date).toLocaleDateString('ru-RU') }}
+                </div>
+              </div>
+            </td>
+          </tr>
         </template>
 
         <template #no-data>
@@ -121,22 +182,35 @@ interface Purchase {
   item_name?: string
   subject?: string
   subsidy_id?: number
+  subsidy_name?: string
   total_nmck?: number
   planned_total_price?: number
   delivery_date?: string
+  acceptance_doc_date?: string
+  last_receipt_date?: string
   purchase_method?: string
   purchase_contract_type?: string
+  contractor_id?: number
+  contractor_name?: string
+  contractor_inn?: string
+  items?: any[]
 }
-const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 
 interface Subsidy { id: number; name: string }
+interface Contractor { id: number; name: string; inn?: string }
+
+const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 
 const items = ref<Purchase[]>([])
 const subsidies = ref<Subsidy[]>([])
+const contractors = ref<Contractor[]>([])
 const loading = ref(false)
 const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
+const filterContractorIds = ref<number[]>([])
 const search = ref('')
+const selected = ref<number[]>([])
+const expandedRows = ref<number[]>([])
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 
@@ -161,26 +235,79 @@ const statusLabel = (s: string, item?: Purchase) => {
 const statusColor = (s: string) => STATUS_COLOR[s] || 'grey'
 const formatMoney = (v?: number | null) => v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
 
+function pickDate(...dates: (string | undefined | null)[]): string | null {
+  for (const d of dates) {
+    if (d) return d
+  }
+  return null
+}
+
 const headers = [
+  { title: '', key: 'data-table-select', width: 40 },
+  { title: '', key: 'data-table-expand', width: 40 },
   { title: '№', key: 'index', width: 55, sortable: false },
-  { title: 'Наименование', key: 'item_name', minWidth: 240 },
-  { title: 'Статус', key: 'status', width: 130 },
+  { title: 'Наименование', key: 'displayName', minWidth: 240 },
+  { title: 'Контрагент', key: 'contractor_name', minWidth: 200 },
+  { title: 'Субсидия', key: 'subsidy_name', width: 160 },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end' as const },
-  { title: 'Дата', key: 'delivery_date', width: 140 },
+  { title: 'Дата исполнения', key: 'executionDate', width: 140 },
+  { title: 'Статус', key: 'status', width: 130 },
 ]
 
+const usedContractors = computed(() => {
+  const ids = new Set<number>()
+  for (const p of items.value) {
+    if (p.contractor_id) ids.add(p.contractor_id)
+  }
+  // fallback по ИНН
+  for (const p of items.value) {
+    if (!p.contractor_id && p.contractor_inn) {
+      const m = contractors.value.find(x => x.inn === p.contractor_inn)
+      if (m) ids.add(m.id)
+    }
+  }
+  return contractors.value.filter(c => ids.has(c.id))
+})
+
+const enrichedItems = computed(() => items.value.map(p => ({
+  ...p,
+  displayName: p.subject || p.item_name || '—',
+  executionDate: pickDate(p.last_receipt_date, p.acceptance_doc_date, p.delivery_date),
+})))
+
 const filteredItems = computed(() => {
-  let r = items.value
+  let r = enrichedItems.value
   if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
   if (filterSubsidyId.value) r = r.filter(p => p.subsidy_id === filterSubsidyId.value)
+  if (filterContractorIds.value.length) r = r.filter(p => {
+    if (p.contractor_id != null && filterContractorIds.value.includes(p.contractor_id)) return true
+    if (!p.contractor_id && p.contractor_inn) {
+      const m = contractors.value.find(x => x.inn === p.contractor_inn)
+      return m ? filterContractorIds.value.includes(m.id) : false
+    }
+    return false
+  })
   return r
 })
+
+function clearFilters() {
+  filterStatus.value = ''
+  filterSubsidyId.value = null
+  filterContractorIds.value = []
+  search.value = ''
+}
 
 async function load() {
   loading.value = true
   try {
-    items.value = await apiFetch<Purchase[]>('/purchases/?purchase_method=advance')
-    subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
+    const [purchasesData, subsidiesData, contractorsData] = await Promise.all([
+      apiFetch<Purchase[]>('/purchases/?purchase_method=advance'),
+      apiFetch<Subsidy[]>('/subsidies/'),
+      apiFetch<Contractor[]>('/contractors/'),
+    ])
+    items.value = purchasesData
+    subsidies.value = subsidiesData
+    contractors.value = contractorsData
   } catch {
     snack.text = 'Ошибка загрузки'; snack.color = 'error'; snack.show = true
   } finally {

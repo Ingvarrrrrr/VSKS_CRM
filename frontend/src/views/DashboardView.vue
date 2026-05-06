@@ -241,47 +241,48 @@
                   <span class="pipeline-pct" :style="{ color: chartMuted }">100%</span>
                 </div>
               </div>
-              <div
-                v-for="stage in pipelineStages" :key="stage.status"
-                class="pipeline-row"
-                @click="onPipelineClick(stage.status)"
-              >
-                <div class="pipeline-label">
-                  <span class="pipeline-dot" :style="{ background: stage.color }" />
-                  {{ stage.label }}
+              <template v-for="stage in pipelineStages" :key="stage.status">
+                <div
+                  class="pipeline-row"
+                  @click="onPipelineClick(stage.status)"
+                >
+                  <div class="pipeline-label">
+                    <span class="pipeline-dot" :style="{ background: stage.color }" />
+                    {{ stage.label }}
+                  </div>
+                  <div class="pipeline-bar-track">
+                    <div
+                      class="pipeline-bar-fill"
+                      :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
+                    />
+                  </div>
+                  <div class="pipeline-meta">
+                    <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
+                    <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
+                      {{ stage.pct }}%
+                    </span>
+                  </div>
                 </div>
-                <div class="pipeline-bar-track">
-                  <div
-                    class="pipeline-bar-fill"
-                    :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
-                  />
+                <!-- Между «Поставлено» и «Оплачено» — красная метрика «Поставлено, не оплачено» -->
+                <div
+                  v-if="stage.status === 'delivered' && deliveredNotPaid.amount > 0"
+                  class="pipeline-row"
+                  style="background: rgba(239,68,68,0.06); border-radius:6px; margin: 4px 0"
+                  @click="onDeliveredNotPaidClick"
+                >
+                  <div class="pipeline-label">
+                    <span class="pipeline-dot" style="background:#EF4444" />
+                    Поставлено, не оплачено
+                  </div>
+                  <div class="pipeline-bar-track">
+                    <div class="pipeline-bar-fill" :style="{ width: Math.min(deliveredNotPaid.pct, 100) + '%', background: '#EF4444' }" />
+                  </div>
+                  <div class="pipeline-meta">
+                    <span class="pipeline-amount" style="color:#EF4444">{{ formatCurrencyShort(deliveredNotPaid.amount) }}</span>
+                    <span class="pipeline-pct" :style="{ color: chartMuted }">{{ deliveredNotPaid.pct }}%</span>
+                  </div>
                 </div>
-                <div class="pipeline-meta">
-                  <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
-                  <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
-                    {{ stage.pct }}%
-                  </span>
-                </div>
-              </div>
-              <!-- Дополнительная метрика: поставлено но не оплачено -->
-              <div
-                v-if="deliveredNotPaid.amount > 0"
-                class="pipeline-row"
-                style="background: rgba(239,68,68,0.06); border-radius:6px; margin-top:6px"
-                @click="onDeliveredNotPaidClick"
-              >
-                <div class="pipeline-label">
-                  <span class="pipeline-dot" style="background:#EF4444" />
-                  Поставлено, не оплачено
-                </div>
-                <div class="pipeline-bar-track">
-                  <div class="pipeline-bar-fill" :style="{ width: Math.min(deliveredNotPaid.pct, 100) + '%', background: '#EF4444' }" />
-                </div>
-                <div class="pipeline-meta">
-                  <span class="pipeline-amount" style="color:#EF4444">{{ formatCurrencyShort(deliveredNotPaid.amount) }}</span>
-                  <span class="pipeline-pct" :style="{ color: chartMuted }">{{ deliveredNotPaid.pct }}%</span>
-                </div>
-              </div>
+              </template>
               <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
                 <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
                 Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
@@ -329,7 +330,7 @@
       </GridItem>
 
       <!-- ── Goods/Services Breakdown ── -->
-      <GridItem v-if="pipelineByType.length > 0" v-bind="layout.find(l => l.i === 'breakdown')" key="breakdown">
+      <GridItem v-if="pipelineByType.some(s => s.total > 0)" v-bind="layout.find(l => l.i === 'breakdown')" key="breakdown">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Товары / Услуги
@@ -1506,7 +1507,6 @@ const pipelineByType = computed(() => {
         servicesPct: budget > 0 ? Math.round(services / budget * 100) : 0,
       }
     })
-    .filter(s => s.total > 0)
 })
 
 // Monthly payment contracts remaining

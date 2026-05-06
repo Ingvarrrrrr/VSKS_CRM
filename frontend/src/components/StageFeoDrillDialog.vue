@@ -147,10 +147,11 @@ const tree = ref<any[]>([])      // categories from /dashboard/
 const loading = ref(false)
 const xlsxLoading = ref(false)
 
-watch(() => props.visible, (v) => {
+watch(() => props.visible, async (v) => {
   if (v) {
     path.value = []
-    if (tree.value.length === 0) loadTree()
+    if (tree.value.length === 0) await loadTree()
+    autoSkipSingleSubsidy()
   }
 })
 
@@ -163,6 +164,18 @@ async function loadTree() {
     tree.value = []
   } finally {
     loading.value = false
+  }
+}
+
+// Если в фильтре только одна субсидия — сразу спускаемся в её FEO-уровень,
+// чтобы не показывать карточку субсидии как единственную строку.
+function autoSkipSingleSubsidy() {
+  const inScope = props.subsidyIds.length > 0
+    ? props.subsidies.filter((s: any) => props.subsidyIds.includes(s.id))
+    : props.subsidies
+  if (inScope.length === 1) {
+    const s = inScope[0]
+    path.value.push({ kind: 'subsidy', subsidyId: s.id, name: s.shortName || s.name })
   }
 }
 

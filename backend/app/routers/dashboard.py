@@ -534,7 +534,7 @@ async def get_financial_plan(
 
 @router.get("/financial-plan/details")
 async def get_financial_plan_details(
-    period: str = Query(..., description="'YYYY-MM' для месяца или 'YYYY-Qn' для квартала"),
+    period: Optional[str] = Query(None, description="'YYYY-MM' для месяца или 'YYYY-Qn' для квартала. Не требуется для category=no_deadline"),
     category: str = Query(..., regex="^(plan|committed|overdue|no_deadline)$"),
     granularity: str = Query("month", regex="^(month|quarter)$"),
     subsidy_id: Optional[int] = Query(None),
@@ -552,6 +552,11 @@ async def get_financial_plan_details(
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
 
     today = date.today()
+
+    # period обязателен для всех категорий кроме no_deadline
+    if category != "no_deadline" and not period:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="period обязателен для category != 'no_deadline'")
 
     if category == "no_deadline":
         # Загружаем все не-paid закупки без obligation_date

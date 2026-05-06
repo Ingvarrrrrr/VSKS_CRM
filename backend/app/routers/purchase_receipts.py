@@ -363,24 +363,57 @@ async def import_receipt_qr_fetch(
     fn = qr_data.get('fiscal_drive_number')
     fd = qr_data.get('fiscal_document_number')
     fp = qr_data.get('fiscal_sign')
-    if fn and fd and fp:
-        existing = (await db.execute(
-            select(PurchaseReceipt).where(
-                PurchaseReceipt.fiscal_drive_number == fn,
-                PurchaseReceipt.fiscal_document_number == fd,
-                PurchaseReceipt.fiscal_sign == fp,
-            )
-        )).scalar_one_or_none()
-        if existing:
-            other = await db.get(Purchase, existing.purchase_id)
-            ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing.purchase_id}"
-            same = existing.purchase_id == purchase_id
-            msg = (
-                f"Этот чек уже заведён в авансовом отчёте {ref}."
-                if not same
-                else "Этот чек уже добавлен в текущий авансовый отчёт."
-            )
-            raise HTTPException(409, msg)
+
+    async def _find_existing_by_qr():
+        """Найти существующий чек по любым доступным полям из QR.
+        Чем больше совпало — тем выше уверенность."""
+        # 1) Точная фискальная тройка
+        if fn and fd and fp:
+            row = (await db.execute(
+                select(PurchaseReceipt).where(
+                    PurchaseReceipt.fiscal_drive_number == fn,
+                    PurchaseReceipt.fiscal_document_number == fd,
+                    PurchaseReceipt.fiscal_sign == fp,
+                )
+            )).scalar_one_or_none()
+            if row:
+                return row
+        # 2) Пара fn+fd (старые записи могли сохраниться без fp)
+        if fn and fd:
+            row = (await db.execute(
+                select(PurchaseReceipt).where(
+                    PurchaseReceipt.fiscal_drive_number == fn,
+                    PurchaseReceipt.fiscal_document_number == fd,
+                )
+            )).scalar_one_or_none()
+            if row:
+                return row
+        # 3) fn + дата + сумма из QR (для очень старых записей без fd/fp)
+        dt = qr_data.get('receipt_datetime')
+        total = qr_data.get('total_sum')
+        if fn and dt and total is not None:
+            row = (await db.execute(
+                select(PurchaseReceipt).where(
+                    PurchaseReceipt.fiscal_drive_number == fn,
+                    PurchaseReceipt.receipt_datetime == dt,
+                    PurchaseReceipt.total_sum == total,
+                )
+            )).scalar_one_or_none()
+            if row:
+                return row
+        return None
+
+    pre_existing = await _find_existing_by_qr()
+    if pre_existing:
+        other = await db.get(Purchase, pre_existing.purchase_id)
+        ref = (other and (other.registry_number or other.purchase_number)) or f"#{pre_existing.purchase_id}"
+        same = pre_existing.purchase_id == purchase_id
+        msg = (
+            f"Этот чек уже заведён в закупке {ref} (#{pre_existing.purchase_id})."
+            if not same
+            else "Этот чек уже добавлен в текущую закупку."
+        )
+        raise HTTPException(409, msg)
 
     token = os.getenv("PROVERKACHEKA_TOKEN", "").strip()
     if not token:
@@ -401,8 +434,24 @@ async def import_receipt_qr_fetch(
 
     if not isinstance(payload, dict) or payload.get("code") != 1:
         msg = (payload or {}).get("data") if isinstance(payload, dict) else None
-        if isinstance(msg, str):
-            raise HTTPException(400, f"Чек не найден: {msg}")
+        msg_str = msg if isinstance(msg, str) else ""
+        # Если ФНС режет по rate-limit — это сильный сигнал что чек уже импортировали
+        # сегодня. Пробуем ещё раз поискать в БД (более широкий поиск).
+        if "Превышено" in msg_str or "превышен" in msg_str.lower() or "уже" in msg_str.lower():
+            again = await _find_existing_by_qr()
+            if again:
+                other = await db.get(Purchase, again.purchase_id)
+                ref = (other and (other.registry_number or other.purchase_number)) or f"#{again.purchase_id}"
+                raise HTTPException(
+                    409,
+                    f"Этот чек уже заведён в закупке {ref} (#{again.purchase_id}).",
+                )
+            raise HTTPException(
+                429,
+                "ФНС временно ограничила запросы по этому чеку. Скорее всего он уже был загружен ранее — проверьте список авансовых отчётов или попробуйте позже.",
+            )
+        if msg_str:
+            raise HTTPException(400, f"Чек не найден: {msg_str}")
         raise HTTPException(400, "Чек не найден в ФНС (proverkacheka.com)")
 
     body = payload.get("data") or {}

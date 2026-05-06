@@ -227,7 +227,7 @@
               <span class="chart-card-title">Закупки по этапам</span>
               <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
             </div>
-            <div v-if="pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
+            <div v-if="totalBudget > 0 || pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
               <div class="pipeline-row">
                 <div class="pipeline-label">
                   <span class="pipeline-dot" style="background:#9CA3AF" />
@@ -261,6 +261,25 @@
                   <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
                     {{ stage.pct }}%
                   </span>
+                </div>
+              </div>
+              <!-- Дополнительная метрика: поставлено но не оплачено -->
+              <div
+                v-if="deliveredNotPaid.amount > 0"
+                class="pipeline-row"
+                style="background: rgba(239,68,68,0.06); border-radius:6px; margin-top:6px"
+                @click="onPipelineClick('delivered')"
+              >
+                <div class="pipeline-label">
+                  <span class="pipeline-dot" style="background:#EF4444" />
+                  Поставлено, не оплачено
+                </div>
+                <div class="pipeline-bar-track">
+                  <div class="pipeline-bar-fill" :style="{ width: Math.min(deliveredNotPaid.pct, 100) + '%', background: '#EF4444' }" />
+                </div>
+                <div class="pipeline-meta">
+                  <span class="pipeline-amount" style="color:#EF4444">{{ formatCurrencyShort(deliveredNotPaid.amount) }}</span>
+                  <span class="pipeline-pct" :style="{ color: chartMuted }">{{ deliveredNotPaid.pct }}%</span>
                 </div>
               </div>
               <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
@@ -813,6 +832,11 @@
           </v-table>
         </v-card-text>
         <v-card-actions class="px-5 pb-4">
+          <v-btn
+            v-if="statusDrillPurchases.length > 0"
+            color="success" variant="tonal" prepend-icon="mdi-microsoft-excel"
+            @click="exportStatusDrillXlsx"
+          >Скачать Excel</v-btn>
           <v-spacer /><v-btn @click="statusDrillDialog = false">Закрыть</v-btn>
         </v-card-actions>
       </v-card>
@@ -1107,6 +1131,31 @@ const drillDialogSubsidies = ref<any[]>([])
 const statusDrillDialog = ref(false)
 const statusDrillStatus = ref('')
 
+// Excel export для status drill-down (клиентский — использует список из computed).
+async function exportStatusDrillXlsx() {
+  try {
+    const XLSX = await import('xlsx')
+    const rows = statusDrillPurchases.value.map((p: any) => ({
+      '№': p.purchase_number || p.id,
+      'Предмет закупки': p.subject || p.item_name || '',
+      'Сумма': purchaseEffectivePrice(p),
+      'Субсидия': p.subsidy_name || '',
+      'Статус': STATUS_LABELS[p.status] || p.status,
+      'Контрагент': p.contractor_name || '',
+      '№ договора': p.contract_number || '',
+      'Дата договора': p.contract_date || '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    const sheetName = (STATUS_LABELS[statusDrillStatus.value] || statusDrillStatus.value || 'Закупки').slice(0, 31)
+    XLSX.utils.book_append_sheet(wb, ws, sheetName)
+    const fname = `dashboard_${statusDrillStatus.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    XLSX.writeFile(wb, fname)
+  } catch (e: any) {
+    showSnack(e?.message || 'Не удалось сформировать Excel', 'error')
+  }
+}
+
 const statusDrillPurchases = computed(() => {
   const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
   return allPurchases.value.filter((p: any) => {
@@ -1348,7 +1397,21 @@ const pipelineStages = computed(() => {
         pct: Math.round(amount / budget * 100),
       }
     })
-    .filter(s => s.amount > 0)
+})
+
+// «Поставлено, не оплачено» = SUM(delivered) − SUM(paid). Drill открывает status='delivered'.
+const deliveredNotPaid = computed(() => {
+  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
+  const filtered = allPurchases.value.filter((p: any) =>
+    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
+  )
+  const delivered = filtered.filter((p: any) => p.status === 'delivered')
+    .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
+  const budget = totalBudget.value || 1
+  return {
+    amount: delivered,
+    pct: Math.round(delivered / budget * 100),
+  }
 })
 function onPipelineClick(status: string) {
   statusDrillStatus.value = status

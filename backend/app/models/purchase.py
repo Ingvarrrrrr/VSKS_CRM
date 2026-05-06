@@ -28,6 +28,10 @@ class Purchase(Base):
     is_monthly_payment = Column(Boolean, default=False)    # ежемесячный платёж
     monthly_payment_count = Column(Integer, nullable=True)   # кол-во ежемесячных платежей
     monthly_payment_amount = Column(Numeric(15, 2), nullable=True)  # сумма одного платежа
+    is_likely_needed = Column(Boolean, default=True, nullable=True)   # «Скорее всего понадобится»
+    is_prepayment = Column(Boolean, default=False, nullable=True)     # Предоплата
+    prepayment_date = Column(Date, nullable=True)                      # Дата возникновения обязательств для предоплаты
+    stage_label = Column(String(100), nullable=True)                   # Подпись этапа (напр. «Февраль 2026»)
 
     # Phase 1: new fields
     contract_number = Column(String(100))

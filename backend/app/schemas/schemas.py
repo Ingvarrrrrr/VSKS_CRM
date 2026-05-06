@@ -416,6 +416,11 @@ class PurchaseCreate(BaseModel):
     is_monthly_payment: Optional[bool] = False
     monthly_payment_count: Optional[int] = None
     monthly_payment_amount: Optional[Decimal] = None
+    # Phase 24: stages + financial plan
+    is_likely_needed: Optional[bool] = True
+    is_prepayment: Optional[bool] = False
+    prepayment_date: Optional[date] = None
+    stage_label: Optional[str] = None
     # Phase 1: extended fields
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None
@@ -502,6 +507,11 @@ class PurchaseUpdate(BaseModel):
     is_monthly_payment: Optional[bool] = None
     monthly_payment_count: Optional[int] = None
     monthly_payment_amount: Optional[Decimal] = None
+    # Phase 24: stages + financial plan
+    is_likely_needed: Optional[bool] = None
+    is_prepayment: Optional[bool] = None
+    prepayment_date: Optional[date] = None
+    stage_label: Optional[str] = None
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None
     registry_number: Optional[str] = None

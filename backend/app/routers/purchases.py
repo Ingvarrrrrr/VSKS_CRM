@@ -627,6 +627,8 @@ PATCHABLE_FIELDS = {
     "payment_amount", "country_origin", "purchase_basis",
     "responsible_person_id", "initiator_id", "subject_kind", "execution_term",
     "event_id", "delivery_location_kind",
+    # Phase 24: stages + financial plan
+    "is_likely_needed", "is_prepayment", "prepayment_date", "stage_label",
 }
 
 

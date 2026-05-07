@@ -466,6 +466,7 @@ const _allMenuItems = [
   { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', tab_key: 'admin.billing' },
   { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', tab_key: 'service_notes' },
   { title: 'Авансовые отчёты', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
+  { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },

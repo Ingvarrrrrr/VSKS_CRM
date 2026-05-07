@@ -269,6 +269,13 @@ const router = createRouter({
       component: () => import('../views/AdminRolesView.vue'),
       meta: { requiresAuth: true, title: 'Роли и права', tab_key: 'admin.roles' }
     },
+    // Payment import (Phase 22)
+    {
+      path: '/payments/import',
+      name: 'payment-import',
+      component: () => import('../views/PaymentImportView.vue'),
+      meta: { requiresAuth: true, title: 'Импорт платёжных реестров', tab_key: 'payment_registry' }
+    },
   ]
 })
 

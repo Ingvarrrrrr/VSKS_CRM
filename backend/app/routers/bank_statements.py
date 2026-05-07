@@ -346,6 +346,7 @@ async def confirm_bank_payment(
 async def rematch_import(
     import_id: int,
     only_unmatched: bool = True,
+    reparse: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Перезапустить auto_match для всех (или только unmatched) платежей данного импорта.
@@ -354,8 +355,12 @@ async def rematch_import(
     - Изменились настройки субсидий (basis_doc_number/date)
     - Изменилась логика matcher
     - Загружены данные но контракты ещё не созданы в системе
+
+    reparse=true — пересчитать parsed_documents из raw_json/purpose_text (нужно после
+    смены regex, например разделения agreements от contracts).
     """
     from app.services.payment_matcher import auto_match
+    from app.services.bank_statement_parser import extract_all_documents
 
     q = select(BankPayment).where(BankPayment.import_id == import_id)
     if only_unmatched:
@@ -371,6 +376,9 @@ async def rematch_import(
             bp.matched_subsidy_id = None
             bp.matched_contract_id = None
             bp.matched_purchase_id = None
+        if reparse:
+            purpose = bp.purpose_text or (bp.raw_json or {}).get('НАЗНАЧЕНИЕ ПЛАТЕЖА') or (bp.raw_json or {}).get('РАСШИФРОВКА П/П/КОНТРАКТ (ДОГОВОР)') or ''
+            bp.parsed_documents = extract_all_documents(purpose) if purpose else {}
         await auto_match(bp, db)
         if bp.matched_contract_id:
             counts['matched_contract'] += 1

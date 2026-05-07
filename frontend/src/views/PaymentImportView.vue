@@ -97,12 +97,28 @@
               title="Открыть детали"
               @click="openDetails(item.id)"
             />
-            <v-btn icon size="small" variant="text" color="primary"
-                   @click.stop="rematchImport(item)"
-                   :loading="rematchingId === item.id"
-                   :title="'Перематчить unmatched строки'">
-              <v-icon>mdi-refresh</v-icon>
-            </v-btn>
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn icon size="small" variant="text" color="primary"
+                       v-bind="menuProps"
+                       :loading="rematchingId === item.id"
+                       title="Перематчить">
+                  <v-icon>mdi-refresh</v-icon>
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  prepend-icon="mdi-refresh"
+                  title="Перематчить unmatched"
+                  @click="rematchImport(item, false, true)"
+                />
+                <v-list-item
+                  prepend-icon="mdi-restart"
+                  title="Перепарсить и пересмотреть все"
+                  @click="rematchImport(item, true, false)"
+                />
+              </v-list>
+            </v-menu>
             <v-btn
               size="x-small"
               variant="text"
@@ -217,11 +233,16 @@ async function deleteImport(id: number) {
   }
 }
 
-async function rematchImport(item: any) {
+async function rematchImport(item: any, reparse = false, onlyUnmatched = true) {
   rematchingId.value = item.id
   try {
-    const res = await apiFetch<any>(`/payments/imports/${item.id}/rematch?only_unmatched=true`, { method: 'POST' })
-    success(`Перематчено: ${res.matched_contract ?? 0} контрактов из ${res.total ?? 0}`)
+    const params = new URLSearchParams({
+      only_unmatched: String(onlyUnmatched),
+      reparse: String(reparse),
+    })
+    const res = await apiFetch<any>(`/payments/imports/${item.id}/rematch?${params}`, { method: 'POST' })
+    const label = reparse ? 'Перепарсено и перематчено' : 'Перематчено'
+    success(`${label}: ${res.matched_contract ?? 0} контрактов из ${res.total ?? 0}`)
     await loadImports()
   } catch (e: any) {
     error(`Ошибка: ${e?.detail || e?.message}`)

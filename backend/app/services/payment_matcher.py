@@ -57,6 +57,41 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
         if s:
             bp.matched_subsidy_id = s.id
 
+    # Fallback: СОГЛАШЕНИЕ из parsed_documents.agreements (purpose_text)
+    if not bp.matched_subsidy_id:
+        from datetime import datetime as _dt
+        agreements_list = (bp.parsed_documents or {}).get("agreements", [])
+        for a in agreements_list:
+            num = a.get("number")
+            date_str = a.get("date")
+            if not num:
+                continue
+            # с датой — точное совпадение
+            if date_str:
+                try:
+                    d = _dt.strptime(date_str, "%d.%m.%Y").date()
+                    q = await db.execute(
+                        select(Subsidy).where(
+                            Subsidy.basis_doc_number == num,
+                            Subsidy.basis_doc_date == d,
+                        ).limit(1)
+                    )
+                    s = q.scalar_one_or_none()
+                    if s:
+                        bp.matched_subsidy_id = s.id
+                        break
+                except (ValueError, TypeError):
+                    pass
+            # без даты — только по номеру
+            if not bp.matched_subsidy_id:
+                q = await db.execute(
+                    select(Subsidy).where(Subsidy.basis_doc_number == num).limit(1)
+                )
+                s = q.scalar_one_or_none()
+                if s:
+                    bp.matched_subsidy_id = s.id
+                    break
+
     # Дополнительный fallback: subsidy_code если есть поле
     if not bp.matched_subsidy_id and bp.subsidy_code:
         try:

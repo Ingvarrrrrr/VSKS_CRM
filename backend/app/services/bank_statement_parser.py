@@ -126,7 +126,13 @@ RX_VAT = re.compile(r"НДС\s*([\d.,]+)", re.IGNORECASE)
 
 DOC_PATTERNS: dict[str, re.Pattern] = {
     "contracts": re.compile(
-        r"(?:ДОГ(?:ОВОР)?|КОНТРАКТ|СОГЛАШ(?:ЕНИЕ)?)"
+        r"(?P<type>ДОГ(?:ОВОР)?|КОНТРАКТ)"
+        r"\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "agreements": re.compile(
+        r"СОГЛАШ(?:ЕНИЕ)?"
         r"\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,

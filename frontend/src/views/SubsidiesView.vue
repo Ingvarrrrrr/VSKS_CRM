@@ -1549,8 +1549,17 @@
     </v-dialog>
 
     <!-- ── Snackbar ── -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
+    <v-snackbar
+      v-model="snack.show"
+      :color="snack.color"
+      :timeout="snack.color === 'error' ? -1 : 3000"
+      location="bottom right"
+      :multi-line="snack.color === 'error'"
+      max-width="600">
       {{ snack.text }}
+      <template #actions>
+        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
+      </template>
     </v-snackbar>
 
     <!-- ── Диалог редактирования плановой позиции ── -->
@@ -3034,8 +3043,11 @@ async function updateSubsidy() {
     await loadSubsidies()
     showEditDialog.value = false
     showSnack('Субсидия обновлена')
-  } catch {
-    showSnack('Ошибка сохранения', 'error')
+  } catch (e: any) {
+    console.error('updateSubsidy failed:', e?.status, e?.payload || e)
+    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
+    const code = e?.status ? ` [${e.status}]` : ''
+    showSnack(`Ошибка${code}: ${msg}`, 'error')
   } finally {
     saving.value = false
   }
@@ -3296,8 +3308,11 @@ async function saveApprover() {
     }
     showApproverFormDialog.value = false
     showSnack(approverEditTarget.value ? 'Обновлено' : 'Добавлено')
-  } catch {
-    showSnack('Ошибка сохранения', 'error')
+  } catch (e: any) {
+    console.error('saveApprover failed:', e?.status, e?.payload || e)
+    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
+    const code = e?.status ? ` [${e.status}]` : ''
+    showSnack(`Ошибка${code}: ${msg}`, 'error')
   } finally {
     savingApprover.value = false
   }
@@ -3502,8 +3517,11 @@ async function saveContractorOverride() {
     })
     showOverrideDialog.value = false
     showSnack('Реквизиты сохранены')
-  } catch {
-    showSnack('Ошибка сохранения', 'error')
+  } catch (e: any) {
+    console.error('upsertContractorOverride failed:', e?.status, e?.payload || e)
+    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
+    const code = e?.status ? ` [${e.status}]` : ''
+    showSnack(`Ошибка${code}: ${msg}`, 'error')
   } finally {
     savingOverride.value = false
   }

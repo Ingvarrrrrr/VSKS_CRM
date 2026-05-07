@@ -105,9 +105,47 @@
       </v-card-text>
     </v-card>
 
+    <!-- Column picker + Table wrapper -->
+    <div class="d-flex align-center justify-end mb-2">
+      <v-menu v-model="colPickerOpen" :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn v-bind="menuProps" variant="outlined" size="small" prepend-icon="mdi-view-column" color="secondary">
+            Колонки
+          </v-btn>
+        </template>
+        <v-card min-width="280" max-height="500" class="overflow-y-auto">
+          <v-card-title class="text-body-2 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
+          <v-divider />
+          <v-list density="compact" class="py-1">
+            <v-list-item
+              v-for="col in allColumns"
+              :key="col.key"
+              :title="col.title"
+              class="px-3"
+              @click="toggleColumn(col.key)"
+            >
+              <template #prepend>
+                <v-checkbox-btn
+                  :model-value="visibleColumnKeys.includes(col.key)"
+                  density="compact"
+                  @click.stop="toggleColumn(col.key)"
+                />
+              </template>
+            </v-list-item>
+          </v-list>
+          <v-divider />
+          <v-card-actions class="px-3 py-2">
+            <v-btn size="x-small" variant="text" @click="resetColumns">Сбросить</v-btn>
+            <v-spacer />
+            <v-btn size="x-small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-menu>
+    </div>
+
     <!-- Table -->
     <v-data-table
-      :headers="headers"
+      :headers="activeHeaders"
       :items="payments"
       :loading="loading"
       density="compact"
@@ -174,8 +212,8 @@
         <v-chip v-else size="x-small" color="grey" variant="tonal">Нет</v-chip>
       </template>
 
-      <!-- Confirmed chip -->
-      <template #item.confirmed="{ item }">
+      <!-- Confirmed chip (key = matched_confirmed) -->
+      <template #item.matched_confirmed="{ item }">
         <v-chip
           v-if="item.matched_confirmed"
           size="x-small"
@@ -184,6 +222,35 @@
           prepend-icon="mdi-check-decagram"
         >Да</v-chip>
         <v-chip v-else size="x-small" color="grey" variant="tonal">Нет</v-chip>
+      </template>
+
+      <!-- Basis doc date -->
+      <template #item.basis_doc_date="{ item }">
+        <span class="text-caption">{{ fmtDate(item.basis_doc_date) }}</span>
+      </template>
+
+      <!-- Parsed contract date -->
+      <template #item.parsed_contract_date="{ item }">
+        <span class="text-caption">{{ fmtDate(item.parsed_contract_date) }}</span>
+      </template>
+
+      <!-- Created at -->
+      <template #item.created_at="{ item }">
+        <span class="text-caption">{{ fmtDate(item.created_at) }}</span>
+      </template>
+
+      <!-- Purpose text (truncated) -->
+      <template #item.purpose_text="{ item }">
+        <div class="text-caption text-truncate" style="max-width:220px" :title="item.purpose_text || ''">
+          {{ item.purpose_text || '—' }}
+        </div>
+      </template>
+
+      <!-- Basis doc text (truncated) -->
+      <template #item.basis_doc_text="{ item }">
+        <div class="text-caption text-truncate" style="max-width:180px" :title="item.basis_doc_text || ''">
+          {{ item.basis_doc_text || '—' }}
+        </div>
       </template>
 
       <!-- Actions -->
@@ -348,21 +415,34 @@ function clearFilters() {
 // ── Table state ─────────────────────────────────────────────────────────────
 interface BankPayment {
   id: number
-  payment_date: string
+  import_id: number | null
+  payment_date: string | null
   payment_number: string | null
-  amount: number
+  amount: number | null
   payer_name: string | null
+  payer_inn: string | null
+  payer_account: string | null
   payee_name: string | null
   payee_inn: string | null
+  payee_account: string | null
   parsed_contract_number: string | null
+  parsed_contract_date: string | null
+  parsed_kbk: string | null
   status: string | null
   purpose_text: string | null
+  basis_doc_text: string | null
+  basis_doc_number: string | null
+  basis_doc_date: string | null
+  subsidy_code: string | null
   kbk: string | null
   payer_kpp: string | null
   payee_kpp: string | null
   matched_contract_id: number | null
-  matched_contract_number: string | null
+  matched_contractor_id: number | null
+  matched_purchase_id: number | null
+  matched_subsidy_id: number | null
   matched_confirmed: boolean
+  created_at: string | null
 }
 
 const payments = ref<BankPayment[]>([])
@@ -371,19 +451,118 @@ const totalCount = ref(0)
 const page = ref(1)
 const expanded = ref<number[]>([])
 
-const headers = [
-  { title: '№', key: 'index', sortable: false, width: '50px' },
-  { title: 'Дата', key: 'payment_date', width: '100px' },
-  { title: 'Плательщик', key: 'payer_name', sortable: false },
-  { title: 'Получатель', key: 'payee_name', sortable: false },
-  { title: 'Сумма', key: 'amount', width: '130px' },
-  { title: 'Статус', key: 'status', width: '120px' },
-  { title: 'Договор (авто)', key: 'parsed_contract_number', width: '130px' },
-  { title: 'Сматчен', key: 'matched', width: '90px', sortable: false },
-  { title: 'Подтверждён', key: 'confirmed', width: '110px', sortable: false },
-  { title: 'Действия', key: 'actions', sortable: false, width: '110px' },
-  { title: '', key: 'data-table-expand', width: '48px' },
+// ── Column picker ─────────────────────────────────────────────────────────────
+const LS_KEY = 'payment_registry_columns'
+
+const DEFAULT_VISIBLE_KEYS = [
+  'index', 'payment_number', 'payment_date', 'payer_name', 'payee_name',
+  'amount', 'status', 'parsed_contract_number', 'matched', 'matched_confirmed',
+  'actions', 'data-table-expand',
 ]
+
+const allColumns = [
+  { title: '№', key: 'index' },
+  { title: 'Номер документа', key: 'payment_number' },
+  { title: 'Дата', key: 'payment_date' },
+  { title: 'Плательщик', key: 'payer_name' },
+  { title: 'ИНН плательщика', key: 'payer_inn' },
+  { title: 'Счёт плательщика', key: 'payer_account' },
+  { title: 'Получатель', key: 'payee_name' },
+  { title: 'ИНН получателя', key: 'payee_inn' },
+  { title: 'Счёт получателя', key: 'payee_account' },
+  { title: 'Сумма', key: 'amount' },
+  { title: 'Статус документа', key: 'status' },
+  { title: 'Назначение платежа', key: 'purpose_text' },
+  { title: 'Документ-основание', key: 'basis_doc_text' },
+  { title: '№ основания', key: 'basis_doc_number' },
+  { title: 'Дата основания', key: 'basis_doc_date' },
+  { title: 'Договор (авто)', key: 'parsed_contract_number' },
+  { title: 'Дата договора (авто)', key: 'parsed_contract_date' },
+  { title: 'КБК', key: 'parsed_kbk' },
+  { title: 'Шифр субсидии', key: 'subsidy_code' },
+  { title: 'Сматчен', key: 'matched' },
+  { title: 'Подтверждён', key: 'matched_confirmed' },
+  { title: 'ID контрагента', key: 'matched_contractor_id' },
+  { title: 'ID договора', key: 'matched_contract_id' },
+  { title: 'ID закупки', key: 'matched_purchase_id' },
+  { title: 'ID субсидии', key: 'matched_subsidy_id' },
+  { title: 'Создано', key: 'created_at' },
+  { title: 'Действия', key: 'actions' },
+  { title: '', key: 'data-table-expand' },
+]
+
+function _loadVisibleKeys(): string[] {
+  try {
+    const stored = localStorage.getItem(LS_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as string[]
+    }
+  } catch {}
+  return [...DEFAULT_VISIBLE_KEYS]
+}
+
+const visibleColumnKeys = ref<string[]>(_loadVisibleKeys())
+const colPickerOpen = ref(false)
+
+function toggleColumn(key: string) {
+  const idx = visibleColumnKeys.value.indexOf(key)
+  if (idx >= 0) {
+    // Don't allow hiding the last column or fixed system columns
+    if (visibleColumnKeys.value.length <= 2) return
+    visibleColumnKeys.value = visibleColumnKeys.value.filter(k => k !== key)
+  } else {
+    visibleColumnKeys.value = [...visibleColumnKeys.value, key]
+  }
+  localStorage.setItem(LS_KEY, JSON.stringify(visibleColumnKeys.value))
+}
+
+function resetColumns() {
+  visibleColumnKeys.value = [...DEFAULT_VISIBLE_KEYS]
+  localStorage.setItem(LS_KEY, JSON.stringify(visibleColumnKeys.value))
+}
+
+// Map from key to column definition including width/sortable
+const _colMeta: Record<string, { width?: string; sortable?: boolean }> = {
+  index:                  { sortable: false, width: '50px' },
+  payment_number:         { width: '130px' },
+  payment_date:           { width: '100px' },
+  payer_name:             { sortable: false },
+  payer_inn:              { width: '130px' },
+  payer_account:          { width: '160px' },
+  payee_name:             { sortable: false },
+  payee_inn:              { width: '130px' },
+  payee_account:          { width: '160px' },
+  amount:                 { width: '130px' },
+  status:                 { width: '130px' },
+  purpose_text:           { sortable: false },
+  basis_doc_text:         { sortable: false },
+  basis_doc_number:       { width: '140px' },
+  basis_doc_date:         { width: '120px' },
+  parsed_contract_number: { width: '140px' },
+  parsed_contract_date:   { width: '130px' },
+  parsed_kbk:             { width: '120px' },
+  subsidy_code:           { width: '130px' },
+  matched:                { width: '90px', sortable: false },
+  matched_confirmed:      { width: '110px', sortable: false },
+  matched_contractor_id:  { width: '100px' },
+  matched_contract_id:    { width: '100px' },
+  matched_purchase_id:    { width: '100px' },
+  matched_subsidy_id:     { width: '100px' },
+  created_at:             { width: '150px' },
+  actions:                { sortable: false, width: '110px' },
+  'data-table-expand':    { width: '48px' },
+}
+
+const activeHeaders = computed(() => {
+  return allColumns
+    .filter(c => visibleColumnKeys.value.includes(c.key))
+    .map(c => ({
+      title: c.title,
+      key: c.key,
+      ...(_colMeta[c.key] || {}),
+    }))
+})
 
 // ── Load data ───────────────────────────────────────────────────────────────
 async function loadPayments() {

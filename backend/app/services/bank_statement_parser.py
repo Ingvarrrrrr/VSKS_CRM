@@ -387,16 +387,54 @@ class ParsedRow:
 
 
 # ---------------------------------------------------------------------------
+# _find_header_row
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+
+_parser_log = _logging.getLogger(__name__)
+
+# Ключевые слова, однозначно указывающие на строку заголовков таблицы
+_EXPECTED_HEADERS = {
+    'НОМЕР ДОКУМЕНТА', 'ДАТА ДОКУМЕНТА', 'СУММА',
+    'СТАТУС ДОКУМЕНТА', 'НАИМЕНОВАНИЕ ПЛАТЕЛЬЩИКА',
+    'НАИМЕНОВАНИЕ ПОЛУЧАТЕЛЯ', 'НАЗНАЧЕНИЕ ПЛАТЕЖА',
+}
+
+
+def _find_header_row(ws) -> int:
+    """Возвращает 1-based номер строки с заголовками таблицы.
+
+    В реальных выписках первые 1-4 строки — metadata («Тип документа»,
+    «Дата формирования», пустая строка и т.д.).  Ищем строку, где хотя бы
+    одно из ожидаемых ключевых слов совпадает с нормализованным значением
+    ячейки.  Fallback — строка 1 (совместимость с тестовыми файлами).
+    """
+    for row_idx in range(1, 15):  # ищем в первых 14 строках
+        try:
+            cells = [str(c.value or '').strip().upper() for c in ws[row_idx]]
+        except Exception:
+            break
+        normalized = {re.sub(r'\s+', ' ', c) for c in cells if c}
+        if normalized & _EXPECTED_HEADERS:
+            _parser_log.info(f"bank_statement_parser: headers found at row {row_idx}")
+            return row_idx
+    _parser_log.warning("bank_statement_parser: header row not detected, using row 1 as fallback")
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # _extract_headers
 # ---------------------------------------------------------------------------
 
-def _extract_headers(ws) -> list[str]:
-    """Читает первую строку листа, нормализует заголовки.
+
+def _extract_headers(ws, header_row: int = 1) -> list[str]:
+    """Читает строку header_row листа, нормализует заголовки.
 
     Merged cells разворачиваются с None у подчинённых ячеек — наследуем
     последний непустой заголовок.
     """
-    raw = [c.value for c in next(ws.iter_rows(max_row=1))]
+    raw = [c.value for c in ws[header_row]]
     out: list[str] = []
     last = ""
     for v in raw:
@@ -561,11 +599,12 @@ def parse_workbook(
         ws = wb.active
         active_name = ws.title
 
-    headers = _extract_headers(ws)
+    header_row = _find_header_row(ws)
+    headers = _extract_headers(ws, header_row)
 
     parsed: list[ParsedRow] = []
 
-    rows_iter = ws.iter_rows(min_row=2, values_only=True)
+    rows_iter = ws.iter_rows(min_row=header_row + 1, values_only=True)
     for raw_values in rows_iter:
         values = list(raw_values)
 

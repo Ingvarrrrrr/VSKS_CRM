@@ -176,6 +176,17 @@ async def lifespan(app_: FastAPI):
     from .routers.telegram_webhook import start_polling as _start_tg_polling
     _start_tg_polling()
 
+    # Phase 22: idempotent ALTER для subsidies — добавить basis_doc_number/date
+    try:
+        from sqlalchemy import text as _text2
+        from .database import engine as _engine2
+        async with _engine2.begin() as conn:
+            await conn.execute(_text2("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_number VARCHAR(100)"))
+            await conn.execute(_text2("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_date DATE"))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 22 subsidies ALTER skipped (non-fatal): {e}")
+
     # Phase 22: idempotent ALTER для bank_payments — заменить старый UniqueConstraint на source_row_hash
     try:
         from sqlalchemy import text

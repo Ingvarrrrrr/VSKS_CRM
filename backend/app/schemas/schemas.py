@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing import Optional, List, Any, Dict
 from datetime import date, datetime
 from decimal import Decimal
@@ -145,6 +145,20 @@ class SubsidyCreate(BaseModel):
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
 
+    @field_validator('basis_doc_date', mode='before')
+    @classmethod
+    def empty_str_to_none_date(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
+
+    @field_validator('basis_doc_number', mode='before')
+    @classmethod
+    def empty_str_to_none_number(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
+
 
 class SubsidyUpdate(BaseModel):
     """Partial update — all fields optional."""
@@ -157,6 +171,20 @@ class SubsidyUpdate(BaseModel):
     # Phase 22: № и дата документа-основания
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+
+    @field_validator('basis_doc_date', mode='before')
+    @classmethod
+    def empty_str_to_none_date(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
+
+    @field_validator('basis_doc_number', mode='before')
+    @classmethod
+    def empty_str_to_none_number(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
 
 
 class SubsidyOut(BaseModel):

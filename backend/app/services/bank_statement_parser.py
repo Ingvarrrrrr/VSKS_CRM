@@ -63,6 +63,10 @@ def _norm_header(s: Any) -> str:
 HEADER_MAP: dict[str, str] = {
     "НОМЕР ДОКУМЕНТА": "payment_number",
     "ДАТА ДОКУМЕНТА": "payment_date",
+    "ДАТА ПЛАТЕЖА": "payment_date",
+    "ДАТА ДОК.": "payment_date",
+    "ДАТА ДОК": "payment_date",
+    "ДАТА": "payment_date",
     "СТАТУС ДОКУМЕНТА": "status",
     "СУММА": "amount",
     "ДАТА ИСПОЛНЕНИЯ ОПЕРАЦИИ": "execution_date",
@@ -311,7 +315,7 @@ def _to_date(v: Any) -> Optional[date]:
     if isinstance(v, date):
         return v
     s = str(v).strip()
-    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y.%m.%d"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -628,6 +632,38 @@ def _build_row(
 
 
 # ---------------------------------------------------------------------------
+# _is_numbering_row — строка нумерации колонок xlsx (1, 2, 3, ... 39)
+# ---------------------------------------------------------------------------
+
+def _is_numbering_row(values: list) -> bool:
+    """Detect 'numbering row' — все непустые значения короткие числа 1-200.
+
+    В некоторых xlsx после строки заголовков идёт строка вида:
+    1, 2, 3, ..., 39 — нумерация позиций для ручного заполнения.
+    Такую строку надо пропустить, иначе она попадает в реестр как платёж.
+    """
+    if not values:
+        return False
+    numeric_count = 0
+    non_empty_count = 0
+    for v in values:
+        if v is None or str(v).strip() == "":
+            continue
+        non_empty_count += 1
+        s = str(v).strip()
+        try:
+            n = int(float(s))
+            if 1 <= n <= 200:
+                numeric_count += 1
+            else:
+                return False  # число вне диапазона — не нумерация
+        except (ValueError, OverflowError):
+            return False  # хотя бы одно нечисло — это не строка нумерации
+    # Минимум 5 числовых ячеек, и все непустые — числа 1-200
+    return non_empty_count >= 5 and numeric_count == non_empty_count
+
+
+# ---------------------------------------------------------------------------
 # parse_workbook — главная функция
 # ---------------------------------------------------------------------------
 
@@ -680,6 +716,10 @@ def parse_workbook(
 
         while len(values) < len(headers):
             values.append(None)
+
+        if _is_numbering_row(values):
+            _parser_log.debug("bank_statement_parser: skip numbering row")
+            continue
 
         row = _build_row(headers, values)
         if row is None:

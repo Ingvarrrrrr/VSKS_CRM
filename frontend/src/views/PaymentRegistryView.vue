@@ -50,6 +50,28 @@
         </div>
         <div class="d-flex flex-wrap gap-2 align-end">
           <v-text-field
+            v-model="searchQuery"
+            prepend-inner-icon="mdi-magnify"
+            label="Поиск по любому полю"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            style="min-width:220px; max-width:340px"
+          />
+          <v-select
+            v-model="filterSubsidyId"
+            :items="subsidiesList"
+            item-title="name"
+            item-value="id"
+            label="Субсидия"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            style="min-width:180px; max-width:260px"
+          />
+          <v-text-field
             v-model="fDateFrom"
             label="Дата от"
             type="date"
@@ -125,7 +147,7 @@
     <!-- Table -->
     <v-data-table
       :headers="activeHeaders"
-      :items="payments"
+      :items="searchedItems"
       :loading="loading"
       density="compact"
       show-expand
@@ -311,16 +333,15 @@
     </v-data-table>
 
     <!-- Column picker dialog -->
-    <v-dialog v-model="colPickerOpen" max-width="600">
+    <v-dialog v-model="colPickerOpen" max-width="640">
       <v-card>
-        <v-card-title class="text-body-1 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
+        <v-card-title class="text-body-1 font-weight-bold px-4 pt-3 pb-1">Видимые колонки и ширина</v-card-title>
         <v-divider />
-        <v-card-text class="pa-0" style="max-height:460px; overflow-y:auto">
+        <v-card-text class="pa-0" style="max-height:500px; overflow-y:auto">
           <v-list density="compact" class="py-1">
             <v-list-item
               v-for="col in allColumns"
               :key="col.key"
-              :title="col.title || col.key"
               class="px-3"
               @click="toggleColumn(col.key)"
             >
@@ -331,12 +352,32 @@
                   @click.stop="toggleColumn(col.key)"
                 />
               </template>
+              <template #default>
+                <div class="d-flex align-center gap-3 w-100">
+                  <span class="text-body-2 flex-grow-1">{{ col.title || col.key }}</span>
+                  <v-text-field
+                    v-if="col.key !== 'data-table-expand'"
+                    :model-value="colWidths[col.key] ?? (_colMetaDefaults[col.key]?.width ?? '')"
+                    type="number"
+                    min="40"
+                    max="600"
+                    label="px"
+                    variant="plain"
+                    density="compact"
+                    hide-details
+                    style="max-width:70px"
+                    @click.stop
+                    @update:model-value="(v: any) => saveColWidth(col.key, Number(v))"
+                  />
+                </div>
+              </template>
             </v-list-item>
           </v-list>
         </v-card-text>
         <v-divider />
         <v-card-actions class="px-3 py-2">
-          <v-btn size="small" variant="text" @click="resetColumns">Сбросить</v-btn>
+          <v-btn size="small" variant="text" @click="resetColumns">Сбросить колонки</v-btn>
+          <v-btn size="small" variant="text" color="warning" @click="colWidths = {}; localStorage.removeItem(LS_WIDTHS_KEY)">Сбросить ширины</v-btn>
           <v-spacer />
           <v-btn size="small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
         </v-card-actions>
@@ -415,6 +456,38 @@ const yesNoOptions = [
   { label: 'Только не сматченные', value: 'false' },
 ]
 
+// ── Global search + subsidy filter ─────────────────────────────────────────
+const searchQuery = ref('')
+const filterSubsidyId = ref<number | null>(null)
+
+interface SubsidyItem { id: number; name: string }
+const subsidiesList = ref<SubsidyItem[]>([])
+
+async function loadSubsidies() {
+  try {
+    const data = await apiFetch<any[]>('/subsidies/')
+    subsidiesList.value = (data || []).map((s: any) => ({ id: s.id, name: s.name }))
+  } catch {}
+}
+
+const searchedItems = computed(() => {
+  let items = payments.value as any[]
+  if (filterSubsidyId.value) {
+    items = items.filter(i => i.matched_subsidy_id === filterSubsidyId.value)
+  }
+  if (!searchQuery.value.trim()) return items
+  const q = searchQuery.value.toLowerCase()
+  return items.filter((item: any) => {
+    const haystack = [
+      item.payer_name, item.payer_name_resolved, item.payer_inn,
+      item.payee_name, item.payee_name_resolved, item.payee_inn,
+      item.purpose_text, item.basis_doc_text, item.basis_doc_number,
+      item.parsed_contract_number, item.payment_number, item.subsidy_code,
+    ].filter(Boolean).join(' ').toLowerCase()
+    return haystack.includes(q)
+  })
+})
+
 const hasFilters = computed(() =>
   fDateFrom.value || fDateTo.value || fStatus.value || fMatched.value || fConfirmed.value || fInn.value
 )
@@ -426,6 +499,8 @@ function clearFilters() {
   fMatched.value = null
   fConfirmed.value = null
   fInn.value = ''
+  searchQuery.value = ''
+  filterSubsidyId.value = null
   applyFilters()
 }
 
@@ -493,29 +568,36 @@ const allColumns = [
   { title: '', key: 'data-table-expand' },
   { title: '№', key: 'index' },
   { title: 'Номер документа', key: 'payment_number' },
-  { title: 'Дата', key: 'payment_date' },
-  { title: 'Плательщик', key: 'payer_name' },
-  { title: 'ИНН плательщика', key: 'payer_inn' },
-  { title: 'Счёт плательщика', key: 'payer_account' },
-  { title: 'Получатель', key: 'payee_name' },
-  { title: 'ИНН получателя', key: 'payee_inn' },
-  { title: 'Счёт получателя', key: 'payee_account' },
-  { title: 'Сумма', key: 'amount' },
+  { title: 'Дата документа', key: 'payment_date' },
+  { title: 'Дата исполнения', key: 'execution_datetime' },
   { title: 'Статус документа', key: 'status' },
+  { title: 'Сумма', key: 'amount' },
+  { title: 'ИНН плательщика', key: 'payer_inn' },
+  { title: 'КПП плательщика', key: 'payer_kpp' },
+  { title: 'Плательщик', key: 'payer_name' },
+  { title: 'Плательщик (raw)', key: 'payer_name_raw' },
+  { title: 'Лицевой счёт плательщика', key: 'payer_account' },
+  { title: 'ИНН получателя', key: 'payee_inn' },
+  { title: 'КПП получателя', key: 'payee_kpp' },
+  { title: 'Получатель', key: 'payee_name' },
+  { title: 'Получатель (raw)', key: 'payee_name_raw2' },
+  { title: 'Счёт получателя', key: 'payee_account' },
+  { title: 'БИК получателя', key: 'payee_bik' },
+  { title: 'Банк получателя', key: 'payee_bank' },
   { title: 'Назначение платежа', key: 'purpose_text' },
-  { title: 'Документ-основание', key: 'basis_doc_text' },
-  { title: '№ основания', key: 'basis_doc_number' },
-  { title: 'Дата основания', key: 'basis_doc_date' },
+  { title: 'Документ-основание (raw)', key: 'basis_doc_text' },
+  { title: '№ документа-основания', key: 'basis_doc_number' },
+  { title: 'Дата документа-основания', key: 'basis_doc_date' },
+  { title: 'Шифр субсидии', key: 'subsidy_code' },
   { title: 'Договор (авто)', key: 'parsed_contract_number' },
   { title: 'Дата договора (авто)', key: 'parsed_contract_date' },
   { title: 'КБК', key: 'parsed_kbk' },
-  { title: 'Шифр субсидии', key: 'subsidy_code' },
+  { title: 'Match: Контрагент', key: 'matched_contractor_id' },
+  { title: 'Match: Субсидия', key: 'matched_subsidy_id' },
+  { title: 'Match: Договор', key: 'matched_contract_id' },
+  { title: 'Match: Закупка', key: 'matched_purchase_id' },
   { title: 'Сматчен', key: 'matched' },
   { title: 'Подтверждён', key: 'matched_confirmed' },
-  { title: 'ID контрагента', key: 'matched_contractor_id' },
-  { title: 'ID договора', key: 'matched_contract_id' },
-  { title: 'ID закупки', key: 'matched_purchase_id' },
-  { title: 'ID субсидии', key: 'matched_subsidy_id' },
   { title: 'Создано', key: 'created_at' },
   { title: 'Действия', key: 'actions' },
 ]
@@ -552,45 +634,74 @@ function resetColumns() {
 }
 
 // Map from key to column definition including width/sortable
-const _colMeta: Record<string, { width?: string; sortable?: boolean }> = {
-  index:                  { sortable: false, width: '50px' },
-  payment_number:         { width: '130px' },
-  payment_date:           { width: '100px' },
-  payer_name:             { sortable: false },
-  payer_inn:              { width: '130px' },
-  payer_account:          { width: '160px' },
-  payee_name:             { sortable: false },
-  payee_inn:              { width: '130px' },
-  payee_account:          { width: '160px' },
-  amount:                 { width: '130px' },
-  status:                 { width: '130px' },
-  purpose_text:           { sortable: false },
-  basis_doc_text:         { sortable: false },
-  basis_doc_number:       { width: '140px' },
-  basis_doc_date:         { width: '120px' },
-  parsed_contract_number: { width: '140px' },
-  parsed_contract_date:   { width: '130px' },
-  parsed_kbk:             { width: '120px' },
-  subsidy_code:           { width: '130px' },
-  matched:                { width: '90px', sortable: false },
-  matched_confirmed:      { width: '110px', sortable: false },
-  matched_contractor_id:  { width: '100px' },
-  matched_contract_id:    { width: '100px' },
-  matched_purchase_id:    { width: '100px' },
-  matched_subsidy_id:     { width: '100px' },
-  created_at:             { width: '150px' },
-  actions:                { sortable: false, width: '110px' },
-  'data-table-expand':    { width: '48px' },
+const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> = {
+  index:                  { sortable: false, width: 50 },
+  payment_number:         { width: 130 },
+  payment_date:           { width: 100 },
+  execution_datetime:     { width: 150 },
+  payer_name:             { sortable: false, width: 180 },
+  payer_name_raw:         { sortable: false, width: 180 },
+  payer_inn:              { width: 130 },
+  payer_kpp:              { width: 110 },
+  payer_account:          { width: 160 },
+  payee_name:             { sortable: false, width: 180 },
+  payee_name_raw2:        { sortable: false, width: 180 },
+  payee_inn:              { width: 130 },
+  payee_kpp:              { width: 110 },
+  payee_account:          { width: 160 },
+  payee_bik:              { width: 110 },
+  payee_bank:             { sortable: false, width: 180 },
+  amount:                 { width: 130 },
+  status:                 { width: 130 },
+  purpose_text:           { sortable: false, width: 280 },
+  basis_doc_text:         { sortable: false, width: 220 },
+  basis_doc_number:       { width: 160 },
+  basis_doc_date:         { width: 130 },
+  subsidy_code:           { width: 130 },
+  parsed_contract_number: { width: 150 },
+  parsed_contract_date:   { width: 130 },
+  parsed_kbk:             { width: 120 },
+  matched:                { width: 90, sortable: false },
+  matched_confirmed:      { width: 110, sortable: false },
+  matched_contractor_id:  { width: 120 },
+  matched_contract_id:    { width: 120 },
+  matched_purchase_id:    { width: 120 },
+  matched_subsidy_id:     { width: 120 },
+  created_at:             { width: 150 },
+  actions:                { sortable: false, width: 110 },
+  'data-table-expand':    { width: 48 },
+}
+
+// LS_COL_WIDTHS_KEY — хранит ширины колонок в пикселях
+const LS_WIDTHS_KEY = 'payment_registry_col_widths'
+
+function _loadColWidths(): Record<string, number> {
+  try {
+    const s = localStorage.getItem(LS_WIDTHS_KEY)
+    if (s) return JSON.parse(s) as Record<string, number>
+  } catch {}
+  return {}
+}
+const colWidths = ref<Record<string, number>>(_loadColWidths())
+
+function saveColWidth(key: string, w: number) {
+  colWidths.value = { ...colWidths.value, [key]: w }
+  localStorage.setItem(LS_WIDTHS_KEY, JSON.stringify(colWidths.value))
 }
 
 const activeHeaders = computed(() => {
   return allColumns
     .filter(c => visibleColumnKeys.value.includes(c.key))
-    .map(c => ({
-      title: c.title,
-      key: c.key,
-      ...(_colMeta[c.key] || {}),
-    }))
+    .map(c => {
+      const meta = _colMetaDefaults[c.key] || {}
+      const w = colWidths.value[c.key] ?? meta.width
+      return {
+        title: c.title,
+        key: c.key,
+        sortable: meta.sortable,
+        width: w ? `${w}px` : undefined,
+      }
+    })
 })
 
 // ── Load data ───────────────────────────────────────────────────────────────
@@ -693,6 +804,7 @@ function statusColor(s: string | null) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 onMounted(() => {
   loadPayments()
+  loadSubsidies()
 })
 </script>
 

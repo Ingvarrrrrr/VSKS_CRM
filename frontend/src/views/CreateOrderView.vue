@@ -282,6 +282,19 @@
                 <v-btn v-if="selectedFrameworkContract" icon="mdi-close" variant="text" size="small" color="error" @click="clearFrameworkContract" />
               </div>
             </v-col>
+            <v-col v-if="isFramework && form.contract_id" cols="12" md="auto">
+              <v-btn
+                color="primary" variant="tonal"
+                prepend-icon="mdi-calendar-multiple"
+                @click="monthlyStagesDialogShow = true"
+                style="margin-top:6px"
+              >
+                Создать ежемесячные этапы
+              </v-btn>
+              <div class="text-caption text-medium-emphasis mt-1" style="max-width:260px">
+                Сгенерировать N закупок-этапов с одинаковой суммой и разными сроками исполнения
+              </div>
+            </v-col>
             <v-col v-if="isFramework && form.contract_id" cols="12" md="2">
               <v-text-field :model-value="form.framework_seq" label="Порядковый № в рамочном договоре"
                 variant="outlined" density="compact" type="number" min="1"
@@ -2077,6 +2090,18 @@
       </v-card>
     </v-dialog>
 
+    <!-- Генератор ежемесячных этапов рамочного договора -->
+    <MonthlyStagesDialog
+      v-if="isFramework && form.contract_id && selectedFrameworkContract"
+      v-model="monthlyStagesDialogShow"
+      :contract-id="form.contract_id"
+      :contract-name="(selectedFrameworkContract as any).number || (selectedFrameworkContract as any).name || ''"
+      :contract-type="(selectedFrameworkContract as any).contract_type || ''"
+      :default-subsidy-id="form.subsidy_id ?? null"
+      :default-amount="(selectedFrameworkContract as any).planned_monthly ?? null"
+      @created="onMonthlyStagesCreated"
+    />
+
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
       <template #actions>
@@ -2852,7 +2877,16 @@ import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
+import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
+
+const monthlyStagesDialogShow = ref(false)
+function onMonthlyStagesCreated(res: any) {
+  monthlyStagesDialogShow.value = false
+  const n = res?.created?.length ?? 0
+  showSnack(`Создано этапов: ${n}`, 'success')
+  if (form.contract_id) loadFrameworkSiblings(form.contract_id)
+}
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 
 const route = useRoute()

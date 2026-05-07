@@ -121,6 +121,22 @@ HEADER_MAP: dict[str, str] = {
     "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ (УПНО)": "upno",
 }
 
+
+def _normalize_lookup_key(h: str) -> str:
+    """Если ключ composite 'MAIN (SUB)' и MAIN в HEADER_MAP — вернуть MAIN.
+
+    Используется для legacy raw_json, где ключи имеют contamination от data row.
+    """
+    if h in HEADER_MAP:
+        return h
+    m = re.match(r'^(.+?)\s*\([^)]*\)\s*$', h)
+    if m:
+        candidate = m.group(1).strip()
+        if candidate in HEADER_MAP:
+            return candidate
+    return h
+
+
 # Финальные ИСПОЛНЕНО-эквивалентные статусы
 EXECUTED_STATUSES = {"ИСПОЛНЕН", "ИСПОЛНЕНО", "ОТРАЖЕНО НА Л/С ПЛАТЕЛЬЩИКА"}
 
@@ -512,6 +528,10 @@ def _extract_headers(ws, header_row: int = 1) -> list[str]:
             out.append(sub)
         elif main == sub:
             out.append(main)
+        elif main in HEADER_MAP:
+            # known single-row header — sub скорее всего contamination
+            # (data row или повтор), берём только main
+            out.append(main)
         else:
             out.append(f"{main} ({sub})")
 
@@ -571,8 +591,18 @@ def _build_row(
     row.raw_json = raw
     row.source_row_hash = compute_row_hash(raw)
 
+    # Legacy raw_json may have composite keys "MAIN (SUB)" where MAIN is the real header
+    # but SUB was data row contamination. Build a normalized lookup view of raw.
+    raw_norm: dict[str, Any] = {}
+    for raw_key, raw_val in raw.items():
+        normalized = _normalize_lookup_key(raw_key)
+        if raw_val is not None and (normalized not in raw_norm or raw_norm[normalized] is None):
+            raw_norm[normalized] = raw_val
+
     for h, field_name in HEADER_MAP.items():
         v = raw.get(h)
+        if v is None:
+            v = raw_norm.get(h)
         if v is None:
             continue
 

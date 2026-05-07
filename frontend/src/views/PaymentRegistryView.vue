@@ -895,6 +895,7 @@ function docDisplay(item: any): string {
   if (pd.invoices?.[0]) return `Счёт ${pd.invoices[0].number}`
   if (pd.ttn?.[0]) return `ТТН ${pd.ttn[0].number}`
   if (pd.registry?.[0]) return `Реестр ${pd.registry[0].number}`
+  if (item.parsed_contract_number) return `Договор ${item.parsed_contract_number}`
   return '—'
 }
 

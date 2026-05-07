@@ -508,6 +508,7 @@ async def reparse_existing_rows(
         HEADER_MAP, _norm_header, _to_decimal, _to_date, _to_datetime,
         _norm_inn, RX_INN, parse_purpose, extract_all_documents, parse_basis_doc,
         EXECUTED_STATUSES, REJECTED_STATUSES, compute_row_hash,
+        _normalize_lookup_key,
     )
 
     q = await db.execute(select(BankPayment).where(BankPayment.import_id == import_id))
@@ -524,9 +525,17 @@ async def reparse_existing_rows(
         for k, v in raw.items():
             norm_raw[_norm_header(k)] = v
 
-        # Применяем HEADER_MAP
+        # Применяем HEADER_MAP с fallback для legacy composite-ключей
+        norm_raw_decomposed: dict = {}
+        for nk, nv in norm_raw.items():
+            mapped = _normalize_lookup_key(nk)
+            if nv is not None and (mapped not in norm_raw_decomposed or norm_raw_decomposed[mapped] is None):
+                norm_raw_decomposed[mapped] = nv
+
         for header, field_name in HEADER_MAP.items():
             v = norm_raw.get(header)
+            if v is None:
+                v = norm_raw_decomposed.get(header)
             if v is None:
                 continue
 

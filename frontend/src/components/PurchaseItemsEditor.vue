@@ -100,6 +100,13 @@
                     </template>
                   </v-tooltip>
                 </div>
+                <v-chip
+                  v-if="item.contractor_name"
+                  size="x-small" variant="tonal" color="indigo" class="mt-1"
+                  prepend-icon="mdi-store"
+                >
+                  {{ item.contractor_name }}
+                </v-chip>
               </td>
               <td>
                 <v-select v-model="item.item_type"
@@ -225,6 +232,13 @@
                     </template>
                   </v-tooltip>
                 </div>
+                <v-chip
+                  v-if="item.contractor_name"
+                  size="x-small" variant="tonal" color="indigo" class="mt-1"
+                  prepend-icon="mdi-store"
+                >
+                  {{ item.contractor_name }}
+                </v-chip>
               </td>
               <td>
                 <v-select v-model="item.item_type"
@@ -765,6 +779,9 @@ interface EditorItem {
   total_price: number | null
   country_origin: string
   match_confirmed?: boolean
+  contractor_id?: number | null
+  contractor_inn?: string | null
+  contractor_name?: string | null
   // Purchase-only (undefined when itemShape === 'wish'):
   final_unit_price?: number | null
   final_total?: number | null

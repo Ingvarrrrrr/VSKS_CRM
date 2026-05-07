@@ -346,6 +346,9 @@ class PurchaseItemCreate(BaseModel):
     final_total: Optional[Decimal] = None
     country_origin: Optional[str] = None
     match_confirmed: bool = True
+    contractor_id: Optional[int] = None
+    contractor_inn: Optional[str] = None
+    contractor_name: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

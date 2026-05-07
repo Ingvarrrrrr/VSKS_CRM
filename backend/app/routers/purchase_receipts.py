@@ -204,6 +204,23 @@ async def _create_receipt_with_items(
 
     items_data = data.pop('items', None) or []
 
+    # Auto-create/find contractor по ИНН продавца из чека
+    seller_inn = data.get('seller_inn')
+    seller_name = data.get('seller_name')
+    contractor_id_for_items = None
+    if seller_inn:
+        from app.models.contractor import Contractor as _Contractor
+        existing_c = (await db.execute(
+            select(_Contractor).where(_Contractor.inn == seller_inn)
+        )).scalar_one_or_none()
+        if existing_c:
+            contractor_id_for_items = existing_c.id
+        else:
+            new_c = _Contractor(inn=seller_inn, name=seller_name or f"ИНН {seller_inn}")
+            db.add(new_c)
+            await db.flush()
+            contractor_id_for_items = new_c.id
+
     valid_cols = {c.key for c in PurchaseReceipt.__table__.columns}
     receipt_kwargs = {k: v for k, v in data.items() if k in valid_cols}
 
@@ -244,6 +261,9 @@ async def _create_receipt_with_items(
             unit_price=price,
             total_price=total,
             match_confirmed=False,
+            contractor_id=contractor_id_for_items,
+            contractor_inn=seller_inn,
+            contractor_name=seller_name,
         ))
 
     await db.commit()

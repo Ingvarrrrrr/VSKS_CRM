@@ -481,6 +481,15 @@ def _to_date(v: Any) -> Optional[date]:
     if isinstance(v, date):
         return v
     s = str(v).strip()
+    if not s:
+        return None
+    # ISO 8601 (с временем или без): 2026-05-07T00:00:00 / 2026-05-07
+    # _json_safe() сохраняет datetime как isoformat для asyncpg JSONB —
+    # обратное чтение должно понимать этот формат.
+    try:
+        return datetime.fromisoformat(s).date()
+    except ValueError:
+        pass
     for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y.%m.%d"):
         try:
             return datetime.strptime(s, fmt).date()
@@ -497,6 +506,13 @@ def _to_datetime(v: Any) -> Optional[datetime]:
     if isinstance(v, date):
         return datetime(v.year, v.month, v.day)
     s = str(v).strip()
+    if not s:
+        return None
+    # ISO 8601 — формат _json_safe() для asyncpg JSONB
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        pass
     for fmt in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
             return datetime.strptime(s, fmt)

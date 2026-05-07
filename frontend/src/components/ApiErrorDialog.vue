@@ -65,8 +65,50 @@ function handleApiError(e: Event) {
   techExpanded.value = null  // reset to collapsed on each error
 }
 
-onMounted(() => window.addEventListener('api-error', handleApiError))
-onUnmounted(() => window.removeEventListener('api-error', handleApiError))
+function handleJsError(e: ErrorEvent) {
+  // Истинно JS-ошибки (ReferenceError, TypeError, рантайм-исключения).
+  // api-ошибки уже отлавливаются через api-error event из apiFetch.
+  const err = e.error
+  if (!err) return
+  if (show.value) return  // не перебиваем уже открытый диалог
+  error.value = {
+    code: err.name || 'JS_ERROR',
+    message: err.message || String(err),
+    details: err.stack || '',
+    correlation_id: '',
+  }
+  show.value = true
+  copied.value = false
+  techExpanded.value = null
+}
+
+function handleUnhandledRejection(e: PromiseRejectionEvent) {
+  const reason: any = e.reason
+  if (!reason) return
+  if (show.value) return
+  // Если это apiFetch error с payload — он уже сработал через api-error event
+  if (reason.payload) return
+  error.value = {
+    code: reason.name || 'UNHANDLED_REJECTION',
+    message: reason.message || String(reason),
+    details: reason.stack || '',
+    correlation_id: '',
+  }
+  show.value = true
+  copied.value = false
+  techExpanded.value = null
+}
+
+onMounted(() => {
+  window.addEventListener('api-error', handleApiError)
+  window.addEventListener('error', handleJsError)
+  window.addEventListener('unhandledrejection', handleUnhandledRejection)
+})
+onUnmounted(() => {
+  window.removeEventListener('api-error', handleApiError)
+  window.removeEventListener('error', handleJsError)
+  window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+})
 
 async function copyDetails() {
   const text = [

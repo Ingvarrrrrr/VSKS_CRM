@@ -3040,14 +3040,12 @@ async function updateSubsidy() {
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge
     // ответа PUT мог давать stale поля если SW кэшировал предыдущий GET.
-    await loadSubsidies()
+    await loadAll()
     showEditDialog.value = false
     showSnack('Субсидия обновлена')
   } catch (e: any) {
-    console.error('updateSubsidy failed:', e?.status, e?.payload || e)
-    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
-    const code = e?.status ? ` [${e.status}]` : ''
-    showSnack(`Ошибка${code}: ${msg}`, 'error')
+    console.error('updateSubsidy failed:', e)
+    showSnack('Ошибка сохранения', 'error')
   } finally {
     saving.value = false
   }
@@ -3309,10 +3307,8 @@ async function saveApprover() {
     showApproverFormDialog.value = false
     showSnack(approverEditTarget.value ? 'Обновлено' : 'Добавлено')
   } catch (e: any) {
-    console.error('saveApprover failed:', e?.status, e?.payload || e)
-    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
-    const code = e?.status ? ` [${e.status}]` : ''
-    showSnack(`Ошибка${code}: ${msg}`, 'error')
+    console.error('saveApprover failed:', e)
+    showSnack('Ошибка сохранения', 'error')
   } finally {
     savingApprover.value = false
   }
@@ -3518,10 +3514,8 @@ async function saveContractorOverride() {
     showOverrideDialog.value = false
     showSnack('Реквизиты сохранены')
   } catch (e: any) {
-    console.error('upsertContractorOverride failed:', e?.status, e?.payload || e)
-    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения'
-    const code = e?.status ? ` [${e.status}]` : ''
-    showSnack(`Ошибка${code}: ${msg}`, 'error')
+    console.error('upsertContractorOverride failed:', e)
+    showSnack('Ошибка сохранения', 'error')
   } finally {
     savingOverride.value = false
   }

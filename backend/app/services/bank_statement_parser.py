@@ -11,6 +11,8 @@ Header dict — словарь нормализованных имён → им�
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -19,6 +21,29 @@ from io import BytesIO
 from typing import Any, Optional
 
 from openpyxl import load_workbook
+
+
+# ---------------------------------------------------------------------------
+# compute_row_hash — SHA-256 от нормализованного JSON всей строки xlsx
+# ---------------------------------------------------------------------------
+
+def compute_row_hash(row_dict: dict) -> str:
+    """SHA-256 от нормализованного JSON всей строки xlsx.
+
+    Стабилен: sorted keys, str(value).strip(), пустые значения нормализованы в "".
+    Две идентичные строки xlsx → один hash. Любое отличие (включая регистры/whitespace) → разный hash.
+    """
+    normalized = {}
+    for k, v in row_dict.items():
+        key = str(k).strip().upper().replace('  ', ' ')  # collapse double spaces in key
+        if v is None or v == '':
+            normalized[key] = ''
+        elif isinstance(v, (int, float)):
+            normalized[key] = repr(v)  # deterministic float repr
+        else:
+            normalized[key] = str(v).strip()
+    serialized = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +375,7 @@ class ParsedRow:
     subsidy_code: Optional[str] = None
 
     raw_json: dict = field(default_factory=dict)
+    source_row_hash: Optional[str] = None
     is_executed: bool = False
     skip_reason: Optional[str] = None
 
@@ -410,6 +436,7 @@ def _build_row(
             raw[h] = "\n".join(str(v) for v in non_null)
 
     row.raw_json = raw
+    row.source_row_hash = compute_row_hash(raw)
 
     for h, field_name in HEADER_MAP.items():
         v = raw.get(h)

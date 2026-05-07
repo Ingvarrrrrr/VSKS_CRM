@@ -176,6 +176,24 @@ async def lifespan(app_: FastAPI):
     from .routers.telegram_webhook import start_polling as _start_tg_polling
     _start_tg_polling()
 
+    # Phase 22: idempotent ALTER для bank_payments — заменить старый UniqueConstraint на source_row_hash
+    try:
+        from sqlalchemy import text
+        from .database import engine
+        async with engine.begin() as conn:
+            # Дропаем старый natural-key UniqueConstraint (если есть на проде из старых ревертов)
+            await conn.execute(text("ALTER TABLE bank_payments DROP CONSTRAINT IF EXISTS uq_bank_payment_natural"))
+            # Добавляем колонку source_row_hash если не существует
+            await conn.execute(text("ALTER TABLE bank_payments ADD COLUMN IF NOT EXISTS source_row_hash VARCHAR(64)"))
+            # Создаём partial unique index (WHERE IS NOT NULL — legacy NULL записи не дедуплицируются)
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bank_payment_source_row_hash "
+                "ON bank_payments (source_row_hash) WHERE source_row_hash IS NOT NULL"
+            ))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 22 hash migration skipped (non-fatal): {e}")
+
     # Phase 22: idempotent seed для tab payment_registry + 3 actions
     try:
         from sqlalchemy import select as _sel

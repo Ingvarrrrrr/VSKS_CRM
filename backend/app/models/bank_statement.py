@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Date, DateTime, Numeric, Boolean,
-    ForeignKey, Text, UniqueConstraint, Index,
+    ForeignKey, Text, Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -81,6 +81,9 @@ class BankPayment(Base):
 
     raw_json = Column(JSONB, default=dict)
 
+    # SHA-256 от всей xlsx-строки (нормализованной); NULL для legacy записей до Phase 22 dedup
+    source_row_hash = Column(String(64), nullable=True, unique=True, index=True)
+
     # Match state
     matched_contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True)
     matched_contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=True)
@@ -98,10 +101,6 @@ class BankPayment(Base):
                             cascade="all, delete-orphan", lazy="selectin")
 
     __table_args__ = (
-        UniqueConstraint(
-            "payment_number", "payment_date", "payer_inn", "amount", "parsed_contract_number",
-            name="uq_bank_payment_natural",
-        ),
         Index("ix_bank_payment_payee_inn", "payee_inn"),
         Index("ix_bank_payment_contract_number", "parsed_contract_number"),
         Index("ix_bank_payment_matched", "matched_confirmed"),

@@ -110,6 +110,7 @@ async def upload_bank_statement(
                 basis_doc_date=pr.basis_doc_date,
                 subsidy_code=pr.subsidy_code,
                 raw_json=pr.raw_json,
+                source_row_hash=pr.source_row_hash,
                 matched_confirmed=False,
             )
             db.add(bp)

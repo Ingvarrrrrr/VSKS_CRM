@@ -9,6 +9,40 @@
         </h1>
         <span class="text-body-2 text-medium-emphasis">{{ totalCount }} записей</span>
       </div>
+      <v-menu v-model="colPickerOpen" :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn v-bind="menuProps" prepend-icon="mdi-view-column" variant="outlined" color="primary">
+            Колонки
+          </v-btn>
+        </template>
+        <v-card min-width="280" max-height="500" class="overflow-y-auto">
+          <v-card-title class="text-body-2 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
+          <v-divider />
+          <v-list density="compact" class="py-1">
+            <v-list-item
+              v-for="col in allColumns"
+              :key="col.key"
+              :title="col.title"
+              class="px-3"
+              @click="toggleColumn(col.key)"
+            >
+              <template #prepend>
+                <v-checkbox-btn
+                  :model-value="visibleColumnKeys.includes(col.key)"
+                  density="compact"
+                  @click.stop="toggleColumn(col.key)"
+                />
+              </template>
+            </v-list-item>
+          </v-list>
+          <v-divider />
+          <v-card-actions class="px-3 py-2">
+            <v-btn size="x-small" variant="text" @click="resetColumns">Сбросить</v-btn>
+            <v-spacer />
+            <v-btn size="x-small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-menu>
     </div>
 
     <!-- Filters -->
@@ -104,44 +138,6 @@
         </div>
       </v-card-text>
     </v-card>
-
-    <!-- Column picker + Table wrapper -->
-    <div class="d-flex align-center justify-end mb-2">
-      <v-menu v-model="colPickerOpen" :close-on-content-click="false" location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <v-btn v-bind="menuProps" variant="outlined" size="small" prepend-icon="mdi-view-column" color="secondary">
-            Колонки
-          </v-btn>
-        </template>
-        <v-card min-width="280" max-height="500" class="overflow-y-auto">
-          <v-card-title class="text-body-2 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
-          <v-divider />
-          <v-list density="compact" class="py-1">
-            <v-list-item
-              v-for="col in allColumns"
-              :key="col.key"
-              :title="col.title"
-              class="px-3"
-              @click="toggleColumn(col.key)"
-            >
-              <template #prepend>
-                <v-checkbox-btn
-                  :model-value="visibleColumnKeys.includes(col.key)"
-                  density="compact"
-                  @click.stop="toggleColumn(col.key)"
-                />
-              </template>
-            </v-list-item>
-          </v-list>
-          <v-divider />
-          <v-card-actions class="px-3 py-2">
-            <v-btn size="x-small" variant="text" @click="resetColumns">Сбросить</v-btn>
-            <v-spacer />
-            <v-btn size="x-small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-menu>
-    </div>
 
     <!-- Table -->
     <v-data-table

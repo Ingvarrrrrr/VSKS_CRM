@@ -427,22 +427,64 @@ def _find_header_row(ws) -> int:
 # _extract_headers
 # ---------------------------------------------------------------------------
 
+# Известные main-headers с merged-cells над sub-rows.
+# Значение — суффикс для composite-ключа («ИНН» + «ПОЛУЧАТЕЛЯ» = «ИНН ПОЛУЧАТЕЛЯ»).
+# Пустая строка означает: sub-header самодостаточен, суффикс не нужен.
+_MERGED_GROUPS: dict[str, str] = {
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА": "ПЛАТЕЛЬЩИКА",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ": "ПОЛУЧАТЕЛЯ",
+    "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ": "",   # sub-headers сами по себе достаточны
+    "СЧЕТ ЦР ФК": "ЦР ФК",
+}
+
 
 def _extract_headers(ws, header_row: int = 1) -> list[str]:
-    """Читает строку header_row листа, нормализует заголовки.
+    """Возвращает массив composite-ключей из ДВУХ строк xlsx.
 
-    Merged cells разворачиваются с None у подчинённых ячеек — наследуем
-    последний непустой заголовок.
+    Логика:
+      1. Читаем main row (header_row) с merged-cell наследованием (LEFT-fill).
+      2. Читаем sub row (header_row+1).
+      3. Если main принадлежит _MERGED_GROUPS — composite = f"{sub} {suffix}".
+         Например: main='РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ', sub='ИНН' → 'ИНН ПОЛУЧАТЕЛЯ'.
+      4. Если main НЕ в _MERGED_GROUPS и sub пустой — берём main inherited.
+      5. Если sub непустой и main неизвестный — берём sub.
     """
-    raw = [c.value for c in ws[header_row]]
-    out: list[str] = []
-    last = ""
-    for v in raw:
+    main_raw = [c.value for c in ws[header_row]]
+    try:
+        sub_raw = [c.value for c in ws[header_row + 1]]
+    except (IndexError, TypeError):
+        sub_raw = []
+
+    # Выравниваем длины
+    n = max(len(main_raw), len(sub_raw))
+    main_raw = list(main_raw) + [None] * (n - len(main_raw))
+    sub_raw = list(sub_raw) + [None] * (n - len(sub_raw))
+
+    # LEFT-fill main через merged-cells
+    main_inherited: list[str] = []
+    last_main = ""
+    for v in main_raw:
         if v not in (None, ""):
-            last = _norm_header(v)
-            out.append(last)
+            last_main = _norm_header(v)
+        main_inherited.append(last_main)
+
+    out: list[str] = []
+    for i in range(n):
+        main = main_inherited[i]
+        sub_v = sub_raw[i]
+        sub = _norm_header(sub_v) if sub_v not in (None, "") else ""
+
+        if main in _MERGED_GROUPS and sub:
+            suffix = _MERGED_GROUPS[main]
+            if suffix:
+                out.append(f"{sub} {suffix}")  # «ИНН ПОЛУЧАТЕЛЯ»
+            else:
+                out.append(sub)               # просто sub-header (Доп.инф)
+        elif sub:
+            out.append(sub)
         else:
-            out.append(last)
+            out.append(main)
+
     return out
 
 
@@ -616,9 +658,20 @@ def parse_workbook(
     header_row = _find_header_row(ws)
     headers = _extract_headers(ws, header_row)
 
+    # _extract_headers читает ДВЕ строки (header_row + sub-row header_row+1).
+    # Проверяем, является ли строка header_row+1 sub-row или уже данными:
+    # если хотя бы один из composite-суффиксов _MERGED_GROUPS попал в headers,
+    # значит sub-row была потреблена и данные начинаются с header_row+2.
+    _merged_suffixes = {s for s in _MERGED_GROUPS.values() if s}
+    _has_composite = any(
+        any(h.endswith(f" {suf}") for suf in _merged_suffixes)
+        for h in headers
+    )
+    data_start_row = header_row + 2 if _has_composite else header_row + 1
+
     parsed: list[ParsedRow] = []
 
-    rows_iter = ws.iter_rows(min_row=header_row + 1, values_only=True)
+    rows_iter = ws.iter_rows(min_row=data_start_row, values_only=True)
     for raw_values in rows_iter:
         values = list(raw_values)
 

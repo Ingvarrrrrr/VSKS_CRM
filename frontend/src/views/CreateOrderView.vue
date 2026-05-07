@@ -5362,6 +5362,15 @@ onMounted(async () => {
     } else if (formMode.value === 'advance_report') {
       form.purchase_method = 'advance'
     }
+    // По умолчанию «Кому возмещать» = текущий пользователь (для новых авансовых).
+    // Можно поменять вручную в форме.
+    if (
+      !form.reimbursement_user_id &&
+      (formMode.value === 'advance_report' || form.purchase_method === 'advance') &&
+      currentUserId
+    ) {
+      form.reimbursement_user_id = currentUserId
+    }
   }
 })
 

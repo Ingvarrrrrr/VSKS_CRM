@@ -445,52 +445,68 @@ _MERGED_GROUPS: dict[str, str] = {
 }
 
 
-def _extract_headers(ws, header_row: int = 1) -> list[str]:
-    """Возвращает массив composite-ключей из ДВУХ строк xlsx.
+def _expand_merged_row(ws, row_idx: int, max_col: int) -> list:
+    """Возвращает значения row_idx с разворачиванием merged cells.
 
-    Логика:
-      1. Читаем main row (header_row) с merged-cell наследованием (LEFT-fill).
-      2. Читаем sub row (header_row+1).
-      3. Если main принадлежит _MERGED_GROUPS — composite = f"{sub} {suffix}".
-         Например: main='РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ', sub='ИНН' → 'ИНН ПОЛУЧАТЕЛЯ'.
-      4. Если main НЕ в _MERGED_GROUPS и sub пустой — берём main inherited.
-      5. Если sub непустой и main неизвестный — берём sub.
+    Для merged range — все колонки получают value верхне-левой ячейки.
     """
-    main_raw = [c.value for c in ws[header_row]]
+    values = [None] * max_col
+    # Обычные ячейки
+    for cell in ws[row_idx]:
+        col = cell.column - 1
+        if 0 <= col < max_col:
+            values[col] = cell.value
+    # Развернуть merged-ranges на эту строку
+    for mr in ws.merged_cells.ranges:
+        if mr.min_row <= row_idx <= mr.max_row:
+            top_left = ws.cell(row=mr.min_row, column=mr.min_col).value
+            for col in range(mr.min_col - 1, mr.max_col):
+                if 0 <= col < max_col:
+                    values[col] = top_left
+    return values
+
+
+def _extract_headers(ws, header_row: int = 1) -> list[str]:
+    """Возвращает composite-ключи из ДВУХ строк xlsx (main + sub).
+
+    Использует ws.merged_cells.ranges для разворачивания merged cells вместо inheritance.
+    """
+    max_col = ws.max_column
+    main_values = _expand_merged_row(ws, header_row, max_col)
     try:
-        sub_raw = [c.value for c in ws[header_row + 1]]
-    except (IndexError, TypeError):
-        sub_raw = []
-
-    # Выравниваем длины
-    n = max(len(main_raw), len(sub_raw))
-    main_raw = list(main_raw) + [None] * (n - len(main_raw))
-    sub_raw = list(sub_raw) + [None] * (n - len(sub_raw))
-
-    # LEFT-fill main через merged-cells
-    main_inherited: list[str] = []
-    last_main = ""
-    for v in main_raw:
-        if v not in (None, ""):
-            last_main = _norm_header(v)
-        main_inherited.append(last_main)
+        sub_values = _expand_merged_row(ws, header_row + 1, max_col)
+    except Exception:
+        sub_values = [None] * max_col
 
     out: list[str] = []
-    for i in range(n):
-        main = main_inherited[i]
-        sub_v = sub_raw[i]
+    for i in range(max_col):
+        main_v = main_values[i]
+        sub_v = sub_values[i]
+        main = _norm_header(main_v) if main_v not in (None, "") else ""
         sub = _norm_header(sub_v) if sub_v not in (None, "") else ""
+
+        # Если sub == main — это значит sub-row тоже была merged (или просто пустая) — берём main
+        if sub == main:
+            sub = ""
 
         if main in _MERGED_GROUPS and sub:
             suffix = _MERGED_GROUPS[main]
             if suffix:
-                out.append(f"{sub} {suffix}")  # «ИНН ПОЛУЧАТЕЛЯ»
+                out.append(f"{sub} {suffix}")
             else:
-                out.append(sub)               # просто sub-header (Доп.инф)
+                out.append(sub)
+        elif sub and main:
+            # main не в _MERGED_GROUPS, но sub присутствует — возможно несколько уровней merged
+            # Берём sub если main выглядит как "родительский тип"
+            out.append(sub if len(sub) >= len(main) else main)
         elif sub:
             out.append(sub)
         else:
             out.append(main)
+
+    _parser_log.info(f"bank_statement_parser: extracted {len(out)} composite headers")
+    known = sum(1 for h in out if h in HEADER_MAP)
+    _parser_log.info(f"bank_statement_parser: {known}/{len(out)} headers found in HEADER_MAP")
 
     return out
 
@@ -664,6 +680,56 @@ def _is_numbering_row(values: list) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# _find_first_data_row — пропустить sub-headers, numbering rows, empty
+# ---------------------------------------------------------------------------
+
+def _find_first_data_row(ws, header_row: int, headers: list[str]) -> int:
+    """Найти первую строку с реальными данными после header_row.
+
+    Пропускает sub-headers, numbering rows (24, 25, 26...), пустые строки.
+    Признак data row: в колонке СУММА число >= 1, ИЛИ в НОМЕР ДОКУМЕНТА строка длиной >3.
+    """
+    sum_idx = next((i for i, h in enumerate(headers) if h.startswith('СУММА')), -1)
+    docnum_idx = next((i for i, h in enumerate(headers) if h.startswith('НОМЕР ДОКУМЕНТА')), -1)
+
+    for row_idx in range(header_row + 1, header_row + 12):
+        try:
+            row_vals = [c.value for c in ws[row_idx]]
+        except Exception:
+            continue
+
+        if _is_numbering_row(row_vals):
+            _parser_log.info(f"bank_statement_parser: skip numbering row at {row_idx}")
+            continue
+
+        # Пропустить пустую строку
+        if all(v is None or str(v).strip() == "" for v in row_vals):
+            continue
+
+        # Hard signal: SUMMA >= 1
+        if sum_idx >= 0 and sum_idx < len(row_vals):
+            v = row_vals[sum_idx]
+            if v is not None:
+                try:
+                    if float(v) >= 1:
+                        _parser_log.info(f"bank_statement_parser: data starts at row {row_idx} (SUMMA={v})")
+                        return row_idx
+                except (ValueError, TypeError):
+                    pass
+
+        # Soft signal: docnum длиннее 3
+        if docnum_idx >= 0 and docnum_idx < len(row_vals):
+            v = row_vals[docnum_idx]
+            if v is not None and len(str(v).strip()) > 3:
+                _parser_log.info(f"bank_statement_parser: data starts at row {row_idx} (DOCNUM={v})")
+                return row_idx
+
+    fallback = header_row + 2
+    _parser_log.warning(f"bank_statement_parser: no clear data row, fallback to {fallback}")
+    return fallback
+
+
+# ---------------------------------------------------------------------------
 # parse_workbook — главная функция
 # ---------------------------------------------------------------------------
 
@@ -685,7 +751,7 @@ def parse_workbook(
        - ставит is_executed=True если status IN EXECUTED_STATUSES
     5. Возвращает (sheet_name, list[ParsedRow])
     """
-    wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    wb = load_workbook(BytesIO(file_bytes), data_only=True)  # без read_only=True для корректной работы с merged_cells
 
     if sheet_name and sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
@@ -696,17 +762,8 @@ def parse_workbook(
 
     header_row = _find_header_row(ws)
     headers = _extract_headers(ws, header_row)
-
-    # _extract_headers читает ДВЕ строки (header_row + sub-row header_row+1).
-    # Проверяем, является ли строка header_row+1 sub-row или уже данными:
-    # если хотя бы один из composite-суффиксов _MERGED_GROUPS попал в headers,
-    # значит sub-row была потреблена и данные начинаются с header_row+2.
-    _merged_suffixes = {s for s in _MERGED_GROUPS.values() if s}
-    _has_composite = any(
-        any(h.endswith(f" {suf}") for suf in _merged_suffixes)
-        for h in headers
-    )
-    data_start_row = header_row + 2 if _has_composite else header_row + 1
+    data_start_row = _find_first_data_row(ws, header_row, headers)
+    _parser_log.info(f"bank_statement_parser: parsing headers={len(headers)}, data starts at row {data_start_row}")
 
     parsed: list[ParsedRow] = []
 
@@ -717,8 +774,8 @@ def parse_workbook(
         while len(values) < len(headers):
             values.append(None)
 
-        if _is_numbering_row(values):
-            _parser_log.debug("bank_statement_parser: skip numbering row")
+        if _is_numbering_row(values):  # ещё одна защита если случайно попалось
+            _parser_log.info("bank_statement_parser: skip numbering row in data section")
             continue
 
         row = _build_row(headers, values)

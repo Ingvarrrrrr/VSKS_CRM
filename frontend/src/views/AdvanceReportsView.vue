@@ -48,6 +48,14 @@
             hide-details
             style="min-width:200px"
           />
+          <v-text-field
+            v-model="fProduct"
+            label="Поиск товара"
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined" density="compact" hide-details clearable
+            placeholder="Название товара..."
+            style="min-width:200px"
+          />
           <v-btn size="small" variant="tonal" @click="clearFilters">Сбросить</v-btn>
         </div>
       </v-card-text>
@@ -83,9 +91,15 @@
         items-per-page="25"
         :items-per-page-options="[25, 50, 100, -1]"
         item-value="id"
+        @click:row="onRowClick"
       >
-        <template #item.index="{ index }">
-          <span class="text-medium-emphasis text-caption">{{ index + 1 }}</span>
+        <template #item.index="{ item, index }">
+          <div class="text-medium-emphasis" style="line-height:1.2">
+            <div class="text-caption">{{ item.purchase_number || (index + 1) }}</div>
+            <div v-if="item.registry_number" class="text-caption" style="font-size:11px;color:#7c3aed">
+              {{ item.registry_number }}
+            </div>
+          </div>
         </template>
 
         <template #item.displayName="{ item }">
@@ -103,7 +117,13 @@
         </template>
 
         <template #item.reimbursement_user_name="{ item }">
-          <span class="text-caption">{{ item.reimbursement_user_name || '—' }}</span>
+          <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
+            {{ item.reimbursement_user_name }}
+          </v-chip>
+          <span v-else-if="(item as any).responsible_person" class="text-caption text-medium-emphasis">
+            {{ (item as any).responsible_person }}
+          </span>
+          <span v-else class="text-caption">—</span>
         </template>
 
         <template #item.subsidy_name="{ item }">
@@ -183,7 +203,18 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+
+const router = useRouter()
+
+function onRowClick(_e: MouseEvent | undefined, ctx: any) {
+  // Не реагируем если клик пришёл по чекбоксу/expand-кнопке (Vuetify сам обрабатывает)
+  const target = (_e?.target as HTMLElement | undefined)
+  if (target?.closest('.v-data-table__td--select-row, .v-data-table__td--select-multiple, [role="checkbox"], button')) return
+  const id = ctx?.item?.id
+  if (id) router.push(`/advance-reports/${id}/edit`)
+}
 
 interface Purchase {
   id: number
@@ -206,6 +237,8 @@ interface Purchase {
   reimbursement_user_id?: number | null
   reimbursement_user_name?: string | null
   multi_contractor_label?: string | null
+  responsible_person?: string | null
+  registry_number?: string | null
   items?: any[]
 }
 
@@ -222,6 +255,7 @@ const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
 const filterContractorIds = ref<number[]>([])
 const search = ref('')
+const fProduct = ref('')
 const selected = ref<number[]>([])
 const expandedRows = ref<number[]>([])
 
@@ -302,6 +336,14 @@ const filteredItems = computed(() => {
     )
     r = r.filter(p => !!p.contractor_name && allowedNames.has(p.contractor_name))
   }
+  if (fProduct.value && fProduct.value.trim()) {
+    const q = fProduct.value.trim().toLowerCase()
+    r = r.filter(p =>
+      (p as any).items?.some((it: any) => it.item_name?.toLowerCase().includes(q)) ||
+      p.subject?.toLowerCase().includes(q) ||
+      p.item_name?.toLowerCase().includes(q)
+    )
+  }
   return r
 })
 
@@ -310,6 +352,7 @@ function clearFilters() {
   filterSubsidyId.value = null
   filterContractorIds.value = []
   search.value = ''
+  fProduct.value = ''
 }
 
 async function load() {

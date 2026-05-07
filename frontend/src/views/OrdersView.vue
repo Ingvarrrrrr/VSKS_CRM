@@ -82,6 +82,14 @@
             hide-details
             style="min-width:220px"
           />
+          <v-text-field
+            v-model="fProduct"
+            label="Поиск товара"
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined" density="compact" hide-details clearable
+            placeholder="Название товара..."
+            style="min-width:200px; max-width:240px"
+          />
           <v-btn
             size="small" variant="tonal" color="primary"
             prepend-icon="mdi-bookmark-plus-outline"
@@ -803,6 +811,7 @@ const filterDueSoon  = ref(false)
 const filterFeoCategoryName = ref<string>('')
 const filterTypes = ref<string[]>([])
 const filterContractorIds = ref<number[]>([])
+const fProduct = ref('')
 const search = ref('')
 
 const orderTypeOptions = [
@@ -820,9 +829,20 @@ function getOrderTypeKey(o: Purchase): string {
   return 'one_time'
 }
 
+// Дедуп по имени контрагента — для авансовых contractor_id часто пуст.
 const contractorsForFilter = computed(() => {
-  const ids = new Set(orders.value.map(o => o.contractor_id).filter(Boolean))
-  return contractors.value.filter(c => ids.has(c.id))
+  const byName = new Map<string, any>()
+  for (const o of orders.value as any[]) {
+    const name = o.contractor_name
+    if (!name || byName.has(name)) continue
+    const real = contractors.value.find(c =>
+      (o.contractor_id && c.id === o.contractor_id) ||
+      (o.contractor_inn && c.inn === o.contractor_inn) ||
+      c.name === name
+    )
+    byName.set(name, real || { id: -byName.size - 1, name, inn: o.contractor_inn || '' })
+  }
+  return Array.from(byName.values())
 })
 const expanded = ref<string[]>([])
 const selectedOrders = ref<Purchase[]>([])
@@ -940,7 +960,21 @@ const filteredOrders = computed(() => {
     r = r.filter(o => filterTypes.value.includes(getOrderTypeKey(o)))
   }
   if (filterContractorIds.value.length > 0) {
-    r = r.filter(o => o.contractor_id != null && filterContractorIds.value.includes(o.contractor_id))
+    const allowedNames = new Set(
+      contractorsForFilter.value
+        .filter((c: any) => filterContractorIds.value.includes(c.id))
+        .map((c: any) => c.name)
+    )
+    r = r.filter(o => !!o.contractor_name && allowedNames.has(o.contractor_name))
+  }
+  // Поиск по товару (item_name позиций или subject закупки)
+  if (fProduct.value && fProduct.value.trim()) {
+    const q = fProduct.value.trim().toLowerCase()
+    r = r.filter(o =>
+      (o as any).items?.some((it: any) => it.item_name?.toLowerCase().includes(q)) ||
+      o.subject?.toLowerCase().includes(q) ||
+      o.item_name?.toLowerCase().includes(q)
+    )
   }
   return r
 })

@@ -3002,7 +3002,21 @@ async function startEdit(s: SubsidyRow) {
   if (s.contractor_id && !contractors.value.find(c => c.id === s.contractor_id)) {
     try { const f = await apiFetch<any>(`/contractors/${s.contractor_id}`); contractors.value.push(f) } catch {}
   }
-  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', contractor_id: s.contractor_id || null, agreement_text: (s as any).agreement_text || '', basis_doc_number: s.basis_doc_number || '', basis_doc_date: s.basis_doc_date || '' }
+  // /dashboard/charts не отдаёт agreement_text / basis_doc_*, тянем полную карточку
+  // через /api/subsidies/{id} — иначе при save поля перезатрутся в NULL.
+  let full: any = s
+  try { full = await apiFetch<any>(`/subsidies/${s.id}`) } catch { full = s }
+  editForm.value = {
+    id: full.id,
+    name: full.name,
+    year: full.year,
+    budget: full.budget,
+    description: full.description || '',
+    contractor_id: full.contractor_id ?? null,
+    agreement_text: full.agreement_text || '',
+    basis_doc_number: full.basis_doc_number || '',
+    basis_doc_date: full.basis_doc_date || '',
+  }
   showEditDialog.value = true
 }
 

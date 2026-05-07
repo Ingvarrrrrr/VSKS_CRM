@@ -240,6 +240,16 @@ def reparse_bank_payment_typed(bp) -> None:
                     bp.parsed_contract_date = _dt.strptime(first["date"], "%d.%m.%Y").date()
                 except ValueError:
                     pass
+        # Авансовые отчёты: «Авансовый отчёт 20 от 28.04.2026» — берём номер и дату как parsed_contract_*
+        # для отображения в UI колонке «Договор/Авансовый отчёт» и для матчинга авансовых.
+        if not bp.parsed_contract_number and bp.parsed_documents.get("advance_reports"):
+            first = bp.parsed_documents["advance_reports"][0]
+            bp.parsed_contract_number = first.get("number")
+            if first.get("date") and not bp.parsed_contract_date:
+                try:
+                    bp.parsed_contract_date = _dt.strptime(first["date"], "%d.%m.%Y").date()
+                except ValueError:
+                    pass
 
     # Парсим basis_doc_text → basis_doc_number/date
     if bp.basis_doc_text:

@@ -490,6 +490,63 @@ async def rematch_import(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/payments/imports/{import_id}/diag — diagnostic: показать raw_json первой строки
+# Без auth — только для отладки рассинхрона HEADER_MAP vs реального формата выписки.
+# ---------------------------------------------------------------------------
+
+@router.get("/imports/{import_id}/diag")
+async def diag_import(import_id: int, db: AsyncSession = Depends(get_db)):
+    """Возвращает первую строку BankPayment этого импорта: raw_json (все ключи и значения)
+    + typed-поля. Помогает понять какие headers попали из xlsx в БД и почему HEADER_MAP их не находит.
+    """
+    q = await db.execute(
+        select(BankPayment).where(BankPayment.import_id == import_id).limit(1)
+    )
+    bp = q.scalar_one_or_none()
+    if not bp:
+        return {"error": "no rows for this import_id"}
+
+    # Вернём ключи raw_json + sample значения (укоротим длинные строки)
+    raw_keys = sorted(list((bp.raw_json or {}).keys()))
+    raw_sample = {}
+    for k, v in (bp.raw_json or {}).items():
+        s = str(v) if v is not None else None
+        if s and len(s) > 200:
+            s = s[:200] + "..."
+        raw_sample[k] = s
+
+    # Подсчёт строк с NULL payment_date в этом импорте
+    from sqlalchemy import func as _func
+    null_count = (await db.execute(
+        select(_func.count()).select_from(BankPayment)
+        .where(BankPayment.import_id == import_id)
+        .where(BankPayment.payment_date.is_(None))
+    )).scalar() or 0
+    total_count = (await db.execute(
+        select(_func.count()).select_from(BankPayment)
+        .where(BankPayment.import_id == import_id)
+    )).scalar() or 0
+
+    return {
+        "import_id": import_id,
+        "rows_total": total_count,
+        "rows_with_null_payment_date": null_count,
+        "first_row": {
+            "id": bp.id,
+            "payment_number": bp.payment_number,
+            "payment_date": bp.payment_date.isoformat() if bp.payment_date else None,
+            "purpose_text": bp.purpose_text,
+            "amount": str(bp.amount) if bp.amount else None,
+            "parsed_contract_number": bp.parsed_contract_number,
+            "parsed_contract_date": bp.parsed_contract_date.isoformat() if bp.parsed_contract_date else None,
+            "parsed_documents": bp.parsed_documents,
+            "raw_json_keys": raw_keys,
+            "raw_json_sample": raw_sample,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /api/payments/imports/{import_id}/reparse-rows — пересборка typed полей из raw_json
 # ---------------------------------------------------------------------------
 

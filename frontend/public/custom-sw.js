@@ -1,4 +1,24 @@
-// Custom service worker for Web Push notifications
+// Custom service worker for Web Push notifications + cache cleanup on activate
+
+// При активации нового SW удаляем старые API-кэши которые остались от
+// предыдущей версии (раньше /api/* был NetworkFirst с cacheName='api-cache').
+// Без этого пользователи продолжают видеть stale GET-ответы пока браузер
+// сам не очистит storage.
+self.addEventListener('activate', function(event) {
+  event.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(
+        keys
+          .filter(function(k) { return k.includes('api-cache') || k.includes('api') })
+          .map(function(k) { return caches.delete(k) })
+      )
+    }).then(function() {
+      // Берём под контроль все открытые вкладки немедленно.
+      return self.clients.claim()
+    })
+  )
+})
+
 self.addEventListener('push', function(event) {
   const data = event.data ? event.data.json() : {}
   const title = data.title || 'VSKS CRM'

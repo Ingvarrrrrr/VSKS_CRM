@@ -11,6 +11,7 @@ export default defineConfig({
     vuetify({ autoImport: true }),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: 'auto',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'VSKS CRM',
@@ -40,19 +41,24 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         importScripts: ['/custom-sw.js'],
+        // Новый SW сразу заменяет старый и берёт под контроль все открытые вкладки.
+        // После каждого deploy клиенты получают свежий bundle без ручных действий.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+        // SPA-fallback: любой navigation попадает на index.html (precache),
+        // но ТОЛЬКО не для /api/* (они проксируются NetworkOnly ниже).
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//, /^\/deploy\//],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/purchases\/\d+\/documents\//,
-            handler: 'NetworkOnly',
-          },
-          {
+            // ВСЕ API-запросы — NetworkOnly. PUT/POST/DELETE летят в backend
+            // напрямую, GET всегда возвращает свежие данные.
+            // Раньше /api/* был NetworkFirst → workbox кэшировал ответы и
+            // отдавал stale при медленной сети → save в БД проходил, но UI
+            // показывал старые значения после reopen диалога.
             urlPattern: /^\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 10,
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            handler: 'NetworkOnly',
           },
         ],
       },

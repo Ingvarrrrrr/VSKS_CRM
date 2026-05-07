@@ -3024,12 +3024,14 @@ async function addSubsidy() {
 async function updateSubsidy() {
   saving.value = true
   try {
-    const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
+    await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null })
     })
-    const i = allSubsidies.value.findIndex(s => s.id === res.id)
-    if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }
+    // После save перезагружаем весь список с backend — гарантированно свежие
+    // данные (включая поля которые backend мог трансформировать). Spread-merge
+    // ответа PUT мог давать stale поля если SW кэшировал предыдущий GET.
+    await loadSubsidies()
     showEditDialog.value = false
     showSnack('Субсидия обновлена')
   } catch {

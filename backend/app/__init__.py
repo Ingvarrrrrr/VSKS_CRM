@@ -303,6 +303,10 @@ app.include_router(contracts.router)
 app.include_router(purchases.router)
 app.include_router(purchase_receipts.router)
 app.include_router(install_router.router, prefix="/api")
+# bank_statements MUST be registered BEFORE payments.router:
+# /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
+from .routers import bank_statements
+app.include_router(bank_statements.router)
 app.include_router(payments.router)
 app.include_router(feo_categories.router)
 app.include_router(feo_planned_items.router)

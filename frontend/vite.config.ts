@@ -52,13 +52,29 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/deploy\//],
         runtimeCaching: [
           {
-            // ВСЕ API-запросы — NetworkOnly. PUT/POST/DELETE летят в backend
-            // напрямую, GET всегда возвращает свежие данные.
-            // Раньше /api/* был NetworkFirst → workbox кэшировал ответы и
-            // отдавал stale при медленной сети → save в БД проходил, но UI
-            // показывал старые значения после reopen диалога.
-            urlPattern: /^\/api\//,
+            // PDF/DOCX/XLSX export — крупный traffic, не кэшируем.
+            urlPattern: /^\/api\/.+\/(documents|export)\//,
             handler: 'NetworkOnly',
+          },
+          {
+            // API: NetworkFirst с коротким таймаутом 3 сек.
+            // Online (типичный случай) → всегда свежие данные.
+            // Slow/offline → fallback на cache (UX не блокируется).
+            // Cache очищается при каждом deploy через custom-sw.js activate handler
+            // (clientsClaim удаляет старый api-cache) — поэтому stale от старого
+            // backend не задерживается. networkTimeoutSeconds 3 (было 10) → быстрее
+            // выявляются live-данные и cache обновляется.
+            urlPattern: /^\/api\//,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'api-cache',
+              networkTimeoutSeconds: 3,
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 12, // 12 часов max
+              },
+            },
           },
         ],
       },

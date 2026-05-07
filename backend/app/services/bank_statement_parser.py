@@ -5,19 +5,13 @@
 raw_json. Возвращает список ParsedRow для дальнейшего сохранения в
 bank_payments через bank_statement_parser_save.
 
-Header dict — словарь нормализованных имён → имя поля BankPayment. См.
-EXCEL-ANALYSIS.md для эталонного списка заголовков ScrollerHash.
+Одна строка xlsx = один платёж по одному договору (multi-row split удалён).
 
-Multi-row split: 20 групп «Расшифровка п/п/Контракт (договор)» в col 62-81
-ScrollerHash. Если несколько групп заполнены — порождает N ParsedRow с
-разными parsed_contract_number и долями суммы (если в группе есть отдельная
-сумма) или равной долей.
+Header dict — словарь нормализованных имён → имя поля BankPayment.
 """
 from __future__ import annotations
 
-import hashlib
 import re
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -49,8 +43,17 @@ HEADER_MAP: dict[str, str] = {
     "ДАТА ИСПОЛНЕНИЯ ОПЕРАЦИИ": "execution_date",
     "ДАТА ПРОВОДКИ": "posting_date",
     "ДАТА И ВРЕМЯ УТВЕРЖДЕНИЯ ЦС": "execution_datetime",
+    # Назначение платежа — несколько возможных заголовков
     "РАСШИФРОВКА П/П/КОНТРАКТ (ДОГОВОР)": "purpose_text",
+    "НАЗНАЧЕНИЕ ПЛАТЕЖА": "purpose_text",
     "ИСТОЧНИК ОПЛАТЫ": "payment_source",
+    # Колонка «Документ-основание» (соглашение о субсидии)
+    "ДОКУМЕНТ-ОСНОВАНИЕ": "basis_doc_text",
+    "ДОКУМЕНТ ОСНОВАНИЕ": "basis_doc_text",
+    # Шифр субсидии
+    "АНАЛИТИЧЕСКИЙ КОД РАЗДЕЛА ПЛАТЕЛЬЩИКА/КОД СУБСИДИИ (ЦЕЛИ)": "subsidy_code",
+    "КОД СУБСИДИИ (ЦЕЛИ)": "subsidy_code",
+    "ШИФР СУБСИДИИ": "subsidy_code",
     # Реквизиты плательщика
     "ИНН ПЛАТЕЛЬЩИКА": "payer_inn",
     "КПП ПЛАТЕЛЬЩИКА": "payer_kpp",
@@ -79,8 +82,6 @@ REJECTED_STATUSES = {
     "КОНТРОЛЬ ФК НЕ ПРОЙДЕН",
 }
 
-# Ключевое слово для multi-split групп
-_PURPOSE_HEADER = "РАСШИФРОВКА П/П/КОНТРАКТ (ДОГОВОР)"
 
 # ---------------------------------------------------------------------------
 # Regex
@@ -89,7 +90,52 @@ _PURPOSE_HEADER = "РАСШИФРОВКА П/П/КОНТРАКТ (ДОГОВОР
 # КБК в скобках вида (712ZU7L4002;0300022) — берём первую группу до «;» или «)»
 RX_KBK = re.compile(r"\(([0-9]{3}[A-ZА-Я0-9]{6,10})[;)]", re.IGNORECASE)
 
-# Приоритет: ДОГОВОР > СОГЛАШЕНИЕ > КОНТРАКТ > РЕЕСТР ДОК
+# ИНН из текстовых блоков (10 или 12 цифр)
+RX_INN = re.compile(r"\b(\d{10}|\d{12})\b")
+
+RX_VAT = re.compile(r"НДС\s*([\d.,]+)", re.IGNORECASE)
+
+# ---------------------------------------------------------------------------
+# DOC_PATTERNS — все типы документов из назначения платежа
+# ---------------------------------------------------------------------------
+
+DOC_PATTERNS: dict[str, re.Pattern] = {
+    "contracts": re.compile(
+        r"(?:ДОГ(?:ОВОР)?|КОНТРАКТ|СОГЛАШ(?:ЕНИЕ)?)"
+        r"\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "acts": re.compile(
+        r"АКТ(?:\s*(?:ПРИ[ЁЕ]МКИ|ВЫПОЛНЕННЫХ\s*РАБОТ))?"
+        r"\.?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "invoices": re.compile(
+        r"СЧ[\.\s]?(?:Ф\.?|-?ФАКТУРА)?"
+        r"\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "upd": re.compile(
+        r"УПД\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "ttn": re.compile(
+        r"ТТН\.?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "registry": re.compile(
+        r"РЕЕСТР\s*(?:ДОК\.?-?ОСН\.?)?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+}
+
+# Для быстрого SQL-фильтра — приоритет: ДОГОВОР > СОГЛАШЕНИЕ > КОНТРАКТ > РЕЕСТР
 RX_CONTRACT_PARTS = [
     ("ДОГОВОР",    re.compile(r"ДОГОВОР\s+([0-9А-ЯA-Z/\-\.]+)", re.IGNORECASE | re.UNICODE)),
     ("СОГЛАШЕНИЕ", re.compile(r"СОГЛАШЕНИЕ\s+([0-9А-ЯA-Z/\-\.]+)", re.IGNORECASE | re.UNICODE)),
@@ -97,12 +143,109 @@ RX_CONTRACT_PARTS = [
     ("РЕЕСТР",     re.compile(r"РЕЕСТР\s+ДОК\.?-?ОСН\.?\s+([0-9А-ЯA-Z/\-\.]+)", re.IGNORECASE | re.UNICODE)),
 ]
 
-# Дата "ОТ ДД.ММ.ГГГГ" — все вхождения, берём последнее соответствующее слову
 RX_DATE = re.compile(r"ОТ\s+(\d{2}\.\d{2}\.\d{4})", re.IGNORECASE)
-RX_VAT = re.compile(r"НДС\s*([\d.,]+)", re.IGNORECASE)
 
-# ИНН из текстовых блоков (10 или 12 цифр)
-RX_INN = re.compile(r"\b(\d{10}|\d{12})\b")
+# Basis doc: «№ xxx ОТ ДД.ММ.ГГГГ» из колонки «Документ-основание»
+BASIS_DOC_PATTERN = re.compile(
+    r"№?\s*([0-9А-ЯA-Z\-/]+)\s+ОТ\s+(\d{2}\.\d{2}\.\d{4})",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+# ---------------------------------------------------------------------------
+# extract_all_documents
+# ---------------------------------------------------------------------------
+
+def extract_all_documents(purpose_text: str) -> dict:
+    """Возвращает {'contracts': [...], 'acts': [...], ...} — все находки из назначения платежа."""
+    if not purpose_text:
+        return {}
+    result: dict[str, list] = {}
+    for key, pattern in DOC_PATTERNS.items():
+        matches = []
+        for m in pattern.finditer(purpose_text):
+            try:
+                num = m.group("num")
+            except IndexError:
+                num = None
+            try:
+                dt = m.group("date")
+            except IndexError:
+                dt = None
+            if num:
+                matches.append({"number": num, "date": dt})
+        if matches:
+            result[key] = matches
+    return result
+
+
+# ---------------------------------------------------------------------------
+# parse_basis_doc
+# ---------------------------------------------------------------------------
+
+def parse_basis_doc(basis_doc_text: str) -> tuple[Optional[str], Optional[date]]:
+    """Парсит «№ xxx ОТ ДД.ММ.ГГГГ» из колонки «Документ-основание»."""
+    if not basis_doc_text:
+        return None, None
+    m = BASIS_DOC_PATTERN.search(basis_doc_text)
+    if not m:
+        return None, None
+    num = m.group(1).strip()
+    try:
+        d = datetime.strptime(m.group(2), "%d.%m.%Y").date()
+    except ValueError:
+        d = None
+    return num or None, d
+
+
+# ---------------------------------------------------------------------------
+# parse_purpose — устаревшее имя сохранено для совместимости
+# ---------------------------------------------------------------------------
+
+def parse_purpose(text: str) -> dict:
+    """Возвращает {kbk, contract_number, contract_date, vat}. Все опциональны.
+
+    Приоритет типа: ДОГОВОР > СОГЛАШЕНИЕ > КОНТРАКТ > РЕЕСТР.
+    """
+    if not text:
+        return {}
+
+    result: dict[str, Any] = {}
+
+    kbk_m = RX_KBK.search(text)
+    if kbk_m:
+        result["kbk"] = kbk_m.group(1).upper()
+
+    contract_number = None
+    contract_match_end = None
+    for _label, rx in RX_CONTRACT_PARTS:
+        matches = list(rx.finditer(text))
+        if matches:
+            m = matches[-1]
+            contract_number = m.group(1)
+            contract_match_end = m.end()
+            break
+
+    if contract_number:
+        result["contract_number"] = contract_number
+        date_matches = list(RX_DATE.finditer(text))
+        for dm in date_matches:
+            if dm.start() >= (contract_match_end or 0):
+                try:
+                    result["contract_date"] = datetime.strptime(dm.group(1), "%d.%m.%Y").date()
+                except ValueError:
+                    pass
+                break
+
+    vat_m = RX_VAT.search(text)
+    if vat_m:
+        vat_s = vat_m.group(1).replace(",", ".")
+        try:
+            result["vat"] = Decimal(vat_s)
+        except InvalidOperation:
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -163,86 +306,12 @@ def _norm_inn(v: Any) -> Optional[str]:
     if v is None:
         return None
     if isinstance(v, float):
-        # Excel хранит ИНН как число → 2315176820.0
         s = str(int(v))
     else:
         s = str(v).strip()
         if s.endswith(".0"):
             s = s[:-2]
     return s if s else None
-
-
-# ---------------------------------------------------------------------------
-# parse_purpose
-# ---------------------------------------------------------------------------
-
-def parse_purpose(text: str) -> dict:
-    """Возвращает {kbk, contract_number, contract_date, vat}. Все опциональны.
-
-    Приоритет типа контракта: ДОГОВОР > СОГЛАШЕНИЕ > КОНТРАКТ > РЕЕСТР.
-    Если несколько вхождений одного типа — берём последнее.
-    Дата «ОТ» берётся следующая после найденного номера контракта.
-    """
-    if not text:
-        return {}
-
-    result: dict[str, Any] = {}
-
-    # КБК
-    kbk_m = RX_KBK.search(text)
-    if kbk_m:
-        result["kbk"] = kbk_m.group(1).upper()
-
-    # Контракт: ищем по приоритету, берём последнее вхождение нужного типа
-    contract_number = None
-    contract_match_end = None
-
-    for _label, rx in RX_CONTRACT_PARTS:
-        matches = list(rx.finditer(text))
-        if matches:
-            # берём последнее вхождение
-            m = matches[-1]
-            contract_number = m.group(1)
-            contract_match_end = m.end()
-            break
-
-    if contract_number:
-        result["contract_number"] = contract_number
-        # Ищем дату "ОТ ДД.ММ.ГГГГ" после найденного номера
-        date_matches = list(RX_DATE.finditer(text))
-        # Берём первую дату ПОСЛЕ позиции конца номера контракта
-        contract_date = None
-        for dm in date_matches:
-            if dm.start() >= (contract_match_end or 0):
-                ds = dm.group(1)
-                try:
-                    contract_date = datetime.strptime(ds, "%d.%m.%Y").date()
-                except ValueError:
-                    pass
-                break
-        if contract_date:
-            result["contract_date"] = contract_date
-
-    # НДС
-    vat_m = RX_VAT.search(text)
-    if vat_m:
-        vat_s = vat_m.group(1).replace(",", ".")
-        try:
-            result["vat"] = Decimal(vat_s)
-        except InvalidOperation:
-            pass
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# _row_hash
-# ---------------------------------------------------------------------------
-
-def _row_hash(payment_number: Any, payment_date: Any, payer_inn: Any, amount: Any) -> str:
-    """SHA1 натурального ключа строки выписки — для multi-split linking."""
-    s = f"{payment_number}|{payment_date}|{payer_inn}|{amount}"
-    return hashlib.sha1(s.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -273,9 +342,14 @@ class ParsedRow:
     parsed_contract_number: Optional[str] = None
     parsed_contract_date: Optional[date] = None
     parsed_kbk: Optional[str] = None
+    parsed_documents: Optional[dict] = None
+
+    basis_doc_text: Optional[str] = None
+    basis_doc_number: Optional[str] = None
+    basis_doc_date: Optional[date] = None
+    subsidy_code: Optional[str] = None
 
     raw_json: dict = field(default_factory=dict)
-    source_row_hash: Optional[str] = None
     is_executed: bool = False
     skip_reason: Optional[str] = None
 
@@ -288,7 +362,7 @@ def _extract_headers(ws) -> list[str]:
     """Читает первую строку листа, нормализует заголовки.
 
     Merged cells разворачиваются с None у подчинённых ячеек — наследуем
-    последний непустой заголовок (логика FADM с Реквизиты получателя x3).
+    последний непустой заголовок.
     """
     raw = [c.value for c in next(ws.iter_rows(max_row=1))]
     out: list[str] = []
@@ -309,27 +383,23 @@ def _extract_headers(ws) -> list[str]:
 def _build_row(
     headers: list[str],
     values: list[Any],
-    purpose_indices: list[int],
 ) -> Optional[ParsedRow]:
     """Строит ParsedRow из одной строки данных.
 
     Возвращает None если строка полностью пустая.
     """
-    # Проверяем что строка не пустая
     if all(v is None or str(v).strip() == "" for v in values):
         return None
 
     row = ParsedRow()
     raw: dict[str, Any] = {}
 
-    # Группировка по нормализованному заголовку для multi-col concat
     col_groups: dict[str, list[Any]] = {}
-    for i, (h, v) in enumerate(zip(headers, values)):
+    for h, v in zip(headers, values):
         if not h:
             continue
         col_groups.setdefault(h, []).append(v)
 
-    # Заполняем raw_json (первое значение для уникальных, join для повторяющихся)
     for h, vals in col_groups.items():
         non_null = [v for v in vals if v is not None and str(v).strip() != ""]
         if not non_null:
@@ -341,14 +411,13 @@ def _build_row(
 
     row.raw_json = raw
 
-    # Маппим известные поля
     for h, field_name in HEADER_MAP.items():
         v = raw.get(h)
         if v is None:
             continue
 
         if field_name == "payment_number":
-            row.payment_number = _norm_inn(v)  # нормализация .0
+            row.payment_number = _norm_inn(v)
         elif field_name == "payment_date":
             row.payment_date = _to_date(v)
         elif field_name == "status":
@@ -366,7 +435,6 @@ def _build_row(
         elif field_name == "payer_account":
             row.payer_account = str(v).strip() if v else None
         elif field_name == "payer_block":
-            # Вытаскиваем ИНН из текстового блока если нет явного поля
             block_text = str(v)
             if not row.payer_inn:
                 inn_m = RX_INN.search(block_text)
@@ -385,14 +453,18 @@ def _build_row(
         elif field_name == "payee_bank":
             row.payee_bank = str(v).strip() if v else None
         elif field_name == "payee_block":
-            # Вытаскиваем ИНН из текстового блока если нет явного поля
             block_text = str(v)
             if not row.payee_inn:
                 inn_m = RX_INN.search(block_text)
                 if inn_m:
                     row.payee_inn = inn_m.group(1)
         elif field_name == "purpose_text":
-            row.purpose_text = str(v).strip() if v else None
+            if not row.purpose_text:  # берём первое найденное
+                row.purpose_text = str(v).strip() if v else None
+        elif field_name == "basis_doc_text":
+            row.basis_doc_text = str(v).strip() if v else None
+        elif field_name == "subsidy_code":
+            row.subsidy_code = str(v).strip() if v else None
 
     # Парсим purpose_text
     if row.purpose_text:
@@ -400,6 +472,20 @@ def _build_row(
         row.parsed_contract_number = pp.get("contract_number")
         row.parsed_contract_date = pp.get("contract_date")
         row.parsed_kbk = pp.get("kbk")
+        row.parsed_documents = extract_all_documents(row.purpose_text)
+        # Заполняем parsed_contract_number из parsed_documents.contracts[0] если parse_purpose не нашёл
+        if not row.parsed_contract_number and row.parsed_documents.get("contracts"):
+            first = row.parsed_documents["contracts"][0]
+            row.parsed_contract_number = first.get("number")
+            if first.get("date"):
+                try:
+                    row.parsed_contract_date = datetime.strptime(first["date"], "%d.%m.%Y").date()
+                except ValueError:
+                    pass
+
+    # Парсим basis_doc_text
+    if row.basis_doc_text:
+        row.basis_doc_number, row.basis_doc_date = parse_basis_doc(row.basis_doc_text)
 
     # Статус
     status_norm = (row.status or "").upper().strip()
@@ -408,52 +494,7 @@ def _build_row(
     if status_norm in REJECTED_STATUSES:
         row.skip_reason = status_norm
 
-    # source_row_hash
-    row.source_row_hash = _row_hash(
-        row.payment_number,
-        row.payment_date,
-        row.payer_inn,
-        row.amount,
-    )
-
     return row
-
-
-# ---------------------------------------------------------------------------
-# _split_by_purpose — multi-row split по повторяющимся purpose_text-группам
-# ---------------------------------------------------------------------------
-
-def _split_by_purpose(base_row: ParsedRow, purpose_values: list[str]) -> list[ParsedRow]:
-    """Если несколько групп «Расшифровка п/п/Контракт (договор)» заполнены,
-    порождает N ParsedRow с разными parsed_contract_number.
-
-    У всех split-строк одинаковый source_row_hash (по базовой строке).
-    """
-    non_empty = [v for v in purpose_values if v and str(v).strip()]
-    if len(non_empty) <= 1:
-        # Нет смысла сплитить — возвращаем базовую строку как есть
-        if non_empty:
-            base_row.purpose_text = str(non_empty[0]).strip()
-            pp = parse_purpose(base_row.purpose_text)
-            base_row.parsed_contract_number = pp.get("contract_number")
-            base_row.parsed_contract_date = pp.get("contract_date")
-            base_row.parsed_kbk = pp.get("kbk")
-        return [base_row]
-
-    result: list[ParsedRow] = []
-    shared_hash = base_row.source_row_hash
-
-    for v in non_empty:
-        new_row = deepcopy(base_row)
-        new_row.source_row_hash = shared_hash
-        new_row.purpose_text = str(v).strip()
-        pp = parse_purpose(new_row.purpose_text)
-        new_row.parsed_contract_number = pp.get("contract_number")
-        new_row.parsed_contract_date = pp.get("contract_date")
-        new_row.parsed_kbk = pp.get("kbk")
-        result.append(new_row)
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -472,12 +513,10 @@ def parse_workbook(
     4. Для каждой data row:
        - заполняет ParsedRow (известные поля)
        - сохраняет ВСЕ значения в raw_json по нормализованному ключу
-       - парсит purpose_text → contract_number/date/kbk
-       - ставит is_executed = True если status IN EXECUTED_STATUSES
-       - детектирует 20 групп «Расшифровка п/п/Контракт (договор)»: если
-         несколько подколонок с этим именем заполнены — split row на N
-         ParsedRow с разными parsed_contract_number и одинаковым
-         source_row_hash. Сумма копируется как есть.
+       - парсит purpose_text → contract_number/date/kbk + все parsed_documents
+       - парсит basis_doc_text → basis_doc_number/date
+       - заполняет subsidy_code из «Аналитический код раздела...»
+       - ставит is_executed=True если status IN EXECUTED_STATUSES
     5. Возвращает (sheet_name, list[ParsedRow])
     """
     wb = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
@@ -491,36 +530,19 @@ def parse_workbook(
 
     headers = _extract_headers(ws)
 
-    # Индексы столбцов с purpose_text (может быть несколько — multi-split)
-    purpose_indices: list[int] = [
-        i for i, h in enumerate(headers) if h == _PURPOSE_HEADER
-    ]
-
     parsed: list[ParsedRow] = []
 
     rows_iter = ws.iter_rows(min_row=2, values_only=True)
     for raw_values in rows_iter:
         values = list(raw_values)
 
-        # Паддинг если меньше столбцов чем заголовков
         while len(values) < len(headers):
             values.append(None)
 
-        # Строим базовую строку (purpose_text будет заполнен из первого индекса)
-        base = _build_row(headers, values, purpose_indices)
-        if base is None:
+        row = _build_row(headers, values)
+        if row is None:
             continue
-
-        # Multi-split: собираем все purpose-значения по всем purpose_indices
-        if len(purpose_indices) > 1:
-            purpose_values = [
-                values[i] for i in purpose_indices if i < len(values)
-            ]
-            rows_out = _split_by_purpose(base, purpose_values)
-        else:
-            rows_out = [base]
-
-        parsed.extend(rows_out)
+        parsed.append(row)
 
     wb.close()
     return active_name, parsed

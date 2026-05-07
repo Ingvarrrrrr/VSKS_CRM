@@ -175,6 +175,52 @@ async def lifespan(app_: FastAPI):
     # Start Telegram bot polling for reply-to-comment routing
     from .routers.telegram_webhook import start_polling as _start_tg_polling
     _start_tg_polling()
+
+    # Phase 22: idempotent seed для tab payment_registry + 3 actions
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionTab, PermissionAction, RolePermission
+        async with async_session() as db:
+            # 1. Tab
+            ex = await db.execute(_sel(PermissionTab).where(PermissionTab.tab_key == 'payment_registry'))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionTab(tab_key='payment_registry', title='Реестр платежей'))
+            # 2. Actions
+            for action_key, description in [
+                ('payment.import', 'Импорт банковских выписок'),
+                ('payment.confirm', 'Подтверждение матча платежа'),
+                ('payment.unbind', 'Откат подтверждения платежа'),
+            ]:
+                ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == action_key))
+                if not ex.scalar_one_or_none():
+                    db.add(PermissionAction(action_key=action_key, description=description))
+            await db.commit()
+            # 3. Role permissions (granted=True)
+            # tab payment_registry — все 5 ролей (superadmin/admin/org_admin/manager/employee)
+            # action payment.import — admin, manager, superadmin
+            # action payment.confirm — admin, manager, org_admin, superadmin
+            # action payment.unbind — admin, superadmin
+            ROLE_PERMS = [
+                ('superadmin', 'payment_registry'), ('admin', 'payment_registry'),
+                ('org_admin', 'payment_registry'), ('manager', 'payment_registry'),
+                ('employee', 'payment_registry'),
+                ('superadmin', 'payment.import'), ('admin', 'payment.import'), ('manager', 'payment.import'),
+                ('superadmin', 'payment.confirm'), ('admin', 'payment.confirm'),
+                ('manager', 'payment.confirm'), ('org_admin', 'payment.confirm'),
+                ('superadmin', 'payment.unbind'), ('admin', 'payment.unbind'),
+            ]
+            for role_name, key in ROLE_PERMS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == key,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=key, granted=True))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
+
     yield
     task.cancel()
     try:

@@ -12,6 +12,9 @@ class Subsidy(Base):
     description = Column(String(2000), nullable=True)
     # Phase 19: large free-text agreement clause (федеральный бюджет / Росмолодёжь)
     agreement_text = Column(Text, nullable=True)
+    # Phase 22: № и дата документа-основания (соглашения о субсидии) — для матчинга с банковской выпиской
+    basis_doc_number = Column(String(100), nullable=True)
+    basis_doc_date = Column(Date, nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

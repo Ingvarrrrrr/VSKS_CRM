@@ -104,8 +104,12 @@ async def upload_bank_statement(
                 parsed_contract_number=pr.parsed_contract_number,
                 parsed_contract_date=pr.parsed_contract_date,
                 parsed_kbk=pr.parsed_kbk,
+                parsed_documents=pr.parsed_documents,
+                basis_doc_text=pr.basis_doc_text,
+                basis_doc_number=pr.basis_doc_number,
+                basis_doc_date=pr.basis_doc_date,
+                subsidy_code=pr.subsidy_code,
                 raw_json=pr.raw_json,
-                source_row_hash=pr.source_row_hash,
                 matched_confirmed=False,
             )
             db.add(bp)
@@ -121,9 +125,9 @@ async def upload_bank_statement(
         rows_matched = 0
         rows_unmatched = 0
         try:
-            matched, unmatched = await match_all_in_import(db, import_run.id)
-            rows_matched = matched
-            rows_unmatched = unmatched
+            match_counts = await match_all_in_import(db, import_run.id)
+            rows_matched = match_counts.get("matched_contract", 0)
+            rows_unmatched = match_counts.get("total", rows_imported) - rows_matched
         except Exception:
             # Если matcher ещё не задеплоен — не падаем
             rows_unmatched = rows_imported

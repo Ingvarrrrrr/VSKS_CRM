@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -141,6 +141,9 @@ class SubsidyCreate(BaseModel):
     contractor_id: Optional[int] = None
     # Phase 19: large agreement-text clause for docx templates
     agreement_text: Optional[str] = None
+    # Phase 22: № и дата документа-основания
+    basis_doc_number: Optional[str] = None
+    basis_doc_date: Optional[_Date] = None
 
 
 class SubsidyUpdate(BaseModel):
@@ -151,6 +154,9 @@ class SubsidyUpdate(BaseModel):
     description: Optional[str] = None
     contractor_id: Optional[int] = None
     agreement_text: Optional[str] = None
+    # Phase 22: № и дата документа-основания
+    basis_doc_number: Optional[str] = None
+    basis_doc_date: Optional[_Date] = None
 
 
 class SubsidyOut(BaseModel):
@@ -169,6 +175,9 @@ class SubsidyOut(BaseModel):
     feo_budget_total: float = 0.0
     # Phase 19
     agreement_text: Optional[str] = None
+    # Phase 22
+    basis_doc_number: Optional[str] = None
+    basis_doc_date: Optional[_Date] = None
     model_config = {"from_attributes": True}
 
 
@@ -1150,8 +1159,15 @@ class BankPaymentOut(BaseModel):
     parsed_contract_number: Optional[str] = None
     parsed_contract_date: Optional[_Date] = None
     parsed_kbk: Optional[str] = None
+    parsed_documents: Optional[Dict[str, List[Dict]]] = None
+    basis_doc_number: Optional[str] = None
+    basis_doc_date: Optional[_Date] = None
+    basis_doc_text: Optional[str] = None
+    subsidy_code: Optional[str] = None
     matched_contractor_id: Optional[int] = None
     matched_contract_id: Optional[int] = None
+    matched_purchase_id: Optional[int] = None
+    matched_subsidy_id: Optional[int] = None
     matched_confirmed: bool = False
 
     model_config = ConfigDict(from_attributes=True)

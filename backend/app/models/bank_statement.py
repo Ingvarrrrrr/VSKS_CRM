@@ -36,8 +36,7 @@ class BankPayment(Base):
     """Одна строка из импортированной выписки.
 
     raw_json хранит все колонки файла {header_norm: value} для аудита.
-    Если matched_confirmed=True — запись породила одну или N Payment-строк
-    (multi-purchase split связан через source_row_hash).
+    Одна строка xlsx = один платёж по одному договору.
     """
     __tablename__ = "bank_payments"
 
@@ -64,25 +63,37 @@ class BankPayment(Base):
     payee_bank = Column(String(500))
 
     purpose_text = Column(Text)
+    # Удобные поля для SQL-фильтров (дублируют parsed_documents.contracts[0])
     parsed_contract_number = Column(String(200))
     parsed_contract_date = Column(Date)
     parsed_kbk = Column(String(50))
+
+    # Все документы из назначения платежа: {contracts:[], acts:[], invoices:[], upd:[], ttn:[], registry:[]}
+    parsed_documents = Column(JSONB, nullable=True)
+
+    # Колонка «Документ-основание» (соглашение о субсидии)
+    basis_doc_text = Column(Text, nullable=True)
+    basis_doc_number = Column(String(100), nullable=True)
+    basis_doc_date = Column(Date, nullable=True)
+
+    # Шифр субсидии из колонки «Аналитический код раздела плательщика/Код субсидии (цели)»
+    subsidy_code = Column(String(50), nullable=True, index=True)
 
     raw_json = Column(JSONB, default=dict)
 
     # Match state
     matched_contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True)
     matched_contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=True)
+    matched_purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=True, index=True)
+    matched_subsidy_id = Column(Integer, ForeignKey("subsidies.id"), nullable=True, index=True)
     matched_confirmed = Column(Boolean, default=False, nullable=False)
-
-    # Все строки split одного платёжного документа имеют одинаковый hash
-    source_row_hash = Column(String(64), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     import_run = relationship("BankStatementImport", back_populates="payments")
-    matched_contractor = relationship("Contractor")
-    matched_contract = relationship("Contract")
+    matched_contractor = relationship("Contractor", foreign_keys=[matched_contractor_id])
+    matched_contract = relationship("Contract", foreign_keys=[matched_contract_id])
+    matched_subsidy = relationship("Subsidy", foreign_keys=[matched_subsidy_id])
     payments = relationship("Payment", back_populates="bank_payment",
                             cascade="all, delete-orphan", lazy="selectin")
 

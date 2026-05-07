@@ -720,6 +720,25 @@
               title="Создать нового контрагента" @click="quickContractorDialog = true" />
           </div>
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
+          <v-row dense class="mt-3">
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.basis_doc_number"
+                label="Номер документа-основания"
+                hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
+                persistent-hint
+                variant="outlined" density="compact"
+              />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.basis_doc_date"
+                label="Дата документа-основания"
+                type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -779,6 +798,25 @@
             hint="Переменная шаблона {{subsidy_agreement_text}}"
             persistent-hint
           />
+          <v-row dense class="mt-3">
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="editForm.basis_doc_number"
+                label="Номер документа-основания"
+                hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
+                persistent-hint
+                variant="outlined" density="compact"
+              />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="editForm.basis_doc_date"
+                label="Дата документа-основания"
+                type="date"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -1749,6 +1787,8 @@ interface SubsidyRow {
   contractor_id?: number
   contractor_name?: string
   contractor_inn?: string
+  basis_doc_number?: string
+  basis_doc_date?: string
 }
 
 interface FeoCategory {
@@ -2356,8 +2396,8 @@ async function importContractorsFromFile() {
   }
 }
 
-const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string })
+const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
 
@@ -2953,7 +2993,7 @@ async function startEdit(s: SubsidyRow) {
   if (s.contractor_id && !contractors.value.find(c => c.id === s.contractor_id)) {
     try { const f = await apiFetch<any>(`/contractors/${s.contractor_id}`); contractors.value.push(f) } catch {}
   }
-  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', contractor_id: s.contractor_id || null, agreement_text: (s as any).agreement_text || '' }
+  editForm.value = { id: s.id, name: s.name, year: s.year, budget: s.budget, description: s.description || '', contractor_id: s.contractor_id || null, agreement_text: (s as any).agreement_text || '', basis_doc_number: s.basis_doc_number || '', basis_doc_date: s.basis_doc_date || '' }
   showEditDialog.value = true
 }
 
@@ -2968,11 +3008,11 @@ async function addSubsidy() {
   try {
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null })
+      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
     })
     allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0 })
     showAddDialog.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '' }
+    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
     showSnack('Субсидия добавлена')
   } catch {
     showSnack('Ошибка добавления', 'error')
@@ -2986,7 +3026,7 @@ async function updateSubsidy() {
   try {
     const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null })
     })
     const i = allSubsidies.value.findIndex(s => s.id === res.id)
     if (i !== -1) allSubsidies.value[i] = { ...allSubsidies.value[i], ...res }

@@ -1,7 +1,13 @@
-"""Phase 22 — матчинг BankPayment с Contractor / Contract / Purchase."""
+"""Phase 22 — матчинг BankPayment с Contractor / Subsidy / Contract / Purchase.
+
+4-шаговый алгоритм:
+  1. Contractor по ИНН (точное совпадение payee_inn)
+  2. Subsidy по basis_doc_number + basis_doc_date; fallback: только по номеру
+  3. Contract: contractor_id + любой номер из parsed_documents.contracts[]
+  4. Purchase: acceptance_doc_number из parsed_documents.acts[]; fallback: единственный Purchase контракта
+"""
 from __future__ import annotations
-import re
-from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,77 +15,125 @@ from app.models.bank_statement import BankPayment
 from app.models.contractor import Contractor
 from app.models.contract import Contract
 from app.models.purchase import Purchase
+from app.models.subsidy import Subsidy
 
 
-def _norm_inn(s: Optional[str]) -> Optional[str]:
+def normalize_doc_number(s: str) -> str:
     if not s:
-        return None
-    return re.sub(r"\D", "", str(s))
+        return ""
+    return s.replace(" ", "").replace("-", "").replace("/", "").replace(".", "").upper()
 
 
-def _norm_contract_number(s: Optional[str]) -> Optional[str]:
-    if not s:
-        return None
-    return re.sub(r"\s+", "", str(s).upper().strip())
+async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
+    """Заполняет matched_*_id поля без commit. Caller сам делает db.commit()."""
 
+    # 1. Contractor по ИНН (точное совпадение)
+    if bp.payee_inn:
+        q = await db.execute(select(Contractor).where(Contractor.inn == bp.payee_inn).limit(1))
+        contractor = q.scalar_one_or_none()
+        if contractor:
+            bp.matched_contractor_id = contractor.id
 
-async def auto_match(db: AsyncSession, bp: BankPayment) -> dict:
-    """Прогонит auto-matching для одной BankPayment in-place
-    (мутирует bp.matched_contractor_id / matched_contract_id).
+    if not bp.matched_contractor_id:
+        return  # Без контрагента дальше не идём
 
-    Возвращает {contractor, contract, candidate_purchases: list[Purchase]}.
-    Менеджер должен потом подтвердить матч через separate API endpoint.
-    """
-    result: dict = {"contractor": None, "contract": None, "candidate_purchases": []}
+    # 2. Subsidy: basis_doc_number + basis_doc_date (точная) → fallback только по номеру
+    if bp.basis_doc_number and bp.basis_doc_date:
+        q = await db.execute(
+            select(Subsidy).where(
+                Subsidy.basis_doc_number == bp.basis_doc_number,
+                Subsidy.basis_doc_date == bp.basis_doc_date,
+            ).limit(1)
+        )
+        s = q.scalar_one_or_none()
+        if s:
+            bp.matched_subsidy_id = s.id
 
-    # 1. Contractor по ИНН (exact)
-    inn = _norm_inn(bp.payee_inn)
-    if inn:
-        c = (await db.execute(
-            select(Contractor).where(Contractor.inn == inn).limit(1)
-        )).scalar_one_or_none()
-        if c:
-            bp.matched_contractor_id = c.id
-            result["contractor"] = c
+    if not bp.matched_subsidy_id and bp.basis_doc_number:
+        q = await db.execute(
+            select(Subsidy).where(Subsidy.basis_doc_number == bp.basis_doc_number).limit(1)
+        )
+        s = q.scalar_one_or_none()
+        if s:
+            bp.matched_subsidy_id = s.id
 
-    # 2. Contract по contract_number + contractor_id
-    cn = _norm_contract_number(bp.parsed_contract_number)
-    if cn and result["contractor"]:
-        # Сравнение нормализованных номеров (case-insensitive, без пробелов)
-        all_contracts = (await db.execute(
-            select(Contract).where(Contract.contractor_id == result["contractor"].id)
-        )).scalars().all()
-        for ct in all_contracts:
-            if _norm_contract_number(ct.number) == cn:
-                bp.matched_contract_id = ct.id
-                result["contract"] = ct
+    # Дополнительный fallback: subsidy_code если есть поле
+    if not bp.matched_subsidy_id and bp.subsidy_code:
+        try:
+            q = await db.execute(
+                select(Subsidy).where(Subsidy.code == bp.subsidy_code).limit(1)
+            )
+            s = q.scalar_one_or_none()
+            if s:
+                bp.matched_subsidy_id = s.id
+        except Exception:
+            pass  # Поле code может отсутствовать в модели Subsidy
+
+    # 3. Contract: contractor_id + ANY parsed_documents.contracts[*].number
+    contracts_list = (bp.parsed_documents or {}).get("contracts", [])
+    if contracts_list:
+        q = await db.execute(
+            select(Contract).where(Contract.contractor_id == bp.matched_contractor_id)
+        )
+        all_contracts = q.scalars().all()
+
+        for doc in contracts_list:
+            norm_num = normalize_doc_number(doc.get("number", ""))
+            if not norm_num:
+                continue
+            for contract in all_contracts:
+                if normalize_doc_number(contract.number or "") == norm_num:
+                    bp.matched_contract_id = contract.id
+                    break
+            if bp.matched_contract_id:
                 break
 
-    # 3. Candidate purchases — все Purchase под этим контрактом, не paid
-    if result["contract"]:
-        purchases = (await db.execute(
-            select(Purchase).where(
-                Purchase.contract_id == result["contract"].id,
-                Purchase.status.in_(["delivered", "contracted", "ordered", "work_in_progress"]),
-            )
-        )).scalars().all()
-        result["candidate_purchases"] = list(purchases)
+    # 4. Purchase: acceptance_doc_number из acts[]; fallback: единственный Purchase контракта
+    if bp.matched_contract_id:
+        q = await db.execute(
+            select(Purchase).where(Purchase.contract_id == bp.matched_contract_id)
+        )
+        purchases = q.scalars().all()
 
-    return result
+        acts_list = (bp.parsed_documents or {}).get("acts", [])
+        matched_purchase = False
+        for act in acts_list:
+            norm_act = normalize_doc_number(act.get("number", ""))
+            if not norm_act:
+                continue
+            for p in purchases:
+                if p.acceptance_doc_number and normalize_doc_number(p.acceptance_doc_number) == norm_act:
+                    bp.matched_purchase_id = p.id
+                    matched_purchase = True
+                    break
+            if matched_purchase:
+                break
+
+        # Fallback: если у Contract ровно 1 Purchase — авто-привязка
+        if not matched_purchase and len(purchases) == 1:
+            bp.matched_purchase_id = purchases[0].id
 
 
 async def match_all_in_import(db: AsyncSession, import_id: int) -> dict:
-    """Прогон auto_match для всех bank_payments одного import. Не подтверждает,
-    только заполняет matched_contractor_id / matched_contract_id."""
-    rows = (await db.execute(
-        select(BankPayment).where(BankPayment.import_id == import_id)
-    )).scalars().all()
-    matched = unmatched = 0
-    for bp in rows:
-        r = await auto_match(db, bp)
-        if r["contract"]:
-            matched += 1
-        else:
-            unmatched += 1
-    await db.flush()
-    return {"matched": matched, "unmatched": unmatched, "total": len(rows)}
+    """Прогоняет auto_match на все BankPayment этого импорта. Возвращает счётчики."""
+    q = await db.execute(select(BankPayment).where(BankPayment.import_id == import_id))
+    counts = {
+        "matched_contractor": 0,
+        "matched_subsidy": 0,
+        "matched_contract": 0,
+        "matched_purchase": 0,
+        "total": 0,
+    }
+    for bp in q.scalars().all():
+        counts["total"] += 1
+        await auto_match(bp, db)
+        if bp.matched_contractor_id:
+            counts["matched_contractor"] += 1
+        if bp.matched_subsidy_id:
+            counts["matched_subsidy"] += 1
+        if bp.matched_contract_id:
+            counts["matched_contract"] += 1
+        if bp.matched_purchase_id:
+            counts["matched_purchase"] += 1
+    await db.commit()
+    return counts

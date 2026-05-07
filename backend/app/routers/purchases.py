@@ -89,6 +89,15 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
             )
             for a in allocations
         ]
+    # Multi-contractor label for advance reports
+    multi_contractor_label: str | None = None
+    if p.purchase_method == 'advance' and p.items:
+        unique_names = {item.contractor_name for item in p.items if item.contractor_name}
+        if len(unique_names) > 1:
+            multi_contractor_label = "Множественный контрагент"
+        elif len(unique_names) == 1:
+            multi_contractor_label = next(iter(unique_names))
+
     return PurchaseOutFull(
         **data,
         items=items,
@@ -101,6 +110,7 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         subsidy_allocations=alloc_out,
         last_receipt_date=(receipt_map or {}).get(p.id),
         reimbursement_user_name=(ru_map or {}).get(p.reimbursement_user_id),
+        multi_contractor_label=multi_contractor_label,
     )
 
 

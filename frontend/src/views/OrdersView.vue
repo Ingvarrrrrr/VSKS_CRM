@@ -232,9 +232,12 @@
             <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
               {{ item.reimbursement_user_name }}
             </v-chip>
+            <v-chip v-else-if="(item as any).multi_contractor_label === 'Множественный контрагент'" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+              {{ (item as any).multi_contractor_label }}
+            </v-chip>
             <div v-else class="text-body-2 text-truncate" style="max-width:160px">
               <v-icon size="x-small" color="purple" class="mr-1">mdi-account-cash</v-icon>
-              {{ advancePersonLabel(item) }}
+              {{ (item as any).multi_contractor_label || advancePersonLabel(item) }}
             </div>
           </template>
           <template v-else>
@@ -648,6 +651,7 @@ interface Purchase {
   contractor_name?: string
   reimbursement_user_id?: number | null
   reimbursement_user_name?: string | null
+  multi_contractor_label?: string | null
   feo_category_name?: string
   feo_category_id?: number
   subsidy_name?: string

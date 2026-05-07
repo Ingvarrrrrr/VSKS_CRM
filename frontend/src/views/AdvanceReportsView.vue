@@ -93,7 +93,13 @@
         </template>
 
         <template #item.contractor_name="{ item }">
-          <span class="text-caption">{{ item.contractor_name || '—' }}</span>
+          <v-chip v-if="(item as any).reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
+            {{ (item as any).reimbursement_user_name }}
+          </v-chip>
+          <v-chip v-else-if="(item as any).multi_contractor_label === 'Множественный контрагент'" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+            {{ (item as any).multi_contractor_label }}
+          </v-chip>
+          <span v-else class="text-caption">{{ (item as any).multi_contractor_label || item.contractor_name || '—' }}</span>
         </template>
 
         <template #item.reimbursement_user_name="{ item }">
@@ -199,6 +205,7 @@ interface Purchase {
   contractor_inn?: string
   reimbursement_user_id?: number | null
   reimbursement_user_name?: string | null
+  multi_contractor_label?: string | null
   items?: any[]
 }
 

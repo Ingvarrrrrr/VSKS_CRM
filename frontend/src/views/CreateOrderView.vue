@@ -42,6 +42,33 @@
 
     <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
+      <!-- Чеки вверху — только при создании авансового отчёта -->
+      <v-card v-if="showReceiptsOnTop" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
+          <span class="d-flex align-center">
+            <v-icon start>mdi-receipt-text-outline</v-icon>
+            <span>Чеки ({{ receipts.length }})</span>
+          </span>
+          <v-spacer />
+          <v-btn size="small" variant="tonal" color="primary" @click="onScanQrClick">
+            <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
+          </v-btn>
+          <v-btn size="small" variant="tonal" @click="onJsonBtnClick">
+            <v-icon start>mdi-file-upload</v-icon>Загрузить чек
+          </v-btn>
+          <input ref="advJsonReceiptInput" type="file" accept="image/*,.json" multiple
+            style="display:none" @change="onJsonReceiptUpload" />
+          <v-btn size="small" variant="tonal" @click="onManualBtnClick">
+            <v-icon start>mdi-plus</v-icon>Вручную
+          </v-btn>
+        </v-card-title>
+        <v-card-text>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-0 text-caption">
+            При сканировании QR или загрузке фото/JSON чека отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
+          </v-alert>
+        </v-card-text>
+      </v-card>
+
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
@@ -310,7 +337,7 @@
       </v-card>
 
       <!-- 1.7. Чеки (для авансовых отчётов и обычных закупок — позиции из чека добавляются в закупку) -->
-      <v-card v-if="formMode === 'advance_report' || (formMode === 'order' && isEdit && purchaseId)" variant="outlined" class="mb-4">
+      <v-card v-if="!showReceiptsOnTop && (formMode === 'advance_report' || (formMode === 'order' && isEdit && purchaseId))" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
           <span class="d-flex align-center">
             <v-icon start>mdi-receipt-text-outline</v-icon>
@@ -2858,6 +2885,9 @@ const contractPriceMode = ref<'auto' | 'manual'>('auto')
 
 // --- formMode: drives simplified views for service notes / advance reports ---
 const formMode = computed(() => (route.meta?.formMode as string) || 'default')
+
+// При создании авансового — блок чеков показывается первым (выше основной формы)
+const showReceiptsOnTop = computed(() => formMode.value === 'advance_report' && !isEdit.value)
 
 const formModeHidden = computed((): Set<string> => {
   if (formMode.value === 'service_note_delivery')

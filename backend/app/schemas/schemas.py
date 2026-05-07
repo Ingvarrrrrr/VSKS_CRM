@@ -590,6 +590,7 @@ class PurchaseOutFull(PurchaseOut):
     event_name: Optional[str] = None
     last_receipt_date: Optional[datetime] = None
     reimbursement_user_name: Optional[str] = None
+    multi_contractor_label: Optional[str] = None
 
 # Payment
 class PaymentCreate(BaseModel):

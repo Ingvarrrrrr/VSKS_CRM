@@ -154,9 +154,14 @@
             {{ (item as any).reimbursement_user_name }}
           </v-chip>
         </template>
+        <template v-else-if="(item as any)._is_advance_report && (item as any).multi_contractor_label === 'Множественный контрагент'">
+          <v-chip size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+            {{ (item as any).multi_contractor_label }}
+          </v-chip>
+        </template>
         <template v-else>
-          <div>{{ item.contractor_name || '—' }}</div>
-          <div v-if="item.contractor_inn" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
+          <div>{{ (item as any)._is_advance_report ? ((item as any).multi_contractor_label || item.contractor_name || '—') : (item.contractor_name || '—') }}</div>
+          <div v-if="item.contractor_inn && !(item as any)._is_advance_report" class="text-caption text-medium-emphasis">ИНН {{ item.contractor_inn }}</div>
           <div v-if="!item.contractor_name || !item.signing_date || !item.max_amount" class="d-flex flex-wrap ga-1 mt-1">
             <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
             <v-chip v-if="!item.signing_date" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Дата</v-chip>
@@ -602,6 +607,7 @@ interface Contract {
   contractor_inn?: string
   reimbursement_user_id?: number | null
   reimbursement_user_name?: string | null
+  multi_contractor_label?: string | null
   subsidy_id?: number
   subsidy_name?: string
   extra_subsidies?: ContractSubsidyItem[]
@@ -1088,6 +1094,7 @@ const loadContracts = async () => {
       _purchase_id: p.id,
       reimbursement_user_id: p.reimbursement_user_id,
       reimbursement_user_name: p.reimbursement_user_name,
+      multi_contractor_label: p.multi_contractor_label,
     }))
     contracts.value = [...contractsData, ...arAsContracts]
   } catch {

@@ -222,7 +222,7 @@ async function loadPayments() {
     return
   }
   try {
-    const data = await apiFetch(`/api/payments/?purchase_id=${props.purchaseId}`)
+    const data = await apiFetch(`/payments/?purchase_id=${props.purchaseId}`)
     payments.value = data
   } catch {
     payments.value = []
@@ -233,7 +233,7 @@ async function deletePayment(pm: Payment) {
   if (!confirm(`Удалить платёж ${pm.document_number || '#' + pm.id}?`)) return
   deletingId.value = pm.id
   try {
-    await apiFetch(`/api/payments/${pm.id}`, { method: 'DELETE' })
+    await apiFetch(`/payments/${pm.id}`, { method: 'DELETE' })
     await loadPayments()
     emit('changed')
   } finally {
@@ -250,7 +250,7 @@ async function submitPayment() {
   if (!props.purchaseId || !newPayment.value.amount) return
   saving.value = true
   try {
-    await apiFetch('/api/payments/', {
+    await apiFetch('/payments/', {
       method: 'POST',
       body: JSON.stringify({
         purchase_id: props.purchaseId,

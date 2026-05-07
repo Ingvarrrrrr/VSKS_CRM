@@ -168,7 +168,7 @@ function statusColor(status: string) {
 async function loadImports() {
   loadingList.value = true
   try {
-    imports.value = await apiFetch<any[]>('/api/payments/imports')
+    imports.value = await apiFetch<any[]>('/payments/imports')
   } catch {
     // errors handled globally by apiFetch
   } finally {
@@ -182,7 +182,7 @@ async function uploadFile() {
   try {
     const fd = new FormData()
     fd.append('file', file.value)
-    const res = await apiFetch<any>('/api/payments/imports', {
+    const res = await apiFetch<any>('/payments/imports', {
       method: 'POST',
       body: fd,
     })
@@ -203,7 +203,7 @@ async function uploadFile() {
 async function deleteImport(id: number) {
   if (!confirm('Удалить прогон импорта? Все связанные платежи будут отозваны.')) return
   try {
-    await apiFetch(`/api/payments/imports/${id}`, { method: 'DELETE' })
+    await apiFetch(`/payments/imports/${id}`, { method: 'DELETE' })
     await loadImports()
   } catch (e: any) {
     error(`Ошибка удаления: ${e?.detail || e?.message || 'неизвестная ошибка'}`)

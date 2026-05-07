@@ -270,6 +270,23 @@ async def list_bank_payment_registry(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/payments/registry/{bp_id} — получить одну запись BankPayment
+# ---------------------------------------------------------------------------
+
+@router.get("/registry/{bp_id}", response_model=BankPaymentOut)
+async def get_bank_payment(
+    bp_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_tab("payment_registry")),
+):
+    """Получить одну запись BankPayment по ID (для PaymentMatchDialog)."""
+    bp = await db.get(BankPayment, bp_id)
+    if not bp:
+        raise HTTPException(status_code=404, detail="Платёж не найден")
+    return bp
+
+
+# ---------------------------------------------------------------------------
 # PATCH /api/payments/registry/{bp_id}/match — ручная привязка
 # ---------------------------------------------------------------------------
 

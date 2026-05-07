@@ -9,40 +9,9 @@
         </h1>
         <span class="text-body-2 text-medium-emphasis">{{ totalCount }} записей</span>
       </div>
-      <v-menu v-model="colPickerOpen" :close-on-content-click="false" location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <v-btn v-bind="menuProps" prepend-icon="mdi-view-column" variant="outlined" color="primary">
-            Колонки
-          </v-btn>
-        </template>
-        <v-card min-width="280" max-height="500" class="overflow-y-auto">
-          <v-card-title class="text-body-2 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
-          <v-divider />
-          <v-list density="compact" class="py-1">
-            <v-list-item
-              v-for="col in allColumns"
-              :key="col.key"
-              :title="col.title"
-              class="px-3"
-              @click="toggleColumn(col.key)"
-            >
-              <template #prepend>
-                <v-checkbox-btn
-                  :model-value="visibleColumnKeys.includes(col.key)"
-                  density="compact"
-                  @click.stop="toggleColumn(col.key)"
-                />
-              </template>
-            </v-list-item>
-          </v-list>
-          <v-divider />
-          <v-card-actions class="px-3 py-2">
-            <v-btn size="x-small" variant="text" @click="resetColumns">Сбросить</v-btn>
-            <v-spacer />
-            <v-btn size="x-small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-menu>
+      <v-btn prepend-icon="mdi-view-column" variant="outlined" color="primary" @click="colPickerOpen = true">
+        Колонки
+      </v-btn>
     </div>
 
     <!-- Filters -->
@@ -149,6 +118,8 @@
       v-model:expanded="expanded"
       item-value="id"
       class="elevation-1"
+      fixed-header
+      height="calc(100vh - 320px)"
       :items-per-page="50"
       :items-per-page-options="[25, 50, 100]"
       :page="page"
@@ -322,6 +293,39 @@
       </template>
     </v-data-table>
 
+    <!-- Column picker dialog -->
+    <v-dialog v-model="colPickerOpen" max-width="600">
+      <v-card>
+        <v-card-title class="text-body-1 font-weight-bold px-4 pt-3 pb-1">Видимые колонки</v-card-title>
+        <v-divider />
+        <v-card-text class="pa-0" style="max-height:460px; overflow-y:auto">
+          <v-list density="compact" class="py-1">
+            <v-list-item
+              v-for="col in allColumns"
+              :key="col.key"
+              :title="col.title || col.key"
+              class="px-3"
+              @click="toggleColumn(col.key)"
+            >
+              <template #prepend>
+                <v-checkbox-btn
+                  :model-value="visibleColumnKeys.includes(col.key)"
+                  density="compact"
+                  @click.stop="toggleColumn(col.key)"
+                />
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-3 py-2">
+          <v-btn size="small" variant="text" @click="resetColumns">Сбросить</v-btn>
+          <v-spacer />
+          <v-btn size="small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Match dialog -->
     <PaymentMatchDialog
       v-model="matchDialog"
@@ -451,12 +455,13 @@ const expanded = ref<number[]>([])
 const LS_KEY = 'payment_registry_columns'
 
 const DEFAULT_VISIBLE_KEYS = [
-  'index', 'payment_number', 'payment_date', 'payer_name', 'payee_name',
+  'data-table-expand', 'index', 'payment_number', 'payment_date', 'payer_name', 'payee_name',
   'amount', 'status', 'parsed_contract_number', 'matched', 'matched_confirmed',
-  'actions', 'data-table-expand',
+  'actions',
 ]
 
 const allColumns = [
+  { title: '', key: 'data-table-expand' },
   { title: '№', key: 'index' },
   { title: 'Номер документа', key: 'payment_number' },
   { title: 'Дата', key: 'payment_date' },
@@ -484,7 +489,6 @@ const allColumns = [
   { title: 'ID субсидии', key: 'matched_subsidy_id' },
   { title: 'Создано', key: 'created_at' },
   { title: 'Действия', key: 'actions' },
-  { title: '', key: 'data-table-expand' },
 ]
 
 function _loadVisibleKeys(): string[] {

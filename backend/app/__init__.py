@@ -177,17 +177,8 @@ async def lifespan(app_: FastAPI):
     _start_tg_polling()
 
     # Phase 22: idempotent ALTER для subsidies — добавить basis_doc_number/date
-    import logging as _logging_p22
-    _p22_log = _logging_p22.getLogger(__name__)
-    try:
-        from sqlalchemy import text as _text2
-        from .database import engine as _engine2
-        async with _engine2.begin() as conn:
-            await conn.execute(_text2("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_number VARCHAR(100)"))
-            await conn.execute(_text2("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_date DATE"))
-        _p22_log.info("Phase 22: subsidies.basis_doc_number/date columns OK (lifespan)")
-    except Exception as e:
-        _p22_log.warning(f"Phase 22 subsidies ALTER skipped (non-fatal): {e}")
+    from .database import ensure_phase22_columns as _ensure_p22
+    await _ensure_p22()
 
     # Phase 22: idempotent ALTER для bank_payments — заменить старый UniqueConstraint на source_row_hash
     try:

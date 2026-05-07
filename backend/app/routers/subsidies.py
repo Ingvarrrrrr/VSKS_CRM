@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
+from sqlalchemy.exc import IntegrityError, ProgrammingError
+from app.database import get_db, engine
 from app.models.subsidy import Subsidy
 from app.models.feo_category import FeoCategory
 from app.models.subsidy_contractor_override import SubsidyContractorOverride
@@ -23,6 +24,21 @@ from app.models.user import User
 from typing import List
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
+
+
+@router.get("/diag/columns")
+async def diag_columns(db: AsyncSession = Depends(get_db)):
+    """Diagnostic endpoint — возвращает реальные колонки таблицы subsidies из information_schema."""
+    result = await db.execute(text(
+        "SELECT column_name, data_type, is_nullable "
+        "FROM information_schema.columns "
+        "WHERE table_name = 'subsidies' "
+        "ORDER BY ordinal_position"
+    ))
+    rows = result.fetchall()
+    columns = [{"column_name": r[0], "data_type": r[1], "is_nullable": r[2]} for r in rows]
+    logger.info("diag_columns: subsidies has %d columns: %s", len(columns), [c["column_name"] for c in columns])
+    return {"table": "subsidies", "columns": columns}
 
 
 async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
@@ -179,13 +195,16 @@ async def update_subsidy(
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
     old_budget = db_subsidy.budget  # capture BEFORE setattr loop
-    # Pydantic v2: model_dump() instead of deprecated .dict()
+
+    # Step 1: log incoming payload
     payload = subsidy.model_dump() if hasattr(subsidy, 'model_dump') else subsidy.dict()
-    logger.info("update_subsidy id=%s payload_keys=%s", subsidy_id, list(payload.keys()))
-    for key, value in payload.items():
-        setattr(db_subsidy, key, value)
+    logger.info("update_subsidy id=%s incoming payload: %s", subsidy_id, payload)
 
     calc = await calculate_budget_from_categories(db, subsidy_id)
+
+    # Step 2: try normal setattr → commit
+    for key, value in payload.items():
+        setattr(db_subsidy, key, value)
     db_subsidy.calculated_budget = calc
 
     # Budget history write hook — track subsidy limit changes only (NOT calculated_budget)
@@ -202,8 +221,64 @@ async def update_subsidy(
             reason=None,
         ))
 
-    await db.commit()
-    await db.refresh(db_subsidy)
+    logger.info(
+        "update_subsidy id=%s db_subsidy state before commit: name=%r year=%r budget=%r "
+        "basis_doc_number=%r basis_doc_date=%r",
+        subsidy_id,
+        db_subsidy.name, db_subsidy.year, db_subsidy.budget,
+        getattr(db_subsidy, 'basis_doc_number', '<attr_missing>'),
+        getattr(db_subsidy, 'basis_doc_date', '<attr_missing>'),
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(db_subsidy)
+    except (ProgrammingError, IntegrityError) as exc:
+        logger.warning(
+            "update_subsidy id=%s commit failed (%s: %s), attempting ALTER fallback",
+            subsidy_id, type(exc).__name__, exc,
+        )
+        await db.rollback()
+
+        # ALTER fallback — отдельная транзакция вне текущей сессии
+        from app.database import ensure_phase22_columns as _ensure_p22
+        await _ensure_p22()
+
+        # Перезагружаем объект и повторяем setattr
+        result2 = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
+        db_subsidy = result2.scalar_one_or_none()
+        if not db_subsidy:
+            raise HTTPException(status_code=404, detail="Subsidy not found after ALTER fallback")
+        db.expire_all()
+
+        for key, value in payload.items():
+            setattr(db_subsidy, key, value)
+        db_subsidy.calculated_budget = calc
+
+        if old_budget != db_subsidy.budget:
+            from app.models.budget_history import BudgetHistory as _BH2
+            db.add(_BH2(
+                subsidy_id=subsidy_id,
+                purchase_id=None,
+                entity_type="subsidy",
+                old_value=float(old_budget) if old_budget is not None else None,
+                new_value=float(db_subsidy.budget) if db_subsidy.budget is not None else None,
+                changed_by_id=current_user.id,
+                changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                reason=None,
+            ))
+
+        await db.commit()
+        await db.refresh(db_subsidy)
+        logger.info("update_subsidy id=%s ALTER fallback commit succeeded", subsidy_id)
+
+    # Step 4: raw SELECT to verify final DB state
+    raw = await db.execute(
+        text("SELECT id, name, year, budget, basis_doc_number, basis_doc_date FROM subsidies WHERE id = :id"),
+        {"id": subsidy_id},
+    )
+    raw_row = raw.fetchone()
+    logger.info("update_subsidy id=%s post-commit raw SELECT: %s", subsidy_id, raw_row)
 
     d = {c.name: getattr(db_subsidy, c.name) for c in db_subsidy.__table__.columns}
     d["calculated_budget"] = calc

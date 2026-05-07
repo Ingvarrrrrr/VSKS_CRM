@@ -134,6 +134,8 @@ class RegisterRequest(BaseModel):
 
 # Subsidy
 class SubsidyCreate(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     name: str
     year: int
     budget: float

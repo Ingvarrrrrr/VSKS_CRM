@@ -470,14 +470,28 @@ def _build_row(
             continue
         col_groups.setdefault(h, []).append(v)
 
+    def _json_safe(v: Any) -> Any:
+        # JSONB-колонка не сериализует datetime/date/Decimal — конвертим в строки
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, date):
+            return v.isoformat()
+        if isinstance(v, Decimal):
+            return str(v)
+        if isinstance(v, (str, int, float, bool)):
+            return v
+        return str(v)
+
     for h, vals in col_groups.items():
         non_null = [v for v in vals if v is not None and str(v).strip() != ""]
         if not non_null:
             raw[h] = None
         elif len(non_null) == 1:
-            raw[h] = non_null[0]
+            raw[h] = _json_safe(non_null[0])
         else:
-            raw[h] = "\n".join(str(v) for v in non_null)
+            raw[h] = "\n".join(str(_json_safe(v)) for v in non_null)
 
     row.raw_json = raw
     row.source_row_hash = compute_row_hash(raw)

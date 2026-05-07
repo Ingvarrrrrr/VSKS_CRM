@@ -339,6 +339,51 @@ async def confirm_bank_payment(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/payments/imports/{import_id}/rematch — перематч строк прогона
+# ---------------------------------------------------------------------------
+
+@router.post("/imports/{import_id}/rematch", dependencies=[Depends(require_action("payment.import"))])
+async def rematch_import(
+    import_id: int,
+    only_unmatched: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Перезапустить auto_match для всех (или только unmatched) платежей данного импорта.
+
+    Используется когда:
+    - Изменились настройки субсидий (basis_doc_number/date)
+    - Изменилась логика matcher
+    - Загружены данные но контракты ещё не созданы в системе
+    """
+    from app.services.payment_matcher import auto_match
+
+    q = select(BankPayment).where(BankPayment.import_id == import_id)
+    if only_unmatched:
+        q = q.where(BankPayment.matched_contract_id.is_(None))
+
+    result = await db.execute(q)
+    rows = result.scalars().all()
+
+    counts = {'total': len(rows), 'matched_contract': 0, 'matched_subsidy': 0, 'matched_purchase': 0}
+    for bp in rows:
+        if not only_unmatched:
+            bp.matched_contractor_id = None
+            bp.matched_subsidy_id = None
+            bp.matched_contract_id = None
+            bp.matched_purchase_id = None
+        await auto_match(bp, db)
+        if bp.matched_contract_id:
+            counts['matched_contract'] += 1
+        if bp.matched_subsidy_id:
+            counts['matched_subsidy'] += 1
+        if bp.matched_purchase_id:
+            counts['matched_purchase'] += 1
+
+    await db.commit()
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # POST /api/payments/registry/{bp_id}/unbind — откат подтверждения
 # ---------------------------------------------------------------------------
 

@@ -194,6 +194,42 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 hash migration skipped (non-fatal): {e}")
 
+    # Phase 22: backfill source_row_hash для legacy записей + удаление дубликатов
+    try:
+        from sqlalchemy import select as _sel, text as _text
+        from .models.bank_statement import BankPayment
+        from .services.bank_statement_parser import compute_row_hash
+
+        async with async_session() as db:
+            # 1. Заполнить hash для legacy записей с NULL
+            q = await db.execute(_sel(BankPayment).where(BankPayment.source_row_hash.is_(None)))
+            legacy = q.scalars().all()
+            backfilled = 0
+            for bp in legacy:
+                if bp.raw_json:
+                    try:
+                        bp.source_row_hash = compute_row_hash(bp.raw_json)
+                        backfilled += 1
+                    except Exception:
+                        pass
+            if backfilled:
+                await db.commit()
+
+            # 2. Удалить дубликаты — оставляем MIN(id) на каждый hash
+            await db.execute(_text("""
+                DELETE FROM bank_payments
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM bank_payments
+                    WHERE source_row_hash IS NOT NULL
+                    GROUP BY source_row_hash
+                )
+                AND source_row_hash IS NOT NULL
+            """))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 22 hash backfill skipped (non-fatal): {e}")
+
     # Phase 22: idempotent seed для tab payment_registry + 3 actions
     try:
         from sqlalchemy import select as _sel

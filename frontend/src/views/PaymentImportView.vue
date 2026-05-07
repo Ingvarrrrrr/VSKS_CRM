@@ -97,6 +97,12 @@
               title="Открыть детали"
               @click="openDetails(item.id)"
             />
+            <v-btn icon size="small" variant="text" color="primary"
+                   @click.stop="rematchImport(item)"
+                   :loading="rematchingId === item.id"
+                   :title="'Перематчить unmatched строки'">
+              <v-icon>mdi-refresh</v-icon>
+            </v-btn>
             <v-btn
               size="x-small"
               variant="text"
@@ -126,6 +132,7 @@ const file = ref<File | null>(null)
 const uploading = ref(false)
 const loadingList = ref(false)
 const imports = ref<any[]>([])
+const rematchingId = ref<number | null>(null)
 
 const headers = [
   { title: 'Дата', key: 'uploaded_at', width: 160 },
@@ -207,6 +214,19 @@ async function deleteImport(id: number) {
     await loadImports()
   } catch (e: any) {
     error(`Ошибка удаления: ${e?.detail || e?.message || 'неизвестная ошибка'}`)
+  }
+}
+
+async function rematchImport(item: any) {
+  rematchingId.value = item.id
+  try {
+    const res = await apiFetch<any>(`/payments/imports/${item.id}/rematch?only_unmatched=true`, { method: 'POST' })
+    success(`Перематчено: ${res.matched_contract ?? 0} контрактов из ${res.total ?? 0}`)
+    await loadImports()
+  } catch (e: any) {
+    error(`Ошибка: ${e?.detail || e?.message}`)
+  } finally {
+    rematchingId.value = null
   }
 }
 

@@ -475,8 +475,8 @@ async def rematch_import(
             bp.matched_contract_id = None
             bp.matched_purchase_id = None
         if reparse:
-            purpose = bp.purpose_text or (bp.raw_json or {}).get('НАЗНАЧЕНИЕ ПЛАТЕЖА') or (bp.raw_json or {}).get('РАСШИФРОВКА П/П/КОНТРАКТ (ДОГОВОР)') or ''
-            bp.parsed_documents = extract_all_documents(purpose) if purpose else {}
+            from app.services.bank_statement_parser import reparse_bank_payment_typed
+            reparse_bank_payment_typed(bp)
         await auto_match(bp, db)
         if bp.matched_contract_id:
             counts['matched_contract'] += 1
@@ -504,116 +504,20 @@ async def reparse_existing_rows(
     а 76 уже импортированных записей имеют NULL во всех полях, так как при
     исходном импорте header_row=1 дал мусорные ключи и HEADER_MAP ничего не нашёл.
     """
-    from app.services.bank_statement_parser import (
-        HEADER_MAP, _norm_header, _to_decimal, _to_date, _to_datetime,
-        _norm_inn, RX_INN, parse_purpose, extract_all_documents, parse_basis_doc,
-        EXECUTED_STATUSES, REJECTED_STATUSES, compute_row_hash,
-        _normalize_lookup_key,
-    )
+    from app.services.bank_statement_parser import reparse_bank_payment_typed
 
     q = await db.execute(select(BankPayment).where(BankPayment.import_id == import_id))
     rows = q.scalars().all()
     fixed = 0
 
     for bp in rows:
-        raw = bp.raw_json
-        if not raw:
+        if not bp.raw_json:
             continue
-
-        # Нормализуем ключи raw_json (на случай если они хранятся с оригинальным регистром)
-        norm_raw: dict = {}
-        for k, v in raw.items():
-            norm_raw[_norm_header(k)] = v
-
-        # Применяем HEADER_MAP с fallback для legacy composite-ключей
-        norm_raw_decomposed: dict = {}
-        for nk, nv in norm_raw.items():
-            mapped = _normalize_lookup_key(nk)
-            if nv is not None and (mapped not in norm_raw_decomposed or norm_raw_decomposed[mapped] is None):
-                norm_raw_decomposed[mapped] = nv
-
-        for header, field_name in HEADER_MAP.items():
-            v = norm_raw.get(header)
-            if v is None:
-                v = norm_raw_decomposed.get(header)
-            if v is None:
-                continue
-
-            if field_name == "payment_number":
-                bp.payment_number = _norm_inn(v)
-            elif field_name == "payment_date":
-                bp.payment_date = _to_date(v)
-            elif field_name == "status":
-                bp.status = str(v).strip().upper() if v else None
-            elif field_name == "amount":
-                bp.amount = _to_decimal(v)
-            elif field_name == "execution_datetime":
-                bp.execution_datetime = _to_datetime(v)
-            elif field_name == "payer_inn":
-                bp.payer_inn = _norm_inn(v)
-            elif field_name == "payer_kpp":
-                bp.payer_kpp = _norm_inn(v)
-            elif field_name == "payer_name":
-                bp.payer_name = str(v).strip() if v else None
-            elif field_name == "payer_account":
-                bp.payer_account = str(v).strip() if v else None
-            elif field_name == "payer_block":
-                if not bp.payer_inn:
-                    import re as _re
-                    inn_m = _re.search(r'\b(\d{10}|\d{12})\b', str(v))
-                    if inn_m:
-                        bp.payer_inn = inn_m.group(1)
-            elif field_name == "payee_inn":
-                bp.payee_inn = _norm_inn(v)
-            elif field_name == "payee_kpp":
-                bp.payee_kpp = _norm_inn(v)
-            elif field_name == "payee_name":
-                bp.payee_name = str(v).strip() if v else None
-            elif field_name == "payee_account":
-                bp.payee_account = str(v).strip() if v else None
-            elif field_name == "payee_bik":
-                bp.payee_bik = str(v).strip() if v else None
-            elif field_name == "payee_bank":
-                bp.payee_bank = str(v).strip() if v else None
-            elif field_name == "payee_block":
-                if not bp.payee_inn:
-                    import re as _re
-                    inn_m = _re.search(r'\b(\d{10}|\d{12})\b', str(v))
-                    if inn_m:
-                        bp.payee_inn = inn_m.group(1)
-            elif field_name == "purpose_text":
-                if not bp.purpose_text:
-                    bp.purpose_text = str(v).strip() if v else None
-            elif field_name == "basis_doc_text":
-                bp.basis_doc_text = str(v).strip() if v else None
-            elif field_name == "subsidy_code":
-                bp.subsidy_code = str(v).strip() if v else None
-
-        # Перепарсим purpose_text
-        if bp.purpose_text:
-            pp = parse_purpose(bp.purpose_text)
-            bp.parsed_contract_number = pp.get("contract_number")
-            bp.parsed_contract_date = pp.get("contract_date")
-            bp.parsed_kbk = pp.get("kbk")
-            bp.parsed_documents = extract_all_documents(bp.purpose_text)
-            if not bp.parsed_contract_number and bp.parsed_documents.get("contracts"):
-                from datetime import datetime as _dt
-                first = bp.parsed_documents["contracts"][0]
-                bp.parsed_contract_number = first.get("number")
-                if first.get("date"):
-                    try:
-                        bp.parsed_contract_date = _dt.strptime(first["date"], "%d.%m.%Y").date()
-                    except ValueError:
-                        pass
-
-        # Перепарсим basis_doc_text
-        if bp.basis_doc_text:
-            bp.basis_doc_number, bp.basis_doc_date = parse_basis_doc(bp.basis_doc_text)
-
+        reparse_bank_payment_typed(bp)
         fixed += 1
 
     await db.commit()
-    return {"import_id": import_id, "fixed": fixed, "total": len(rows)}
+    return {"updated": fixed}
 
 
 # ---------------------------------------------------------------------------

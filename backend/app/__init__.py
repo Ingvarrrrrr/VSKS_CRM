@@ -279,6 +279,36 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 22 RESTORE: backfill typed-fields для legacy bank_payments c payment_date IS NULL
+    # Идемпотентно — skip если все строки уже типизированы. Запускается на каждом старте.
+    try:
+        from sqlalchemy import select as _sel, func as _func
+        from .models.bank_statement import BankPayment
+        from .services.bank_statement_parser import reparse_bank_payment_typed
+        async with async_session() as db:
+            null_count = (await db.execute(
+                _sel(_func.count()).select_from(BankPayment).where(BankPayment.payment_date.is_(None))
+            )).scalar() or 0
+            if null_count > 0:
+                q = await db.execute(_sel(BankPayment).where(BankPayment.payment_date.is_(None)))
+                rows = q.scalars().all()
+                fixed = 0
+                for bp in rows:
+                    if not bp.raw_json:
+                        continue
+                    reparse_bank_payment_typed(bp)
+                    if bp.payment_date is not None or bp.purpose_text is not None:
+                        fixed += 1
+                if fixed:
+                    await db.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    f"Phase 22 backfill: {fixed}/{null_count} bank_payments re-typed from raw_json"
+                )
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 22 bank_payments backfill skipped (non-fatal): {e}")
+
     yield
     task.cancel()
     try:

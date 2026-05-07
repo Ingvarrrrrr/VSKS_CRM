@@ -333,53 +333,92 @@
     </v-data-table>
 
     <!-- Column picker dialog -->
-    <v-dialog v-model="colPickerOpen" max-width="640">
+    <v-dialog v-model="colPickerOpen" max-width="800">
       <v-card>
-        <v-card-title class="text-body-1 font-weight-bold px-4 pt-3 pb-1">Видимые колонки и ширина</v-card-title>
-        <v-divider />
-        <v-card-text class="pa-0" style="max-height:500px; overflow-y:auto">
-          <v-list density="compact" class="py-1">
-            <v-list-item
-              v-for="col in allColumns"
-              :key="col.key"
-              class="px-3"
-              @click="toggleColumn(col.key)"
-            >
-              <template #prepend>
-                <v-checkbox-btn
-                  :model-value="visibleColumnKeys.includes(col.key)"
-                  density="compact"
-                  @click.stop="toggleColumn(col.key)"
-                />
-              </template>
-              <template #default>
-                <div class="d-flex align-center gap-3 w-100">
-                  <span class="text-body-2 flex-grow-1">{{ col.title || col.key }}</span>
+        <v-card-title class="d-flex align-center">
+          Колонки реестра
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="colPickerOpen = false" />
+        </v-card-title>
+        <v-tabs v-model="colPickerTab" color="primary">
+          <v-tab value="core">Основные ({{ coreColumnsCount }})</v-tab>
+          <v-tab value="file">В этом файле ({{ rawColumns.length }})</v-tab>
+          <v-tab value="all">Все возможные ({{ masterListLength }})</v-tab>
+        </v-tabs>
+        <v-card-text style="max-height: 60vh; overflow-y: auto;">
+          <v-window v-model="colPickerTab">
+            <!-- Tab 1: Core typed columns -->
+            <v-window-item value="core">
+              <v-row v-for="col in coreColumns" :key="col.key" dense align="center">
+                <v-col cols="auto">
+                  <v-checkbox v-model="visibleKeys" :value="col.key" density="compact" hide-details />
+                </v-col>
+                <v-col>
+                  <span>{{ col.title || col.key }}</span>
+                </v-col>
+                <v-col cols="3">
                   <v-text-field
                     v-if="col.key !== 'data-table-expand'"
                     :model-value="colWidths[col.key] ?? (_colMetaDefaults[col.key]?.width ?? '')"
                     type="number"
                     min="40"
-                    max="600"
-                    label="px"
+                    max="800"
+                    label="Ширина (px)"
                     variant="plain"
                     density="compact"
                     hide-details
-                    style="max-width:70px"
                     @click.stop
                     @update:model-value="(v: any) => saveColWidth(col.key, Number(v))"
                   />
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
+                </v-col>
+              </v-row>
+            </v-window-item>
+
+            <!-- Tab 2: Dynamic from this file -->
+            <v-window-item value="file">
+              <v-alert v-if="!rawColumns.length" type="info" variant="tonal" density="compact" class="mb-2">
+                Загрузите импорт чтобы увидеть колонки из файла
+              </v-alert>
+              <v-row v-for="col in rawColumns" :key="`raw_${col.key}`" dense align="center">
+                <v-col cols="auto">
+                  <v-checkbox v-model="visibleKeys" :value="`raw_${col.key}`" density="compact" hide-details />
+                </v-col>
+                <v-col>
+                  <span class="text-body-2">{{ col.key }}</span>
+                </v-col>
+                <v-col cols="2">
+                  <v-chip size="x-small" variant="tonal">{{ col.count }} зап.</v-chip>
+                </v-col>
+              </v-row>
+            </v-window-item>
+
+            <!-- Tab 3: Master list ScrollerHash -->
+            <v-window-item value="all">
+              <v-text-field
+                v-model="masterFilter"
+                prepend-inner-icon="mdi-magnify"
+                label="Найти колонку"
+                density="compact"
+                variant="outlined"
+                hide-details
+                class="mb-2"
+              />
+              <v-row v-for="key in filteredMaster" :key="`raw_${key}`" dense align="center">
+                <v-col cols="auto">
+                  <v-checkbox v-model="visibleKeys" :value="`raw_${key}`" density="compact" hide-details />
+                </v-col>
+                <v-col>
+                  <span class="text-body-2">{{ key }}</span>
+                </v-col>
+              </v-row>
+            </v-window-item>
+          </v-window>
         </v-card-text>
-        <v-divider />
-        <v-card-actions class="px-3 py-2">
-          <v-btn size="small" variant="text" @click="resetColumns">Сбросить колонки</v-btn>
-          <v-btn size="small" variant="text" color="warning" @click="colWidths = {}; localStorage.removeItem(LS_WIDTHS_KEY)">Сбросить ширины</v-btn>
+        <v-card-actions>
+          <v-btn variant="text" color="error" @click="resetColumns">Сбросить</v-btn>
+          <v-btn variant="text" color="warning" @click="colWidths = {}; localStorage.removeItem(LS_WIDTHS_KEY)">Сбросить ширины</v-btn>
           <v-spacer />
-          <v-btn size="small" color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
+          <v-btn color="primary" variant="elevated" @click="colPickerOpen = false">Готово</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -415,6 +454,7 @@ import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
+import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
 
 // ── Route & auth ───────────────────────────────────────────────────────────
 const route = useRoute()
@@ -519,8 +559,6 @@ interface BankPayment {
   payer_account: string | null
   payer_bank: string | null
   payer_bik: string | null
-  payer_settlement_account: string | null
-  payer_corr_account: string | null
   // Получатель
   payee_name: string | null
   payee_name_resolved: string | null
@@ -529,8 +567,6 @@ interface BankPayment {
   payee_account: string | null
   payee_bank: string | null
   payee_bik: string | null
-  payee_settlement_account: string | null
-  payee_corr_account: string | null
   // Парсинг
   parsed_contract_number: string | null
   parsed_contract_date: string | null
@@ -542,8 +578,9 @@ interface BankPayment {
   basis_doc_number: string | null
   basis_doc_date: string | null
   subsidy_code: string | null
-  kbk: string | null
   execution_datetime: string | null
+  // raw_json (for raw_* columns)
+  raw_json: Record<string, any> | null
   // Match
   matched_contract_id: number | null
   matched_contractor_id: number | null
@@ -578,7 +615,8 @@ const DEFAULT_VISIBLE_KEYS = [
   'actions',
 ]
 
-const allColumns = [
+// Core typed columns — все имеют backing-поля в модели BankPayment
+const coreColumns = [
   { title: '', key: 'data-table-expand' },
   { title: '№', key: 'index' },
   // Метаданные документа
@@ -591,29 +629,23 @@ const allColumns = [
   { title: 'ИНН плательщика', key: 'payer_inn' },
   { title: 'КПП плательщика', key: 'payer_kpp' },
   { title: 'Плательщик', key: 'payer_name' },
-  { title: 'Плательщик (raw)', key: 'payer_name_raw' },
   { title: 'Лицевой счёт плательщика', key: 'payer_account' },
   { title: 'Банк плательщика', key: 'payer_bank' },
   { title: 'БИК плательщика', key: 'payer_bik' },
-  { title: 'Расчётный счёт плательщика', key: 'payer_settlement_account' },
-  { title: 'Корр. счёт плательщика', key: 'payer_corr_account' },
   // Получатель
   { title: 'ИНН получателя', key: 'payee_inn' },
   { title: 'КПП получателя', key: 'payee_kpp' },
   { title: 'Получатель', key: 'payee_name' },
-  { title: 'Получатель (raw)', key: 'payee_name_raw' },
   { title: 'Лицевой счёт получателя', key: 'payee_account' },
   { title: 'Банк получателя', key: 'payee_bank' },
   { title: 'БИК получателя', key: 'payee_bik' },
-  { title: 'Расчётный счёт получателя', key: 'payee_settlement_account' },
-  { title: 'Корр. счёт получателя', key: 'payee_corr_account' },
   // Назначение и парсинг
   { title: 'Назначение платежа', key: 'purpose_text' },
   { title: 'Документ-основание (raw)', key: 'basis_doc_text' },
   { title: '№ документа-основания', key: 'basis_doc_number' },
   { title: 'Дата документа-основания', key: 'basis_doc_date' },
   { title: 'Шифр субсидии', key: 'subsidy_code' },
-  { title: 'Договор/Авансовый/Соглашение (авто)', key: 'parsed_contract_number' },
+  { title: 'Договор (авто)', key: 'parsed_contract_number' },
   { title: 'Дата договора (авто)', key: 'parsed_contract_date' },
   { title: 'КБК', key: 'parsed_kbk' },
   // Match
@@ -628,6 +660,9 @@ const allColumns = [
   { title: 'Действия', key: 'actions' },
 ]
 
+// allColumns = coreColumns (raw_* добавляются динамически через visibleKeys)
+const allColumns = coreColumns
+
 function _loadVisibleKeys(): string[] {
   try {
     const stored = localStorage.getItem(LS_KEY)
@@ -639,25 +674,48 @@ function _loadVisibleKeys(): string[] {
   return [...DEFAULT_VISIBLE_KEYS]
 }
 
-const visibleColumnKeys = ref<string[]>(_loadVisibleKeys())
-const colPickerOpen = ref(false)
+const visibleKeys = ref<string[]>(_loadVisibleKeys())
+// alias для обратной совместимости с template (item.actions etc)
+const visibleColumnKeys = visibleKeys
 
-function toggleColumn(key: string) {
-  const idx = visibleColumnKeys.value.indexOf(key)
-  if (idx >= 0) {
-    // Don't allow hiding the last column or fixed system columns
-    if (visibleColumnKeys.value.length <= 2) return
-    visibleColumnKeys.value = visibleColumnKeys.value.filter(k => k !== key)
-  } else {
-    visibleColumnKeys.value = [...visibleColumnKeys.value, key]
+const colPickerOpen = ref(false)
+const colPickerTab = ref<'core' | 'file' | 'all'>('core')
+const rawColumns = ref<{ key: string; count: number }[]>([])
+const masterFilter = ref('')
+const masterListLength = SCROLLERHASH_MASTER_KEYS.length
+const coreColumnsCount = coreColumns.length
+
+const filteredMaster = computed(() => {
+  const q = masterFilter.value.trim().toLowerCase()
+  return q
+    ? SCROLLERHASH_MASTER_KEYS.filter(k => k.toLowerCase().includes(q))
+    : SCROLLERHASH_MASTER_KEYS
+})
+
+async function loadRawColumns() {
+  try {
+    const importIdFilter = importId.value
+    const url = importIdFilter
+      ? `/payments/registry/raw-columns?import_id=${importIdFilter}`
+      : '/payments/registry/raw-columns'
+    rawColumns.value = await apiFetch<{ key: string; count: number }[]>(url)
+  } catch {
+    rawColumns.value = []
   }
-  localStorage.setItem(LS_KEY, JSON.stringify(visibleColumnKeys.value))
 }
+
+watch(colPickerOpen, (open) => {
+  if (open) loadRawColumns()
+})
 
 function resetColumns() {
-  visibleColumnKeys.value = [...DEFAULT_VISIBLE_KEYS]
-  localStorage.setItem(LS_KEY, JSON.stringify(visibleColumnKeys.value))
+  visibleKeys.value = [...DEFAULT_VISIBLE_KEYS]
+  localStorage.setItem(LS_KEY, JSON.stringify(visibleKeys.value))
 }
+
+watch(visibleKeys, (v) => {
+  localStorage.setItem(LS_KEY, JSON.stringify(v))
+}, { deep: true })
 
 // Map from key to column definition including width/sortable
 const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> = {
@@ -667,24 +725,18 @@ const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> =
   execution_datetime:          { width: 150 },
   // Плательщик
   payer_name:                  { sortable: false, width: 180 },
-  payer_name_raw:              { sortable: false, width: 180 },
   payer_inn:                   { width: 130 },
   payer_kpp:                   { width: 110 },
   payer_account:               { width: 160 },
   payer_bank:                  { sortable: false, width: 180 },
   payer_bik:                   { width: 110 },
-  payer_settlement_account:    { width: 180 },
-  payer_corr_account:          { width: 180 },
   // Получатель
   payee_name:                  { sortable: false, width: 180 },
-  payee_name_raw:              { sortable: false, width: 180 },
   payee_inn:                   { width: 130 },
   payee_kpp:                   { width: 110 },
   payee_account:               { width: 160 },
   payee_bank:                  { sortable: false, width: 180 },
   payee_bik:                   { width: 110 },
-  payee_settlement_account:    { width: 180 },
-  payee_corr_account:          { width: 180 },
   // Прочее
   amount:                      { width: 130 },
   status:                      { width: 130 },
@@ -725,18 +777,32 @@ function saveColWidth(key: string, w: number) {
 }
 
 const activeHeaders = computed(() => {
-  return allColumns
-    .filter(c => visibleColumnKeys.value.includes(c.key))
-    .map(c => {
-      const meta = _colMetaDefaults[c.key] || {}
-      const w = colWidths.value[c.key] ?? meta.width
+  return visibleKeys.value
+    .map(key => {
+      // raw_* колонки — данные из raw_json
+      if (key.startsWith('raw_')) {
+        const rawKey = key.slice(4)
+        const w = colWidths.value[key] ?? 160
+        return {
+          title: rawKey,
+          key,
+          value: (item: any) => item.raw_json?.[rawKey] ?? '—',
+          sortable: false,
+          width: w ? `${w}px` : undefined,
+        }
+      }
+      const col = allColumns.find(c => c.key === key)
+      if (!col) return null
+      const meta = _colMetaDefaults[key] || {}
+      const w = colWidths.value[key] ?? meta.width
       return {
-        title: c.title,
-        key: c.key,
+        title: col.title,
+        key: col.key,
         sortable: meta.sortable,
         width: w ? `${w}px` : undefined,
       }
     })
+    .filter(Boolean) as any[]
 })
 
 // ── Load data ───────────────────────────────────────────────────────────────
@@ -819,17 +885,17 @@ async function doUnbind() {
 }
 
 // ── Doc display: тип + номер ──────────────────────────────────────────────────
+// Соглашение убрано — оно в 100% платежей через basis_doc, неинформативно в этой колонке.
 function docDisplay(item: any): string {
   const pd = item.parsed_documents || {}
-  const contracts = pd.contracts || []
-  const advance = pd.advance_reports || []
-  const agreements = pd.agreements || []
-
-  if (contracts.length) return `Договор ${contracts[0].number}`
-  if (advance.length) return `Авансовый отчёт ${advance[0].number}`
-  if (agreements.length) return `Соглашение ${agreements[0].number}`
-  // fallback: просто parsed_contract_number без типа
-  return item.parsed_contract_number || '—'
+  if (pd.contracts?.[0]) return `Договор ${pd.contracts[0].number}`
+  if (pd.advance_reports?.[0]) return `Авансовый отчёт ${pd.advance_reports[0].number}`
+  if (pd.acts?.[0]) return `Акт ${pd.acts[0].number}`
+  if (pd.upd?.[0]) return `УПД ${pd.upd[0].number}`
+  if (pd.invoices?.[0]) return `Счёт ${pd.invoices[0].number}`
+  if (pd.ttn?.[0]) return `ТТН ${pd.ttn[0].number}`
+  if (pd.registry?.[0]) return `Реестр ${pd.registry[0].number}`
+  return '—'
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

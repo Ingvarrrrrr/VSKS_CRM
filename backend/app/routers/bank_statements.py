@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.permissions import require_action, require_tab
+from app.auth.jwt import get_current_user
 from app.models.bank_statement import BankStatementImport, BankPayment
 from app.models.payment import Payment
 from app.services.bank_statement_parser import parse_workbook
@@ -302,6 +303,48 @@ async def list_bank_payment_registry(
         d["payee_name_resolved"] = await _resolve_inn(bp.payee_inn)
         out.append(d)
     return out
+
+
+# ---------------------------------------------------------------------------
+# GET /api/payments/registry/raw-columns — уникальные ключи raw_json
+# ---------------------------------------------------------------------------
+
+@router.get("/registry/raw-columns")
+async def get_raw_columns(
+    import_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+    _: bool = Depends(require_tab("payment_registry")),
+):
+    """Возвращает список уникальных ключей из raw_json BankPayment записей.
+
+    Если import_id задан — только этот импорт. Иначе UNION по всем.
+    Для каждого ключа считается count записей где он встречается.
+    """
+    from sqlalchemy import text
+
+    if import_id is not None:
+        sql = text("""
+            SELECT k AS key, COUNT(*) AS cnt
+            FROM bank_payments,
+                 LATERAL jsonb_object_keys(raw_json) AS k
+            WHERE import_id = :import_id AND raw_json IS NOT NULL
+            GROUP BY k
+            ORDER BY cnt DESC, k ASC
+        """)
+        result = await db.execute(sql, {"import_id": import_id})
+    else:
+        sql = text("""
+            SELECT k AS key, COUNT(*) AS cnt
+            FROM bank_payments,
+                 LATERAL jsonb_object_keys(raw_json) AS k
+            WHERE raw_json IS NOT NULL
+            GROUP BY k
+            ORDER BY cnt DESC, k ASC
+        """)
+        result = await db.execute(sql)
+
+    return [{"key": row[0], "count": row[1]} for row in result.fetchall()]
 
 
 # ---------------------------------------------------------------------------

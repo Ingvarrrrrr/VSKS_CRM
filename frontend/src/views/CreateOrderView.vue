@@ -1369,14 +1369,15 @@
           <v-row>
             <v-col cols="12" md="4" data-field-name="payment_doc_number">
               <v-text-field v-model="form.payment_doc_number" label="Номер платёжного поручения" variant="outlined" density="compact"
-                :hint="needsPayment ? 'Обязательно для перехода в статус Оплачено' : ''" persistent-hint />
+                readonly hint="Заполняется автоматически из платежей. См. раздел Платежи ниже" persistent-hint />
             </v-col>
             <v-col cols="12" md="4" data-field-name="payment_doc_date">
-              <v-text-field v-model="form.payment_doc_date" label="Дата ПП" variant="outlined" density="compact" type="date" />
+              <v-text-field v-model="form.payment_doc_date" label="Дата ПП" variant="outlined" density="compact" type="date"
+                readonly hint="Заполняется автоматически из платежей" persistent-hint />
             </v-col>
             <v-col cols="12" md="4" data-field-name="payment_amount">
               <v-text-field v-model.number="form.payment_amount" label="Сумма платежа" variant="outlined"
-                density="compact" type="number" suffix="₽" />
+                density="compact" type="number" suffix="₽" readonly hint="Заполняется автоматически из платежей" persistent-hint />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model.number="form.payment_federal" label="в т.ч. федеральный бюджет" variant="outlined"
@@ -1393,6 +1394,16 @@
           </v-row>
         </v-card-text>
       </v-card>
+
+      <!-- Платежи — только для обычных закупок (не advance_report, не service_note) -->
+      <PaymentsBlock
+        v-if="formMode === 'order' || formMode === 'default'"
+        :purchase-id="isEdit ? purchaseId : null"
+        :contract-price="form.contract_price"
+        :planned-total-price="null"
+        :status="form.status"
+        @changed="loadPurchase"
+      />
 
       <!-- Обсуждение — linked chat room -->
       <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
@@ -2878,6 +2889,7 @@ import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
+import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 
 const monthlyStagesDialogShow = ref(false)

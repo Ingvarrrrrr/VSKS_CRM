@@ -250,6 +250,9 @@ def parse_purpose(text: str) -> dict:
     contract_number = None
     contract_match_end = None
     for _label, rx in RX_CONTRACT_PARTS:
+        # СОГЛАШЕНИЕ — это субсидия, не договор; не записываем в parsed_contract_number
+        if _label == "СОГЛАШЕНИЕ":
+            continue
         matches = list(rx.finditer(text))
         if matches:
             m = matches[-1]

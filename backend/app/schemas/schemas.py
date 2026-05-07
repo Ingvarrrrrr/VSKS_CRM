@@ -1152,8 +1152,10 @@ class BankPaymentOut(BaseModel):
     amount: Optional[Decimal] = None
     payer_inn: Optional[str] = None
     payer_name: Optional[str] = None
+    payer_name_resolved: Optional[str] = None  # Phase 22.5: разрешённое имя из Organization/Contractor по ИНН
     payee_inn: Optional[str] = None
     payee_name: Optional[str] = None
+    payee_name_resolved: Optional[str] = None  # Phase 22.5: разрешённое имя из Organization/Contractor по ИНН
     payee_account: Optional[str] = None
     purpose_text: Optional[str] = None
     parsed_contract_number: Optional[str] = None

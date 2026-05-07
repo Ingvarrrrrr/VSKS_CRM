@@ -177,6 +177,16 @@ async def update_subsidy(
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    # Phase 22 fallback: idempotent ALTER на случай если lifespan-блок не отработал (проде до рестарта)
+    try:
+        from sqlalchemy import text as _text
+        await db.execute(_text("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_number VARCHAR(100)"))
+        await db.execute(_text("ALTER TABLE subsidies ADD COLUMN IF NOT EXISTS basis_doc_date DATE"))
+        logger.info("Phase 22 subsidies ALTER (fallback in update_subsidy) — OK")
+    except Exception as _e:
+        logger.warning("Phase 22 subsidies ALTER fallback skipped: %s", _e)
+
     old_budget = db_subsidy.budget  # capture BEFORE setattr loop
     for key, value in subsidy.dict().items():
         setattr(db_subsidy, key, value)

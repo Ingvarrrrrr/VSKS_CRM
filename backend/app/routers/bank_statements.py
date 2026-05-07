@@ -241,6 +241,9 @@ async def list_bank_payment_registry(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab("payment_registry")),
 ):
+    from app.models.organization import Organization
+    from app.models.contractor import Contractor as ContractorModel
+
     filters = []
     if import_id is not None:
         filters.append(BankPayment.import_id == import_id)
@@ -266,7 +269,39 @@ async def list_bank_payment_registry(
     q = q.order_by(BankPayment.payment_date.desc()).limit(limit)
 
     result = await db.execute(q)
-    return result.scalars().all()
+    rows = result.scalars().all()
+
+    # Обогащаем payer_name_resolved / payee_name_resolved по ИНН (lookup Organization → Contractor)
+    # Кеш ИНН → имя внутри запроса, чтобы не гонять N запросов на одинаковые ИНН
+    inn_name_cache: dict[str, str] = {}
+
+    async def _resolve_inn(inn: Optional[str]) -> Optional[str]:
+        if not inn:
+            return None
+        if inn in inn_name_cache:
+            return inn_name_cache[inn]
+        # Сначала Organization
+        org_q = await db.execute(select(Organization).where(Organization.inn == inn).limit(1))
+        org = org_q.scalars().first()
+        if org:
+            inn_name_cache[inn] = org.name
+            return org.name
+        # Затем Contractor
+        contr_q = await db.execute(select(ContractorModel).where(ContractorModel.inn == inn).limit(1))
+        c = contr_q.scalars().first()
+        if c:
+            inn_name_cache[inn] = c.name
+            return c.name
+        inn_name_cache[inn] = None  # type: ignore[assignment]
+        return None
+
+    out = []
+    for bp in rows:
+        d = BankPaymentOut.model_validate(bp).model_dump()
+        d["payer_name_resolved"] = await _resolve_inn(bp.payer_inn)
+        d["payee_name_resolved"] = await _resolve_inn(bp.payee_inn)
+        out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------------------

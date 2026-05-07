@@ -105,7 +105,14 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
             pass  # Поле code может отсутствовать в модели Subsidy
 
     # 3. Contract: contractor_id + ANY parsed_documents.contracts[*].number
+    # ВАЖНО: пропускаем номера из agreements — они относятся к субсидии, не к договору
     contracts_list = (bp.parsed_documents or {}).get("contracts", [])
+    agreements_list_nums = {
+        normalize_doc_number(a.get("number", ""))
+        for a in (bp.parsed_documents or {}).get("agreements", [])
+        if a.get("number")
+    }
+
     if contracts_list:
         q = await db.execute(
             select(Contract).where(Contract.contractor_id == bp.matched_contractor_id)
@@ -116,12 +123,30 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
             norm_num = normalize_doc_number(doc.get("number", ""))
             if not norm_num:
                 continue
+            # Если этот номер совпадает с номером соглашения о субсидии — пропустить
+            if norm_num in agreements_list_nums:
+                continue
+            # Дополнительная проверка: если номер совпадает с Subsidy.basis_doc_number в БД — пропустить
+            sub_check = await db.execute(
+                select(Subsidy).where(Subsidy.basis_doc_number == doc.get("number", "")).limit(1)
+            )
+            if sub_check.scalars().first():
+                continue
             for contract in all_contracts:
                 if normalize_doc_number(contract.number or "") == norm_num:
                     bp.matched_contract_id = contract.id
                     break
             if bp.matched_contract_id:
                 break
+
+    # Fallback: если contracts[] не нашёл — ищем по contractor_id (ровно 1 договор → берём его)
+    if not bp.matched_contract_id and bp.matched_contractor_id:
+        q2 = await db.execute(
+            select(Contract).where(Contract.contractor_id == bp.matched_contractor_id)
+        )
+        fallback_contracts = q2.scalars().all()
+        if len(fallback_contracts) == 1:
+            bp.matched_contract_id = fallback_contracts[0].id
 
     # 4. Purchase: acceptance_doc_number из acts[]; fallback: единственный Purchase контракта
     if bp.matched_contract_id:

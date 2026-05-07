@@ -14,6 +14,20 @@
       </v-btn>
     </div>
 
+    <!-- Stale parsed alert: записи где parsed_contract_number совпадает с номером субсидии -->
+    <v-alert
+      v-if="hasStaleParsed"
+      type="warning"
+      variant="tonal"
+      closable
+      density="compact"
+      class="mb-3"
+      @click:close="staleParsedDismissed = true"
+    >
+      В реестре есть записи где номер субсидии попал в колонку «Договор (авто)».
+      Откройте импорт → нажмите «Перепарсить» для исправления.
+    </v-alert>
+
     <!-- Filters -->
     <v-card class="mb-4" variant="outlined" rounded="lg">
       <v-card-text class="py-2 px-3">
@@ -137,15 +151,18 @@
 
       <!-- Payer -->
       <template #item.payer_name="{ item }">
-        <div class="text-body-2 text-truncate" style="max-width:160px" :title="item.payer_name || ''">
-          {{ item.payer_name || '—' }}
+        <div class="text-body-2">
+          {{ item.payer_name_resolved || item.payer_name || '—' }}
+        </div>
+        <div v-if="item.payer_name_resolved && item.payer_name_resolved !== item.payer_name" class="text-caption text-medium-emphasis" :title="item.payer_name || ''">
+          ({{ item.payer_name }})
         </div>
       </template>
 
       <!-- Payee -->
       <template #item.payee_name="{ item }">
-        <div class="text-body-2 text-truncate" style="max-width:160px" :title="item.payee_name || ''">
-          {{ item.payee_name || '—' }}
+        <div class="text-body-2">
+          {{ item.payee_name_resolved || item.payee_name || '—' }}
         </div>
         <div v-if="item.payee_inn" class="text-caption text-medium-emphasis">ИНН {{ item.payee_inn }}</div>
       </template>
@@ -206,16 +223,16 @@
         <span class="text-caption">{{ fmtDate(item.created_at) }}</span>
       </template>
 
-      <!-- Purpose text (truncated) -->
+      <!-- Purpose text (wrap) -->
       <template #item.purpose_text="{ item }">
-        <div class="text-caption text-truncate" style="max-width:220px" :title="item.purpose_text || ''">
+        <div class="text-caption" style="max-width:280px">
           {{ item.purpose_text || '—' }}
         </div>
       </template>
 
-      <!-- Basis doc text (truncated) -->
+      <!-- Basis doc text (wrap) -->
       <template #item.basis_doc_text="{ item }">
-        <div class="text-caption text-truncate" style="max-width:180px" :title="item.basis_doc_text || ''">
+        <div class="text-caption" style="max-width:220px">
           {{ item.basis_doc_text || '—' }}
         </div>
       </template>
@@ -420,9 +437,11 @@ interface BankPayment {
   payment_number: string | null
   amount: number | null
   payer_name: string | null
+  payer_name_resolved: string | null
   payer_inn: string | null
   payer_account: string | null
   payee_name: string | null
+  payee_name_resolved: string | null
   payee_inn: string | null
   payee_account: string | null
   parsed_contract_number: string | null
@@ -450,6 +469,16 @@ const loading = ref(false)
 const totalCount = ref(0)
 const page = ref(1)
 const expanded = ref<number[]>([])
+
+// Stale parsed detection: записи где parsed_contract_number совпадает с basis_doc_number (номер субсидии)
+const staleParsedDismissed = ref(false)
+const hasStaleParsed = computed(() =>
+  !staleParsedDismissed.value &&
+  payments.value.some(
+    p => p.parsed_contract_number && p.basis_doc_number &&
+      p.parsed_contract_number === p.basis_doc_number
+  )
+)
 
 // ── Column picker ─────────────────────────────────────────────────────────────
 const LS_KEY = 'payment_registry_columns'
@@ -666,3 +695,14 @@ onMounted(() => {
   loadPayments()
 })
 </script>
+
+<style scoped>
+/* Phase 22.5: перенос текста в ячейках таблицы */
+:deep(.v-data-table td) {
+  white-space: normal !important;
+  word-break: break-word;
+  vertical-align: top;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+</style>

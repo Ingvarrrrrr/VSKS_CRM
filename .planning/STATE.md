@@ -3,21 +3,50 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to plan
-last_updated: "2026-05-04T00:00:00.000Z"
+last_updated: "2026-05-07T20:00:00.000Z"
 progress:
-  total_phases: 19
-  completed_phases: 12
-  total_plans: 74
-  completed_plans: 70
+  total_phases: 20
+  completed_phases: 15
+  total_plans: 80
+  completed_plans: 78
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 18
-Next action: применить SQL `y2z3a4b5c6d7_phase22_bank_statements.sql` + `z3a4b5c6d7e8_phase22_permissions.sql` на проде через psql, затем UAT импорта реальной выписки `Config_Full.xlsx`
+Phase: 24 ✅ (завершена)
+Next action: UAT реформы авансовых отчётов (создать Ростелеком 12 этапов + 2 чека от разных ИП → проверить multi_contractor_label + reimbursement_user + FEO-drill в pipeline). Затем — право `purchase.transition.skip_validation` (новый action) и backend mismatch /dashboard/ vs /charts.
 Resume file: None
+
+## 2026-05-07 — Phase 24 + drill-down + реформа авансовых
+
+Push `c5ed69a` (последний из 24 коммитов): этапы рамочного, FEO-drill в pipeline, реформа авансовых отчётов в 3 фазы (reimbursement_user → per-item contractor → multi_contractor_label).
+
+Detailed log: `/c/Users/1/Documents/VAULT_for_LLM/Projects/VSKS_CRM/Sessions/2026-05-07_VSKS_CRM.md`.
+
+### Инциденты
+- 2× OOM build на проде после крупных frontend refactor'ов (`81a5267`, `307290f`) → revert + атомарные правки. Lesson зафиксирован.
+- alembic chain сломан, `check_schema.py --apply` авто-добавляет колонки на старте контейнера.
+
+### Bundle deployment chain (для контроля OOM)
+`8ea172f→DpY8cZqE→OOM→DWu4YuSF→B6MSF_sA→CWprrQSO→DFqZxfNU→BjOYCtYV→D1ECJ3n0→BlpoywjK→BoMULp2O→BQnejltI→Drz-nu6d`
+
+## 2026-05-05 — Triage 3 (фидбек 5 мая, docx)
+
+Push `89514eb` — 9 правок одним коммитом, applied/verified на проде:
+
+1. **check_schema asyncpg multi-statement bug** — DROP+ADD одним `text()` падал PostgresSyntaxError; теперь два отдельных execute. Cascade FK `payments.purchase_id` стоял NO ACTION с момента a273f8c (4+ дня) — фикс применён вручную SQL + код корректен на следующий деплой.
+2. **`/departments/{id}/members` UNION** — раньше показывал только из `department_members`; теперь UNION с `user_organizations.dept_id` → Цыганов виден в depts 3, 17, 18 (подтверждено API). `add_member` больше НЕ удаляет другие отделы той же org (раньше «one dept per org» сносил multi-dept).
+3. **PATCH `/purchases/{pid}`** — НОВЫЙ endpoint. Phase 26 autosave стрелял PATCH, но его не было → 405 → autosaveState='error' silently. Поэтому пропадал контрагент в #525. PATCHABLE whitelist + partial body.
+4. **Тогл «Адрес доставки/Место оказания услуг»** в карточке закупки (v-btn-toggle над AddressAutocomplete). Новое поле `purchases.delivery_location_kind` + schema/PATCHABLE.
+5. **Receipt block для advance method** — раньше был только в `formMode='advance_report'` (/advance-reports). Теперь и для обычной закупки с `purchase_method='advance'`. loadReceipts() расширен.
+6. **Transitions для авансового** — `FIELD_LABELS` подменяются: `contract_date` → «Дата документа основания (чек/УПД)», `contract_number` → «№». Хинт без служебных слов.
+7. **`lookup-inn` НЕ дефолтит «Юридическое лицо»** для 12-знач ИНН без ОГРН → None, пользователь сам выбирает.
+8. **AddressAutocomplete defaults** — «По месту нахождения подрядчика» (вместо «На территории Исполнителя») + ownOrgAddress prop + customerAddress.
+9. **focusout-handler** — flush autosave немедленно при blur поля (помимо debounce 1500ms). Document capture-phase listener.
+
+UAT pending: пользователь проверяет на проде (Ctrl+F5 → /orders, /dashboard). Ошибок в логах backend кроме тестовой PATCH с FK violation — нет.
 
 Recently closed:
 
@@ -34,8 +63,7 @@ Recently closed:
 
 ## Status
 
-- ✅ Complete (16): Phases 1–9, 11, 13, 15, 16, 17, 21, 22
-- 🟡 In progress (2): Phase 10 (3/4 — осталось 10-04 AppBar chat nav+badge), Phase 14 (3/4 — осталось 14-04 polish+UAT)
+- ✅ Complete (18): Phases 1–9, 10, 11, 13, 14, 15, 16, 17, 21, 22
 - ⏳ Not started (2): Phase 12 (4 плана ready), Phase 18 Staff Directory (TBD)
 - Post-phase feedback work: ✅ Delivered (Голичков-3, Суперадмин-1, Суперадмин-2, Суперадмин-3)
 

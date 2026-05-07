@@ -83,13 +83,13 @@ HEADER_MAP: dict[str, str] = {
     "АНАЛИТИЧЕСКИЙ КОД РАЗДЕЛА ПЛАТЕЛЬЩИКА/КОД СУБСИДИИ (ЦЕЛИ)": "subsidy_code",
     "КОД СУБСИДИИ (ЦЕЛИ)": "subsidy_code",
     "ШИФР СУБСИДИИ": "subsidy_code",
-    # Реквизиты плательщика
+    # Реквизиты плательщика — старый формат (fallback)
     "ИНН ПЛАТЕЛЬЩИКА": "payer_inn",
     "КПП ПЛАТЕЛЬЩИКА": "payer_kpp",
     "НАИМЕНОВАНИЕ ПЛАТЕЛЬЩИКА": "payer_name",
     "СЧЕТ ПЛАТЕЛЬЩИКА": "payer_account",
     "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА": "payer_block",
-    # Реквизиты получателя
+    # Реквизиты получателя — старый формат (fallback)
     "ИНН ПОЛУЧАТЕЛЯ": "payee_inn",
     "КПП ПОЛУЧАТЕЛЯ": "payee_kpp",
     "НАИМЕНОВАНИЕ ПОЛУЧАТЕЛЯ": "payee_name",
@@ -97,6 +97,28 @@ HEADER_MAP: dict[str, str] = {
     "БИК ПОЛУЧАТЕЛЯ": "payee_bik",
     "БАНК ПОЛУЧАТЕЛЯ": "payee_bank",
     "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ": "payee_block",
+    # Новый универсальный формат "main (sub)" — composite-ключи
+    # Реквизиты плательщика
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (ИНН)": "payer_inn",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (КПП)": "payer_kpp",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (НАИМЕНОВАНИЕ)": "payer_name",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (ЛИЦЕВОЙ СЧЕТ)": "payer_account",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (НАИМЕНОВАНИЕ БАНКА)": "payer_bank",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (БИК)": "payer_bik",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (РАСЧЕТНЫЙ СЧЕТ)": "payer_settlement_account",
+    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА (КОРР. СЧЕТ)": "payer_corr_account",
+    # Реквизиты получателя
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (ИНН)": "payee_inn",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (КПП)": "payee_kpp",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (НАИМЕНОВАНИЕ)": "payee_name",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (ЛИЦЕВОЙ СЧЕТ)": "payee_account",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (НАИМЕНОВАНИЕ БАНКА)": "payee_bank",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (БИК)": "payee_bik",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (РАСЧЕТНЫЙ СЧЕТ)": "payee_settlement_account",
+    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ (КОРР. СЧЕТ)": "payee_corr_account",
+    # Дополнительная информация
+    "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ (НАЗНАЧЕНИЕ ПЛАТЕЖА)": "purpose_text",
+    "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ (УПНО)": "upno",
 }
 
 # Финальные ИСПОЛНЕНО-эквивалентные статусы
@@ -166,6 +188,11 @@ DOC_PATTERNS: dict[str, re.Pattern] = {
     "registry": re.compile(
         r"РЕЕСТР\s*(?:ДОК\.?-?ОСН\.?)?\s*№?\s*(?P<num>[0-9\-/]+)"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    "advance_reports": re.compile(
+        r"АВАНСОВ(?:ЫЙ)?\s*ОТЧ[ЕЁ]Т\.?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"\s*(?:ОТ\s*(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,
     ),
 }
@@ -434,17 +461,6 @@ def _find_header_row(ws) -> int:
 # _extract_headers
 # ---------------------------------------------------------------------------
 
-# Известные main-headers с merged-cells над sub-rows.
-# Значение — суффикс для composite-ключа («ИНН» + «ПОЛУЧАТЕЛЯ» = «ИНН ПОЛУЧАТЕЛЯ»).
-# Пустая строка означает: sub-header самодостаточен, суффикс не нужен.
-_MERGED_GROUPS: dict[str, str] = {
-    "РЕКВИЗИТЫ ПЛАТЕЛЬЩИКА": "ПЛАТЕЛЬЩИКА",
-    "РЕКВИЗИТЫ ПОЛУЧАТЕЛЯ": "ПОЛУЧАТЕЛЯ",
-    "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ": "",   # sub-headers сами по себе достаточны
-    "СЧЕТ ЦР ФК": "ЦР ФК",
-}
-
-
 def _expand_merged_row(ws, row_idx: int, max_col: int) -> list:
     """Возвращает значения row_idx с разворачиванием merged cells.
 
@@ -467,9 +483,14 @@ def _expand_merged_row(ws, row_idx: int, max_col: int) -> list:
 
 
 def _extract_headers(ws, header_row: int = 1) -> list[str]:
-    """Возвращает composite-ключи из ДВУХ строк xlsx (main + sub).
+    """Composite-ключи из ДВУХ строк xlsx.
 
-    Использует ws.merged_cells.ranges для разворачивания merged cells вместо inheritance.
+    Логика:
+    - main и sub оба пустые → ""
+    - только main → main
+    - только sub → sub
+    - main == sub (merged на 2 строки одно значение) → main
+    - main != sub оба непустые → "main (sub)"  ← композит
     """
     max_col = ws.max_column
     main_values = _expand_merged_row(ws, header_row, max_col)
@@ -480,34 +501,23 @@ def _extract_headers(ws, header_row: int = 1) -> list[str]:
 
     out: list[str] = []
     for i in range(max_col):
-        main_v = main_values[i]
-        sub_v = sub_values[i]
-        main = _norm_header(main_v) if main_v not in (None, "") else ""
-        sub = _norm_header(sub_v) if sub_v not in (None, "") else ""
+        main = _norm_header(main_values[i]) if main_values[i] not in (None, "") else ""
+        sub = _norm_header(sub_values[i]) if sub_values[i] not in (None, "") else ""
 
-        # Если sub == main — это значит sub-row тоже была merged (или просто пустая) — берём main
-        if sub == main:
-            sub = ""
-
-        if main in _MERGED_GROUPS and sub:
-            suffix = _MERGED_GROUPS[main]
-            if suffix:
-                out.append(f"{sub} {suffix}")
-            else:
-                out.append(sub)
-        elif sub and main:
-            # main не в _MERGED_GROUPS, но sub присутствует — возможно несколько уровней merged
-            # Берём sub если main выглядит как "родительский тип"
-            out.append(sub if len(sub) >= len(main) else main)
-        elif sub:
-            out.append(sub)
-        else:
+        if not main and not sub:
+            out.append("")
+        elif not sub:
             out.append(main)
+        elif not main:
+            out.append(sub)
+        elif main == sub:
+            out.append(main)
+        else:
+            out.append(f"{main} ({sub})")
 
     _parser_log.info(f"bank_statement_parser: extracted {len(out)} composite headers")
     known = sum(1 for h in out if h in HEADER_MAP)
     _parser_log.info(f"bank_statement_parser: {known}/{len(out)} headers found in HEADER_MAP")
-
     return out
 
 

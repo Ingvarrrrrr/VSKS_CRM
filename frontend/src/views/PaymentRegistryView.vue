@@ -201,9 +201,9 @@
         </v-chip>
       </template>
 
-      <!-- Parsed contract -->
+      <!-- Parsed contract / advance report / agreement -->
       <template #item.parsed_contract_number="{ item }">
-        <span class="text-caption">{{ item.parsed_contract_number || '—' }}</span>
+        <span class="text-caption">{{ docDisplay(item) }}</span>
       </template>
 
       <!-- Matched chip -->
@@ -511,17 +511,31 @@ interface BankPayment {
   payment_date: string | null
   payment_number: string | null
   amount: number | null
+  // Плательщик
   payer_name: string | null
   payer_name_resolved: string | null
   payer_inn: string | null
+  payer_kpp: string | null
   payer_account: string | null
+  payer_bank: string | null
+  payer_bik: string | null
+  payer_settlement_account: string | null
+  payer_corr_account: string | null
+  // Получатель
   payee_name: string | null
   payee_name_resolved: string | null
   payee_inn: string | null
+  payee_kpp: string | null
   payee_account: string | null
+  payee_bank: string | null
+  payee_bik: string | null
+  payee_settlement_account: string | null
+  payee_corr_account: string | null
+  // Парсинг
   parsed_contract_number: string | null
   parsed_contract_date: string | null
   parsed_kbk: string | null
+  parsed_documents: Record<string, Array<{ number: string; date: string | null }>> | null
   status: string | null
   purpose_text: string | null
   basis_doc_text: string | null
@@ -529,8 +543,8 @@ interface BankPayment {
   basis_doc_date: string | null
   subsidy_code: string | null
   kbk: string | null
-  payer_kpp: string | null
-  payee_kpp: string | null
+  execution_datetime: string | null
+  // Match
   matched_contract_id: number | null
   matched_contractor_id: number | null
   matched_purchase_id: number | null
@@ -567,37 +581,49 @@ const DEFAULT_VISIBLE_KEYS = [
 const allColumns = [
   { title: '', key: 'data-table-expand' },
   { title: '№', key: 'index' },
+  // Метаданные документа
   { title: 'Номер документа', key: 'payment_number' },
   { title: 'Дата документа', key: 'payment_date' },
-  { title: 'Дата исполнения', key: 'execution_datetime' },
+  { title: 'Дата исполнения операции', key: 'execution_datetime' },
   { title: 'Статус документа', key: 'status' },
   { title: 'Сумма', key: 'amount' },
+  // Плательщик
   { title: 'ИНН плательщика', key: 'payer_inn' },
   { title: 'КПП плательщика', key: 'payer_kpp' },
   { title: 'Плательщик', key: 'payer_name' },
   { title: 'Плательщик (raw)', key: 'payer_name_raw' },
   { title: 'Лицевой счёт плательщика', key: 'payer_account' },
+  { title: 'Банк плательщика', key: 'payer_bank' },
+  { title: 'БИК плательщика', key: 'payer_bik' },
+  { title: 'Расчётный счёт плательщика', key: 'payer_settlement_account' },
+  { title: 'Корр. счёт плательщика', key: 'payer_corr_account' },
+  // Получатель
   { title: 'ИНН получателя', key: 'payee_inn' },
   { title: 'КПП получателя', key: 'payee_kpp' },
   { title: 'Получатель', key: 'payee_name' },
-  { title: 'Получатель (raw)', key: 'payee_name_raw2' },
-  { title: 'Счёт получателя', key: 'payee_account' },
-  { title: 'БИК получателя', key: 'payee_bik' },
+  { title: 'Получатель (raw)', key: 'payee_name_raw' },
+  { title: 'Лицевой счёт получателя', key: 'payee_account' },
   { title: 'Банк получателя', key: 'payee_bank' },
+  { title: 'БИК получателя', key: 'payee_bik' },
+  { title: 'Расчётный счёт получателя', key: 'payee_settlement_account' },
+  { title: 'Корр. счёт получателя', key: 'payee_corr_account' },
+  // Назначение и парсинг
   { title: 'Назначение платежа', key: 'purpose_text' },
   { title: 'Документ-основание (raw)', key: 'basis_doc_text' },
   { title: '№ документа-основания', key: 'basis_doc_number' },
   { title: 'Дата документа-основания', key: 'basis_doc_date' },
   { title: 'Шифр субсидии', key: 'subsidy_code' },
-  { title: 'Договор (авто)', key: 'parsed_contract_number' },
+  { title: 'Договор/Авансовый/Соглашение (авто)', key: 'parsed_contract_number' },
   { title: 'Дата договора (авто)', key: 'parsed_contract_date' },
   { title: 'КБК', key: 'parsed_kbk' },
+  // Match
   { title: 'Match: Контрагент', key: 'matched_contractor_id' },
   { title: 'Match: Субсидия', key: 'matched_subsidy_id' },
   { title: 'Match: Договор', key: 'matched_contract_id' },
   { title: 'Match: Закупка', key: 'matched_purchase_id' },
   { title: 'Сматчен', key: 'matched' },
   { title: 'Подтверждён', key: 'matched_confirmed' },
+  // Audit
   { title: 'Создано', key: 'created_at' },
   { title: 'Действия', key: 'actions' },
 ]
@@ -635,41 +661,50 @@ function resetColumns() {
 
 // Map from key to column definition including width/sortable
 const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> = {
-  index:                  { sortable: false, width: 50 },
-  payment_number:         { width: 130 },
-  payment_date:           { width: 100 },
-  execution_datetime:     { width: 150 },
-  payer_name:             { sortable: false, width: 180 },
-  payer_name_raw:         { sortable: false, width: 180 },
-  payer_inn:              { width: 130 },
-  payer_kpp:              { width: 110 },
-  payer_account:          { width: 160 },
-  payee_name:             { sortable: false, width: 180 },
-  payee_name_raw2:        { sortable: false, width: 180 },
-  payee_inn:              { width: 130 },
-  payee_kpp:              { width: 110 },
-  payee_account:          { width: 160 },
-  payee_bik:              { width: 110 },
-  payee_bank:             { sortable: false, width: 180 },
-  amount:                 { width: 130 },
-  status:                 { width: 130 },
-  purpose_text:           { sortable: false, width: 280 },
-  basis_doc_text:         { sortable: false, width: 220 },
-  basis_doc_number:       { width: 160 },
-  basis_doc_date:         { width: 130 },
-  subsidy_code:           { width: 130 },
-  parsed_contract_number: { width: 150 },
-  parsed_contract_date:   { width: 130 },
-  parsed_kbk:             { width: 120 },
-  matched:                { width: 90, sortable: false },
-  matched_confirmed:      { width: 110, sortable: false },
-  matched_contractor_id:  { width: 120 },
-  matched_contract_id:    { width: 120 },
-  matched_purchase_id:    { width: 120 },
-  matched_subsidy_id:     { width: 120 },
-  created_at:             { width: 150 },
-  actions:                { sortable: false, width: 110 },
-  'data-table-expand':    { width: 48 },
+  index:                      { sortable: false, width: 50 },
+  payment_number:              { width: 130 },
+  payment_date:                { width: 100 },
+  execution_datetime:          { width: 150 },
+  // Плательщик
+  payer_name:                  { sortable: false, width: 180 },
+  payer_name_raw:              { sortable: false, width: 180 },
+  payer_inn:                   { width: 130 },
+  payer_kpp:                   { width: 110 },
+  payer_account:               { width: 160 },
+  payer_bank:                  { sortable: false, width: 180 },
+  payer_bik:                   { width: 110 },
+  payer_settlement_account:    { width: 180 },
+  payer_corr_account:          { width: 180 },
+  // Получатель
+  payee_name:                  { sortable: false, width: 180 },
+  payee_name_raw:              { sortable: false, width: 180 },
+  payee_inn:                   { width: 130 },
+  payee_kpp:                   { width: 110 },
+  payee_account:               { width: 160 },
+  payee_bank:                  { sortable: false, width: 180 },
+  payee_bik:                   { width: 110 },
+  payee_settlement_account:    { width: 180 },
+  payee_corr_account:          { width: 180 },
+  // Прочее
+  amount:                      { width: 130 },
+  status:                      { width: 130 },
+  purpose_text:                { sortable: false, width: 280 },
+  basis_doc_text:              { sortable: false, width: 220 },
+  basis_doc_number:            { width: 160 },
+  basis_doc_date:              { width: 130 },
+  subsidy_code:                { width: 130 },
+  parsed_contract_number:      { width: 200 },
+  parsed_contract_date:        { width: 130 },
+  parsed_kbk:                  { width: 120 },
+  matched:                     { width: 90, sortable: false },
+  matched_confirmed:           { width: 110, sortable: false },
+  matched_contractor_id:       { width: 120 },
+  matched_contract_id:         { width: 120 },
+  matched_purchase_id:         { width: 120 },
+  matched_subsidy_id:          { width: 120 },
+  created_at:                  { width: 150 },
+  actions:                     { sortable: false, width: 110 },
+  'data-table-expand':         { width: 48 },
 }
 
 // LS_COL_WIDTHS_KEY — хранит ширины колонок в пикселях
@@ -781,6 +816,20 @@ async function doUnbind() {
     unbindLoading.value = false
     unbindingId.value = null
   }
+}
+
+// ── Doc display: тип + номер ──────────────────────────────────────────────────
+function docDisplay(item: any): string {
+  const pd = item.parsed_documents || {}
+  const contracts = pd.contracts || []
+  const advance = pd.advance_reports || []
+  const agreements = pd.agreements || []
+
+  if (contracts.length) return `Договор ${contracts[0].number}`
+  if (advance.length) return `Авансовый отчёт ${advance[0].number}`
+  if (agreements.length) return `Соглашение ${agreements[0].number}`
+  // fallback: просто parsed_contract_number без типа
+  return item.parsed_contract_number || '—'
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

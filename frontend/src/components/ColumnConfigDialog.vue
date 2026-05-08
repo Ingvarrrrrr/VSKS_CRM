@@ -1,66 +1,69 @@
 <template>
-  <v-dialog v-model="dialog" max-width="900" scrollable>
-    <v-card>
-      <v-card-title class="d-flex align-center">
-        <v-icon icon="mdi-view-column" class="mr-2" />
-        Настройка колонок
-        <v-spacer />
-        <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false" />
-      </v-card-title>
+  <!-- Drawer справа — таблица остаётся видимой для live preview изменений колонок -->
+  <v-navigation-drawer
+    v-model="dialog"
+    location="right"
+    temporary
+    :scrim="false"
+    width="520"
+    class="column-config-drawer"
+  >
+    <div class="d-flex align-center pa-3" style="border-bottom: 1px solid rgba(0,0,0,0.08);">
+      <v-icon icon="mdi-view-column" class="mr-2" />
+      <span class="text-subtitle-1 font-weight-medium">Настройка колонок</span>
+      <v-spacer />
+      <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false" />
+    </div>
 
-      <v-tabs v-if="hasGroups" v-model="tab" color="primary" density="compact">
-        <v-tab v-for="g in groups" :key="g.key" :value="g.key">{{ g.label }}</v-tab>
-      </v-tabs>
+    <v-tabs v-if="hasGroups" v-model="tab" color="primary" density="compact" grow>
+      <v-tab v-for="g in groups" :key="g.key" :value="g.key">{{ g.label }}</v-tab>
+    </v-tabs>
 
-      <v-divider />
+    <div class="pa-3" style="overflow-y: auto; height: calc(100% - 130px);">
+      <div v-for="col in displayedColumns" :key="col.key" class="d-flex align-center py-2 column-row">
+        <v-checkbox
+          :model-value="state.visible.includes(col.key)"
+          density="compact"
+          hide-details
+          class="mr-2"
+          style="flex: 0 0 auto;"
+          @update:model-value="toggleVisible(col.key, $event as boolean)"
+        />
+        <div class="flex-grow-1 text-body-2 text-truncate" :title="col.title">{{ col.title }}</div>
+        <v-select
+          v-if="state.visible.includes(col.key) && state.visible.length >= 2"
+          :model-value="visiblePosition(col.key)"
+          :items="orderOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="№"
+          style="max-width: 80px;"
+          class="mr-2"
+          @update:model-value="setPosition(col.key, $event as number)"
+        />
+        <v-text-field
+          v-if="showWidth && state.visible.includes(col.key)"
+          :model-value="state.widths[col.key] ?? col.width ?? 120"
+          type="number"
+          min="40"
+          max="800"
+          density="compact"
+          variant="outlined"
+          hide-details
+          label="px"
+          style="max-width: 80px;"
+          @update:model-value="setWidth(col.key, Number($event))"
+        />
+      </div>
+    </div>
 
-      <v-card-text style="max-height: 65vh; overflow-y: auto;">
-        <div v-for="col in displayedColumns" :key="col.key" class="d-flex align-center py-2 column-row">
-          <v-checkbox
-            :model-value="state.visible.includes(col.key)"
-            density="compact"
-            hide-details
-            class="mr-3"
-            style="flex: 0 0 auto;"
-            @update:model-value="toggleVisible(col.key, $event as boolean)"
-          />
-          <div class="flex-grow-1 text-body-2">{{ col.title }}</div>
-          <v-select
-            v-if="state.visible.includes(col.key) && state.visible.length >= 2"
-            :model-value="visiblePosition(col.key)"
-            :items="orderOptions"
-            density="compact"
-            variant="outlined"
-            hide-details
-            label="Позиция"
-            style="max-width: 120px;"
-            class="mr-2"
-            @update:model-value="setPosition(col.key, $event as number)"
-          />
-          <div v-else-if="state.visible.includes(col.key)" style="max-width: 120px; width: 120px;" class="mr-2" />
-          <v-text-field
-            v-if="showWidth && state.visible.includes(col.key)"
-            :model-value="state.widths[col.key] ?? col.width ?? 120"
-            type="number"
-            min="40"
-            max="800"
-            density="compact"
-            variant="outlined"
-            hide-details
-            label="px"
-            style="max-width: 90px;"
-            @update:model-value="setWidth(col.key, Number($event))"
-          />
-        </div>
-      </v-card-text>
-
-      <v-card-actions>
-        <v-btn variant="text" color="error" @click="reset">Сбросить</v-btn>
-        <v-spacer />
-        <v-btn color="primary" variant="tonal" @click="dialog = false">Готово</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <div class="d-flex align-center pa-2" style="border-top: 1px solid rgba(0,0,0,0.08); position: absolute; bottom: 0; left: 0; right: 0; background: white;">
+      <v-btn variant="text" color="error" size="small" @click="reset">Сбросить</v-btn>
+      <v-spacer />
+      <v-btn color="primary" variant="tonal" size="small" @click="dialog = false">Готово</v-btn>
+    </div>
+  </v-navigation-drawer>
 </template>
 
 <script setup lang="ts">

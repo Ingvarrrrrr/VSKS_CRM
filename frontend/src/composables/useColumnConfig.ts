@@ -76,7 +76,9 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
     { deep: false },
   )
 
-  // visibleHeaders = order.filter(visible) → map to ColumnDef
+  // visibleHeaders = order.filter(visible) → map to ColumnDef + inline style for width
+  // Vuetify v-data-table игнорирует поле width в reactive headers без явного inline style
+  // на <th> и <td> — поэтому добавляем cellProps/headerProps.
   const visibleHeaders = computed(() => {
     const cols = toValue(allColumns)
     return state.value.order
@@ -84,12 +86,18 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
       .map(k => {
         const def = cols.find(c => c.key === k)
         if (!def) return null
+        const w = state.value.widths[k] ?? def.width
+        const widthStyle = w
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px;`
+          : ''
         return {
           ...def,
-          width: state.value.widths[k] ?? def.width,
+          width: w,
+          headerProps: widthStyle ? { style: widthStyle } : undefined,
+          cellProps: widthStyle ? { style: widthStyle } : undefined,
         }
       })
-      .filter(Boolean) as ColumnDef[]
+      .filter(Boolean) as any[]
   })
 
   function toggleVisible(key: string, show?: boolean) {

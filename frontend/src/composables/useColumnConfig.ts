@@ -87,13 +87,13 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
         const def = cols.find(c => c.key === k)
         if (!def) return null
         const w = state.value.widths[k] ?? def.width
-        // text-overflow ellipsis обязателен — без него длинный текст в ячейке
-        // распирает колонку поверх min-width/max-width.
+        // word-wrap: длинный текст переносится на новые строки, ячейка растёт по высоте.
+        // overflow-wrap: anywhere ломает даже слова без пробелов (длинные ИНН/UUID/etc).
         const cellStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-wrap: break-word; overflow-wrap: anywhere;`
           : ''
         const headerStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-wrap: break-word;`
           : ''
         return {
           ...def,

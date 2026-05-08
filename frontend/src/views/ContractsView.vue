@@ -284,6 +284,7 @@
       :all-columns="allColumns"
       :state="colState"
       :show-width="true"
+      :groups="groups"
       :toggle-visible="toggleVisible"
       :set-position="setPosition"
       :set-width="setWidth"
@@ -1064,24 +1065,41 @@ const formatMoney = (v: number | string) =>
 
 // ── Table headers ──────────────────────────────────────────────────────────
 const allColumns: ColumnDef[] = [
-  { title: '', key: 'data-table-expand', width: 40, sortable: false },
-  { title: '№', key: 'index', width: 50, sortable: false },
-  { title: '№ документа', key: 'number' },
-  { title: 'Дата', key: 'date', width: 110 },
-  { title: 'Тип', key: 'contract_type', width: 170 },
-  { title: 'Способ', key: 'purchase_method', width: 130 },
-  { title: 'Контрагент', key: 'contractor_name' },
-  { title: 'Субсидия', key: 'subsidy_name' },
-  { title: 'Предельная сумма', key: 'max_amount', align: 'end', width: 140 },
-  { title: 'Заказано', key: 'total_ordered', align: 'end', width: 120 },
-  { title: 'Поставлено', key: 'total_delivered', align: 'end', width: 120 },
-  { title: 'Оплачено', key: 'total_paid', align: 'end', width: 120 },
-  { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end', width: 130 },
-  { title: 'Не поставлено', key: 'remaining_delivered', align: 'end', width: 140 },
-  { title: 'Не оплачено', key: 'remaining_paid', align: 'end', width: 130 },
-  { title: 'Предмет договора', key: 'subject' },
-  { title: 'Тип', key: 'item_type', width: 90 },
-  { title: 'Срок', key: 'end_date', width: 110 },
+  // core — видимые по умолчанию
+  { title: '', key: 'data-table-expand', width: 40, sortable: false, group: 'core' },
+  { title: '№', key: 'index', width: 50, sortable: false, group: 'core' },
+  { title: '№ документа', key: 'number', group: 'core' },
+  { title: 'Дата', key: 'date', width: 110, group: 'core' },
+  { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },
+  { title: 'Способ', key: 'purchase_method', width: 130, group: 'core' },
+  { title: 'Контрагент', key: 'contractor_name', group: 'core' },
+  { title: 'Субсидия', key: 'subsidy_name', group: 'core' },
+  { title: 'Предельная сумма', key: 'max_amount', align: 'end', width: 140, group: 'core' },
+  { title: 'Заказано', key: 'total_ordered', align: 'end', width: 120, group: 'core' },
+  { title: 'Поставлено', key: 'total_delivered', align: 'end', width: 120, group: 'core' },
+  { title: 'Оплачено', key: 'total_paid', align: 'end', width: 120, group: 'core' },
+  { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end', width: 130, group: 'core' },
+  { title: 'Не поставлено', key: 'remaining_delivered', align: 'end', width: 140, group: 'core' },
+  { title: 'Не оплачено', key: 'remaining_paid', align: 'end', width: 130, group: 'core' },
+  { title: 'Предмет договора', key: 'subject', group: 'core' },
+  { title: 'Тип позиции', key: 'item_type', width: 90, group: 'core' },
+  { title: 'Срок', key: 'end_date', width: 110, group: 'core' },
+  // all — дополнительные поля из ContractOut / Contract модели
+  { title: 'Дата начала', key: 'start_date', width: 130, group: 'all' },
+  { title: 'Статус', key: 'status', width: 120, group: 'all' },
+  { title: 'Примечания', key: 'notes', group: 'all' },
+  { title: 'ИНН контрагента', key: 'contractor_inn', width: 160, group: 'all' },
+  { title: 'ID контрагента', key: 'contractor_id', width: 140, group: 'all' },
+  { title: 'ID субсидии', key: 'subsidy_id', width: 120, group: 'all' },
+  { title: 'Плановый ежемесячный', key: 'planned_monthly', width: 190, align: 'end', group: 'all' },
+  { title: 'Всего оплат', key: 'total_payment', width: 140, align: 'end', group: 'all' },
+  { title: 'Остаток (legacy)', key: 'remaining', width: 150, align: 'end', group: 'all' },
+  { title: 'Доп. субсидии', key: 'extra_subsidies', width: 160, group: 'all' },
+]
+
+const groups = [
+  { key: 'core', label: 'Основные' },
+  { key: 'all', label: 'Все возможные' },
 ]
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('contracts', allColumns)

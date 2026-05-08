@@ -207,6 +207,7 @@
       :all-columns="allColumns"
       :state="colState"
       :show-width="true"
+      :groups="groups"
       :toggle-visible="toggleVisible"
       :set-position="setPosition"
       :set-width="setWidth"
@@ -306,16 +307,73 @@ function pickDate(...dates: (string | undefined | null)[]): string | null {
 }
 
 const allColumns: ColumnDef[] = [
-  { title: '', key: 'data-table-select', width: 40 },
-  { title: '', key: 'data-table-expand', width: 40 },
-  { title: '№', key: 'index', width: 55, sortable: false },
-  { title: 'Наименование', key: 'displayName' },
-  { title: 'Контрагент', key: 'contractor_name' },
-  { title: 'Кому возмещать', key: 'reimbursement_user_name' },
-  { title: 'Субсидия', key: 'subsidy_name', width: 160 },
-  { title: 'Сумма', key: 'nmck', width: 130, align: 'end' },
-  { title: 'Дата исполнения', key: 'executionDate', width: 140 },
-  { title: 'Статус', key: 'status', width: 130 },
+  // core — видимые по умолчанию
+  { title: '', key: 'data-table-select', width: 40, group: 'core' },
+  { title: '', key: 'data-table-expand', width: 40, group: 'core' },
+  { title: '№', key: 'index', width: 55, sortable: false, group: 'core' },
+  { title: 'Наименование', key: 'displayName', group: 'core' },
+  { title: 'Контрагент', key: 'contractor_name', group: 'core' },
+  { title: 'Кому возмещать', key: 'reimbursement_user_name', group: 'core' },
+  { title: 'Субсидия', key: 'subsidy_name', width: 160, group: 'core' },
+  { title: 'Сумма', key: 'nmck', width: 130, align: 'end', group: 'core' },
+  { title: 'Дата исполнения', key: 'executionDate', width: 140, group: 'core' },
+  { title: 'Статус', key: 'status', width: 130, group: 'core' },
+  // all — дополнительные поля из Purchase (purchase_method='advance')
+  { title: '№ реестра', key: 'registry_number', width: 130, group: 'all' },
+  { title: '№ закупки', key: 'purchase_number', width: 110, group: 'all' },
+  { title: 'Предмет', key: 'subject', group: 'all' },
+  { title: 'Тип позиции', key: 'item_type', width: 120, group: 'all' },
+  { title: 'Кол-во', key: 'planned_quantity', width: 100, align: 'end', group: 'all' },
+  { title: 'Ед. изм.', key: 'unit', width: 90, group: 'all' },
+  { title: 'Цена ед. (план)', key: 'planned_unit_price', width: 150, align: 'end', group: 'all' },
+  { title: 'Сумма (план)', key: 'planned_total_price', width: 140, align: 'end', group: 'all' },
+  { title: 'Цена ед. (факт)', key: 'final_unit_price', width: 150, align: 'end', group: 'all' },
+  { title: 'Сумма (факт)', key: 'final_total_amount', width: 140, align: 'end', group: 'all' },
+  { title: 'Итого НМЦД', key: 'total_nmck', width: 130, align: 'end', group: 'all' },
+  { title: 'Цена договора', key: 'contract_price', width: 140, align: 'end', group: 'all' },
+  { title: '№ договора', key: 'contract_number', width: 140, group: 'all' },
+  { title: 'Дата договора', key: 'contract_date', width: 140, group: 'all' },
+  { title: 'Ответственный', key: 'responsible_person', group: 'all' },
+  { title: 'Последний чек', key: 'last_receipt_date', width: 150, group: 'all' },
+  { title: 'Дата поставки', key: 'delivery_date', width: 140, group: 'all' },
+  { title: 'Дата закрывающего', key: 'acceptance_doc_date', width: 170, group: 'all' },
+  { title: 'Закрывающий документ', key: 'acceptance_doc_name', width: 190, group: 'all' },
+  { title: '№ закрывающего', key: 'acceptance_doc_number', width: 160, group: 'all' },
+  { title: 'Сумма закрывающего', key: 'acceptance_doc_amount', width: 180, align: 'end', group: 'all' },
+  { title: '№ ПП', key: 'payment_doc_number', width: 110, group: 'all' },
+  { title: 'Дата ПП', key: 'payment_doc_date', width: 130, group: 'all' },
+  { title: 'Оплачено', key: 'payment_amount', width: 130, align: 'end', group: 'all' },
+  { title: 'Оплачено (федерал.)', key: 'payment_federal', width: 170, align: 'end', group: 'all' },
+  { title: 'Место доставки', key: 'delivery_location', group: 'all' },
+  { title: 'Тип места', key: 'delivery_location_kind', width: 130, group: 'all' },
+  { title: 'Адрес доставки', key: 'delivery_address', group: 'all' },
+  { title: 'Срок подачи заявок', key: 'submission_deadline', width: 170, group: 'all' },
+  { title: 'Нач. период услуги', key: 'service_start_date', width: 170, group: 'all' },
+  { title: 'Кон. период услуги', key: 'service_end_date', width: 170, group: 'all' },
+  { title: 'Дедлайн услуги', key: 'service_deadline_date', width: 150, group: 'all' },
+  { title: 'Дней услуги', key: 'service_term_days', width: 130, group: 'all' },
+  { title: 'Этап', key: 'stage_label', width: 160, group: 'all' },
+  { title: 'Подстатус', key: 'substatus', width: 150, group: 'all' },
+  { title: 'ФЭО категория', key: 'feo_category_name', group: 'all' },
+  { title: 'Мероприятие', key: 'event_name', group: 'all' },
+  { title: 'Способ закупки', key: 'purchase_method', width: 150, group: 'all' },
+  { title: 'Основание закупки', key: 'purchase_basis', width: 160, group: 'all' },
+  { title: 'Предоплата', key: 'is_prepayment', width: 120, group: 'all' },
+  { title: 'Дата предоплаты', key: 'prepayment_date', width: 150, group: 'all' },
+  { title: 'Скорее всего нужно', key: 'is_likely_needed', width: 170, group: 'all' },
+  { title: 'Основание оплаты', key: 'payment_basis_type', width: 170, group: 'all' },
+  { title: 'Казначейский код', key: 'treasury_code', width: 160, group: 'all' },
+  { title: 'Претензионная работа', key: 'has_pretension', width: 180, group: 'all' },
+  { title: 'НДС применяется', key: 'vat_applicable', width: 150, group: 'all' },
+  { title: 'Ставка НДС', key: 'vat_rate', width: 120, group: 'all' },
+  { title: 'Служебная записка', key: 'service_note_text', group: 'all' },
+  { title: 'ID субсидии', key: 'subsidy_id', width: 110, group: 'all' },
+  { title: 'ID договора', key: 'contract_id', width: 110, group: 'all' },
+]
+
+const groups = [
+  { key: 'core', label: 'Основные' },
+  { key: 'all', label: 'Все возможные' },
 ]
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('advance_reports', allColumns)

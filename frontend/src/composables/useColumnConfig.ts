@@ -87,14 +87,19 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
         const def = cols.find(c => c.key === k)
         if (!def) return null
         const w = state.value.widths[k] ?? def.width
-        const widthStyle = w
+        // text-overflow ellipsis обязателен — без него длинный текст в ячейке
+        // распирает колонку поверх min-width/max-width.
+        const cellStyle = w
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`
+          : ''
+        const headerStyle = w
           ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px;`
           : ''
         return {
           ...def,
           width: w,
-          headerProps: widthStyle ? { style: widthStyle } : undefined,
-          cellProps: widthStyle ? { style: widthStyle } : undefined,
+          headerProps: headerStyle ? { style: headerStyle } : undefined,
+          cellProps: cellStyle ? { style: cellStyle, title: undefined } : undefined,
         }
       })
       .filter(Boolean) as any[]

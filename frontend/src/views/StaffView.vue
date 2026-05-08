@@ -244,7 +244,6 @@
 
         <v-card variant="outlined">
           <v-data-table
-            v-resizable-columns="'staff-users'"
             :headers="visibleHeaders"
             :items="filteredUsers"
             :loading="usersLoading"

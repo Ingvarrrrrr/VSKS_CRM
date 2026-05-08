@@ -174,7 +174,6 @@
     <v-card variant="outlined">
       <v-data-table
         ref="ordersTableRef"
-        v-resizable-columns="'orders'"
         :headers="visibleHeaders"
         :items="filteredOrders"
         :loading="loading"

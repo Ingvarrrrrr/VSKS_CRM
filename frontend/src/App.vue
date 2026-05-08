@@ -111,6 +111,17 @@ onMounted(async () => {
 </script>
 
 <style>
+/* ── v-data-table: table-layout fixed чтобы width на th/td реально применялся ── */
+/* Без этого браузер применяет auto layout и игнорирует inline width когда content большой */
+.v-data-table > .v-table__wrapper > table,
+.v-data-table-virtual > .v-table__wrapper > table {
+  table-layout: fixed;
+}
+/* В data-table cells не должны overflow visible когда мы хотим обрезать через ellipsis */
+.v-data-table td {
+  overflow: hidden;
+}
+
 /* ── Global: wrap long text in all Vuetify dropdowns / overlays ── */
 .v-overlay__content .v-list-item-title,
 .v-overlay__content .v-list-item__content .v-list-item-title {

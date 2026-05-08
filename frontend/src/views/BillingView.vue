@@ -11,6 +11,7 @@
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <span class="text-subtitle-1 font-weight-bold">Контуры — текущий месяц</span>
           <v-spacer />
+          <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" class="mr-2" @click="showColumnPicker = true">Колонки</v-btn>
           <v-btn size="small" variant="outlined" :color="showHistory ? 'primary' : undefined"
             prepend-icon="mdi-history" @click="showHistory = !showHistory">
             {{ showHistory ? 'Скрыть историю' : 'История' }}
@@ -19,7 +20,7 @@
 
         <v-data-table
           v-if="!showHistory"
-          :headers="headers"
+          :headers="visibleHeaders"
           :items="orgs"
           :loading="loading"
           item-value="org_id"
@@ -256,12 +257,25 @@
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const role = localStorage.getItem('user_role') || ''
 const isSuperadmin = role === 'superadmin'
@@ -280,7 +294,7 @@ const historyLoading = ref(false)
 const payingId = ref<number | null>(null)
 const payingKey = ref<string | null>(null)
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 40, sortable: false },
   { title: 'Контур / Организация', key: 'org_name', sortable: true },
   { title: 'Подключена', key: 'created_at', sortable: true, width: 120 },
@@ -291,6 +305,9 @@ const headers = [
   { title: 'Статус', key: 'current.is_paid', width: 150 },
   { title: '', key: 'actions', sortable: false, width: 130 },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('billing', allColumns)
+const showColumnPicker = ref(false)
 
 const historyHeaders = [
   { title: 'Период', key: 'month', width: 140 },

@@ -5,7 +5,10 @@
         <h1 class="text-h5 font-weight-bold">Служебные записки на выдачу</h1>
         <span class="text-body-2 text-medium-emphasis">{{ filteredItems.length }} записей</span>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" to="/service-notes/create">Добавить</v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" to="/service-notes/create">Добавить</v-btn>
+      </div>
     </div>
 
     <v-card class="mb-4" variant="outlined">
@@ -65,7 +68,7 @@
 
     <v-card variant="outlined">
       <v-data-table
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="filteredItems"
         :loading="loading"
         :search="search"
@@ -106,12 +109,25 @@
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Purchase {
   id: number
@@ -161,14 +177,17 @@ const statusLabel = (s: string, item?: Purchase) => {
 const statusColor = (s: string) => STATUS_COLOR[s] || 'grey'
 const formatMoney = (v?: number | null) => v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '#', key: 'purchase_number', width: 70 },
-  { title: 'Наименование', key: 'item_name', minWidth: 240 },
+  { title: 'Наименование', key: 'item_name' },
   { title: 'Статус', key: 'status', width: 130 },
-  { title: 'НМЦД', key: 'nmck', width: 130, align: 'end' as const },
+  { title: 'НМЦД', key: 'nmck', width: 130, align: 'end' },
   { title: 'Срок поставки', key: 'delivery_date', width: 140 },
   { title: 'Действия', key: 'actions', width: 80, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('service_notes', allColumns)
+const showColumnPicker = ref(false)
 
 const filteredItems = computed(() => {
   let r = items.value

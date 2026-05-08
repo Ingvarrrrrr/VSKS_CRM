@@ -6,9 +6,12 @@
         <h1 class="text-h5 font-weight-bold">Запросы КП</h1>
         <span class="text-body-2 text-medium-emphasis">{{ requests.length }} записей</span>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        Создать запрос КП
-      </v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
+          Создать запрос КП
+        </v-btn>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -39,7 +42,7 @@
     <v-card variant="outlined">
       <v-data-table
         v-resizable-columns="'commercial-requests'"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="filteredRequests"
         :loading="loading"
         item-value="id"
@@ -346,12 +349,25 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Recipient { id: number; contractor_id?: number; contractor_name?: string; email?: string; status: string }
 interface CommercialRequest {
@@ -384,15 +400,18 @@ const recipientStatusColor = (s: string) => RECIPIENT_STATUSES[s]?.color || 'gre
 const statusItems = Object.entries(REQUEST_STATUSES).map(([v, d]) => ({ value: v, label: d.label }))
 const recipientStatusItems = Object.entries(RECIPIENT_STATUSES).map(([v, d]) => ({ value: v, label: d.label }))
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '№', key: 'id', width: 60 },
-  { title: 'Тема', key: 'subject', minWidth: 200 },
-  { title: 'Получатели', key: 'recipients', minWidth: 200, sortable: false },
+  { title: 'Тема', key: 'subject' },
+  { title: 'Получатели', key: 'recipients', sortable: false },
   { title: 'Срок КП', key: 'delivery_date', width: 110 },
   { title: 'Создан', key: 'created_at', width: 110 },
   { title: 'Статус', key: 'status', width: 140 },
   { title: 'Действия', key: 'actions', width: 130, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('commercial_requests', allColumns)
+const showColumnPicker = ref(false)
 
 const requests = ref<CommercialRequest[]>([])
 const purchases = ref<Purchase[]>([])

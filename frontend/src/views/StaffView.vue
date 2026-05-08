@@ -222,6 +222,7 @@
           <v-btn v-if="isAdmin" color="success" variant="tonal" size="small" prepend-icon="mdi-file-excel-outline" @click="userImportDialog.show = true">
             Импорт из Excel
           </v-btn>
+          <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
         </div>
 
         <!-- B6: кнопка дубликатов по ИНН -->
@@ -244,7 +245,7 @@
         <v-card variant="outlined">
           <v-data-table
             v-resizable-columns="'staff-users'"
-            :headers="userHeaders"
+            :headers="visibleHeaders"
             :items="filteredUsers"
             :loading="usersLoading"
             density="comfortable"
@@ -887,6 +888,17 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
@@ -899,6 +911,8 @@ import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -1058,17 +1072,20 @@ function getMemberAvatar(userId: number): string | undefined {
 // ═══════════════════════════════════════════════════════════════
 // TAB 2: USERS STATE
 // ═══════════════════════════════════════════════════════════════
-const userHeaders = [
+const allColumns: ColumnDef[] = [
   { title: '', key: 'avatar', width: 50, sortable: false },
-  { title: 'Email', key: 'email', minWidth: 140 },
-  { title: 'ФИО', key: 'full_name', minWidth: 140 },
+  { title: 'Email', key: 'email' },
+  { title: 'ФИО', key: 'full_name' },
   { title: 'Роль', key: 'role', width: 130 },
-  { title: 'Отдел', key: 'department', minWidth: 120 },
-  { title: 'Должность', key: 'position', minWidth: 120 },
-  { title: 'Город', key: 'city', minWidth: 90 },
+  { title: 'Отдел', key: 'department' },
+  { title: 'Должность', key: 'position' },
+  { title: 'Город', key: 'city' },
   { title: 'Подпись', key: 'has_signature', width: 90, sortable: false },
   { title: '', key: 'actions', width: 100, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('staff', allColumns)
+const showColumnPicker = ref(false)
 
 // Task authority expand
 const expandedUsers = ref<number[]>([])

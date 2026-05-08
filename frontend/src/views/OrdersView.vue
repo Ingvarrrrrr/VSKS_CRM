@@ -96,6 +96,7 @@
             @click="saveFilterPreset">
             Сохранить фильтр
           </v-btn>
+          <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
         </div>
         <!-- Saved filter preset chips -->
         <div v-if="savedFilterPresets.length" class="d-flex align-center gap-2 flex-wrap mt-2">
@@ -174,7 +175,7 @@
       <v-data-table
         ref="ordersTableRef"
         v-resizable-columns="'orders'"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="filteredOrders"
         :loading="loading"
         :search="search"
@@ -560,6 +561,18 @@
       </v-card>
     </v-dialog>
 
+    <!-- Column Config Dialog -->
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
+
     <!-- Excel Export Dialog -->
     <v-dialog v-model="exportDialog.show" max-width="680" scrollable>
       <v-card>
@@ -640,6 +653,8 @@ import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -764,21 +779,24 @@ function transitionRequired(item: Purchase): Record<string, { field: keyof Purch
   ],
 }}
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false },
   { title: '№', key: 'purchase_number', width: 60 },
   { title: 'Реестр. №', key: 'registry_number', width: 120 },
-  { title: 'Предмет договора', key: 'subject', minWidth: 180 },
-  { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
-  { title: 'Субсидия', key: 'subsidy_name', minWidth: 150 },
-  { title: 'Цена', key: 'effective_price', align: 'end' as const, minWidth: 120, sortable: false },
-  { title: '№ договора', key: 'contract_number', minWidth: 120 },
-  { title: 'Дата договора', key: 'contract_date', minWidth: 120 },
+  { title: 'Предмет договора', key: 'subject' },
+  { title: 'Контрагент', key: 'contractor_name' },
+  { title: 'Субсидия', key: 'subsidy_name' },
+  { title: 'Цена', key: 'effective_price', align: 'end', sortable: false },
+  { title: '№ договора', key: 'contract_number' },
+  { title: 'Дата договора', key: 'contract_date' },
   { title: 'Тип', key: 'purchase_type', width: 110, sortable: false },
   { title: 'Статус', key: 'status', width: 130 },
   { title: 'Согласование', key: 'approval_status', width: 130, sortable: true },
   { title: 'Действия', key: 'actions', sortable: false, width: 200 },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('orders', allColumns)
+const showColumnPicker = ref(false)
 
 // ── Link task mode (from ?link_task=ID) ──
 const linkTaskId = ref<number | null>(null)

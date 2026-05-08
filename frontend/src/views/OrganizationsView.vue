@@ -17,12 +17,13 @@
         style="max-width: 320px"
         @update:model-value="debouncedLoad"
       />
+      <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
     </div>
 
     <v-card variant="outlined">
       <v-data-table
         v-resizable-columns="'organizations'"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="orgs"
         :loading="loading"
         :search="search"
@@ -195,6 +196,17 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
@@ -202,6 +214,8 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Org {
   id: number
@@ -380,15 +394,18 @@ async function saveOrg() {
   }
 }
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: 'ID', key: 'id', width: 60 },
-  { title: 'Название', key: 'name', minWidth: 200 },
+  { title: 'Название', key: 'name' },
   { title: 'ИНН', key: 'inn', width: 120 },
   { title: 'Пользователи', key: 'user_count', width: 120 },
   { title: 'Статус', key: 'is_active', width: 140 },
   { title: 'Создана', key: 'created_at', width: 160 },
   { title: '', key: 'actions', width: 80, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('organizations', allColumns)
+const showColumnPicker = ref(false)
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('ru-RU')

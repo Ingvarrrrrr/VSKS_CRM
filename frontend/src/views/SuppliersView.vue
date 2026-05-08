@@ -6,7 +6,10 @@
         <span class="text-body-2 text-medium-emphasis">{{ suppliers.length }} записей</span>
       </div>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить поставщика</v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить поставщика</v-btn>
+      </div>
     </div>
 
     <!-- Search -->
@@ -19,7 +22,7 @@
     <v-card variant="outlined">
       <v-data-table
         v-resizable-columns="'suppliers'"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="filteredSuppliers"
         :loading="loading"
         density="comfortable"
@@ -100,12 +103,25 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface SupplierProduct { id: number; product_id?: number; price_notes?: string; source?: string }
 interface Supplier { id: number; name: string; inn?: string; kpp?: string; contact?: string; phone?: string; email?: string; notes?: string; products: SupplierProduct[] }
@@ -117,16 +133,19 @@ const search = ref('')
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
-const headers = [
-  { title: 'Наименование', key: 'name', minWidth: 200 },
+const allColumns: ColumnDef[] = [
+  { title: 'Наименование', key: 'name' },
   { title: 'ИНН', key: 'inn', width: 120 },
   { title: 'КПП', key: 'kpp', width: 120 },
-  { title: 'Контакт', key: 'contact', minWidth: 140 },
-  { title: 'Email', key: 'email', minWidth: 160 },
-  { title: 'Телефон', key: 'phone', minWidth: 120 },
+  { title: 'Контакт', key: 'contact' },
+  { title: 'Email', key: 'email' },
+  { title: 'Телефон', key: 'phone' },
   { title: 'Товары', key: 'products', width: 120, sortable: false },
   { title: '', key: 'actions', width: 80, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('suppliers', allColumns)
+const showColumnPicker = ref(false)
 
 const filteredSuppliers = computed(() => {
   if (!search.value) return suppliers.value

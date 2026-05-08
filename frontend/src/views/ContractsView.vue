@@ -30,6 +30,7 @@
           Скачать реестр
         </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить</v-btn>
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
       </div>
     </div>
 
@@ -116,7 +117,7 @@
 
     <!-- ── Table ── -->
     <v-data-table
-      :headers="headers"
+      :headers="visibleHeaders"
       :items="filtered"
       :loading="loading"
       density="compact"
@@ -276,6 +277,18 @@
         </tr>
       </template>
     </v-data-table>
+
+    <!-- Column Config Dialog -->
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
 
     <!-- Export Dialog -->
     <v-dialog v-model="exportDialog" max-width="480">
@@ -566,6 +579,8 @@ import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
 import FileDropZone from '@/components/FileDropZone.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const router = useRouter()
 
@@ -1048,26 +1063,29 @@ const formatMoney = (v: number | string) =>
   Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₽'
 
 // ── Table headers ──────────────────────────────────────────────────────────
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 40, sortable: false },
   { title: '№', key: 'index', width: 50, sortable: false },
-  { title: '№ документа', key: 'number', minWidth: 120 },
+  { title: '№ документа', key: 'number' },
   { title: 'Дата', key: 'date', width: 110 },
   { title: 'Тип', key: 'contract_type', width: 170 },
   { title: 'Способ', key: 'purchase_method', width: 130 },
-  { title: 'Контрагент', key: 'contractor_name', minWidth: 160 },
-  { title: 'Субсидия', key: 'subsidy_name', minWidth: 120 },
-  { title: 'Предельная сумма', key: 'max_amount', align: 'end' as const, width: 140 },
-  { title: 'Заказано', key: 'total_ordered', align: 'end' as const, width: 120 },
-  { title: 'Поставлено', key: 'total_delivered', align: 'end' as const, width: 120 },
-  { title: 'Оплачено', key: 'total_paid', align: 'end' as const, width: 120 },
-  { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end' as const, width: 130 },
-  { title: 'Не поставлено', key: 'remaining_delivered', align: 'end' as const, width: 140 },
-  { title: 'Не оплачено', key: 'remaining_paid', align: 'end' as const, width: 130 },
-  { title: 'Предмет договора', key: 'subject', minWidth: 160 },
+  { title: 'Контрагент', key: 'contractor_name' },
+  { title: 'Субсидия', key: 'subsidy_name' },
+  { title: 'Предельная сумма', key: 'max_amount', align: 'end', width: 140 },
+  { title: 'Заказано', key: 'total_ordered', align: 'end', width: 120 },
+  { title: 'Поставлено', key: 'total_delivered', align: 'end', width: 120 },
+  { title: 'Оплачено', key: 'total_paid', align: 'end', width: 120 },
+  { title: 'Ост. (заказ)', key: 'remaining_ordered', align: 'end', width: 130 },
+  { title: 'Не поставлено', key: 'remaining_delivered', align: 'end', width: 140 },
+  { title: 'Не оплачено', key: 'remaining_paid', align: 'end', width: 130 },
+  { title: 'Предмет договора', key: 'subject' },
   { title: 'Тип', key: 'item_type', width: 90 },
   { title: 'Срок', key: 'end_date', width: 110 },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('contracts', allColumns)
+const showColumnPicker = ref(false)
 
 // ── Load data (all contracts, no server-side filter) ──────────────────────
 const loadContracts = async () => {

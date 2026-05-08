@@ -5,7 +5,10 @@
         <h1 class="text-h5 font-weight-bold">Авансовые отчёты</h1>
         <span class="text-body-2 text-medium-emphasis">{{ enrichedItems.length }} записей</span>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
+      </div>
     </div>
 
     <v-card class="mb-4" variant="outlined">
@@ -79,7 +82,7 @@
       <v-data-table
         v-model="selected"
         v-model:expanded="expandedRows"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="filteredItems"
         :loading="loading"
         :search="search"
@@ -198,6 +201,17 @@
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
@@ -205,6 +219,8 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const router = useRouter()
 
@@ -289,18 +305,21 @@ function pickDate(...dates: (string | undefined | null)[]): string | null {
   return null
 }
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-select', width: 40 },
   { title: '', key: 'data-table-expand', width: 40 },
   { title: '№', key: 'index', width: 55, sortable: false },
-  { title: 'Наименование', key: 'displayName', minWidth: 240 },
-  { title: 'Контрагент', key: 'contractor_name', minWidth: 200 },
-  { title: 'Кому возмещать', key: 'reimbursement_user_name', minWidth: 180 },
+  { title: 'Наименование', key: 'displayName' },
+  { title: 'Контрагент', key: 'contractor_name' },
+  { title: 'Кому возмещать', key: 'reimbursement_user_name' },
   { title: 'Субсидия', key: 'subsidy_name', width: 160 },
-  { title: 'Сумма', key: 'nmck', width: 130, align: 'end' as const },
+  { title: 'Сумма', key: 'nmck', width: 130, align: 'end' },
   { title: 'Дата исполнения', key: 'executionDate', width: 140 },
   { title: 'Статус', key: 'status', width: 130 },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('advance_reports', allColumns)
+const showColumnPicker = ref(false)
 
 // Дедуп по имени контрагента — у авансовых contractor_id часто пуст, есть только contractor_name.
 const usedContractors = computed(() => {

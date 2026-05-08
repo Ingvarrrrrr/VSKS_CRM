@@ -30,11 +30,13 @@
 
     <!-- Journal table -->
     <v-card variant="outlined">
-      <v-card-title class="text-body-1 font-weight-medium pa-4 pb-2">
+      <v-card-title class="text-body-1 font-weight-medium pa-4 pb-2 d-flex align-center">
         <v-icon icon="mdi-history" class="mr-2" />Журнал прогонов
+        <v-spacer />
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
       </v-card-title>
       <v-data-table
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="imports"
         :loading="loadingList"
         density="compact"
@@ -131,6 +133,17 @@
         </template>
       </v-data-table>
     </v-card>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
@@ -140,6 +153,8 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const router = useRouter()
 const { success, error } = useToast()
@@ -150,17 +165,20 @@ const loadingList = ref(false)
 const imports = ref<any[]>([])
 const rematchingId = ref<number | null>(null)
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: 'Дата', key: 'uploaded_at', width: 160 },
   { title: 'Файл', key: 'file_name' },
-  { title: 'Строк', key: 'rows_total', width: 80, align: 'end' as const },
-  { title: 'Импорт.', key: 'rows_imported', width: 90, align: 'end' as const },
-  { title: 'Сматч.', key: 'rows_matched', width: 90, align: 'end' as const },
-  { title: 'Не сматч.', key: 'rows_unmatched', width: 100, align: 'end' as const },
-  { title: 'Дубл.', key: 'rows_dup', width: 80, align: 'end' as const },
+  { title: 'Строк', key: 'rows_total', width: 80, align: 'end' },
+  { title: 'Импорт.', key: 'rows_imported', width: 90, align: 'end' },
+  { title: 'Сматч.', key: 'rows_matched', width: 90, align: 'end' },
+  { title: 'Не сматч.', key: 'rows_unmatched', width: 100, align: 'end' },
+  { title: 'Дубл.', key: 'rows_dup', width: 80, align: 'end' },
   { title: 'Статус', key: 'status', width: 110 },
   { title: '', key: 'actions', width: 80, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('payment_imports', allColumns)
+const showColumnPicker = ref(false)
 
 function formatDateTime(dt: string | null) {
   if (!dt) return '—'

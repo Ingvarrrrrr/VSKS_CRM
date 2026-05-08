@@ -6,9 +6,12 @@
         <span class="text-body-2 text-medium-emphasis">Лог ошибок бэкенда</span>
       </div>
       <v-spacer />
-      <v-btn color="error" variant="outlined" prepend-icon="mdi-delete-sweep" :loading="clearing" @click="confirmClear">
-        Очистить всё
-      </v-btn>
+      <div class="d-flex gap-2">
+        <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn color="error" variant="outlined" prepend-icon="mdi-delete-sweep" :loading="clearing" @click="confirmClear">
+          Очистить всё
+        </v-btn>
+      </div>
     </div>
 
     <!-- Search -->
@@ -22,7 +25,7 @@
     <v-card variant="outlined">
       <v-data-table
         v-resizable-columns="'system-incidents'"
-        :headers="headers"
+        :headers="visibleHeaders"
         :items="incidents"
         :loading="loading"
         density="comfortable"
@@ -98,12 +101,25 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <ColumnConfigDialog
+      v-model="showColumnPicker"
+      :all-columns="allColumns"
+      :state="colState"
+      :show-width="true"
+      :toggle-visible="toggleVisible"
+      :set-position="setPosition"
+      :set-width="setWidth"
+      :reset="resetColumns"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Incident {
   id: number
@@ -127,14 +143,17 @@ const detailDialog = reactive({ show: false, item: null as Incident | null })
 const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
-const headers = [
+const allColumns: ColumnDef[] = [
   { title: 'Время', key: 'created_at', width: 160 },
   { title: 'Метод', key: 'method', width: 80 },
-  { title: 'Сообщение / Путь', key: 'message', minWidth: 250 },
+  { title: 'Сообщение / Путь', key: 'message' },
   { title: 'Код', key: 'code', width: 120 },
-  { title: 'Correlation ID', key: 'correlation_id', minWidth: 200 },
+  { title: 'Correlation ID', key: 'correlation_id' },
   { title: '', key: 'actions', width: 80, sortable: false },
 ]
+
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('system_incidents', allColumns)
+const showColumnPicker = ref(false)
 
 function formatDate(iso: string) {
   if (!iso) return '—'

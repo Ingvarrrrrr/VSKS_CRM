@@ -268,6 +268,22 @@ async def _create_receipt_with_items(
 
     await db.commit()
     await db.refresh(receipt)
+
+    # Auto-fill contract_date / contract_number for advance purchases.
+    # First receipt sets the basis; bank_payment match will override later.
+    p = await db.get(Purchase, purchase_id)
+    if p and p.purchase_method == 'advance':
+        changed = False
+        rd = receipt.receipt_datetime
+        if rd and not p.contract_date:
+            p.contract_date = rd.date() if hasattr(rd, 'date') else rd
+            changed = True
+        if receipt.fiscal_document_number and not p.contract_number:
+            p.contract_number = str(receipt.fiscal_document_number)
+            changed = True
+        if changed:
+            await db.commit()
+
     return receipt
 
 

@@ -173,6 +173,23 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
         if not matched_purchase and len(purchases) == 1:
             bp.matched_purchase_id = purchases[0].id
 
+    # Для advance purchases: parsed_documents.advance_reports[0] перезаписывает
+    # contract_number/date в Purchase. Override (не if not) — bank_payment авторитетнее чека.
+    if bp.matched_purchase_id:
+        from datetime import datetime as _dt2
+        purchase = await db.get(Purchase, bp.matched_purchase_id)
+        if purchase and purchase.purchase_method == 'advance':
+            advance_reports = (bp.parsed_documents or {}).get('advance_reports', [])
+            if advance_reports:
+                first = advance_reports[0] or {}
+                if first.get('number'):
+                    purchase.contract_number = str(first['number'])
+                if first.get('date'):
+                    try:
+                        purchase.contract_date = _dt2.strptime(first['date'], "%d.%m.%Y").date()
+                    except (ValueError, TypeError):
+                        pass
+
 
 async def match_all_in_import(db: AsyncSession, import_id: int) -> dict:
     """Прогоняет auto_match на все BankPayment этого импорта. Возвращает счётчики."""

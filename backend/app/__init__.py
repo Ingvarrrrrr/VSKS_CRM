@@ -309,6 +309,51 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 22 bank_payments backfill skipped (non-fatal): {e}")
 
+    # Phase 24 RESTORE: backfill contract_date/number для advance purchases
+    # с receipts но без основания. Идемпотентно — skip если 0 строк нуждаются.
+    try:
+        from sqlalchemy import select as _sel, or_
+        from .models.purchase import Purchase as _Purchase
+        from .models.purchase_receipt import PurchaseReceipt as _PurchaseReceipt
+        async with async_session() as db:
+            q = await db.execute(
+                _sel(_Purchase).where(
+                    _Purchase.purchase_method == 'advance',
+                    or_(_Purchase.contract_date.is_(None), _Purchase.contract_number.is_(None))
+                )
+            )
+            advances = q.scalars().all()
+            fixed = 0
+            for p in advances:
+                rq = await db.execute(
+                    _sel(_PurchaseReceipt)
+                    .where(_PurchaseReceipt.purchase_id == p.id)
+                    .order_by(_PurchaseReceipt.receipt_datetime.asc())
+                    .limit(1)
+                )
+                receipt = rq.scalar_one_or_none()
+                if not receipt:
+                    continue
+                changed = False
+                if receipt.receipt_datetime and not p.contract_date:
+                    rd = receipt.receipt_datetime
+                    p.contract_date = rd.date() if hasattr(rd, 'date') else rd
+                    changed = True
+                if receipt.fiscal_document_number and not p.contract_number:
+                    p.contract_number = str(receipt.fiscal_document_number)
+                    changed = True
+                if changed:
+                    fixed += 1
+            if fixed:
+                await db.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    f"Phase 24 backfill: {fixed} advance purchases получили contract_date/number из receipts"
+                )
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 24 advance backfill skipped (non-fatal): {e}")
+
     yield
     task.cancel()
     try:

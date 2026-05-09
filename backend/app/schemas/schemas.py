@@ -517,6 +517,7 @@ class PurchaseCreate(BaseModel):
     submission_deadline: Optional[datetime] = None
     delivery_location: Optional[str] = None
     delivery_location_kind: Optional[str] = None    # '' | 'delivery' | 'service' (фидбек 5 мая, ручной тогл)
+    region: Optional[str] = None                    # Регион проведения мероприятия (89 субъектов РФ или спец-значения)
     service_term_mode: Optional[str] = None         # 'range' | 'duration' | 'deadline'
     service_term_days: Optional[int] = None         # mode='duration'
     service_term_type: Optional[str] = None         # 'calendar' | 'working' (mode='duration')
@@ -607,6 +608,7 @@ class PurchaseUpdate(BaseModel):
     submission_deadline: Optional[datetime] = None
     delivery_location: Optional[str] = None
     delivery_location_kind: Optional[str] = None
+    region: Optional[str] = None                    # Регион проведения мероприятия
     service_term_mode: Optional[str] = None
     service_term_days: Optional[int] = None
     service_term_type: Optional[str] = None

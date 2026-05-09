@@ -107,6 +107,7 @@ class Purchase(Base):
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки
     delivery_location_kind = Column(String(20), nullable=True)      # '' | 'delivery' | 'service' (ручной тогл лейбла, фидбек 5 мая)
+    region = Column(String(200), nullable=True)                      # Регион проведения мероприятия (89 субъектов РФ или спец-значения)
     service_term_mode = Column(String(20), nullable=True)           # 'range' | 'duration' | 'deadline'
     # service_start_date / service_end_date already declared above (Phase 1) — reused for mode='range'
     service_term_days = Column(Integer, nullable=True)              # N дней для mode='duration'

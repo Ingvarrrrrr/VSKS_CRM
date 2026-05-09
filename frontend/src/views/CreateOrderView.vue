@@ -1137,6 +1137,20 @@
             </v-col>
           </v-row>
           <v-row>
+            <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="form.region"
+                :items="RUSSIAN_REGIONS"
+                label="Регион проведения мероприятия"
+                density="compact"
+                variant="outlined"
+                clearable
+                hide-details
+                @update:model-value="markDirty"
+              />
+            </v-col>
+          </v-row>
+          <v-row>
             <v-col cols="12">
               <div class="text-body-2 mb-1">Срок оказания услуг (для шаблонов)</div>
               <v-radio-group
@@ -2900,6 +2914,7 @@ function onMonthlyStagesCreated(res: any) {
   if (form.contract_id) loadFrameworkSiblings(form.contract_id)
 }
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
+import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
 
 const route = useRoute()
 const router = useRouter()
@@ -3095,6 +3110,7 @@ const form = reactive({
   submission_deadline: '' as string,              // ISO datetime-local (YYYY-MM-DDTHH:mm)
   delivery_location: '' as string,
   delivery_location_kind: '' as string,        // '' | 'delivery' | 'service' (ручной тогл лейбла)
+  region: '' as string,                          // Регион проведения мероприятия (Phase 25)
   service_term_mode: '' as string,                // '' | 'range' | 'duration' | 'deadline'
   service_term_days: null as number | null,       // mode='duration'
   service_term_type: 'calendar' as string,        // 'calendar' | 'working' (mode='duration')
@@ -5000,6 +5016,7 @@ const loadPurchase = async () => {
       ? String(data.submission_deadline).slice(0, 16)  // ISO → datetime-local input value
       : '',
     delivery_location: data.delivery_location || '',
+    region: data.region || '',
     service_term_mode: data.service_term_mode || '',
     service_term_days: data.service_term_days ?? null,
     service_term_type: data.service_term_type || 'calendar',
@@ -5522,6 +5539,7 @@ const doSave = async (adminOverride: boolean) => {
       // Phase 19: template-specific fields
       submission_deadline: form.submission_deadline || null,
       delivery_location: form.delivery_location || null,
+      region: form.region || null,
       service_term_mode: form.service_term_mode || null,
       service_term_days: form.service_term_days ?? null,
       service_term_type: form.service_term_mode === 'duration' ? (form.service_term_type || 'calendar') : null,

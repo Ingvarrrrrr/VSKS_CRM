@@ -29,6 +29,7 @@ from .routers import chat as chat_router
 from .routers import push as push_router
 from .routers import purchase_receipts
 from .routers import install as install_router
+from .routers import analytics as analytics_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -536,3 +537,4 @@ app.include_router(wishes.router)
 app.include_router(push_router.router)
 app.include_router(permissions_router.router)
 app.include_router(user_addresses_router.router)
+app.include_router(analytics_router.router)

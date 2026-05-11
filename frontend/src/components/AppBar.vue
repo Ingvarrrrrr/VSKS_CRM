@@ -461,6 +461,7 @@ const _allMenuItems = [
   { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', tab_key: 'staff' },
   { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', tab_key: 'reports' },
   { title: 'Реестры', icon: 'mdi-table', route: '/reports/lists', tab_key: 'reports' },
+  { title: 'Сводные', icon: 'mdi-pivot', route: '/reports/pivots', tab_key: 'reports' },
   { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', tab_key: 'plan' },
   { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', tab_key: 'system_incidents' },
   { title: 'Организации', icon: 'mdi-domain', route: '/organizations', tab_key: 'admin.organizations' },

@@ -163,6 +163,30 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Запуск реестра', tab_key: 'reports' },
     },
     {
+      path: '/reports/pivots',
+      name: 'reports-pivots',
+      component: () => import('@/views/ReportsPivotsListView.vue'),
+      meta: { requiresAuth: true, title: 'Сводные', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/pivots/new',
+      name: 'reports-pivots-new',
+      component: () => import('@/views/PivotBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Новая сводная', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/pivots/:id/edit',
+      name: 'reports-pivots-edit',
+      component: () => import('@/views/PivotBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Редактор сводной', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/pivots/:id/run',
+      name: 'reports-pivots-run',
+      component: () => import('@/views/ReportRunView.vue'),
+      meta: { requiresAuth: true, title: 'Запуск сводной', tab_key: 'reports' },
+    },
+    {
       path: '/staff',
       name: 'staff',
       component: () => import('../views/StaffView.vue'),

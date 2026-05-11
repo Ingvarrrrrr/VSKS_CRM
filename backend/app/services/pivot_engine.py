@@ -230,6 +230,18 @@ async def _execute_list(base, config, feo_l1, feo_l2, feo_l3, db) -> Dict:
         row_dict['_id'] = purchase.id if purchase else None
         rows.append(row_dict)
 
+    # Phase 25-05: composite/constant columns + group_by
+    from app.services.composite_columns import apply_composite_columns, group_rows
+
+    composite_specs = config.get('computed_columns', [])
+    if composite_specs:
+        rows = apply_composite_columns(rows, composite_specs)
+
+    group_by = config.get('group_by', [])
+    measures_for_subtotal = config.get('group_measures', [])
+    if group_by:
+        rows = group_rows(rows, group_by, measures_for_subtotal)
+
     return {
         'kind': 'list',
         'rows': rows,

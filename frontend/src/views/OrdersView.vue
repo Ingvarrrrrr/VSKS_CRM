@@ -234,6 +234,11 @@
           </v-chip>
         </template>
 
+        <!-- Способ закупки (локализованный) -->
+        <template #item.purchase_method="{ item }">
+          <span class="text-caption">{{ purchaseMethodLabel(item.purchase_method) }}</span>
+        </template>
+
         <!-- Контрагент / Подотчётное лицо -->
         <template #item.contractor_name="{ item }">
           <template v-if="item.purchase_method === 'advance'">
@@ -289,7 +294,7 @@
         </template>
 
         <template #item.actions="{ item }">
-          <div class="d-flex align-center gap-1" @click.stop>
+          <div class="d-flex align-center gap-1 w-100" @click.stop>
             <v-btn
               v-if="!isAdmin && nextStatus(item.status)"
               size="x-small"
@@ -319,6 +324,7 @@
               prepend-icon="mdi-link-variant" @click.stop="doLinkTask(item.id)">
               Привязать
             </v-btn>
+            <v-spacer />
             <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDeleteOne(item)" />
           </div>
         </template>
@@ -718,6 +724,12 @@ function purchaseTypeLabel(item: Purchase): string {
   if (item.purchase_method === 'single' || item.purchase_contract_type === 'single') return 'Разовый'
   if (item.purchase_method === 'competitive') return 'Конкурентный'
   return 'Разовый'
+}
+function purchaseMethodLabel(m?: string): string {
+  if (m === 'single') return 'Единственный поставщик'
+  if (m === 'competitive') return 'Конкурсная процедура'
+  if (m === 'advance') return 'Авансовый отчёт'
+  return m || '—'
 }
 function purchaseTypeColor(item: Purchase): string {
   if (item.purchase_method === 'advance') return 'purple'

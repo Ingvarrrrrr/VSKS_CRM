@@ -142,7 +142,8 @@
         </span>
       </template>
       <template #item.contract_type="{ item }">
-        <v-chip size="x-small" :color="contractTypeColor(item.contract_type)" variant="tonal">
+        <v-chip size="x-small" :color="contractTypeColor(item.contract_type)" variant="tonal"
+                style="white-space: normal; height: auto; min-height: 22px; padding: 2px 8px;">
           {{ contractTypeLabel(item.contract_type) }}
         </v-chip>
       </template>
@@ -1026,7 +1027,7 @@ const contractTypeItems = [
   { value: 'framework_with_amount', label: 'Рамочный (с суммой)' },
   { value: 'invoice',               label: 'Счёт' },
   { value: 'invoice_contract',      label: 'Счёт-договор' },
-  { value: 'advance_report',        label: 'Авансовый отчёт' },
+  { value: 'advance_report',        label: 'Авансовый платёж' },
 ]
 const purchaseMethodItems = [
   { value: 'single',      label: 'Единственный поставщик' },

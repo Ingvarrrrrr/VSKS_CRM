@@ -11,6 +11,7 @@
       </v-btn-toggle>
       <v-btn color="primary" prepend-icon="mdi-plus" v-if="editMode" @click="openAddWidget" class="mr-2">Виджет</v-btn>
       <v-btn color="success" prepend-icon="mdi-file-excel" @click="exportExcel" class="mr-2" :disabled="!widgets.length">Excel</v-btn>
+      <v-btn color="error" prepend-icon="mdi-file-pdf-box" @click="exportPdf" class="mr-2" :disabled="!widgets.length">PDF</v-btn>
       <v-btn color="primary" prepend-icon="mdi-content-save" @click="saveDialog = true">Сохранить</v-btn>
     </div>
 
@@ -272,6 +273,34 @@ async function exportExcel() {
     toast.success('Excel выгружен')
   } catch (e: any) {
     toast.error('Excel: ' + (e?.message || e))
+  }
+}
+
+async function exportPdf() {
+  try {
+    const token = localStorage.getItem('auth_token')
+    const resp = await fetch('/api/analytics/export.pdf', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        config: { kind: 'dashboard', widgets: widgets.value, parameters: parameters.value },
+        name: configName.value || 'Дашборд',
+      }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${configName.value || 'Дашборд'}_${new Date().toISOString().slice(0, 10)}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('PDF выгружен')
+  } catch (e: any) {
+    toast.error('PDF: ' + (e?.message || e))
   }
 }
 

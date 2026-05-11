@@ -506,7 +506,30 @@ async function exportExcel() {
     toast.error('Excel: ' + (e?.message || e))
   }
 }
-async function exportPdf() { toast.info('Будет в 25-09') }
+async function exportPdf() {
+  try {
+    const token = localStorage.getItem('auth_token')
+    const resp = await fetch('/api/analytics/export.pdf', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ config: pivot.buildQuery(), name: configName.value || 'Сводная' }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${configName.value || 'Сводная'}_${new Date().toISOString().slice(0, 10)}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('PDF выгружен')
+  } catch (e: any) {
+    toast.error('PDF: ' + (e?.message || e))
+  }
+}
 
 watch(() => pivot.state, debouncedReload, { deep: true })
 

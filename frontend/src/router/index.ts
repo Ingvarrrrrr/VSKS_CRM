@@ -187,6 +187,24 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Запуск сводной', tab_key: 'reports' },
     },
     {
+      path: '/dashboards',
+      name: 'dashboards',
+      component: () => import('@/views/ReportsDashboardsListView.vue'),
+      meta: { requiresAuth: true, title: 'Дашборды', tab_key: 'reports' },
+    },
+    {
+      path: '/dashboards/new',
+      name: 'dashboards-new',
+      component: () => import('@/views/DashboardBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Новый дашборд', tab_key: 'reports' },
+    },
+    {
+      path: '/dashboards/:id/edit',
+      name: 'dashboards-edit',
+      component: () => import('@/views/DashboardBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Редактор дашборда', tab_key: 'reports' },
+    },
+    {
       path: '/staff',
       name: 'staff',
       component: () => import('../views/StaffView.vue'),

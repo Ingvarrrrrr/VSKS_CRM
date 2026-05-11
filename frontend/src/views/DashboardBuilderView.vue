@@ -10,6 +10,7 @@
         <v-btn :value="true" size="small">Редактировать</v-btn>
       </v-btn-toggle>
       <v-btn color="primary" prepend-icon="mdi-plus" v-if="editMode" @click="openAddWidget" class="mr-2">Виджет</v-btn>
+      <v-btn color="success" prepend-icon="mdi-file-excel" @click="exportExcel" class="mr-2" :disabled="!widgets.length">Excel</v-btn>
       <v-btn color="primary" prepend-icon="mdi-content-save" @click="saveDialog = true">Сохранить</v-btn>
     </div>
 
@@ -244,6 +245,34 @@ function saveWidget() {
 function removeWidget(i: string) {
   const idx = widgets.value.findIndex((w) => w.i === i)
   if (idx >= 0) widgets.value.splice(idx, 1)
+}
+
+async function exportExcel() {
+  try {
+    const token = localStorage.getItem('auth_token')
+    const resp = await fetch('/api/analytics/export.xlsx', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        config: { kind: 'dashboard', widgets: widgets.value, parameters: parameters.value },
+        name: configName.value || 'Дашборд',
+      }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${configName.value || 'Дашборд'}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Excel выгружен')
+  } catch (e: any) {
+    toast.error('Excel: ' + (e?.message || e))
+  }
 }
 
 async function saveConfig() {

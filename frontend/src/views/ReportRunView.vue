@@ -96,6 +96,7 @@ const toast = useToast()
 
 const configId = ref<number | null>(null)
 const configName = ref('')
+const configJson = ref<any>(null)
 const parameters = ref<any[]>([])
 const paramValues = ref<Record<string, any>>({})
 const columns = ref<any[]>([])
@@ -141,8 +142,33 @@ function formatCell(row: any, col: any) {
   return String(v)
 }
 
-function exportExcel() {
-  toast.info('Excel-экспорт будет в Plan 25-08')
+async function exportExcel() {
+  if (!configJson.value) {
+    toast.warning('Конфигурация отчёта не загружена')
+    return
+  }
+  try {
+    const token = localStorage.getItem('auth_token')
+    const resp = await fetch('/api/analytics/export.xlsx', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ config: configJson.value, name: configName.value || 'Отчёт' }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${configName.value || 'Отчёт'}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Excel выгружен')
+  } catch (e: any) {
+    toast.error('Excel: ' + (e?.message || e))
+  }
 }
 
 function exportPdf() {
@@ -159,6 +185,7 @@ onMounted(async () => {
       apiFetch<any>('/api/subsidies/'),
     ])
     configName.value = cfg.name
+    configJson.value = cfg.config_json || null
     parameters.value = cfg.parameters_json || []
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
     // Build columns from config_json for header display

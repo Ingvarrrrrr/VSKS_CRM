@@ -532,8 +532,30 @@ async function saveConfig() {
   }
 }
 
-function exportExcel() {
-  toast.info('Excel-экспорт будет в Plan 25-08')
+async function exportExcel() {
+  try {
+    const config = buildConfig()
+    const token = localStorage.getItem('auth_token')
+    const resp = await fetch('/api/analytics/export.xlsx', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ config, name: configName.value || 'Реестр' }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${configName.value || 'Реестр'}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Excel выгружен')
+  } catch (e: any) {
+    toast.error('Excel: ' + (e?.message || e))
+  }
 }
 
 function exportPdf() {

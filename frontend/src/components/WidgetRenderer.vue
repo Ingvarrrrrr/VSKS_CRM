@@ -68,7 +68,7 @@ async function reload() {
   error.value = ''
   try {
     result.value = await apiFetch<any>(
-      `/api/report-configs/${props.widget.source_config_id}/run`,
+      `/report-configs/${props.widget.source_config_id}/run`,
       {
         method: 'POST',
         body: JSON.stringify(props.parameters || {}),

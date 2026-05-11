@@ -460,7 +460,7 @@ async function runQuery() {
   }
   loading.value = true
   try {
-    const result = await apiFetch<any>('/api/analytics/query', {
+    const result = await apiFetch<any>('/analytics/query', {
       method: 'POST',
       body: JSON.stringify(buildConfig()),
     })
@@ -507,7 +507,7 @@ async function saveConfig() {
   }
   try {
     if (configId.value) {
-      await apiFetch(`/api/report-configs/${configId.value}`, {
+      await apiFetch(`/report-configs/${configId.value}`, {
         method: 'PUT',
         body: JSON.stringify({
           name: configName.value,
@@ -518,7 +518,7 @@ async function saveConfig() {
       })
       toast.success('Шаблон обновлён')
     } else {
-      const created = await apiFetch<any>('/api/report-configs/', {
+      const created = await apiFetch<any>('/report-configs/', {
         method: 'POST',
         body: JSON.stringify(body),
       })
@@ -585,7 +585,7 @@ async function exportPdf() {
 }
 
 async function loadConfig(id: number) {
-  const cfg = await apiFetch<any>(`/api/report-configs/${id}`)
+  const cfg = await apiFetch<any>(`/report-configs/${id}`)
   configId.value = cfg.id
   configName.value = cfg.name
   configDescription.value = cfg.description || ''
@@ -616,13 +616,13 @@ watch([filters, groupBy], reload, { deep: true })
 // Init
 onMounted(async () => {
   try {
-    const f = await apiFetch<any>('/api/analytics/fields')
+    const f = await apiFetch<any>('/analytics/fields')
     fields.value = f.fields
     groups.value = f.groups
     openGroups.value = [...f.groups]
     const [subs, ctrs] = await Promise.all([
-      apiFetch<any>('/api/subsidies/'),
-      apiFetch<any>('/api/contractors/?limit=500'),
+      apiFetch<any>('/subsidies/'),
+      apiFetch<any>('/contractors/?limit=500'),
     ])
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
     contractors.value = Array.isArray(ctrs) ? ctrs : ctrs.items || []

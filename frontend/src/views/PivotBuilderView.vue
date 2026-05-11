@@ -405,7 +405,7 @@ async function reload() {
   }
   loading.value = true
   try {
-    result.value = await apiFetch<any>('/api/analytics/query', {
+    result.value = await apiFetch<any>('/analytics/query', {
       method: 'POST',
       body: JSON.stringify(pivot.buildQuery()),
     })
@@ -429,7 +429,7 @@ async function drillTo(row: any) {
   drillDialog.value = true
   drillLoading.value = true
   try {
-    const r = await apiFetch<any>('/api/analytics/drill', {
+    const r = await apiFetch<any>('/analytics/drill', {
       method: 'POST',
       body: JSON.stringify({ config: pivot.buildQuery(), dimension_values: dimVals }),
     })
@@ -458,7 +458,7 @@ async function saveConfig() {
   }
   try {
     if (configId.value) {
-      await apiFetch(`/api/report-configs/${configId.value}`, {
+      await apiFetch(`/report-configs/${configId.value}`, {
         method: 'PUT',
         body: JSON.stringify({
           name: configName.value,
@@ -469,7 +469,7 @@ async function saveConfig() {
       })
       toast.success('Обновлено')
     } else {
-      const created = await apiFetch<any>('/api/report-configs/', {
+      const created = await apiFetch<any>('/report-configs/', {
         method: 'POST',
         body: JSON.stringify(body),
       })
@@ -535,15 +535,15 @@ watch(() => pivot.state, debouncedReload, { deep: true })
 
 onMounted(async () => {
   try {
-    const f = await apiFetch<any>('/api/analytics/fields')
+    const f = await apiFetch<any>('/analytics/fields')
     fields.value = f.fields
     groups.value = f.groups
     openGroups.value = [...f.groups]
-    const subs = await apiFetch<any>('/api/subsidies/')
+    const subs = await apiFetch<any>('/subsidies/')
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
     const idParam = route.params.id
     if (idParam) {
-      const cfg = await apiFetch<any>(`/api/report-configs/${idParam}`)
+      const cfg = await apiFetch<any>(`/report-configs/${idParam}`)
       configId.value = cfg.id
       configName.value = cfg.name
       configDescription.value = cfg.description || ''

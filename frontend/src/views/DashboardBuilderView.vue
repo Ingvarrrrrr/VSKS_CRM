@@ -322,7 +322,7 @@ async function saveConfig() {
   }
   try {
     if (configId.value) {
-      await apiFetch(`/api/report-configs/${configId.value}`, {
+      await apiFetch(`/report-configs/${configId.value}`, {
         method: 'PUT',
         body: JSON.stringify({
           name: configName.value,
@@ -334,7 +334,7 @@ async function saveConfig() {
       })
       toast.success('Обновлено')
     } else {
-      const created = await apiFetch<any>('/api/report-configs/', {
+      const created = await apiFetch<any>('/report-configs/', {
         method: 'POST',
         body: JSON.stringify(body),
       })
@@ -351,9 +351,9 @@ async function saveConfig() {
 onMounted(async () => {
   try {
     const [list, pivots, subs] = await Promise.all([
-      apiFetch<any>('/api/report-configs/?kind=list'),
-      apiFetch<any>('/api/report-configs/?kind=pivot'),
-      apiFetch<any>('/api/subsidies/'),
+      apiFetch<any>('/report-configs/?kind=list'),
+      apiFetch<any>('/report-configs/?kind=pivot'),
+      apiFetch<any>('/subsidies/'),
     ])
     const allConfigs = [
       ...(Array.isArray(list) ? list : []).map((c: any) => ({ ...c, display_name: `[Реестр] ${c.name}` })),
@@ -364,7 +364,7 @@ onMounted(async () => {
 
     const idParam = route.params.id
     if (idParam) {
-      const cfg = await apiFetch<any>(`/api/report-configs/${idParam}`)
+      const cfg = await apiFetch<any>(`/report-configs/${idParam}`)
       configId.value = cfg.id
       configName.value = cfg.name
       configDescription.value = cfg.description || ''

@@ -108,7 +108,7 @@ const subsidies = ref<any[]>([])
 async function runReport() {
   loading.value = true
   try {
-    const result = await apiFetch<any>(`/api/report-configs/${configId.value}/run`, {
+    const result = await apiFetch<any>(`/report-configs/${configId.value}/run`, {
       method: 'POST',
       body: JSON.stringify({ params: paramValues.value }),
     })
@@ -206,8 +206,8 @@ onMounted(async () => {
   configId.value = id
   try {
     const [cfg, subs] = await Promise.all([
-      apiFetch<any>(`/api/report-configs/${id}`),
-      apiFetch<any>('/api/subsidies/'),
+      apiFetch<any>(`/report-configs/${id}`),
+      apiFetch<any>('/subsidies/'),
     ])
     configName.value = cfg.name
     configJson.value = cfg.config_json || null

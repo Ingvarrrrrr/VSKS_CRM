@@ -95,7 +95,7 @@ function confirmDelete(cfg: any) {
 async function doDelete() {
   if (!deleteTarget.value) return
   try {
-    await apiFetch(`/api/report-configs/${deleteTarget.value.id}`, { method: 'DELETE' })
+    await apiFetch(`/report-configs/${deleteTarget.value.id}`, { method: 'DELETE' })
     configs.value = configs.value.filter((c) => c.id !== deleteTarget.value.id)
     toast.success('Реестр удалён')
   } catch (e: any) {
@@ -109,7 +109,7 @@ async function doDelete() {
 onMounted(async () => {
   loading.value = true
   try {
-    const result = await apiFetch<any>('/api/report-configs/?kind=list')
+    const result = await apiFetch<any>('/report-configs/?kind=list')
     configs.value = Array.isArray(result) ? result : result.items || []
   } catch (e: any) {
     toast.error('Ошибка загрузки: ' + (e?.message || String(e)))

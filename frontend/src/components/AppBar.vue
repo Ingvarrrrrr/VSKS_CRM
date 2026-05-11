@@ -460,6 +460,7 @@ const _allMenuItems = [
   { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', tab_key: 'commercial_requests' },
   { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', tab_key: 'staff' },
   { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', tab_key: 'reports' },
+  { title: 'Реестры', icon: 'mdi-table', route: '/reports/lists', tab_key: 'reports' },
   { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', tab_key: 'plan' },
   { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', tab_key: 'system_incidents' },
   { title: 'Организации', icon: 'mdi-domain', route: '/organizations', tab_key: 'admin.organizations' },

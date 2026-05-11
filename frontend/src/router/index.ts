@@ -139,6 +139,30 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Отчёты', tab_key: 'reports' }
     },
     {
+      path: '/reports/lists',
+      name: 'reports-lists',
+      component: () => import('@/views/ReportsListsListView.vue'),
+      meta: { requiresAuth: true, title: 'Реестры', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/lists/new',
+      name: 'reports-lists-new',
+      component: () => import('@/views/ListBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Новый реестр', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/lists/:id/edit',
+      name: 'reports-lists-edit',
+      component: () => import('@/views/ListBuilderView.vue'),
+      meta: { requiresAuth: true, title: 'Редактор реестра', tab_key: 'reports' },
+    },
+    {
+      path: '/reports/lists/:id/run',
+      name: 'reports-lists-run',
+      component: () => import('@/views/ReportRunView.vue'),
+      meta: { requiresAuth: true, title: 'Запуск реестра', tab_key: 'reports' },
+    },
+    {
       path: '/staff',
       name: 'staff',
       component: () => import('../views/StaffView.vue'),

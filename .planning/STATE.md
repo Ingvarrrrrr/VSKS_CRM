@@ -3,21 +3,61 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to plan
-last_updated: "2026-05-07T20:00:00.000Z"
+last_updated: "2026-05-11T01:30:00.000Z"
 progress:
-  total_phases: 20
-  completed_phases: 15
-  total_plans: 80
-  completed_plans: 78
+  total_phases: 21
+  completed_phases: 16
+  total_plans: 90
+  completed_plans: 88
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 24 ✅ (завершена)
-Next action: UAT реформы авансовых отчётов (создать Ростелеком 12 этапов + 2 чека от разных ИП → проверить multi_contractor_label + reimbursement_user + FEO-drill в pipeline). Затем — право `purchase.transition.skip_validation` (новый action) и backend mismatch /dashboard/ vs /charts.
+Phase: 25 ✅ (Report Builder — завершена 2026-05-11, 11 атомарных коммитов `558dcc9..0b16f75`)
+Next action: UAT Phase 25 на проде (16 пунктов в `.planning/phases/25-report-builder/STATE.md`). Применить permission seed SQL вручную: `phase25_seed_report_config_action.sql`. Параллельно UAT реформы авансовых отчётов Phase 24 + право `purchase.transition.skip_validation` + backend mismatch /dashboard/ vs /charts.
 Resume file: None
+Baseline rollback Phase 25: `f5bfc3c` (git revert --no-edit f5bfc3c..HEAD && git push)
+
+## 2026-05-11 — Phase 25 ✅ Report Builder (UI-конфигуратор сводных и дашбордов)
+
+11 коммитов (`558dcc9..0b16f75`) → push в `claude`. Полная реализация UI-конструктора отчётов: 3 типа (реестр / сводная / дашборд) с drill-down, Excel и PDF экспортом.
+
+### Backend (ядро)
+- **field_registry.py** — 95 полей с label/type/source/sql_expr/agg_default/is_dimension/is_measure (источник правды для всех UI)
+- **pivot_engine.py** — SQL group_by с whitelist ALLOWED_KEYS/ALLOWED_AGGS (защита от инъекций); LEFT JOIN purchases→contractors/subsidies/feo (3 уровня FEO через aliased); execute_query (list+pivot) + execute_drill
+- **calc_columns.py** — share_of_total / cumulative_sum / delta_to_plan post-processing
+- **composite_columns.py** — template-рендеринг `{field|format}` с fallback + group_rows (subtotals + grand_total)
+- **report_excel.py** — openpyxl 3 типа: list (group_header + subtotals + grand_total), pivot (multi-row header + totals), dashboard (N листов по виджету)
+- **report_pdf.py** — reportlab + DejaVuSans (fallback CID) + reportlab.graphics.charts.VerticalBarChart
+- **routers/analytics.py** — `/fields` `/query` `/drill` `/export.xlsx` `/export.pdf`
+- **routers/report_configs.py** — CRUD per-org + `/run` с params
+- **models/report_config.py** — таблица `report_configs(id, org_id, kind, name, config_json, parameters_json)`
+- **permission action `report_config.edit`** (default admin + org_admin)
+
+### Frontend (3 builder'а + 4 supporting view)
+- **ListBuilderView** (Тип A — реестр) — drag поля, composite-колонки `{contract_number} от {contract_date|dmy}`, константы «Россия», format units (₽/тыс.₽/млн.₽), группировка с subtotals; превью live (debounce 350ms)
+- **PivotBuilderView** (Тип B — сводная) — drop-зоны Строки/Колонки/Значения/Фильтры; aggs; calc-columns (% от итога/нарастающий/Δ); drill-click→диалог→`/orders/{id}`
+- **DashboardBuilderView** (Тип C — дашборд) — grid-layout-plus + WidgetRenderer (KPI/bar/line/area/pie/donut/table) + параметры
+- **ReportRunView** — запуск шаблона с параметрами
+- **Reports{Lists,Pivots,Dashboards}ListView** — индекс сохранённых отчётов
+
+### Миграции
+- **Purchase.region** (String 200, nullable) — через `check_schema.py --apply` auto-add
+- **report_configs** таблица — через `Base.metadata.create_all` (alembic chain сломан)
+- **89 субъектов РФ** — `frontend/src/constants/russian_regions.ts` + spec values
+- **fonts-dejavu** в Dockerfile (для PDF кириллицы)
+
+### Pending UAT (16 пунктов в `.planning/phases/25-report-builder/STATE.md`)
+Ключевые: воспроизвести в UI 3 эталонных листа Excel пользователя — «Сумма_заключенных_договоров» (329 строк), «Контрактование закупок» (Товары/Услуги × Квартал × SUM), «Это для отчёта по мероприятиям» (группировка по event_id + composite).
+
+### Manual step (alembic сломан)
+Применить permission seed на проде:
+```bash
+docker cp backend/alembic/versions/phase25_seed_report_config_action.sql vsks-crm-db-1:/tmp/
+docker exec vsks-crm-db-1 psql -U vsks -d vsks_crm -f /tmp/phase25_seed_report_config_action.sql
+```
 
 ## 2026-05-07 — Phase 24 + drill-down + реформа авансовых
 

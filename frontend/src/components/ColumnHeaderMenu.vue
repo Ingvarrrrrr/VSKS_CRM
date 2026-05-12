@@ -109,7 +109,7 @@
               v-for="item in filteredEnumItems"
               :key="String(item)"
               :model-value="enumSelected.includes(item)"
-              :label="item === null ? '(пусто)' : String(item)"
+              :label="enumLabel(item)"
               density="compact"
               hide-details
               class="px-3"
@@ -235,6 +235,7 @@ const props = defineProps<{
   title: string
   colType: 'text' | 'enum' | 'number' | 'date' | 'boolean'
   items?: (string | number | null)[]
+  itemLabels?: Record<string, string> | ((v: string | number | null) => string)
   modelValue: FilterValue | null
   sortBy?: 'asc' | 'desc' | null
   align?: 'start' | 'center' | 'end'
@@ -295,13 +296,19 @@ watch(
   }
 )
 
+function enumLabel(item: string | number | null): string {
+  if (item === null || item === '') return '(пусто)'
+  const labels = props.itemLabels
+  if (typeof labels === 'function') return labels(item) || String(item)
+  if (labels && typeof labels === 'object') return labels[String(item)] || String(item)
+  return String(item)
+}
+
 const filteredEnumItems = computed(() => {
   const all = props.items ?? []
   if (!enumSearch.value) return all
   const q = enumSearch.value.toLowerCase()
-  return all.filter(item =>
-    item === null ? '(пусто)'.includes(q) : String(item).toLowerCase().includes(q)
-  )
+  return all.filter(item => enumLabel(item).toLowerCase().includes(q))
 })
 
 function onEnumToggle(item: string | number | null, checked: boolean) {

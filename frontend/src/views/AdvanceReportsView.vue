@@ -210,6 +210,7 @@
             :title="column.title"
             col-type="enum"
             :items="uniqValues(enrichedItems, 'status')"
+            :item-labels="STATUS_LABEL"
             :model-value="cfg.state.value.filters['status'] ?? null"
             :sort-by="getSortBy('status')"
             @update:model-value="(v: FilterValue | null) => setFilter('status', v)"
@@ -482,12 +483,14 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 const STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
   confirmed: 'Подтверждено', work_in_progress: 'В работе',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
+  contracted: 'Договор', ordered: 'Заказано',
+  delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
   confirmed: 'blue', work_in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  contracted: 'indigo', ordered: 'purple',
+  delivered: 'deep-purple', paid: 'green',
 }
 const statusItems = Object.entries(STATUS_LABEL).map(([value, label]) => ({
   value, label, color: STATUS_COLOR[value],

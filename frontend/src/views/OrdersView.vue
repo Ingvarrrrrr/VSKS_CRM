@@ -282,7 +282,8 @@
         </template>
         <template #header.status="{ column }">
           <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
-            :items="statusItems.map(s => s.value)"
+            :items="STATUS_ORDER"
+            :item-labels="STATUS_LABEL"
             :model-value="cfg.state.value.filters['status'] ?? null"
             :sort-by="getSortBy('status')"
             @update:model-value="v => cfg.setFilter('status', v)"
@@ -292,6 +293,7 @@
         <template #header.approval_status="{ column }">
           <ColumnHeaderMenu col-key="approval_status" :title="column.title" col-type="enum"
             :items="['in_progress', 'approved', 'rejected']"
+            :item-labels="{ in_progress: 'На согласовании', approved: 'Согласовано', rejected: 'Отклонено' }"
             :model-value="cfg.state.value.filters['approval_status'] ?? null"
             :sort-by="getSortBy('approval_status')"
             @update:model-value="v => cfg.setFilter('approval_status', v)"
@@ -855,11 +857,12 @@ function advancePersonLabel(item: Purchase): string {
   return item.responsible_person || `#${item.assigned_user_id}` || '—'
 }
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
   confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
+  contracted: 'Договор', ordered: 'Заказано',
+  delivered: 'Поставлено', paid: 'Оплачено',
 }
 function statusLabelFor(item: Purchase, status?: string): string {
   const s = status || item.status
@@ -869,7 +872,8 @@ function statusLabelFor(item: Purchase, status?: string): string {
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
   confirmed: 'blue', work_in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  contracted: 'indigo', ordered: 'purple',
+  delivered: 'deep-purple', paid: 'green',
 }
 const SUBSTATUS_LABEL: Record<string, string> = {
   tz_forming: 'Формируется ТЗ',

@@ -171,6 +171,7 @@
       <template #header.contract_type="{ column }">
         <ColumnHeaderMenu col-key="contract_type" :title="column.title" col-type="enum"
           :items="uniqValues(contracts, 'contract_type')"
+          :item-labels="contractTypeLabels"
           :model-value="colState.filters['contract_type'] ?? null"
           :sort-by="getSortBy('contract_type')"
           @update:model-value="v => cfgSetFilter('contract_type', v)"
@@ -181,6 +182,7 @@
       <template #header.purchase_method="{ column }">
         <ColumnHeaderMenu col-key="purchase_method" :title="column.title" col-type="enum"
           :items="uniqValues(contracts, 'purchase_method')"
+          :item-labels="purchaseMethodLabels"
           :model-value="colState.filters['purchase_method'] ?? null"
           :sort-by="getSortBy('purchase_method')"
           @update:model-value="v => cfgSetFilter('purchase_method', v)"
@@ -291,6 +293,7 @@
       <template #header.status="{ column }">
         <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
           :items="uniqValues(contracts, 'status')"
+          :item-labels="statusLabels"
           :model-value="colState.filters['status'] ?? null"
           :sort-by="getSortBy('status')"
           @update:model-value="v => cfgSetFilter('status', v)"
@@ -1287,6 +1290,10 @@ const statusItems = [
 const contractTypeLabel = (t?: string) => contractTypeItems.find(i => i.value === t)?.label || t || '—'
 const purchaseMethodLabel = (m?: string) => purchaseMethodItems.find(i => i.value === m)?.label || m || '—'
 const statusLabel = (s?: string) => statusItems.find(i => i.value === s)?.label || s || '—'
+
+const contractTypeLabels = Object.fromEntries(contractTypeItems.map(i => [i.value, i.label]))
+const purchaseMethodLabels = Object.fromEntries(purchaseMethodItems.map(i => [i.value, i.label]))
+const statusLabels = Object.fromEntries(statusItems.map(i => [i.value, i.label]))
 
 const PURCHASE_STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график', confirmed: 'Подтверждено',

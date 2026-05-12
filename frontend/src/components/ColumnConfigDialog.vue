@@ -95,6 +95,10 @@ const allColumnsList = computed(() => toValue(props.allColumns))
 
 const displayedColumns = computed(() => {
   if (!hasGroups.value) return allColumnsList.value
+  // Спец-кейс: вкладка 'all' = «Все возможные» показывает ВСЕ колонки,
+  // не только те у которых group='all'. Иначе «Основные» (core-фильтр)
+  // могут оказаться больше чем «Все возможные» — нелогично.
+  if (tab.value === 'all') return allColumnsList.value
   return allColumnsList.value.filter(c => (c.group ?? '') === tab.value)
 })
 

@@ -112,10 +112,30 @@ onMounted(async () => {
 
 <style>
 /* ── v-data-table: table-layout fixed чтобы width на th/td реально применялся ── */
-/* Без этого браузер применяет auto layout и игнорирует inline width когда content большой */
-.v-data-table > .v-table__wrapper > table,
-.v-data-table-virtual > .v-table__wrapper > table {
-  table-layout: fixed;
+/* Без этого браузер применяет auto layout и игнорирует inline width когда content большой.
+   ВАЖНО: только на desktop (≥960px). На mobile fixed-layout превращает текст в
+   вертикальный «по букве на строку» из-за узких viewport-ширин и overflow-wrap.
+   На mobile оставляем auto-layout — таблица сама подгоняет ширины под контент,
+   при необходимости включается горизонтальный scroll. */
+@media (min-width: 960px) {
+  .v-data-table > .v-table__wrapper > table,
+  .v-data-table-virtual > .v-table__wrapper > table {
+    table-layout: fixed;
+  }
+}
+/* На mobile отменяем agressive overflow-wrap (видимо унаследовано) и принудительный wrap
+   чтобы текст не ломался посимвольно. Контент перепрыгивает horizontal-scroll. */
+@media (max-width: 959.98px) {
+  .v-data-table td,
+  .v-data-table-virtual td {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+  /* Чтобы AppBar и страницы не перекрывались — фильтр-бары компактнее */
+  .v-data-table thead th {
+    white-space: nowrap !important;
+  }
 }
 /* ── Global: wrap long text in all Vuetify dropdowns / overlays ── */
 .v-overlay__content .v-list-item-title,

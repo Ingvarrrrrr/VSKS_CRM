@@ -10,10 +10,18 @@ export interface ColumnDef {
   align?: 'start' | 'center' | 'end'
 }
 
+export type FilterValue =
+  | { type: 'text'; q: string }
+  | { type: 'enum'; values: (string | number | null)[] }
+  | { type: 'number'; min: number | null; max: number | null }
+  | { type: 'date'; from: string | null; to: string | null }
+  | { type: 'boolean'; value: boolean | null }
+
 export interface ColumnConfigState {
   visible: string[]   // массив видимых ключей (Set сериализуется хуже)
   order: string[]     // полный порядок (включая невидимые — чтобы при тогле visible вернуть на исходную позицию)
   widths: Record<string, number>
+  filters: Record<string, FilterValue>
 }
 
 const LS_PREFIX = 'col_config_v1_'  // v1 чтобы будущие миграции не ломались
@@ -36,6 +44,7 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
       visible: cols.filter(c => c.group !== 'all').map(c => c.key),
       order: cols.map(c => c.key),
       widths: Object.fromEntries(cols.filter(c => c.width).map(c => [c.key, c.width!])),
+      filters: {},
     }
   }
 
@@ -67,6 +76,7 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
         visible: visibleWithNewCore,
         order,
         widths: parsed.widths ?? def.widths,
+        filters: parsed.filters && typeof parsed.filters === 'object' ? parsed.filters : {},
       }
     } catch {
       return defaultState()
@@ -156,6 +166,26 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
     state.value.widths = { ...state.value.widths, [key]: px }
   }
 
+  function setFilter(key: string, value: FilterValue | null) {
+    const updated = { ...state.value.filters }
+    if (value === null) {
+      delete updated[key]
+    } else {
+      updated[key] = value
+    }
+    state.value.filters = updated
+  }
+
+  function clearAllFilters() {
+    state.value.filters = {}
+  }
+
+  function hasFilter(key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(state.value.filters, key)
+  }
+
+  const activeFilterCount = computed(() => Object.keys(state.value.filters).length)
+
   function reset() {
     localStorage.removeItem(lsKey)
     state.value = defaultState()
@@ -182,5 +212,17 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
     state.value = migrated
   }
 
-  return { state, visibleHeaders, toggleVisible, setPosition, setWidth, reset, migrateFrom }
+  return {
+    state,
+    visibleHeaders,
+    toggleVisible,
+    setPosition,
+    setWidth,
+    setFilter,
+    clearAllFilters,
+    hasFilter,
+    activeFilterCount,
+    reset,
+    migrateFrom,
+  }
 }

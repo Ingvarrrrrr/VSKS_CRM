@@ -44,6 +44,13 @@
             closable
             @click:close="clearImport"
           >Фильтр: Импорт #{{ importId }}</v-chip>
+          <v-chip
+            v-if="activeFilterCount > 0"
+            size="small"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-filter-check"
+          >Фильтры {{ activeFilterCount }}</v-chip>
           <v-btn v-if="hasFilters" variant="text" size="x-small" color="error" prepend-icon="mdi-filter-remove" @click="clearFilters">
             Сбросить
           </v-btn>
@@ -164,6 +171,122 @@
       :page="page"
       @update:page="page = $event"
     >
+      <!-- ColumnHeaderMenu slots — только типизированные core-колонки -->
+      <template #header.payment_number="{ column }">
+        <ColumnHeaderMenu col-key="payment_number" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['payment_number'] ?? null"
+          :sort-by="getSortBy('payment_number')"
+          @update:model-value="v => setFilter('payment_number', v)"
+          @sort="dir => applySort('payment_number', dir)"
+          @hide="toggleVisible('payment_number', false)" />
+      </template>
+      <template #header.payer_name="{ column }">
+        <ColumnHeaderMenu col-key="payer_name" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['payer_name'] ?? null"
+          :sort-by="getSortBy('payer_name')"
+          @update:model-value="v => setFilter('payer_name', v)"
+          @sort="dir => applySort('payer_name', dir)"
+          @hide="toggleVisible('payer_name', false)" />
+      </template>
+      <template #header.payee_name="{ column }">
+        <ColumnHeaderMenu col-key="payee_name" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['payee_name'] ?? null"
+          :sort-by="getSortBy('payee_name')"
+          @update:model-value="v => setFilter('payee_name', v)"
+          @sort="dir => applySort('payee_name', dir)"
+          @hide="toggleVisible('payee_name', false)" />
+      </template>
+      <template #header.payer_inn="{ column }">
+        <ColumnHeaderMenu col-key="payer_inn" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['payer_inn'] ?? null"
+          :sort-by="getSortBy('payer_inn')"
+          @update:model-value="v => setFilter('payer_inn', v)"
+          @sort="dir => applySort('payer_inn', dir)"
+          @hide="toggleVisible('payer_inn', false)" />
+      </template>
+      <template #header.payee_inn="{ column }">
+        <ColumnHeaderMenu col-key="payee_inn" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['payee_inn'] ?? null"
+          :sort-by="getSortBy('payee_inn')"
+          @update:model-value="v => setFilter('payee_inn', v)"
+          @sort="dir => applySort('payee_inn', dir)"
+          @hide="toggleVisible('payee_inn', false)" />
+      </template>
+      <template #header.purpose_text="{ column }">
+        <ColumnHeaderMenu col-key="purpose_text" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['purpose_text'] ?? null"
+          :sort-by="getSortBy('purpose_text')"
+          @update:model-value="v => setFilter('purpose_text', v)"
+          @sort="dir => applySort('purpose_text', dir)"
+          @hide="toggleVisible('purpose_text', false)" />
+      </template>
+      <template #header.parsed_contract_number="{ column }">
+        <ColumnHeaderMenu col-key="parsed_contract_number" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['parsed_contract_number'] ?? null"
+          :sort-by="getSortBy('parsed_contract_number')"
+          @update:model-value="v => setFilter('parsed_contract_number', v)"
+          @sort="dir => applySort('parsed_contract_number', dir)"
+          @hide="toggleVisible('parsed_contract_number', false)" />
+      </template>
+      <template #header.parsed_kbk="{ column }">
+        <ColumnHeaderMenu col-key="parsed_kbk" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['parsed_kbk'] ?? null"
+          :sort-by="getSortBy('parsed_kbk')"
+          @update:model-value="v => setFilter('parsed_kbk', v)"
+          @sort="dir => applySort('parsed_kbk', dir)"
+          @hide="toggleVisible('parsed_kbk', false)" />
+      </template>
+      <template #header.status="{ column }">
+        <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
+          :items="uniqValues(payments, 'status')"
+          :model-value="colConfigState.filters['status'] ?? null"
+          :sort-by="getSortBy('status')"
+          @update:model-value="v => setFilter('status', v)"
+          @sort="dir => applySort('status', dir)"
+          @hide="toggleVisible('status', false)" />
+      </template>
+      <template #header.matched="{ column }">
+        <ColumnHeaderMenu col-key="matched" :title="column.title" col-type="boolean"
+          :model-value="colConfigState.filters['matched'] ?? null"
+          :sort-by="getSortBy('matched')"
+          @update:model-value="v => setFilter('matched', v)"
+          @sort="dir => applySort('matched', dir)"
+          @hide="toggleVisible('matched', false)" />
+      </template>
+      <template #header.matched_confirmed="{ column }">
+        <ColumnHeaderMenu col-key="matched_confirmed" :title="column.title" col-type="boolean"
+          :model-value="colConfigState.filters['matched_confirmed'] ?? null"
+          :sort-by="getSortBy('matched_confirmed')"
+          @update:model-value="v => setFilter('matched_confirmed', v)"
+          @sort="dir => applySort('matched_confirmed', dir)"
+          @hide="toggleVisible('matched_confirmed', false)" />
+      </template>
+      <template #header.amount="{ column }">
+        <ColumnHeaderMenu col-key="amount" :title="column.title" col-type="number"
+          :model-value="colConfigState.filters['amount'] ?? null"
+          :sort-by="getSortBy('amount')"
+          align="end"
+          @update:model-value="v => setFilter('amount', v)"
+          @sort="dir => applySort('amount', dir)"
+          @hide="toggleVisible('amount', false)" />
+      </template>
+      <template #header.payment_date="{ column }">
+        <ColumnHeaderMenu col-key="payment_date" :title="column.title" col-type="date"
+          :model-value="colConfigState.filters['payment_date'] ?? null"
+          :sort-by="getSortBy('payment_date')"
+          @update:model-value="v => setFilter('payment_date', v)"
+          @sort="dir => applySort('payment_date', dir)"
+          @hide="toggleVisible('payment_date', false)" />
+      </template>
+      <template #header.parsed_contract_date="{ column }">
+        <ColumnHeaderMenu col-key="parsed_contract_date" :title="column.title" col-type="date"
+          :model-value="colConfigState.filters['parsed_contract_date'] ?? null"
+          :sort-by="getSortBy('parsed_contract_date')"
+          @update:model-value="v => setFilter('parsed_contract_date', v)"
+          @sort="dir => applySort('parsed_contract_date', dir)"
+          @hide="toggleVisible('parsed_contract_date', false)" />
+      </template>
+
       <!-- Index -->
       <template #item.index="{ index }">
         <span class="text-medium-emphasis">{{ (page - 1) * 50 + index + 1 }}</span>
@@ -384,6 +507,7 @@ import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
 import { formatMoney } from '@/utils/formatMoney'
@@ -447,17 +571,23 @@ const searchedItems = computed(() => {
   if (filterSubsidyId.value) {
     items = items.filter(i => i.matched_subsidy_id === filterSubsidyId.value)
   }
-  if (!searchQuery.value.trim()) return items
-  const q = searchQuery.value.toLowerCase()
-  return items.filter((item: any) => {
-    const haystack = [
-      item.payer_name, item.payer_name_resolved, item.payer_inn,
-      item.payee_name, item.payee_name_resolved, item.payee_inn,
-      item.purpose_text, item.basis_doc_text, item.basis_doc_number,
-      item.parsed_contract_number, item.payment_number, item.subsidy_code,
-    ].filter(Boolean).join(' ').toLowerCase()
-    return haystack.includes(q)
-  })
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase()
+    items = items.filter((item: any) => {
+      const haystack = [
+        item.payer_name, item.payer_name_resolved, item.payer_inn,
+        item.payee_name, item.payee_name_resolved, item.payee_inn,
+        item.purpose_text, item.basis_doc_text, item.basis_doc_number,
+        item.parsed_contract_number, item.payment_number, item.subsidy_code,
+      ].filter(Boolean).join(' ').toLowerCase()
+      return haystack.includes(q)
+    })
+  }
+  // column-header filters
+  if (colConfigState.value && Object.keys(colConfigState.value.filters).length > 0) {
+    items = items.filter(matchesColumnFilters)
+  }
+  return items
 })
 
 const searchedItemsWithRowNum = computed(() => {
@@ -465,7 +595,18 @@ const searchedItemsWithRowNum = computed(() => {
   const sorted = [...searchedItems.value].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
   const map = new Map<string, number>()
   sorted.forEach((p, idx) => map.set(String(p.id), idx + 1))
-  return searchedItems.value.map(p => ({ ...p, _rownum: map.get(String(p.id)) ?? '' }))
+  let items = searchedItems.value.map(p => ({ ...p, _rownum: map.get(String(p.id)) ?? '' }))
+  // Apply localSort from ColumnHeaderMenu
+  if (localSort.value) {
+    const { key, order } = localSort.value
+    items = [...items].sort((a, b) => {
+      const av = a?.[key] ?? null
+      const bv = b?.[key] ?? null
+      const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'ru', { numeric: true })
+      return order === 'asc' ? cmp : -cmp
+    })
+  }
+  return items
 })
 
 const filteredSum = computed(() =>
@@ -473,7 +614,8 @@ const filteredSum = computed(() =>
 )
 
 const hasFilters = computed(() =>
-  fDateFrom.value || fDateTo.value || fStatus.value || fMatched.value || fConfirmed.value || fInn.value
+  fDateFrom.value || fDateTo.value || fStatus.value || fMatched.value || fConfirmed.value || fInn.value ||
+  activeFilterCount.value > 0
 )
 
 function clearFilters() {
@@ -485,6 +627,8 @@ function clearFilters() {
   fInn.value = ''
   searchQuery.value = ''
   filterSubsidyId.value = null
+  clearAllFilters()
+  localSort.value = null
   applyFilters()
 }
 
@@ -698,6 +842,9 @@ const {
   setWidth: setColWidth,
   reset: resetColumns,
   migrateFrom,
+  setFilter,
+  clearAllFilters,
+  activeFilterCount,
 } = useColumnConfig('payment_registry', allColumnsRef)
 
 const activeHeaders = computed(() =>
@@ -758,6 +905,56 @@ const tableHeaders = computed(() => [
   { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
   ...activeHeaders.value,
 ])
+
+// ── ColumnHeaderMenu helpers ─────────────────────────────────────────────────
+const localSort = ref<{ key: string; order: 'asc' | 'desc' } | null>(null)
+function getSortBy(k: string): 'asc' | 'desc' | null {
+  return localSort.value?.key === k ? localSort.value.order : null
+}
+function applySort(k: string, dir: 'asc' | 'desc' | null) {
+  localSort.value = dir ? { key: k, order: dir } : null
+}
+
+function uniqValues(rows: any[], key: string): (string | number | null)[] {
+  const set = new Set<any>()
+  rows.forEach(r => set.add(r?.[key] ?? null))
+  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
+}
+
+function matchesColumnFilters(row: any): boolean {
+  const filters = colConfigState.value.filters
+  for (const [k, f] of Object.entries(filters)) {
+    // matched — derived from matched_contract_id
+    let v: any
+    if (k === 'matched') {
+      v = Boolean(row?.matched_contract_id)
+    } else if (k.startsWith('raw_')) {
+      v = row?.raw_json?.[k.slice(4)] ?? null
+    } else {
+      v = row?.[k] ?? null
+    }
+    if (f.type === 'text') {
+      if (!f.q) continue
+      if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
+    } else if (f.type === 'enum') {
+      if (!f.values || f.values.length === 0) continue
+      if (!f.values.includes(v)) return false
+    } else if (f.type === 'number') {
+      const n = typeof v === 'number' ? v : parseFloat(v)
+      if (f.min != null && !(n >= f.min)) return false
+      if (f.max != null && !(n <= f.max)) return false
+    } else if (f.type === 'date') {
+      if (!v) { if (f.from || f.to) return false; continue }
+      const d = String(v).slice(0, 10)
+      if (f.from && d < f.from) return false
+      if (f.to && d > f.to) return false
+    } else if (f.type === 'boolean') {
+      if (f.value == null) continue
+      if (Boolean(v) !== f.value) return false
+    }
+  }
+  return true
+}
 
 // ── Watch import_id changes in URL ──────────────────────────────────────────
 watch(importId, () => {

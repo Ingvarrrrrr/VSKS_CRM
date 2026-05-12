@@ -76,6 +76,17 @@
             style="min-width:200px"
           />
           <v-btn size="small" variant="tonal" @click="clearFilters">Сбросить</v-btn>
+          <v-chip
+            v-if="activeFilterCount > 0"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-filter"
+            size="small"
+            closable
+            @click:close="clearAllFilters"
+          >
+            Фильтры {{ activeFilterCount }}
+          </v-chip>
           <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
             Сумма: {{ formatMoney(filteredSum) }}
           </v-chip>
@@ -105,6 +116,7 @@
         :items="filteredItemsWithRowNum"
         :loading="loading"
         :search="search"
+        :sort-by="localSort ? [localSort] : undefined"
         show-select
         show-expand
         :single-expand="false"
@@ -115,6 +127,172 @@
         item-value="id"
         @click:row="onRowClick"
       >
+        <!-- ColumnHeaderMenu slots -->
+        <template #header.displayName="{ column }">
+          <ColumnHeaderMenu
+            col-key="displayName"
+            :title="column.title"
+            col-type="text"
+            :model-value="cfg.state.value.filters['displayName'] ?? null"
+            :sort-by="getSortBy('displayName')"
+            @update:model-value="(v: FilterValue | null) => setFilter('displayName', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('displayName', dir)"
+            @hide="toggleVisible('displayName', false)"
+          />
+        </template>
+        <template #header.contractor_name="{ column }">
+          <ColumnHeaderMenu
+            col-key="contractor_name"
+            :title="column.title"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'contractor_name')"
+            :model-value="cfg.state.value.filters['contractor_name'] ?? null"
+            :sort-by="getSortBy('contractor_name')"
+            @update:model-value="(v: FilterValue | null) => setFilter('contractor_name', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('contractor_name', dir)"
+            @hide="toggleVisible('contractor_name', false)"
+          />
+        </template>
+        <template #header.reimbursement_user_name="{ column }">
+          <ColumnHeaderMenu
+            col-key="reimbursement_user_name"
+            :title="column.title"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'reimbursement_user_name')"
+            :model-value="cfg.state.value.filters['reimbursement_user_name'] ?? null"
+            :sort-by="getSortBy('reimbursement_user_name')"
+            @update:model-value="(v: FilterValue | null) => setFilter('reimbursement_user_name', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('reimbursement_user_name', dir)"
+            @hide="toggleVisible('reimbursement_user_name', false)"
+          />
+        </template>
+        <template #header.subsidy_name="{ column }">
+          <ColumnHeaderMenu
+            col-key="subsidy_name"
+            :title="column.title"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'subsidy_name')"
+            :model-value="cfg.state.value.filters['subsidy_name'] ?? null"
+            :sort-by="getSortBy('subsidy_name')"
+            @update:model-value="(v: FilterValue | null) => setFilter('subsidy_name', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('subsidy_name', dir)"
+            @hide="toggleVisible('subsidy_name', false)"
+          />
+        </template>
+        <template #header.nmck="{ column }">
+          <ColumnHeaderMenu
+            col-key="nmck"
+            :title="column.title"
+            col-type="number"
+            :model-value="cfg.state.value.filters['nmck'] ?? null"
+            :sort-by="getSortBy('nmck')"
+            align="end"
+            @update:model-value="(v: FilterValue | null) => setFilter('nmck', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('nmck', dir)"
+            @hide="toggleVisible('nmck', false)"
+          />
+        </template>
+        <template #header.executionDate="{ column }">
+          <ColumnHeaderMenu
+            col-key="executionDate"
+            :title="column.title"
+            col-type="date"
+            :model-value="cfg.state.value.filters['executionDate'] ?? null"
+            :sort-by="getSortBy('executionDate')"
+            @update:model-value="(v: FilterValue | null) => setFilter('executionDate', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('executionDate', dir)"
+            @hide="toggleVisible('executionDate', false)"
+          />
+        </template>
+        <template #header.status="{ column }">
+          <ColumnHeaderMenu
+            col-key="status"
+            :title="column.title"
+            col-type="enum"
+            :items="uniqValues(enrichedItems, 'status')"
+            :model-value="cfg.state.value.filters['status'] ?? null"
+            :sort-by="getSortBy('status')"
+            @update:model-value="(v: FilterValue | null) => setFilter('status', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('status', dir)"
+            @hide="toggleVisible('status', false)"
+          />
+        </template>
+        <template #header.registry_number="{ column }">
+          <ColumnHeaderMenu
+            col-key="registry_number"
+            :title="column.title"
+            col-type="text"
+            :model-value="cfg.state.value.filters['registry_number'] ?? null"
+            :sort-by="getSortBy('registry_number')"
+            @update:model-value="(v: FilterValue | null) => setFilter('registry_number', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('registry_number', dir)"
+            @hide="toggleVisible('registry_number', false)"
+          />
+        </template>
+        <template #header.purchase_number="{ column }">
+          <ColumnHeaderMenu
+            col-key="purchase_number"
+            :title="column.title"
+            col-type="text"
+            :model-value="cfg.state.value.filters['purchase_number'] ?? null"
+            :sort-by="getSortBy('purchase_number')"
+            @update:model-value="(v: FilterValue | null) => setFilter('purchase_number', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('purchase_number', dir)"
+            @hide="toggleVisible('purchase_number', false)"
+          />
+        </template>
+        <template #header.subject="{ column }">
+          <ColumnHeaderMenu
+            col-key="subject"
+            :title="column.title"
+            col-type="text"
+            :model-value="cfg.state.value.filters['subject'] ?? null"
+            :sort-by="getSortBy('subject')"
+            @update:model-value="(v: FilterValue | null) => setFilter('subject', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('subject', dir)"
+            @hide="toggleVisible('subject', false)"
+          />
+        </template>
+        <template #header.last_receipt_date="{ column }">
+          <ColumnHeaderMenu
+            col-key="last_receipt_date"
+            :title="column.title"
+            col-type="date"
+            :model-value="cfg.state.value.filters['last_receipt_date'] ?? null"
+            :sort-by="getSortBy('last_receipt_date')"
+            @update:model-value="(v: FilterValue | null) => setFilter('last_receipt_date', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('last_receipt_date', dir)"
+            @hide="toggleVisible('last_receipt_date', false)"
+          />
+        </template>
+        <template #header.planned_total_price="{ column }">
+          <ColumnHeaderMenu
+            col-key="planned_total_price"
+            :title="column.title"
+            col-type="number"
+            :model-value="cfg.state.value.filters['planned_total_price'] ?? null"
+            :sort-by="getSortBy('planned_total_price')"
+            align="end"
+            @update:model-value="(v: FilterValue | null) => setFilter('planned_total_price', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('planned_total_price', dir)"
+            @hide="toggleVisible('planned_total_price', false)"
+          />
+        </template>
+        <template #header.total_nmck="{ column }">
+          <ColumnHeaderMenu
+            col-key="total_nmck"
+            :title="column.title"
+            col-type="number"
+            :model-value="cfg.state.value.filters['total_nmck'] ?? null"
+            :sort-by="getSortBy('total_nmck')"
+            align="end"
+            @update:model-value="(v: FilterValue | null) => setFilter('total_nmck', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('total_nmck', dir)"
+            @hide="toggleVisible('total_nmck', false)"
+          />
+        </template>
+        <!-- End ColumnHeaderMenu slots -->
+
         <template #item.index="{ item, index }">
           <div class="text-medium-emphasis" style="line-height:1.2">
             <div class="text-caption">{{ item.purchase_number || (index + 1) }}</div>
@@ -239,8 +417,9 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
-import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 
 const router = useRouter()
@@ -399,7 +578,9 @@ const groups = [
   { key: 'all', label: 'Все возможные' },
 ]
 
-const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('advance_reports', allColumns)
+const cfg = useColumnConfig('advance_reports', allColumns)
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns,
+  setFilter, clearAllFilters, activeFilterCount } = cfg
 // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
 const tableHeaders = computed(() => [
   { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
@@ -475,6 +656,7 @@ const filteredItems = computed(() => {
       p.item_name?.toLowerCase().includes(q)
     )
   }
+  r = r.filter(matchesColumnFilters)
   return r
 })
 
@@ -493,6 +675,47 @@ const filteredSum = computed(() =>
   }, 0)
 )
 
+// ---- Column-header filtering & sorting ----
+
+function uniqValues(rows: any[], key: string): (string | number | null)[] {
+  const set = new Set<any>()
+  rows.forEach(r => set.add(r?.[key] ?? null))
+  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
+}
+
+function matchesColumnFilters(row: any): boolean {
+  const filters = cfg.state.value.filters
+  for (const [k, f] of Object.entries(filters)) {
+    const v = row?.[k] ?? null
+    if (f.type === 'text') {
+      if (!f.q) continue
+      if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
+    } else if (f.type === 'enum') {
+      if (!f.values || f.values.length === 0) continue
+      if (!f.values.includes(v)) return false
+    } else if (f.type === 'number') {
+      const n = typeof v === 'number' ? v : parseFloat(v)
+      if (f.min != null && !(n >= f.min)) return false
+      if (f.max != null && !(n <= f.max)) return false
+    } else if (f.type === 'date') {
+      if (!v) { if (f.from || f.to) return false; continue }
+      const d = String(v).slice(0, 10)
+      if (f.from && d < f.from) return false
+      if (f.to && d > f.to) return false
+    } else if (f.type === 'boolean') {
+      if (f.value == null) continue
+      if (Boolean(v) !== f.value) return false
+    }
+  }
+  return true
+}
+
+const localSort = ref<{ key: string; order: 'asc' | 'desc' } | null>(null)
+function getSortBy(k: string) { return localSort.value?.key === k ? localSort.value.order : null }
+function applySort(k: string, dir: 'asc' | 'desc' | null) { localSort.value = dir ? { key: k, order: dir } : null }
+
+// ---- End column-header helpers ----
+
 function clearFilters() {
   filterStatus.value = ''
   filterSubsidyId.value = null
@@ -500,6 +723,7 @@ function clearFilters() {
   filterReimbursementUsers.value = []
   search.value = ''
   fProduct.value = ''
+  clearAllFilters()
 }
 
 async function load() {

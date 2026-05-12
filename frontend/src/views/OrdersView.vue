@@ -97,6 +97,16 @@
             Сохранить фильтр
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-chip
+            v-if="activeFilterCount > 0"
+            color="deep-orange" variant="tonal" size="small"
+            prepend-icon="mdi-filter-multiple"
+            class="ml-1"
+            closable
+            @click:close="clearAllFilters()"
+          >
+            Фильтры {{ activeFilterCount }}
+          </v-chip>
           <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
             Сумма: {{ formatMoney(filteredSum) }}
           </v-chip>
@@ -193,6 +203,102 @@
         class="orders-clickable"
         @click:row="(_, { item }) => router.push(`/orders/${item.id}/edit`)"
       >
+        <!-- Column header menus -->
+        <template #header.purchase_number="{ column }">
+          <ColumnHeaderMenu col-key="purchase_number" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['purchase_number'] ?? null"
+            :sort-by="getSortBy('purchase_number')"
+            @update:model-value="v => cfg.setFilter('purchase_number', v)"
+            @sort="dir => applySort('purchase_number', dir)"
+            @hide="toggleVisible('purchase_number', false)" />
+        </template>
+        <template #header.registry_number="{ column }">
+          <ColumnHeaderMenu col-key="registry_number" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['registry_number'] ?? null"
+            :sort-by="getSortBy('registry_number')"
+            @update:model-value="v => cfg.setFilter('registry_number', v)"
+            @sort="dir => applySort('registry_number', dir)"
+            @hide="toggleVisible('registry_number', false)" />
+        </template>
+        <template #header.subject="{ column }">
+          <ColumnHeaderMenu col-key="subject" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['subject'] ?? null"
+            :sort-by="getSortBy('subject')"
+            @update:model-value="v => cfg.setFilter('subject', v)"
+            @sort="dir => applySort('subject', dir)"
+            @hide="toggleVisible('subject', false)" />
+        </template>
+        <template #header.contractor_name="{ column }">
+          <ColumnHeaderMenu col-key="contractor_name" :title="column.title" col-type="enum"
+            :items="uniqValues(filteredOrders, 'contractor_name')"
+            :model-value="cfg.state.value.filters['contractor_name'] ?? null"
+            :sort-by="getSortBy('contractor_name')"
+            @update:model-value="v => cfg.setFilter('contractor_name', v)"
+            @sort="dir => applySort('contractor_name', dir)"
+            @hide="toggleVisible('contractor_name', false)" />
+        </template>
+        <template #header.subsidy_name="{ column }">
+          <ColumnHeaderMenu col-key="subsidy_name" :title="column.title" col-type="enum"
+            :items="uniqValues(filteredOrders, 'subsidy_name')"
+            :model-value="cfg.state.value.filters['subsidy_name'] ?? null"
+            :sort-by="getSortBy('subsidy_name')"
+            @update:model-value="v => cfg.setFilter('subsidy_name', v)"
+            @sort="dir => applySort('subsidy_name', dir)"
+            @hide="toggleVisible('subsidy_name', false)" />
+        </template>
+        <template #header.effective_price="{ column }">
+          <ColumnHeaderMenu col-key="effective_price" :title="column.title" col-type="number"
+            align="end"
+            :model-value="cfg.state.value.filters['effective_price'] ?? null"
+            :sort-by="getSortBy('effective_price')"
+            @update:model-value="v => cfg.setFilter('effective_price', v)"
+            @sort="dir => applySort('effective_price', dir)"
+            @hide="toggleVisible('effective_price', false)" />
+        </template>
+        <template #header.contract_number="{ column }">
+          <ColumnHeaderMenu col-key="contract_number" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['contract_number'] ?? null"
+            :sort-by="getSortBy('contract_number')"
+            @update:model-value="v => cfg.setFilter('contract_number', v)"
+            @sort="dir => applySort('contract_number', dir)"
+            @hide="toggleVisible('contract_number', false)" />
+        </template>
+        <template #header.contract_date="{ column }">
+          <ColumnHeaderMenu col-key="contract_date" :title="column.title" col-type="date"
+            :model-value="cfg.state.value.filters['contract_date'] ?? null"
+            :sort-by="getSortBy('contract_date')"
+            @update:model-value="v => cfg.setFilter('contract_date', v)"
+            @sort="dir => applySort('contract_date', dir)"
+            @hide="toggleVisible('contract_date', false)" />
+        </template>
+        <template #header.purchase_type="{ column }">
+          <ColumnHeaderMenu col-key="purchase_type" :title="column.title" col-type="enum"
+            :items="['Разовый', 'Рамочный', 'Авансовый', 'По счёту', 'Конкурентный']"
+            :model-value="cfg.state.value.filters['purchase_type'] ?? null"
+            :sort-by="getSortBy('purchase_type')"
+            @update:model-value="v => cfg.setFilter('purchase_type', v)"
+            @sort="dir => applySort('purchase_type', dir)"
+            @hide="toggleVisible('purchase_type', false)" />
+        </template>
+        <template #header.status="{ column }">
+          <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
+            :items="statusItems.map(s => s.value)"
+            :model-value="cfg.state.value.filters['status'] ?? null"
+            :sort-by="getSortBy('status')"
+            @update:model-value="v => cfg.setFilter('status', v)"
+            @sort="dir => applySort('status', dir)"
+            @hide="toggleVisible('status', false)" />
+        </template>
+        <template #header.approval_status="{ column }">
+          <ColumnHeaderMenu col-key="approval_status" :title="column.title" col-type="enum"
+            :items="['in_progress', 'approved', 'rejected']"
+            :model-value="cfg.state.value.filters['approval_status'] ?? null"
+            :sort-by="getSortBy('approval_status')"
+            @update:model-value="v => cfg.setFilter('approval_status', v)"
+            @sort="dir => applySort('approval_status', dir)"
+            @hide="toggleVisible('approval_status', false)" />
+        </template>
+
         <!-- Expand toggle column -->
         <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
           <v-btn
@@ -664,8 +770,9 @@ import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import FileDropZone from '@/components/FileDropZone.vue'
-import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 
 const { globalSubsidyId } = useGlobalSubsidy()
@@ -892,13 +999,52 @@ const groups = [
   { key: 'all', label: 'Все возможные' },
 ]
 
-const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('orders', allColumns)
+const cfg = useColumnConfig('orders', allColumns)
+const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns, setFilter, clearAllFilters, activeFilterCount } = cfg
 // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
 const tableHeaders = computed(() => [
   { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
   ...visibleHeaders.value,
 ])
 const showColumnPicker = ref(false)
+
+// ── Column-header sort / filter helpers ──────────────────────────────────────
+const localSort = ref<{ key: string; order: 'asc' | 'desc' } | null>(null)
+function getSortBy(k: string) { return localSort.value?.key === k ? localSort.value.order : null }
+function applySort(k: string, dir: 'asc' | 'desc' | null) { localSort.value = dir ? { key: k, order: dir } : null }
+
+function uniqValues(rows: any[], key: string): (string | number | null)[] {
+  const set = new Set<any>()
+  rows.forEach(r => set.add(r?.[key] ?? null))
+  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
+}
+
+function matchesColumnFilters(row: any): boolean {
+  const filters = cfg.state.value.filters
+  for (const [k, f] of Object.entries(filters)) {
+    const v = row?.[k] ?? null
+    if (f.type === 'text') {
+      if (!f.q) continue
+      if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
+    } else if (f.type === 'enum') {
+      if (!f.values || f.values.length === 0) continue
+      if (!f.values.includes(v)) return false
+    } else if (f.type === 'number') {
+      const n = typeof v === 'number' ? v : parseFloat(v)
+      if (f.min != null && !(n >= f.min)) return false
+      if (f.max != null && !(n <= f.max)) return false
+    } else if (f.type === 'date') {
+      if (!v) { if (f.from || f.to) return false; continue }
+      const d = String(v).slice(0, 10)
+      if (f.from && d < f.from) return false
+      if (f.to && d > f.to) return false
+    } else if (f.type === 'boolean') {
+      if (f.value == null) continue
+      if (Boolean(v) !== f.value) return false
+    }
+  }
+  return true
+}
 
 // ── Link task mode (from ?link_task=ID) ──
 const linkTaskId = ref<number | null>(null)
@@ -1093,6 +1239,8 @@ const filteredOrders = computed(() => {
       o.item_name?.toLowerCase().includes(q)
     )
   }
+  // Column-header filters (поверх panel-фильтров)
+  r = r.filter(matchesColumnFilters)
   return r
 })
 
@@ -1102,7 +1250,18 @@ const filteredOrdersWithRowNum = computed(() => {
   const sorted = [...filteredOrders.value].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
   const map = new Map<string, number>()
   sorted.forEach((o, idx) => map.set(String(o.id), idx + 1))
-  return filteredOrders.value.map(o => ({ ...o, _rownum: map.get(String(o.id)) ?? '' }))
+  let result = filteredOrders.value.map(o => ({ ...o, _rownum: map.get(String(o.id)) ?? '' }))
+  // Apply localSort from column-header menus
+  if (localSort.value) {
+    const { key, order } = localSort.value
+    result = [...result].sort((a, b) => {
+      const av = (a as any)[key] ?? null
+      const bv = (b as any)[key] ?? null
+      const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'ru', { numeric: true })
+      return order === 'asc' ? cmp : -cmp
+    })
+  }
+  return result
 })
 
 const filteredSum = computed(() =>

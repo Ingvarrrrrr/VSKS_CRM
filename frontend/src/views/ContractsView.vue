@@ -403,6 +403,50 @@
               <div class="text-caption font-weight-medium text-medium-emphasis mb-2">
                 Закупки по документу {{ item.number }}
               </div>
+
+              <!-- ── Финансовый блок для рамочных договоров ── -->
+              <v-card v-if="isFrameworkContract(item)" class="mb-2" variant="tonal" rounded="lg">
+                <v-card-text class="d-flex flex-wrap ga-3 align-center py-2">
+                  <div>
+                    <div class="text-caption text-medium-emphasis">Максимальная сумма</div>
+                    <div class="text-subtitle-2 font-weight-bold">{{ formatMoney(item.max_amount ?? 0) }}</div>
+                  </div>
+                  <v-divider vertical />
+                  <div>
+                    <div class="text-caption text-medium-emphasis">Заказано всего</div>
+                    <div class="text-subtitle-2 font-weight-bold text-info">{{ formatMoney(item.total_ordered ?? 0) }}</div>
+                  </div>
+                  <v-divider vertical />
+                  <div>
+                    <div class="text-caption text-medium-emphasis">Поставлено</div>
+                    <div class="text-subtitle-2 font-weight-bold text-warning">{{ formatMoney(item.total_delivered ?? 0) }}</div>
+                  </div>
+                  <v-divider vertical />
+                  <div>
+                    <div class="text-caption text-medium-emphasis">Оплачено</div>
+                    <div class="text-subtitle-2 font-weight-bold text-success">{{ formatMoney(item.total_paid ?? 0) }}</div>
+                  </div>
+                  <v-divider vertical />
+                  <div>
+                    <div class="text-caption text-medium-emphasis">Остаток (не заказано)</div>
+                    <div class="text-subtitle-2 font-weight-bold" :class="Number(item.remaining_ordered) < 0 ? 'text-error' : 'text-primary'">
+                      {{ formatMoney(item.remaining_ordered ?? 0) }}
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+
+              <!-- Alert для накопительного договора -->
+              <v-alert
+                v-if="item.contract_type === 'framework_cumulative'"
+                type="info"
+                density="compact"
+                variant="tonal"
+                class="mb-2"
+                icon="mdi-information"
+              >
+                Договор накопительный — сумма за поставку согласуйте с руководителем.
+              </v-alert>
               <div v-if="!purchasesByContract[item.id]" class="text-caption text-medium-emphasis">
                 <v-btn size="x-small" variant="text" @click="loadPurchasesForContract(item.id)">Загрузить</v-btn>
               </div>
@@ -1265,6 +1309,8 @@ const isExpired = (d: string) => new Date(d) < new Date()
 const fmtDate = (d?: string) => d ? new Date(d).toLocaleDateString('ru-RU') : '—'
 const formatMoney = (v: number | string) =>
   Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₽'
+const isFrameworkContract = (c: any): boolean =>
+  c?.contract_type === 'framework_cumulative' || c?.contract_type === 'framework_non_cumulative'
 
 // ── Table headers ──────────────────────────────────────────────────────────
 const allColumns: ColumnDef[] = [

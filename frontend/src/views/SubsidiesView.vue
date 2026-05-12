@@ -1317,6 +1317,52 @@
             </v-list-item>
           </v-list>
 
+          <!-- Template variables reference panel -->
+          <v-expansion-panels variant="accordion" class="mt-3">
+            <v-expansion-panel title="Доступные переменные шаблона">
+              <template #text>
+                <v-text-field
+                  v-model="varsSearch"
+                  prepend-inner-icon="mdi-magnify"
+                  label="Поиск по переменной или описанию..."
+                  density="compact"
+                  hide-details
+                  clearable
+                  class="mb-2"
+                />
+                <v-data-table
+                  :headers="[
+                    { title: 'Переменная', key: 'var', width: '22%' },
+                    { title: 'Описание', key: 'description', width: '28%' },
+                    { title: 'Пример записи в шаблоне', key: 'example_template', width: '25%' },
+                    { title: 'Что получится', key: 'example_result', width: '25%' },
+                  ]"
+                  :items="filteredVars"
+                  density="compact"
+                  :items-per-page="-1"
+                  hide-default-footer
+                  class="text-caption"
+                >
+                  <template #item.var="{ item }">
+                    <div class="d-flex align-center gap-1">
+                      <code class="text-caption">{{ item.var }}</code>
+                      <v-btn
+                        icon size="x-small" variant="text"
+                        :title="'Копировать ' + item.var"
+                        @click="copyVar(item.var)"
+                      >
+                        <v-icon size="x-small">mdi-content-copy</v-icon>
+                      </v-btn>
+                    </div>
+                  </template>
+                  <template #item.example_template="{ item }">
+                    <code class="text-caption">{{ item.example_template }}</code>
+                  </template>
+                </v-data-table>
+              </template>
+            </v-expansion-panel>
+          </v-expansion-panels>
+
           <!-- Hidden file input for template upload -->
           <input ref="templateFileInputRef" type="file" accept=".docx" style="display:none"
             @change="onTemplateFileSelected" />
@@ -1894,6 +1940,28 @@ async function loadApproverUsers() {
     const data = await apiFetch<any[]>('/users/')
     approverUsersList.value = data
   } catch { approverUsersList.value = [] }
+}
+
+// Template variables panel state
+interface TemplateVar { var: string; description: string; example_template: string; example_result: string }
+const templateVars = ref<TemplateVar[]>([])
+const varsSearch = ref('')
+const filteredVars = computed(() => {
+  if (!varsSearch.value) return templateVars.value
+  const q = varsSearch.value.toLowerCase()
+  return templateVars.value.filter(v =>
+    v.var.toLowerCase().includes(q) ||
+    v.description.toLowerCase().includes(q) ||
+    v.example_template.toLowerCase().includes(q)
+  )
+})
+async function loadTemplateVars() {
+  try {
+    templateVars.value = await apiFetch<TemplateVar[]>('/documents/template-vars')
+  } catch (e) { console.error('loadTemplateVars:', e) }
+}
+function copyVar(text: string) {
+  navigator.clipboard?.writeText(text)
 }
 
 // Template management state
@@ -3663,7 +3731,10 @@ async function deleteEvent(eventId: number) {
   }
 }
 
-onMounted(loadAll)
+onMounted(() => {
+  loadAll()
+  loadTemplateVars()
+})
 </script>
 
 <style scoped>

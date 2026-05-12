@@ -382,10 +382,14 @@ async def generate_document(
             )
             selected_approvers = res.scalars().all()
 
-    # Load initiator if requested
+    # Load initiator if requested (with user for initiator_dept)
     initiator = None
     if initiator_id:
-        res = await db.execute(select(SubsidyApprover).where(SubsidyApprover.id == initiator_id))
+        res = await db.execute(
+            select(SubsidyApprover)
+            .where(SubsidyApprover.id == initiator_id)
+            .options(selectinload(SubsidyApprover.user))
+        )
         initiator = res.scalar_one_or_none()
 
     # If no approvers specified — load defaults for this subsidy
@@ -783,6 +787,11 @@ async def generate_document(
         "approvers": approvers_list,
         "initiator_name": initiator.full_name if initiator else "",
         "initiator_role": initiator.role_name if initiator else "",
+        "initiator_dept": (
+            initiator.user.department
+            if initiator and initiator.user and initiator.user.department
+            else ""
+        ),
         # Мероприятие
         "event_name": event.name if event else "",
         # Тип договора
@@ -1356,179 +1365,182 @@ async def download_kp_xlsx(
 # ── Template markup guide ────────────────────────────────────────────────────
 
 TEMPLATE_VARIABLES = [
+    # (template_var, description, example_template, example_result)
     # ── Выбор шаблона ──
-    ("", "ВЫБОР ШАБЛОНА"),
-    ("", "  contract.docx — универсальный договор (Phase 23.1): subject_kind определяется автоматически."),
-    ("", "  Все позиции 'услуга' → договор оказания услуг; иначе → договор поставки."),
-    ("{{subject_kind}}", "Тип договора (auto): 'services' или 'goods' — вычисляется из позиций закупки"),
+    ("", "ВЫБОР ШАБЛОНА", "", ""),
+    ("", "  contract.docx — универсальный договор (Phase 23.1): subject_kind определяется автоматически.", "", ""),
+    ("", "  Все позиции 'услуга' → договор оказания услуг; иначе → договор поставки.", "", ""),
+    ("{{subject_kind}}", "Тип договора (auto): вычисляется из позиций закупки", "{{subject_kind}}", "services"),
     # ── Закупка ──
-    ("", "ЗАКУПКА"),
-    ("{{purchase_number}}", "Номер закупки (например: 42)"),
-    ("{{registry_number}}", "Реестровый номер (например: РЕЕ-2026-00042)"),
-    ("{{subject}}", "Предмет закупки"),
-    ("{{status}}", "Статус (planned / confirmed / contracted / delivered / paid)"),
-    ("{{purchase_method}}", "Способ закупки (Единственный поставщик / Конкурсная процедура / Авансовый отчёт)"),
-    ("{{purchase_basis}}", "Основание (план-график / служебная записка)"),
-    ("{{contract_type}}", "Тип договора (Единственный поставщик / Рамочный)"),
-    ("{{responsible_person}}", "ФИО ответственного исполнителя"),
-    ("{{feo_category_name}}", "Категория ФЭО (только выбранный узел)"),
-    ("{{feo_path}}",    "Полный путь ФЭО: Направление → Тип → Категория"),
-    ("{{feo_level_1}}", "ФЭО уровень 1 — Направление расходов"),
-    ("{{feo_level_2}}", "ФЭО уровень 2 — Тип расходов"),
-    ("{{feo_level_3}}", "ФЭО уровень 3 — Конкретизированная категория"),
+    ("", "ЗАКУПКА", "", ""),
+    ("{{purchase_number}}", "Номер закупки", "{{purchase_number}}", "42"),
+    ("{{registry_number}}", "Реестровый номер", "{{registry_number}}", "РЕЕ-2026-00042"),
+    ("{{subject}}", "Предмет закупки", "{{subject}}", "Оказание услуг связи"),
+    ("{{status}}", "Статус", "{{status}}", "contracted"),
+    ("{{purchase_method}}", "Способ закупки", "{{purchase_method}}", "Единственный поставщик"),
+    ("{{purchase_basis}}", "Основание", "{{purchase_basis}}", "план-график"),
+    ("{{contract_type}}", "Тип договора", "{{contract_type}}", "Единственный поставщик"),
+    ("{{responsible_person}}", "ФИО ответственного исполнителя", "{{responsible_person}}", "Иванов Иван Иванович"),
+    ("{{feo_category_name}}", "Категория ФЭО (только выбранный узел)", "{{feo_category_name}}", "Услуги связи"),
+    ("{{feo_path}}", "Полный путь ФЭО", "{{feo_path}}", "1. Адм → 1.2 IT → 1.2.3 Услуги связи"),
+    ("{{feo_level_1}}", "ФЭО уровень 1 — Направление расходов", "{{feo_level_1}}", "1. Административные расходы"),
+    ("{{feo_level_2}}", "ФЭО уровень 2 — Тип расходов", "{{feo_level_2}}", "1.2 IT и коммуникации"),
+    ("{{feo_level_3}}", "ФЭО уровень 3 — Конкретизированная категория", "{{feo_level_3}}", "1.2.3 Услуги связи"),
     # ── Субсидия и мероприятие ──
-    ("", "СУБСИДИЯ И МЕРОПРИЯТИЕ"),
-    ("{{subsidy_name}}", "Наименование субсидии"),
-    ("{{subsidy_year}}", "Год субсидии"),
-    ("{{subsidy_budget}}", "Бюджет субсидии (например: 15 500 000,00 ₽)"),
-    ("{{event_name}}", "Название мероприятия"),
+    ("", "СУБСИДИЯ И МЕРОПРИЯТИЕ", "", ""),
+    ("{{subsidy_name}}", "Наименование субсидии", "{{subsidy_name}}", "ФАДМ-2026"),
+    ("{{subsidy_year}}", "Год субсидии", "{{subsidy_year}}", "2026"),
+    ("{{subsidy_budget}}", "Бюджет субсидии", "{{subsidy_budget}}", "15 500 000,00 ₽"),
+    ("{{event_name}}", "Название мероприятия", "{{event_name}}", "Сборы спасателей"),
     # ── Заказчик (Phase 23) ──
-    ("", "ЗАКАЗЧИК — Phase 23 (организация-владелец субсидии + linked Contractor через FK)"),
-    ("{{customer_name}}", "Краткое название организации Заказчика"),
-    ("{{customer_full_name}}", "Полное наименование (АНО «ВСКС»)"),
-    ("{{customer_short_name}}", "Из кавычек: «...» (ВСКС)"),
-    ("{{customer_address}}", "Юридический адрес"),
-    ("{{customer_postal_address}}", "Почтовый адрес"),
-    ("{{customer_inn}}", "ИНН Заказчика"),
-    ("{{customer_kpp}}", "КПП Заказчика"),
-    ("{{customer_ogrn}}", "ОГРН Заказчика"),
-    ("{{customer_bank_name}}", "Банк (берётся из linked Contractor)"),
-    ("{{customer_settlement_account}}", "Расчётный счёт Заказчика"),
-    ("{{customer_correspondent_account}}", "Корр. счёт Заказчика"),
-    ("{{customer_bik}}", "БИК банка Заказчика"),
-    ("{{customer_phone}}", "Телефон"),
-    ("{{customer_email}}", "Email"),
-    ("{{customer_signatory}}", "Полная строка подписанта (Президент Козеев Е.В.)"),
-    ("{{customer_signatory_position}}", "Должность подписанта (Президент / Директор)"),
-    ("{{customer_signatory_name}}", "ФИО подписанта в им.падеже (Козеев Евгений Викторович)"),
-    ("{{customer_signatory_name_genitive}}", "ФИО в род.падеже (Козеева Евгения Викторовича) — для «в лице ___, действующего на основании»"),
-    ("{{customer_signatory_initials}}", "Фамилия + инициалы (Козеев Е.В.) — для подписи внизу"),
-    ("{{customer_signatory_basis}}", "Основание полномочий (Устава / Доверенности № ...)"),
-    ("{{contract_city}}", "Город заключения договора (Москва — default)"),
+    ("", "ЗАКАЗЧИК", "", ""),
+    ("{{customer_name}}", "Краткое название организации Заказчика", "{{customer_name}}", "АНО «ВСКС»"),
+    ("{{customer_full_name}}", "Полное наименование", "{{customer_full_name}}", "Автономная некоммерческая организация «ВСКС»"),
+    ("{{customer_short_name}}", "Из кавычек: «...»", "{{customer_short_name}}", "ВСКС"),
+    ("{{customer_address}}", "Юридический адрес", "{{customer_address}}", "г. Москва, ул. Ленина, д. 1"),
+    ("{{customer_postal_address}}", "Почтовый адрес", "{{customer_postal_address}}", "г. Москва, ул. Ленина, д. 1"),
+    ("{{customer_inn}}", "ИНН Заказчика", "{{customer_inn}}", "7700000001"),
+    ("{{customer_kpp}}", "КПП Заказчика", "{{customer_kpp}}", "770001001"),
+    ("{{customer_ogrn}}", "ОГРН Заказчика", "{{customer_ogrn}}", "1027700000001"),
+    ("{{customer_bank_name}}", "Банк Заказчика", "{{customer_bank_name}}", "ПАО «Сбербанк»"),
+    ("{{customer_settlement_account}}", "Расчётный счёт Заказчика", "{{customer_settlement_account}}", "40703810400000000001"),
+    ("{{customer_correspondent_account}}", "Корр. счёт Заказчика", "{{customer_correspondent_account}}", "30101810400000000225"),
+    ("{{customer_bik}}", "БИК банка Заказчика", "{{customer_bik}}", "044525225"),
+    ("{{customer_phone}}", "Телефон", "{{customer_phone}}", "+7 (495) 000-00-01"),
+    ("{{customer_email}}", "Email", "{{customer_email}}", "info@vsks.ru"),
+    ("{{customer_signatory}}", "Полная строка подписанта", "{{customer_signatory}}", "Президент Козеев Е.В."),
+    ("{{customer_signatory_position}}", "Должность подписанта", "{{customer_signatory_position}}", "Президент"),
+    ("{{customer_signatory_name}}", "ФИО подписанта (им.падеж)", "{{customer_signatory_name}}", "Козеев Евгений Викторович"),
+    ("{{customer_signatory_name_genitive}}", "ФИО в род.падеже", "{{customer_signatory_name_genitive}}", "Козеева Евгения Викторовича"),
+    ("{{customer_signatory_initials}}", "Фамилия + инициалы", "{{customer_signatory_initials}}", "Козеев Е.В."),
+    ("{{customer_signatory_basis}}", "Основание полномочий", "{{customer_signatory_basis}}", "Устава"),
+    ("{{contract_city}}", "Город заключения договора", "{{contract_city}}", "Москва"),
     # ── Контрагент ──
-    ("", "КОНТРАГЕНТ (ИСПОЛНИТЕЛЬ)"),
-    ("{{contractor_name}}", "Полное наименование контрагента"),
-    ("{{contractor_short_name}}", "Краткое наименование (из кавычек или первое слово)"),
-    ("{{contractor_org_type}}", "Тип организации (Юр.лицо / ИП / Самозанятый)"),
-    ("{{contractor_inn}}", "ИНН контрагента"),
-    ("{{contractor_kpp}}", "КПП контрагента"),
-    ("{{contractor_ogrn}}", "ОГРН / ОГРНИП"),
-    ("{{contractor_address}}", "Юридический адрес"),
-    ("{{contractor_postal_address}}", "Почтовый адрес"),
-    ("{{contractor_phone}}", "Телефон"),
-    ("{{contractor_email}}", "E-mail"),
-    ("{{contractor_signatory}}", "ФИО подписанта"),
-    ("{{contractor_signatory_basis}}", "Основание полномочий (Устав / Доверенность №...)"),
-    ("{{contractor_signatory_position}}", "Должность подписанта (Директор)"),
-    ("{{contractor_signatory_name}}", "ФИО в им.падеже — Phase 23"),
-    ("{{contractor_signatory_name_genitive}}", "ФИО в род.падеже (Сидорова Петра Павловича) — Phase 23"),
-    ("{{contractor_signatory_initials}}", "Фамилия + инициалы (Сидоров П.П.) — Phase 23"),
-    ("{{contractor_signatory_line}}", "ФИО + основание (комбинированное)"),
-    ("{{contractor_ogrnip}}", "ОГРНИП — заполняется только если контрагент ИП — Phase 23"),
-    ("{{service_subject}}", "Предмет услуг (синоним subject) — Phase 23"),
-    ("{{contractor_settlement_account}}", "Расчётный счёт"),
-    ("{{contractor_bank_name}}", "Наименование банка"),
-    ("{{contractor_bank_details}}", "Реквизиты банка"),
-    ("{{contractor_bik}}", "БИК банка"),
-    ("{{contractor_correspondent_account}}", "Корреспондентский счёт"),
+    ("", "КОНТРАГЕНТ (ИСПОЛНИТЕЛЬ)", "", ""),
+    ("{{contractor_name}}", "Полное наименование контрагента", "{{contractor_name}}", "ООО «Ромашка»"),
+    ("{{contractor_short_name}}", "Краткое наименование", "{{contractor_short_name}}", "Ромашка"),
+    ("{{contractor_org_type}}", "Тип организации", "{{contractor_org_type}}", "Юр.лицо"),
+    ("{{contractor_inn}}", "ИНН контрагента", "{{contractor_inn}}", "7701234567"),
+    ("{{contractor_kpp}}", "КПП контрагента", "{{contractor_kpp}}", "770101001"),
+    ("{{contractor_ogrn}}", "ОГРН / ОГРНИП", "{{contractor_ogrn}}", "1027701234567"),
+    ("{{contractor_address}}", "Юридический адрес", "{{contractor_address}}", "г. Москва, ул. Садовая, д. 5"),
+    ("{{contractor_postal_address}}", "Почтовый адрес", "{{contractor_postal_address}}", "г. Москва, ул. Садовая, д. 5"),
+    ("{{contractor_phone}}", "Телефон", "{{contractor_phone}}", "+7 (495) 111-22-33"),
+    ("{{contractor_email}}", "E-mail", "{{contractor_email}}", "info@romashka.ru"),
+    ("{{contractor_signatory}}", "ФИО подписанта", "{{contractor_signatory}}", "Сидоров Пётр Павлович"),
+    ("{{contractor_signatory_basis}}", "Основание полномочий", "{{contractor_signatory_basis}}", "Устава"),
+    ("{{contractor_signatory_position}}", "Должность подписанта", "{{contractor_signatory_position}}", "Директор"),
+    ("{{contractor_signatory_name}}", "ФИО в им.падеже", "{{contractor_signatory_name}}", "Сидоров Пётр Павлович"),
+    ("{{contractor_signatory_name_genitive}}", "ФИО в род.падеже", "{{contractor_signatory_name_genitive}}", "Сидорова Петра Павловича"),
+    ("{{contractor_signatory_initials}}", "Фамилия + инициалы", "{{contractor_signatory_initials}}", "Сидоров П.П."),
+    ("{{contractor_signatory_line}}", "ФИО + основание", "{{contractor_signatory_line}}", "Сидоров П.П., действующий на основании Устава"),
+    ("{{contractor_ogrnip}}", "ОГРНИП (только для ИП)", "{{contractor_ogrnip}}", "304770000000001"),
+    ("{{service_subject}}", "Предмет услуг (синоним subject)", "{{service_subject}}", "Оказание услуг связи"),
+    ("{{contractor_settlement_account}}", "Расчётный счёт", "{{contractor_settlement_account}}", "40702810400000000002"),
+    ("{{contractor_bank_name}}", "Наименование банка", "{{contractor_bank_name}}", "ПАО «Сбербанк»"),
+    ("{{contractor_bank_details}}", "Реквизиты банка", "{{contractor_bank_details}}", "БИК 044525225, к/с 30101810400000000225"),
+    ("{{contractor_bik}}", "БИК банка", "{{contractor_bik}}", "044525225"),
+    ("{{contractor_correspondent_account}}", "Корреспондентский счёт", "{{contractor_correspondent_account}}", "30101810400000000225"),
     # ── Финансы ──
-    ("", "ФИНАНСЫ"),
-    ("{{total_nmcd}}", "НМЦД — начальная максимальная цена договора (рекомендуется)"),
-    ("{{total_nmck}}", "НМЦК — устаревшее, используйте total_nmcd"),
-    ("{{nmck}}", "НМЦК (синоним total_nmck)"),
-    ("{{contract_price}}", "Цена договора (например: 130 000,00 ₽)"),
-    ("{{contract_price_num}}", "Цена без валюты (130 000,00)"),
-    ("{{contract_price_words}}", "Цена прописью (сто тридцать тысяч рублей 00 копеек)"),
-    ("{{economy}}", "Экономия"),
-    ("{{price_increase}}", "Увеличение цены"),
+    ("", "ФИНАНСЫ", "", ""),
+    ("{{total_nmcd}}", "НМЦД — начальная максимальная цена договора", "{{total_nmcd}}", "130 000,00 ₽"),
+    ("{{total_nmck}}", "НМЦК (устаревшее)", "{{total_nmck}}", "130 000,00 ₽"),
+    ("{{nmck}}", "НМЦК (синоним total_nmck)", "{{nmck}}", "130 000,00 ₽"),
+    ("{{contract_price}}", "Цена договора", "{{contract_price}}", "130 000,00 ₽"),
+    ("{{contract_price_num}}", "Цена без валюты", "{{contract_price_num}}", "130 000,00"),
+    ("{{contract_price_words}}", "Цена прописью", "{{contract_price_words}}", "сто тридцать тысяч рублей 00 копеек"),
+    ("{{economy}}", "Экономия", "{{economy}}", "5 000,00 ₽"),
+    ("{{price_increase}}", "Увеличение цены", "{{price_increase}}", "0,00 ₽"),
     # ── НДС ──
-    ("", "НДС"),
-    ("{{vat_applicable}}", "Облагается НДС (true / false)"),
-    ("{{vat_rate}}", "Ставка НДС (например: 20)"),
-    ("{{vat_amount_num}}", "Сумма НДС цифрами (21 666,67)"),
-    ("{{vat_amount_words}}", "Сумма НДС прописью"),
-    ("{{vat_exemption_article}}", "Статья освобождения от НДС"),
-    ("{{vat_info_line}}", "Готовая строка: «В том числе НДС 20%: ... руб.»"),
+    ("", "НДС", "", ""),
+    ("{{vat_applicable}}", "Облагается НДС", "{{vat_applicable}}", "true"),
+    ("{{vat_rate}}", "Ставка НДС", "{{vat_rate}}", "20"),
+    ("{{vat_amount_num}}", "Сумма НДС цифрами", "{{vat_amount_num}}", "21 666,67"),
+    ("{{vat_amount_words}}", "Сумма НДС прописью", "{{vat_amount_words}}", "двадцать одна тысяча 666 руб. 67 коп."),
+    ("{{vat_exemption_article}}", "Статья освобождения от НДС", "{{vat_exemption_article}}", "ст. 149 НК РФ"),
+    ("{{vat_info_line}}", "Готовая строка НДС", "{{vat_info_line}}", "В том числе НДС 20%: 21 666,67 руб."),
     # ── Договор ──
-    ("", "ДОГОВОР"),
-    ("{{contract_number}}", "Номер договора (например: 2026/42)"),
-    ("{{contract_date}}", "Дата договора (15.01.2026)"),
-    ("{{contract_date_day}}", "День (15)"),
-    ("{{contract_date_month}}", "Месяц прописью (января)"),
-    ("{{contract_date_year}}", "Год (2026)"),
-    ("{{execution_term}}", "Срок исполнения (28.02.2026)"),
-    ("{{execution_term_changed}}", "Изменённый срок"),
-    ("{{delivery_date}}", "Дата поставки"),
-    ("{{country_origin}}", "Страна происхождения (Российская Федерация)"),
-    ("{{service_name}}", "Предмет (синоним subject)"),
-    ("{{period_type}}", "Тип срока (period / date)"),
-    ("{{service_start_date}}", "Начало оказания услуг (Phase 19 real column, fallback: contract_date)"),
-    ("{{service_end_date}}", "Конец оказания услуг (Phase 19 real column, fallback: execution_term)"),
-    ("{{service_date}}", "Дата оказания (разовая)"),
-    ("{{third_party_involved}}", "Привлечение третьих лиц (true / false)"),
+    ("", "ДОГОВОР", "", ""),
+    ("{{contract_number}}", "Номер договора", "{{contract_number}}", "2026/42"),
+    ("{{contract_date}}", "Дата договора", "{{contract_date}}", "15.01.2026"),
+    ("{{contract_date_day}}", "День", "{{contract_date_day}}", "15"),
+    ("{{contract_date_month}}", "Месяц прописью", "{{contract_date_month}}", "января"),
+    ("{{contract_date_year}}", "Год", "{{contract_date_year}}", "2026"),
+    ("{{execution_term}}", "Срок исполнения", "{{execution_term}}", "28.02.2026"),
+    ("{{execution_term_changed}}", "Изменённый срок", "{{execution_term_changed}}", "31.03.2026"),
+    ("{{delivery_date}}", "Дата поставки", "{{delivery_date}}", "20.01.2026"),
+    ("{{country_origin}}", "Страна происхождения", "{{country_origin}}", "Российская Федерация"),
+    ("{{service_name}}", "Предмет (синоним subject)", "{{service_name}}", "Оказание услуг связи"),
+    ("{{period_type}}", "Тип срока", "{{period_type}}", "date"),
+    ("{{service_start_date}}", "Начало оказания услуг", "{{service_start_date}}", "15.01.2026"),
+    ("{{service_end_date}}", "Конец оказания услуг", "{{service_end_date}}", "28.02.2026"),
+    ("{{service_date}}", "Дата оказания (разовая)", "{{service_date}}", "20.01.2026"),
+    ("{{third_party_involved}}", "Привлечение третьих лиц", "{{third_party_involved}}", "false"),
     # ── Phase 19: срок услуг расширенный ──
-    ("", "СРОК УСЛУГ (Phase 19)"),
-    ("{{service_term}}", "Готовая строка срока (range / duration / deadline)"),
-    ("{{service_term_mode}}", "Режим: range | duration | deadline"),
-    ("{{service_term_days}}", "Кол-во дней (для mode=duration)"),
-    ("{{service_term_type}}", "Тип дней: calendar | working (для mode=duration)"),
-    ("{{service_term_type_name}}", "Тип дней прописью: календарных | рабочих"),
-    ("{{service_deadline_date}}", "Срок \"до даты\" (для mode=deadline)"),
+    ("", "СРОК УСЛУГ (Phase 19)", "", ""),
+    ("{{service_term}}", "Готовая строка срока", "{{service_term}}", "с 15.01.2026 по 28.02.2026"),
+    ("{{service_term_mode}}", "Режим срока", "{{service_term_mode}}", "range"),
+    ("{{service_term_days}}", "Кол-во дней (для mode=duration)", "{{service_term_days}}", "30"),
+    ("{{service_term_type}}", "Тип дней", "{{service_term_type}}", "calendar"),
+    ("{{service_term_type_name}}", "Тип дней прописью", "{{service_term_type_name}}", "календарных"),
+    ("{{service_deadline_date}}", "Срок \"до даты\"", "{{service_deadline_date}}", "28.02.2026"),
     # ── Phase 19: приём заявок ──
-    ("", "ПРИЁМ ЗАЯВОК (Phase 19)"),
-    ("{{submission_deadline_date}}", "Дата завершения приёма заявок (ISO)"),
-    ("{{submission_deadline_time}}", "Время завершения приёма заявок (HH:MM)"),
-    ("{{submission_deadline_datetime}}", "Дата+время завершения (dd.mm.YYYY HH:MM)"),
+    ("", "ПРИЁМ ЗАЯВОК (Phase 19)", "", ""),
+    ("{{submission_deadline_date}}", "Дата завершения приёма заявок", "{{submission_deadline_date}}", "10.01.2026"),
+    ("{{submission_deadline_time}}", "Время завершения приёма заявок", "{{submission_deadline_time}}", "17:00"),
+    ("{{submission_deadline_datetime}}", "Дата+время завершения", "{{submission_deadline_datetime}}", "10.01.2026 17:00"),
     # ── Phase 19: место доставки ──
-    ("", "МЕСТО ДОСТАВКИ / ОКАЗАНИЯ УСЛУГ (Phase 19)"),
-    ("{{delivery_location}}", "Место оказания услуг / доставки"),
+    ("", "МЕСТО ДОСТАВКИ / ОКАЗАНИЯ УСЛУГ (Phase 19)", "", ""),
+    ("{{delivery_location}}", "Место оказания услуг / доставки", "{{delivery_location}}", "г. Москва, ул. Ленина, д. 1"),
     # ── Phase 19: соглашение субсидии ──
-    ("", "СОГЛАШЕНИЕ ПО СУБСИДИИ (Phase 19)"),
-    ("{{subsidy_agreement_text}}", "Большой текст соглашения (федеральный бюджет / Росмолодёжь)"),
+    ("", "СОГЛАШЕНИЕ ПО СУБСИДИИ (Phase 19)", "", ""),
+    ("{{subsidy_agreement_text}}", "Большой текст соглашения", "{{subsidy_agreement_text}}", "(многострочный текст)"),
     # ── Акт приёмки ──
-    ("", "АКТ ПРИЁМКИ"),
-    ("{{acceptance_doc_name}}", "Наименование акта"),
-    ("{{acceptance_doc_number}}", "Номер акта"),
-    ("{{acceptance_doc_date}}", "Дата акта"),
-    ("{{acceptance_doc_amount}}", "Сумма акта"),
+    ("", "АКТ ПРИЁМКИ", "", ""),
+    ("{{acceptance_doc_name}}", "Наименование акта", "{{acceptance_doc_name}}", "АКТ"),
+    ("{{acceptance_doc_number}}", "Номер акта", "{{acceptance_doc_number}}", "001"),
+    ("{{acceptance_doc_date}}", "Дата акта", "{{acceptance_doc_date}}", "28.02.2026"),
+    ("{{acceptance_doc_amount}}", "Сумма акта", "{{acceptance_doc_amount}}", "130 000,00"),
     # ── Платёж ──
-    ("", "ПЛАТЁЖ"),
-    ("{{payment_doc_number}}", "Номер платёжного поручения"),
-    ("{{payment_doc_date}}", "Дата ПП"),
-    ("{{payment_amount}}", "Сумма платежа"),
-    ("{{payment_federal}}", "В т.ч. федеральный бюджет"),
+    ("", "ПЛАТЁЖ", "", ""),
+    ("{{payment_doc_number}}", "Номер платёжного поручения", "{{payment_doc_number}}", "П-00125"),
+    ("{{payment_doc_date}}", "Дата ПП", "{{payment_doc_date}}", "05.03.2026"),
+    ("{{payment_amount}}", "Сумма платежа", "{{payment_amount}}", "130 000,00"),
+    ("{{payment_federal}}", "В т.ч. федеральный бюджет", "{{payment_federal}}", "100 000,00"),
     # ── Инициатор ──
-    ("", "ИНИЦИАТОР (для служебных записок)"),
-    ("{{initiator_name}}", "ФИО инициатора"),
-    ("{{initiator_role}}", "Должность инициатора"),
+    ("", "ИНИЦИАТОР (для служебных записок)", "", ""),
+    ("{{initiator_name}}", "ФИО инициатора", "{{initiator_name}}", "Иванов И.И."),
+    ("{{initiator_role}}", "Должность инициатора", "{{initiator_role}}", "начальник отдела"),
+    ("{{initiator_dept}}", "Отдел инициатора (если несколько — первый)", "{{initiator_dept}}", "Отдел спасательных операций"),
     # ── Согласующие (цикл) ──
-    ("", "СОГЛАСУЮЩИЕ (цикл для таблицы)"),
-    ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим"),
-    ("{{a.num}}", "Порядковый номер (1, 2, 3...)"),
-    ("{{a.role_name}}", "Должность"),
-    ("{{a.full_name}}", "ФИО"),
-    ("{{a.signature_img}}", "Электронная подпись (картинка)"),
-    ("{{a.decided_date}}", "Дата подписания"),
-    ("{{a.note}}", "Примечание (путь ФЭО)"),
+    ("", "СОГЛАСУЮЩИЕ (цикл для таблицы)", "", ""),
+    ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим (в строке таблицы)", "{%tr for a in approvers %}<строка>{%tr endfor %}", "повторяется по числу согласующих"),
+    ("{{a.num}}", "Порядковый номер (1, 2, 3...)", "{{a.num}}", "1"),
+    ("{{a.role_name}}", "Должность согласующего", "{{a.role_name}}", "начальник отдела"),
+    ("{{a.full_name}}", "ФИО согласующего", "{{a.full_name}}", "Петров П.П."),
+    ("{{a.signature_img}}", "Электронная подпись (картинка)", "{{a.signature_img}}", "(изображение подписи)"),
+    ("{{a.decided_date}}", "Дата подписания", "{{a.decided_date}}", "12.05.2026"),
+    ("{{a.note}}", "Примечание (путь ФЭО)", "{{a.note}}", "Согласовано"),
     # ── Позиции (цикл) ──
-    ("", "ПОЗИЦИИ ЗАКУПКИ (цикл для таблицы)"),
-    ("{%tr for item in items %} ... {%tr endfor %}", "Цикл по позициям"),
-    ("{{item.num}}", "Порядковый номер"),
-    ("{{item.name}}", "Наименование товара/услуги"),
-    ("{{item.description}}", "Описание (из карточки продукта)"),
-    ("{{item.type}}", "Тип (товар/услуга)"),
-    ("{{item.quantity}}", "Количество"),
-    ("{{item.unit}}", "Единица измерения"),
-    ("{{item.unit_price}}", "Цена за единицу"),
-    ("{{item.total_price}}", "Сумма строки"),
-    ("{{item.photo}}", "Фото товара (картинка)"),
-    ("{{items_count}}", "Общее количество позиций"),
-    ("{{item_names}}", "Перечень названий через запятую"),
+    ("", "ПОЗИЦИИ ЗАКУПКИ (цикл для таблицы)", "", ""),
+    ("{%tr for item in items %} ... {%tr endfor %}", "Цикл по позициям (в строке таблицы)", "{%tr for item in items %}<строка>{%tr endfor %}", "повторяется по числу позиций"),
+    ("{{item.num}}", "Порядковый номер", "{{item.num}}", "1"),
+    ("{{item.name}}", "Наименование товара/услуги", "{{item.name}}", "Услуги мобильной связи"),
+    ("{{item.description}}", "Описание (из карточки продукта)", "{{item.description}}", "Корпоративная SIM-карта"),
+    ("{{item.type}}", "Тип (товар/услуга)", "{{item.type}}", "услуга"),
+    ("{{item.quantity}}", "Количество", "{{item.quantity}}", "10"),
+    ("{{item.unit}}", "Единица измерения", "{{item.unit}}", "шт."),
+    ("{{item.unit_price}}", "Цена за единицу", "{{item.unit_price}}", "13 000,00"),
+    ("{{item.total_price}}", "Сумма строки", "{{item.total_price}}", "130 000,00"),
+    ("{{item.photo}}", "Фото товара (картинка)", "{{item.photo}}", "(изображение)"),
+    ("{{items_count}}", "Общее количество позиций", "{{items_count}}", "3"),
+    ("{{item_names}}", "Перечень названий через запятую", "{{item_names}}", "Услуги связи, Интернет, Хостинг"),
     # ── Служебные ──
-    ("", "СЛУЖЕБНЫЕ"),
-    ("{{today}}", "Сегодняшняя дата (20.03.2026)"),
-    ("{{today_iso}}", "Дата ISO (2026-03-20)"),
+    ("", "СЛУЖЕБНЫЕ", "", ""),
+    ("{{today}}", "Сегодняшняя дата", "{{today}}", "13.05.2026"),
+    ("{{today_iso}}", "Дата ISO", "{{today_iso}}", "2026-05-13"),
 ]
+
 
 
 @guide_router.get("/template-guide")
@@ -1551,20 +1563,22 @@ async def download_template_guide(
 
     doc.add_heading("Доступные переменные", 1)
 
-    table = doc.add_table(rows=1, cols=2)
+    table = doc.add_table(rows=1, cols=4)
     table.style = "Table Grid"
     hdr = table.rows[0].cells
     hdr[0].text = "Переменная"
     hdr[1].text = "Описание"
+    hdr[2].text = "Пример записи"
+    hdr[3].text = "Результат"
     for cell in hdr:
         for run in cell.paragraphs[0].runs:
             run.bold = True
 
-    for var, desc in TEMPLATE_VARIABLES:
+    for var, desc, ex_t, ex_r in TEMPLATE_VARIABLES:
         if not var:
             # Section header row
             row = table.add_row().cells
-            row[0].merge(row[1])
+            row[0].merge(row[3])
             p = row[0].paragraphs[0]
             run = p.add_run(desc)
             run.bold = True
@@ -1574,6 +1588,8 @@ async def download_template_guide(
         row = table.add_row().cells
         row[0].text = var
         row[1].text = desc
+        row[2].text = ex_t
+        row[3].text = ex_r
 
     doc.add_heading("Примеры использования в шаблоне Word", 1)
 
@@ -1631,3 +1647,20 @@ async def download_template_guide(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename*=UTF-8''Template_Guide.docx"},
     )
+
+
+@guide_router.get("/template-vars")
+async def get_template_vars(current_user=Depends(get_current_user)):
+    """Return all template variables with description, example template text, and example result."""
+    result = []
+    for entry in TEMPLATE_VARIABLES:
+        var, desc, ex_t, ex_r = entry
+        if not var:
+            continue  # skip section headers
+        result.append({
+            "var": var,
+            "description": desc,
+            "example_template": ex_t,
+            "example_result": ex_r,
+        })
+    return result

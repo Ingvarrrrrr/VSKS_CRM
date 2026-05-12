@@ -282,6 +282,13 @@
                 <v-btn v-if="selectedFrameworkContract" icon="mdi-close" variant="text" size="small" color="error" @click="clearFrameworkContract" />
               </div>
             </v-col>
+            <!-- Alert для накопительного договора -->
+            <v-col v-if="isFrameworkCumulative && form.contract_id" cols="12">
+              <v-alert type="info" density="compact" variant="tonal" icon="mdi-information" class="mb-0">
+                Договор накопительный — сумма за поставку согласуйте с руководителем.
+              </v-alert>
+            </v-col>
+
             <v-col v-if="isFramework && form.contract_id" cols="12" md="auto">
               <v-btn
                 color="primary" variant="tonal"
@@ -350,7 +357,7 @@
       </v-card>
 
       <!-- 1.7. Чеки (для авансовых отчётов и обычных закупок — позиции из чека добавляются в закупку) -->
-      <v-card v-if="!showReceiptsOnTop && (formMode === 'advance_report' || (formMode === 'order' && isEdit && purchaseId))" variant="outlined" class="mb-4">
+      <v-card v-if="!showReceiptsOnTop && showReceiptsBlock" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
           <span class="d-flex align-center">
             <v-icon start>mdi-receipt-text-outline</v-icon>
@@ -371,7 +378,7 @@
         </v-card-title>
         <v-card-text>
           <v-alert v-if="!isEdit || !purchaseId" type="info" variant="tonal" density="compact" class="mb-0 text-caption">
-            При сканировании QR или загрузке фото/JSON чека отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
+            При сканировании QR или загрузке фото/JSON чека запись сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
           </v-alert>
           <template v-else>
             <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
@@ -1319,7 +1326,6 @@
           </div>
 
           <!-- Реквизиты закрывающих документов -->
-          <div v-if="!acceptanceDocs.length && !closingFiles.length" class="text-medium-emphasis text-caption pa-2">Нет закрывающих документов</div>
           <div v-for="(doc, idx) in acceptanceDocs" :key="idx" class="mb-3">
             <div class="d-flex align-center gap-2 mb-1">
               <span class="text-caption font-weight-medium">Документ {{ idx + 1 }}</span>
@@ -1328,7 +1334,15 @@
             </div>
             <v-row dense>
               <v-col cols="12" md="5">
-                <v-text-field v-model="doc.name" label="Наименование" variant="outlined" density="compact" hide-details />
+                <v-combobox
+                  v-model="doc.name"
+                  :items="acceptanceDocTypes"
+                  label="Тип документа"
+                  variant="outlined"
+                  density="compact"
+                  hide-details="auto"
+                  @update:model-value="onAcceptanceDocTypeAdd($event)"
+                />
               </v-col>
               <v-col cols="12" md="2">
                 <v-text-field v-model="doc.number" label="Номер" variant="outlined" density="compact" hide-details />
@@ -3264,6 +3278,33 @@ const acceptanceDocs = ref<{ name: string; number: string; date: string; amount:
 function addAcceptanceDoc() {
   acceptanceDocs.value.push({ name: '', number: '', date: '', amount: null })
 }
+function ensurePlaceholderDoc() {
+  if (!acceptanceDocs.value || acceptanceDocs.value.length === 0) {
+    acceptanceDocs.value = [{ name: '', number: '', date: '', amount: null }]
+  }
+}
+
+// 26-F4b: combobox с inline-add для типа документа
+const BUILTIN_ACCEPTANCE_DOC_TYPES = ['АКТ', 'УПД', 'СЧФ', 'ТТН', 'Счёт', 'Накладная', 'Платежное поручение']
+const customDocTypes = ref<string[]>(JSON.parse(localStorage.getItem('acceptance_doc_types_custom') || '[]'))
+const acceptanceDocTypes = computed(() => [
+  ...BUILTIN_ACCEPTANCE_DOC_TYPES,
+  ...customDocTypes.value.filter(t => !BUILTIN_ACCEPTANCE_DOC_TYPES.includes(t))
+])
+function onAcceptanceDocTypeAdd(val: string | null) {
+  if (!val) return
+  const v = String(val).trim()
+  if (!v) return
+  if (acceptanceDocTypes.value.includes(v)) return
+  customDocTypes.value = [...customDocTypes.value, v]
+  try { localStorage.setItem('acceptance_doc_types_custom', JSON.stringify(customDocTypes.value)) } catch {}
+}
+
+// 26-F2: показывать блок чеков и в обычной закупке
+const showReceiptsBlock = computed(() => {
+  return formMode.value === 'advance_report' || formMode.value === 'order'
+})
+
 const addressLabel = computed(() => form.item_type === 'услуга' ? 'Адрес оказания услуг' : 'Адрес доставки')
 
 // Phase 23.4: динамический label для delivery_location по типу позиций.
@@ -5109,6 +5150,8 @@ const loadPurchase = async () => {
   if (!acceptanceDocs.value.length && data.acceptance_doc_name) {
     acceptanceDocs.value = [{ name: data.acceptance_doc_name, number: data.acceptance_doc_number || '', date: data.acceptance_doc_date || '', amount: data.acceptance_doc_amount ? Number(data.acceptance_doc_amount) : null }]
   }
+  // 26-F4a: гарантировать хотя бы одну пустую строку в режиме редактирования
+  ensurePlaceholderDoc()
 
   // Load uploaded files
   uploadedFiles.value = data.files || []
@@ -5464,6 +5507,8 @@ onMounted(async () => {
     ) {
       form.reimbursement_user_id = currentUserId
     }
+    // 26-F4a: пустой плейсхолдер для закрывающего документа при создании
+    ensurePlaceholderDoc()
   }
 })
 
@@ -5550,7 +5595,7 @@ const doSave = async (adminOverride: boolean) => {
       prepayment_date: form.prepayment_date || null,
       stage_label: form.stage_label || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
-      acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim()),
+      acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim() || d.number?.trim() || d.date?.trim() || (d.amount !== null && d.amount !== undefined)),
       payment_doc_date: form.payment_doc_date || null,
       items: validItems,
       subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),

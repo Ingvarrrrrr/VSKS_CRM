@@ -109,7 +109,9 @@ async def generate_wish_service_note(
     initiator = None
     if initiator_id:
         res = await db.execute(
-            select(SubsidyApprover).where(SubsidyApprover.id == initiator_id)
+            select(SubsidyApprover)
+            .where(SubsidyApprover.id == initiator_id)
+            .options(selectinload(SubsidyApprover.user))
         )
         initiator = res.scalar_one_or_none()
 
@@ -188,6 +190,11 @@ async def generate_wish_service_note(
         # Initiator
         "initiator_name": (initiator.full_name if initiator else creator_full) or "",
         "initiator_role": (initiator.role_name if initiator else "") or "",
+        "initiator_dept": (
+            initiator.user.department
+            if initiator and initiator.user and initiator.user.department
+            else ""
+        ),
         # Items
         "items": items_list,
         "items_count": len(items_list),

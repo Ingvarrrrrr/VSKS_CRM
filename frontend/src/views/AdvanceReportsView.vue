@@ -41,6 +41,20 @@
             hide-details
             style="min-width:220px"
           />
+          <v-autocomplete
+            v-model="filterReimbursementUsers"
+            :items="usedReimbursementUsers"
+            label="Кому возмещать"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            hide-details
+            style="min-width:220px"
+            prepend-inner-icon="mdi-account-cash"
+          />
           <v-text-field
             v-model="search"
             prepend-inner-icon="mdi-magnify"
@@ -275,6 +289,7 @@ const loading = ref(false)
 const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
 const filterContractorIds = ref<number[]>([])
+const filterReimbursementUsers = ref<string[]>([])
 const search = ref('')
 const fProduct = ref('')
 const selected = ref<number[]>([])
@@ -405,6 +420,16 @@ const usedContractors = computed(() => {
   return Array.from(byName.values())
 })
 
+// Уникальные значения reimbursement_user_name из items для filter dropdown
+const usedReimbursementUsers = computed(() => {
+  const set = new Set<string>()
+  for (const p of items.value as any[]) {
+    const name = p.reimbursement_user_name
+    if (name) set.add(name)
+  }
+  return Array.from(set).sort()
+})
+
 const enrichedItems = computed(() => items.value.map(p => ({
   ...p,
   displayName: p.subject || p.item_name || '—',
@@ -422,6 +447,10 @@ const filteredItems = computed(() => {
         .map((c: any) => c.name)
     )
     r = r.filter(p => !!p.contractor_name && allowedNames.has(p.contractor_name))
+  }
+  if (filterReimbursementUsers.value.length) {
+    const allowed = new Set(filterReimbursementUsers.value)
+    r = r.filter(p => (p as any).reimbursement_user_name && allowed.has((p as any).reimbursement_user_name))
   }
   if (fProduct.value && fProduct.value.trim()) {
     const q = fProduct.value.trim().toLowerCase()
@@ -453,6 +482,7 @@ function clearFilters() {
   filterStatus.value = ''
   filterSubsidyId.value = null
   filterContractorIds.value = []
+  filterReimbursementUsers.value = []
   search.value = ''
   fProduct.value = ''
 }

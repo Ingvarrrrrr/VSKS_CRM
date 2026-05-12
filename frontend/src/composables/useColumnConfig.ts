@@ -1,4 +1,5 @@
 import { ref, computed, watch, toValue, type MaybeRefOrGetter } from 'vue'
+import { useDisplay } from 'vuetify'
 
 export interface ColumnDef {
   key: string
@@ -19,6 +20,15 @@ const LS_PREFIX = 'col_config_v1_'  // v1 чтобы будущие миграц
 
 export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<ColumnDef[]>) {
   const lsKey = LS_PREFIX + tableId
+  // На mobile inline width/overflow-wrap превращают текст в вертикальный «по букве».
+  // useDisplay reactive: при ротации устройства автоматически переключаемся.
+  // Защита если composable вызван вне Vuetify-context (например в тестах).
+  let smAndDown: { value: boolean }
+  try {
+    smAndDown = useDisplay().smAndDown
+  } catch {
+    smAndDown = { value: false }
+  }
 
   function defaultState(): ColumnConfigState {
     const cols = toValue(allColumns)
@@ -81,12 +91,18 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
   // на <th> и <td> — поэтому добавляем cellProps/headerProps.
   const visibleHeaders = computed(() => {
     const cols = toValue(allColumns)
+    const isMobile = smAndDown.value
     return state.value.order
       .filter(k => state.value.visible.includes(k))
       .map(k => {
         const def = cols.find(c => c.key === k)
         if (!def) return null
         const w = state.value.widths[k] ?? def.width
+        // На mobile: inline width/wrap снимаем — даём таблице auto-layout с horizontal scroll.
+        // Без этого узкие колонки (60-200px на 375px viewport) ломали текст посимвольно.
+        if (isMobile) {
+          return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
+        }
         // word-wrap: длинный текст переносится на новые строки, ячейка растёт по высоте.
         // overflow-wrap: anywhere ломает даже слова без пробелов (длинные ИНН/UUID/etc).
         const cellStyle = w

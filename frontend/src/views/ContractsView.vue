@@ -1023,9 +1023,10 @@ const filtered = computed(() => {
 
 const filteredWithRowNum = computed(() => {
   // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
-  const sorted = filtered.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
-  const rownumMap = new Map(sorted.map((c, idx) => [c.id, idx + 1]))
-  return filtered.value.map(c => ({ ...c, _rownum: rownumMap.get(c.id) || 0 }))
+  const sorted = [...filtered.value].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
+  const map = new Map<string, number>()
+  sorted.forEach((c, idx) => map.set(String(c.id), idx + 1))
+  return filtered.value.map(c => ({ ...c, _rownum: map.get(String(c.id)) ?? '' }))
 })
 
 const filteredSum = computed(() =>

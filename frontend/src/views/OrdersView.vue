@@ -1092,10 +1092,12 @@ const filteredOrders = computed(() => {
 })
 
 const filteredOrdersWithRowNum = computed(() => {
-  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
-  const sorted = filteredOrders.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
-  const rownumMap = new Map(sorted.map((o, idx) => [o.id, idx + 1]))
-  return filteredOrders.value.map(o => ({ ...o, _rownum: rownumMap.get(o.id) || 0 }))
+  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum.
+  // Ключ Map — String(id) чтобы избежать number/string mismatch.
+  const sorted = [...filteredOrders.value].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0))
+  const map = new Map<string, number>()
+  sorted.forEach((o, idx) => map.set(String(o.id), idx + 1))
+  return filteredOrders.value.map(o => ({ ...o, _rownum: map.get(String(o.id)) ?? '' }))
 })
 
 const filteredSum = computed(() =>

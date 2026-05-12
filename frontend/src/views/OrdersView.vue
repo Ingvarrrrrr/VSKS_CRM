@@ -290,7 +290,8 @@
         </template>
 
         <template #item.approval_status="{ item }">
-          <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal">
+          <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal"
+                  style="white-space: normal; height: auto; min-height: 22px; padding: 2px 8px;">
             {{ APPROVAL_STATUS_LABEL[item.approval_status] }}
           </v-chip>
           <span v-else class="text-caption text-medium-emphasis">—</span>
@@ -304,13 +305,14 @@
               :color="STATUS_COLOR[nextStatus(item.status)!]"
               variant="tonal"
               :loading="transitioning === item.id"
+              style="min-width: 130px"
               @click.stop="doTransition(item)"
             >
               → {{ statusLabelFor(item, nextStatus(item.status)!) }}
             </v-btn>
             <v-menu v-if="isAdmin">
               <template #activator="{ props: menuProps }">
-                <v-btn v-bind="menuProps" size="x-small" :color="STATUS_COLOR[item.status]" variant="tonal" :loading="transitioning === item.id" append-icon="mdi-chevron-down">
+                <v-btn v-bind="menuProps" size="x-small" :color="STATUS_COLOR[item.status]" variant="tonal" :loading="transitioning === item.id" append-icon="mdi-chevron-down" style="min-width: 130px">
                   {{ statusLabelFor(item) }}
                 </v-btn>
               </template>
@@ -1089,9 +1091,12 @@ const filteredOrders = computed(() => {
   return r
 })
 
-const filteredOrdersWithRowNum = computed(() =>
-  filteredOrders.value.map((o, idx) => ({ ...o, _rownum: idx + 1 }))
-)
+const filteredOrdersWithRowNum = computed(() => {
+  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
+  const sorted = filteredOrders.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
+  const rownumMap = new Map(sorted.map((o, idx) => [o.id, idx + 1]))
+  return filteredOrders.value.map(o => ({ ...o, _rownum: rownumMap.get(o.id) || 0 }))
+})
 
 const filteredSum = computed(() =>
   filteredOrders.value.reduce((acc, o) => acc + (effectivePrice(o) ?? 0), 0)

@@ -429,9 +429,12 @@ const filteredItems = computed(() => {
   return r
 })
 
-const filteredItemsWithRowNum = computed(() =>
-  filteredItems.value.map((p, idx) => ({ ...p, _rownum: idx + 1 }))
-)
+const filteredItemsWithRowNum = computed(() => {
+  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
+  const sorted = filteredItems.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
+  const rownumMap = new Map(sorted.map((p, idx) => [p.id, idx + 1]))
+  return filteredItems.value.map(p => ({ ...p, _rownum: rownumMap.get(p.id) || 0 }))
+})
 
 const filteredSum = computed(() =>
   filteredItems.value.reduce((acc, p) => {

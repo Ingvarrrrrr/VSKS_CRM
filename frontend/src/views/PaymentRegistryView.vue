@@ -460,9 +460,12 @@ const searchedItems = computed(() => {
   })
 })
 
-const searchedItemsWithRowNum = computed(() =>
-  searchedItems.value.map((p, idx) => ({ ...p, _rownum: idx + 1 }))
-)
+const searchedItemsWithRowNum = computed(() => {
+  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
+  const sorted = searchedItems.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
+  const rownumMap = new Map(sorted.map((p, idx) => [p.id, idx + 1]))
+  return searchedItems.value.map(p => ({ ...p, _rownum: rownumMap.get(p.id) || 0 }))
+})
 
 const filteredSum = computed(() =>
   searchedItems.value.reduce((acc, p) => acc + (p.amount ? Number(p.amount) : 0), 0)

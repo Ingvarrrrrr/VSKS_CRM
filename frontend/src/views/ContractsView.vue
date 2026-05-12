@@ -1021,9 +1021,12 @@ const filtered = computed(() => {
   return list
 })
 
-const filteredWithRowNum = computed(() =>
-  filtered.value.map((c, idx) => ({ ...c, _rownum: idx + 1 }))
-)
+const filteredWithRowNum = computed(() => {
+  // Нумерация по возрастанию id: более раннее (меньший id) = меньший _rownum
+  const sorted = filtered.value.slice().sort((a, b) => (a.id || 0) - (b.id || 0))
+  const rownumMap = new Map(sorted.map((c, idx) => [c.id, idx + 1]))
+  return filtered.value.map(c => ({ ...c, _rownum: rownumMap.get(c.id) || 0 }))
+})
 
 const filteredSum = computed(() =>
   filtered.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)

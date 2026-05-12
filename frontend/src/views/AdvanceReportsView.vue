@@ -60,6 +60,9 @@
             style="min-width:200px"
           />
           <v-btn size="small" variant="tonal" @click="clearFilters">Сбросить</v-btn>
+          <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
+            Сумма: {{ formatMoney(filteredSum) }}
+          </v-chip>
         </div>
       </v-card-text>
     </v-card>
@@ -83,7 +86,7 @@
         v-model="selected"
         v-model:expanded="expandedRows"
         :headers="visibleHeaders"
-        :items="filteredItems"
+        :items="filteredItemsWithRowNum"
         :loading="loading"
         :search="search"
         show-select
@@ -222,6 +225,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { formatMoney } from '@/utils/formatMoney'
 
 const router = useRouter()
 
@@ -308,6 +312,7 @@ function pickDate(...dates: (string | undefined | null)[]): string | null {
 
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
   { title: '', key: 'data-table-select', width: 40, group: 'core' },
   { title: '', key: 'data-table-expand', width: 40, group: 'core' },
   { title: '№', key: 'index', width: 55, sortable: false, group: 'core' },
@@ -423,6 +428,17 @@ const filteredItems = computed(() => {
   }
   return r
 })
+
+const filteredItemsWithRowNum = computed(() =>
+  filteredItems.value.map((p, idx) => ({ ...p, _rownum: idx + 1 }))
+)
+
+const filteredSum = computed(() =>
+  filteredItems.value.reduce((acc, p) => {
+    const v = (p as any).final_total_amount ?? (p as any).planned_total_price ?? 0
+    return acc + Number(v)
+  }, 0)
+)
 
 function clearFilters() {
   filterStatus.value = ''

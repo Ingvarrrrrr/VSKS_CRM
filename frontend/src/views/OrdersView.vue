@@ -97,6 +97,9 @@
             Сохранить фильтр
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
+            Сумма: {{ formatMoney(filteredSum) }}
+          </v-chip>
         </div>
         <!-- Saved filter preset chips -->
         <div v-if="savedFilterPresets.length" class="d-flex align-center gap-2 flex-wrap mt-2">
@@ -175,7 +178,7 @@
       <v-data-table
         ref="ordersTableRef"
         :headers="visibleHeaders"
-        :items="filteredOrders"
+        :items="filteredOrdersWithRowNum"
         :loading="loading"
         :search="search"
         density="compact"
@@ -661,6 +664,7 @@ import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResi
 import FileDropZone from '@/components/FileDropZone.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { formatMoney } from '@/utils/formatMoney'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -793,6 +797,7 @@ function transitionRequired(item: Purchase): Record<string, { field: keyof Purch
 
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
   { title: '', key: 'data-table-expand', width: 48, sortable: false, group: 'core' },
   { title: '№', key: 'purchase_number', width: 60, group: 'core' },
   { title: 'Реестр. №', key: 'registry_number', width: 120, group: 'core' },
@@ -1011,9 +1016,6 @@ const deleteDialog = reactive({
 
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
-const formatMoney = (v?: number | null) =>
-  v ? Number(v).toLocaleString('ru-RU') + ' ₽' : '—'
-
 const effectivePrice = (item: Purchase): number | null => {
   switch (item.status) {
     case 'contracted':
@@ -1086,6 +1088,14 @@ const filteredOrders = computed(() => {
   }
   return r
 })
+
+const filteredOrdersWithRowNum = computed(() =>
+  filteredOrders.value.map((o, idx) => ({ ...o, _rownum: idx + 1 }))
+)
+
+const filteredSum = computed(() =>
+  filteredOrders.value.reduce((acc, o) => acc + (effectivePrice(o) ?? 0), 0)
+)
 
 const loadOrders = async () => {
   loading.value = true

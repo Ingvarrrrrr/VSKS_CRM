@@ -41,6 +41,9 @@
           <v-icon size="16" color="grey">mdi-filter</v-icon>
           <span class="text-caption font-weight-medium text-medium-emphasis">ФИЛЬТРЫ (мульти-выбор)</span>
           <v-spacer />
+          <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="mr-2">
+            Сумма: {{ formatMoneyUtil(filteredSum) }}
+          </v-chip>
           <v-btn v-if="hasFilters" variant="text" size="x-small" color="error" prepend-icon="mdi-filter-remove" @click="clearFilters">
             Сбросить все
           </v-btn>
@@ -118,7 +121,7 @@
     <!-- ── Table ── -->
     <v-data-table
       :headers="visibleHeaders"
-      :items="filtered"
+      :items="filteredWithRowNum"
       :loading="loading"
       density="compact"
       show-expand
@@ -215,9 +218,6 @@
           {{ item.item_type === 'услуга' ? 'Услуги' : 'Товары' }}
         </v-chip>
         <span v-else class="text-medium-emphasis">—</span>
-      </template>
-      <template #item.index="{ index }">
-        <span class="text-medium-emphasis">{{ index + 1 }}</span>
       </template>
       <!-- Expanded: закупки по договору -->
       <template #expanded-row="{ columns, item }">
@@ -583,6 +583,7 @@ import FileDropZone from '@/components/FileDropZone.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { formatMoney as formatMoneyUtil } from '@/utils/formatMoney'
 
 const router = useRouter()
 
@@ -1020,6 +1021,14 @@ const filtered = computed(() => {
   return list
 })
 
+const filteredWithRowNum = computed(() =>
+  filtered.value.map((c, idx) => ({ ...c, _rownum: idx + 1 }))
+)
+
+const filteredSum = computed(() =>
+  filtered.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)
+)
+
 // ── Type / method / status lookup tables ──────────────────────────────────
 const contractTypeItems = [
   { value: 'single',                label: 'Разовая поставка' },
@@ -1067,8 +1076,8 @@ const formatMoney = (v: number | string) =>
 // ── Table headers ──────────────────────────────────────────────────────────
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
   { title: '', key: 'data-table-expand', width: 40, sortable: false, group: 'core' },
-  { title: '№', key: 'index', width: 50, sortable: false, group: 'core' },
   { title: '№ документа', key: 'number', group: 'core' },
   { title: 'Дата', key: 'date', width: 110, group: 'core' },
   { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },

@@ -140,6 +140,9 @@
           <v-btn color="primary" variant="elevated" @click="applyFilters" :loading="loading">
             Применить
           </v-btn>
+          <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
+            Сумма: {{ formatMoney(filteredSum) }}
+          </v-chip>
         </div>
       </v-card-text>
     </v-card>
@@ -147,7 +150,7 @@
     <!-- Table -->
     <v-data-table
       :headers="activeHeaders"
-      :items="searchedItems"
+      :items="searchedItemsWithRowNum"
       :loading="loading"
       density="compact"
       show-expand
@@ -383,6 +386,7 @@ import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
+import { formatMoney } from '@/utils/formatMoney'
 
 // ── Route & auth ───────────────────────────────────────────────────────────
 const route = useRoute()
@@ -455,6 +459,14 @@ const searchedItems = computed(() => {
     return haystack.includes(q)
   })
 })
+
+const searchedItemsWithRowNum = computed(() =>
+  searchedItems.value.map((p, idx) => ({ ...p, _rownum: idx + 1 }))
+)
+
+const filteredSum = computed(() =>
+  searchedItems.value.reduce((acc, p) => acc + (p.amount ? Number(p.amount) : 0), 0)
+)
 
 const hasFilters = computed(() =>
   fDateFrom.value || fDateTo.value || fStatus.value || fMatched.value || fConfirmed.value || fInn.value
@@ -580,6 +592,7 @@ const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> =
 
 // Core typed columns — все имеют backing-поля в модели BankPayment
 const coreColumnDefs: ColumnDef[] = [
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
   { title: '', key: 'data-table-expand', group: 'core', ..._colMetaDefaults['data-table-expand'] },
   { title: '№', key: 'index', group: 'core', ..._colMetaDefaults['index'] },
   // Метаданные документа

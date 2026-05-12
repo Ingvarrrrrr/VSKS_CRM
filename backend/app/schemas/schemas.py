@@ -723,6 +723,8 @@ class ProductSummaryItem(BaseModel):
     purchase_id: int
     subsidy_name: str
     org_name: Optional[str] = None
+    org_id: Optional[int] = None
+    region: Optional[str] = None
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     unit_price: Optional[Decimal] = None

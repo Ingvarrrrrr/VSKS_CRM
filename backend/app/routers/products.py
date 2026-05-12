@@ -95,6 +95,11 @@ async def product_summary(
     category: Optional[str] = Query(None),
     product_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
+    org_id: Optional[int] = Query(None),
+    region: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    quarter: Optional[int] = Query(None, ge=1, le=4),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -104,6 +109,8 @@ async def product_summary(
     from app.models.subsidy import Subsidy
     from app.models.organization import Organization
     from sqlalchemy.orm import joinedload
+    from sqlalchemy import extract
+    from datetime import date as _date
 
     q = (
         select(PurchaseItem)
@@ -126,9 +133,31 @@ async def product_summary(
         q = q.where(Product.id == product_id)
     if search:
         q = q.where(Product.name.ilike(f"%{search}%"))
+    if org_id is not None:
+        q = q.where(Subsidy.org_id == org_id)
+    if region is not None:
+        q = q.where(Purchase.region == region)
+    if date_from is not None:
+        try:
+            df = _date.fromisoformat(date_from)
+            q = q.where(Purchase.delivery_date >= df)
+        except ValueError:
+            pass
+    if date_to is not None:
+        try:
+            dt = _date.fromisoformat(date_to)
+            q = q.where(Purchase.delivery_date <= dt)
+        except ValueError:
+            pass
+    if quarter is not None:
+        q = q.where(extract("quarter", Purchase.delivery_date) == quarter)
 
-    # Also need subsidy name and org name — use add_columns
-    q = q.add_columns(Subsidy.name.label("subsidy_name"), Organization.name.label("org_name"))
+    # Also need subsidy name, org name, org_id — use add_columns
+    q = q.add_columns(
+        Subsidy.name.label("subsidy_name"),
+        Organization.name.label("org_name"),
+        Subsidy.org_id.label("s_org_id"),
+    )
     q = q.order_by(Product.name, Subsidy.name)
 
     result = await db.execute(q)
@@ -138,9 +167,10 @@ async def product_summary(
     from collections import defaultdict
     groups: dict[int, dict] = {}
     for row in rows:
-        pi = row[0]  # PurchaseItem
-        s_name = row[1]  # subsidy_name
-        o_name = row[2]  # org_name
+        pi = row[0]       # PurchaseItem
+        s_name = row[1]   # subsidy_name
+        o_name = row[2]   # org_name
+        s_org_id = row[3] # subsidy.org_id
         product = pi.product
         purchase = pi.purchase
 
@@ -166,6 +196,8 @@ async def product_summary(
             purchase_id=purchase.id,
             subsidy_name=s_name or "",
             org_name=o_name,
+            org_id=s_org_id,
+            region=purchase.region,
             quantity=pi.quantity,
             unit=pi.unit,
             unit_price=pi.unit_price,

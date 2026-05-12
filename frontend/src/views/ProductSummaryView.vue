@@ -5,7 +5,8 @@
       <div>
         <h1 class="page-title text-h5 font-weight-bold">Сводная по продукции</h1>
         <span class="page-subtitle text-body-2">
-          {{ groups.length }} продуктов, {{ totalPurchases }} закупок
+          {{ filteredGroups.length }} продуктов, {{ totalPurchases }} закупок
+          &nbsp;·&nbsp; Итого: {{ formatQty(totalQuantity) }} шт, {{ formatCurrency(totalAmount) }}
         </span>
       </div>
       <v-btn variant="outlined" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadData">
@@ -20,17 +21,44 @@
           <v-select
             v-model="filterCategory" :items="categoryOptions" label="Категория"
             variant="outlined" density="compact" clearable hide-details
-            style="min-width: 200px; max-width: 250px"
+            style="min-width: 180px; max-width: 220px"
           />
           <v-select
             v-model="filterSubsidy" :items="subsidyOptions" item-title="name" item-value="id"
             label="Субсидия" variant="outlined" density="compact" clearable hide-details
-            style="min-width: 200px; max-width: 250px"
+            style="min-width: 180px; max-width: 220px"
+          />
+          <v-autocomplete
+            v-model="filterOrgId" :items="orgOptions" item-title="name" item-value="id"
+            label="Организация" variant="outlined" density="compact" clearable hide-details
+            style="min-width: 180px; max-width: 220px"
+          />
+          <v-autocomplete
+            v-model="filterRegion" :items="RUSSIAN_REGIONS"
+            label="Регион" variant="outlined" density="compact" clearable hide-details
+            style="min-width: 180px; max-width: 220px"
+          />
+          <v-text-field
+            v-model="filterDateFrom" type="date" label="Дата с"
+            variant="outlined" density="compact" clearable hide-details
+            style="min-width: 150px; max-width: 170px"
+          />
+          <v-text-field
+            v-model="filterDateTo" type="date" label="Дата по"
+            variant="outlined" density="compact" clearable hide-details
+            style="min-width: 150px; max-width: 170px"
+          />
+          <v-select
+            v-model="filterQuarter"
+            :items="[{ title: 'Q1 (янв–мар)', value: 1 }, { title: 'Q2 (апр–июн)', value: 2 }, { title: 'Q3 (июл–сен)', value: 3 }, { title: 'Q4 (окт–дек)', value: 4 }]"
+            item-title="title" item-value="value"
+            label="Квартал" variant="outlined" density="compact" clearable hide-details
+            style="min-width: 155px; max-width: 175px"
           />
           <v-text-field
             v-model="searchText" prepend-inner-icon="mdi-magnify" label="Поиск по названию"
             variant="outlined" density="compact" clearable hide-details
-            style="min-width: 200px; max-width: 300px"
+            style="min-width: 180px; max-width: 260px"
           />
         </div>
       </v-card-text>
@@ -153,14 +181,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { useResizableColumns } from '@/composables/useResizableColumns'
+import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
 
 interface SummaryItem {
   purchase_id: number
   subsidy_name: string
   org_name: string | null
+  org_id: number | null
+  region: string | null
   quantity: number | null
   unit: string | null
   unit_price: number | null
@@ -186,6 +217,7 @@ interface SummaryGroup {
 interface SubsidyOption {
   id: number
   name: string
+  org_id: number | null
 }
 
 const { onResizeStart, resizeStyle } = useResizableColumns('product-summary', {
@@ -200,9 +232,22 @@ const expandedGroups = ref(new Set<number>())
 const filterCategory = ref<string | null>(null)
 const filterSubsidy = ref<number | null>(null)
 const searchText = ref('')
+const filterOrgId = ref<number | null>(null)
+const filterRegion = ref<string | null>(null)
+const filterDateFrom = ref('')
+const filterDateTo = ref('')
+const filterQuarter = ref<number | null>(null)
 
 const totalPurchases = computed(() =>
-  groups.value.reduce((sum, g) => sum + g.purchase_count, 0)
+  filteredGroups.value.reduce((sum, g) => sum + g.purchase_count, 0)
+)
+
+const totalQuantity = computed(() =>
+  filteredGroups.value.reduce((sum, g) => sum + (g.total_quantity || 0), 0)
+)
+
+const totalAmount = computed(() =>
+  filteredGroups.value.reduce((sum, g) => sum + (g.total_amount || 0), 0)
 )
 
 const categoryOptions = computed(() => {
@@ -212,6 +257,20 @@ const categoryOptions = computed(() => {
 })
 
 const subsidyOptions = computed(() => subsidies.value)
+
+const orgOptions = computed(() => {
+  const seen = new Map<number, string>()
+  subsidies.value.forEach(s => {
+    if (s.org_id && !seen.has(s.org_id)) {
+      // org_name not in subsidies list — use org_id as label fallback;
+      // actual names come from items already loaded
+      const nameFromItems = groups.value.flatMap(g => g.items)
+        .find(i => i.org_id === s.org_id)?.org_name
+      seen.set(s.org_id, nameFromItems || String(s.org_id))
+    }
+  })
+  return Array.from(seen.entries()).map(([id, name]) => ({ id, name }))
+})
 
 const filteredGroups = computed(() => {
   let result = groups.value
@@ -295,6 +354,11 @@ const loadData = async () => {
     const params = new URLSearchParams()
     if (filterSubsidy.value) params.set('subsidy_id', String(filterSubsidy.value))
     if (filterCategory.value) params.set('category', filterCategory.value)
+    if (filterOrgId.value) params.set('org_id', String(filterOrgId.value))
+    if (filterRegion.value) params.set('region', filterRegion.value)
+    if (filterDateFrom.value) params.set('date_from', filterDateFrom.value)
+    if (filterDateTo.value) params.set('date_to', filterDateTo.value)
+    if (filterQuarter.value) params.set('quarter', String(filterQuarter.value))
     const qs = params.toString()
     groups.value = await apiFetch<SummaryGroup[]>(`/products/summary${qs ? '?' + qs : ''}`)
   } catch (e) {
@@ -303,6 +367,11 @@ const loadData = async () => {
     loading.value = false
   }
 }
+
+watch(
+  [filterSubsidy, filterCategory, filterOrgId, filterRegion, filterDateFrom, filterDateTo, filterQuarter],
+  () => { loadData() },
+)
 
 const loadSubsidies = async () => {
   try { subsidies.value = await apiFetch<SubsidyOption[]>('/subsidies/') } catch { /* ok */ }

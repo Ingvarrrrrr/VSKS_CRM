@@ -68,7 +68,7 @@
           </v-list-item-subtitle>
 
           <template #append>
-            <div class="d-flex flex-column align-end">
+            <div class="d-flex flex-column align-end" @click.stop>
               <span v-if="room.last_message" class="text-caption text-medium-emphasis mb-1">
                 {{ formatTime(room.last_message.created_at) }}
               </span>
@@ -78,6 +78,25 @@
                 color="primary"
                 inline
               />
+              <v-menu location="bottom end">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-dots-vertical"
+                    variant="text"
+                    size="x-small"
+                    density="compact"
+                    class="room-menu-btn"
+                  />
+                </template>
+                <v-list density="compact">
+                  <v-list-item
+                    prepend-icon="mdi-exit-to-app"
+                    title="Удалить у себя"
+                    @click="confirmLeaveRoom(room)"
+                  />
+                </v-list>
+              </v-menu>
             </div>
           </template>
         </v-list-item>
@@ -411,6 +430,25 @@
       </v-card>
     </v-dialog>
 
+  <!-- Leave Room Confirm Dialog -->
+  <v-dialog v-model="showLeaveDialog" max-width="400">
+    <v-card>
+      <v-card-title class="d-flex align-center pa-4">
+        <v-icon icon="mdi-exit-to-app" class="me-2" color="error" />
+        Удалить чат у себя?
+      </v-card-title>
+      <v-card-text>
+        Чат «{{ leaveRoomTarget ? roomDisplayName(leaveRoomTarget) : '' }}» будет удалён из вашего списка.
+        Другие участники не пострадают.
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" @click="showLeaveDialog = false">Отмена</v-btn>
+        <v-btn color="error" variant="flat" :loading="leavingRoom" @click="doLeaveRoom">Удалить</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <!-- Participants Dialog -->
   <v-dialog v-model="showParticipantsDialog" max-width="400" scrollable>
     <v-card v-if="selectedRoom">
@@ -536,6 +574,11 @@ const creatingChat = ref(false)
 
 // Current user
 const currentUserId = ref<number | null>(null)
+
+// Leave room dialog
+const showLeaveDialog = ref(false)
+const leaveRoomTarget = ref<Room | null>(null)
+const leavingRoom = ref(false)
 
 // Mobile: show sidebar or messages
 const showingSidebar = ref(true)
@@ -906,6 +949,33 @@ function handleChatEvent(event: any) {
   }
 }
 
+// ─── Leave room ───────────────────────────────────────────────────────────────
+
+function confirmLeaveRoom(room: Room) {
+  leaveRoomTarget.value = room
+  showLeaveDialog.value = true
+}
+
+async function doLeaveRoom() {
+  if (!leaveRoomTarget.value) return
+  leavingRoom.value = true
+  try {
+    await apiFetch(`/chat/rooms/${leaveRoomTarget.value.id}/leave`, { method: 'POST' })
+    // Remove from local state
+    rooms.value = rooms.value.filter(r => r.id !== leaveRoomTarget.value!.id)
+    if (selectedRoom.value?.id === leaveRoomTarget.value.id) {
+      selectedRoom.value = null
+      showingSidebar.value = true
+    }
+    showLeaveDialog.value = false
+    leaveRoomTarget.value = null
+  } catch (e) {
+    // errors handled globally
+  } finally {
+    leavingRoom.value = false
+  }
+}
+
 // ─── New chat dialog ──────────────────────────────────────────────────────────
 
 async function openNewChatDialog() {
@@ -1191,6 +1261,14 @@ onUnmounted(() => {
 
 .chat-sidebar {
   border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.room-menu-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.v-list-item:hover .room-menu-btn {
+  opacity: 1;
 }
 
 /* Inline image messages */

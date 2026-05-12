@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -763,6 +763,25 @@ async def add_participant(
         "user_name": target.full_name,
     })
     return {"ok": True, "already_member": False}
+
+
+@router.post("/rooms/{room_id}/leave")
+async def leave_room(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-leave: remove current user from chat_participants."""
+    res = await db.execute(
+        delete(ChatParticipant).where(
+            ChatParticipant.room_id == room_id,
+            ChatParticipant.user_id == current_user.id,
+        )
+    )
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Вы не участник этой комнаты")
+    await db.commit()
+    return {"left": True, "room_id": room_id}
 
 
 @router.get("/rooms/{room_id}/participants")

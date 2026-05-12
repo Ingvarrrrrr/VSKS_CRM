@@ -149,7 +149,7 @@
 
     <!-- Table -->
     <v-data-table
-      :headers="activeHeaders"
+      :headers="tableHeaders"
       :items="searchedItemsWithRowNum"
       :loading="loading"
       density="compact"
@@ -596,7 +596,7 @@ const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> =
 
 // Core typed columns — все имеют backing-поля в модели BankPayment
 const coreColumnDefs: ColumnDef[] = [
-  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
+  // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-expand', group: 'core', ..._colMetaDefaults['data-table-expand'] },
   { title: '№', key: 'index', group: 'core', ..._colMetaDefaults['index'] },
   // Метаданные документа
@@ -752,6 +752,12 @@ function applyFilters() {
   page.value = 1
   loadPayments()
 }
+
+// _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
+const tableHeaders = computed(() => [
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+  ...activeHeaders.value,
+])
 
 // ── Watch import_id changes in URL ──────────────────────────────────────────
 watch(importId, () => {

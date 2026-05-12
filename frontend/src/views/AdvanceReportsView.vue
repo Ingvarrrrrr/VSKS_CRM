@@ -85,7 +85,7 @@
       <v-data-table
         v-model="selected"
         v-model:expanded="expandedRows"
-        :headers="visibleHeaders"
+        :headers="tableHeaders"
         :items="filteredItemsWithRowNum"
         :loading="loading"
         :search="search"
@@ -312,7 +312,7 @@ function pickDate(...dates: (string | undefined | null)[]): string | null {
 
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
-  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
+  // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-select', width: 40, group: 'core' },
   { title: '', key: 'data-table-expand', width: 40, group: 'core' },
   { title: '№', key: 'index', width: 55, sortable: false, group: 'core' },
@@ -382,6 +382,11 @@ const groups = [
 ]
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('advance_reports', allColumns)
+// _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
+const tableHeaders = computed(() => [
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+  ...visibleHeaders.value,
+])
 const showColumnPicker = ref(false)
 
 // Дедуп по имени контрагента — у авансовых contractor_id часто пуст, есть только contractor_name.

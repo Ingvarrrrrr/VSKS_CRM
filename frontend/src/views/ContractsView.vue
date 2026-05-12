@@ -120,7 +120,7 @@
 
     <!-- ── Table ── -->
     <v-data-table
-      :headers="visibleHeaders"
+      :headers="tableHeaders"
       :items="filteredWithRowNum"
       :loading="loading"
       density="compact"
@@ -1080,7 +1080,8 @@ const formatMoney = (v: number | string) =>
 // ── Table headers ──────────────────────────────────────────────────────────
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
-  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
+  // (_rownum добавляется отдельно через tableHeaders computed — всегда первая колонка,
+  //  не зависит от useColumnConfig localStorage state)
   { title: '', key: 'data-table-expand', width: 40, sortable: false, group: 'core' },
   { title: '№ документа', key: 'number', group: 'core' },
   { title: 'Дата', key: 'date', width: 110, group: 'core' },
@@ -1117,6 +1118,11 @@ const groups = [
 ]
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('contracts', allColumns)
+// _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
+const tableHeaders = computed(() => [
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+  ...visibleHeaders.value,
+])
 const showColumnPicker = ref(false)
 
 // ── Load data (all contracts, no server-side filter) ──────────────────────

@@ -177,7 +177,7 @@
     <v-card variant="outlined">
       <v-data-table
         ref="ordersTableRef"
-        :headers="visibleHeaders"
+        :headers="tableHeaders"
         :items="filteredOrdersWithRowNum"
         :loading="loading"
         :search="search"
@@ -799,7 +799,7 @@ function transitionRequired(item: Purchase): Record<string, { field: keyof Purch
 
 const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
-  { title: '№ п/п', key: '_rownum', width: 60, sortable: false, group: 'core' },
+  // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-expand', width: 48, sortable: false, group: 'core' },
   { title: '№', key: 'purchase_number', width: 60, group: 'core' },
   { title: 'Реестр. №', key: 'registry_number', width: 120, group: 'core' },
@@ -893,6 +893,11 @@ const groups = [
 ]
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('orders', allColumns)
+// _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
+const tableHeaders = computed(() => [
+  { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+  ...visibleHeaders.value,
+])
 const showColumnPicker = ref(false)
 
 // ── Link task mode (from ?link_task=ID) ──

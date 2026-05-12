@@ -53,8 +53,18 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
       // Добавить новые колонки в конец order
       const missingInOrder = cols.map(c => c.key).filter(k => !orderFromLS.includes(k))
       const order = [...orderFromLS, ...missingInOrder]
+      // ВАЖНО: новые core-колонки (group='core') автоматически попадают в visible.
+      // Без этого после миграции с localStorage пользователь не видит свежедобавленные
+      // обязательные колонки (например, _rownum «№ п/п» из Phase 26-D3).
+      const fromLSVisible = new Set(visible)
+      const newCoreVisible = cols
+        .filter(c => c.group === 'core' && !fromLSVisible.has(c.key) && knownKeys.has(c.key))
+        .map(c => c.key)
+      // Вставляем новые core-колонки в начале visible (они приоритетнее) — порядок
+      // в order сохранён, но visible-checklist получает их сразу.
+      const visibleWithNewCore = [...newCoreVisible, ...visible]
       return {
-        visible,
+        visible: visibleWithNewCore,
         order,
         widths: parsed.widths ?? def.widths,
       }

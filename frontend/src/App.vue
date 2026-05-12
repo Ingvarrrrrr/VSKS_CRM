@@ -126,15 +126,35 @@ onMounted(async () => {
 /* На mobile отменяем agressive overflow-wrap (видимо унаследовано) и принудительный wrap
    чтобы текст не ломался посимвольно. Контент перепрыгивает horizontal-scroll. */
 @media (max-width: 959.98px) {
+  /* Глобально снимаем inline width/min-width/max-width на td и th — они задаются
+     через useColumnConfig.cellProps и перебивают media query без !important.
+     На mobile позволяем auto-layout таблицы. */
   .v-data-table td,
-  .v-data-table-virtual td {
-    white-space: nowrap !important;
-    overflow-wrap: normal !important;
-    word-break: normal !important;
+  .v-data-table th,
+  .v-data-table-virtual td,
+  .v-data-table-virtual th {
+    width: auto !important;
+    min-width: auto !important;
+    max-width: 280px !important;
+    /* word-break: keep-all не ломает слова по букве (ИНН/UUID останутся целыми);
+       overflow-wrap: break-word ломает только по пробелам. */
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: break-word !important;
   }
-  /* Чтобы AppBar и страницы не перекрывались — фильтр-бары компактнее */
-  .v-data-table thead th {
-    white-space: nowrap !important;
+  /* Header bars views (Реестр договоров + кнопки) — на mobile flex-wrap, чтобы
+     заголовок и кнопки не наезжали друг на друга. */
+  .v-container > .d-flex.justify-space-between {
+    flex-wrap: wrap !important;
+    gap: 8px;
+  }
+  /* Фильтр-карточки: внутренние v-text-field/v-autocomplete не должны быть уже 100% */
+  .v-card .d-flex.flex-wrap > .v-input,
+  .v-card .d-flex.flex-wrap > .v-autocomplete,
+  .v-card .d-flex.flex-wrap > .v-text-field,
+  .v-card .d-flex.flex-wrap > .v-select {
+    min-width: 100% !important;
+    max-width: 100% !important;
   }
 }
 /* ── Global: wrap long text in all Vuetify dropdowns / overlays ── */

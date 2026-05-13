@@ -1593,7 +1593,7 @@ async function openEditUser(item: UserItem) {
 
   // Load extra orgs & all orgs lazily
   if (organizations.value.length === 0) {
-    apiFetch<any[]>('/organizations/').then(r => { organizations.value = r }).catch(() => {})
+    apiFetch<any[]>('/organizations/my').then(r => { organizations.value = r }).catch(() => {})
   }
   editDialog.extraOrgsLoading = true
   editDialog.orgPositions = {}
@@ -2173,7 +2173,7 @@ onMounted(async () => {
   loadHierarchyTree()
   try { subsidies.value = await apiFetch<any[]>('/subsidies/') } catch { subsidies.value = [] }
   await loadDicts()
-  try { organizations.value = await apiFetch<any[]>('/organizations/') } catch { organizations.value = [] }
+  try { organizations.value = await apiFetch<any[]>('/organizations/my') } catch { organizations.value = [] }
 })
 </script>
 

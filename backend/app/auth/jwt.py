@@ -62,7 +62,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 def require_role(*roles):
     async def checker(user: User = Depends(get_current_user)):
         if user.role not in roles:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Доступ только для ролей: {', '.join(roles)}. Ваша роль: {user.role}."
+            )
         return user
     return checker
 
@@ -103,6 +106,9 @@ async def check_org_active(current_user: User = Depends(get_current_user), db: A
 def require_superadmin():
     async def checker(user: User = Depends(get_current_user)):
         if user.role != 'superadmin':
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Этот эндпоинт доступен только суперадминистратору SaaS. Ваша роль: {user.role}. Возможно фронтенд использует не тот endpoint — для своих организаций нужен /api/organizations/my."
+            )
         return user
     return checker

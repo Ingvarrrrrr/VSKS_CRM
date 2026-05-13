@@ -514,7 +514,7 @@ async def update_purchase(
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
     if not await _has_purchase_write_access(current_user, db):
-        raise HTTPException(403, "Insufficient permissions")
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
 
@@ -710,7 +710,7 @@ async def patch_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     if not await _has_purchase_write_access(current_user, db):
-        raise HTTPException(403, "Insufficient permissions")
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
 
     # Phase 28 B4: нельзя снять ответственного через PATCH
     if "assigned_user_id" in (body or {}):

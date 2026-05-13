@@ -524,7 +524,7 @@ async def delete_user(
         raise HTTPException(404, "User not found")
     # Org admin can only delete users from their org
     if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
-        raise HTTPException(403, "Insufficient permissions")
+        raise HTTPException(403, "Удалять можно только сотрудников своей организации.")
     await db.delete(user)
     await db.commit()
     return {"ok": True}

@@ -3370,7 +3370,7 @@ watch(() => form.subsidy_id, async (sid) => {
   try {
     const subsidy = subsidies.value.find(s => s.id === sid)
     if (!subsidy?.org_id) { customerPreview.value = null; return }
-    const orgs = await apiFetch<any[]>('/organizations/')
+    const orgs = await apiFetch<any[]>('/organizations/my')
     customerPreview.value = orgs.find(o => o.id === subsidy.org_id) ?? null
   } catch { customerPreview.value = null }
 }, { immediate: true })

@@ -1155,7 +1155,7 @@ async def import_items_smart(
         raise HTTPException(404, "Закупка не найдена")
     # Employees can import to any purchase they have access to
     if not await _has_purchase_write_access(current_user, db):
-        raise HTTPException(403, "Insufficient permissions")
+        raise HTTPException(403, "Нет прав импортировать позиции в эту закупку.")
 
     content = await file.read()
     filename = (file.filename or "").lower()

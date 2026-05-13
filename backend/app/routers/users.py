@@ -155,6 +155,32 @@ async def list_users_in_my_orgs(
     return res.scalars().all()
 
 
+@router.get("/i-can-act-for", response_model=List[UserOut])
+async def list_users_i_can_act_for(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает себя + всех видимых через _get_visible_user_ids (подчинённые
+    по иерархии + начальник отдела/орг). Используется для picker'а инициатора
+    служебной записки: за другого человека делать СЗ может только тот, кому
+    он подчинён. См. бизнес-правило в documents.py:generate_document."""
+    from app.routers.task_visibility import _get_visible_user_ids
+    visible = await _get_visible_user_ids(current_user, db)
+    if visible is None:
+        # SaaS-wide (superadmin) — отдаём всех
+        res = await db.execute(select(User).order_by(User.full_name))
+        return res.scalars().all()
+    # Самого себя гарантированно включаем
+    visible = set(visible)
+    visible.add(current_user.id)
+    if not visible:
+        return [current_user]
+    res = await db.execute(
+        select(User).where(User.id.in_(visible)).order_by(User.full_name)
+    )
+    return res.scalars().all()
+
+
 @router.get("/me", response_model=UserOut)
 async def get_me(
     org_id: Optional[int] = Query(None),

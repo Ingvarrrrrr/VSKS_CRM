@@ -395,13 +395,28 @@ async def generate_document(
             selected_approvers = res.scalars().all()
 
     # Load initiator if requested (frontend always sends User.id, not SubsidyApprover.id).
-    # Стратегия:
-    #   1) SubsidyApprover.user_id == initiator_id (привязанный к субсидии approver) →
-    #      берёт full_name/role_name из карточки approver'а.
-    #   2) Иначе — построить виртуальный approver из User (SimpleNamespace).
-    # Старый fallback по SubsidyApprover.id убран — он подставлял случайного человека
-    # когда SubsidyApprover.id численно совпадал с User.id (баг: Цыганов → Борисов).
+    # Бизнес-правило: за другого человека делать СЗ может только тот, кому
+    # подчинён этот человек (видим через _get_visible_user_ids — тот же scope,
+    # что для постановки задач). Самого себя — всегда можно.
     initiator = None
+    if initiator_id and initiator_id != getattr(current_user, "id", None):
+        from app.routers.task_visibility import _get_visible_user_ids
+        visible = await _get_visible_user_ids(current_user, db)
+        if visible is not None and initiator_id not in visible:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "INITIATOR_FORBIDDEN",
+                    "message": (
+                        "Указанный инициатор вам не подчинён. Сделать служебную "
+                        "записку за другого человека может только его руководитель."
+                    ),
+                },
+            )
+    # Стратегия резолва:
+    #   1) SubsidyApprover.user_id == initiator_id (привязанный approver субсидии) →
+    #      берём full_name/role_name из карточки approver'а
+    #   2) Иначе SimpleNamespace из User (full_name/position/department)
     if initiator_id:
         # 1. Привязанный approver субсидии (если есть)
         res = await db.execute(

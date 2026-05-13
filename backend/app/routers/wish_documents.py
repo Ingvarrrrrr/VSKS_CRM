@@ -106,12 +106,24 @@ async def generate_wish_service_note(
         )
 
     # ── Load initiator if provided ──────────────────────────────────────────
-    # Frontend всегда шлёт User.id. Стратегия:
-    #   1) SubsidyApprover с привязкой user_id → подхватываем role_name из карточки
-    #   2) Виртуальный approver из User (SimpleNamespace)
-    # Старый fallback по SubsidyApprover.id убран — он подставлял случайного
-    # человека при численном совпадении SubsidyApprover.id с User.id.
+    # Бизнес-правило: за другого человека делать СЗ может только тот, кому
+    # подчинён этот человек (тот же scope что _get_visible_user_ids для задач).
+    # Самого себя — всегда можно.
     initiator = None
+    if initiator_id and initiator_id != getattr(current_user, "id", None):
+        from app.routers.task_visibility import _get_visible_user_ids
+        visible = await _get_visible_user_ids(current_user, db)
+        if visible is not None and initiator_id not in visible:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "INITIATOR_FORBIDDEN",
+                    "message": (
+                        "Указанный инициатор вам не подчинён. Сделать служебную "
+                        "записку за другого человека может только его руководитель."
+                    ),
+                },
+            )
     if initiator_id:
         res = await db.execute(
             select(SubsidyApprover)

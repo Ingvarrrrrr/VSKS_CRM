@@ -2668,11 +2668,12 @@
             Для этой субсидии не настроены согласующие.<br>
             Откройте страницу Субсидии → кнопка «Согласующие».
           </div>
-          <!-- service_note: autocomplete из всех сотрудников -->
+          <!-- service_note: autocomplete только из подчинённых + сам пользователь
+               (бизнес-правило: за другого может делать только его руководитель) -->
           <div v-else-if="docPickerType.startsWith('service_note')" class="mt-1">
             <v-autocomplete
               v-model="pickerInitiatorId"
-              :items="orgUsersList"
+              :items="actAsList"
               item-title="full_name"
               item-value="id"
               label="Специалист (инициатор)"
@@ -2680,6 +2681,8 @@
               density="compact"
               clearable
               hide-details
+              :hint="'Доступны: вы и сотрудники, кому вы можете ставить задачи'"
+              persistent-hint
               :no-data-text="loadingDocApprovers ? 'Загрузка...' : 'Нет сотрудников'"
             >
               <template #item="{ item, props }">
@@ -3533,6 +3536,19 @@ async function loadOrgUsers() {
   } catch { orgUsersList.value = [] }
 }
 
+// Список «за кого можно делать служебку»: сам + подчинённые (видимые через
+// _get_visible_user_ids на бэке). Бизнес-правило: за другого человека делать
+// СЗ может только его руководитель/тот кому он подчинён.
+const actAsList = ref<OrgUser[]>([])
+async function loadActAsUsers() {
+  try {
+    const users = await apiFetch<any[]>('/users/i-can-act-for')
+    actAsList.value = users
+      .filter(u => u.full_name)
+      .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
+  } catch { actAsList.value = [] }
+}
+
 // Кому возмещать — список сотрудников из orgUsersList
 const reimbursementUserOptions = computed(() => orgUsersList.value)
 
@@ -3659,10 +3675,11 @@ async function openDocPicker(type: 'service_note_procurement' | 'service_note_de
     if (type === 'approval_sheet') {
       pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
     } else {
-      // Load all users and default to current user
-      await loadOrgUsers()
+      // Бизнес-правило: за другого человека делать СЗ может только тот, кому
+      // подчинён этот человек. Грузим scope «я + мои подчинённые».
+      await loadActAsUsers()
       // Default: current logged-in user
-      if (currentUserId && orgUsersList.value.find(u => u.id === currentUserId)) {
+      if (currentUserId && actAsList.value.find(u => u.id === currentUserId)) {
         pickerInitiatorId.value = currentUserId
       } else {
         const def = list.find(a => a.can_initiate && a.is_default) || list.find(a => a.can_initiate)

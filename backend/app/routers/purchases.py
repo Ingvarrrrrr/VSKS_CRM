@@ -30,20 +30,27 @@ router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
     """True if user may create/edit purchases.
 
-    Checks contour role first; falls back to per-org role (N-10: users managed
-    exclusively via user_org_access may have NULL contour role but valid per-org
-    role such as org_admin or manager).
+    Policy (open by default for any registered user):
+      1) Contour role in MANAGER_ROLES/employee → ok
+      2) Has ANY user_org_access row (даже с NULL role) → ok (член организации
+         в любом качестве; видимость закупок уже ограничена org-filter'ом)
+      3) Has primary org_id → ok (legacy users без user_org_access)
+      4) Иначе False
+    Доступ к конкретной закупке всё равно гейтится через org_filter в list_purchases
+    и видимостью _get_visible_user_ids; этот хелпер только разрешает CRUD-операции.
     """
     if user.role in MANAGER_ROLES or user.role == "employee":
         return True
-    # Per-org fallback: any org_admin or manager entry in user_org_access
+    # Любая строка user_org_access (роль может быть NULL после backfill Phase 17.1)
     row = (await db.execute(
-        select(UserOrgAccess).where(
-            UserOrgAccess.user_id == user.id,
-            UserOrgAccess.role.in_(["org_admin", "manager", "admin", "account_owner", "superadmin", "employee"]),
-        ).limit(1)
-    )).scalar_one_or_none()
-    return row is not None
+        select(UserOrgAccess.id).where(UserOrgAccess.user_id == user.id).limit(1)
+    )).first()
+    if row:
+        return True
+    # Legacy fallback — primary org_id из User
+    if getattr(user, "org_id", None):
+        return True
+    return False
 
 
 # Status workflow

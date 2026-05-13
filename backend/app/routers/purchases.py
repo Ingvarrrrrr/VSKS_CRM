@@ -28,29 +28,18 @@ router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
 async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
-    """True if user may create/edit purchases.
+    """True for any authenticated user.
 
-    Policy (open by default for any registered user):
-      1) Contour role in MANAGER_ROLES/employee → ok
-      2) Has ANY user_org_access row (даже с NULL role) → ok (член организации
-         в любом качестве; видимость закупок уже ограничена org-filter'ом)
-      3) Has primary org_id → ok (legacy users без user_org_access)
-      4) Иначе False
-    Доступ к конкретной закупке всё равно гейтится через org_filter в list_purchases
-    и видимостью _get_visible_user_ids; этот хелпер только разрешает CRUD-операции.
+    Дизайн: доступ к конкретной закупке гейтится через org_filter +
+    _get_visible_user_ids в list_purchases. GET /{pid} вообще без auth — кто
+    смог прочесть, тот может и сохранить (autosave PATCH). Бизнес-проверки
+    (статус-переходы, согласование) — отдельные эндпоинты с require_action.
+
+    Раньше эта функция гейтила MANAGER_ROLES + user_org_access — но у юзеров
+    созданных давно (до Phase 17.1) могло не быть ни role, ни UOA-row,
+    ни org_id (data-issue), что приводило к 403 при autosave формы закупки.
     """
-    if user.role in MANAGER_ROLES or user.role == "employee":
-        return True
-    # Любая строка user_org_access (роль может быть NULL после backfill Phase 17.1)
-    row = (await db.execute(
-        select(UserOrgAccess.id).where(UserOrgAccess.user_id == user.id).limit(1)
-    )).first()
-    if row:
-        return True
-    # Legacy fallback — primary org_id из User
-    if getattr(user, "org_id", None):
-        return True
-    return False
+    return user is not None
 
 
 # Status workflow
@@ -727,6 +716,39 @@ PATCHABLE_FIELDS = {
 }
 
 
+# Имена полей с типом DATE/DATETIME — для коэрсии строк в date-объекты в PATCH.
+# Фронт шлёт ISO-строки ('2026-05-08'), asyncpg ожидает date()/datetime().
+_DATE_FIELDS = {
+    "contract_date", "contract_end_date", "delivery_date",
+    "service_start_date", "service_end_date", "service_deadline_date",
+    "payment_doc_date", "acceptance_doc_date", "prepayment_date",
+}
+_DATETIME_FIELDS = {"submission_deadline"}
+
+
+def _coerce_patch_value(field: str, value):
+    """Конвертирует ISO-строку в date/datetime для DATE-полей; пустые строки → None."""
+    if value == "":
+        return None
+    if value is None:
+        return None
+    if field in _DATE_FIELDS and isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except Exception:
+            return None
+    if field in _DATETIME_FIELDS and isinstance(value, str):
+        try:
+            # Поддержка и 'YYYY-MM-DD', и 'YYYY-MM-DDTHH:MM[:SS]'
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            try:
+                return date.fromisoformat(value[:10])
+            except Exception:
+                return None
+    return value
+
+
 @router.patch("/{pid}")
 async def patch_purchase(
     pid: int,
@@ -746,6 +768,7 @@ async def patch_purchase(
             continue
         if not hasattr(p, k):
             continue
+        v = _coerce_patch_value(k, v)
         if getattr(p, k) != v:
             setattr(p, k, v)
             changed.append(k)

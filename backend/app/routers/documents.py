@@ -383,14 +383,39 @@ async def generate_document(
             selected_approvers = res.scalars().all()
 
     # Load initiator if requested (with user for initiator_dept)
+    # Priority: user_id match (frontend sends User.id) → SubsidyApprover.id (legacy) → raw User fallback
     initiator = None
     if initiator_id:
+        # 1. Try matching by user_id (frontend passes User.id, not SubsidyApprover.id)
         res = await db.execute(
             select(SubsidyApprover)
-            .where(SubsidyApprover.id == initiator_id)
+            .where(SubsidyApprover.user_id == initiator_id)
             .options(selectinload(SubsidyApprover.user))
+            .order_by(SubsidyApprover.id)
+            .limit(1)
         )
         initiator = res.scalar_one_or_none()
+        # 2. Fallback: SubsidyApprover.id (legacy behaviour)
+        if initiator is None:
+            res = await db.execute(
+                select(SubsidyApprover)
+                .where(SubsidyApprover.id == initiator_id)
+                .options(selectinload(SubsidyApprover.user))
+            )
+            initiator = res.scalar_one_or_none()
+        # 3. Final fallback: User record only — build a virtual approver object
+        if initiator is None:
+            from app.models.user import User as UserModel
+            from types import SimpleNamespace
+            u = (
+                await db.execute(select(UserModel).where(UserModel.id == initiator_id))
+            ).scalar_one_or_none()
+            if u:
+                initiator = SimpleNamespace(
+                    full_name=u.full_name or u.username,
+                    role_name=u.position or "",
+                    user=u,
+                )
 
     # If no approvers specified — load defaults for this subsidy
     if not selected_approvers and p.subsidy_id:
@@ -768,11 +793,28 @@ async def generate_document(
         "execution_term_changed": _fmt_date(p.execution_term_changed),
         "delivery_date": _fmt_date(p.delivery_date),
         "country_origin": p.country_origin or "",
-        # Акт приёмки
-        "acceptance_doc_name": p.acceptance_doc_name or "",
-        "acceptance_doc_number": p.acceptance_doc_number or "",
-        "acceptance_doc_date": _fmt_date(p.acceptance_doc_date),
-        "acceptance_doc_amount": _fmt_money(p.acceptance_doc_amount),
+        # Акт приёмки — если нет закрывающих документов, подставляем данные договора
+        # (статус «Заказано» — оплата до поставки, документов ещё нет)
+        "acceptance_doc_name": (
+            p.acceptance_doc_name
+            if p.acceptance_doc_name
+            else "договору"
+        ),
+        "acceptance_doc_number": (
+            p.acceptance_doc_number
+            if p.acceptance_doc_number
+            else (p.contract_number or "")
+        ),
+        "acceptance_doc_date": (
+            _fmt_date(p.acceptance_doc_date)
+            if p.acceptance_doc_date
+            else (_fmt_date(p.contract_date) if p.contract_date else "")
+        ),
+        "acceptance_doc_amount": (
+            _fmt_money(p.acceptance_doc_amount)
+            if p.acceptance_doc_amount
+            else _fmt_money(p.contract_price or p.planned_total_price or 0)
+        ),
         # Платёж
         "payment_doc_number": p.payment_doc_number or "",
         "payment_doc_date": _fmt_date(p.payment_doc_date),

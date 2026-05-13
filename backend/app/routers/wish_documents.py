@@ -105,15 +105,40 @@ async def generate_wish_service_note(
             ),
         )
 
-    # ── Load initiator if provided (same pattern as documents.py line 314) ──
+    # ── Load initiator if provided ──────────────────────────────────────────
+    # Priority: user_id match (frontend sends User.id) → SubsidyApprover.id (legacy) → raw User
     initiator = None
     if initiator_id:
+        # 1. Try matching by user_id (frontend passes User.id, not SubsidyApprover.id)
         res = await db.execute(
             select(SubsidyApprover)
-            .where(SubsidyApprover.id == initiator_id)
+            .where(SubsidyApprover.user_id == initiator_id)
             .options(selectinload(SubsidyApprover.user))
+            .order_by(SubsidyApprover.id)
+            .limit(1)
         )
         initiator = res.scalar_one_or_none()
+        # 2. Fallback: SubsidyApprover.id (legacy behaviour)
+        if initiator is None:
+            res = await db.execute(
+                select(SubsidyApprover)
+                .where(SubsidyApprover.id == initiator_id)
+                .options(selectinload(SubsidyApprover.user))
+            )
+            initiator = res.scalar_one_or_none()
+        # 3. Final fallback: User record only — build a virtual approver object
+        if initiator is None:
+            from app.models.user import User as UserModel
+            from types import SimpleNamespace
+            u = (
+                await db.execute(select(UserModel).where(UserModel.id == initiator_id))
+            ).scalar_one_or_none()
+            if u:
+                initiator = SimpleNamespace(
+                    full_name=u.full_name or u.username,
+                    role_name=u.position or "",
+                    user=u,
+                )
 
     # ── Build DocxTemplate object (needed early for InlineImage) ────────────
     try:

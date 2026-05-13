@@ -592,6 +592,23 @@
               Субсидия определяется автоматически по категории ФЭО (колонка 5). Заголовки — в строке 6.
             </v-alert>
 
+            <!-- FEO: assigned user selector -->
+            <v-autocomplete
+              v-if="importDialog.format === 'feo'"
+              v-model="importDialog.assignedUserId"
+              :items="importUserItems"
+              item-title="text"
+              item-value="value"
+              label="Ответственный исполнитель"
+              hint="Все импортируемые закупки будут назначены на этого сотрудника"
+              persistent-hint
+              variant="outlined"
+              density="compact"
+              class="mb-3"
+              :rules="[(v: any) => !!v || 'Обязательное поле']"
+              clearable
+            />
+
             <FileDropZone v-model="importDialog.file"
               accept=".xlsx,.xls"
               hint="Excel (.xlsx, .xls) — перетащите или нажмите"
@@ -1449,15 +1466,23 @@ const doDelete = async () => {
 }
 
 // ─── Import ───────────────────────────────────────────────────────────────────
+const _importCurrentUserId = parseInt(localStorage.getItem('user_id') || '0')
+const importUserItems = ref<{ text: string; value: number }[]>([])
+
 const importDialog = reactive({
   show: false,
   step: 1,
   format: 'standard' as 'standard' | 'feo',
   subsidyId: null as number | null,
+  assignedUserId: _importCurrentUserId || null as number | null,
   file: null as File | null,
   loading: false,
   result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
 })
+
+apiFetch<any[]>('/users/in-my-orgs').then(users => {
+  importUserItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
+}).catch(() => {})
 
 const resetImport = () => {
   importDialog.show = false
@@ -1465,6 +1490,7 @@ const resetImport = () => {
   importDialog.format = 'standard'
   importDialog.file = null
   importDialog.subsidyId = null
+  importDialog.assignedUserId = _importCurrentUserId || null
   importDialog.result = null
 }
 
@@ -1492,7 +1518,8 @@ const doImport = async () => {
     const token = localStorage.getItem('auth_token')
     let endpoint: string
     if (importDialog.format === 'feo') {
-      endpoint = '/api/purchases/import/feo-format'
+      const qs = importDialog.assignedUserId ? `?assigned_user_id=${importDialog.assignedUserId}` : ''
+      endpoint = `/api/purchases/import/feo-format${qs}`
     } else {
       const qs = importDialog.subsidyId ? `?subsidy_id=${importDialog.subsidyId}` : ''
       endpoint = `/api/purchases/import${qs}`

@@ -1413,16 +1413,27 @@ async def download_feo_template(_=Depends(require_tab('purchases'))):
 @router.post("/import/feo-format")
 async def import_feo_format(
     file: UploadFile = File(...),
+    assigned_user_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('purchases')),
 ):
     """Импорт закупок из ФЭО-формата (57 колонок, заголовки в строке 6).
     Субсидия определяется автоматически через feo_category.subsidy_id.
+    assigned_user_id: если передан — присваивается всем созданным закупкам; иначе — текущий пользователь.
     """
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Поддерживаются только файлы .xlsx и .xls")
+
+    # Resolve assigned user
+    if assigned_user_id is not None:
+        target_user = await db.get(User, assigned_user_id)
+        if target_user is None:
+            raise HTTPException(400, f"Пользователь {assigned_user_id} не найден")
+        resolved_assigned_user_id = assigned_user_id
+    else:
+        resolved_assigned_user_id = current_user.id
 
     content = await file.read()
     wb = load_workbook(BytesIO(content), data_only=True)
@@ -1658,6 +1669,7 @@ async def import_feo_format(
             execution_term=execution_term,
             vat_applicable=vat_applicable,
             status=status,
+            assigned_user_id=resolved_assigned_user_id,
         )
         db.add(p)
         created += 1

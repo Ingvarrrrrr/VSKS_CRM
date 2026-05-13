@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import select, func, delete, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab
 from app.models.user import User
+from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.product_matcher import find_matching_product
@@ -23,6 +25,25 @@ from decimal import Decimal
 from datetime import datetime, date
 from app.models.user_hierarchy import UserHierarchy
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
+
+
+async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
+    """True if user may create/edit purchases.
+
+    Checks contour role first; falls back to per-org role (N-10: users managed
+    exclusively via user_org_access may have NULL contour role but valid per-org
+    role such as org_admin or manager).
+    """
+    if user.role in MANAGER_ROLES or user.role == "employee":
+        return True
+    # Per-org fallback: any org_admin or manager entry in user_org_access
+    row = (await db.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user.id,
+            UserOrgAccess.role.in_(["org_admin", "manager", "admin", "account_owner", "superadmin", "employee"]),
+        ).limit(1)
+    )).scalar_one_or_none()
+    return row is not None
 
 
 # Status workflow
@@ -562,8 +583,8 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
-    # Employees can save any purchase they have access to (org-level access checked at list level)
-    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
+    # Employees/managers can save any purchase they have access to (org-level access checked at list level)
+    if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Insufficient permissions")
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
@@ -601,6 +622,9 @@ async def update_purchase(
         if is_contracted and k in ("total_nmck", "planned_total_price"):
             continue
         setattr(p, k, v)
+    # JSONB columns need explicit dirty-flag so SQLAlchemy detects mutations
+    if "acceptance_docs" in data.model_fields_set:
+        flag_modified(p, "acceptance_docs")
 
     # Contract price: для разовых (single) и авансовых (advance) — авто-пересчёт из items
     is_single_contract = not p.purchase_contract_type or p.purchase_contract_type == "single"
@@ -703,7 +727,7 @@ async def patch_purchase(
     p = await db.get(Purchase, pid)
     if not p:
         raise HTTPException(404, "Not found")
-    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
+    if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Insufficient permissions")
 
     changed: list[str] = []

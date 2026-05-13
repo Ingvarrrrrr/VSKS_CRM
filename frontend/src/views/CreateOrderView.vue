@@ -1289,7 +1289,7 @@
         <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
           Закрывающие документы
           <v-spacer />
-          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Реквизиты</v-btn>
+          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить закрывающий документ</v-btn>
         </v-card-title>
         <v-card-text>
           <!-- Загрузка файлов по типам -->
@@ -5094,8 +5094,17 @@ const loadPurchase = async () => {
   // Restore selected framework contract
   if (data.contract_id && (form.purchase_contract_type === 'framework_cumulative' || form.purchase_contract_type === 'framework_with_amount')) {
     try {
-      const contracts = await apiFetch<FrameworkContract[]>(`/contracts/?subsidy_id=${data.subsidy_id || ''}`)
-      selectedFrameworkContract.value = contracts.find(c => c.id === data.contract_id) ?? null
+      // First try filtered by subsidy (fast), then fallback to unfiltered (safe)
+      const params = new URLSearchParams()
+      if (data.subsidy_id) params.set('subsidy_id', String(data.subsidy_id))
+      let contracts = await apiFetch<FrameworkContract[]>(`/contracts/?${params}`)
+      let found = contracts.find(c => c.id === data.contract_id) ?? null
+      if (!found) {
+        // contract may belong to a different subsidy — fetch all and locate by id
+        const all = await apiFetch<FrameworkContract[]>('/contracts/')
+        found = all.find(c => c.id === data.contract_id) ?? null
+      }
+      selectedFrameworkContract.value = found
     } catch {}
     await loadFrameworkSiblings(data.contract_id)
   }

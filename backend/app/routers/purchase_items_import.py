@@ -30,6 +30,7 @@ from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.auth.jwt import get_current_user, require_role, get_single_org_id, MANAGER_ROLES
 from app.auth.permissions import require_tab
+from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
 
 try:
@@ -1153,7 +1154,7 @@ async def import_items_smart(
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")
     # Employees can import to any purchase they have access to
-    if current_user.role not in MANAGER_ROLES and current_user.role not in ("employee",):
+    if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Insufficient permissions")
 
     content = await file.read()

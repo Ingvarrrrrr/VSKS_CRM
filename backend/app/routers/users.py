@@ -20,7 +20,7 @@ from typing import List, Optional
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("/", response_model=List[UserOut])
-async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_role(*ALL_ROLES))):
+async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     q = select(User).order_by(User.full_name)
     # D-09: hide superadmin from non-superadmin callers
     if current_user.role != "superadmin":

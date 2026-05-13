@@ -123,11 +123,27 @@ async def transition_status(
 
     # Field guards for specific target statuses
     if target_status in TRANSITION_REQUIRED:
-        # acceptance_docs JSONB overrides legacy single fields
-        has_acceptance_docs = bool(p.acceptance_docs and len(p.acceptance_docs) > 0 and any(d.get("name") for d in p.acceptance_docs))
         required_fields = TRANSITION_REQUIRED[target_status]
-        if has_acceptance_docs and target_status == "delivered":
-            required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
+        if target_status == "delivered":
+            # acceptance_docs JSONB overrides legacy flat fields.
+            # True if at least one entry has name+number+date+amount all filled.
+            def _has_acceptance_doc(purchase) -> bool:
+                # Legacy flat fields
+                if (purchase.acceptance_doc_name and purchase.acceptance_doc_number
+                        and purchase.acceptance_doc_date and purchase.acceptance_doc_amount):
+                    return True
+                # New JSONB array (keys: name/number/date/amount as written by frontend)
+                docs = purchase.acceptance_docs or []
+                for d in docs:
+                    if not isinstance(d, dict):
+                        continue
+                    if (d.get("name") and d.get("number")
+                            and d.get("date") and d.get("amount") not in (None, "", 0)):
+                        return True
+                return False
+
+            if _has_acceptance_doc(p):
+                required_fields = [f for f in required_fields if not f.startswith("acceptance_doc")]
         # Phase 23.4: для авансовых отчётов с привязанными чеками acceptance_doc не обязательны
         if target_status == "delivered" and getattr(p, "purchase_method", None) == "advance":
             from app.models.purchase_receipt import PurchaseReceipt

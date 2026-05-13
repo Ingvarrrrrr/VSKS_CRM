@@ -58,11 +58,25 @@ async def remove_user_org_access(
         await db.delete(existing)
 
 
+_ROLE_PRIORITY = {
+    "superadmin": 6,
+    "account_owner": 5,
+    "admin": 4,
+    "org_admin": 3,
+    "manager": 2,
+    "employee": 1,
+}
+
+
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
     """Return effective key set (tabs + actions, undifferentiated).
 
     Role resolution: if user_org_access.role is set for (user_id, org_id) it takes
     precedence over user.role; otherwise fallback to user.role.
+    Per-org fallback (N-10): if user has no contour role (NULL) or no UOA for the
+    active org, also scan ALL user_org_access rows and pick the highest-priority role.
+    This ensures users managed via per-org role assignment (e.g. org_admin in ВСКС)
+    receive correct tab/action permissions even when their contour user.role is NULL.
     Boolean-flip: base = {key for RP where role_name=effective_role and granted=True};
     then for each override row: granted=True -> add; granted=False -> discard.
     """
@@ -77,6 +91,17 @@ async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) ->
         )).scalar_one_or_none()
         if uoa and uoa.role:
             effective_role = uoa.role
+
+    # Step 0b: per-org fallback — if contour role is missing/unknown, find best per-org role
+    if effective_role not in _ROLE_PRIORITY:
+        all_uoa_rows = (await db.execute(
+            select(UserOrgAccess.role).where(
+                UserOrgAccess.user_id == user.id,
+                UserOrgAccess.role.isnot(None),
+            )
+        )).scalars().all()
+        if all_uoa_rows:
+            effective_role = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
 
     # Step 1: base from role matrix with resolved role
     rp_rows = await db.execute(

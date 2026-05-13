@@ -422,6 +422,11 @@ async def create_purchase(
 
     dump = data.model_dump(exclude={"items", "subsidy_allocations"})
     dump["total_nmck"] = total_nmck
+    # Phase 28 B4: validate provided assigned_user_id
+    if data.assigned_user_id is not None and data.assigned_user_id != 0:
+        target = await db.get(User, data.assigned_user_id)
+        if target is None:
+            raise HTTPException(422, f"Пользователь {data.assigned_user_id} не найден")
     # Auto-assign current user as owner when frontend did not specify one.
     # Без этого закупка с assigned_user_id=NULL становится невидимой для рядового
     # автора (list_purchases фильтрует по visible_user_ids; NULL IN (...) = false).
@@ -515,6 +520,14 @@ async def update_purchase(
 
     items_data = data.items or []
     items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+
+    # Phase 28 B4: validate assigned_user_id on PUT
+    if data.assigned_user_id is not None and data.assigned_user_id != 0:
+        target = await db.get(User, data.assigned_user_id)
+        if target is None:
+            raise HTTPException(422, f"Пользователь {data.assigned_user_id} не найден")
+    elif data.assigned_user_id == 0:
+        raise HTTPException(422, "Укажите ответственного исполнителя")
 
     # Opportunistic backfill: legacy purchases с assigned_user_id=NULL
     # становятся видимыми создателю через первое же сохранение.
@@ -646,6 +659,8 @@ PATCHABLE_FIELDS = {
     "is_likely_needed", "is_prepayment", "prepayment_date", "stage_label",
     # Авансовый отчёт: кому возмещать
     "reimbursement_user_id",
+    # Phase 28 B4: ответственный исполнитель
+    "assigned_user_id",
 }
 
 
@@ -696,6 +711,15 @@ async def patch_purchase(
         raise HTTPException(404, "Not found")
     if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Insufficient permissions")
+
+    # Phase 28 B4: нельзя снять ответственного через PATCH
+    if "assigned_user_id" in (body or {}):
+        val = body["assigned_user_id"]
+        if val is None or val == 0:
+            raise HTTPException(422, "Нельзя снять ответственного исполнителя")
+        target = await db.get(User, val)
+        if target is None:
+            raise HTTPException(422, f"Пользователь {val} не найден")
 
     # Opportunistic backfill: первый PATCH (autosave) от user'а закрепляет
     # за ним legacy-закупку без assigned_user_id — иначе после save она опять

@@ -174,18 +174,42 @@
                 :items="orgUsersList"
                 item-title="short_name"
                 item-value="full_name"
-                label="Ответственный исполнитель"
+                label="Исполнитель (для документов)"
                 variant="outlined"
                 density="compact"
                 clearable
                 hide-no-data
-                hint="Необязательное поле"
+                hint="Имя для шаблонов документов"
                 persistent-hint
                 autocomplete="off"
               >
                 <template #item="{ item, props: itemProps }">
                   <v-list-item v-bind="itemProps">
                     <template #title>{{ item.raw.short_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+            <!-- Phase 28 B4: Ответственный исполнитель (user FK, обязательное) -->
+            <v-col cols="12" md="4">
+              <v-autocomplete
+                v-model="form.assigned_user_id"
+                :items="orgUsersList"
+                item-title="full_name"
+                item-value="id"
+                label="Ответственный исполнитель *"
+                variant="outlined"
+                density="compact"
+                hide-no-data
+                :rules="[v => !!v || 'Обязательное поле']"
+                hint="Кто ведёт закупку в системе"
+                persistent-hint
+                autocomplete="off"
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps">
+                    <template #title>{{ item.raw.full_name }}</template>
                     <template #subtitle>{{ item.raw.position || '' }}</template>
                   </v-list-item>
                 </template>
@@ -3148,6 +3172,8 @@ const form = reactive({
   stage_label: '' as string,
   // Авансовый отчёт: кому возмещать
   reimbursement_user_id: null as number | null,
+  // Phase 28 B4: ответственный исполнитель (user FK)
+  assigned_user_id: null as number | null,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3200,6 +3226,8 @@ function serializeFormForAutosave() {
     is_prepayment: f.is_prepayment,
     prepayment_date: f.prepayment_date || null,
     stage_label: f.stage_label || null,
+    // Phase 28 B4: ответственный исполнитель — не шлём null, только валидное id
+    ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
   })
 }
 
@@ -5101,6 +5129,8 @@ const loadPurchase = async () => {
       subsidy_id: a.subsidy_id,
       amount: a.amount != null ? Number(a.amount) : null,
     })),
+    // Phase 28 B4: ответственный исполнитель
+    assigned_user_id: data.assigned_user_id ?? null,
   })
 
   // Save frozen НМЦД from DB
@@ -5536,6 +5566,10 @@ onMounted(async () => {
       currentUserId
     ) {
       form.reimbursement_user_id = currentUserId
+    }
+    // Phase 28 B4: default ответственный исполнитель = текущий пользователь
+    if (!form.assigned_user_id && currentUserId) {
+      form.assigned_user_id = currentUserId
     }
     // 26-F4a: пустой плейсхолдер для закрывающего документа при создании
     ensurePlaceholderDoc()

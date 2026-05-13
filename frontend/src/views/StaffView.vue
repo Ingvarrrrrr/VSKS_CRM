@@ -494,30 +494,64 @@
                 <v-icon size="12" class="mr-1">mdi-briefcase-outline</v-icon>
                 Организации, должности, оклад:
               </div>
-              <div v-for="(entry, ei) in allOrgEntries" :key="ei" class="mb-4 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0;position:relative">
-                <div class="d-flex align-center mb-2">
-                  <v-chip size="small" color="purple" variant="tonal">{{ entry.org_name }}{{ entry.dept_name ? ' · ' + entry.dept_name : '' }}</v-chip>
-                  <v-spacer />
-                  <v-btn v-if="entry.id" icon size="x-small" variant="text" color="error" @click="confirmDeleteOrgEntry(entry)" :title="'Удалить из ' + (entry.dept_name || entry.org_name)">
-                    <v-icon size="18">mdi-delete</v-icon>
-                  </v-btn>
+              <!-- Группировка по org: несколько отделов одной организации отображаются под одним заголовком -->
+              <div v-for="group in groupedOrgEntries" :key="group.org_id" class="mb-4">
+                <div class="text-caption font-weight-medium mb-1 px-1" style="color:#7b1fa2">
+                  <v-icon size="12" class="mr-1">mdi-domain</v-icon>{{ group.org_name }}
                 </div>
-                <v-row dense>
-                  <v-col cols="12" md="6">
-                    <v-text-field :model-value="entry.dept_name" label="Отдел" variant="outlined" density="compact" hide-details readonly
-                      prepend-inner-icon="mdi-office-building-outline" hint="Отдел меняется через Иерархию" />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-combobox v-model="entry.position" :items="getPositionsForOrg(entry.org_id)" label="Должность" variant="outlined" density="compact" hide-details clearable
-                      prepend-inner-icon="mdi-briefcase-outline" />
-                  </v-col>
-                  <v-col cols="6">
-                    <v-text-field v-model.number="entry.salary_amount" label="Оклад ₽" variant="outlined" density="compact" type="number" hide-details />
-                  </v-col>
-                  <v-col cols="6">
-                    <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
-                  </v-col>
-                </v-row>
+                <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0;position:relative">
+                  <div class="d-flex align-center mb-2">
+                    <v-chip size="small" color="purple" variant="tonal">{{ entry.dept_name || 'Без отдела' }}</v-chip>
+                    <v-spacer />
+                    <v-btn v-if="entry.id" icon size="x-small" variant="text" color="error" @click="confirmDeleteOrgEntry(entry)" :title="'Удалить из ' + (entry.dept_name || entry.org_name)">
+                      <v-icon size="18">mdi-delete</v-icon>
+                    </v-btn>
+                    <v-btn v-else-if="(entry as any).is_new" icon size="x-small" variant="text" color="grey" @click="allOrgEntries.splice(allOrgEntries.indexOf(entry as any), 1)" title="Отмена">
+                      <v-icon size="18">mdi-close</v-icon>
+                    </v-btn>
+                  </div>
+                  <v-row dense>
+                    <!-- Для новых строк — выбор отдела через автокомплит; для существующих — readonly -->
+                    <v-col cols="12" md="6">
+                      <v-autocomplete
+                        v-if="(entry as any).is_new"
+                        v-model="entry.dept_id"
+                        :items="deptsForOrg(group.org_id)"
+                        label="Отдел"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        prepend-inner-icon="mdi-office-building-outline"
+                        @update:model-value="val => { const d = deptsForOrg(group.org_id).find(x => x.value === val); if (d) entry.dept_name = d.title }"
+                      />
+                      <v-text-field
+                        v-else
+                        :model-value="entry.dept_name"
+                        label="Отдел"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        readonly
+                        prepend-inner-icon="mdi-office-building-outline"
+                      />
+                    </v-col>
+                    <v-col cols="12" md="6">
+                      <v-combobox v-model="entry.position" :items="getPositionsForOrg(entry.org_id)" label="Должность" variant="outlined" density="compact" hide-details clearable
+                        prepend-inner-icon="mdi-briefcase-outline" />
+                    </v-col>
+                    <v-col cols="6">
+                      <v-text-field v-model.number="entry.salary_amount" label="Оклад ₽" variant="outlined" density="compact" type="number" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
+                    </v-col>
+                  </v-row>
+                </div>
+                <!-- Кнопка «+ ещё отдел в этой организации» -->
+                <v-btn size="x-small" variant="text" color="purple" prepend-icon="mdi-plus" class="ml-1" @click="addDeptToOrg(group.org_id)">
+                  Ещё отдел в {{ group.org_name }}
+                </v-btn>
               </div>
             </div>
           </div>
@@ -1199,6 +1233,45 @@ function dedupOrgAccess(entries: typeof allOrgEntries.value) {
   return Array.from(map.values())
 }
 
+// Группировка allOrgEntries по org_id — для отображения нескольких отделов одной организации
+const groupedOrgEntries = computed(() => {
+  const groups: Record<number, typeof allOrgEntries.value> = {}
+  for (const e of allOrgEntries.value) {
+    const key = Number(e.org_id)
+    if (!groups[key]) groups[key] = []
+    groups[key].push(e)
+  }
+  return Object.entries(groups).map(([org_id, entries]) => ({
+    org_id: Number(org_id),
+    org_name: entries[0]?.org_name || '',
+    entries,
+  }))
+})
+
+// Список отделов для данной org (из deptTree, уже загруженного)
+function deptsForOrg(org_id: number) {
+  return flatDepts(deptTree.value)
+    .filter((d: any) => d.org_id === org_id)
+    .map((d: any) => ({ title: d.name, value: d.id }))
+}
+
+// Кнопка «+ ещё отдел в этой организации»: добавляет новую строку is_new=true
+function addDeptToOrg(org_id: number) {
+  const org_name = allOrgEntries.value.find(e => e.org_id === org_id)?.org_name || ''
+  allOrgEntries.value.push({
+    id: null,
+    dept_id: null,
+    org_id,
+    org_name,
+    dept_name: '',
+    position: '',
+    salary_amount: null,
+    employment_percent: 100,
+    _idx: allOrgEntries.value.length,
+    is_new: true,
+  } as any)
+}
+
 // Фикс: при добавлении новой org через extraOrgIds — optimistic-push в allOrgEntries
 // чтобы UserPermissionsSection сразу видела её (до сохранения и reload)
 watch(
@@ -1549,21 +1622,12 @@ async function openEditUser(item: UserItem) {
     }
     editDialog.orgSalary = sal
     editDialog.orgPercent = pct
-    // Fill all org entries for the bottom block
-    // Phase 23.4: дедуп по org_id чтобы сотрудник с несколькими отделами в одной орг не дублировал орг в секции Доступ
-    {
-      const seenOrgIds = new Set<number>()
-      allOrgEntries.value = (salaryRes || []).filter((s: any) => {
-        const key = Number(s.org_id)
-        if (seenOrgIds.has(key)) return false
-        seenOrgIds.add(key)
-        return true
-      }).map((s: any, i: number) => ({
-        id: s.id ?? null, dept_id: s.dept_id ?? null,
-        org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-        position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
-      }))
-    }
+    // Fill all org entries — one row per dept membership (multi-dept fully visible)
+    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
+      id: s.id ?? null, dept_id: s.dept_id ?? null,
+      org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+    }))
     editDialog.orgDepts = {}
     for (const s of (salaryRes || [])) {
       if (s.dept_name) editDialog.orgDepts[s.org_id] = s.dept_name
@@ -1625,21 +1689,13 @@ async function confirmDeleteOrgEntry(entry: any) {
   try {
     await apiFetch(`/users/${editDialog.userId}/org-memberships/${entry.id}`, { method: 'DELETE' })
     showSnack('Запись удалена')
-    // Reload allOrgEntries (с дедупом по org_id)
+    // Reload allOrgEntries (все dept-строки без дедупа)
     const salaryRes = await apiFetch<any[]>(`/users/${editDialog.userId}/salary`).catch(() => [])
-    {
-      const seenOrgIds2 = new Set<number>()
-      allOrgEntries.value = (salaryRes || []).filter((s: any) => {
-        const key = Number(s.org_id)
-        if (seenOrgIds2.has(key)) return false
-        seenOrgIds2.add(key)
-        return true
-      }).map((s: any, i: number) => ({
-        id: s.id ?? null, dept_id: s.dept_id ?? null,
-        org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-        position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
-      }))
-    }
+    allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
+      id: s.id ?? null, dept_id: s.dept_id ?? null,
+      org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+    }))
     // Also update extraOrgIds list to drop this org if no entries left
     if (!allOrgEntries.value.some(e => e.org_id === entry.org_id)) {
       editDialog.extraOrgIds = (editDialog.extraOrgIds || []).filter((id: number) => id !== entry.org_id)
@@ -1695,6 +1751,22 @@ async function saveEditUser() {
     }
     // Note: if only position changed (same dept), PATCH /users above already syncs
     // DepartmentMember.position via _sync_user_department — no extra call needed.
+
+    // Save new dept entries added via «+ ещё отдел в этой организации» button
+    // POST /departments/{dept_id}/members creates both DepartmentMember and UserOrganization row
+    for (const entry of allOrgEntries.value) {
+      if ((entry as any).is_new && entry.dept_id) {
+        try {
+          await apiFetch(`/departments/${entry.dept_id}/members`, {
+            method: 'POST',
+            body: { user_id: editDialog.userId, position: entry.position || undefined },
+          })
+          // Salary/percent on the new UO row will be synced by the org-membership PATCH loop below
+        } catch (e: any) {
+          showSnack(`Не удалось добавить отдел: ${e?.message || ''}`, 'error')
+        }
+      }
+    }
 
     // Sync ALL org memberships (primary + extra unified)
     try {

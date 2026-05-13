@@ -229,6 +229,24 @@ async def list_purchases(
             org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
             visible_user_ids.update(r[0] for r in org_users.all())
 
+        # Per-org role: user_org_access.role IN ('org_admin','manager') → see all members of that org
+        from app.models.user_org_access import UserOrgAccess
+        uoa_orgs_res = await db.execute(
+            select(UserOrgAccess.org_id).where(
+                UserOrgAccess.user_id == current_user.id,
+                UserOrgAccess.role.in_(['org_admin', 'manager']),
+            )
+        )
+        uoa_org_ids = [r[0] for r in uoa_orgs_res.all()]
+        if uoa_org_ids:
+            uoa_members_res = await db.execute(
+                select(User.id).where(
+                    User.org_id.in_(uoa_org_ids),
+                    User.role != 'superadmin',
+                )
+            )
+            visible_user_ids.update(r[0] for r in uoa_members_res.all())
+
         # Filter: assigned to visible user OR purchase member OR chat-room participant.
         # NOTE: intentionally dropped the "assigned_user_id IS NULL" OR-branch — previously
         # every unassigned purchase leaked to every non-superadmin role, defeating the

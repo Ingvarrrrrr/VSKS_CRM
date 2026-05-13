@@ -119,6 +119,18 @@ def _fmt_money_plain(v) -> str:
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
+def _sum_items_price(p) -> float:
+    """Fallback: manually sum item.total_price when p.total_nmck is NULL."""
+    items = getattr(p, "items", None) or []
+    total = 0.0
+    for it in items:
+        try:
+            total += float(getattr(it, "total_price", 0) or 0)
+        except Exception:
+            pass
+    return total
+
+
 def _format_service_term(p) -> str:
     """Build the human-readable service-term string for docx templates.
 
@@ -813,7 +825,13 @@ async def generate_document(
         "acceptance_doc_amount": (
             _fmt_money(p.acceptance_doc_amount)
             if p.acceptance_doc_amount
-            else _fmt_money(p.contract_price or p.planned_total_price or 0)
+            else _fmt_money(
+                p.contract_price
+                or p.planned_total_price
+                or p.total_nmck            # SUM(items.total_price) — always set when items exist
+                or _sum_items_price(p)     # manual fallback if total_nmck is NULL
+                or 0
+            )
         ),
         # Платёж
         "payment_doc_number": p.payment_doc_number or "",

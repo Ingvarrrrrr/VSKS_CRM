@@ -106,6 +106,24 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
         org_users = await db.execute(org_user_q)
         visible.update(r[0] for r in org_users.all())
 
+    # Per-org role: user_org_access.role IN ('org_admin','manager') → see all members of that org
+    from app.models.user_org_access import UserOrgAccess
+    uoa_orgs_res = await db.execute(
+        select(UserOrgAccess.org_id).where(
+            UserOrgAccess.user_id == current_user.id,
+            UserOrgAccess.role.in_(['org_admin', 'manager']),
+        )
+    )
+    uoa_org_ids = [r[0] for r in uoa_orgs_res.all()]
+    if uoa_org_ids:
+        uoa_members_res = await db.execute(
+            select(User.id).where(
+                User.org_id.in_(uoa_org_ids),
+                User.role != 'superadmin',
+            )
+        )
+        visible.update(r[0] for r in uoa_members_res.all())
+
     return visible
 
 

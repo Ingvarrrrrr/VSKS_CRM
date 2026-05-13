@@ -718,12 +718,14 @@ PATCHABLE_FIELDS = {
 
 # Имена полей с типом DATE/DATETIME — для коэрсии строк в date-объекты в PATCH.
 # Фронт шлёт ISO-строки ('2026-05-08'), asyncpg ожидает date()/datetime().
+# Полный список из backend/app/models/purchase.py — все Column(Date)/Column(DateTime).
 _DATE_FIELDS = {
-    "contract_date", "contract_end_date", "delivery_date",
-    "service_start_date", "service_end_date", "service_deadline_date",
-    "payment_doc_date", "acceptance_doc_date", "prepayment_date",
+    "contract_date", "execution_term", "execution_term_changed",
+    "delivery_date", "acceptance_doc_date", "payment_doc_date",
+    "contract_end_date", "service_start_date", "service_end_date",
+    "procurement_planned_date", "service_deadline_date", "prepayment_date",
 }
-_DATETIME_FIELDS = {"submission_deadline"}
+_DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 
 
 def _coerce_patch_value(field: str, value):

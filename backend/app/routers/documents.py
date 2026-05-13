@@ -131,27 +131,41 @@ def _sum_items_price(p) -> float:
     return total
 
 
-async def _resolve_user_dept(user, db) -> str:
+async def _resolve_user_dept(user, db, org_id: Optional[int] = None) -> str:
     """Возвращает название отдела пользователя для шаблона СЗ.
 
-    Приоритет:
-      1) User.department (legacy строковое поле) — если заполнено
-      2) Department.name через user_organizations.dept_id (первая запись)
-      3) "" если ничего нет
+    Бизнес-правило: должность/отдел берутся per-org, по той организации,
+    к которой привязана субсидия закупки. Если юзер в этой org в нескольких
+    отделах — берём первый (по user_organizations.id).
 
-    Аргумент user может быть моделью User или None.
+    Приоритет:
+      1) Department.name через user_organizations где org_id == org_id (если задан)
+      2) Department.name через user_organizations первая запись (любая org)
+      3) User.department (legacy строковое поле)
+      4) "" если ничего нет
     """
     if user is None:
         return ""
-    # 1. Legacy строковое поле
-    dept_str = getattr(user, "department", None)
-    if dept_str:
-        return dept_str
-    # 2. Через user_organizations → Department
     try:
         from app.models.user_organization import UserOrganization
         from app.models.department import Department
         from sqlalchemy import select as _sel
+        # 1. В пределах org закупки
+        if org_id is not None:
+            res = await db.execute(
+                _sel(Department.name)
+                .join(UserOrganization, UserOrganization.dept_id == Department.id)
+                .where(
+                    UserOrganization.user_id == user.id,
+                    UserOrganization.org_id == org_id,
+                )
+                .order_by(UserOrganization.id)
+                .limit(1)
+            )
+            name = res.scalar_one_or_none()
+            if name:
+                return name
+        # 2. Любая первая
         res = await db.execute(
             _sel(Department.name)
             .join(UserOrganization, UserOrganization.dept_id == Department.id)
@@ -164,7 +178,49 @@ async def _resolve_user_dept(user, db) -> str:
             return name
     except Exception:
         pass
-    return ""
+    # 3. Legacy строковое поле
+    return getattr(user, "department", None) or ""
+
+
+async def _resolve_user_position(user, db, org_id: Optional[int] = None) -> str:
+    """Возвращает должность пользователя для шаблона СЗ.
+
+    Приоритет:
+      1) user_organizations.position где org_id == org_id (если задан и не пустой)
+      2) user_organizations.position первая (любая org)
+      3) User.position (legacy)
+      4) "" если нет
+    """
+    if user is None:
+        return ""
+    try:
+        from app.models.user_organization import UserOrganization
+        from sqlalchemy import select as _sel
+        if org_id is not None:
+            res = await db.execute(
+                _sel(UserOrganization.position)
+                .where(
+                    UserOrganization.user_id == user.id,
+                    UserOrganization.org_id == org_id,
+                )
+                .order_by(UserOrganization.id)
+                .limit(1)
+            )
+            pos = res.scalar_one_or_none()
+            if pos:
+                return pos
+        res = await db.execute(
+            _sel(UserOrganization.position)
+            .where(UserOrganization.user_id == user.id)
+            .order_by(UserOrganization.id)
+            .limit(1)
+        )
+        pos = res.scalar_one_or_none()
+        if pos:
+            return pos
+    except Exception:
+        pass
+    return getattr(user, "position", None) or ""
 
 
 def _format_service_term(p) -> str:
@@ -893,11 +949,22 @@ async def generate_document(
         "item_categories": item_categories_str,
         # Согласующие
         "approvers": approvers_list,
+        # Инициатор: ФИО берётся как есть; должность и отдел резолвятся per-org
+        # — по организации, к которой привязана субсидия закупки. Если у юзера
+        # несколько отделов в этой org — первый.
         "initiator_name": initiator.full_name if initiator else "",
-        "initiator_role": initiator.role_name if initiator else "",
+        "initiator_role": (
+            await _resolve_user_position(
+                initiator.user if (initiator and getattr(initiator, "user", None)) else None,
+                db,
+                getattr(subsidy, "org_id", None) if subsidy else None,
+            )
+            or (initiator.role_name if initiator else "")
+        ),
         "initiator_dept": await _resolve_user_dept(
             initiator.user if (initiator and getattr(initiator, "user", None)) else None,
             db,
+            getattr(subsidy, "org_id", None) if subsidy else None,
         ),
         # Мероприятие
         "event_name": event.name if event else "",

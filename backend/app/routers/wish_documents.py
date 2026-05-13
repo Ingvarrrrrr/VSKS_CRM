@@ -32,7 +32,11 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
-from app.routers.documents import _fmt_date, _fmt_money, TEMPLATES_DIR, _resolve_user_dept as _resolve_user_dept_for_wish
+from app.routers.documents import (
+    _fmt_date, _fmt_money, TEMPLATES_DIR,
+    _resolve_user_dept as _resolve_user_dept_for_wish,
+    _resolve_user_position as _resolve_user_position_for_wish,
+)
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-documents"])
 
@@ -218,12 +222,20 @@ async def generate_wish_service_note(
         "subsidy_name": w.subsidy.name if w.subsidy else "",
         "subsidy_year": w.subsidy.year if w.subsidy else "",
         "subsidy_budget": "",
-        # Initiator
+        # Initiator — должность/отдел per-org (org субсидии заявки)
         "initiator_name": (initiator.full_name if initiator else creator_full) or "",
-        "initiator_role": (initiator.role_name if initiator else "") or "",
+        "initiator_role": (
+            await _resolve_user_position_for_wish(
+                initiator.user if (initiator and getattr(initiator, "user", None)) else None,
+                db,
+                getattr(w.subsidy, "org_id", None) if w.subsidy else None,
+            )
+            or (initiator.role_name if initiator else "")
+        ),
         "initiator_dept": await _resolve_user_dept_for_wish(
             initiator.user if (initiator and getattr(initiator, "user", None)) else None,
             db,
+            getattr(w.subsidy, "org_id", None) if w.subsidy else None,
         ),
         # Items
         "items": items_list,

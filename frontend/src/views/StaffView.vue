@@ -1130,6 +1130,7 @@ const editDialog = reactive({
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
   exclude_from_directory: false,
+  org_id: null as number | null,
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
@@ -1476,6 +1477,7 @@ async function saveUser() {
 
 async function openEditUser(item: UserItem) {
   editDialog.userId = item.id
+  editDialog.org_id = item.org_id ?? null
   editDialog.username = item.username
   editDialog.full_name = item.full_name || ''
   editDialog.role = item.role
@@ -1618,6 +1620,12 @@ async function confirmDeleteOrgEntry(entry: any) {
 async function saveEditUser() {
   editDialog.saving = true
   try {
+    // Sync User.position (primary field) with per-org position of primary org before PATCH
+    const primaryEntryForBody = allOrgEntries.value.find(e => e.org_id === editDialog.org_id)
+    if (primaryEntryForBody && primaryEntryForBody.position !== undefined) {
+      editDialog.position = primaryEntryForBody.position || ''
+    }
+
     // PATCH user fields (NOT department text — managed via DepartmentMember API below)
     const body: any = {
       full_name: editDialog.full_name || null,
@@ -1665,11 +1673,12 @@ async function saveEditUser() {
 
       const desiredIds = new Set(editDialog.extraOrgIds)
 
-      // Add or update desired orgs
+      // Add or update desired orgs — read from allOrgEntries (reactive, bound to v-combobox)
       for (const oid of desiredIds) {
-        const pos = editDialog.orgPositions[oid] || null
-        const sal = editDialog.orgSalary[oid] ?? null
-        const pct = editDialog.orgPercent[oid] ?? null
+        const entry = allOrgEntries.value.find(e => e.org_id === oid)
+        const pos = entry ? (entry.position || null) : (editDialog.orgPositions[oid] || null)
+        const sal = entry ? (entry.salary_amount ?? null) : (editDialog.orgSalary[oid] ?? null)
+        const pct = entry ? (entry.employment_percent ?? null) : (editDialog.orgPercent[oid] ?? null)
         if (!currentOrgMap.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
             method: 'POST', body: { position: pos, salary_amount: sal, employment_percent: pct },

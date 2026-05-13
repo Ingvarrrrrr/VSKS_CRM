@@ -225,6 +225,19 @@
             <div class="chart-card-header">
               <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
               <span class="chart-card-title">Закупки по этапам</span>
+              <v-chip
+                size="x-small"
+                :color="selectedSubsidyIds.length === 0 ? 'grey' : 'primary'"
+                variant="tonal"
+                class="ml-2"
+                :title="selectedSubsidyIds.length === 0 ? 'Показаны закупки по всем субсидиям' : 'Применён фильтр субсидий'"
+              >
+                {{ selectedSubsidyIds.length === 0
+                  ? 'Все субсидии'
+                  : selectedSubsidyIds.length === 1
+                    ? (allSubsidies.find(s => s.id === selectedSubsidyIds[0])?.name || '1 субсидия')
+                    : `${selectedSubsidyIds.length} субсидий` }}
+              </v-chip>
               <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
             </div>
             <div v-if="totalBudget > 0 || pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">

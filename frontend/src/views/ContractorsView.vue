@@ -220,6 +220,20 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4" style="max-height:75vh">
+          <v-alert
+            v-if="existingContractor"
+            type="info"
+            density="compact"
+            class="mb-2"
+          >
+            Контрагент с таким ИНН уже существует в базе:
+            <strong>{{ existingContractor.name }}</strong>
+            <template #append>
+              <v-btn size="small" color="primary" variant="tonal" @click="openExistingContractor">
+                Открыть карточку
+              </v-btn>
+            </template>
+          </v-alert>
           <v-form ref="formRef">
             <div class="section-label">Загрузить из файла</div>
             <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
@@ -367,7 +381,7 @@
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" @click="save">Сохранить</v-btn>
+          <v-btn color="primary" :loading="saving" :disabled="!!existingContractor" @click="save">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -654,6 +668,7 @@ const saving      = ref(false)
 const fnsLoading  = ref(false)
 const fnsMessage  = ref('')
 const fnsMessageType = ref<'success' | 'info' | 'error' | 'warning'>('info')
+const existingContractor = ref<{ id: number; name: string } | null>(null)
 
 // Confirmation dialog for EGRUL diff
 const egrulDiffDialog = ref(false)
@@ -770,6 +785,7 @@ function clearFilters() {
 let _innTimeout: any = null
 function onInnChange(val: string) {
   clearTimeout(_innTimeout)
+  existingContractor.value = null
   const inn = (val || '').replace(/\D/g, '')
   if (inn.length === 10 || inn.length === 12) {
     _innTimeout = setTimeout(() => lookupFns(), 400)
@@ -783,8 +799,15 @@ async function lookupFns(forceEgrul = false) {
   fnsMessage.value = ''
   try {
     const url = forceEgrul ? `/contractors/lookup-inn/${inn}?force_egrul=1` : `/contractors/lookup-inn/${inn}`
-    const data = await apiFetch<Record<string, string | null>>(url)
+    const data = await apiFetch<Record<string, any>>(url)
     const source = (data as any)._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
+
+    // If the lookup found an existing local contractor (not the one being edited) — show alert
+    if ((data as any)._source === 'local' && (data as any).id && (data as any).id !== editId.value) {
+      existingContractor.value = { id: (data as any).id, name: (data as any).name || '' }
+    } else {
+      existingContractor.value = null
+    }
 
     // Build diff: compare EGRUL fields with current form values
     const diffs: { label: string; old: string; new: string }[] = []
@@ -917,11 +940,23 @@ function openAdd() {
   editId.value = null
   form.value = emptyForm()
   fnsMessage.value = ''
+  existingContractor.value = null
   contractorCardFile.value = null
   dialog.value = true
 }
 
+function openExistingContractor() {
+  if (!existingContractor.value) return
+  const found = contractors.value.find(c => c.id === existingContractor.value!.id)
+  existingContractor.value = null
+  dialog.value = false
+  if (found) {
+    openEdit(found)
+  }
+}
+
 function openEdit(c: ContractorWithStats) {
+  existingContractor.value = null
   editId.value = c.id
   form.value = {
     name:                 c.name,

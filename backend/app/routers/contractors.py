@@ -611,6 +611,7 @@ async def lookup_inn(
             raw_phone = None
             logger.warning("lookup_inn: phone field contained INN for contractor %s, suppressed", inn)
         return {
+            "id": local_contractor.id,
             "name": local_contractor.name,
             "inn": local_contractor.inn,
             "kpp": local_contractor.kpp,

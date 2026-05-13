@@ -456,7 +456,7 @@ async function load() {
   } catch (e) { console.error('Load error:', e) }
   finally { loading.value = false }
   // Load users lazily after paint
-  apiFetch<any[]>('/users/').then(users => {
+  apiFetch<any[]>('/users/in-my-orgs').then(users => {
     userItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
   }).catch(() => {})
   apiFetch<any[]>(`/users/${currentUserId}/subordinates`).then(subs => {

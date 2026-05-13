@@ -91,6 +91,39 @@ async def create_user(
     return user
 
 
+@router.get("/in-my-orgs", response_model=List[UserOut])
+async def list_users_in_my_orgs(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Возвращает всех пользователей из всех организаций текущего юзера.
+    Используется для autocomplete «Исполнитель» в MyTasksView (без hierarchy-фильтра).
+    Для не-подчинённых назначаемых create_task выставит consent_needed=true.
+    """
+    from app.models.user_organization import UserOrganization
+    # 1. orgs где состоит текущий юзер
+    own_orgs_q = await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
+    )
+    own_orgs = [r[0] for r in own_orgs_q.all()]
+    if not own_orgs:
+        return []
+    # 2. user_ids в этих орг
+    uids_q = await db.execute(
+        select(UserOrganization.user_id).where(UserOrganization.org_id.in_(own_orgs)).distinct()
+    )
+    user_ids = [r[0] for r in uids_q.all()]
+    if not user_ids:
+        return []
+    # 3. сами user-записи (с фильтром superadmin кроме самого superadmin'а — D-09)
+    q = select(User).where(User.id.in_(user_ids)).order_by(User.full_name)
+    if current_user.role != 'superadmin':
+        q = q.where(User.role != 'superadmin')
+    res = await db.execute(q)
+    return res.scalars().all()
+
+
 @router.get("/me", response_model=UserOut)
 async def get_me(
     org_id: Optional[int] = Query(None),

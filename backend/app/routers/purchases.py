@@ -14,6 +14,7 @@ from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.auth.visibility import build_visibility_clause, get_visible_user_ids
 from app.auth.permissions import require_tab
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
@@ -160,7 +161,6 @@ async def list_purchases(
     current_user: User = Depends(get_current_user),
 ):
     from app.models.subsidy import Subsidy
-    from app.models.purchase_event import PurchaseMember
     q = select(Purchase).options(
         selectinload(Purchase.contractor),
         selectinload(Purchase.feo_category),
@@ -179,114 +179,24 @@ async def list_purchases(
             q = q.where(Subsidy.org_id == org_id)
         elif org_ids is not None:
             q = q.where(Subsidy.org_id.in_(org_ids))
-    # Visibility by hierarchy position (business rule, not title):
-    # - superadmin / account_owner: SaaS-level, see everything in tenant (already
-    #   scoped by get_org_filter above; no extra user-level filter).
-    # - employee: sees ONLY purchases where they are the executor OR a participant
-    #   (PurchaseMember); no one else's rows, even if they share an org.
-    # - everyone else (manager, admin, org_admin): sees own + recursive subordinates
-    #   + managed-department members + managed-organization members (by hierarchy).
-    #   Being 'admin' is a system-privilege role (delete/export/settings), not a
-    #   visibility role — an admin without subordinates sees only their own stuff.
-    # Chat participation (purchase-linked rooms) — a user can join a purchase
-    # discussion via @mention / consent, and that also means "I participate".
-    from app.models.chat_room import ChatRoom, ChatParticipant
-    chat_pids_me = (
-        select(ChatRoom.entity_id)
-        .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
-        .where(
-            ChatParticipant.user_id == current_user.id,
-            ChatRoom.entity_type == 'purchase',
-            ChatRoom.entity_id.isnot(None),
-        )
-    )
-
-    if current_user.role not in ('superadmin', 'account_owner'):
-        # All non-SaaS roles follow the same hierarchy rule (employee included).
-        # employee without subordinates/depts ends up seeing only their own purchases.
-        from app.models.manager_organization import ManagerOrganization
-        from app.models.manager_department import ManagerDepartment
-        from app.models.department import Department, DepartmentMember
-        from app.routers.user_hierarchy import get_all_subordinate_ids
-
-        visible_user_ids = {current_user.id}
-
-        # Recursive subordinates (all levels via CTE)
-        sub_ids = await get_all_subordinate_ids(current_user.id, db)
-        visible_user_ids.update(sub_ids)
-
-        # Department head: departments where current_user is head (Department.head_user_id)
-        headed_dept_res = await db.execute(
-            select(Department.id).where(Department.head_user_id == current_user.id)
-        )
-        headed_dept_ids = [r[0] for r in headed_dept_res.all()]
-        if headed_dept_ids:
-            head_dm_res = await db.execute(
-                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(headed_dept_ids))
-            )
-            visible_user_ids.update(r[0] for r in head_dm_res.all())
-
-        # Members of managed depts (ManagerDepartment explicit assignment)
-        md_res = await db.execute(
-            select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
-        )
-        managed_dept_ids = [r[0] for r in md_res.all()]
-        if managed_dept_ids:
-            dm_res = await db.execute(
-                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
-            )
-            visible_user_ids.update(r[0] for r in dm_res.all())
-
-        # Members of managed orgs
-        mo_res = await db.execute(
-            select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
-        )
-        managed_org_ids = [r[0] for r in mo_res.all()]
-        if managed_org_ids:
-            org_users = await db.execute(select(User.id).where(User.org_id.in_(managed_org_ids)))
-            visible_user_ids.update(r[0] for r in org_users.all())
-
-        # Per-org role: user_org_access.role IN ('org_admin','manager') → see all members of that org
-        from app.models.user_org_access import UserOrgAccess
-        uoa_orgs_res = await db.execute(
-            select(UserOrgAccess.org_id).where(
-                UserOrgAccess.user_id == current_user.id,
-                UserOrgAccess.role.in_(['org_admin', 'manager']),
-            )
-        )
-        uoa_org_ids = [r[0] for r in uoa_orgs_res.all()]
-        if uoa_org_ids:
-            uoa_members_res = await db.execute(
-                select(User.id).where(
-                    User.org_id.in_(uoa_org_ids),
-                    User.role != 'superadmin',
-                )
-            )
-            visible_user_ids.update(r[0] for r in uoa_members_res.all())
-
-        # Filter: assigned to visible user OR purchase member OR chat-room participant.
-        # Org-leads (admin/account_owner role, headed/managed dept, managed org,
-        # UOA org_admin/manager) ADDITIONALLY see unassigned (assigned_user_id IS NULL)
-        # purchases within their org — first-layer org_id filter already scopes them
-        # to the lead's organisation, so this is not a cross-org leak. Plain employees
-        # still don't see NULL-assigned purchases (the prior behaviour that motivated
-        # the drop of the NULL-branch).
+    # Phase 28: unified visibility helper.
+    # — build_visibility_clause возвращает None для SaaS-ролей (фильтр не нужен),
+    #   иначе or_() с правилами 1-5 (иерархия + участие).
+    clause = await build_visibility_clause(current_user, db, 'purchase')
+    if clause is not None:
+        # Safety-net: для org-lead'ов всё ещё пропускаем закупки с
+        # assigned_user_id IS NULL — на проде осталась 1 legacy-закупка
+        # (id 779 без subsidy_id), будет удалена после ручного triage.
+        # Org-lead = admin/account_owner ИЛИ есть head/managed dept/org/UOA.
+        # Используем visible_user_ids: если size > 1 → user управляет ≥1 чел.
+        vuids = await get_visible_user_ids(current_user, db)
         is_org_lead = (
             current_user.role in ADMIN_ROLES
-            or bool(headed_dept_ids)
-            or bool(managed_dept_ids)
-            or bool(managed_org_ids)
-            or bool(uoa_org_ids)
+            or (vuids is not None and len(vuids) > 1)
         )
-        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
-        conditions = [
-            Purchase.assigned_user_id.in_(visible_user_ids),
-            Purchase.id.in_(member_pids),
-            Purchase.id.in_(chat_pids_me),
-        ]
         if is_org_lead:
-            conditions.append(Purchase.assigned_user_id.is_(None))
-        q = q.where(or_(*conditions))
+            clause = or_(clause, Purchase.assigned_user_id.is_(None))
+        q = q.where(clause)
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:

@@ -308,8 +308,13 @@ async function enrichFromEgrul() {
       egrulDiffDialog.value = true
     }
   } catch (e: any) {
-    egrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
-    egrulMessageType.value = 'error'
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      egrulMessage.value = e.payload.message
+      egrulMessageType.value = 'warning'
+    } else {
+      egrulMessage.value = e?.message || 'Ошибка запроса к ФНС'
+      egrulMessageType.value = 'error'
+    }
   } finally {
     egrulLoading.value = false
   }

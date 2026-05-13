@@ -2406,8 +2406,13 @@ async function lookupQcInn(inn: string) {
       : `Найден: ${data.name || inn} (${source}). Поля уже заполнены.`
     qcInnMessageType.value = filled.length ? 'success' : 'info'
   } catch (e: any) {
-    qcInnMessage.value = e?.detail || 'ИНН не найден'
-    qcInnMessageType.value = 'error'
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      qcInnMessage.value = e.payload.message
+      qcInnMessageType.value = 'warning'
+    } else {
+      qcInnMessage.value = e?.message || 'Ошибка запроса к ФНС'
+      qcInnMessageType.value = 'error'
+    }
   } finally {
     qcInnLoading.value = false
   }

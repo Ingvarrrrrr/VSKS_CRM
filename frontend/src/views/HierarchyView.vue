@@ -1471,8 +1471,13 @@ async function enrichNewOrgFromEgrul() {
     newOrgEgrulMessage.value = 'Данные заполнены из ЕГРЮЛ'
     newOrgEgrulMessageType.value = 'success'
   } catch (e: any) {
-    newOrgEgrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
-    newOrgEgrulMessageType.value = 'error'
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      newOrgEgrulMessage.value = e.payload.message
+      newOrgEgrulMessageType.value = 'warning'
+    } else {
+      newOrgEgrulMessage.value = e?.message || 'Ошибка запроса к ФНС'
+      newOrgEgrulMessageType.value = 'error'
+    }
   } finally {
     newOrgEgrulLoading.value = false
   }
@@ -1494,8 +1499,13 @@ async function enrichEditOrgFromEgrul() {
     editOrgEgrulMessage.value = 'Данные обновлены из ЕГРЮЛ'
     editOrgEgrulMessageType.value = 'success'
   } catch (e: any) {
-    editOrgEgrulMessage.value = e?.detail || 'ИНН не найден в ЕГРЮЛ'
-    editOrgEgrulMessageType.value = 'error'
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      editOrgEgrulMessage.value = e.payload.message
+      editOrgEgrulMessageType.value = 'warning'
+    } else {
+      editOrgEgrulMessage.value = e?.message || 'Ошибка запроса к ФНС'
+      editOrgEgrulMessageType.value = 'error'
+    }
   } finally {
     editOrgEgrulLoading.value = false
   }

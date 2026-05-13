@@ -657,7 +657,14 @@ async def lookup_inn(
                     break
 
             if not rows:
-                raise HTTPException(404, f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП")
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "INN_NOT_FOUND",
+                        "message": f"ИНН {inn} не найден в базе и не зарегистрирован в ЕГРЮЛ/ЕГРИП. Проверьте правильность ввода.",
+                        "hint": "Если организация существует, попробуйте найти её по названию или КПП.",
+                    },
+                )
 
             row = rows[0]  # first match
             result = {

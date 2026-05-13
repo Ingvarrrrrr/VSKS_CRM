@@ -10,7 +10,7 @@ Endpoints:
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
@@ -482,26 +482,32 @@ async def update_user_org_position(
     current_user: User = Depends(require_tab('staff')),
 ):
     """Update user's position in a specific extra organization."""
-    row = (await db.execute(
-        select(UserOrganization).where(
-            UserOrganization.user_id == uid,
-            UserOrganization.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    if not row:
-        # Auto-create for primary org
-        user = await db.get(User, uid)
-        if user and user.org_id == org_id:
-            row = UserOrganization(user_id=uid, org_id=org_id, position=body.position)
-            db.add(row)
-        else:
-            raise HTTPException(404, "Членство не найдено")
+    # Use UPDATE ... WHERE to avoid MultipleResultsFound when user has several
+    # dept rows for the same org (multi-dept case, e.g. Цыганов in org_id=1).
+    values: dict = {}
     if body.position is not None:
-        row.position = body.position
+        values["position"] = body.position
     if body.salary_amount is not None:
-        row.salary_amount = body.salary_amount
+        values["salary_amount"] = body.salary_amount
     if body.employment_percent is not None:
-        row.employment_percent = body.employment_percent
+        values["employment_percent"] = body.employment_percent
+
+    if values:
+        result = await db.execute(
+            sa_update(UserOrganization)
+            .where(
+                UserOrganization.user_id == uid,
+                UserOrganization.org_id == org_id,
+            )
+            .values(**values)
+        )
+        if result.rowcount == 0:
+            # No existing rows — auto-create for primary org
+            user = await db.get(User, uid)
+            if user and user.org_id == org_id:
+                db.add(UserOrganization(user_id=uid, org_id=org_id, **values))
+            else:
+                raise HTTPException(404, "Членство не найдено")
     await db.commit()
     return {"ok": True}
 

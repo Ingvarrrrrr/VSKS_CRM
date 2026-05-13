@@ -841,8 +841,13 @@ async function lookupFns(forceEgrul = false) {
     fnsMessage.value = `Получены данные из ${source}. Подтвердите обновление.`
     fnsMessageType.value = 'info'
   } catch (e: any) {
-    fnsMessage.value = e.message || 'Ошибка запроса к ФНС'
-    fnsMessageType.value = 'error'
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      fnsMessage.value = e.payload.message
+      fnsMessageType.value = 'warning'
+    } else {
+      fnsMessage.value = e.message || 'Ошибка запроса к ФНС'
+      fnsMessageType.value = 'error'
+    }
   } finally {
     fnsLoading.value = false
   }

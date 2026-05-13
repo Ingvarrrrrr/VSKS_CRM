@@ -538,6 +538,21 @@
             :user-role="editDialog.role"
             :org-access-list="dedupOrgAccess(allOrgEntries)"
           />
+
+          <!-- Диагностика видимости: отделы, которые возглавляет сотрудник -->
+          <div v-if="editDialog.headedDepts.length" class="mt-3 pa-3 rounded-lg" style="background:rgba(0,128,100,0.07);border-left:3px solid #00897b">
+            <div class="text-caption text-medium-emphasis mb-2 d-flex align-center">
+              <v-icon size="14" class="mr-1" color="teal">mdi-eye-check-outline</v-icon>
+              Видимость: возглавляет отдел(ы) — видит закупки/задачи всех участников:
+            </div>
+            <v-chip v-for="d in editDialog.headedDepts" :key="d.id" size="x-small" color="teal" variant="tonal" class="mr-1 mb-1">
+              <v-icon start size="10">mdi-crown</v-icon>{{ d.name }}{{ d.org_name ? ' · ' + d.org_name : '' }}
+            </v-chip>
+          </div>
+          <div v-else-if="editDialog.userId" class="mt-2 text-caption" style="color:#e65100">
+            <v-icon size="13" color="warning" class="mr-1">mdi-alert-outline</v-icon>
+            Не назначен начальником ни одного отдела — видит только свои закупки/задачи (+ подчинённые по иерархии).
+          </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-account-convert" @click="syncToContractor(editDialog.userId)">
@@ -1141,6 +1156,8 @@ const editDialog = reactive({
   deptId: null as number | null,
   origDeptId: null as number | null,
   origPosition: '',
+  // Diagnostic: departments where this user is head (head_user_id)
+  headedDepts: [] as { id: number; name: string; org_name?: string }[],
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -1560,6 +1577,21 @@ async function openEditUser(item: UserItem) {
   try {
     const photoRes = await apiFetch<{ photo_url: string | null }>(`/users/${item.id}/photo`)
     editDialog.profile_photo = photoRes.photo_url || ''
+  } catch { /* ignore */ }
+
+  // Diagnostic: departments this user heads (head_user_id), for visibility audit.
+  // Also loads managed-orgs from hierarchy endpoint if available.
+  editDialog.headedDepts = []
+  editDialog.headedOrgs = []
+  try {
+    const allDepts = flatDepts(deptTree.value)
+    editDialog.headedDepts = allDepts
+      .filter((d: any) => d.head_user_id === item.id)
+      .map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        org_name: (organizations.value.find((o: any) => o.id === d.org_id) as any)?.name,
+      }))
   } catch { /* ignore */ }
 }
 

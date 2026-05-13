@@ -49,7 +49,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }
     // 409 Conflict = expected business logic error; handled locally by callers, no global dialog
-    if (res.status !== 409) {
+    // INN_NOT_FOUND = user-facing "not found", handled locally with friendly snackbar
+    const suppressGlobal = res.status === 409 || payload.code === 'INN_NOT_FOUND'
+    if (!suppressGlobal) {
       window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
     }
     const err: any = new Error(payload.message)

@@ -363,21 +363,22 @@ async def add_member(
     if user:
         user.department = dept.name
         await db.commit()
-    # Sync UserOrganization: ensure user has org record with dept_id
+    # Sync UserOrganization: ensure user has org record with this dept_id.
+    # User may have multiple UO rows for the same org (multi-dept) — first look
+    # for a row that already targets this exact dept_id, then fall back to any
+    # existing row for UPSERT (avoids scalar_one_or_none MultipleResultsFound).
     from app.models.user_organization import UserOrganization as _UO
-    uo = (await db.execute(
-        select(_UO).where(_UO.user_id == data.user_id, _UO.org_id == dept.org_id)
+    uo_exact = (await db.execute(
+        select(_UO).where(_UO.user_id == data.user_id, _UO.org_id == dept.org_id, _UO.dept_id == dept_id)
     )).scalar_one_or_none()
-    if uo:
-        uo.dept_id = dept_id
-        if not uo.position and data.position:
-            uo.position = data.position
-    elif user and user.org_id != dept.org_id:
-        # Extra org — create UserOrganization record
-        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=data.position))
-    elif user and user.org_id == dept.org_id:
-        # Primary org — create record to store dept_id
-        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=data.position or user.position))
+    if uo_exact:
+        # Row already correct — just sync position if needed
+        if not uo_exact.position and data.position:
+            uo_exact.position = data.position
+    else:
+        # No row for this dept yet — insert a new one (multi-dept allowed)
+        new_pos = data.position or (user.position if user else None)
+        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos))
     await db.commit()
     # Auto-create hierarchy: new member becomes subordinate of dept head
     if dept.head_user_id and dept.head_user_id != data.user_id:
@@ -463,8 +464,22 @@ async def remove_member(
     if dm_row:
         await db.delete(dm_row)
     for uo in uo_rows:
-        # Don't delete UO row — preserve org membership + salary; just unset dept_id
-        uo.dept_id = None
+        # Check whether a dept_id=NULL row for (user, org) already exists.
+        # If it does, a simple SET dept_id=NULL would violate ux_user_org_dept —
+        # instead delete this redundant row (org membership preserved by the
+        # existing NULL-row with its salary/position data).
+        conflict = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == uo.user_id,
+                UserOrganization.org_id == uo.org_id,
+                UserOrganization.dept_id.is_(None),
+                UserOrganization.id != uo.id,
+            )
+        )).scalar_one_or_none()
+        if conflict is not None:
+            await db.delete(uo)
+        else:
+            uo.dept_id = None
 
     await db.commit()
     # Clear user.department — check if user still has other dept memberships

@@ -4907,7 +4907,11 @@ async function lookupContractorInn() {
     egrulDiffPending.value = pending
     egrulDiffDialog.value = true
   } catch (e: any) {
-    showSnack(e?.message || 'ИНН не найден в ЕГРЮЛ', 'error')
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      showSnack(e.payload.message, 'warning')
+    } else {
+      showSnack(e?.message || 'Ошибка запроса к ФНС', 'error')
+    }
   }
 }
 

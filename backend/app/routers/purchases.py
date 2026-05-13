@@ -184,29 +184,32 @@ async def list_purchases(
         )
     )
 
-    if current_user.role == 'employee':
-        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id == current_user.id)
-        q = q.where(
-            (Purchase.assigned_user_id == current_user.id) |
-            (Purchase.id.in_(member_pids)) |
-            (Purchase.id.in_(chat_pids_me))
-        )
-    elif current_user.role not in ('superadmin', 'account_owner'):
-        # manager / admin / org_admin — all follow the same hierarchy rule.
-        from app.models.user_hierarchy import UserHierarchy
+    if current_user.role not in ('superadmin', 'account_owner'):
+        # All non-SaaS roles follow the same hierarchy rule (employee included).
+        # employee without subordinates/depts ends up seeing only their own purchases.
         from app.models.manager_organization import ManagerOrganization
         from app.models.manager_department import ManagerDepartment
-        from app.models.department import DepartmentMember
+        from app.models.department import Department, DepartmentMember
+        from app.routers.user_hierarchy import get_all_subordinate_ids
 
         visible_user_ids = {current_user.id}
 
-        # Direct subordinates
-        sub_res = await db.execute(
-            select(UserHierarchy.subordinate_id).where(UserHierarchy.manager_id == current_user.id)
-        )
-        visible_user_ids.update(r[0] for r in sub_res.all())
+        # Recursive subordinates (all levels via CTE)
+        sub_ids = await get_all_subordinate_ids(current_user.id, db)
+        visible_user_ids.update(sub_ids)
 
-        # Members of managed depts
+        # Department head: departments where current_user is head (Department.head_user_id)
+        headed_dept_res = await db.execute(
+            select(Department.id).where(Department.head_user_id == current_user.id)
+        )
+        headed_dept_ids = [r[0] for r in headed_dept_res.all()]
+        if headed_dept_ids:
+            head_dm_res = await db.execute(
+                select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(headed_dept_ids))
+            )
+            visible_user_ids.update(r[0] for r in head_dm_res.all())
+
+        # Members of managed depts (ManagerDepartment explicit assignment)
         md_res = await db.execute(
             select(ManagerDepartment.dept_id).where(ManagerDepartment.manager_user_id == current_user.id)
         )

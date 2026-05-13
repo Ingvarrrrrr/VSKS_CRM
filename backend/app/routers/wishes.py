@@ -10,6 +10,7 @@ from app.auth.jwt import (
     ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES,
 )
 from app.auth.permissions import require_tab
+from app.auth.visibility import build_visibility_clause
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -67,9 +68,10 @@ async def list_wishes(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List wishes. Employee sees only own; manager/admin sees all in org.
+    """List wishes with unified visibility (Phase 28 Bundle 2B).
     assigned_to_me=true: wishes where current user is the assignee.
     subordinates_only=true: wishes created by direct subordinates (not current user).
+    mine_only=true / role==employee: show only own wishes (shortcut filters).
     """
     from app.models.user_hierarchy import UserHierarchy
 
@@ -85,7 +87,7 @@ async def list_wishes(
         q = q.where(Wish.org_id.in_(org_ids))
 
     if assigned_to_me:
-        # Wishes where I am the designated approver
+        # Explicit shortcut: wishes where I am the designated approver
         q = q.where(Wish.assigned_to == current_user.id)
     elif mine_only or current_user.role == 'employee':
         # Employee always sees only own; or explicit mine_only flag
@@ -97,12 +99,16 @@ async def list_wishes(
         )
         subordinate_ids = [r[0] for r in hier_res.all()]
         if not subordinate_ids:
-            # No subordinates — return empty list
             return []
         q = q.where(
             Wish.created_by.in_(subordinate_ids),
             Wish.created_by != current_user.id,
         )
+    else:
+        # Phase 28: unified visibility helper
+        clause = await build_visibility_clause(current_user, db, 'wish')
+        if clause is not None:
+            q = q.where(clause)
 
     if status and status != 'all':
         q = q.where(Wish.status == status)

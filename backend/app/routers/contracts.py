@@ -10,6 +10,7 @@ from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab, require_action
+from app.auth.visibility import build_visibility_clause
 from app.models.subsidy import Subsidy
 from typing import List, Optional, Literal
 from decimal import Decimal
@@ -81,6 +82,10 @@ async def list_contracts(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, Contract.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+    # Phase 28 Bundle 3: user-level visibility filter (was missing — data leak fix).
+    clause = await build_visibility_clause(current_user, db, 'contract')
+    if clause is not None:
+        q = q.where(clause)
     result = await db.execute(q)
     contracts = result.scalars().all()
     out = []

@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, func, and_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority, TaskAssignee
@@ -17,6 +17,7 @@ from datetime import date, datetime
 from app.chat_manager import manager as chat_manager
 from app.models.chat_room import ChatRoom, ChatParticipant
 from app.models.chat_message import ChatMessage
+from app.auth.visibility import build_visibility_clause
 
 logger = logging.getLogger(__name__)
 
@@ -48,36 +49,10 @@ async def list_tasks(
     elif org_ids is not None:
         q = q.where(Task.org_id.in_(org_ids))
 
-    # Visibility = hierarchy ∪ direct participation by the current user.
-    # Hierarchy picks up tasks where *anyone in my reporting tree* is creator
-    # or assignee. Direct participation picks up tasks I'm personally involved
-    # in:
-    #   - I commented (TaskComment)
-    #   - I'm a chat-room participant for a room linked to the task
-    #     (entity_type='task'); this covers @mentions and discussion invites
-    # Direct participation is NOT inherited downward — only my own.
-    visible_ids = await _get_visible_user_ids(current_user, db)
-    if visible_ids is not None:
-        assignee_tasks = select(TaskAssignee.task_id).where(TaskAssignee.user_id.in_(visible_ids)).scalar_subquery()
-        commented_tasks = select(TaskComment.task_id).where(TaskComment.user_id == current_user.id).scalar_subquery()
-        chat_tasks = (
-            select(ChatRoom.entity_id)
-            .join(ChatParticipant, ChatParticipant.room_id == ChatRoom.id)
-            .where(
-                ChatParticipant.user_id == current_user.id,
-                ChatRoom.entity_type == 'task',
-                ChatRoom.entity_id.isnot(None),
-            )
-            .scalar_subquery()
-        )
-        q = q.where(
-            or_(
-                Task.created_by_id.in_(visible_ids),
-                Task.id.in_(assignee_tasks),
-                Task.id.in_(commented_tasks),
-                Task.id.in_(chat_tasks),
-            )
-        )
+    # Phase 28 Bundle 2B: unified visibility helper replaces inline logic.
+    clause = await build_visibility_clause(current_user, db, 'task')
+    if clause is not None:
+        q = q.where(clause)
 
     if status:
         q = q.where(Task.status == status)

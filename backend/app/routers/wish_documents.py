@@ -106,10 +106,13 @@ async def generate_wish_service_note(
         )
 
     # ── Load initiator if provided ──────────────────────────────────────────
-    # Priority: user_id match (frontend sends User.id) → SubsidyApprover.id (legacy) → raw User
+    # Frontend всегда шлёт User.id. Стратегия:
+    #   1) SubsidyApprover с привязкой user_id → подхватываем role_name из карточки
+    #   2) Виртуальный approver из User (SimpleNamespace)
+    # Старый fallback по SubsidyApprover.id убран — он подставлял случайного
+    # человека при численном совпадении SubsidyApprover.id с User.id.
     initiator = None
     if initiator_id:
-        # 1. Try matching by user_id (frontend passes User.id, not SubsidyApprover.id)
         res = await db.execute(
             select(SubsidyApprover)
             .where(SubsidyApprover.user_id == initiator_id)
@@ -118,15 +121,6 @@ async def generate_wish_service_note(
             .limit(1)
         )
         initiator = res.scalar_one_or_none()
-        # 2. Fallback: SubsidyApprover.id (legacy behaviour)
-        if initiator is None:
-            res = await db.execute(
-                select(SubsidyApprover)
-                .where(SubsidyApprover.id == initiator_id)
-                .options(selectinload(SubsidyApprover.user))
-            )
-            initiator = res.scalar_one_or_none()
-        # 3. Final fallback: User record only — build a virtual approver object
         if initiator is None:
             from app.models.user import User as UserModel
             from types import SimpleNamespace

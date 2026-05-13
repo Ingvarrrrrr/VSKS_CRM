@@ -394,11 +394,16 @@ async def generate_document(
             )
             selected_approvers = res.scalars().all()
 
-    # Load initiator if requested (with user for initiator_dept)
-    # Priority: user_id match (frontend sends User.id) → SubsidyApprover.id (legacy) → raw User fallback
+    # Load initiator if requested (frontend always sends User.id, not SubsidyApprover.id).
+    # Стратегия:
+    #   1) SubsidyApprover.user_id == initiator_id (привязанный к субсидии approver) →
+    #      берёт full_name/role_name из карточки approver'а.
+    #   2) Иначе — построить виртуальный approver из User (SimpleNamespace).
+    # Старый fallback по SubsidyApprover.id убран — он подставлял случайного человека
+    # когда SubsidyApprover.id численно совпадал с User.id (баг: Цыганов → Борисов).
     initiator = None
     if initiator_id:
-        # 1. Try matching by user_id (frontend passes User.id, not SubsidyApprover.id)
+        # 1. Привязанный approver субсидии (если есть)
         res = await db.execute(
             select(SubsidyApprover)
             .where(SubsidyApprover.user_id == initiator_id)
@@ -407,15 +412,7 @@ async def generate_document(
             .limit(1)
         )
         initiator = res.scalar_one_or_none()
-        # 2. Fallback: SubsidyApprover.id (legacy behaviour)
-        if initiator is None:
-            res = await db.execute(
-                select(SubsidyApprover)
-                .where(SubsidyApprover.id == initiator_id)
-                .options(selectinload(SubsidyApprover.user))
-            )
-            initiator = res.scalar_one_or_none()
-        # 3. Final fallback: User record only — build a virtual approver object
+        # 2. Виртуальный approver из User
         if initiator is None:
             from app.models.user import User as UserModel
             from types import SimpleNamespace

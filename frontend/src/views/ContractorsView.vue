@@ -265,7 +265,8 @@
             <v-btn
               variant="tonal" color="primary" size="small" class="mt-2 mb-2"
               prepend-icon="mdi-database-search-outline"
-              :loading="fnsLoading" :disabled="!form.inn || form.inn.length < 10"
+              :loading="fnsLoading"
+              :disabled="!form.inn || form.inn.length < 10 || !!existingContractor"
               @click="lookupFns(true)"
             >
               Заполнить на основании ИНН из ЕГРЮЛ
@@ -805,6 +806,12 @@ async function lookupFns(forceEgrul = false) {
     // If the lookup found an existing local contractor (not the one being edited) — show alert
     if ((data as any)._source === 'local' && (data as any).id && (data as any).id !== editId.value) {
       existingContractor.value = { id: (data as any).id, name: (data as any).name || '' }
+      // Не показываем diff-диалог поверх banner'а — banner уже сообщает «Контрагент уже
+      // существует», действие = «Открыть карточку». Сравнение БД↔ЕГРЮЛ имеет смысл только
+      // внутри edit-режима existing-контрагента, не в add-режиме.
+      fnsMessage.value = ''
+      fnsMessageType.value = 'info'
+      return
     } else {
       existingContractor.value = null
     }

@@ -273,7 +273,7 @@
         </template>
         <template #header.purchase_type="{ column }">
           <ColumnHeaderMenu col-key="purchase_type" :title="column.title" col-type="enum"
-            :items="['Разовый', 'Рамочный', 'Авансовый', 'По счёту', 'Конкурентный']"
+            :items="['Разовый', 'Рамочный', 'Авансовый', 'По счёту']"
             :model-value="cfg.state.value.filters['purchase_type'] ?? null"
             :sort-by="getSortBy('purchase_type')"
             @update:model-value="v => cfg.setFilter('purchase_type', v)"
@@ -1023,10 +1023,19 @@ function uniqValues(rows: any[], key: string): (string | number | null)[] {
   return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
 }
 
+// Field getters for computed/derived columns where row[key] is undefined.
+const FIELD_GETTERS: Record<string, (r: any) => any> = {
+  effective_price: (r) => effectivePrice(r),
+}
+function getRowField(row: any, key: string): any {
+  const getter = FIELD_GETTERS[key]
+  return getter ? getter(row) : (row?.[key] ?? null)
+}
+
 function matchesColumnFilters(row: any): boolean {
   const filters = cfg.state.value.filters
   for (const [k, f] of Object.entries(filters)) {
-    const v = row?.[k] ?? null
+    const v = getRowField(row, k)
     if (f.type === 'text') {
       if (!f.q) continue
       if (!String(v ?? '').toLowerCase().includes(f.q.toLowerCase())) return false
@@ -1259,9 +1268,14 @@ const filteredOrdersWithRowNum = computed(() => {
   if (localSort.value) {
     const { key, order } = localSort.value
     result = [...result].sort((a, b) => {
-      const av = (a as any)[key] ?? null
-      const bv = (b as any)[key] ?? null
-      const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'ru', { numeric: true })
+      const av = getRowField(a, key)
+      const bv = getRowField(b, key)
+      // Numeric-aware: если оба числа, сравниваем как числа
+      const an = typeof av === 'number' ? av : parseFloat(av)
+      const bn = typeof bv === 'number' ? bv : parseFloat(bv)
+      let cmp: number
+      if (!isNaN(an) && !isNaN(bn)) cmp = an - bn
+      else cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'ru', { numeric: true })
       return order === 'asc' ? cmp : -cmp
     })
   }

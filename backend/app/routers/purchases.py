@@ -713,7 +713,10 @@ PATCHABLE_FIELDS = {
     "service_deadline_date", "third_party_involved",
     "vat_applicable", "vat_rate", "vat_exemption_article",
     "acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number",
-    "acceptance_doc_amount", "payment_doc_number", "payment_doc_date",
+    "acceptance_doc_amount",
+    # Phase 24 D-08: JSONB-массив закрывающих документов (АКТ/УПД/СЧФ/ТТН/...)
+    "acceptance_docs",
+    "payment_doc_number", "payment_doc_date",
     "payment_amount", "country_origin", "purchase_basis",
     "responsible_person_id", "initiator_id", "subject_kind", "execution_term",
     "event_id", "delivery_location_kind", "region",
@@ -746,6 +749,9 @@ async def patch_purchase(
         if getattr(p, k) != v:
             setattr(p, k, v)
             changed.append(k)
+            # JSONB колонки: SQLAlchemy не детектирует мутации без flag_modified
+            if k == "acceptance_docs":
+                flag_modified(p, "acceptance_docs")
     if changed:
         await db.commit()
         await db.refresh(p)

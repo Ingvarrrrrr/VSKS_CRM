@@ -68,8 +68,8 @@ _ROLE_PRIORITY = {
 }
 
 
-async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
-    """Return effective key set (tabs + actions, undifferentiated).
+async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
+    """Return effective key set for a single user WITHOUT hierarchy inheritance.
 
     Role resolution: if user_org_access.role is set for (user_id, org_id) it takes
     precedence over user.role; otherwise fallback to user.role.
@@ -79,6 +79,8 @@ async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) ->
     receive correct tab/action permissions even when their contour user.role is NULL.
     Boolean-flip: base = {key for RP where role_name=effective_role and granted=True};
     then for each override row: granted=True -> add; granted=False -> discard.
+
+    NOTE: Does NOT call get_visible_user_ids — safe to call from _get_effective loop.
     """
     # Step 0: resolve effective role (per-org override takes precedence)
     effective_role = user.role
@@ -128,6 +130,29 @@ async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) ->
                 effective.add(ov.key)
             else:
                 effective.discard(ov.key)
+
+    return effective
+
+
+async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
+    """Return effective key set (tabs + actions, undifferentiated).
+
+    Phase 28-Ext: иерархия > роли. Effective = UNION прав current user
+    и прав всех subordinates (visible_user_ids). Начальник superadmin'а
+    автоматически получает SaaS-уровень доступа.
+
+    Delegating per-user resolution to _get_effective_simple to avoid recursion.
+    """
+    effective = await _get_effective_simple(user, db, org_id)
+
+    # Phase 28-Ext: inherit from subordinates via hierarchy
+    from app.auth.visibility import get_visible_user_ids
+    visible = await get_visible_user_ids(user, db)
+    if visible:
+        for sub_uid in visible - {user.id}:
+            sub_user = await db.get(User, sub_uid)
+            if sub_user:
+                effective |= await _get_effective_simple(sub_user, db, org_id)
 
     return effective
 

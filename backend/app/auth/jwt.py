@@ -59,14 +59,45 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         user._active_org_id = user.org_id
     return user
 
+async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> bool:
+    """True если у current user role в roles ИЛИ в его visible_user_ids
+    есть юзер с одной из этих ролей.
+
+    Принцип «иерархия > роли»: кто может ставить задачи юзеру X —
+    наследует его роль/доступ. Используется в require_role и
+    require_superadmin для проверки иерархического старшинства.
+    """
+    if user.role in roles:
+        return True
+
+    # Avoid circular import — lazy
+    from app.auth.visibility import get_visible_user_ids
+    visible = await get_visible_user_ids(user, db)
+    if visible is None:
+        # SaaS-роль (superadmin/account_owner) — уже всё видит. Сюда не дойдёт
+        # потому что user.role был бы в roles, но защищаем.
+        return True
+    visible = visible - {user.id}
+    if not visible:
+        return False
+    from app.models.user import User as _User
+    res = await db.execute(
+        select(_User.id).where(_User.id.in_(visible), _User.role.in_(roles)).limit(1)
+    )
+    return res.scalar_one_or_none() is not None
+
+
 def require_role(*roles):
-    async def checker(user: User = Depends(get_current_user)):
-        if user.role not in roles:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Доступ только для ролей: {', '.join(roles)}. Ваша роль: {user.role}."
-            )
-        return user
+    async def checker(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        if await has_role_via_hierarchy(user, db, *roles):
+            return user
+        raise HTTPException(
+            status_code=403,
+            detail=f"Доступ только для ролей: {', '.join(roles)} (или иерархически старше). Ваша роль: {user.role}."
+        )
     return checker
 
 def get_org_filter(current_user: User) -> Optional[List[int]]:
@@ -104,11 +135,14 @@ async def check_org_active(current_user: User = Depends(get_current_user), db: A
     return current_user
 
 def require_superadmin():
-    async def checker(user: User = Depends(get_current_user)):
-        if user.role != 'superadmin':
-            raise HTTPException(
-                status_code=403,
-                detail=f"Этот эндпоинт доступен только суперадминистратору SaaS. Ваша роль: {user.role}. Возможно фронтенд использует не тот endpoint — для своих организаций нужен /api/organizations/my."
-            )
-        return user
+    async def checker(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        if await has_role_via_hierarchy(user, db, 'superadmin'):
+            return user
+        raise HTTPException(
+            status_code=403,
+            detail=f"Эндпоинт требует роль superadmin (или иерархически старше). Ваша роль: {user.role}."
+        )
     return checker

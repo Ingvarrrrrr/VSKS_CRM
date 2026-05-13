@@ -533,6 +533,35 @@ async def generate_document(
                     user=u,
                 )
 
+        # Membership-check: инициатор должен состоять в организации, к которой
+        # привязана субсидия закупки. Без этого должность/отдел не определены,
+        # СЗ от имени постороннего сотрудника недопустима.
+        subsidy_org_id = getattr(subsidy, "org_id", None) if subsidy else None
+        init_user = initiator.user if (initiator and getattr(initiator, "user", None)) else None
+        if subsidy_org_id and init_user:
+            from app.models.user_organization import UserOrganization
+            mem = (await db.execute(
+                select(UserOrganization.id).where(
+                    UserOrganization.user_id == init_user.id,
+                    UserOrganization.org_id == subsidy_org_id,
+                ).limit(1)
+            )).first()
+            # Legacy fallback — User.org_id (primary)
+            if not mem and getattr(init_user, "org_id", None) != subsidy_org_id:
+                org_name = getattr(customer_org, "name", "") if customer_org else ""
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "INITIATOR_NOT_IN_ORG",
+                        "message": (
+                            f"Инициатор не состоит в организации"
+                            + (f" «{org_name}»" if org_name else "")
+                            + ", к которой привязана субсидия закупки. Выберите "
+                            "сотрудника этой организации."
+                        ),
+                    },
+                )
+
     # If no approvers specified — load defaults for this subsidy
     if not selected_approvers and p.subsidy_id:
         res = await db.execute(

@@ -150,6 +150,31 @@ async def generate_wish_service_note(
                     user=u,
                 )
 
+        # Membership-check: инициатор должен состоять в организации, к которой
+        # привязана субсидия заявки.
+        subsidy_org_id = getattr(w.subsidy, "org_id", None) if w.subsidy else None
+        init_user = initiator.user if (initiator and getattr(initiator, "user", None)) else None
+        if subsidy_org_id and init_user:
+            from app.models.user_organization import UserOrganization
+            mem = (await db.execute(
+                select(UserOrganization.id).where(
+                    UserOrganization.user_id == init_user.id,
+                    UserOrganization.org_id == subsidy_org_id,
+                ).limit(1)
+            )).first()
+            if not mem and getattr(init_user, "org_id", None) != subsidy_org_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "INITIATOR_NOT_IN_ORG",
+                        "message": (
+                            "Инициатор не состоит в организации, к которой "
+                            "привязана субсидия заявки. Выберите сотрудника "
+                            "этой организации."
+                        ),
+                    },
+                )
+
     # ── Build DocxTemplate object (needed early for InlineImage) ────────────
     try:
         from docxtpl import DocxTemplate, InlineImage

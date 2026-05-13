@@ -97,30 +97,61 @@ async def list_users_in_my_orgs(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Возвращает всех пользователей из всех организаций текущего юзера.
-    Используется для autocomplete «Исполнитель» в MyTasksView (без hierarchy-фильтра).
+    Возвращает пользователей из всех организаций текущего юзера для autocomplete
+    «Исполнитель» в MyTasksView (без hierarchy-фильтра).
     Для не-подчинённых назначаемых create_task выставит consent_needed=true.
+
+    Источники org_id (объединение):
+      1. user_organizations.user_id == current_user.id
+      2. users.org_id (primary org — legacy для юзеров без user_organizations row)
+      3. user_org_access.user_id == current_user.id (per-org role/permissions)
+    Если ни одного орг не нашлось — возвращаем всех (fallback, ранний бутстрап).
+    superadmin'ы всегда включаются (могут быть назначаемыми задачами от owner'ов
+    отделов, как в кейсе Цыганова который должен мочь поставить задачу СУПЕРАДМИНУ).
     """
     from app.models.user_organization import UserOrganization
-    # 1. orgs где состоит текущий юзер
-    own_orgs_q = await db.execute(
+    own_orgs: set[int] = set()
+
+    # 1. user_organizations
+    res = await db.execute(
         select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
     )
-    own_orgs = [r[0] for r in own_orgs_q.all()]
-    if not own_orgs:
-        return []
-    # 2. user_ids в этих орг
-    uids_q = await db.execute(
-        select(UserOrganization.user_id).where(UserOrganization.org_id.in_(own_orgs)).distinct()
-    )
-    user_ids = [r[0] for r in uids_q.all()]
-    if not user_ids:
-        return []
-    # 3. сами user-записи (с фильтром superadmin кроме самого superadmin'а — D-09)
-    q = select(User).where(User.id.in_(user_ids)).order_by(User.full_name)
-    if current_user.role != 'superadmin':
-        q = q.where(User.role != 'superadmin')
-    res = await db.execute(q)
+    own_orgs.update(r[0] for r in res.all() if r[0])
+
+    # 2. primary org_id
+    if current_user.org_id:
+        own_orgs.add(current_user.org_id)
+
+    # 3. user_org_access
+    try:
+        from app.models.user_org_access import UserOrgAccess
+        res = await db.execute(
+            select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == current_user.id)
+        )
+        own_orgs.update(r[0] for r in res.all() if r[0])
+    except Exception:
+        pass
+
+    if own_orgs:
+        # Все user_id из этих орг (через любой источник)
+        user_ids: set[int] = set()
+        res = await db.execute(
+            select(UserOrganization.user_id).where(UserOrganization.org_id.in_(own_orgs)).distinct()
+        )
+        user_ids.update(r[0] for r in res.all() if r[0])
+        res = await db.execute(
+            select(User.id).where(User.org_id.in_(own_orgs))
+        )
+        user_ids.update(r[0] for r in res.all() if r[0])
+        # Сам current_user всегда включён
+        user_ids.add(current_user.id)
+        if user_ids:
+            q = select(User).where(User.id.in_(user_ids)).order_by(User.full_name)
+            res = await db.execute(q)
+            return res.scalars().all()
+
+    # Fallback: ни одной орг не нашлось — вернуть всех (ранний бутстрап / data-issue)
+    res = await db.execute(select(User).order_by(User.full_name))
     return res.scalars().all()
 
 

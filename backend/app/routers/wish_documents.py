@@ -32,7 +32,7 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
-from app.routers.documents import _fmt_date, _fmt_money, TEMPLATES_DIR
+from app.routers.documents import _fmt_date, _fmt_money, TEMPLATES_DIR, _resolve_user_dept as _resolve_user_dept_for_wish
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-documents"])
 
@@ -221,10 +221,9 @@ async def generate_wish_service_note(
         # Initiator
         "initiator_name": (initiator.full_name if initiator else creator_full) or "",
         "initiator_role": (initiator.role_name if initiator else "") or "",
-        "initiator_dept": (
-            initiator.user.department
-            if initiator and initiator.user and initiator.user.department
-            else ""
+        "initiator_dept": await _resolve_user_dept_for_wish(
+            initiator.user if (initiator and getattr(initiator, "user", None)) else None,
+            db,
         ),
         # Items
         "items": items_list,

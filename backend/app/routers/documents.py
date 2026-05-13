@@ -131,6 +131,42 @@ def _sum_items_price(p) -> float:
     return total
 
 
+async def _resolve_user_dept(user, db) -> str:
+    """Возвращает название отдела пользователя для шаблона СЗ.
+
+    Приоритет:
+      1) User.department (legacy строковое поле) — если заполнено
+      2) Department.name через user_organizations.dept_id (первая запись)
+      3) "" если ничего нет
+
+    Аргумент user может быть моделью User или None.
+    """
+    if user is None:
+        return ""
+    # 1. Legacy строковое поле
+    dept_str = getattr(user, "department", None)
+    if dept_str:
+        return dept_str
+    # 2. Через user_organizations → Department
+    try:
+        from app.models.user_organization import UserOrganization
+        from app.models.department import Department
+        from sqlalchemy import select as _sel
+        res = await db.execute(
+            _sel(Department.name)
+            .join(UserOrganization, UserOrganization.dept_id == Department.id)
+            .where(UserOrganization.user_id == user.id)
+            .order_by(UserOrganization.id)
+            .limit(1)
+        )
+        name = res.scalar_one_or_none()
+        if name:
+            return name
+    except Exception:
+        pass
+    return ""
+
+
 def _format_service_term(p) -> str:
     """Build the human-readable service-term string for docx templates.
 
@@ -859,10 +895,9 @@ async def generate_document(
         "approvers": approvers_list,
         "initiator_name": initiator.full_name if initiator else "",
         "initiator_role": initiator.role_name if initiator else "",
-        "initiator_dept": (
-            initiator.user.department
-            if initiator and initiator.user and initiator.user.department
-            else ""
+        "initiator_dept": await _resolve_user_dept(
+            initiator.user if (initiator and getattr(initiator, "user", None)) else None,
+            db,
         ),
         # Мероприятие
         "event_name": event.name if event else "",

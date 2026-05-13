@@ -265,15 +265,28 @@ async def list_purchases(
             visible_user_ids.update(r[0] for r in uoa_members_res.all())
 
         # Filter: assigned to visible user OR purchase member OR chat-room participant.
-        # NOTE: intentionally dropped the "assigned_user_id IS NULL" OR-branch — previously
-        # every unassigned purchase leaked to every non-superadmin role, defeating the
-        # hierarchy rule. Unassigned purchases are now visible only via participation.
-        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
-        q = q.where(
-            (Purchase.assigned_user_id.in_(visible_user_ids)) |
-            (Purchase.id.in_(member_pids)) |
-            (Purchase.id.in_(chat_pids_me))
+        # Org-leads (admin/account_owner role, headed/managed dept, managed org,
+        # UOA org_admin/manager) ADDITIONALLY see unassigned (assigned_user_id IS NULL)
+        # purchases within their org — first-layer org_id filter already scopes them
+        # to the lead's organisation, so this is not a cross-org leak. Plain employees
+        # still don't see NULL-assigned purchases (the prior behaviour that motivated
+        # the drop of the NULL-branch).
+        is_org_lead = (
+            current_user.role in ADMIN_ROLES
+            or bool(headed_dept_ids)
+            or bool(managed_dept_ids)
+            or bool(managed_org_ids)
+            or bool(uoa_org_ids)
         )
+        member_pids = select(PurchaseMember.purchase_id).where(PurchaseMember.user_id.in_(visible_user_ids))
+        conditions = [
+            Purchase.assigned_user_id.in_(visible_user_ids),
+            Purchase.id.in_(member_pids),
+            Purchase.id.in_(chat_pids_me),
+        ]
+        if is_org_lead:
+            conditions.append(Purchase.assigned_user_id.is_(None))
+        q = q.where(or_(*conditions))
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:
@@ -499,6 +512,11 @@ async def create_purchase(
 
     dump = data.model_dump(exclude={"items", "subsidy_allocations"})
     dump["total_nmck"] = total_nmck
+    # Auto-assign current user as owner when frontend did not specify one.
+    # Без этого закупка с assigned_user_id=NULL становится невидимой для рядового
+    # автора (list_purchases фильтрует по visible_user_ids; NULL IN (...) = false).
+    if not dump.get("assigned_user_id"):
+        dump["assigned_user_id"] = current_user.id
     p = Purchase(**dump)
     db.add(p)
     await db.flush()  # get p.id before commit
@@ -587,6 +605,11 @@ async def update_purchase(
 
     items_data = data.items or []
     items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+
+    # Opportunistic backfill: legacy purchases с assigned_user_id=NULL
+    # становятся видимыми создателю через первое же сохранение.
+    if p.assigned_user_id is None and not getattr(data, "assigned_user_id", None):
+        p.assigned_user_id = current_user.id
 
     # Auto-assign purchase_number if missing
     if not p.purchase_number:
@@ -763,6 +786,12 @@ async def patch_purchase(
         raise HTTPException(404, "Not found")
     if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Insufficient permissions")
+
+    # Opportunistic backfill: первый PATCH (autosave) от user'а закрепляет
+    # за ним legacy-закупку без assigned_user_id — иначе после save она опять
+    # пропадёт из его OrdersView.
+    if p.assigned_user_id is None and "assigned_user_id" not in (body or {}):
+        p.assigned_user_id = current_user.id
 
     changed: list[str] = []
     for k, v in (body or {}).items():

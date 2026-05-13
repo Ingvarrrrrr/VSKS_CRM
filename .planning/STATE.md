@@ -2,23 +2,39 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to plan
-last_updated: "2026-05-11T01:30:00.000Z"
+status: Active — UAT pending Phase 26
+last_updated: "2026-05-13T23:59:00.000Z"
 progress:
   total_phases: 21
-  completed_phases: 16
+  completed_phases: 18
   total_plans: 90
-  completed_plans: 88
+  completed_plans: 90
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 25 ✅ (Report Builder — завершена 2026-05-11, 11 атомарных коммитов `558dcc9..0b16f75`)
-Next action: UAT Phase 25 на проде (16 пунктов в `.planning/phases/25-report-builder/STATE.md`). Применить permission seed SQL вручную: `phase25_seed_report_config_action.sql`. Параллельно UAT реформы авансовых отчётов Phase 24 + право `purchase.transition.skip_validation` + backend mismatch /dashboard/ vs /charts.
+Phase: 26-H ✅ (UX/Permissions/SZ fixes batch — завершена 2026-05-13, 22 коммита `900a369..4200e0a`)
+Next action: UAT Phase 26 (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`). Phase 27 «Позиции поставки» отложена — ждёт планирования.
 Resume file: None
-Baseline rollback Phase 25: `f5bfc3c` (git revert --no-edit f5bfc3c..HEAD && git push)
+Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
+
+## 2026-05-13 — Phase 26-E/F/G/H ✅ UX/Permissions/SZ fixes batch (22 коммита)
+
+`900a369..4200e0a` → push в `claude`. Полный разбор в `VAULT_for_LLM/Projects/VSKS_CRM/Sessions/2026-05-13_VSKS_CRM.md`.
+
+Ключевые изменения:
+- **26-E**: Excel-like ColumnHeaderMenu (54 слота на 4 list-view, ~440 LOC)
+- **26-F**: рамочный остаток, шаблонные переменные UI, закрывающие документы UX
+- **26-G**: должность per-org, дедуп ИНН, /users/in-my-orgs
+- **26-H**: PATCH coerce ISO-дат, JSONB flag_modified, убран опасный SubsidyApprover.id fallback, membership-check СЗ, «за другого» только руководитель
+
+**Архитектурные решения:**
+- `_coerce_patch_value`: ISO-строки → date/datetime, '' → None (asyncpg не принимает str для Date-колонок)
+- `flag_modified(obj, 'acceptance_docs')`: обязателен для JSONB мутаций в SQLAlchemy
+- Initiator resolve: SubsidyApprover.user_id → SimpleNamespace из User (уровень SubsidyApprover.id УБРАН как опасный)
+- Membership-check: инициатор обязан состоять в org субсидии
 
 ## 2026-05-11 — Phase 25 ✅ Report Builder (UI-конфигуратор сводных и дашбордов)
 

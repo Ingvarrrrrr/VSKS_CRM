@@ -359,13 +359,13 @@
             <v-chip v-else-if="(item as any).multi_contractor_label === 'Множественный контрагент'" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
               {{ (item as any).multi_contractor_label }}
             </v-chip>
-            <div v-else class="text-body-2 text-truncate" style="max-width:160px">
+            <div v-else class="text-body-2">
               <v-icon size="x-small" color="purple" class="mr-1">mdi-account-cash</v-icon>
               {{ (item as any).multi_contractor_label || advancePersonLabel(item) }}
             </div>
           </template>
           <template v-else>
-            <span class="text-body-2 text-truncate" style="max-width:160px;display:inline-block">
+            <span class="text-body-2">
               {{ item.contractor_name || '—' }}
             </span>
           </template>
@@ -392,7 +392,7 @@
         </template>
 
         <template #item.subsidy_name="{ item }">
-          <span class="text-body-2 text-truncate" style="max-width:150px;display:inline-block">
+          <span class="text-body-2">
             {{ item.subsidy_name || '—' }}
           </span>
         </template>

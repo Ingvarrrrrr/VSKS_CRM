@@ -5407,6 +5407,41 @@ const loadPurchase = async () => {
     form.contractor_id = data.contractor_id
   }
 
+  // Phase 26-AA: дозагрузить ответственного и возмещателя, если их нет в orgUsersList.
+  // Сценарий: employee не имеет прав видеть пользователя, который назначен другим
+  // (например, Цыганов id=8 у employee Лягина). Без этого v-autocomplete с item-value=id
+  // показывает raw ID цифру вместо ФИО.
+  {
+    const _toHydrate: number[] = []
+    if (data.assigned_user_id && !orgUsersList.value.some((u: any) => u.id === data.assigned_user_id)) {
+      _toHydrate.push(data.assigned_user_id)
+    }
+    if (data.reimbursement_user_id && !orgUsersList.value.some((u: any) => u.id === data.reimbursement_user_id)) {
+      if (!_toHydrate.includes(data.reimbursement_user_id)) _toHydrate.push(data.reimbursement_user_id)
+    }
+    await Promise.all(_toHydrate.map(async (uid) => {
+      try {
+        const u = await apiFetch<any>(`/users/${uid}`)
+        if (u && u.full_name) {
+          orgUsersList.value.push({
+            id: u.id,
+            full_name: u.full_name,
+            short_name: toShortName(u.full_name),
+            position: u.position || null,
+          })
+        }
+      } catch {
+        // Endpoint /users/{id} закрыт — fallback: заглушка с минимальными данными
+        orgUsersList.value.push({
+          id: uid,
+          full_name: `Сотрудник #${uid}`,
+          short_name: `#${uid}`,
+          position: null,
+        })
+      }
+    }))
+  }
+
   calcBudget()
 
   // Restore manual НМЦД if saved value differs from items total

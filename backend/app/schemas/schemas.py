@@ -1262,3 +1262,44 @@ class ReportConfigOut(BaseModel):
     is_shared: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 27.1: contract_items — фактически заказанные позиции по договору
+# ---------------------------------------------------------------------------
+
+class ContractItemBase(BaseModel):
+    source_item_id: Optional[int] = None
+    contract_id: Optional[int] = None
+    product_id: Optional[int] = None
+    name: str
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    match_confirmed: bool = True
+
+
+class ContractItemCreate(ContractItemBase):
+    pass
+
+
+class ContractItemUpdate(BaseModel):
+    source_item_id: Optional[int] = None
+    contract_id: Optional[int] = None
+    product_id: Optional[int] = None
+    name: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    match_confirmed: Optional[bool] = None
+
+
+class ContractItemOut(ContractItemBase):
+    id: int
+    purchase_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

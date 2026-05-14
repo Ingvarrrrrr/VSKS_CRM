@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from decimal import Decimal
 from httpx import AsyncClient, ASGITransport
 
 
@@ -210,3 +211,110 @@ async def make_override(db_session):
         await db_session.refresh(ov)
         return ov
     return _factory
+
+
+# ---------------------------------------------------------------------------
+# Phase 27.1: contract_items fixtures
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def make_purchase(db_session, test_org):
+    """Phase 27.1: Factory for creating a minimal Purchase in tests."""
+    from app.models.purchase import Purchase
+
+    async def _make(status="planned", org_id=None, **kwargs):
+        p = Purchase(
+            org_id=org_id if org_id is not None else test_org.id,
+            status=status,
+            item_type="goods",
+            item_name="Test purchase",
+            **kwargs,
+        )
+        db_session.add(p)
+        await db_session.commit()
+        await db_session.refresh(p)
+        return p
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def make_purchase_with_items(db_session, test_org):
+    """Phase 27.1: Factory for creating a Purchase with PurchaseItems."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    async def _make(status="planned", items_count=2, item_total=Decimal("500"), org_id=None):
+        p = Purchase(
+            org_id=org_id if org_id is not None else test_org.id,
+            status=status,
+            item_type="goods",
+            item_name="Test purchase with items",
+        )
+        db_session.add(p)
+        await db_session.flush()  # get p.id without committing
+        for i in range(items_count):
+            item = PurchaseItem(
+                purchase_id=p.id,
+                item_name=f"Item {i + 1}",
+                quantity=Decimal("1"),
+                unit="шт",
+                unit_price=item_total,
+                total_price=item_total,
+            )
+            db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(p)
+        return p
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def make_contract_item(db_session):
+    """Phase 27.1: Helper for creating ContractItem in tests."""
+    from app.models.contract_item import ContractItem
+
+    async def _make(
+        purchase_id,
+        name="Test item",
+        quantity=Decimal("1"),
+        unit_price=Decimal("100"),
+        total=Decimal("100"),
+        source_item_id=None,
+        product_id=None,
+        contract_id=None,
+        match_confirmed=True,
+        unit="шт",
+    ):
+        ci = ContractItem(
+            purchase_id=purchase_id,
+            name=name,
+            quantity=quantity,
+            unit=unit,
+            unit_price=unit_price,
+            total=total,
+            source_item_id=source_item_id,
+            product_id=product_id,
+            contract_id=contract_id,
+            match_confirmed=match_confirmed,
+        )
+        db_session.add(ci)
+        await db_session.commit()
+        await db_session.refresh(ci)
+        return ci
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def make_legacy_contracted_purchase(db_session, make_purchase_with_items):
+    """Phase 27.1: closure for backfill testing — purchase in `contracted` status WITHOUT contract_items."""
+
+    async def _make(status="contracted", items_count=2, item_total=Decimal("500")):
+        p = await make_purchase_with_items(items_count=items_count, item_total=item_total)
+        p.status = status
+        await db_session.commit()
+        return p
+
+    return _make

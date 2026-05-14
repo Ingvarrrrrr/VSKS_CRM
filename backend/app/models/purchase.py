@@ -129,6 +129,12 @@ class Purchase(Base):
     total_nmck = Column(Numeric(15, 2))
     items = relationship("PurchaseItem", back_populates="purchase",
                          cascade="all, delete-orphan", lazy="selectin")
+    contract_items = relationship(
+        "ContractItem",
+        back_populates="purchase",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )  # Phase 27.1: фактически заказанные позиции по договору (D-11)
     files = relationship("PurchaseFile", back_populates="purchase",
                          cascade="all, delete-orphan", lazy="selectin")
     approvals = relationship("PurchaseApproval", back_populates="purchase",

@@ -69,6 +69,19 @@
         </v-card-text>
       </v-card>
 
+      <!-- U-2: Подсказка про мульти-чеки (только для авансового, закрываемая) -->
+      <v-alert
+        v-if="formMode === 'advance_report' && !advanceInfoAlertClosed"
+        type="info"
+        variant="tonal"
+        density="compact"
+        closable
+        class="mb-4"
+        @click:close="closeAdvanceInfoAlert"
+      >
+        В одном авансовом отчёте можно загрузить <strong>несколько чеков от разных контрагентов</strong>. Каждый чек сохранит свой ИНН продавца и список товаров. Для добавления чека используйте кнопки «Загрузить чек», «Сканировать QR» или «Внести вручную».
+      </v-alert>
+
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
@@ -485,6 +498,8 @@
             :supports-smart-import="true"
             :supports-full-product-dialog="true"
             :supports-photo-upload="true"
+            :vat-mode="form.vat_mode"
+            :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
@@ -1126,6 +1141,21 @@
                 variant="outlined" density="compact"
                 placeholder="напр. п.2 ст.346.11 НК РФ (УСН)"
               />
+            </v-col>
+            <!-- U-3: НДС режим toggle -->
+            <v-col cols="12" md="4" class="d-flex align-center">
+              <v-btn-toggle
+                v-model="form.vat_mode"
+                density="compact"
+                rounded="lg"
+                color="primary"
+                border
+                mandatory
+                @update:model-value="onVatModeChange"
+              >
+                <v-btn value="uniform" size="small">НДС одинаковый</v-btn>
+                <v-btn value="per_item" size="small">НДС для каждого товара</v-btn>
+              </v-btn-toggle>
             </v-col>
           </v-row>
 
@@ -3025,6 +3055,25 @@ const nmckManualValue = ref<number | null>(null)
 // Цена договора mode
 const contractPriceMode = ref<'auto' | 'manual'>('auto')
 
+// U-2: Alert о мульти-чеках для авансового
+const ADVANCE_ALERT_KEY = 'advance_multi_receipt_alert_closed'
+const advanceInfoAlertClosed = ref(localStorage.getItem(ADVANCE_ALERT_KEY) === '1')
+function closeAdvanceInfoAlert() {
+  advanceInfoAlertClosed.value = true
+  localStorage.setItem(ADVANCE_ALERT_KEY, '1')
+}
+
+// U-3: НДС режим toggle
+function onVatModeChange(newMode: string) {
+  if (newMode === 'per_item') {
+    // При переключении на per_item — сбрасываем vat_rate у всех items на null (без НДС)
+    items.value = items.value.map((it: any) => ({ ...it, vat_rate: null }))
+  } else if (newMode === 'uniform') {
+    // При переключении на uniform — убираем per-item ставки (они игнорируются при сохранении)
+    items.value = items.value.map((it: any) => ({ ...it, vat_rate: null }))
+  }
+}
+
 // --- formMode: drives simplified views for service notes / advance reports ---
 const formMode = computed(() => (route.meta?.formMode as string) || 'default')
 
@@ -3217,6 +3266,8 @@ const form = reactive({
   reimbursement_user_id: null as number | null,
   // Phase 28 B4: ответственный исполнитель (user FK)
   assigned_user_id: null as number | null,
+  // Phase 26-U-3: режим НДС
+  vat_mode: 'uniform' as string,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3247,6 +3298,7 @@ function serializeFormForAutosave() {
     third_party_involved: f.third_party_involved,
     vat_applicable: f.vat_applicable,
     vat_rate: f.vat_rate,
+    vat_mode: f.vat_mode,
     vat_exemption_article: f.vat_exemption_article,
     acceptance_doc_name: f.acceptance_doc_name,
     acceptance_doc_date: f.acceptance_doc_date,
@@ -5195,6 +5247,8 @@ const loadPurchase = async () => {
     })),
     // Phase 28 B4: ответственный исполнитель
     assigned_user_id: data.assigned_user_id ?? null,
+    // Phase 26-U-3: НДС режим
+    vat_mode: data.vat_mode || 'uniform',
   })
 
   // Save frozen НМЦД from DB

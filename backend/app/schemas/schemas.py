@@ -524,6 +524,10 @@ class PurchaseCreate(BaseModel):
     service_deadline_date: Optional[date] = None    # mode='deadline'
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4: ответственный исполнитель
+    # Phase 26-K: доп. соглашение и дата заказа
+    agreement_number: Optional[str] = None
+    agreement_date: Optional[date] = None
+    order_date: Optional[date] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -616,6 +620,10 @@ class PurchaseUpdate(BaseModel):
     service_deadline_date: Optional[date] = None
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4
+    # Phase 26-K: доп. соглашение и дата заказа
+    agreement_number: Optional[str] = None
+    agreement_date: Optional[date] = None
+    order_date: Optional[date] = None
 
 
 class PurchaseOut(PurchaseCreate):

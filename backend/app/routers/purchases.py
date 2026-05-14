@@ -689,6 +689,8 @@ PATCHABLE_FIELDS = {
     "reimbursement_user_id",
     # Phase 28 B4: ответственный исполнитель
     "assigned_user_id",
+    # Phase 26-K: доп. соглашение и дата заказа
+    "agreement_number", "agreement_date", "order_date",
 }
 
 
@@ -700,6 +702,8 @@ _DATE_FIELDS = {
     "delivery_date", "acceptance_doc_date", "payment_doc_date",
     "contract_end_date", "service_start_date", "service_end_date",
     "procurement_planned_date", "service_deadline_date", "prepayment_date",
+    # Phase 26-K
+    "agreement_date", "order_date",
 }
 _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 

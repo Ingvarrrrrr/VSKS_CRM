@@ -94,6 +94,11 @@ class Purchase(Base):
     delivery_address = Column(Text, nullable=True)          # адрес доставки
     procurement_planned_date = Column(Date, nullable=True)  # планируемая дата закупки
 
+    # Phase 26-K: доп. соглашение и дата заказа
+    agreement_number = Column(String(100), nullable=True)   # № доп. соглашения
+    agreement_date = Column(Date, nullable=True)             # Дата доп. соглашения
+    order_date = Column(Date, nullable=True)                 # Дата заказа
+
     # Основание для оплаты: 'contract' | 'invoice' | 'invoice_contract'
     payment_basis_type = Column(String(30), nullable=True, default="contract")
 

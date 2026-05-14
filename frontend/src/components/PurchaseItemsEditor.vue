@@ -157,27 +157,7 @@
                               </template>
                             </v-tooltip>
                           </div>
-                          <!-- Phase 26-X: contractor inline when not advance_report -->
-                          <template v-if="!showContractorColumn">
-                            <v-autocomplete
-                              :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                              :items="contractors" :custom-filter="contractorFilter"
-                              item-title="name" item-value="id" return-object
-                              density="compact" variant="outlined" hide-details clearable
-                              class="mt-1" style="min-width:180px"
-                              placeholder="Контрагент (магазин)..." prepend-inner-icon="mdi-store"
-                              no-data-text="Не найден" :disabled="props.readonly"
-                              @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                              @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                            >
-                              <template #no-data>
-                                <v-list-item>
-                                  <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">Контрагент не найден в БД.</v-alert>
-                                  <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus" @click.stop="openContractorQuickCreate(idx)">Создать нового</v-btn>
-                                </v-list-item>
-                              </template>
-                            </v-autocomplete>
-                          </template>
+                          <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
                         </td>
                         <td>
                           <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -240,9 +220,10 @@
                       <tr class="stage-contract-row">
                         <td><v-chip color="success" size="x-small" variant="tonal">Договор</v-chip></td>
                         <td>
-                          <v-text-field
+                          <v-textarea
                             :model-value="getContractItemFor(idx)?.name ?? ''"
                             density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
+                            rows="1" auto-grow class="my-1" style="min-width:200px"
                             :disabled="props.readonly"
                             @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
                           />
@@ -302,8 +283,15 @@
                       <tr class="stage-delivery-row" :class="{ 'stage-delivery-empty': !isDeliveryFilled(idx) }">
                         <td><v-chip color="purple" size="x-small" variant="tonal">Поставка</v-chip></td>
                         <template v-if="isDelivered(idx) && getContractItemFor(idx)">
-                          <!-- delivered/paid: копия Договор, readonly -->
-                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.name || '—' }}</td>
+                          <!-- delivered/paid: копия Договор, readonly textarea (унифицировано с ТЗ/Договор) -->
+                          <td>
+                            <v-textarea
+                              :model-value="getContractItemFor(idx)?.name || '—'"
+                              density="compact" variant="outlined" hide-details readonly
+                              rows="1" auto-grow class="my-1" style="min-width:200px"
+                              bg-color="grey-lighten-4"
+                            />
+                          </td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>

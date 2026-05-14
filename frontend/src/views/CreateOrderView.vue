@@ -631,11 +631,20 @@
               </div>
             </v-col>
             <v-col cols="12" md="3" class="pt-8">
-              <v-text-field v-if="isFramework && selectedFrameworkContract"
+              <!-- framework_cumulative без лимита: нет отрицательного остатка, только счётчик -->
+              <template v-if="isFrameworkCumulative && selectedFrameworkContract && selectedFrameworkContract.remaining_ordered == null">
+                <div class="text-caption text-medium-emphasis mb-1">Накопленная сумма заказов</div>
+                <div class="text-body-2 font-weight-bold">{{ formatMoney(Number(selectedFrameworkContract.total_ordered ?? 0)) }} ₽</div>
+                <div class="text-caption text-medium-emphasis">Накопительный договор без предельной суммы</div>
+                <!-- TODO(phase26): кнопка «Согласовать у руководителя» если сумма выходит за разумный предел -->
+              </template>
+              <!-- framework_with_amount или cumulative с лимитом: показываем остаток -->
+              <v-text-field v-else-if="isFramework && selectedFrameworkContract"
                 :model-value="selectedFrameworkContract.remaining_ordered != null ? formatMoney(selectedFrameworkContract.remaining_ordered) : '—'"
-                label="Остаток средств на договоре" variant="outlined"
-                density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
-                hint="Предельная сумма минус сумма заказанного" persistent-hint />
+                :label="isFrameworkCumulative ? 'Остаток (лимит − накоплено)' : 'Остаток средств на договоре'" variant="outlined"
+                density="compact" suffix="₽" readonly
+                :bg-color="(selectedFrameworkContract.remaining_ordered ?? 0) < 0 ? 'red-lighten-5' : 'grey-lighten-4'"
+                :hint="(selectedFrameworkContract.remaining_ordered ?? 0) < 0 ? 'Превышен лимит договора' : 'Предельная сумма минус сумма заказанного'" persistent-hint />
               <v-text-field v-else :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
                 density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
                 hint="НМЦД минус Цена договора. Считается автоматически." persistent-hint />

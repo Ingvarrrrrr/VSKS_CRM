@@ -308,13 +308,34 @@
         </template>
 
         <template #item.contractor_name="{ item }">
-          <v-chip v-if="(item as any).reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
-            {{ (item as any).reimbursement_user_name }}
-          </v-chip>
-          <v-chip v-else-if="(item as any).multi_contractor_label === 'Множественный контрагент'" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
-            {{ (item as any).multi_contractor_label }}
-          </v-chip>
-          <span v-else class="text-caption">{{ (item as any).multi_contractor_label || item.contractor_name || '—' }}</span>
+          <!-- U-1: Контрагент = продавец из items чека, а не получатель возмещения -->
+          <div>
+            <!-- Единственный контрагент из items -->
+            <v-chip
+              v-if="(item as any)._unique_item_contractor_count === 1"
+              size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-store"
+            >
+              {{ (item as any)._unique_item_contractor_name }}
+            </v-chip>
+            <!-- Несколько контрагентов из items -->
+            <v-tooltip v-else-if="(item as any)._unique_item_contractor_count > 1" location="top">
+              <template #activator="{ props: tip }">
+                <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+                  {{ (item as any)._unique_item_contractor_name }} +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
+                </v-chip>
+              </template>
+              <span>{{ (item as any)._all_item_contractor_names }}</span>
+            </v-tooltip>
+            <!-- Fallback: legacy contractor_name -->
+            <span v-else class="text-caption">
+              {{ (item as any).multi_contractor_label || item.contractor_name || '—' }}
+            </span>
+            <!-- Получатель возмещения — дополняет, не подменяет -->
+            <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis mt-0" style="font-size:11px">
+              <v-icon size="12" color="purple">mdi-account</v-icon>
+              возмещ.: {{ (item as any).reimbursement_user_name }}
+            </div>
+          </div>
         </template>
 
         <template #item.reimbursement_user_name="{ item }">
@@ -629,11 +650,22 @@ const usedReimbursementUsers = computed(() => {
   return list.sort((a, b) => a.title.localeCompare(b.title, 'ru'))
 })
 
-const enrichedItems = computed(() => items.value.map(p => ({
-  ...p,
-  displayName: p.subject || p.item_name || '—',
-  executionDate: pickDate(p.last_receipt_date, p.acceptance_doc_date, p.delivery_date),
-})))
+const enrichedItems = computed(() => items.value.map(p => {
+  // U-1: вычислить уникальных контрагентов из purchase items
+  const itemContractors = (p.items || [])
+    .map((it: any) => it.contractor_name)
+    .filter((n: any): n is string => !!n)
+  const uniqueContractors = [...new Set(itemContractors)]
+  const uniqueCount = uniqueContractors.length
+  return {
+    ...p,
+    displayName: p.subject || p.item_name || '—',
+    executionDate: pickDate(p.last_receipt_date, p.acceptance_doc_date, p.delivery_date),
+    _unique_item_contractor_count: uniqueCount,
+    _unique_item_contractor_name: uniqueCount > 0 ? uniqueContractors[0] : null,
+    _all_item_contractor_names: uniqueContractors.join(', '),
+  }
+}))
 
 const filteredItems = computed(() => {
   let r = enrichedItems.value

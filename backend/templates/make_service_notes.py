@@ -484,9 +484,9 @@ def add_body_advance(doc):
     p_comp_hdr = new_para(doc, space_before=4, space_after=2)
     add_text(p_comp_hdr, "Состав расходов (предварительный):", bold=True)
 
-    # Цикл позиций
+    # Цикл позиций — обычный {% for %}/{% endfor %} (без {% tr %}, т.к. таблицы нет)
     p_for = new_para(doc, space_after=0)
-    add_marker(p_for, "{% tr for item in items %}", size=10)
+    add_marker(p_for, "{% for item in items %}", size=10)
 
     p_item = new_para(doc, space_after=2)
     add_placeholder(p_item, "{{item.num}}")
@@ -496,7 +496,20 @@ def add_body_advance(doc):
     add_placeholder(p_item, "{{item.total_price}}")
 
     p_endfor = new_para(doc, space_after=6)
-    add_marker(p_endfor, "{% tr endfor %}", size=10)
+    add_marker(p_endfor, "{% endfor %}", size=10)
+
+    # Phase 26-S: Чеки (InlineImage'ы) — последовательно по порядку загрузки
+    p_receipts_hdr = new_para(doc, space_before=4, space_after=2)
+    add_text(p_receipts_hdr, "Приложенные чеки:", bold=True)
+
+    p_for_r = new_para(doc, space_after=0)
+    add_marker(p_for_r, "{% for r in receipts %}", size=10)
+
+    p_img = new_para(doc, space_after=2)
+    add_placeholder(p_img, "{{ r }}")
+
+    p_endfor_r = new_para(doc, space_after=6)
+    add_marker(p_endfor_r, "{% endfor %}", size=10)
 
 
 # ─── ГЛАВНАЯ ФУНКЦИЯ ─────────────────────────────────────────────────────────

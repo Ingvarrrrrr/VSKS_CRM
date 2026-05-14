@@ -137,24 +137,20 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
     """Return effective key set (tabs + actions, undifferentiated).
 
-    Phase 28-Ext: иерархия > роли. Effective = UNION прав current user
-    и прав всех subordinates (visible_user_ids). Начальник superadmin'а
-    автоматически получает SaaS-уровень доступа.
+    Phase 26-P (fix после фидбека 14 мая): UI-разрешения вкладок/действий
+    определяются ТОЛЬКО ролью и override'ами самого пользователя.
 
-    Delegating per-user resolution to _get_effective_simple to avoid recursion.
+    Раньше (Phase 28-Ext, 5736ba3) брался UNION с правами подчинённых через
+    иерархию — это давало Лягину «все вкладки», потому что у его subordinates
+    могла оказаться более широкая роль/override. Это корректно для видимости
+    ДАННЫХ (чтобы руководитель видел задачи подчинённых), но не для UI:
+    руководитель не должен получать админскую вкладку «Роли» только потому,
+    что под ним числится admin.
+
+    Inheritance прав через иерархию теперь делается ТОЛЬКО в get_visible_user_ids
+    для фильтрации данных, не для меню/decorator'ов require_tab/require_action.
     """
-    effective = await _get_effective_simple(user, db, org_id)
-
-    # Phase 28-Ext: inherit from subordinates via hierarchy
-    from app.auth.visibility import get_visible_user_ids
-    visible = await get_visible_user_ids(user, db)
-    if visible:
-        for sub_uid in visible - {user.id}:
-            sub_user = await db.get(User, sub_uid)
-            if sub_user:
-                effective |= await _get_effective_simple(sub_user, db, org_id)
-
-    return effective
+    return await _get_effective_simple(user, db, org_id)
 
 
 async def get_effective_tabs(

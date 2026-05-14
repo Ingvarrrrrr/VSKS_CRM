@@ -472,7 +472,23 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
                     if _it.contractor_inn != _r.seller_inn:
                         mismatch_count += 1
                         break  # достаточно одного для триггера
-                need_recompute = bool(null_items_count) or bool(receipt_ids_actual - receipt_ids_in_docs) or bool(mismatch_count)
+                # Phase 26-DD: receipts с raw_json items, но 0 PurchaseItem с этими receipt_id
+                from app.routers.purchase_receipts import _extract_items as _ext_items
+                orphan_receipts = 0
+                if receipt_ids_actual:
+                    for _rid in receipt_ids_actual:
+                        _r = await db.get(_PR, _rid)
+                        if not _r:
+                            continue
+                        _has_items = (await db.execute(
+                            _sel(func.count(_PI.id)).where(_PI.receipt_id == _rid)
+                        )).scalar() or 0
+                        if _has_items == 0:
+                            _raw_items = _ext_items(_r.raw_json or {})
+                            if _raw_items:
+                                orphan_receipts += 1
+                                break
+                need_recompute = bool(null_items_count) or bool(receipt_ids_actual - receipt_ids_in_docs) or bool(mismatch_count) or bool(orphan_receipts)
                 if need_recompute:
                     from app.routers.purchase_receipts import _recompute_from_receipts_core
                     await _recompute_from_receipts_core(pid, db)

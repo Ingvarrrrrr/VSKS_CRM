@@ -843,7 +843,7 @@ async def diag_version():
         schema_status["error"] = str(e)[:200]
 
     return {
-        "phase": "26-CC",
+        "phase": "26-DD",
         "git_sha": git_sha,
         "schema": schema_status,
         "features": [
@@ -981,13 +981,29 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
         except Exception as e:
             result["errors"].append(f"stage_C: {str(e)[:200]}")
 
+        # Stage D: для каждой advance закупки прогнать _recompute_from_receipts_core —
+        # создаёт PurchaseItem из raw_json если items отсутствуют, плюс per-receipt mapping.
+        try:
+            from app.routers.purchase_receipts import _recompute_from_receipts_core
+            advances_ids = (await db.execute(
+                _sel(_Purchase.id).where(_Purchase.purchase_method == 'advance')
+            )).all()
+            d_autocreated = 0
+            for (pid_,) in advances_ids:
+                res = await _recompute_from_receipts_core(pid_, db)
+                d_autocreated += int(res.get("items_autocreated") or 0)
+            result["items_autocreated_from_raw_json"] = d_autocreated
+        except Exception as e:
+            result["errors"].append(f"stage_D: {str(e)[:200]}")
+
     return result
 
 
 @app.get("/api/diag/purchase/{pid}")
-async def diag_purchase(pid: int):
-    """Sample данных о закупке для диагностики backfills.
-    Phase 26-CC: временно без auth — нужно админу проверить 575 через curl."""
+async def diag_purchase(pid: int, current_user=Depends(get_current_user)):
+    """Sample данных о закупке для диагностики backfills (admin/superadmin only)."""
+    if current_user.role not in ('admin', 'superadmin'):
+        raise HTTPException(403, "Только admin/superadmin")
 
     from sqlalchemy import select as _sel
     from .models.purchase import Purchase as _Purchase

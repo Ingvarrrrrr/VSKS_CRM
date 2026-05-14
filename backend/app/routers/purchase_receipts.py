@@ -483,6 +483,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
     # 2. Items-уровень: Phase 26-BB per-receipt mapping
     from app.models.purchase_item import PurchaseItem as _PI
     from app.models.contractor import Contractor as _Ctr
+    from decimal import Decimal as _Dec
 
     # Построить map: receipt_id → (contractor_id, inn, name)
     receipt_to_contractor = {}
@@ -497,6 +498,52 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
             db.add(c_row)
             await db.flush()
         receipt_to_contractor[r.id] = (c_row.id, r.seller_inn, r.seller_name)
+
+    # Phase 26-DD: если в БД для receipt НЕТ привязанных PurchaseItem,
+    # но raw_json содержит товары — создать PurchaseItem из raw_json.
+    # Это закрывает кейс «чек загружен, items_data не распарсился при импорте».
+    items_autocreated = 0
+    for r in receipts:
+        linked_count = (await db.execute(
+            select(_PI).where(_PI.purchase_id == purchase_id, _PI.receipt_id == r.id)
+        )).scalars().all()
+        if linked_count:
+            continue  # уже есть items этого чека
+        raw_items = _extract_items(r.raw_json or {})
+        if not raw_items:
+            continue
+        pack = receipt_to_contractor.get(r.id)
+        cid, c_inn, c_name = pack if pack else (None, r.seller_inn, r.seller_name)
+        for idx, ri in enumerate(raw_items, start=1):
+            try:
+                qty = _Dec(str(ri.get('quantity') or 1))
+            except Exception:
+                qty = _Dec('1')
+            try:
+                price = _Dec(str(ri.get('price') or 0))
+            except Exception:
+                price = _Dec('0')
+            try:
+                total = _Dec(str(ri.get('sum') or ri.get('total') or (qty * price)))
+            except Exception:
+                total = _Dec('0')
+            raw_name = (str(ri.get('name') or f"Позиция {idx}"))[:5000]
+            db.add(_PI(
+                purchase_id=purchase_id,
+                item_name=raw_name,
+                quantity=qty,
+                unit='шт.',
+                unit_price=price,
+                total_price=total,
+                match_confirmed=False,
+                contractor_id=cid,
+                contractor_inn=c_inn,
+                contractor_name=c_name,
+                receipt_id=r.id,
+            ))
+            items_autocreated += 1
+    if items_autocreated:
+        await db.flush()
 
     # Шаг A: items с receipt_id → overwrite contractor если mismatch
     linked_items_q = await db.execute(
@@ -657,6 +704,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
         "receipts_count": len(receipts),
         "items_updated": items_updated,
         "items_linked_by_fuzzy": items_linked_by_fuzzy,
+        "items_autocreated": items_autocreated,
         "files_attached": files_attached,
         "acceptance_docs_added": acceptance_docs_added,
     }

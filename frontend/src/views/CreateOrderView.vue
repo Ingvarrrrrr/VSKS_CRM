@@ -733,6 +733,18 @@
                 density="compact" type="date" :rules="contractDateRules" />
             </v-col>
             <v-col cols="12" md="3">
+              <v-text-field v-model="form.agreement_number" label="№ доп.соглашения" variant="outlined"
+                density="compact" placeholder="При наличии" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.agreement_date" label="Дата доп.соглашения" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.order_date" label="Дата заказа" variant="outlined"
+                density="compact" type="date" />
+            </v-col>
+            <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_end_date" label="Срок действия договора" variant="outlined"
                 density="compact" type="date"
                 :readonly="isFramework && !!selectedFrameworkContract?.end_date"
@@ -3138,6 +3150,9 @@ const form = reactive({
   price_increase: null as number | null,
   contract_number: '',
   contract_date: '',
+  agreement_number: '' as string,   // Phase 26-K: № доп. соглашения
+  agreement_date: '' as string,     // Phase 26-K: Дата доп. соглашения
+  order_date: '' as string,         // Phase 26-K: Дата заказа
   contract_end_date: '' as string,
   delivery_date: '',
   delivery_address: '',
@@ -5104,6 +5119,9 @@ const loadPurchase = async () => {
     price_increase: data.price_increase ? Number(data.price_increase) : null,
     contract_number: data.contract_number || '',
     contract_date: data.contract_date || '',
+    agreement_number: data.agreement_number || '',
+    agreement_date: data.agreement_date || '',
+    order_date: data.order_date || '',
     contract_end_date: data.contract_end_date || '',
     delivery_date: data.delivery_date || '',
     delivery_address: data.delivery_address || '',
@@ -5672,6 +5690,9 @@ const doSave = async (adminOverride: boolean) => {
       total_nmck: displayNmck.value || null,
       framework_seq: form.framework_seq || null,
       contract_date: form.contract_date || null,
+      agreement_number: form.agreement_number || null,
+      agreement_date: form.agreement_date || null,
+      order_date: form.order_date || null,
       contract_end_date: form.contract_end_date || null,
       delivery_date: form.delivery_date || null,
       delivery_address: form.delivery_address || null,

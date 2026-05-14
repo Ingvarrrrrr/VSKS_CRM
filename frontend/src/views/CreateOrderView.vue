@@ -2969,9 +2969,14 @@
         </v-card-title>
         <v-card-text class="pt-4" v-if="docErrorInfo">
           <div class="text-body-1 font-weight-medium mb-2">{{ docErrorInfo.message }}</div>
-          <div class="text-caption text-medium-emphasis mb-3">
+          <div v-if="docErrorInfo.template" class="text-caption text-medium-emphasis mb-3">
             <v-icon size="14" class="mr-1">mdi-file-document-outline</v-icon>
             {{ docErrorInfo.template_source }}: <code>{{ docErrorInfo.template }}</code>
+          </div>
+          <div class="text-caption text-medium-emphasis mb-3">
+            <span v-if="docErrorInfo.code">Код: <code>{{ docErrorInfo.code }}</code></span>
+            <span v-if="docErrorInfo.code && docErrorInfo.correlation_id"> · </span>
+            <span v-if="docErrorInfo.correlation_id">ID: <code>{{ docErrorInfo.correlation_id }}</code></span>
           </div>
           <v-alert v-if="docErrorInfo.hint" type="info" variant="tonal" density="compact" class="mb-3">
             <div class="text-body-2" style="white-space: pre-line">{{ docErrorInfo.hint }}</div>
@@ -6109,14 +6114,23 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
     })
     if (!res.ok) {
       const err = await res.json().catch(() => null)
+      // Phase 26-U: ВСЕГДА показываем подробный диалог, если backend вернул structured payload
+      // (любой code, не только TEMPLATE_RENDER_ERROR). Generic snackbar — только если JSON не распарсился.
       // Backend exception handler возвращает: {code, message, details, correlation_id}
       // где details = оригинальный dict-detail из HTTPException(detail={...})
-      const d = err?.details || err?.detail  // fallback на err.detail если handler не пробросил
-      if (err?.code === 'TEMPLATE_RENDER_ERROR' && d && typeof d === 'object') {
-        docErrorInfo.value = d
+      const d = err?.details || err?.detail
+      if (err?.code) {
+        const info: any = {
+          code: err.code,
+          message: err.message || 'Ошибка генерации документа',
+          correlation_id: err.correlation_id,
+        }
+        if (d && typeof d === 'object') Object.assign(info, d)
+        else if (typeof d === 'string') info.error_raw = d
+        docErrorInfo.value = info
         docErrorDialog.value = true
       } else {
-        showSnack(err?.message || (typeof d === 'string' ? d : (d?.message || 'Ошибка генерации документа')), 'error')
+        showSnack(err?.message || 'Ошибка генерации документа (нет подробностей от сервера)', 'error')
       }
       return
     }

@@ -398,6 +398,21 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 24 advance backfill skipped (non-fatal): {e}")
 
+    # Phase 26-U-3: idempotent ALTER для purchase_items.vat_rate + purchases.vat_mode
+    try:
+        from sqlalchemy import text as _text2
+        from .database import engine as _engine2
+        async with _engine2.begin() as conn:
+            await conn.execute(_text2(
+                "ALTER TABLE purchase_items ADD COLUMN IF NOT EXISTS vat_rate VARCHAR(20)"
+            ))
+            await conn.execute(_text2(
+                "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS vat_mode VARCHAR(20) DEFAULT 'uniform'"
+            ))
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-U-3 vat columns skipped (non-fatal): {e}")
+
     yield
     task.cancel()
     try:

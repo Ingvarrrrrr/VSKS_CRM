@@ -388,6 +388,7 @@ class PurchaseItemCreate(BaseModel):
     contractor_id: Optional[int] = None
     contractor_inn: Optional[str] = None
     contractor_name: Optional[str] = None
+    vat_rate: Optional[str] = None  # Phase 26-U-3: per-item НДС ставка
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int
@@ -524,6 +525,7 @@ class PurchaseCreate(BaseModel):
     service_deadline_date: Optional[date] = None    # mode='deadline'
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4: ответственный исполнитель
+    vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
     # Phase 26-K: доп. соглашение и дата заказа
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None
@@ -620,6 +622,7 @@ class PurchaseUpdate(BaseModel):
     service_deadline_date: Optional[date] = None
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4
+    vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
     # Phase 26-K: доп. соглашение и дата заказа
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None

@@ -108,6 +108,9 @@ class Purchase(Base):
     # Авансовый отчёт: кому возмещать (сотрудник)
     reimbursement_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
+    # Phase 26-U-3: НДС режим — 'uniform' (одинаковый) или 'per_item' (для каждого товара)
+    vat_mode = Column(String(20), nullable=True, default='uniform', server_default='uniform')
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки

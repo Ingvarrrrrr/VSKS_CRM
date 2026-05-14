@@ -23,6 +23,7 @@ class PurchaseItem(Base):
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor_inn = Column(String(20), nullable=True)
     contractor_name = Column(String(500), nullable=True)
+    vat_rate = Column(String(20), nullable=True)  # Phase 26-U-3: per-item НДС ставка
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

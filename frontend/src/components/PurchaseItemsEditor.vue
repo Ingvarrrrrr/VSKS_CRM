@@ -20,8 +20,8 @@
       </div>
     </div>
 
-    <!-- Phase 27.1 D-01: Contract items toolbar (only when showContractColumns) -->
-    <div v-if="props.showContractColumns && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
+    <!-- Phase 27.1 D-01: Contract items toolbar (only when stagesEnabled) -->
+    <div v-if="stagesEnabled && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
       <v-btn
         variant="tonal" prepend-icon="mdi-content-copy" size="small" color="success"
         :loading="contractItemCopying"
@@ -40,317 +40,505 @@
 
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
-      <div class="overflow-x-auto">
+      <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) -->
+      <template v-if="stagesEnabled">
         <v-table density="compact">
           <thead>
-            <!-- Phase 27.1 D-04: group header row when side-by-side is active -->
-            <tr v-if="props.showContractColumns">
-              <th colspan="2"></th>
-              <th colspan="8" style="border-right:2px solid #e0e0e0;text-align:center;font-weight:700;color:#1565C0">Заявка</th>
-              <th colspan="5" style="text-align:center;font-weight:700;color:#2E7D32">Договор</th>
-            </tr>
             <tr>
+              <th style="width:36px"></th>
               <th style="width:36px;padding:0 4px;text-align:center">
                 <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
                   :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
                   @update:model-value="toggleSelectAll" />
               </th>
               <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-              <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
-              <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
-              <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
-              <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
-              <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
-              <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
-              <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
-              <!-- U-3: per-item НДС колонка -->
-              <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
-              <!-- Phase 26-X: Контрагент колонка для advance_report -->
-              <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
-              <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
-              <!-- Phase 27.1 D-04: Договор columns -->
-              <template v-if="props.showContractColumns">
-                <th style="min-width:280px;border-left:2px solid #e0e0e0">Наименование (договор)</th>
-                <th style="min-width:120px">Кол-во</th>
-                <th style="min-width:130px">Цена ед., ₽</th>
-                <th style="min-width:130px">Сумма, ₽</th>
-                <th style="width:48px"></th>
-              </template>
+              <th>Наименование</th>
+              <th style="min-width:280px">Суммы стадий</th>
+              <th style="width:48px">Матч</th>
+              <th style="width:80px"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(item, idx) in localItems" :key="idx">
-              <td style="width:36px;padding:0 4px;text-align:center">
-                <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
-                  @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
-              </td>
-              <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
-              <td style="min-width:420px">
-                <div class="d-flex align-center gap-1">
-                  <v-tooltip v-if="item._photo_url" location="right">
-                    <template #activator="{ props: tip }">
-                      <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
-                        <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
-                      </v-avatar>
-                    </template>
-                    <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
-                  </v-tooltip>
-                  <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-
-                  <v-tooltip v-if="item.item_name && !item.product_id"
-                    text="Позиция не привязана к каталогу" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
-                    </template>
-                  </v-tooltip>
-
-                  <v-textarea
-                    v-model="item.item_name"
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    clearable
-                    readonly
-                    rows="1"
-                    auto-grow
-                    class="my-1"
-                    style="cursor:pointer;min-width:280px"
-                    placeholder="Нажмите для выбора..."
-                    :disabled="props.readonly"
-                    @click="openProductPicker(idx)"
-                    @click:clear.stop="clearItem(idx)"
+            <template v-for="(item, idx) in localItems" :key="idx">
+              <!-- Summary row -->
+              <tr class="summary-row" style="cursor:pointer" @click="toggleExpand(idx)">
+                <td style="width:36px;text-align:center">
+                  <v-btn
+                    :icon="expanded[idx] ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                    size="small" variant="text" density="compact"
+                    @click.stop="toggleExpand(idx)"
                   />
-                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
-                        color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
-                        @click.stop="openQuickProductEdit(item)" />
-                    </template>
-                  </v-tooltip>
-                  <v-tooltip v-if="item.match_confirmed === false && item.product_id"
-                    text="Подтвердить, что товар из каталога определён правильно" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
-                        color="warning" class="flex-shrink-0 ml-1" :disabled="props.readonly"
-                        @click.stop="confirmMatch(idx)" />
-                    </template>
-                  </v-tooltip>
-                </div>
-                <!-- Phase 26-X: inline contractor picker when not in dedicated column mode -->
-                <template v-if="!showContractorColumn">
-                  <v-autocomplete
-                    :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                    :items="contractors"
-                    :custom-filter="contractorFilter"
-                    item-title="name"
-                    item-value="id"
-                    return-object
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    clearable
-                    class="mt-1"
-                    style="min-width:200px"
-                    placeholder="Контрагент (магазин)..."
-                    prepend-inner-icon="mdi-store"
-                    no-data-text="Не найден"
-                    :disabled="props.readonly"
-                    @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                    @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                  >
-                    <template #no-data>
-                      <v-list-item>
-                        <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
-                          Контрагент не найден в БД.
-                        </v-alert>
-                        <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
-                          @click.stop="openContractorQuickCreate(idx)">
-                          Создать нового
-                        </v-btn>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                </template>
-              </td>
-              <td>
-                <v-select v-model="item.item_type"
-                  :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
-                  item-title="title" item-value="value" density="compact" variant="outlined"
-                  hide-details class="my-1" :disabled="props.readonly" />
-              </td>
-              <td>
-                <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                  @update:model-value="calcItemTotal(idx)" />
-              </td>
-              <td>
-                <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
-                  hide-details class="my-1" :disabled="props.readonly" />
-              </td>
-              <td>
-                <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                  @update:model-value="calcItemTotal(idx)" />
-              </td>
-              <td>
-                <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
-                  variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
-              </td>
-              <td>
-                <v-text-field v-model="item.country_origin" density="compact"
-                  variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
-              </td>
-              <!-- U-3: per-item НДС ставка -->
-              <td v-if="props.vatMode === 'per_item'">
-                <v-select
-                  v-model="item.vat_rate"
-                  :items="[
-                    { title: 'Без НДС', value: null },
-                    { title: '0%', value: '0%' },
-                    { title: '10%', value: '10%' },
-                    { title: '20%', value: '20%' },
-                  ]"
-                  density="compact" variant="outlined" hide-details class="my-1"
-                  :disabled="props.readonly"
-                  @update:model-value="emitUpdate"
-                />
-              </td>
-              <!-- Phase 26-Y: dedicated Контрагент column for advance_report (идентично CreateOrderView) -->
-              <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
-                <v-autocomplete
-                  :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                  :items="contractors"
-                  item-title="name"
-                  item-value="id"
-                  return-object
-                  variant="outlined"
-                  density="compact"
-                  clearable
-                  auto-select-first
-                  hide-details
-                  class="my-1"
-                  :custom-filter="contractorFilter"
-                  :loading="contractorLookupLoading[idx] === true"
-                  :menu-props="{ maxWidth: 500 }"
-                  placeholder="Поставщик. Поиск по названию или ИНН..."
-                  :disabled="props.readonly"
-                  @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                >
-                  <template #item="{ item: i, props: itemProps }">
-                    <v-list-item v-bind="itemProps" :title="undefined">
-                      <template #title>
-                        <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ i.raw.name }}</span>
+                </td>
+                <td style="width:36px;padding:0 4px;text-align:center" @click.stop>
+                  <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+                    @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
+                </td>
+                <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
+                <td>
+                  <div class="d-flex align-center gap-1">
+                    <v-tooltip v-if="item._photo_url" location="right">
+                      <template #activator="{ props: tip }">
+                        <v-avatar v-bind="tip" size="28" rounded="sm" class="flex-shrink-0" style="overflow:hidden">
+                          <img :src="item._photo_url" style="width:28px;height:28px;object-fit:cover;display:block" />
+                        </v-avatar>
                       </template>
-                      <template #subtitle>
-                        <span v-if="i.raw.inn" class="text-caption">ИНН: {{ i.raw.inn }}</span>
-                      </template>
-                    </v-list-item>
-                  </template>
-                  <template #append-inner>
-                    <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
-                      title="Добавить контрагента" :disabled="props.readonly"
-                      @click.stop="openContractorQuickCreate(idx)" />
-                  </template>
-                  <template #no-data>
-                    <v-list-item>
-                      <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">
-                        Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.
-                      </v-alert>
-                    </v-list-item>
-                  </template>
-                </v-autocomplete>
-              </td>
-              <td>
-                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                  :disabled="props.readonly"
-                  @click="removeItem(idx)" />
-              </td>
-              <!-- Phase 27.1 D-04: Договор columns side-by-side -->
-              <template v-if="props.showContractColumns">
-                <td style="min-width:280px;border-left:2px solid #e0e0e0">
-                  <v-text-field
-                    :model-value="getContractItemFor(idx)?.name ?? ''"
-                    density="compact" variant="plain" hide-details placeholder="Наименование по договору"
-                    :disabled="props.readonly"
-                    @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
-                  />
-                  <v-chip
-                    v-if="getContractItemFor(idx)?.source_item_id != null"
-                    size="x-small" color="info" variant="tonal" class="mt-1"
-                  >
-                    Связано с ТЗ №{{ getContractItemFor(idx)?.source_item_id }}
-                  </v-chip>
-                </td>
-                <td style="min-width:120px">
-                  <v-text-field
-                    :model-value="getContractItemFor(idx)?.quantity ?? ''"
-                    type="number" density="compact" variant="plain" hide-details
-                    :disabled="props.readonly"
-                    @update:model-value="(v: string) => updateContractField(idx, 'quantity', Number(v))"
-                  />
-                </td>
-                <td style="min-width:130px">
-                  <v-text-field
-                    :model-value="getContractItemFor(idx)?.unit_price ?? ''"
-                    type="number" density="compact" variant="plain" hide-details
-                    :disabled="props.readonly"
-                    @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
-                  />
-                </td>
-                <td style="min-width:130px" class="text-caption">
-                  {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                      <img :src="item._photo_url" style="width:160px;height:160px;object-fit:cover;border-radius:8px;display:block" />
+                    </v-tooltip>
+                    <v-icon v-else size="20" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+                    <span class="text-body-2" style="max-width:300px;white-space:normal;line-height:1.3">{{ summaryName(idx) || '—' }}</span>
+                  </div>
                 </td>
                 <td>
-                  <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
+                  <div class="d-flex ga-1 flex-wrap align-center">
+                    <v-chip size="x-small" color="info" variant="tonal">ТЗ: {{ stageTotals(idx).tz > 0 ? stageTotals(idx).tz.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
+                    <v-chip size="x-small" color="success" variant="tonal">Дог: {{ stageTotals(idx).dog > 0 ? stageTotals(idx).dog.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
+                    <v-chip size="x-small" color="purple" variant="tonal">Пост: {{ stageTotals(idx).delivery > 0 ? stageTotals(idx).delivery.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
+                  </div>
+                </td>
+                <td style="text-align:center">
+                  <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Fuzzy-match — требует подтверждения" location="top">
                     <template #activator="{ props: tip }">
-                      <v-btn
-                        v-bind="tip"
-                        icon="mdi-arrow-split-vertical"
-                        size="x-small" variant="text" color="orange"
-                        title="Разделить строку договора"
-                        @click="splitContractRow(idx)"
-                      />
+                      <v-icon v-bind="tip" color="warning" icon="mdi-alert" size="small" />
                     </template>
                   </v-tooltip>
+                  <v-icon v-else-if="item.product_id" color="success" icon="mdi-check" size="small" />
+                  <v-icon v-else color="grey" icon="mdi-minus" size="small" />
                 </td>
-              </template>
-            </tr>
+                <td @click.stop>
+                  <div class="d-flex">
+                    <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Подтвердить матч" location="top">
+                      <template #activator="{ props: tip }">
+                        <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
+                          color="warning" :disabled="props.readonly"
+                          @click.stop="confirmMatch(idx)" />
+                      </template>
+                    </v-tooltip>
+                    <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                      :disabled="props.readonly"
+                      @click.stop="removeItem(idx)" />
+                  </div>
+                </td>
+              </tr>
+              <!-- Expanded sub-rows -->
+              <tr v-if="expanded[idx]" class="stage-row-wrapper">
+                <td colspan="7" style="padding:0 0 8px 48px">
+                  <v-table density="compact" class="nested-stages-table">
+                    <thead>
+                      <tr>
+                        <th style="width:90px">Стадия</th>
+                        <th style="min-width:280px">Наименование</th>
+                        <th style="min-width:90px">Кол-во</th>
+                        <th style="min-width:80px">Ед.</th>
+                        <th style="min-width:110px">Цена ед., ₽</th>
+                        <th style="min-width:110px">Сумма, ₽</th>
+                        <th style="min-width:200px">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <!-- ТЗ sub-row -->
+                      <tr class="stage-tz-row">
+                        <td><v-chip color="info" size="x-small" variant="tonal">ТЗ</v-chip></td>
+                        <td>
+                          <div class="d-flex align-center gap-1">
+                            <v-textarea
+                              v-model="item.item_name"
+                              density="compact" variant="outlined" hide-details clearable readonly
+                              rows="1" auto-grow class="my-1" style="cursor:pointer;min-width:200px"
+                              placeholder="Нажмите для выбора..."
+                              :disabled="props.readonly"
+                              @click="openProductPicker(idx)"
+                              @click:clear.stop="clearItem(idx)"
+                            />
+                            <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
+                              <template #activator="{ props: tip }">
+                                <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                                  color="teal" class="flex-shrink-0" :disabled="props.readonly"
+                                  @click.stop="openQuickProductEdit(item)" />
+                              </template>
+                            </v-tooltip>
+                          </div>
+                          <!-- Phase 26-X: contractor inline when not advance_report -->
+                          <template v-if="!showContractorColumn">
+                            <v-autocomplete
+                              :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                              :items="contractors" :custom-filter="contractorFilter"
+                              item-title="name" item-value="id" return-object
+                              density="compact" variant="outlined" hide-details clearable
+                              class="mt-1" style="min-width:180px"
+                              placeholder="Контрагент (магазин)..." prepend-inner-icon="mdi-store"
+                              no-data-text="Не найден" :disabled="props.readonly"
+                              @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                              @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                            >
+                              <template #no-data>
+                                <v-list-item>
+                                  <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">Контрагент не найден в БД.</v-alert>
+                                  <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus" @click.stop="openContractorQuickCreate(idx)">Создать нового</v-btn>
+                                </v-list-item>
+                              </template>
+                            </v-autocomplete>
+                          </template>
+                        </td>
+                        <td>
+                          <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                            variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                            @update:model-value="calcItemTotal(idx)" />
+                        </td>
+                        <td>
+                          <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
+                            hide-details class="my-1" :disabled="props.readonly" />
+                        </td>
+                        <td>
+                          <v-text-field v-model.number="item.unit_price" type="number" density="compact"
+                            variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                            @update:model-value="calcItemTotal(idx)" />
+                        </td>
+                        <td class="text-caption font-weight-medium">
+                          {{ item.total_price != null ? Number(item.total_price).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                        </td>
+                        <td>
+                          <div class="d-flex align-center ga-1 flex-wrap">
+                            <!-- Тип -->
+                            <v-select v-model="item.item_type"
+                              :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
+                              item-title="title" item-value="value" density="compact" variant="outlined"
+                              hide-details style="min-width:100px" class="my-1" :disabled="props.readonly" />
+                            <!-- Страна -->
+                            <v-text-field v-model="item.country_origin" density="compact"
+                              variant="outlined" hide-details class="my-1" placeholder="Россия"
+                              style="min-width:120px" :disabled="props.readonly" />
+                            <!-- НДС per_item -->
+                            <v-select v-if="props.vatMode === 'per_item'"
+                              v-model="item.vat_rate"
+                              :items="[{ title: 'Без НДС', value: null },{ title: '0%', value: '0%' },{ title: '10%', value: '10%' },{ title: '20%', value: '20%' }]"
+                              density="compact" variant="outlined" hide-details class="my-1"
+                              style="min-width:100px" :disabled="props.readonly"
+                              @update:model-value="emitUpdate"
+                            />
+                            <!-- Контрагент (advance_report column mode) -->
+                            <template v-if="showContractorColumn">
+                              <v-autocomplete
+                                :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                                :items="contractors" item-title="name" item-value="id" return-object
+                                variant="outlined" density="compact" clearable auto-select-first hide-details
+                                class="my-1" style="min-width:180px"
+                                :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
+                                placeholder="Поставщик..." :disabled="props.readonly"
+                                @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                                @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                              >
+                                <template #append-inner>
+                                  <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                                    :disabled="props.readonly" @click.stop="openContractorQuickCreate(idx)" />
+                                </template>
+                              </v-autocomplete>
+                            </template>
+                          </div>
+                        </td>
+                      </tr>
+                      <!-- Договор sub-row -->
+                      <tr class="stage-contract-row">
+                        <td><v-chip color="success" size="x-small" variant="tonal">Договор</v-chip></td>
+                        <td>
+                          <v-text-field
+                            :model-value="getContractItemFor(idx)?.name ?? ''"
+                            density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
+                            :disabled="props.readonly"
+                            @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
+                          />
+                        </td>
+                        <td>
+                          <v-text-field
+                            :model-value="getContractItemFor(idx)?.quantity ?? ''"
+                            type="number" density="compact" variant="outlined" hide-details
+                            :disabled="props.readonly"
+                            @update:model-value="(v: string) => updateContractField(idx, 'quantity', Number(v))"
+                          />
+                        </td>
+                        <td>
+                          <v-text-field
+                            :model-value="getContractItemFor(idx)?.unit ?? ''"
+                            density="compact" variant="outlined" hide-details
+                            :disabled="props.readonly"
+                            @update:model-value="(v: string) => updateContractField(idx, 'unit', v)"
+                          />
+                        </td>
+                        <td>
+                          <v-text-field
+                            :model-value="getContractItemFor(idx)?.unit_price ?? ''"
+                            type="number" density="compact" variant="outlined" hide-details
+                            :disabled="props.readonly"
+                            @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
+                          />
+                        </td>
+                        <td class="text-caption font-weight-medium">
+                          {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                        </td>
+                        <td>
+                          <div class="d-flex align-center ga-1 flex-wrap">
+                            <!-- NEW: rematch autocomplete -->
+                            <v-autocomplete
+                              :items="rematchOptions"
+                              :model-value="getContractItemFor(idx)?.source_item_id ?? null"
+                              density="compact" variant="outlined" hide-details
+                              placeholder="Связать с ТЗ №..." style="min-width:160px"
+                              :disabled="props.readonly"
+                              @update:model-value="(v: number | null) => {
+                                const ci = getContractItemFor(idx)
+                                if (ci) rematchContractItem(localContractItems.indexOf(ci), v)
+                              }"
+                            />
+                            <!-- split row button -->
+                            <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
+                              <template #activator="{ props: tip }">
+                                <v-btn v-bind="tip" icon="mdi-arrow-split-vertical" size="x-small" variant="text" color="orange"
+                                  @click="splitContractRow(idx)" />
+                              </template>
+                            </v-tooltip>
+                          </div>
+                        </td>
+                      </tr>
+                      <!-- Поставка sub-row (D-01.1.1) -->
+                      <tr class="stage-delivery-row" :class="{ 'stage-delivery-empty': !isDeliveryFilled(idx) }">
+                        <td><v-chip color="purple" size="x-small" variant="tonal">Поставка</v-chip></td>
+                        <template v-if="isDelivered(idx) && getContractItemFor(idx)">
+                          <!-- delivered/paid: копия Договор, readonly -->
+                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.name || '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1 font-weight-medium">
+                            {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                          </td>
+                          <td>
+                            <v-tooltip location="top">
+                              <template #default>Автозаполнено из договора. Реальный ввод появится в Phase 27 (delivery_items).</template>
+                              <template #activator="{ props: tip }">
+                                <v-icon v-bind="tip" icon="mdi-information-outline" size="small" color="grey" />
+                              </template>
+                            </v-tooltip>
+                          </td>
+                        </template>
+                        <template v-else>
+                          <td colspan="6" class="text-caption text-grey-lighten-1 text-center py-1">
+                            Поставок ещё нет — появятся в Phase 27 (delivery_items)
+                          </td>
+                        </template>
+                      </tr>
+                    </tbody>
+                  </v-table>
+                </td>
+              </tr>
+            </template>
             <tr v-if="!localItems.length">
-              <td :colspan="props.showContractColumns ? 15 : (showContractorColumn ? 11 : 10)" class="text-center text-medium-emphasis py-4">
+              <td colspan="7" class="text-center text-medium-emphasis py-4">
                 Нет позиций. Нажмите «Добавить позицию».
               </td>
             </tr>
           </tbody>
           <tfoot v-if="localItems.length">
             <tr>
-              <td colspan="7" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
-              <td class="py-2 font-weight-bold text-blue-darken-2">
+              <td colspan="3" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
+              <td colspan="4" class="py-2 font-weight-bold text-blue-darken-2">
                 {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
               </td>
-              <td :colspan="showContractorColumn ? 3 : 2"></td>
-              <td v-if="props.showContractColumns" colspan="5"></td>
             </tr>
           </tfoot>
         </v-table>
-      </div>
 
-      <!-- Phase 27.1 D-04: Savings badge under the table -->
-      <div v-if="props.showContractColumns && contractItemsTotal > 0" class="mt-3 d-flex ga-2 flex-wrap align-center">
-        <v-chip color="primary" variant="tonal" size="small">
-          Сумма позиций договора: {{ contractItemsTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
-        </v-chip>
-        <v-chip color="info" variant="tonal" size="small">
-          НМЦД заявки: {{ purchasePlannedTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
-        </v-chip>
-        <v-chip
-          v-if="contractSavings != null"
-          :color="Number(contractSavings) >= 0 ? 'success' : 'error'"
-          variant="tonal" size="small"
-        >
-          Экономия: {{ contractSavings.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽ ({{ contractSavingsPercent }}%)
-        </v-chip>
-      </div>
+        <!-- Savings badge under the expand-row table -->
+        <div v-if="contractItemsTotal > 0" class="mt-3 d-flex ga-2 flex-wrap align-center">
+          <v-chip color="primary" variant="tonal" size="small">
+            Сумма позиций договора: {{ contractItemsTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
+          </v-chip>
+          <v-chip color="info" variant="tonal" size="small">
+            НМЦД заявки: {{ purchasePlannedTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
+          </v-chip>
+          <v-chip
+            v-if="contractSavings != null"
+            :color="Number(contractSavings) >= 0 ? 'success' : 'error'"
+            variant="tonal" size="small"
+          >
+            Экономия: {{ contractSavings.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽ ({{ contractSavingsPercent }}%)
+          </v-chip>
+        </div>
+      </template>
+
+      <!-- Legacy flat table (when stagesEnabled is false, i.e. pre-Phase 27.1.1) -->
+      <template v-else>
+        <div class="overflow-x-auto">
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th style="width:36px;padding:0 4px;text-align:center">
+                  <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
+                    :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
+                    @update:model-value="toggleSelectAll" />
+                </th>
+                <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
+                <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
+                <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
+                <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
+                <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
+                <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
+                <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
+                <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
+                <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
+                <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
+                <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, idx) in localItems" :key="idx">
+                <td style="width:36px;padding:0 4px;text-align:center">
+                  <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+                    @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
+                </td>
+                <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
+                <td style="min-width:420px">
+                  <div class="d-flex align-center gap-1">
+                    <v-tooltip v-if="item._photo_url" location="right">
+                      <template #activator="{ props: tip }">
+                        <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                          <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
+                        </v-avatar>
+                      </template>
+                      <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
+                    </v-tooltip>
+                    <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+                    <v-tooltip v-if="item.item_name && !item.product_id" text="Позиция не привязана к каталогу" location="top">
+                      <template #activator="{ props: tip }">
+                        <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
+                      </template>
+                    </v-tooltip>
+                    <v-textarea
+                      v-model="item.item_name" density="compact" variant="outlined" hide-details clearable readonly
+                      rows="1" auto-grow class="my-1" style="cursor:pointer;min-width:280px"
+                      placeholder="Нажмите для выбора..." :disabled="props.readonly"
+                      @click="openProductPicker(idx)" @click:clear.stop="clearItem(idx)"
+                    />
+                    <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
+                      <template #activator="{ props: tip }">
+                        <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                          color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
+                          @click.stop="openQuickProductEdit(item)" />
+                      </template>
+                    </v-tooltip>
+                    <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Подтвердить, что товар из каталога определён правильно" location="top">
+                      <template #activator="{ props: tip }">
+                        <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
+                          color="warning" class="flex-shrink-0 ml-1" :disabled="props.readonly"
+                          @click.stop="confirmMatch(idx)" />
+                      </template>
+                    </v-tooltip>
+                  </div>
+                  <template v-if="!showContractorColumn">
+                    <v-autocomplete
+                      :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                      :items="contractors" :custom-filter="contractorFilter"
+                      item-title="name" item-value="id" return-object
+                      density="compact" variant="outlined" hide-details clearable
+                      class="mt-1" style="min-width:200px"
+                      placeholder="Контрагент (магазин)..." prepend-inner-icon="mdi-store"
+                      no-data-text="Не найден" :disabled="props.readonly"
+                      @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                      @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                    >
+                      <template #no-data>
+                        <v-list-item>
+                          <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">Контрагент не найден в БД.</v-alert>
+                          <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus" @click.stop="openContractorQuickCreate(idx)">Создать нового</v-btn>
+                        </v-list-item>
+                      </template>
+                    </v-autocomplete>
+                  </template>
+                </td>
+                <td>
+                  <v-select v-model="item.item_type"
+                    :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
+                    item-title="title" item-value="value" density="compact" variant="outlined"
+                    hide-details class="my-1" :disabled="props.readonly" />
+                </td>
+                <td>
+                  <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                    variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                    @update:model-value="calcItemTotal(idx)" />
+                </td>
+                <td>
+                  <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
+                    hide-details class="my-1" :disabled="props.readonly" />
+                </td>
+                <td>
+                  <v-text-field v-model.number="item.unit_price" type="number" density="compact"
+                    variant="outlined" hide-details class="my-1" :disabled="props.readonly"
+                    @update:model-value="calcItemTotal(idx)" />
+                </td>
+                <td>
+                  <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                    variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
+                </td>
+                <td>
+                  <v-text-field v-model="item.country_origin" density="compact"
+                    variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
+                </td>
+                <td v-if="props.vatMode === 'per_item'">
+                  <v-select v-model="item.vat_rate"
+                    :items="[{ title: 'Без НДС', value: null },{ title: '0%', value: '0%' },{ title: '10%', value: '10%' },{ title: '20%', value: '20%' }]"
+                    density="compact" variant="outlined" hide-details class="my-1"
+                    :disabled="props.readonly" @update:model-value="emitUpdate" />
+                </td>
+                <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
+                  <v-autocomplete
+                    :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                    :items="contractors" item-title="name" item-value="id" return-object
+                    variant="outlined" density="compact" clearable auto-select-first hide-details
+                    class="my-1" :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
+                    :menu-props="{ maxWidth: 500 }" placeholder="Поставщик. Поиск по названию или ИНН..."
+                    :disabled="props.readonly"
+                    @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                    @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                  >
+                    <template #item="{ item: i, props: itemProps }">
+                      <v-list-item v-bind="itemProps" :title="undefined">
+                        <template #title><span style="white-space:normal;word-break:break-word;line-height:1.4">{{ i.raw.name }}</span></template>
+                        <template #subtitle><span v-if="i.raw.inn" class="text-caption">ИНН: {{ i.raw.inn }}</span></template>
+                      </v-list-item>
+                    </template>
+                    <template #append-inner>
+                      <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                        title="Добавить контрагента" :disabled="props.readonly"
+                        @click.stop="openContractorQuickCreate(idx)" />
+                    </template>
+                    <template #no-data>
+                      <v-list-item>
+                        <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.</v-alert>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </td>
+                <td>
+                  <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                    :disabled="props.readonly" @click="removeItem(idx)" />
+                </td>
+              </tr>
+              <tr v-if="!localItems.length">
+                <td :colspan="showContractorColumn ? 11 : 10" class="text-center text-medium-emphasis py-4">
+                  Нет позиций. Нажмите «Добавить позицию».
+                </td>
+              </tr>
+            </tbody>
+            <tfoot v-if="localItems.length">
+              <tr>
+                <td colspan="7" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
+                <td class="py-2 font-weight-bold text-blue-darken-2">
+                  {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
+                </td>
+                <td :colspan="showContractorColumn ? 3 : 2"></td>
+              </tr>
+            </tfoot>
+          </v-table>
+        </div>
+      </template>
     </template>
 
     <!-- Wish shape table -->
@@ -1109,7 +1297,9 @@ void COUNTRIES
 const props = withDefaults(defineProps<{
   modelValue: EditorItem[]
   contractItems?: ContractItem[]        // Phase 27.1 D-04: contract_items for side-by-side
-  showContractColumns?: boolean         // Phase 27.1 D-04: render «Договор» column group
+  showContractColumns?: boolean         // @deprecated — use unifiedStagesView (Phase 27.1.1)
+  unifiedStagesView?: boolean           // Phase 27.1.1: expand-row 3-stage mode
+  purchaseStatus?: string               // Phase 27.1.1: для определения isDelivered (D-01.1.1)
   itemShape: 'purchase' | 'wish'
   purchaseId?: number | null
   allowedItemTypes?: string[]
@@ -1127,6 +1317,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
+  unifiedStagesView: false,
+  purchaseStatus: '',
   allowedItemTypes: () => ['товар', 'услуга', 'работа'],
   defaultItemType: 'товар',
   defaultUnit: 'шт.',
@@ -1141,6 +1333,9 @@ const props = withDefaults(defineProps<{
   uniformVatRate: null,
   formMode: 'default',
 })
+
+// Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
+const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)
 
 const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
@@ -1291,6 +1486,56 @@ function splitContractRow(rowIdx: number) {
   localContractItems.value.push(newCi)
   emitContractItemsUpdate()
 }
+
+// ── Phase 27.1.1: expand-row state + helpers ──────────────────────────────────
+
+const expanded = ref<Record<number, boolean>>({})
+
+function toggleExpand(idx: number) {
+  expanded.value[idx] = !expanded.value[idx]
+}
+
+// Auto-expand для match_confirmed=false (D-01.1.2)
+watch(localItems, (items) => {
+  items.forEach((it, i) => {
+    if (it.match_confirmed === false && it.product_id) expanded.value[i] = true
+  })
+}, { immediate: true })
+
+function rematchContractItem(contractIdx: number, newSourceItemId: number | null) {
+  const ci = localContractItems.value[contractIdx]
+  if (!ci) return
+  ci.source_item_id = newSourceItemId
+  ci.match_confirmed = true
+  emit('update:contractItems', [...localContractItems.value])
+}
+
+function summaryName(idx: number): string {
+  return getContractItemFor(idx)?.name || localItems.value[idx]?.item_name || '—'
+}
+
+function stageTotals(idx: number) {
+  const tz = Number(localItems.value[idx]?.total_price || 0)
+  const dog = Number(getContractItemFor(idx)?.total || 0)
+  const delivery = isDelivered(idx) ? dog : 0
+  return { tz, dog, delivery }
+}
+
+function isDelivered(idx: number): boolean {
+  void idx
+  return props.purchaseStatus === 'delivered' || props.purchaseStatus === 'paid'
+}
+
+function isDeliveryFilled(idx: number): boolean {
+  return isDelivered(idx) && !!getContractItemFor(idx)
+}
+
+const rematchOptions = computed(() =>
+  localItems.value.map((it, i) => ({
+    title: `№${i + 1}: ${(it.item_name || '').slice(0, 50) || '(без имени)'}`,
+    value: (it as any).id ?? i,
+  }))
+)
 
 // Snackbar
 const snack = reactive({ show: false, text: '', color: 'success' })
@@ -2611,5 +2856,28 @@ th { position: relative; }
 /* ──────────────────────────────────────────────────────── */
 .purchase-items-editor {
   width: 100%;
+}
+/* Phase 27.1.1: expand-row layout */
+.summary-row:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+.stage-row-wrapper td {
+  background: #fafafa;
+}
+.nested-stages-table {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+.stage-tz-row td {
+  background: rgba(25, 118, 210, 0.04);
+}
+.stage-contract-row td {
+  background: rgba(46, 125, 50, 0.04);
+}
+.stage-delivery-row td {
+  background: rgba(156, 39, 176, 0.04);
+}
+.stage-delivery-empty td {
+  opacity: 0.6;
 }
 </style>

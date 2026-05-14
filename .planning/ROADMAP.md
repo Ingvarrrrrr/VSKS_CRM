@@ -471,6 +471,51 @@ Plans:
 
 ---
 
+### Phase 27.1: contract_items — фактически заказанные позиции по подписанному договору
+
+**Directory:** `.planning/phases/27.1-contract-items/`
+
+**Context:** `.planning/phases/27.1-contract-items/27.1-CONTEXT.md` (gathered 2026-05-14), `27.1-RESEARCH.md` (HIGH confidence), `27.1-VALIDATION.md`
+
+**Goal:** Зафиксировать промежуточный слой «фактически заказано по договору» между `purchase_items` (заявка/ТЗ) и `delivery_items` (Phase 27, поставлено). После подписания договора имена/количества/цены позиций часто отличаются от ТЗ: замены аналогами, скидки, переименования. Без этого слоя теряется ground truth для генерации docxtpl-шаблонов договора и для сводных «План vs Договор vs Поставка». `purchase.contract_price` авто-вычисляется из `SUM(contract_items.total)`.
+
+**Контекст:** TODO `2026-05-13-three-stages-tz-contract-delivery.md`. Развивает B-01 backlog. Решение принято в `27-CONTEXT.md` D-11 — этот слой вставляется ПЕРЕД Phase 27.
+
+**Зависит от:** —
+**Unblocks:** Phase 27 (`delivery_items.contract_item_id` FK→contract_items)
+
+**Locked decisions (D-01..D-08 + inherited D-11/D-12/D-15/D-19):**
+1. D-01 LAZY 2 UI кнопки в `PurchaseItemsEditor`: «Скопировать из заявки» + «Импорт из файла/QR/фото». НЕТ auto-create.
+2. D-02 Reuse Excel/QR/photo/JSON import из Phase 15 + qrDecode.ts (Phase 21-08). Full OCR PDF/DOCX deferred.
+3. D-03 Protocol API (Росэлторг/Фабрикант) deferred → Phase 27.2.
+4. D-04 UI side-by-side колонки «Заявка | Договор» + бадж «Экономия N ₽ (M%)».
+5. D-05 Reshape через `contract_items.source_item_id` (nullable FK→purchase_items). Кнопка «Разделить».
+6. D-06 STRICT transition в `contracted` без contract_items → 422 (`CONTRACT_ITEMS_REQUIRED`). Migration backfill 1↔1 для legacy.
+7. D-07 `purchase.contract_price = SUM(contract_items.total)` АВТО для разовой/авансовой/дочерней рамочного. Рамочный головной — manual.
+8. D-08 Closes B-01: `contract_item_name`/`final_unit_price`/`final_total` → `contract_items.name`/`unit_price`/`total` + deprecated alias.
+
+**Closes:** B-01 backlog
+
+**Success Criteria:**
+1. Таблица `contract_items` существует в БД (новая модель + check_schema.py `_ensure_contract_items_table` + idempotent backfill из purchase_items для legacy в `contracted/ordered/delivered/paid`)
+2. CRUD endpoints `/api/purchases/{pid}/contract-items` работают (GET/POST/PATCH/DELETE + copy-from-purchase + PUT bulk replace)
+3. Transition в `contracted` без contract_items блокируется 422 с code='CONTRACT_ITEMS_REQUIRED'
+4. `purchase.contract_price` авто-пересчитывается = SUM(contract_items.total) для single/advance/framework_child; framework_head — manual
+5. В карточке закупки PurchaseItemsEditor показывает side-by-side колонки «Заявка | Договор» + 2 toolbar кнопки + бадж экономии + split-row UI
+6. Эталонная сводная «План/Договор» строится через Phase 25 Report Builder (новый source 'contract_item' в field_registry + JOIN в pivot_engine + calc_columns contract_savings)
+7. Docxtpl шаблоны договора получают переменные `{{contract_items}}` (loop) + `{{contract_items_total}}` с fallback на purchase_items (D-08)
+
+**Plans:** 1/5 plans executed
+
+Plans:
+- [x] 27.1-01-PLAN.md — ContractItem model + check_schema._ensure_contract_items_table + idempotent backfill SQL + Pydantic schemas + Wave 0 tests (Wave 0)
+- [ ] 27.1-02-PLAN.md — CRUD router /api/purchases/{pid}/contract-items + copy-from-purchase + D-06 transition gate + D-07 auto-recalc contract_price (Wave 1, depends on 01)
+- [ ] 27.1-03-PLAN.md — Frontend: TypeScript types + API client + PurchaseItemsEditor side-by-side D-04 + 2 toolbar кнопки D-01 + D-05 split + E2E spec (Wave 2, depends on 02)
+- [ ] 27.1-04-PLAN.md — Analytics: field_registry source contract_item + pivot_engine JOIN + calc_columns contract_savings (Wave 3, depends on 02)
+- [ ] 27.1-05-PLAN.md — Docxtpl: _build_contract_items_context helper + context update в documents.py + D-08 fallback на purchase_items (Wave 3, depends on 02)
+
+---
+
 ### Post-Phase 8: Untracked Additional Work ✅ DELIVERED
 
 Features delivered after Phase 8 completion, outside GSD tracking:

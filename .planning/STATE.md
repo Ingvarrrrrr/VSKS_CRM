@@ -2,35 +2,80 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Active — UAT pending Phase 26
-last_updated: "2026-05-13T23:59:00.000Z"
+status: Ready to execute
+last_updated: "2026-05-14T08:01:53.170Z"
 progress:
-  total_phases: 21
-  completed_phases: 18
-  total_plans: 90
-  completed_plans: 90
+  total_phases: 19
+  completed_phases: 11
+  total_plans: 74
+  completed_plans: 64
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 26-H ✅ (UX/Permissions/SZ fixes batch — завершена 2026-05-13, 22 коммита `900a369..4200e0a`)
-Next action: UAT Phase 26 (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`). Phase 27 «Позиции поставки» отложена — ждёт планирования.
+Phase: 27.1 (contract-items) — EXECUTING
+Plan: 2 of 5
+Next action: `/gsd:plan-phase 27.1` сначала (contract_items — вставлена ПЕРЕД 27 как зависимость), затем `/gsd:plan-phase 27`. UAT Phase 26 параллельно (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`).
 Resume file: None
 Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
+
+## 2026-05-14 — Phase 26-I ✅ Фидбек 14 мая по фазе 26 (12 коммитов)
+
+`de78162..47c9abf` → push в `claude`. 5 параллельных Sonnet-агентов, непересекающиеся scope. Подробности в `VAULT_for_LLM/Projects/VSKS_CRM/Sessions/2026-05-14_VSKS_CRM.md`.
+
+**Кластеры:**
+
+- **1a/1b** ColumnHeaderMenu стрелка справа + фильтр purchase_type на реальных ключах БД
+- **2** Накопительный договор без max_amount → счётчик (без отрицательного остатка)
+- **3** Диалог шаблонных переменных 1100px + nowrap
+- **4** Combobox типов закр. документов — удаление кастомных через крестик
+- **5** ContractorsView «Открыть карточку» работает (nextTick + GET fallback)
+- **7a-g** Multi-dept big pack: per-row position, DnD move с remove-from-old, cascade DELETE org-membership, org-color border, UserAvatar с photo_url + square, DepartmentsView UNION фильтр
+
+**Архитектурные решения:**
+
+- `PATCH /api/users/{uid}/org-memberships/{row_id}` — per-row position update (не bulk по org)
+- `DELETE /api/users/{uid}/organizations/{org_id}` cascade: user_organizations + department_members
+- DepartmentsView `/departments/tree` UNION (DepartmentMember ∪ UserOrganization.dept_id)
+- Новый `UserAvatar.vue` с prop `square`
+
+## 2026-05-14 — Phase 27 context gathered ✅ + Phase 27.1 inserted
+
+Discuss-phase 27 завершён, 19 решений D-01..D-19 + 3 Claude's Discretion. Ключевое: введён промежуточный слой `contract_items` (Phase 27.1, ВСТАВЛЕНА В ROADMAP ПЕРЕД 27) на основании фидбека «три стадии: ТЗ/Договор/Поставка». Phase 27 теперь зависит от Phase 27.1 через `delivery_items.contract_item_id` FK.
+
+**Артефакты:**
+
+- `.planning/phases/27-delivery-items-manual-matching/27-CONTEXT.md` — 19 решений
+- `.planning/phases/27-delivery-items-manual-matching/27-DISCUSSION-LOG.md` — аудит Q&A (21 вопрос)
+- `.planning/todos/pending/2026-05-13-three-stages-tz-contract-delivery.md` — folded в Phase 27.1
+- `.planning/ROADMAP.md` — Phase 27.1 stub добавлен
+
+**Ключевые решения:**
+
+- D-01 lazy trigger «Заполнить позиции», D-03 импорт как PurchaseItemsEditor (Excel/CSV/JSON/QR-фото), без OCR PDF
+- D-04/05 strict валидация сумм: SUM(delivery_items) == acceptance_doc.amount + SUM(acceptance_docs) ≤ contract_price
+- D-08 fuzzy-match difflib 0.7 → auto-link match_confirmed=false (Phase 21 паттерн)
+- D-11 Phase 27.1 contract_items ВСТАВЛЕНА ПЕРЕД 27
+- D-12/15 новый source 'delivery_items' в field_registry, сводная «Закупка × Товар × (План/Договор/Поставка)»
+- D-16 legacy acceptance_doc_* → миграция в JSONB[0] + deprecated alias
+- D-18 PaymentMatcher subset-sum комбинаторный матчинг (Phase 22 extension)
+- D-19 «протокол закупки» (Росэлторг/Фабрикант API + manual upload) → contract_items
 
 ## 2026-05-13 — Phase 26-E/F/G/H ✅ UX/Permissions/SZ fixes batch (22 коммита)
 
 `900a369..4200e0a` → push в `claude`. Полный разбор в `VAULT_for_LLM/Projects/VSKS_CRM/Sessions/2026-05-13_VSKS_CRM.md`.
 
 Ключевые изменения:
+
 - **26-E**: Excel-like ColumnHeaderMenu (54 слота на 4 list-view, ~440 LOC)
 - **26-F**: рамочный остаток, шаблонные переменные UI, закрывающие документы UX
 - **26-G**: должность per-org, дедуп ИНН, /users/in-my-orgs
 - **26-H**: PATCH coerce ISO-дат, JSONB flag_modified, убран опасный SubsidyApprover.id fallback, membership-check СЗ, «за другого» только руководитель
 
 **Архитектурные решения:**
+
 - `_coerce_patch_value`: ISO-строки → date/datetime, '' → None (asyncpg не принимает str для Date-колонок)
 - `flag_modified(obj, 'acceptance_docs')`: обязателен для JSONB мутаций в SQLAlchemy
 - Initiator resolve: SubsidyApprover.user_id → SimpleNamespace из User (уровень SubsidyApprover.id УБРАН как опасный)
@@ -41,6 +86,7 @@ Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && g
 11 коммитов (`558dcc9..0b16f75`) → push в `claude`. Полная реализация UI-конструктора отчётов: 3 типа (реестр / сводная / дашборд) с drill-down, Excel и PDF экспортом.
 
 ### Backend (ядро)
+
 - **field_registry.py** — 95 полей с label/type/source/sql_expr/agg_default/is_dimension/is_measure (источник правды для всех UI)
 - **pivot_engine.py** — SQL group_by с whitelist ALLOWED_KEYS/ALLOWED_AGGS (защита от инъекций); LEFT JOIN purchases→contractors/subsidies/feo (3 уровня FEO через aliased); execute_query (list+pivot) + execute_drill
 - **calc_columns.py** — share_of_total / cumulative_sum / delta_to_plan post-processing
@@ -53,6 +99,7 @@ Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && g
 - **permission action `report_config.edit`** (default admin + org_admin)
 
 ### Frontend (3 builder'а + 4 supporting view)
+
 - **ListBuilderView** (Тип A — реестр) — drag поля, composite-колонки `{contract_number} от {contract_date|dmy}`, константы «Россия», format units (₽/тыс.₽/млн.₽), группировка с subtotals; превью live (debounce 350ms)
 - **PivotBuilderView** (Тип B — сводная) — drop-зоны Строки/Колонки/Значения/Фильтры; aggs; calc-columns (% от итога/нарастающий/Δ); drill-click→диалог→`/orders/{id}`
 - **DashboardBuilderView** (Тип C — дашборд) — grid-layout-plus + WidgetRenderer (KPI/bar/line/area/pie/donut/table) + параметры
@@ -60,16 +107,20 @@ Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && g
 - **Reports{Lists,Pivots,Dashboards}ListView** — индекс сохранённых отчётов
 
 ### Миграции
+
 - **Purchase.region** (String 200, nullable) — через `check_schema.py --apply` auto-add
 - **report_configs** таблица — через `Base.metadata.create_all` (alembic chain сломан)
 - **89 субъектов РФ** — `frontend/src/constants/russian_regions.ts` + spec values
 - **fonts-dejavu** в Dockerfile (для PDF кириллицы)
 
 ### Pending UAT (16 пунктов в `.planning/phases/25-report-builder/STATE.md`)
+
 Ключевые: воспроизвести в UI 3 эталонных листа Excel пользователя — «Сумма_заключенных_договоров» (329 строк), «Контрактование закупок» (Товары/Услуги × Квартал × SUM), «Это для отчёта по мероприятиям» (группировка по event_id + composite).
 
 ### Manual step (alembic сломан)
+
 Применить permission seed на проде:
+
 ```bash
 docker cp backend/alembic/versions/phase25_seed_report_config_action.sql vsks-crm-db-1:/tmp/
 docker exec vsks-crm-db-1 psql -U vsks -d vsks_crm -f /tmp/phase25_seed_report_config_action.sql
@@ -82,10 +133,12 @@ Push `c5ed69a` (последний из 24 коммитов): этапы рам�
 Detailed log: `/c/Users/1/Documents/VAULT_for_LLM/Projects/VSKS_CRM/Sessions/2026-05-07_VSKS_CRM.md`.
 
 ### Инциденты
+
 - 2× OOM build на проде после крупных frontend refactor'ов (`81a5267`, `307290f`) → revert + атомарные правки. Lesson зафиксирован.
 - alembic chain сломан, `check_schema.py --apply` авто-добавляет колонки на старте контейнера.
 
 ### Bundle deployment chain (для контроля OOM)
+
 `8ea172f→DpY8cZqE→OOM→DWu4YuSF→B6MSF_sA→CWprrQSO→DFqZxfNU→BjOYCtYV→D1ECJ3n0→BlpoywjK→BoMULp2O→BQnejltI→Drz-nu6d`
 
 ## 2026-05-05 — Triage 3 (фидбек 5 мая, docx)
@@ -191,6 +244,8 @@ Recently closed:
 - [Phase 17-permission-system-override]: Plan 17-09: EMPLOYEE_ALLOWED removed outright (no fallback) — authStore.loaded fail-opens on API failure (17-06) + 17-01 seed grants employee defaults; double-gating would regress
 - [Phase 17-permission-system-override]: Plan 17-09: Sub-routes share parent tab_key (/hierarchy→staff, /suppliers→contractors, /orders/*→purchases, service-notes/advance-reports sub-paths) — matches RESEARCH Open-Question 2
 - [Phase 17-permission-system-override]: Plan 17-09: E2E uses inline loginAs(page,user,pwd) helper — existing helpers.ts login() is hardcoded to admin/admin123; keeps plan scope to two declared files
+- [Phase 27.1]: ContractItem uses _ensure_*_table pattern (not alembic) + non-fatal lifespan startup
+- [Phase 27.1]: Backfill uses NOT EXISTS guard; framework head excluded by purchase_contract_type check (D-07)
 
 ## Blockers
 

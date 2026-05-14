@@ -334,6 +334,55 @@
             @sort="dir => applySort('order_date', dir)"
             @hide="toggleVisible('order_date', false)" />
         </template>
+        <!-- Phase 26-N: денежные показатели по закупке -->
+        <template #header.ordered_amount="{ column }">
+          <ColumnHeaderMenu col-key="ordered_amount" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['ordered_amount'] ?? null"
+            :sort-by="getSortBy('ordered_amount')"
+            @update:model-value="v => cfg.setFilter('ordered_amount', v)"
+            @sort="dir => applySort('ordered_amount', dir)"
+            @hide="toggleVisible('ordered_amount', false)" />
+        </template>
+        <template #header.delivered_amount="{ column }">
+          <ColumnHeaderMenu col-key="delivered_amount" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['delivered_amount'] ?? null"
+            :sort-by="getSortBy('delivered_amount')"
+            @update:model-value="v => cfg.setFilter('delivered_amount', v)"
+            @sort="dir => applySort('delivered_amount', dir)"
+            @hide="toggleVisible('delivered_amount', false)" />
+        </template>
+        <template #header.paid_amount="{ column }">
+          <ColumnHeaderMenu col-key="paid_amount" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['paid_amount'] ?? null"
+            :sort-by="getSortBy('paid_amount')"
+            @update:model-value="v => cfg.setFilter('paid_amount', v)"
+            @sort="dir => applySort('paid_amount', dir)"
+            @hide="toggleVisible('paid_amount', false)" />
+        </template>
+        <template #header.diff_ordered_delivered="{ column }">
+          <ColumnHeaderMenu col-key="diff_ordered_delivered" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['diff_ordered_delivered'] ?? null"
+            :sort-by="getSortBy('diff_ordered_delivered')"
+            @update:model-value="v => cfg.setFilter('diff_ordered_delivered', v)"
+            @sort="dir => applySort('diff_ordered_delivered', dir)"
+            @hide="toggleVisible('diff_ordered_delivered', false)" />
+        </template>
+        <template #header.diff_delivered_paid="{ column }">
+          <ColumnHeaderMenu col-key="diff_delivered_paid" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['diff_delivered_paid'] ?? null"
+            :sort-by="getSortBy('diff_delivered_paid')"
+            @update:model-value="v => cfg.setFilter('diff_delivered_paid', v)"
+            @sort="dir => applySort('diff_delivered_paid', dir)"
+            @hide="toggleVisible('diff_delivered_paid', false)" />
+        </template>
+        <template #header.diff_ordered_paid="{ column }">
+          <ColumnHeaderMenu col-key="diff_ordered_paid" :title="column.title" col-type="number"
+            :model-value="cfg.state.value.filters['diff_ordered_paid'] ?? null"
+            :sort-by="getSortBy('diff_ordered_paid')"
+            @update:model-value="v => cfg.setFilter('diff_ordered_paid', v)"
+            @sort="dir => applySort('diff_ordered_paid', dir)"
+            @hide="toggleVisible('diff_ordered_paid', false)" />
+        </template>
 
         <!-- Expand toggle column -->
         <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
@@ -424,6 +473,26 @@
         <!-- phase26-m: для рамочного — framework_contract_total (max_amount or SUM) -->
         <template #item.contract_price="{ item }">
           {{ formatMoney(FIELD_GETTERS.contract_price(item)) }}
+        </template>
+
+        <!-- Phase 26-N: денежные показатели по закупке -->
+        <template #item.ordered_amount="{ item }">
+          {{ FIELD_GETTERS.ordered_amount(item) != null ? formatMoney(FIELD_GETTERS.ordered_amount(item)) : '—' }}
+        </template>
+        <template #item.delivered_amount="{ item }">
+          {{ FIELD_GETTERS.delivered_amount(item) != null ? formatMoney(FIELD_GETTERS.delivered_amount(item)) : '—' }}
+        </template>
+        <template #item.paid_amount="{ item }">
+          {{ FIELD_GETTERS.paid_amount(item) != null ? formatMoney(FIELD_GETTERS.paid_amount(item)) : '—' }}
+        </template>
+        <template #item.diff_ordered_delivered="{ item }">
+          {{ FIELD_GETTERS.diff_ordered_delivered(item) != null ? formatMoney(FIELD_GETTERS.diff_ordered_delivered(item)) : '—' }}
+        </template>
+        <template #item.diff_delivered_paid="{ item }">
+          {{ FIELD_GETTERS.diff_delivered_paid(item) != null ? formatMoney(FIELD_GETTERS.diff_delivered_paid(item)) : '—' }}
+        </template>
+        <template #item.diff_ordered_paid="{ item }">
+          {{ FIELD_GETTERS.diff_ordered_paid(item) != null ? formatMoney(FIELD_GETTERS.diff_ordered_paid(item)) : '—' }}
         </template>
 
         <template #item.contract_date="{ item }">
@@ -999,6 +1068,13 @@ const allColumns: ColumnDef[] = [
   { title: 'НМЦД', key: 'nmck', width: 130, align: 'end', group: 'all' },
   { title: 'Итого НМЦД', key: 'total_nmck', width: 130, align: 'end', group: 'all' },
   { title: 'Цена договора', key: 'contract_price', width: 130, align: 'end', group: 'all' },
+  // Phase 26-N: денежные показатели по закупке (скрыты по умолчанию, group:'all')
+  { title: 'Заказано', key: 'ordered_amount', width: 130, align: 'end', group: 'all' },
+  { title: 'Поставлено', key: 'delivered_amount', width: 130, align: 'end', group: 'all' },
+  { title: 'Оплачено (закупка)', key: 'paid_amount', width: 130, align: 'end', group: 'all' },
+  { title: 'Заказано − Поставлено', key: 'diff_ordered_delivered', width: 160, align: 'end', group: 'all' },
+  { title: 'Поставлено − Оплачено', key: 'diff_delivered_paid', width: 160, align: 'end', group: 'all' },
+  { title: 'Заказано − Оплачено', key: 'diff_ordered_paid', width: 160, align: 'end', group: 'all' },
   { title: 'Экономия', key: 'economy', width: 120, align: 'end', group: 'all' },
   { title: 'Превышение', key: 'price_increase', width: 130, align: 'end', group: 'all' },
   { title: 'Срок исполнения', key: 'execution_term', width: 150, group: 'all' },
@@ -1090,6 +1166,17 @@ function uniqValues(rows: any[], key: string): (string | number | null)[] {
   return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
 }
 
+// Phase 26-N: helper for delivered amount (acceptance_doc_amount → delivery_payment_amount → last acceptance_docs entry)
+function _deliveredAmount(r: any): number | null {
+  if (r.acceptance_doc_amount != null) return Number(r.acceptance_doc_amount)
+  if (r.delivery_payment_amount != null) return Number(r.delivery_payment_amount)
+  if (Array.isArray(r.acceptance_docs) && r.acceptance_docs.length) {
+    const last = r.acceptance_docs[r.acceptance_docs.length - 1]
+    if (last?.amount != null) return Number(last.amount)
+  }
+  return null
+}
+
 // Field getters for computed/derived columns where row[key] is undefined.
 const FIELD_GETTERS: Record<string, (r: any) => any> = {
   effective_price: (r) => effectivePrice(r),
@@ -1098,6 +1185,25 @@ const FIELD_GETTERS: Record<string, (r: any) => any> = {
     const isFw = (r.purchase_contract_type || '').startsWith('framework')
     if (isFw && r.framework_contract_total != null) return Number(r.framework_contract_total)
     return r.contract_price != null ? Number(r.contract_price) : null
+  },
+  // Phase 26-N: денежные показатели
+  ordered_amount: (r: any) => r.contract_price != null ? Number(r.contract_price) : null,
+  delivered_amount: (r: any) => _deliveredAmount(r),
+  paid_amount: (r: any) => r.payment_amount != null ? Number(r.payment_amount) : null,
+  diff_ordered_delivered: (r: any) => {
+    const o = r.contract_price != null ? Number(r.contract_price) : null
+    const d = _deliveredAmount(r)
+    return (o != null && d != null) ? o - d : null
+  },
+  diff_delivered_paid: (r: any) => {
+    const d = _deliveredAmount(r)
+    const p = r.payment_amount != null ? Number(r.payment_amount) : null
+    return (d != null && p != null) ? d - p : null
+  },
+  diff_ordered_paid: (r: any) => {
+    const o = r.contract_price != null ? Number(r.contract_price) : null
+    const p = r.payment_amount != null ? Number(r.payment_amount) : null
+    return (o != null && p != null) ? o - p : null
   },
   // purchase_type — виртуальное поле, матчим по purchase_contract_type напрямую
   purchase_type: (r: any) => {

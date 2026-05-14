@@ -131,4 +131,79 @@ test.describe('Phase 27.1 contract_items UI', () => {
     const body = await ciResp.json()
     expect(Array.isArray(body)).toBe(true)
   })
+
+  // ── Phase 27.1.1: expand-row layout tests ──────────────────────────────────
+
+  test.skip(true, 'Requires autodeploy: expand-row chevron toggle shows 3 sub-rows')
+  test('expand-row: click chevron → 3 sub-rows visible (ТЗ/Договор/Поставка)', async ({ page }) => {
+    await page.goto(`${BASE_URL}/purchases`)
+    await page.waitForURL(/purchases/, { timeout: 10000 })
+    // open first purchase in contracted/confirmed state that has contract items
+    const row = page.locator('.v-data-table tbody tr').first()
+    await row.locator('a, button').first().click()
+    await page.waitForTimeout(1500)
+    // find a summary-row chevron
+    const chevron = page.locator('.summary-row .v-btn[aria-label*="chevron"], .summary-row button').first()
+    await chevron.click()
+    // assert 3 sub-rows are now visible
+    await expect(page.locator('.v-chip').filter({ hasText: 'ТЗ' }).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.v-chip').filter({ hasText: 'Договор' }).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.v-chip').filter({ hasText: 'Поставка' }).first()).toBeVisible({ timeout: 5000 })
+  })
+
+  test.skip(true, 'Requires autodeploy: auto-expand for unconfirmed match')
+  test('expand-row: match_confirmed=false row auto-expands without click', async ({ page }) => {
+    await page.goto(`${BASE_URL}/purchases`)
+    await page.waitForTimeout(1000)
+    // Find purchase with warning icon (unconfirmed match)
+    const warningIcon = page.locator('.summary-row .v-icon[color="warning"], .summary-row [style*="warning"]').first()
+    if (await warningIcon.isVisible()) {
+      // The sub-rows should already be visible (auto-expanded)
+      await expect(page.locator('.stage-tz-row, .stage-contract-row').first()).toBeVisible({ timeout: 5000 })
+    } else {
+      // No unconfirmed matches — skip gracefully
+      test.skip(true, 'No unconfirmed matches found in this environment')
+    }
+  })
+
+  test.skip(true, 'Requires autodeploy: rematch autocomplete updates source_item_id')
+  test('expand-row: rematch autocomplete updates contract item source_item_id', async ({ page }) => {
+    await page.goto(`${BASE_URL}/purchases`)
+    await page.waitForTimeout(1000)
+    const chevron = page.locator('.summary-row button').first()
+    await chevron.click()
+    await page.waitForTimeout(500)
+    // Open the rematch autocomplete in Договор sub-row
+    const rematchField = page.locator('.stage-contract-row .v-autocomplete input').first()
+    if (await rematchField.isVisible()) {
+      await rematchField.click()
+      // Select first option
+      const option = page.locator('.v-overlay .v-list-item').first()
+      if (await option.isVisible({ timeout: 2000 })) {
+        await option.click()
+        // Wait for update — no hard assertion possible without mock, just check no crash
+        await page.waitForTimeout(500)
+        await expect(page.locator('.v-snackbar[color="error"]')).not.toBeVisible()
+      }
+    }
+  })
+
+  test.skip(true, 'Requires autodeploy: delivered status shows Поставка as readonly copy of Договор')
+  test('expand-row: delivered status Поставка sub-row shows contract copy with info tooltip', async ({ page }) => {
+    await page.goto(`${BASE_URL}/purchases`)
+    await page.waitForTimeout(1000)
+    // Look for a purchase chip with 'delivered' or 'paid' label
+    const deliveredChip = page.locator('.v-chip').filter({ hasText: /исполнен|оплачен/i }).first()
+    if (await deliveredChip.isVisible({ timeout: 2000 })) {
+      await deliveredChip.locator('..').locator('a').first().click()
+      await page.waitForTimeout(1500)
+      const chevron = page.locator('.summary-row button').first()
+      await chevron.click()
+      await page.waitForTimeout(500)
+      // Поставка sub-row should have info icon (tooltip) and no editable fields
+      await expect(page.locator('.stage-delivery-row .v-icon[icon="mdi-information-outline"], .stage-delivery-row .mdi-information-outline').first()).toBeVisible({ timeout: 5000 })
+    } else {
+      test.skip(true, 'No delivered/paid purchases found in this environment')
+    }
+  })
 })

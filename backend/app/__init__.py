@@ -763,8 +763,9 @@ app.include_router(report_configs_router.router)
 
 @app.get("/api/diag/version")
 async def diag_version():
-    """Phase 26-Z-bootstrap: маркер задеплоенной фазы + git sha."""
+    """Phase 26-BB: маркер фазы + git sha + runtime checks (колонка, backfill)."""
     import os as _os, subprocess as _sp
+    from sqlalchemy import text as _text
     git_sha = "unknown"
     try:
         git_sha = _sp.check_output(
@@ -774,9 +775,37 @@ async def diag_version():
         ).decode().strip()
     except Exception:
         pass
+
+    # Runtime DB checks
+    schema_status = {"purchase_items.receipt_id": "unknown", "linked_count": 0, "advance_purchases": 0, "advance_null_contractor_items": 0}
+    try:
+        async with async_session() as db:
+            col_q = await db.execute(_text("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='purchase_items' AND column_name='receipt_id'
+                LIMIT 1
+            """))
+            schema_status["purchase_items.receipt_id"] = "present" if col_q.scalar() else "MISSING"
+            if schema_status["purchase_items.receipt_id"] == "present":
+                cnt_q = await db.execute(_text("SELECT COUNT(*) FROM purchase_items WHERE receipt_id IS NOT NULL"))
+                schema_status["linked_count"] = int(cnt_q.scalar() or 0)
+            advances_q = await db.execute(_text("""
+                SELECT COUNT(*) FROM purchases WHERE purchase_method='advance'
+            """))
+            schema_status["advance_purchases"] = int(advances_q.scalar() or 0)
+            null_c_q = await db.execute(_text("""
+                SELECT COUNT(*) FROM purchase_items pi
+                JOIN purchases p ON p.id = pi.purchase_id
+                WHERE p.purchase_method='advance' AND pi.contractor_id IS NULL
+            """))
+            schema_status["advance_null_contractor_items"] = int(null_c_q.scalar() or 0)
+    except Exception as e:
+        schema_status["error"] = str(e)[:200]
+
     return {
         "phase": "26-BB",
         "git_sha": git_sha,
+        "schema": schema_status,
         "features": [
             "auto-recompute-on-get-advance",
             "structured-document-errors",

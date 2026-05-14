@@ -286,7 +286,7 @@ const router = createRouter({
       path: '/advance-reports',
       name: 'advance-reports',
       component: AdvanceReportsView,
-      meta: { requiresAuth: true, title: 'Авансовые отчёты', tab_key: 'advance_reports' }
+      meta: { requiresAuth: true, title: 'Реестр авансовых отчётов', tab_key: 'advance_reports' }
     },
     {
       path: '/advance-reports/create',

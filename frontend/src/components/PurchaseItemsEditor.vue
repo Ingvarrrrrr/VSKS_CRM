@@ -248,8 +248,9 @@
                 >
                   <template #no-data>
                     <v-list-item>
-                      <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
-                        Контрагент не найден в БД.
+                      <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">
+                        Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.
+                        Или нажмите «Создать нового».
                       </v-alert>
                       <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
                         @click.stop="openContractorQuickCreate(idx)">
@@ -1408,14 +1409,35 @@ async function tryLookupContractorByInn(inn: string): Promise<Contractor | null>
 }
 
 // When user types INN in contractor autocomplete search, try to auto-lookup
+let _innLookupTimer: ReturnType<typeof setTimeout> | null = null
 async function onContractorSearchInput(idx: number, search: string) {
-  const cleaned = (search || '').replace(/\D/g, '')
-  if (cleaned.length === 10 || cleaned.length === 12) {
-    const found = await tryLookupContractorByInn(cleaned)
-    if (found) {
-      onItemContractorSelect(idx, found)
-    }
+  if (_innLookupTimer) {
+    clearTimeout(_innLookupTimer)
+    _innLookupTimer = null
   }
+  const q = (search || '').trim()
+  // Только цифры, длина 10 или 12
+  if (!/^\d{10}$|^\d{12}$/.test(q)) return
+  // Если уже в массиве contractors есть с таким inn — autocomplete сам отфильтрует
+  if (contractors.value.some(c => c.inn === q)) return
+  _innLookupTimer = setTimeout(async () => {
+    try {
+      const found = await apiFetch<Contractor>(`/contractors/lookup-inn/${q}`)
+      if (found && found.id) {
+        // Добавляем в локальный массив, если ещё не там
+        if (!contractors.value.some(c => c.id === found.id)) {
+          contractors.value.push(found)
+        }
+        // Auto-select для этой строки, если contractor ещё не выбран
+        const item = localItems.value[idx]
+        if (item && !item.contractor_id) {
+          onItemContractorSelect(idx, found)
+        }
+      }
+    } catch {
+      // ФНС не нашёл / network — молча игнорируем, user может ввести вручную
+    }
+  }, 600)
 }
 
 onMounted(async () => {

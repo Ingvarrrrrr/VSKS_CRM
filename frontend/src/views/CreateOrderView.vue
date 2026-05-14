@@ -1408,6 +1408,15 @@
             <div class="d-flex align-center gap-2 mb-1">
               <span class="text-caption font-weight-medium">Документ {{ idx + 1 }}</span>
               <v-spacer />
+              <v-btn
+                v-if="doc.file_id"
+                icon="mdi-paperclip"
+                variant="text"
+                size="x-small"
+                color="primary"
+                title="Скачать прикреплённый файл (чек)"
+                @click="downloadAcceptanceFile(doc.file_id!)"
+              />
               <v-btn icon="mdi-close" variant="text" size="x-small" color="error" @click="acceptanceDocs.splice(idx, 1)" />
             </div>
             <v-row dense>
@@ -3222,7 +3231,7 @@ const form = reactive({
   acceptance_doc_number: '',
   acceptance_doc_date: '',
   acceptance_doc_amount: null as number | null,
-  acceptance_docs: [] as { name: string; number: string; date: string; amount: number | null }[],
+  acceptance_docs: [] as { name: string; number: string; date: string; amount: number | null; file_id?: number | null }[],
   payment_doc_number: '',
   payment_doc_date: '',
   payment_amount: null as number | null,
@@ -3413,9 +3422,20 @@ const canShowContractColumns = computed(() =>
 
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
-const acceptanceDocs = ref<{ name: string; number: string; date: string; amount: number | null }[]>([])
+const acceptanceDocs = ref<{ name: string; number: string; date: string; amount: number | null; file_id?: number | null }[]>([])
 function addAcceptanceDoc() {
   acceptanceDocs.value.push({ name: '', number: '', date: '', amount: null })
+}
+async function downloadAcceptanceFile(fileId: number) {
+  const token = localStorage.getItem('auth_token')
+  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fileId}/view`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) { showSnack('Не удалось скачать файл', 'error'); return }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  window.open(url, '_blank')
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 function ensurePlaceholderDoc() {
   if (!acceptanceDocs.value || acceptanceDocs.value.length === 0) {
@@ -5341,7 +5361,8 @@ const loadPurchase = async () => {
 
   // Load acceptance docs
   acceptanceDocs.value = (data.acceptance_docs || []).map((d: any) => ({
-    name: d.name || '', number: d.number || '', date: d.date || '', amount: d.amount ? Number(d.amount) : null,
+    name: d.name || d.type || '', number: d.number || '', date: d.date || '', amount: d.amount ? Number(d.amount) : null,
+    file_id: d.file_id || null,
   }))
   // Migrate legacy single fields if no acceptance_docs
   if (!acceptanceDocs.value.length && data.acceptance_doc_name) {

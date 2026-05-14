@@ -445,6 +445,64 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-U-3 vat columns skipped (non-fatal): {e}")
 
+    # Phase 26-W: backfill PurchaseItem.contractor_id для авансовых закупок,
+    # где контрагент создан из чека, но item.contractor_id остался NULL
+    # (deploy до Phase 26-V не заполнял contractor_id из seller_inn чека).
+    try:
+        from sqlalchemy import select as _sel, update as _upd
+        from .models.purchase import Purchase as _Purchase
+        from .models.purchase_item import PurchaseItem as _PI
+        from .models.purchase_receipt import PurchaseReceipt as _PR
+        from .models.contractor import Contractor as _Ctr
+        async with async_session() as db:
+            # Находим все advance-закупки с item.contractor_id IS NULL
+            q = await db.execute(
+                _sel(_Purchase.id).where(_Purchase.purchase_method == 'advance')
+            )
+            advance_ids = [row[0] for row in q.all()]
+            backfilled = 0
+            for pid in advance_ids:
+                # Получаем seller_inn из первого по дате PurchaseReceipt
+                rq = await db.execute(
+                    _sel(_PR).where(_PR.purchase_id == pid).order_by(_PR.id.asc()).limit(1)
+                )
+                receipt = rq.scalar_one_or_none()
+                if not receipt or not receipt.seller_inn:
+                    continue
+                # Resolve contractor по ИНН (или создаём)
+                cq = await db.execute(
+                    _sel(_Ctr).where(_Ctr.inn == receipt.seller_inn)
+                )
+                contractor = cq.scalar_one_or_none()
+                if not contractor:
+                    contractor = _Ctr(
+                        inn=receipt.seller_inn,
+                        name=receipt.seller_name or f"ИНН {receipt.seller_inn}",
+                    )
+                    db.add(contractor)
+                    await db.flush()
+                # Update PurchaseItem (only NULL ones)
+                res = await db.execute(
+                    _upd(_PI).where(
+                        _PI.purchase_id == pid,
+                        _PI.contractor_id.is_(None),
+                    ).values(
+                        contractor_id=contractor.id,
+                        contractor_inn=receipt.seller_inn,
+                        contractor_name=receipt.seller_name,
+                    )
+                )
+                backfilled += res.rowcount or 0
+            if backfilled:
+                await db.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    f"Phase 26-W backfill: {backfilled} purchase_items got contractor_id from receipts"
+                )
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-W backfill skipped (non-fatal): {e}")
+
     yield
     task.cancel()
     try:

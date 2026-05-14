@@ -283,6 +283,50 @@ async def _create_receipt_with_items(
             p.contract_number = str(receipt.fiscal_document_number)
             changed = True
 
+        # Phase 26-W: чек → файл в покупке + ссылка в acceptance_docs
+        pf_id = None
+        try:
+            import os as _os, hashlib as _hashlib
+            from app.models.purchase_file import PurchaseFile as _PF
+            UPLOAD_DIR = _os.environ.get('UPLOAD_DIR', '/data/uploads')
+            png_bytes = _render_receipt_png(receipt)
+            content_hash = _hashlib.sha256(png_bytes).hexdigest()
+            # Dedup: если файл с таким hash уже привязан к этой закупке — переиспользовать
+            existing_pf = (await db.execute(
+                select(_PF).where(
+                    _PF.purchase_id == purchase_id,
+                    _PF.content_hash == content_hash,
+                ).limit(1)
+            )).scalar_one_or_none()
+            if existing_pf:
+                pf_id = existing_pf.id
+            else:
+                dest_dir = _os.path.join(UPLOAD_DIR, str(purchase_id))
+                _os.makedirs(dest_dir, exist_ok=True)
+                receipt_label = f"check_{receipt.fiscal_document_number or receipt.id}.png"
+                dest_path = _os.path.join(dest_dir, receipt_label)
+                with open(dest_path, 'wb') as _f:
+                    _f.write(png_bytes)
+                pf = _PF(
+                    purchase_id=purchase_id,
+                    filename=receipt_label,
+                    original_name=f"Чек № {receipt.fiscal_document_number or receipt.id}.png",
+                    filepath=dest_path,
+                    mime_type='image/png',
+                    size=len(png_bytes),
+                    file_type='acceptance_doc',
+                    doc_format='scan',
+                    content_hash=content_hash,
+                    is_active=True,
+                )
+                db.add(pf)
+                await db.flush()
+                pf_id = pf.id
+        except Exception as _attach_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(f"receipt {receipt.id} file attach skipped: {_attach_exc}")
+            pf_id = None
+
         # U-4: auto-add чек в acceptance_docs (только для авансовых, дедуп по receipt_id)
         new_doc = {
             "type": "Чек",
@@ -291,6 +335,7 @@ async def _create_receipt_with_items(
             "amount": float(receipt.total_sum) if receipt.total_sum is not None else None,
             "source": "receipt",
             "receipt_id": receipt.id,
+            "file_id": pf_id,
         }
         existing_docs = list(p.acceptance_docs or [])
         if not any(d.get("receipt_id") == receipt.id for d in existing_docs):
@@ -298,6 +343,18 @@ async def _create_receipt_with_items(
             p.acceptance_docs = existing_docs
             _orm_attrs.flag_modified(p, "acceptance_docs")
             changed = True
+        else:
+            # Обновить file_id в уже существующей записи, если он был NULL
+            updated_docs = []
+            for d in existing_docs:
+                if d.get("receipt_id") == receipt.id and d.get("file_id") is None and pf_id is not None:
+                    d = dict(d)
+                    d["file_id"] = pf_id
+                    changed = True
+                updated_docs.append(d)
+            if updated_docs != existing_docs:
+                p.acceptance_docs = updated_docs
+                _orm_attrs.flag_modified(p, "acceptance_docs")
 
         if changed:
             await db.commit()

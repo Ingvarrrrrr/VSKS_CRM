@@ -607,7 +607,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
@@ -957,13 +957,23 @@ function openAdd() {
   dialog.value = true
 }
 
-function openExistingContractor() {
+async function openExistingContractor() {
   if (!existingContractor.value) return
-  const found = contractors.value.find(c => c.id === existingContractor.value!.id)
+  const targetId = existingContractor.value.id
   existingContractor.value = null
   dialog.value = false
+  await nextTick()
+  // Ищем в уже загруженном списке; если нет — загружаем с сервера
+  const found = contractors.value.find(c => c.id === targetId)
   if (found) {
     openEdit(found)
+  } else {
+    try {
+      const c = await apiFetch<ContractorWithStats>(`/contractors/${targetId}`)
+      openEdit(c)
+    } catch (e: any) {
+      showSnack(e.message || 'Не удалось загрузить контрагента', 'error')
+    }
   }
 }
 

@@ -277,7 +277,39 @@ async def list_purchases(
         )
         receipt_map = {pid: dt for pid, dt in res.all()}
 
-    return [_purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map) for p in purchases]
+    # phase26-m: batch-load framework_contract_total (max_amount or SUM(contract_price))
+    framework_contract_ids = {
+        p.contract_id for p in purchases
+        if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount')
+    }
+    display_total_by_contract: dict = {}
+    if framework_contract_ids:
+        contracts_r = await db.execute(
+            select(Contract.id, Contract.max_amount).where(Contract.id.in_(framework_contract_ids))
+        )
+        contracts_by_id = {row[0]: row[1] for row in contracts_r.all()}
+        for cid in framework_contract_ids:
+            max_amount = contracts_by_id.get(cid)
+            if max_amount is not None:
+                display_total_by_contract[cid] = max_amount
+            else:
+                sum_r = await db.execute(
+                    select(func.coalesce(func.sum(func.coalesce(
+                        Purchase.contract_price,
+                        Purchase.planned_total_price,
+                        Purchase.total_nmck,
+                        Decimal("0"),
+                    )), Decimal("0"))).where(Purchase.contract_id == cid)
+                )
+                display_total_by_contract[cid] = sum_r.scalar() or Decimal("0")
+
+    result_rows = []
+    for p in purchases:
+        out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map)
+        if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
+            out.framework_contract_total = display_total_by_contract.get(p.contract_id)
+        result_rows.append(out)
+    return result_rows
 
 
 @router.get("/my-tasks")
@@ -415,7 +447,24 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
     single_ru_map: dict = {}
     if p.reimbursement_user_id and p.reimbursement_user:
         single_ru_map = {p.reimbursement_user_id: p.reimbursement_user.full_name}
-    return _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map)
+    out = _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map)
+    # phase26-m: populate framework_contract_total for single purchase view
+    if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
+        c = await db.get(Contract, p.contract_id)
+        if c:
+            if c.max_amount is not None:
+                out.framework_contract_total = c.max_amount
+            else:
+                sum_r = await db.execute(
+                    select(func.coalesce(func.sum(func.coalesce(
+                        Purchase.contract_price,
+                        Purchase.planned_total_price,
+                        Purchase.total_nmck,
+                        Decimal("0"),
+                    )), Decimal("0"))).where(Purchase.contract_id == p.contract_id)
+                )
+                out.framework_contract_total = sum_r.scalar() or Decimal("0")
+    return out
 
 
 @router.post("/", response_model=PurchaseOut)

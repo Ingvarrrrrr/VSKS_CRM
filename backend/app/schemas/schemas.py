@@ -642,6 +642,8 @@ class PurchaseOutFull(PurchaseOut):
     last_receipt_date: Optional[datetime] = None
     reimbursement_user_name: Optional[str] = None
     multi_contractor_label: Optional[str] = None
+    # phase26-m: для рамочных закупок — max_amount договора или SUM(contract_price) всех закупок по нему
+    framework_contract_total: Optional[Decimal] = None
 
 # Payment
 class PaymentCreate(BaseModel):

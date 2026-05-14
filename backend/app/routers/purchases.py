@@ -674,6 +674,20 @@ async def update_purchase(
         item = PurchaseItem(purchase_id=pid, **d)
         db.add(item)
 
+    # Phase 26-Z: при PUT — проставить contractor_id во все позиции без контрагента,
+    # если на уровне закупки contractor_id установлен. Идемпотентно.
+    if p.contractor_id:
+        await db.flush()  # flush чтобы только что созданные items видны в SELECT
+        _ctr_put = await db.get(Contractor, p.contractor_id)
+        if _ctr_put:
+            _null_items_put = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.purchase_id == pid, PurchaseItem.contractor_id.is_(None))
+            )).scalars().all()
+            for _it in _null_items_put:
+                _it.contractor_id = _ctr_put.id
+                _it.contractor_inn = _ctr_put.inn
+                _it.contractor_name = _ctr_put.name
+
     # Replace subsidy allocations
     await db.execute(delete(PurchaseSubsidyAllocation).where(PurchaseSubsidyAllocation.purchase_id == pid))
     if data.subsidy_allocations:
@@ -858,6 +872,20 @@ async def patch_purchase(
         for f in ("contract_number", "contract_date", "purchase_contract_type"):
             if f not in changed:
                 changed.append(f)
+    # Phase 26-Z: при установке contractor_id на закупке — проставить во все
+    # позиции без указанного контрагента (наследование одним подрядчиком).
+    if p.contractor_id and "contractor_id" in changed:
+        from app.models.purchase_item import PurchaseItem as _PI
+        from app.models.contractor import Contractor as _Ctr
+        c_row = await db.get(_Ctr, p.contractor_id)
+        if c_row:
+            upd_q = await db.execute(
+                select(_PI).where(_PI.purchase_id == p.id, _PI.contractor_id.is_(None))
+            )
+            for it in upd_q.scalars().all():
+                it.contractor_id = c_row.id
+                it.contractor_inn = c_row.inn
+                it.contractor_name = c_row.name
     if changed:
         await db.commit()
         await db.refresh(p)

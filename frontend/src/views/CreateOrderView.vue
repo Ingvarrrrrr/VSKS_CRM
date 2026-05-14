@@ -61,6 +61,17 @@
           <v-btn size="small" variant="tonal" @click="onManualBtnClick">
             <v-icon start>mdi-plus</v-icon>Вручную
           </v-btn>
+          <v-btn
+            v-if="isEdit && purchaseId"
+            size="small"
+            variant="tonal"
+            color="primary"
+            prepend-icon="mdi-refresh"
+            :loading="recomputeLoading"
+            @click="recomputeFromReceipts"
+          >
+            Пересчитать из чеков
+          </v-btn>
         </v-card-title>
         <v-card-text>
           <v-alert type="info" variant="tonal" density="compact" class="mb-0 text-caption">
@@ -5492,6 +5503,25 @@ async function onJsonBtnClick() {
 async function onManualBtnClick() {
   if (!(await ensureSavedThen('manual_receipt'))) return
   openManualReceiptDialog()
+}
+
+const recomputeLoading = ref(false)
+async function recomputeFromReceipts() {
+  if (!purchaseId.value) return
+  recomputeLoading.value = true
+  try {
+    const result = await apiFetch<any>(
+      `/purchases/${purchaseId.value}/recompute-from-receipts`,
+      { method: 'POST' }
+    )
+    const msg = `Обновлено позиций: ${result.items_updated}, прикреплено файлов чеков: ${result.files_attached}, добавлено записей закр.документов: ${result.acceptance_docs_added}`
+    showSnack(msg, 'success')
+    await loadPurchase()
+  } catch (e: any) {
+    showSnack(e?.message || 'Не удалось пересчитать', 'error')
+  } finally {
+    recomputeLoading.value = false
+  }
 }
 
 function consumePostSaveAction() {

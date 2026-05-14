@@ -363,6 +363,194 @@ async def _create_receipt_with_items(
 
 
 # ── endpoints ────────────────────────────────────────────────────────────────
+
+@router.post("/{purchase_id}/recompute-from-receipts")
+async def recompute_from_receipts(
+    purchase_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Phase 26-Z: ручной пересчёт авансовой закупки из её PurchaseReceipt.
+    Идемпотентно. Заполняет:
+    - PurchaseItem.contractor_id/contractor_inn/contractor_name (для всех item с contractor_id IS NULL)
+    - Purchase.contractor_id (если NULL и есть seller_inn в первом чеке)
+    - Purchase.contract_date/contract_number (если NULL и есть в чеке)
+    - acceptance_docs: добавляет запись {type:'Чек', number, date, amount, receipt_id, file_id}
+      для каждого PurchaseReceipt где её ещё нет
+    - PurchaseFile: PNG чека (file_type='acceptance_doc')
+    """
+    from sqlalchemy.orm import attributes as _orm_attrs
+    p = await db.get(Purchase, purchase_id)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    receipts_q = await db.execute(
+        select(PurchaseReceipt)
+        .where(PurchaseReceipt.purchase_id == purchase_id)
+        .order_by(PurchaseReceipt.id.asc())
+    )
+    receipts = receipts_q.scalars().all()
+
+    if not receipts:
+        return {"ok": True, "message": "Чеков нет — нечего пересчитывать", "items_updated": 0, "files_attached": 0, "acceptance_docs_added": 0}
+
+    items_updated = 0
+    files_attached = 0
+    acceptance_docs_added = 0
+
+    # 1. Покупка-уровень: contractor_id + contract_date + contract_number
+    first_receipt = receipts[0]
+    if first_receipt.seller_inn and not p.contractor_id:
+        # Resolve/create Contractor
+        from app.models.contractor import Contractor as _Ctr
+        c_row = (await db.execute(
+            select(_Ctr).where(_Ctr.inn == first_receipt.seller_inn)
+        )).scalar_one_or_none()
+        if not c_row:
+            c_row = _Ctr(inn=first_receipt.seller_inn, name=first_receipt.seller_name or f"ИНН {first_receipt.seller_inn}")
+            db.add(c_row)
+            await db.flush()
+        p.contractor_id = c_row.id
+    if first_receipt.receipt_datetime and not p.contract_date:
+        rd = first_receipt.receipt_datetime
+        p.contract_date = rd.date() if hasattr(rd, 'date') else rd
+    if first_receipt.fiscal_document_number and not p.contract_number:
+        p.contract_number = str(first_receipt.fiscal_document_number)
+
+    # 2. Items-уровень: contractor_id (per item)
+    from app.models.purchase_item import PurchaseItem as _PI
+    from app.models.contractor import Contractor as _Ctr
+    null_items = (await db.execute(
+        select(_PI).where(_PI.purchase_id == purchase_id, _PI.contractor_id.is_(None))
+    )).scalars().all()
+    # Простая стратегия: все NULL-item'ы получают контрагента первого чека
+    if first_receipt.seller_inn and null_items:
+        c_row = (await db.execute(
+            select(_Ctr).where(_Ctr.inn == first_receipt.seller_inn)
+        )).scalar_one_or_none()
+        if c_row:
+            for it in null_items:
+                it.contractor_id = c_row.id
+                it.contractor_inn = first_receipt.seller_inn
+                it.contractor_name = first_receipt.seller_name
+                items_updated += 1
+
+    # 3. acceptance_docs + PurchaseFile для каждого receipt
+    import os as _os, hashlib as _hashlib
+    from app.models.purchase_file import PurchaseFile as _PF
+    UPLOAD_DIR = _os.environ.get('UPLOAD_DIR', '/data/uploads')
+    existing_docs = list(p.acceptance_docs or [])
+    existing_receipt_ids = {d.get("receipt_id") for d in existing_docs if d.get("receipt_id")}
+    docs_changed = False
+
+    for r in receipts:
+        if r.id in existing_receipt_ids:
+            # Запись уже есть, но проверим file_id
+            for d in existing_docs:
+                if d.get("receipt_id") == r.id and not d.get("file_id"):
+                    # Попробовать прикрепить файл
+                    try:
+                        png_bytes = _render_receipt_png(r)
+                        content_hash = _hashlib.sha256(png_bytes).hexdigest()
+                        existing_pf = (await db.execute(
+                            select(_PF).where(_PF.purchase_id == purchase_id, _PF.content_hash == content_hash).limit(1)
+                        )).scalar_one_or_none()
+                        if existing_pf:
+                            d["file_id"] = existing_pf.id
+                            docs_changed = True
+                        else:
+                            dest_dir = _os.path.join(UPLOAD_DIR, str(purchase_id))
+                            _os.makedirs(dest_dir, exist_ok=True)
+                            receipt_label = f"check_{r.fiscal_document_number or r.id}.png"
+                            dest_path = _os.path.join(dest_dir, receipt_label)
+                            with open(dest_path, 'wb') as _f:
+                                _f.write(png_bytes)
+                            pf = _PF(
+                                purchase_id=purchase_id,
+                                filename=receipt_label,
+                                original_name=f"Чек № {r.fiscal_document_number or r.id}.png",
+                                filepath=dest_path,
+                                mime_type='image/png',
+                                size=len(png_bytes),
+                                file_type='acceptance_doc',
+                                doc_format='scan',
+                                content_hash=content_hash,
+                                is_active=True,
+                            )
+                            db.add(pf)
+                            await db.flush()
+                            d["file_id"] = pf.id
+                            files_attached += 1
+                            docs_changed = True
+                    except Exception:
+                        pass
+            continue
+
+        # Новая запись
+        pf_id = None
+        try:
+            png_bytes = _render_receipt_png(r)
+            content_hash = _hashlib.sha256(png_bytes).hexdigest()
+            existing_pf = (await db.execute(
+                select(_PF).where(_PF.purchase_id == purchase_id, _PF.content_hash == content_hash).limit(1)
+            )).scalar_one_or_none()
+            if existing_pf:
+                pf_id = existing_pf.id
+            else:
+                dest_dir = _os.path.join(UPLOAD_DIR, str(purchase_id))
+                _os.makedirs(dest_dir, exist_ok=True)
+                receipt_label = f"check_{r.fiscal_document_number or r.id}.png"
+                dest_path = _os.path.join(dest_dir, receipt_label)
+                with open(dest_path, 'wb') as _f:
+                    _f.write(png_bytes)
+                pf = _PF(
+                    purchase_id=purchase_id,
+                    filename=receipt_label,
+                    original_name=f"Чек № {r.fiscal_document_number or r.id}.png",
+                    filepath=dest_path,
+                    mime_type='image/png',
+                    size=len(png_bytes),
+                    file_type='acceptance_doc',
+                    doc_format='scan',
+                    content_hash=content_hash,
+                    is_active=True,
+                )
+                db.add(pf)
+                await db.flush()
+                pf_id = pf.id
+                files_attached += 1
+        except Exception as _e:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(f"recompute receipt {r.id} png skipped: {_e}")
+
+        existing_docs.append({
+            "type": "Чек",
+            "number": str(r.fiscal_document_number or ""),
+            "date": r.receipt_datetime.date().isoformat() if r.receipt_datetime else None,
+            "amount": float(r.total_sum) if r.total_sum is not None else None,
+            "source": "receipt",
+            "receipt_id": r.id,
+            "file_id": pf_id,
+        })
+        acceptance_docs_added += 1
+        docs_changed = True
+
+    if docs_changed:
+        p.acceptance_docs = existing_docs
+        _orm_attrs.flag_modified(p, "acceptance_docs")
+
+    await db.commit()
+    return {
+        "ok": True,
+        "purchase_id": purchase_id,
+        "receipts_count": len(receipts),
+        "items_updated": items_updated,
+        "files_attached": files_attached,
+        "acceptance_docs_added": acceptance_docs_added,
+    }
+
+
 @router.get("/{purchase_id}/receipts", response_model=List[ReceiptOut])
 async def list_receipts(
     purchase_id: int,

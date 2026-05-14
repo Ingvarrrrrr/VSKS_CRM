@@ -273,6 +273,7 @@ async def _create_receipt_with_items(
     # First receipt sets the basis; bank_payment match will override later.
     p = await db.get(Purchase, purchase_id)
     if p and p.purchase_method == 'advance':
+        from sqlalchemy.orm import attributes as _orm_attrs
         changed = False
         rd = receipt.receipt_datetime
         if rd and not p.contract_date:
@@ -281,6 +282,23 @@ async def _create_receipt_with_items(
         if receipt.fiscal_document_number and not p.contract_number:
             p.contract_number = str(receipt.fiscal_document_number)
             changed = True
+
+        # U-4: auto-add чек в acceptance_docs (только для авансовых, дедуп по receipt_id)
+        new_doc = {
+            "type": "Чек",
+            "number": str(receipt.fiscal_document_number or ""),
+            "date": receipt.receipt_datetime.date().isoformat() if receipt.receipt_datetime else None,
+            "amount": float(receipt.total_sum) if receipt.total_sum is not None else None,
+            "source": "receipt",
+            "receipt_id": receipt.id,
+        }
+        existing_docs = list(p.acceptance_docs or [])
+        if not any(d.get("receipt_id") == receipt.id for d in existing_docs):
+            existing_docs.append(new_doc)
+            p.acceptance_docs = existing_docs
+            _orm_attrs.flag_modified(p, "acceptance_docs")
+            changed = True
+
         if changed:
             await db.commit()
 
@@ -538,6 +556,16 @@ async def delete_receipt(
     r = await db.get(PurchaseReceipt, receipt_id)
     if not r or r.purchase_id != purchase_id:
         raise HTTPException(404, "Чек не найден")
+
+    # U-4: при удалении чека — убрать запись из acceptance_docs (если авансовый)
+    purchase = await db.get(Purchase, purchase_id)
+    if purchase and purchase.purchase_method == 'advance' and purchase.acceptance_docs:
+        from sqlalchemy.orm import attributes as _orm_attrs
+        new_docs = [d for d in (purchase.acceptance_docs or []) if d.get("receipt_id") != receipt_id]
+        if len(new_docs) != len(purchase.acceptance_docs or []):
+            purchase.acceptance_docs = new_docs
+            _orm_attrs.flag_modified(purchase, "acceptance_docs")
+
     await db.delete(r)
     await db.commit()
     return {"status": "ok"}

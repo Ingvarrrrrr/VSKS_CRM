@@ -90,9 +90,13 @@ async def list_contracts(
     contracts = result.scalars().all()
     out = []
     for c in contracts:
-        # SUM(contract_price) — total ordered
+        # phase26-l-2: COALESCE chain contract_price → planned_total_price → total_nmck
+        # чтобы legacy-закупки с NULL contract_price тоже учитывались в total_ordered.
         ordered_result = await db.execute(
-            select(func.coalesce(func.sum(Purchase.contract_price), 0))
+            select(func.coalesce(
+                func.sum(func.coalesce(Purchase.contract_price, Purchase.planned_total_price, Purchase.total_nmck, 0)),
+                0
+            ))
             .where(Purchase.contract_id == c.id)
         )
         total_ordered = ordered_result.scalar() or Decimal("0")

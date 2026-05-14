@@ -662,6 +662,34 @@ async def update_purchase(
     return p
 
 
+# Phase 27.1 D-07: helper — авто-пересчёт purchase.contract_price = SUM(contract_items.total)
+async def _recalc_contract_price_from_contract_items(purchase_id: int, db: AsyncSession) -> None:
+    """Phase 27.1 D-07: авто-пересчёт purchase.contract_price = SUM(contract_items.total).
+
+    Применимо: разовая (purchase_contract_type='single' или NULL), авансовая
+    (purchase_method='advance'), дочерняя рамочного (parent_purchase_id IS NOT NULL).
+    НЕ применимо для рамочного головного (framework_cumulative/framework_limited
+    AND parent_purchase_id IS NULL) — manual entry сохраняется.
+    """
+    from app.models.contract_item import ContractItem
+    p = await db.get(Purchase, purchase_id)
+    if not p:
+        return
+    is_framework_head = (
+        p.purchase_contract_type in ('framework_cumulative', 'framework_limited')
+        and p.parent_purchase_id is None
+    )
+    if is_framework_head:
+        return
+    result = await db.execute(
+        select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == purchase_id)
+    )
+    ci_sum = result.scalar() or Decimal('0')
+    if ci_sum > 0:
+        p.contract_price = ci_sum
+        await db.commit()
+
+
 # Phase 26: автосохранение полей карточки закупки.
 # Принимает произвольный частичный JSON; обновляет только переданные поля.
 # Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).

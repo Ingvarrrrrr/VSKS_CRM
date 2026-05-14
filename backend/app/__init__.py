@@ -499,6 +499,10 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(contractors.router)
 app.include_router(contracts.router)
+# Phase 27.1: contract_items MUST be registered BEFORE purchases.router
+# because purchases has catch-all /{purchase_id} that would intercept /contract-items
+from .routers import contract_items as contract_items_router
+app.include_router(contract_items_router.router)
 app.include_router(purchases.router)
 app.include_router(purchase_receipts.router)
 app.include_router(install_router.router, prefix="/api")

@@ -28,6 +28,25 @@ from app.models.user_hierarchy import UserHierarchy
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
+async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
+    """Когда установлен contract_id — копируем number/date/contract_type из contracts в purchases.
+
+    Поля в purchases являются денормализованным снапшотом (для list-view без JOIN),
+    но при наличии FK должны строго следовать связанному контракту.
+    """
+    if not p.contract_id:
+        return
+    c = await db.get(Contract, p.contract_id)
+    if not c:
+        return
+    if c.number:
+        p.contract_number = c.number.strip()
+    if c.date:
+        p.contract_date = c.date
+    if c.contract_type:
+        p.purchase_contract_type = c.contract_type
+
+
 async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
     """True for any authenticated user.
 
@@ -439,8 +458,13 @@ async def create_purchase(
     year = date.today().year
     if not p.registry_number:
         p.registry_number = f"РЕЕ-{year}-{p.id:05d}"
-    if not p.contract_number:
+    # removed in phase26-j-1: only set when single contract без FK на existing contracts row
+    # auto-generate мусорит номером вида "2026/42" для рамочных закупок с реальным contract_id.
+    if not p.contract_number and not p.contract_id:
         p.contract_number = f"{year}/{p.id}"
+
+    # phase26-j-1: sync number/date/type из связанного контракта, если contract_id задан
+    await _sync_purchase_from_contract(p, db)
 
     await _assign_framework_seq(p, db)
 
@@ -575,6 +599,9 @@ async def update_purchase(
         p.contract_price = items_sum
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below
+    # phase26-j-1: если contract_id задан — синхронизируем поля из contracts
+    if p.contract_id and ("contract_id" in data.model_fields_set or p.contract_id != old_contract_id):
+        await _sync_purchase_from_contract(p, db)
     await _assign_framework_seq(p, db, exclude_id=pid)
 
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
@@ -740,6 +767,14 @@ async def patch_purchase(
             # JSONB колонки: SQLAlchemy не детектирует мутации без flag_modified
             if k == "acceptance_docs":
                 flag_modified(p, "acceptance_docs")
+    # phase26-j-1: если в PATCH-теле явно указан contract_id — синхронизируем поля
+    # Не вызываем безусловно, чтобы не перетирать ручные правки в локальных полях.
+    if "contract_id" in (body or {}) and p.contract_id:
+        await _sync_purchase_from_contract(p, db)
+        # включить изменённые поля в changed (для отчёта клиенту)
+        for f in ("contract_number", "contract_date", "purchase_contract_type"):
+            if f not in changed:
+                changed.append(f)
     if changed:
         await db.commit()
         await db.refresh(p)

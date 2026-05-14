@@ -514,17 +514,57 @@ async def import_receipt_qr_fetch(
                 return row
         return None
 
-    pre_existing = await _find_existing_by_qr()
+    async def _find_existing_loose():
+        """Loose поиск: только fn+fd (без fp), затем dt+inn+sum."""
+        parsed = _parse_qr_string(qr) or {}
+        fn2 = parsed.get('fiscal_drive_number')
+        fd2 = parsed.get('fiscal_document_number')
+        if fn2 and fd2:
+            row = (await db.execute(
+                select(PurchaseReceipt).where(
+                    PurchaseReceipt.fiscal_drive_number == fn2,
+                    PurchaseReceipt.fiscal_document_number == fd2,
+                ).limit(1)
+            )).scalar_one_or_none()
+            if row:
+                return row
+        # Fallback: dt+inn+sum
+        dt2 = parsed.get('receipt_datetime')
+        inn2 = parsed.get('seller_inn')
+        total2 = parsed.get('total_sum')
+        if dt2 and inn2 and total2 is not None:
+            row = (await db.execute(
+                select(PurchaseReceipt).where(
+                    PurchaseReceipt.seller_inn == inn2,
+                    PurchaseReceipt.receipt_datetime == dt2,
+                    PurchaseReceipt.total_sum == total2,
+                ).limit(1)
+            )).scalar_one_or_none()
+            if row:
+                return row
+        return None
+
+    async def _raise_receipt_duplicate(existing_row):
+        """Поднять structured 409 со ссылкой на закупку, где этот чек уже есть."""
+        other = await db.get(Purchase, existing_row.purchase_id)
+        ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing_row.purchase_id}"
+        same = existing_row.purchase_id == purchase_id
+        if same:
+            message = "Этот чек уже добавлен в текущую закупку."
+        else:
+            message = f"Чек был загружен ранее в закупку № {ref}."
+        raise HTTPException(409, detail={
+            "code": "RECEIPT_DUPLICATE",
+            "message": message,
+            "purchase_id": existing_row.purchase_id,
+            "purchase_ref": ref,
+            "receipt_id": existing_row.id,
+            "same_purchase": same,
+        })
+
+    pre_existing = await _find_existing_by_qr() or await _find_existing_loose()
     if pre_existing:
-        other = await db.get(Purchase, pre_existing.purchase_id)
-        ref = (other and (other.registry_number or other.purchase_number)) or f"#{pre_existing.purchase_id}"
-        same = pre_existing.purchase_id == purchase_id
-        msg = (
-            f"Этот чек уже заведён в закупке {ref} (#{pre_existing.purchase_id})."
-            if not same
-            else "Этот чек уже добавлен в текущую закупку."
-        )
-        raise HTTPException(409, msg)
+        await _raise_receipt_duplicate(pre_existing)
 
     token = os.getenv("PROVERKACHEKA_TOKEN", "").strip()
     if not token:
@@ -547,20 +587,16 @@ async def import_receipt_qr_fetch(
         msg = (payload or {}).get("data") if isinstance(payload, dict) else None
         msg_str = msg if isinstance(msg, str) else ""
         # Если ФНС режет по rate-limit — это сильный сигнал что чек уже импортировали
-        # сегодня. Пробуем ещё раз поискать в БД (более широкий поиск).
+        # сегодня. Пробуем ещё раз поискать в БД (loose поиск тоже).
         if "Превышено" in msg_str or "превышен" in msg_str.lower() or "уже" in msg_str.lower():
-            again = await _find_existing_by_qr()
+            again = await _find_existing_by_qr() or await _find_existing_loose()
             if again:
-                other = await db.get(Purchase, again.purchase_id)
-                ref = (other and (other.registry_number or other.purchase_number)) or f"#{again.purchase_id}"
-                raise HTTPException(
-                    409,
-                    f"Этот чек уже заведён в закупке {ref} (#{again.purchase_id}).",
-                )
-            raise HTTPException(
-                429,
-                "ФНС временно ограничила запросы по этому чеку. Скорее всего он уже был загружен ранее — проверьте список авансовых отчётов или попробуйте позже.",
-            )
+                await _raise_receipt_duplicate(again)
+            raise HTTPException(429, detail={
+                "code": "FNS_RATE_LIMIT",
+                "message": "ФНС временно ограничила запросы. В базе CRM этот чек не найден — попробуйте через 1–2 минуты.",
+                "hint": msg_str or None,
+            })
         if msg_str:
             raise HTTPException(400, f"Чек не найден: {msg_str}")
         raise HTTPException(400, "Чек не найден в ФНС (proverkacheka.com)")

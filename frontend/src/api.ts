@@ -31,9 +31,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     try { parsed = JSON.parse(text) } catch {}
     // FastAPI 422 returns detail as array of validation errors or structured object
     let rawDetail = parsed?.detail
-    // If detail is a structured object with a message field (e.g. STATUS_TRANSITION_BLOCKED)
-    if (rawDetail && typeof rawDetail === 'object' && !Array.isArray(rawDetail) && rawDetail.message) {
-      rawDetail = rawDetail.message
+    // If detail is a structured object with a code field (e.g. RECEIPT_DUPLICATE) — preserve it
+    const structuredDetail = (rawDetail && typeof rawDetail === 'object' && !Array.isArray(rawDetail)) ? rawDetail : null
+    if (structuredDetail?.message) {
+      rawDetail = structuredDetail.message
     }
     let detailMsg = parsed?.message || rawDetail || text || 'Ошибка запроса'
     if (Array.isArray(detailMsg)) {
@@ -43,9 +44,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       }).join('; ')
     }
     const payload = {
-      code: parsed?.code || `HTTP_${res.status}`,
+      code: structuredDetail?.code || parsed?.code || `HTTP_${res.status}`,
       message: detailMsg,
-      details: parsed?.details || text || '',
+      details: structuredDetail || parsed?.details || text || '',
       correlation_id: parsed?.correlation_id || res.headers.get('X-Correlation-ID') || '',
     }
     // 409 Conflict = expected business logic error; handled locally by callers, no global dialog

@@ -2243,9 +2243,10 @@
       @created="onMonthlyStagesCreated"
     />
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : (snack.actionText ? -1 : 3500)" location="bottom right" multi-line>
       {{ snack.text }}
       <template #actions>
+        <v-btn v-if="snack.actionText && snack.onAction" variant="text" @click="snack.onAction?.(); snack.show = false">{{ snack.actionText }}</v-btn>
         <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
       </template>
     </v-snackbar>
@@ -3874,7 +3875,7 @@ async function confirmDocDownload() {
     await downloadDoc('approval_sheet', parts.length ? `?${parts.join('&')}` : '')
   }
 }
-const snack = reactive({ show: false, text: '', color: 'success' })
+const snack = reactive({ show: false, text: '', color: 'success', actionText: '' as string, onAction: null as (() => void) | null })
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
 const budgetOverrideDialog = ref(false)
 const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
@@ -4805,7 +4806,13 @@ const monthlyTotal = computed(() => {
 
 const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
 
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const showSnack = (text: string, color = 'success', opts?: { actionText?: string; onAction?: () => void }) => {
+  snack.text = text
+  snack.color = color
+  snack.actionText = opts?.actionText || ''
+  snack.onAction = opts?.onAction || null
+  snack.show = true
+}
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
 const formatDate = (dt?: string | null) => dt ? new Date(dt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
@@ -5524,7 +5531,22 @@ async function onQrDetected(qr: string) {
       showSnack('Чек получен из ФНС, позиции добавлены')
     }
   } catch (e: any) {
-    showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
+    const p = e?.payload
+    const code = p?.code
+    const det = (p?.details && typeof p.details === 'object') ? p.details : null
+    if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
+      const ref = det.purchase_ref || `#${det.purchase_id}`
+      const pid = det.purchase_id
+      showSnack(
+        p.message || `Чек был загружен ранее в закупку № ${ref}.`,
+        'warning',
+        { actionText: `Открыть закупку № ${ref}`, onAction: () => window.open(`/orders/${pid}`, '_blank') },
+      )
+    } else if (code === 'FNS_RATE_LIMIT') {
+      showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
+    } else {
+      showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
+    }
   }
 }
 
@@ -5566,7 +5588,22 @@ async function onJsonReceiptUpload(e: Event) {
         }
       }
     } catch (err: any) {
-      showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
+      const p2 = err?.payload
+      const code2 = p2?.code
+      const det2 = (p2?.details && typeof p2.details === 'object') ? p2.details : null
+      if (code2 === 'RECEIPT_DUPLICATE' && det2?.purchase_id) {
+        const ref2 = det2.purchase_ref || `#${det2.purchase_id}`
+        const pid2 = det2.purchase_id
+        showSnack(
+          p2.message || `Чек был загружен ранее в закупку № ${ref2}.`,
+          'warning',
+          { actionText: `Открыть закупку № ${ref2}`, onAction: () => window.open(`/orders/${pid2}`, '_blank') },
+        )
+      } else if (code2 === 'FNS_RATE_LIMIT') {
+        showSnack(p2?.message || 'ФНС временно ограничила запросы', 'warning')
+      } else {
+        showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
+      }
     }
   }
   input.value = ''

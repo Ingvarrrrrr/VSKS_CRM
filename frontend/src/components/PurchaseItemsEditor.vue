@@ -63,6 +63,8 @@
               <th style="min-width:150px">Цена ед., ₽</th>
               <th style="min-width:150px">Сумма, ₽</th>
               <th style="min-width:150px">Страна происхождения</th>
+              <!-- U-3: per-item НДС колонка -->
+              <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
               <th style="width:48px"></th>
               <!-- Phase 27.1 D-04: Договор columns -->
               <template v-if="props.showContractColumns">
@@ -167,6 +169,21 @@
               <td>
                 <v-text-field v-model="item.country_origin" density="compact"
                   variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
+              </td>
+              <!-- U-3: per-item НДС ставка -->
+              <td v-if="props.vatMode === 'per_item'">
+                <v-select
+                  v-model="item.vat_rate"
+                  :items="[
+                    { title: 'Без НДС', value: null },
+                    { title: '0%', value: '0%' },
+                    { title: '10%', value: '10%' },
+                    { title: '20%', value: '20%' },
+                  ]"
+                  density="compact" variant="outlined" hide-details class="my-1"
+                  :disabled="props.readonly"
+                  @update:model-value="emitUpdate"
+                />
               </td>
               <td>
                 <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
@@ -947,6 +964,8 @@ const props = withDefaults(defineProps<{
   supportsFullProductDialog?: boolean
   supportsPhotoUpload?: boolean
   readonly?: boolean
+  vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
+  uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -960,6 +979,8 @@ const props = withDefaults(defineProps<{
   supportsPhotoUpload: true,
   readonly: false,
   purchaseId: null,
+  vatMode: 'uniform',
+  uniformVatRate: null,
 })
 
 const emit = defineEmits<{

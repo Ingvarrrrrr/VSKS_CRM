@@ -1308,7 +1308,7 @@ const showContractorColumn = computed(() => props.formMode === 'advance_report')
 
 async function loadContractors() {
   try {
-    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=2000')
+    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=1000')
   } catch (e) {
     console.warn('[PurchaseItemsEditor] Could not load contractors:', e)
   }

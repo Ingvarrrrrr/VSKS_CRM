@@ -301,6 +301,39 @@
             @sort="dir => applySort('approval_status', dir)"
             @hide="toggleVisible('approval_status', false)" />
         </template>
+        <!-- Phase 26-K: доп. соглашение и дата заказа -->
+        <template #header.agreement_number="{ column }">
+          <ColumnHeaderMenu col-key="agreement_number" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['agreement_number'] ?? null"
+            :sort-by="getSortBy('agreement_number')"
+            @update:model-value="v => cfg.setFilter('agreement_number', v)"
+            @sort="dir => applySort('agreement_number', dir)"
+            @hide="toggleVisible('agreement_number', false)" />
+        </template>
+        <template #header.agreement_date="{ column }">
+          <ColumnHeaderMenu col-key="agreement_date" :title="column.title" col-type="date"
+            :model-value="cfg.state.value.filters['agreement_date'] ?? null"
+            :sort-by="getSortBy('agreement_date')"
+            @update:model-value="v => cfg.setFilter('agreement_date', v)"
+            @sort="dir => applySort('agreement_date', dir)"
+            @hide="toggleVisible('agreement_date', false)" />
+        </template>
+        <template #header.order_number="{ column }">
+          <ColumnHeaderMenu col-key="order_number" :title="column.title" col-type="text"
+            :model-value="cfg.state.value.filters['order_number'] ?? null"
+            :sort-by="getSortBy('order_number')"
+            @update:model-value="v => cfg.setFilter('order_number', v)"
+            @sort="dir => applySort('order_number', dir)"
+            @hide="toggleVisible('order_number', false)" />
+        </template>
+        <template #header.order_date="{ column }">
+          <ColumnHeaderMenu col-key="order_date" :title="column.title" col-type="date"
+            :model-value="cfg.state.value.filters['order_date'] ?? null"
+            :sort-by="getSortBy('order_date')"
+            @update:model-value="v => cfg.setFilter('order_date', v)"
+            @sort="dir => applySort('order_date', dir)"
+            @hide="toggleVisible('order_date', false)" />
+        </template>
 
         <!-- Expand toggle column -->
         <template #item.data-table-expand="{ item, internalItem, isExpanded, toggleExpand }">
@@ -845,6 +878,11 @@ interface Purchase {
   items?: PurchaseItem[]
   approval_status?: string
   execution_term?: string
+  // Phase 26-K
+  agreement_number?: string
+  agreement_date?: string
+  order_number?: string
+  order_date?: string
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -1014,6 +1052,11 @@ const allColumns: ColumnDef[] = [
   { title: 'Мероприятие', key: 'event_name', group: 'all' },
   { title: 'ID субсидии', key: 'subsidy_id', width: 110, group: 'all' },
   { title: 'ID договора', key: 'contract_id', width: 110, group: 'all' },
+  // Phase 26-K: доп. соглашение и дата заказа — скрыты по умолчанию
+  { title: '№ доп.соглашения', key: 'agreement_number', width: 170, group: 'all' },
+  { title: 'Дата доп.соглашения', key: 'agreement_date', width: 180, group: 'all' },
+  { title: '№ заказа', key: 'order_number', width: 140, group: 'all' },
+  { title: 'Дата заказа', key: 'order_date', width: 140, group: 'all' },
 ]
 
 const groups = [

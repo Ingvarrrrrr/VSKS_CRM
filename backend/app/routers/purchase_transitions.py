@@ -7,12 +7,14 @@ Handles:
 G-08: TRANSITION_REQUIRED dict lives here (only transition endpoint uses it).
 STATUS_ORDER stays in purchases.py (G-08 — used by CRUD + members + my-tasks).
 """
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.contract_item import ContractItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.contractor import Contractor
@@ -203,6 +205,40 @@ async def transition_status(
                     "status_label": status_label,
                 },
             )
+
+    # Phase 27.1 D-06: CONTRACT_ITEMS_REQUIRED — strict gate before contracted transition
+    if target_status == "contracted":
+        ci_count_res = await db.execute(
+            select(func.count()).select_from(ContractItem).where(ContractItem.purchase_id == pid)
+        )
+        ci_count = ci_count_res.scalar() or 0
+        if ci_count == 0:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "CONTRACT_ITEMS_REQUIRED",
+                    "message": (
+                        "Для перехода в статус «Заключён договор» необходимо заполнить позиции "
+                        "договора. Используйте кнопку «Скопировать из заявки» или «Импорт из "
+                        "файла/QR» в карточке закупки."
+                    ),
+                    "missing_fields": ["contract_items"],
+                    "status": "contracted",
+                    "status_label": "Заключён договор",
+                },
+            )
+        # Phase 27.1 D-07: recompute contract_price (если не рамочный головной)
+        is_framework_head = (
+            p.purchase_contract_type in ('framework_cumulative', 'framework_limited')
+            and p.parent_purchase_id is None
+        )
+        if not is_framework_head:
+            ci_sum_res = await db.execute(
+                select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == pid)
+            )
+            ci_sum = ci_sum_res.scalar() or Decimal('0')
+            if ci_sum > 0:
+                p.contract_price = ci_sum
 
     old_status = p.status
     p.status = target_status

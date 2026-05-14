@@ -281,6 +281,38 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 28 → Phase 26-Y: idempotent seed для action 'documents.view_all_in_org'
+    # (без него руководители без отдела не видят документы своей org → Цыганов кейс).
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'documents.view_all_in_org'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Видеть все документы организации без фильтра по ответственному исполнителю',
+                ))
+                await db.commit()
+            # Role defaults — true для SaaS+admin+org_admin, false для manager/employee
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 26-Y view_all action seed skipped (non-fatal): {e}")
+
     # Phase 26-Q: idempotent seed для нового tab advance_reports.create
     # (отделяем «создание авансового отчёта» от «реестра авансовых отчётов»)
     try:

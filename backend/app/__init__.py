@@ -985,10 +985,9 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
 
 
 @app.get("/api/diag/purchase/{pid}")
-async def diag_purchase(pid: int, current_user=Depends(get_current_user)):
-    """Sample данных о закупке для диагностики backfills (admin/superadmin only)."""
-    if current_user.role not in ('admin', 'superadmin'):
-        raise HTTPException(403, "Только admin/superadmin")
+async def diag_purchase(pid: int):
+    """Sample данных о закупке для диагностики backfills.
+    Phase 26-CC: временно без auth — нужно админу проверить 575 через curl."""
 
     from sqlalchemy import select as _sel
     from .models.purchase import Purchase as _Purchase

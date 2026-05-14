@@ -38,6 +38,19 @@
       </v-btn>
     </div>
 
+    <!-- Phase 27.1.2: НДС режим toggle (всегда виден над таблицей, не зависит от секции «Параметры договора») -->
+    <div v-if="itemShape === 'purchase' && !props.readonly" class="d-flex ga-2 mb-2 align-center flex-wrap">
+      <span class="text-caption text-medium-emphasis">НДС:</span>
+      <v-btn-toggle
+        :model-value="props.vatMode || 'uniform'"
+        density="compact" rounded="lg" color="primary" border mandatory
+        @update:model-value="(v: string) => emit('update:vatMode', v)"
+      >
+        <v-btn value="uniform" size="x-small">Одинаковый на всю закупку</v-btn>
+        <v-btn value="per_item" size="x-small">Для каждой позиции</v-btn>
+      </v-btn-toggle>
+    </div>
+
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
       <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) -->
@@ -420,26 +433,7 @@
                       </template>
                     </v-tooltip>
                   </div>
-                  <template v-if="!showContractorColumn">
-                    <v-autocomplete
-                      :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                      :items="contractors" :custom-filter="contractorFilter"
-                      item-title="name" item-value="id" return-object
-                      density="compact" variant="outlined" hide-details clearable
-                      class="mt-1" style="min-width:200px"
-                      placeholder="Контрагент (магазин)..." prepend-inner-icon="mdi-store"
-                      no-data-text="Не найден" :disabled="props.readonly"
-                      @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                      @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                    >
-                      <template #no-data>
-                        <v-list-item>
-                          <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">Контрагент не найден в БД.</v-alert>
-                          <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus" @click.stop="openContractorQuickCreate(idx)">Создать нового</v-btn>
-                        </v-list-item>
-                      </template>
-                    </v-autocomplete>
-                  </template>
+                  <!-- Phase 27.1.2: inline contractor убран для не-advance из flat layout. Per-item contractor только в advance_report mode (колонка showContractorColumn справа). -->
                 </td>
                 <td>
                   <v-select v-model="item.item_type"
@@ -1333,6 +1327,7 @@ const stagesEnabled = computed(() => props.unifiedStagesView || props.showContra
 const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
   'update:contractItems': [items: ContractItem[]]  // Phase 27.1 D-04
+  'update:vatMode': [mode: string]                 // Phase 27.1.2: inline toggle
   'item-added': [item: EditorItem]
   'item-removed': [idx: number]
   'product-created': [product: Product]

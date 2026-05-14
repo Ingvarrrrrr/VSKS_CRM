@@ -514,6 +514,7 @@
             :vat-mode="form.vat_mode"
             :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
             :form-mode="formMode"
+            @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
@@ -3430,9 +3431,9 @@ const items = ref<OrderItem[]>([])
 
 // Phase 27.1 D-04: contract_items side-by-side
 const contractItemsState = ref<ContractItem[]>([])
-const canShowContractColumns = computed(() =>
-  isEdit.value && ['confirmed', 'contracted', 'delivered', 'paid'].includes(form.status || ''),
-)
+// Phase 27.1.2: expand-row для любой существующей закупки независимо от статуса (planned/wishes тоже).
+// Для новой (несохранённой) закупки контракт-стадия неприменима — contract_items нельзя POST'ить без purchase_id.
+const canShowContractColumns = computed(() => isEdit.value)
 
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])

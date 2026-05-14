@@ -599,8 +599,9 @@ async def update_purchase(
         p.contract_price = items_sum
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below
-    # phase26-j-1: если contract_id задан — синхронизируем поля из contracts
-    if p.contract_id and ("contract_id" in data.model_fields_set or p.contract_id != old_contract_id):
+    # phase26-j-1 (fix: hotfix после регрессии): sync только при ИЗМЕНЕНИИ contract_id,
+    # иначе ручные правки contract_number перетираются на каждом save (Vue v-model шлёт contract_id всегда).
+    if p.contract_id and p.contract_id != old_contract_id:
         await _sync_purchase_from_contract(p, db)
     await _assign_framework_seq(p, db, exclude_id=pid)
 
@@ -754,6 +755,10 @@ async def patch_purchase(
     if p.assigned_user_id is None and "assigned_user_id" not in (body or {}):
         p.assigned_user_id = current_user.id
 
+    # phase26-j-1 (fix): запоминаем contract_id ДО setattr, чтобы sync вызвался
+    # только при реальном изменении FK, а не на каждый autosave с тем же contract_id.
+    old_contract_id_patch = p.contract_id
+
     changed: list[str] = []
     for k, v in (body or {}).items():
         if k not in PATCHABLE_FIELDS:
@@ -767,11 +772,10 @@ async def patch_purchase(
             # JSONB колонки: SQLAlchemy не детектирует мутации без flag_modified
             if k == "acceptance_docs":
                 flag_modified(p, "acceptance_docs")
-    # phase26-j-1: если в PATCH-теле явно указан contract_id — синхронизируем поля
-    # Не вызываем безусловно, чтобы не перетирать ручные правки в локальных полях.
-    if "contract_id" in (body or {}) and p.contract_id:
+    # phase26-j-1 (fix): sync только при ИЗМЕНЕНИИ contract_id, иначе ручные правки
+    # contract_number перетираются на каждом autosave (Phase 26 patches шлют contract_id вместе с другими полями).
+    if p.contract_id and p.contract_id != old_contract_id_patch:
         await _sync_purchase_from_contract(p, db)
-        # включить изменённые поля в changed (для отчёта клиенту)
         for f in ("contract_number", "contract_date", "purchase_contract_type"):
             if f not in changed:
                 changed.append(f)

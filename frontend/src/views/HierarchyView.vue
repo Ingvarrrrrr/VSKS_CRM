@@ -1214,6 +1214,45 @@ onNodeDragStop(async ({ node }) => {
           y: parentNode.position.y + node.position.y,
         }
         const oldParent = node.parentNode
+
+        // 7b: Check if dropped ONTO another dept (move, not just exit)
+        const targetDept = nodes.value.find(dn => {
+          if (dn.type !== 'dept' || dn.id === oldParent) return false
+          const pw = parseFloat((dn.style as any)?.width) || DEPT_W
+          const ph = parseFloat((dn.style as any)?.height) || 200
+          const cx = absPos.x + USER_W / 2
+          const cy = absPos.y + USER_H / 2
+          return cx >= dn.position.x && cx <= dn.position.x + pw
+              && cy >= dn.position.y && cy <= dn.position.y + ph
+        })
+
+        if (targetDept) {
+          // Move from old dept to new dept in same org (or cross-org)
+          const newDeptId = parseInt(targetDept.id.replace('dept-', ''))
+          try {
+            // Remove from old dept, add to new dept atomically on frontend side
+            await apiFetch(`/departments/${deptId}/members/${userId}`, { method: 'DELETE' })
+            await apiFetch(`/departments/${newDeptId}/members`, { method: 'POST', body: { user_id: userId } })
+            // Auto-add to org if cross-org
+            const tDept = _lastGraphData.value?.departments.find(d => d.id === newDeptId)
+            if (tDept) {
+              const user = _lastGraphData.value?.users.find(u => u.id === userId)
+              const userOrgIds = new Set([user?.org_id, ...(user?.extra_org_ids || [])])
+              if (!userOrgIds.has(tDept.org_id)) {
+                try { await apiFetch(`/users/${userId}/organizations/${tDept.org_id}`, { method: 'POST', body: {} }) } catch {}
+              }
+            }
+            showSnack('Сотрудник перемещён в другой отдел')
+            // Reload to sync state cleanly
+            await loadGraph()
+            emit('data-changed')
+          } catch (e: any) {
+            showSnack(e?.message || 'Ошибка перемещения', 'error')
+            await loadGraph()
+          }
+          return
+        }
+
         try {
           await apiFetch(`/departments/${deptId}/members/${userId}`, { method: 'DELETE' })
           // Update node: remove from dept

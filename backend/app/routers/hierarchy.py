@@ -605,6 +605,28 @@ async def remove_user_from_organization(
     return {"ok": True}
 
 
+@router.patch("/api/users/{uid}/org-memberships/{row_id}")
+async def patch_user_org_membership_row(
+    uid: int,
+    row_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    """Обновить поля конкретной строки user_organizations (position, salary_amount, employment_percent)."""
+    row = await db.get(UserOrganization, row_id)
+    if not row or row.user_id != uid:
+        raise HTTPException(404, "Запись не найдена")
+    if "position" in body:
+        row.position = body["position"] or None
+    if "salary_amount" in body:
+        row.salary_amount = body["salary_amount"]
+    if "employment_percent" in body:
+        row.employment_percent = body["employment_percent"]
+    await db.commit()
+    return {"ok": True}
+
+
 @router.delete("/api/users/{uid}/org-memberships/{row_id}")
 async def remove_user_org_membership_row(
     uid: int,

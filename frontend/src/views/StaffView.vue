@@ -1768,7 +1768,25 @@ async function saveEditUser() {
       }
     }
 
-    // Sync ALL org memberships (primary + extra unified)
+    // 7a: Sync per-row (per dept) position/salary/percent — NOT bulk-by-org
+    // Each allOrgEntries row has its own id (user_organizations PK), save individually.
+    for (const entry of allOrgEntries.value) {
+      if ((entry as any).is_new) continue // new rows already handled above
+      if (entry.id) {
+        try {
+          await apiFetch(`/users/${editDialog.userId}/org-memberships/${entry.id}`, {
+            method: 'PATCH',
+            body: {
+              position: entry.position || null,
+              salary_amount: entry.salary_amount ?? null,
+              employment_percent: entry.employment_percent ?? null,
+            },
+          })
+        } catch { /* non-critical */ }
+      }
+    }
+
+    // Sync org list membership (add/remove orgs) — position/salary handled above per-row
     try {
       const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
       const currentOrgMap = new Map<number, any>()
@@ -1777,19 +1795,11 @@ async function saveEditUser() {
 
       const desiredIds = new Set(editDialog.extraOrgIds)
 
-      // Add or update desired orgs — read from allOrgEntries (reactive, bound to v-combobox)
+      // Add org membership if not present yet
       for (const oid of desiredIds) {
-        const entry = allOrgEntries.value.find(e => e.org_id === oid)
-        const pos = entry ? (entry.position || null) : (editDialog.orgPositions[oid] || null)
-        const sal = entry ? (entry.salary_amount ?? null) : (editDialog.orgSalary[oid] ?? null)
-        const pct = entry ? (entry.employment_percent ?? null) : (editDialog.orgPercent[oid] ?? null)
         if (!currentOrgMap.has(oid)) {
           await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
-            method: 'POST', body: { position: pos, salary_amount: sal, employment_percent: pct },
-          })
-        } else {
-          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
-            method: 'PATCH', body: { position: pos, salary_amount: sal, employment_percent: pct },
+            method: 'POST', body: {},
           })
         }
       }

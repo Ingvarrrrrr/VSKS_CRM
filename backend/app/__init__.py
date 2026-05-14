@@ -4,9 +4,10 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from .auth.jwt import get_current_user
 
 from .routers import (
     auth, users, contractors, contracts, purchases, payments,
@@ -455,6 +456,45 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-U-3 vat columns skipped (non-fatal): {e}")
 
+    # Phase 26-CC: propagate purchase.contractor_id → items.contractor_id для advance.
+    # Если на уровне закупки контрагент проставлен вручную, items без contractor_id
+    # должны его наследовать. Самый дешёвый backfill — без чтения raw_json.
+    try:
+        from sqlalchemy import select as _sel
+        from .models.purchase import Purchase as _Purchase
+        from .models.purchase_item import PurchaseItem as _PI
+        from .models.contractor import Contractor as _Ctr
+        async with async_session() as db:
+            advances_with_c = (await db.execute(
+                _sel(_Purchase).where(
+                    _Purchase.purchase_method == 'advance',
+                    _Purchase.contractor_id.is_not(None),
+                )
+            )).scalars().all()
+            propagated_total = 0
+            for p in advances_with_c:
+                c_row = await db.get(_Ctr, p.contractor_id)
+                if not c_row:
+                    continue
+                null_items = (await db.execute(
+                    _sel(_PI).where(
+                        _PI.purchase_id == p.id,
+                        _PI.contractor_id.is_(None),
+                    )
+                )).scalars().all()
+                for it in null_items:
+                    it.contractor_id = c_row.id
+                    it.contractor_inn = c_row.inn
+                    it.contractor_name = c_row.name
+                    propagated_total += 1
+            if propagated_total:
+                await db.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).info(f"Phase 26-CC propagated: {propagated_total} items inherited contractor from purchase")
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-CC propagate skipped (non-fatal): {e}")
+
     # Phase 26-BB: per-receipt привязка через fuzzy match по 4 полям
     # (name + quantity + unit_price + total_price)
     try:
@@ -488,7 +528,7 @@ async def lifespan(app_: FastAPI):
                         items_list = _ext_items(r.raw_json or {})
                         for ri in items_list:
                             s = _fuzzy(it, ri)
-                            if s >= 3 and s > best_score:
+                            if s >= 2 and s > best_score:
                                 best_score = s
                                 best_r = r
                     if best_r:
@@ -803,7 +843,7 @@ async def diag_version():
         schema_status["error"] = str(e)[:200]
 
     return {
-        "phase": "26-BB",
+        "phase": "26-CC",
         "git_sha": git_sha,
         "schema": schema_status,
         "features": [
@@ -813,5 +853,194 @@ async def diag_version():
             "contractor-inheritance-purchase-to-items",
             "per-receipt-contractor-mapping",
             "fuzzy-match-legacy-items",
+            "propagate-purchase-contractor-to-items",
+            "force-backfill-endpoint",
+            "diag-purchase-endpoint",
         ],
     }
+
+
+@app.post("/api/diag/run-backfills")
+async def diag_run_backfills(current_user=Depends(get_current_user)):
+    """Принудительный запуск всех backfill'ов (admin/superadmin only).
+    Returns per-stage counts."""
+    if current_user.role not in ('admin', 'superadmin'):
+        raise HTTPException(403, "Только admin/superadmin")
+
+    from sqlalchemy import select as _sel
+    from .models.purchase import Purchase as _Purchase
+    from .models.purchase_item import PurchaseItem as _PI
+    from .models.purchase_receipt import PurchaseReceipt as _PR
+    from .models.contractor import Contractor as _Ctr
+    from app.routers.purchase_receipts import _items_match_score as _fuzzy, _extract_items as _ext
+
+    result = {"propagated_from_purchase": 0, "linked_by_fuzzy": 0, "filled_first_receipt": 0, "errors": []}
+
+    async with async_session() as db:
+        # Stage A: propagate purchase.contractor_id → items
+        try:
+            advances_with_c = (await db.execute(
+                _sel(_Purchase).where(
+                    _Purchase.purchase_method == 'advance',
+                    _Purchase.contractor_id.is_not(None),
+                )
+            )).scalars().all()
+            for p in advances_with_c:
+                c_row = await db.get(_Ctr, p.contractor_id)
+                if not c_row:
+                    continue
+                null_items = (await db.execute(
+                    _sel(_PI).where(_PI.purchase_id == p.id, _PI.contractor_id.is_(None))
+                )).scalars().all()
+                for it in null_items:
+                    it.contractor_id = c_row.id
+                    it.contractor_inn = c_row.inn
+                    it.contractor_name = c_row.name
+                    result["propagated_from_purchase"] += 1
+            await db.commit()
+        except Exception as e:
+            result["errors"].append(f"stage_A: {str(e)[:200]}")
+
+        # Stage B: fuzzy match unlinked items с raw_json
+        try:
+            advances_ids = (await db.execute(
+                _sel(_Purchase.id).where(_Purchase.purchase_method == 'advance')
+            )).all()
+            for (pid,) in advances_ids:
+                unlinked = (await db.execute(
+                    _sel(_PI).where(_PI.purchase_id == pid, _PI.receipt_id.is_(None))
+                )).scalars().all()
+                if not unlinked:
+                    continue
+                receipts = (await db.execute(
+                    _sel(_PR).where(_PR.purchase_id == pid)
+                )).scalars().all()
+                if not receipts:
+                    continue
+                for it in unlinked:
+                    best_r = None
+                    best_score = 0
+                    for r in receipts:
+                        for ri in _ext(r.raw_json):
+                            s = _fuzzy(it, ri)
+                            if s >= 2 and s > best_score:
+                                best_score = s
+                                best_r = r
+                    if best_r:
+                        it.receipt_id = best_r.id
+                        if best_r.seller_inn:
+                            c_row = (await db.execute(
+                                _sel(_Ctr).where(_Ctr.inn == best_r.seller_inn)
+                            )).scalar_one_or_none()
+                            if not c_row:
+                                c_row = _Ctr(inn=best_r.seller_inn, name=best_r.seller_name or f"ИНН {best_r.seller_inn}")
+                                db.add(c_row)
+                                await db.flush()
+                            it.contractor_id = c_row.id
+                            it.contractor_inn = best_r.seller_inn
+                            it.contractor_name = best_r.seller_name
+                        result["linked_by_fuzzy"] += 1
+            await db.commit()
+        except Exception as e:
+            result["errors"].append(f"stage_B: {str(e)[:200]}")
+
+        # Stage C: fallback — для NULL items с одним чеком в закупке, заполнить от него
+        try:
+            advances_ids = (await db.execute(
+                _sel(_Purchase.id).where(_Purchase.purchase_method == 'advance')
+            )).all()
+            for (pid,) in advances_ids:
+                null_items = (await db.execute(
+                    _sel(_PI).where(_PI.purchase_id == pid, _PI.contractor_id.is_(None))
+                )).scalars().all()
+                if not null_items:
+                    continue
+                receipts = (await db.execute(
+                    _sel(_PR).where(_PR.purchase_id == pid).order_by(_PR.id.asc())
+                )).scalars().all()
+                if not receipts:
+                    continue
+                # Стратегия: если 1 чек — все NULL ← него; если несколько — НЕ трогать
+                if len(receipts) == 1:
+                    r = receipts[0]
+                    if not r.seller_inn:
+                        continue
+                    c_row = (await db.execute(
+                        _sel(_Ctr).where(_Ctr.inn == r.seller_inn)
+                    )).scalar_one_or_none()
+                    if not c_row:
+                        c_row = _Ctr(inn=r.seller_inn, name=r.seller_name or f"ИНН {r.seller_inn}")
+                        db.add(c_row)
+                        await db.flush()
+                    for it in null_items:
+                        it.contractor_id = c_row.id
+                        it.contractor_inn = r.seller_inn
+                        it.contractor_name = r.seller_name
+                        result["filled_first_receipt"] += 1
+            await db.commit()
+        except Exception as e:
+            result["errors"].append(f"stage_C: {str(e)[:200]}")
+
+    return result
+
+
+@app.get("/api/diag/purchase/{pid}")
+async def diag_purchase(pid: int, current_user=Depends(get_current_user)):
+    """Sample данных о закупке для диагностики backfills (admin/superadmin only)."""
+    if current_user.role not in ('admin', 'superadmin'):
+        raise HTTPException(403, "Только admin/superadmin")
+
+    from sqlalchemy import select as _sel
+    from .models.purchase import Purchase as _Purchase
+    from .models.purchase_item import PurchaseItem as _PI
+    from .models.purchase_receipt import PurchaseReceipt as _PR
+    from .models.contractor import Contractor as _Ctr
+    import json as _json
+
+    async with async_session() as db:
+        p = await db.get(_Purchase, pid)
+        if not p:
+            raise HTTPException(404, "Закупка не найдена")
+        items = (await db.execute(
+            _sel(_PI).where(_PI.purchase_id == pid).order_by(_PI.id.asc())
+        )).scalars().all()
+        receipts = (await db.execute(
+            _sel(_PR).where(_PR.purchase_id == pid).order_by(_PR.id.asc())
+        )).scalars().all()
+
+        # Resolve contractor inn for purchase
+        purchase_contractor_inn = None
+        if p.contractor_id:
+            c = await db.get(_Ctr, p.contractor_id)
+            if c:
+                purchase_contractor_inn = c.inn
+
+        items_out = [{
+            "id": it.id,
+            "item_name": it.item_name,
+            "qty": float(it.quantity or 0),
+            "unit_price": float(it.unit_price or 0),
+            "total_price": float(it.total_price or 0),
+            "contractor_id": it.contractor_id,
+            "contractor_inn": it.contractor_inn,
+            "receipt_id": it.receipt_id,
+        } for it in items]
+
+        receipts_out = []
+        for r in receipts:
+            raw_str = _json.dumps(r.raw_json or {}, ensure_ascii=False)[:2000] if r.raw_json else None
+            receipts_out.append({
+                "id": r.id,
+                "seller_inn": r.seller_inn,
+                "seller_name": r.seller_name,
+                "total_sum": float(r.total_sum or 0),
+                "raw_json_truncated": raw_str,
+            })
+
+        return {
+            "purchase_id": pid,
+            "purchase_contractor_id": p.contractor_id,
+            "purchase_contractor_inn": purchase_contractor_inn,
+            "items": items_out,
+            "receipts": receipts_out,
+        }

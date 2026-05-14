@@ -309,7 +309,7 @@ async def _create_receipt_with_items(
         best_score = 0
         for ex in existing_unlinked:
             s = _items_match_score(ex, it)
-            if s >= 3 and s > best_score:
+            if s >= 2 and s > best_score:
                 best_score = s
                 matched_existing = ex
 
@@ -532,7 +532,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
             items_list = _extract_items(r.raw_json or {})
             for ri in items_list:
                 score = _items_match_score(it, ri)
-                if score >= 3 and score > best_score:
+                if score >= 2 and score > best_score:
                     best_score = score
                     best_receipt = r
         if best_receipt:

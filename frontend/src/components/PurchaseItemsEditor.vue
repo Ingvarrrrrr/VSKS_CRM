@@ -503,6 +503,10 @@
                       </v-list-item>
                     </template>
                   </v-autocomplete>
+                  <div v-if="item.receipt_id" class="text-caption text-medium-emphasis mt-1 d-flex align-center gap-1">
+                    <v-icon size="12">mdi-receipt</v-icon>
+                    <span>из чека #{{ item.receipt_id }}</span>
+                  </div>
                 </td>
                 <td>
                   <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
@@ -1233,6 +1237,7 @@ interface EditorItem {
   contractor_id?: number | null
   contractor_inn?: string | null
   contractor_name?: string | null
+  receipt_id?: number | null  // Phase 26-BB
   // Purchase-only (undefined when itemShape === 'wish'):
   final_unit_price?: number | null
   final_total?: number | null

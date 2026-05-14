@@ -148,6 +148,52 @@ def _parse_qr_string(qr: str) -> dict:
     }
 
 
+def _items_match_score(item_a, item_b) -> int:
+    """
+    Phase 26-BB: возвращает количество совпавших полей (0-4) для сопоставления
+    позиции из БД (item_a — ORM объект) и позиции из raw_json чека (item_b — dict).
+    Поля: name (similarity >= 0.7), quantity, unit_price, total_price.
+    item_b['price'] и item_b['sum'] — уже в рублях (прошли через _extract_items или _parse_fns_json_receipt).
+    """
+    import difflib
+    score = 0
+    # name
+    name_a = (getattr(item_a, 'item_name', None) or '').strip().lower()
+    name_b = str(item_b.get('name') or '').strip().lower()
+    if name_a and name_b:
+        sim = difflib.SequenceMatcher(None, name_a, name_b).ratio()
+        if sim >= 0.7:
+            score += 1
+    # quantity
+    try:
+        qa = Decimal(str(item_a.quantity or 0))
+        qb = Decimal(str(item_b.get('quantity') or item_b.get('qty') or 0))
+        if qa > 0 and qb > 0:
+            ratio = abs(qa - qb) / max(qa, qb)
+            if ratio <= Decimal('0.01'):
+                score += 1
+    except Exception:
+        pass
+    # unit_price
+    try:
+        pa = Decimal(str(item_a.unit_price or 0))
+        pb = Decimal(str(item_b.get('price') or 0))
+        if abs(pa - pb) <= Decimal('0.01'):
+            score += 1
+    except Exception:
+        pass
+    # total_price
+    try:
+        ta = Decimal(str(item_a.total_price or 0))
+        tb_raw = item_b.get('sum') or item_b.get('total')
+        tb = Decimal(str(tb_raw or 0))
+        if abs(ta - tb) <= Decimal('0.01'):
+            score += 1
+    except Exception:
+        pass
+    return score
+
+
 async def _create_receipt_with_items(
     purchase_id: int,
     data: dict,
@@ -233,6 +279,17 @@ async def _create_receipt_with_items(
     db.add(receipt)
     await db.flush()
 
+    # Phase 26-BB: дедуплицировать existing items закупки без receipt_id
+    # (ручные позиции или legacy). Если найден match >= 3/4 полей — linklink
+    # на этот чек и overwrite contractor.
+    existing_q = await db.execute(
+        select(PurchaseItem).where(
+            PurchaseItem.purchase_id == purchase_id,
+            PurchaseItem.receipt_id.is_(None),
+        )
+    )
+    existing_unlinked = list(existing_q.scalars().all())
+
     for idx, it in enumerate(items_data, start=1):
         try:
             qty = Decimal(str(it.get('quantity') or 1))
@@ -246,6 +303,24 @@ async def _create_receipt_with_items(
             except Exception:
                 total = Decimal('0')
         raw_name = (it.get('name') or f'Позиция {idx}')[:5000]
+
+        # Phase 26-BB: попытаться найти match среди existing unlinked
+        matched_existing = None
+        best_score = 0
+        for ex in existing_unlinked:
+            s = _items_match_score(ex, it)
+            if s >= 3 and s > best_score:
+                best_score = s
+                matched_existing = ex
+
+        if matched_existing is not None:
+            matched_existing.receipt_id = receipt.id
+            matched_existing.contractor_id = contractor_id_for_items
+            matched_existing.contractor_inn = seller_inn
+            matched_existing.contractor_name = seller_name
+            existing_unlinked.remove(matched_existing)
+            continue  # пропустить создание нового PurchaseItem
+
         # Phase 21.06+: token-set fuzzy match against catalog. Catches names
         # like "Карабин Ozone..." vs "Ozone..." (where the type is stored in
         # Product.product_type, not in the name itself). Matched items are
@@ -264,6 +339,7 @@ async def _create_receipt_with_items(
             contractor_id=contractor_id_for_items,
             contractor_inn=seller_inn,
             contractor_name=seller_name,
+            receipt_id=receipt.id,  # Phase 26-BB
         ))
 
     await db.commit()
@@ -404,23 +480,71 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
     if first_receipt.fiscal_document_number and not p.contract_number:
         p.contract_number = str(first_receipt.fiscal_document_number)
 
-    # 2. Items-уровень: contractor_id (per item)
+    # 2. Items-уровень: Phase 26-BB per-receipt mapping
     from app.models.purchase_item import PurchaseItem as _PI
     from app.models.contractor import Contractor as _Ctr
-    null_items = (await db.execute(
-        select(_PI).where(_PI.purchase_id == purchase_id, _PI.contractor_id.is_(None))
-    )).scalars().all()
-    # Простая стратегия: все NULL-item'ы получают контрагента первого чека
-    if first_receipt.seller_inn and null_items:
+
+    # Построить map: receipt_id → (contractor_id, inn, name)
+    receipt_to_contractor = {}
+    for r in receipts:
+        if not r.seller_inn:
+            continue
         c_row = (await db.execute(
-            select(_Ctr).where(_Ctr.inn == first_receipt.seller_inn)
+            select(_Ctr).where(_Ctr.inn == r.seller_inn)
         )).scalar_one_or_none()
-        if c_row:
-            for it in null_items:
-                it.contractor_id = c_row.id
-                it.contractor_inn = first_receipt.seller_inn
-                it.contractor_name = first_receipt.seller_name
-                items_updated += 1
+        if not c_row:
+            c_row = _Ctr(inn=r.seller_inn, name=r.seller_name or f"ИНН {r.seller_inn}")
+            db.add(c_row)
+            await db.flush()
+        receipt_to_contractor[r.id] = (c_row.id, r.seller_inn, r.seller_name)
+
+    # Шаг A: items с receipt_id → overwrite contractor если mismatch
+    linked_items_q = await db.execute(
+        select(_PI).where(
+            _PI.purchase_id == purchase_id,
+            _PI.receipt_id.is_not(None),
+        )
+    )
+    for it in linked_items_q.scalars().all():
+        pack = receipt_to_contractor.get(it.receipt_id)
+        if not pack:
+            continue
+        cid, c_inn, c_name = pack
+        if it.contractor_id != cid:
+            it.contractor_id = cid
+            it.contractor_inn = c_inn
+            it.contractor_name = c_name
+            items_updated += 1
+
+    # Шаг B: items без receipt_id → fuzzy match по raw_json чеков
+    unlinked_q = await db.execute(
+        select(_PI).where(
+            _PI.purchase_id == purchase_id,
+            _PI.receipt_id.is_(None),
+        )
+    )
+    unlinked = unlinked_q.scalars().all()
+    items_linked_by_fuzzy = 0
+    for it in unlinked:
+        best_receipt = None
+        best_score = 0
+        for r in receipts:
+            items_list = _extract_items(r.raw_json or {})
+            for ri in items_list:
+                score = _items_match_score(it, ri)
+                if score >= 3 and score > best_score:
+                    best_score = score
+                    best_receipt = r
+        if best_receipt:
+            it.receipt_id = best_receipt.id
+            pack = receipt_to_contractor.get(best_receipt.id)
+            if pack:
+                cid, c_inn, c_name = pack
+                it.contractor_id = cid
+                it.contractor_inn = c_inn
+                it.contractor_name = c_name
+            items_updated += 1
+            items_linked_by_fuzzy += 1
 
     # 3. acceptance_docs + PurchaseFile для каждого receipt
     import os as _os, hashlib as _hashlib
@@ -532,6 +656,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
         "purchase_id": purchase_id,
         "receipts_count": len(receipts),
         "items_updated": items_updated,
+        "items_linked_by_fuzzy": items_linked_by_fuzzy,
         "files_attached": files_attached,
         "acceptance_docs_added": acceptance_docs_added,
     }

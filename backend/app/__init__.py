@@ -385,6 +385,16 @@ async def lifespan(app_: FastAPI):
             f"Phase 27.1 contract_items setup skipped (non-fatal): {e}"
         )
 
+    # Phase 26-BB: purchase_items.receipt_id column + FK
+    try:
+        from check_schema import _ensure_purchase_items_receipt_id
+        from .database import engine as _engine
+        async with _engine.begin() as conn:
+            await _ensure_purchase_items_receipt_id(conn)
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-BB receipt_id column setup skipped (non-fatal): {e}")
+
     # Phase 24 RESTORE: backfill contract_date/number для advance purchases
     # с receipts но без основания. Идемпотентно — skip если 0 строк нуждаются.
     try:
@@ -444,6 +454,64 @@ async def lifespan(app_: FastAPI):
     except Exception as e:
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-U-3 vat columns skipped (non-fatal): {e}")
+
+    # Phase 26-BB: per-receipt привязка через fuzzy match по 4 полям
+    # (name + quantity + unit_price + total_price)
+    try:
+        from sqlalchemy import select as _sel
+        from .models.purchase import Purchase as _Purchase
+        from .models.purchase_item import PurchaseItem as _PI
+        from .models.purchase_receipt import PurchaseReceipt as _PR
+        from .models.contractor import Contractor as _Ctr
+        from app.routers.purchase_receipts import _items_match_score as _fuzzy
+        from app.routers.purchase_receipts import _extract_items as _ext_items
+        async with async_session() as db:
+            advances = (await db.execute(
+                _sel(_Purchase.id).where(_Purchase.purchase_method == 'advance')
+            )).all()
+            linked_total = 0
+            for (pid,) in advances:
+                unlinked = (await db.execute(
+                    _sel(_PI).where(_PI.purchase_id == pid, _PI.receipt_id.is_(None))
+                )).scalars().all()
+                if not unlinked:
+                    continue
+                receipts = (await db.execute(
+                    _sel(_PR).where(_PR.purchase_id == pid)
+                )).scalars().all()
+                if not receipts:
+                    continue
+                for it in unlinked:
+                    best_r = None
+                    best_score = 0
+                    for r in receipts:
+                        items_list = _ext_items(r.raw_json or {})
+                        for ri in items_list:
+                            s = _fuzzy(it, ri)
+                            if s >= 3 and s > best_score:
+                                best_score = s
+                                best_r = r
+                    if best_r:
+                        it.receipt_id = best_r.id
+                        if best_r.seller_inn:
+                            c_row = (await db.execute(
+                                _sel(_Ctr).where(_Ctr.inn == best_r.seller_inn)
+                            )).scalar_one_or_none()
+                            if not c_row:
+                                c_row = _Ctr(inn=best_r.seller_inn, name=best_r.seller_name or f"ИНН {best_r.seller_inn}")
+                                db.add(c_row)
+                                await db.flush()
+                            it.contractor_id = c_row.id
+                            it.contractor_inn = best_r.seller_inn
+                            it.contractor_name = best_r.seller_name
+                        linked_total += 1
+            if linked_total:
+                await db.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).info(f"Phase 26-BB backfill: {linked_total} purchase_items linked to receipts via fuzzy")
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-BB backfill skipped (non-fatal): {e}")
 
     # Phase 26-W: backfill PurchaseItem.contractor_id для авансовых закупок,
     # где контрагент создан из чека, но item.contractor_id остался NULL
@@ -707,12 +775,14 @@ async def diag_version():
     except Exception:
         pass
     return {
-        "phase": "26-Z-bootstrap",
+        "phase": "26-BB",
         "git_sha": git_sha,
         "features": [
             "auto-recompute-on-get-advance",
             "structured-document-errors",
             "receipt-as-file-in-acceptance-docs",
             "contractor-inheritance-purchase-to-items",
+            "per-receipt-contractor-mapping",
+            "fuzzy-match-legacy-items",
         ],
     }

@@ -396,6 +396,7 @@ class PurchaseItemOut(PurchaseItemCreate):
     product_photo_url: Optional[str] = None
     product_description: Optional[str] = None
     product_description_44fz: Optional[str] = None
+    receipt_id: Optional[int] = None  # Phase 26-BB
     model_config = {"from_attributes": True}
 
 class PurchaseFileOut(BaseModel):

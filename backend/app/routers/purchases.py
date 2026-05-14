@@ -457,7 +457,22 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
                 receipt_ids_actual = set((await db.execute(
                     _sel(_PR.id).where(_PR.purchase_id == pid)
                 )).scalars().all())
-                need_recompute = bool(null_items_count) or bool(receipt_ids_actual - receipt_ids_in_docs)
+                # Mismatch detection: позиция привязана к чеку, но контрагент не из этого чека
+                mismatch_count = 0
+                linked_items_q = await db.execute(
+                    _sel(_PI).where(
+                        _PI.purchase_id == pid,
+                        _PI.receipt_id.is_not(None),
+                    )
+                )
+                for _it in linked_items_q.scalars().all():
+                    _r = await db.get(_PR, _it.receipt_id)
+                    if not _r or not _r.seller_inn:
+                        continue
+                    if _it.contractor_inn != _r.seller_inn:
+                        mismatch_count += 1
+                        break  # достаточно одного для триггера
+                need_recompute = bool(null_items_count) or bool(receipt_ids_actual - receipt_ids_in_docs) or bool(mismatch_count)
                 if need_recompute:
                     from app.routers.purchase_receipts import _recompute_from_receipts_core
                     await _recompute_from_receipts_core(pid, db)

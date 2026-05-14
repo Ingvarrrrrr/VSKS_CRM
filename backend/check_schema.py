@@ -254,6 +254,35 @@ async def _ensure_contract_items_table(conn) -> None:
         print(f"  \u26a0\ufe0f   contract_items table ensure failed: {e}")
 
 
+async def _ensure_purchase_items_receipt_id(conn) -> None:
+    """Phase 26-BB: добавить receipt_id FK в purchase_items (idempotent)."""
+    try:
+        await conn.execute(text("""
+            ALTER TABLE purchase_items
+            ADD COLUMN IF NOT EXISTS receipt_id INTEGER
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_purchase_items_receipt_id
+            ON purchase_items(receipt_id)
+        """))
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'fk_purchase_items_receipt_id'
+                ) THEN
+                    ALTER TABLE purchase_items
+                    ADD CONSTRAINT fk_purchase_items_receipt_id
+                    FOREIGN KEY (receipt_id) REFERENCES purchase_receipts(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        print("  \u2705  purchase_items.receipt_id ensured (Phase 26-BB)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   purchase_items.receipt_id ensure failed: {e}")
+
+
 async def _backfill_contract_items_from_purchase_items(conn) -> int:
     """Phase 27.1 D-06: idempotent backfill 1\u21941 \u0434\u043b\u044f legacy \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted+.
 

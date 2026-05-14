@@ -281,6 +281,30 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 26-Q: idempotent seed для нового tab advance_reports.create
+    # (отделяем «создание авансового отчёта» от «реестра авансовых отчётов»)
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionTab, RolePermission
+        async with async_session() as db:
+            ex = await db.execute(_sel(PermissionTab).where(PermissionTab.tab_key == 'advance_reports.create'))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionTab(tab_key='advance_reports.create', title='Авансовый отчёт (создание)'))
+                await db.commit()
+            # Role permissions: разрешено всем ролям, кому был разрешён advance_reports
+            ALL_ADV_ROLES = ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager', 'employee']
+            for role_name in ALL_ADV_ROLES:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == 'advance_reports.create',
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key='advance_reports.create', granted=True))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 26-Q permission seed skipped (non-fatal): {e}")
+
     # Phase 22 RESTORE: backfill typed-fields для legacy bank_payments c payment_date IS NULL
     # Идемпотентно — skip если все строки уже типизированы. Запускается на каждом старте.
     try:

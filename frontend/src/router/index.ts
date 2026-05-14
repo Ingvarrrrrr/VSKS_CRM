@@ -292,7 +292,7 @@ const router = createRouter({
       path: '/advance-reports/create',
       name: 'create-advance-report',
       component: CreateOrderView,
-      meta: { requiresAuth: true, title: 'Новый авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports' }
+      meta: { requiresAuth: true, title: 'Новый авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports.create' }
     },
     {
       path: '/advance-reports/:id/edit',

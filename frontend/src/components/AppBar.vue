@@ -468,7 +468,7 @@ const _allMenuItems = [
   { title: 'Организации', icon: 'mdi-domain', route: '/organizations', tab_key: 'admin.organizations' },
   { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', tab_key: 'admin.billing' },
   { title: 'Служебные записки', icon: 'mdi-file-account-outline', route: '/service-notes', tab_key: 'service_notes' },
-  { title: 'Авансовый отчёт', icon: 'mdi-cash-plus', route: '/advance-reports/create', tab_key: 'advance_reports' },
+  { title: 'Авансовый отчёт', icon: 'mdi-cash-plus', route: '/advance-reports/create', tab_key: 'advance_reports.create' },
   { title: 'Реестр авансовых отчётов', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
   { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },

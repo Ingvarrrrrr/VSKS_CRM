@@ -579,21 +579,44 @@ async def remove_user_from_organization(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    """Remove user from an organization (extra or primary)."""
+    """Remove user from an organization (extra or primary).
+    7c: Cascade — удаляет ВСЕ строки user_organizations с этим org_id,
+    а также все связанные DepartmentMember записи.
+    """
+    from app.models.department import DepartmentMember
     user = await db.get(User, uid)
     is_primary = user and user.org_id == org_id
 
-    row = (await db.execute(
+    # 7c: Load ALL rows for this user+org (may be multiple due to multi-dept)
+    all_rows = (await db.execute(
         select(UserOrganization).where(
             UserOrganization.user_id == uid,
             UserOrganization.org_id == org_id,
         )
-    )).scalar_one_or_none()
+    )).scalars().all()
 
-    if not row and not is_primary:
+    if not all_rows and not is_primary:
         raise HTTPException(404, "Членство не найдено")
-    if row:
+
+    # 7c: Collect dept_ids to clean up DepartmentMember records
+    dept_ids_to_clean = {row.dept_id for row in all_rows if row.dept_id is not None}
+
+    # Delete all user_organizations rows for this org
+    for row in all_rows:
         await db.delete(row)
+    await db.flush()
+
+    # 7c: Delete DepartmentMember for each dept that was linked to this org
+    for dept_id in dept_ids_to_clean:
+        dm = (await db.execute(
+            select(DepartmentMember).where(
+                DepartmentMember.user_id == uid,
+                DepartmentMember.department_id == dept_id,
+            )
+        )).scalar_one_or_none()
+        if dm:
+            await db.delete(dm)
+
     if is_primary:
         user.org_id = None
     await db.commit()

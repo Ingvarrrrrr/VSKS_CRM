@@ -135,22 +135,44 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
 
 
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
-    """Return effective key set (tabs + actions, undifferentiated).
+    """Return effective key set (tabs + actions, undifferentiated) — UI-вариант.
 
-    Phase 26-P (fix после фидбека 14 мая): UI-разрешения вкладок/действий
-    определяются ТОЛЬКО ролью и override'ами самого пользователя.
+    Phase 26-P: UI-разрешения вкладок/действий определяются ТОЛЬКО ролью и
+    override'ами самого пользователя. Используется в require_tab/require_action
+    и в authStore.hasTab/hasAction на фронте.
 
-    Раньше (Phase 28-Ext, 5736ba3) брался UNION с правами подчинённых через
-    иерархию — это давало Лягину «все вкладки», потому что у его subordinates
-    могла оказаться более широкая роль/override. Это корректно для видимости
-    ДАННЫХ (чтобы руководитель видел задачи подчинённых), но не для UI:
-    руководитель не должен получать админскую вкладку «Роли» только потому,
-    что под ним числится admin.
+    Раньше (Phase 28-Ext, 5736ba3) делался UNION с правами подчинённых через
+    иерархию — это давало руководителю «все вкладки», если хоть один подчинённый
+    был admin/org_admin. Правильно для видимости ДАННЫХ (руководитель видит
+    задачи/закупки подчинённых), но не для UI.
 
-    Inheritance прав через иерархию теперь делается ТОЛЬКО в get_visible_user_ids
-    для фильтрации данных, не для меню/decorator'ов require_tab/require_action.
+    Для visibility данных используй _get_effective_with_inheritance — он
+    восстанавливает старое поведение UNION'a, нужное для get_view_all_org_ids.
     """
     return await _get_effective_simple(user, db, org_id)
+
+
+async def _get_effective_with_inheritance(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
+    """UNION-вариант: права user + права всех подчинённых через иерархию.
+
+    Phase 26-W: восстановлен для visibility данных. Используется в
+    get_view_all_org_ids → build_visibility_clause: если у любого из подчинённых
+    есть action 'documents.view_all_in_org' для org → руководитель тоже видит
+    данные этой org (документы подчинённых = его документы).
+
+    НЕ использовать для UI (require_tab/require_action) — для них _get_effective.
+    """
+    effective = await _get_effective_simple(user, db, org_id)
+
+    from app.auth.visibility import get_visible_user_ids
+    visible = await get_visible_user_ids(user, db)
+    if visible:
+        for sub_uid in visible - {user.id}:
+            sub_user = await db.get(User, sub_uid)
+            if sub_user:
+                effective |= await _get_effective_simple(sub_user, db, org_id)
+
+    return effective
 
 
 async def get_effective_tabs(

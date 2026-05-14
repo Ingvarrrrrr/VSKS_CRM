@@ -171,7 +171,7 @@ async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:
         return set()
 
     from app.auth.jwt import get_org_filter
-    from app.auth.permissions import _get_effective
+    from app.auth.permissions import _get_effective_with_inheritance
 
     ACTION_KEY = "documents.view_all_in_org"
 
@@ -181,8 +181,10 @@ async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:
 
     result: set[int] = set()
     for org_id in org_ids:
-        effective = await _get_effective(user, db, org_id)
-        # effective is a plain set of str keys (tabs + actions undifferentiated)
+        # Phase 26-W: для visibility данных нужен UNION с правами подчинённых.
+        # Иначе руководитель не получает action 'documents.view_all_in_org'
+        # которая есть у его org_admin-подчинённого → не видит данные org.
+        effective = await _get_effective_with_inheritance(user, db, org_id)
         if ACTION_KEY in effective:
             result.add(org_id)
 

@@ -23,7 +23,7 @@ from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_RO
 from app.auth.permissions import require_action
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.routers.purchases import _purchase_to_full, _item_to_out, STATUS_ORDER
+from app.routers.purchases import _purchase_to_full, _item_to_out, STATUS_ORDER, _sync_purchase_from_contract
 from app.schemas.schemas import PurchaseOutFull
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
@@ -123,6 +123,12 @@ async def transition_status(
 
     # Field guards for specific target statuses
     if target_status in TRANSITION_REQUIRED:
+        # phase26-j-2: если contract_id установлен, подтягиваем поля из contracts перед валидацией.
+        # Это закрывает кейс: purchase.contract_date=NULL, contracts[cid].date заполнена →
+        # переход не блокируется, данные синхронизируются автоматически.
+        if p.contract_id:
+            await _sync_purchase_from_contract(p, db)
+
         required_fields = TRANSITION_REQUIRED[target_status]
         if target_status == "delivered":
             # acceptance_docs JSONB overrides legacy flat fields.

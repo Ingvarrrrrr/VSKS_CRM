@@ -474,6 +474,8 @@
         <v-card-text>
           <PurchaseItemsEditor
             v-model="items"
+            v-model:contract-items="contractItemsState"
+            :show-contract-columns="canShowContractColumns"
             item-shape="purchase"
             :purchase-id="purchaseId"
             :default-unit="'шт.'"
@@ -2971,6 +2973,8 @@
 import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
+import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
+import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
@@ -3342,6 +3346,13 @@ function activeDescription(item: OrderItem): string | undefined {
 interface EventItem { id: number; subsidy_id: number; name: string; is_active: boolean }
 
 const items = ref<OrderItem[]>([])
+
+// Phase 27.1 D-04: contract_items side-by-side
+const contractItemsState = ref<ContractItem[]>([])
+const canShowContractColumns = computed(() =>
+  isEdit.value && ['confirmed', 'contracted', 'delivered', 'paid'].includes(form.status || ''),
+)
+
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
 const acceptanceDocs = ref<{ name: string; number: string; date: string; amount: number | null }[]>([])
@@ -5252,6 +5263,15 @@ const loadPurchase = async () => {
     }]
   }
 
+  // Phase 27.1 D-04: load contract_items for side-by-side
+  if (purchaseId.value) {
+    try {
+      contractItemsState.value = await listContractItems(purchaseId.value)
+    } catch {
+      contractItemsState.value = []
+    }
+  }
+
   // Resolve FEO cascade
   if (data.feo_category_id) resolveFeeLevels(data.feo_category_id)
 
@@ -5730,6 +5750,28 @@ const doSave = async (adminOverride: boolean) => {
       if (updated.contract_number) form.contract_number = updated.contract_number
       if (updated.purchase_number) form.purchase_number = updated.purchase_number
       if (updated.framework_seq != null) form.framework_seq = updated.framework_seq
+      // Phase 27.1 W-2: unconditionally save contract_items when status >= contracted
+      // Passing empty array correctly clears contract_items on backend
+      if (purchaseId.value && canShowContractColumns.value) {
+        const drafts = contractItemsState.value.map(ci => ({
+          source_item_id: ci.source_item_id ?? null,
+          contract_id: ci.contract_id ?? null,
+          product_id: ci.product_id ?? null,
+          name: ci.name,
+          quantity: ci.quantity ?? null,
+          unit: ci.unit ?? null,
+          unit_price: ci.unit_price ?? null,
+          total: ci.total ?? null,
+          match_confirmed: ci.match_confirmed,
+        }))
+        try {
+          const savedCi = await replaceAllContractItems(purchaseId.value, drafts)
+          contractItemsState.value = savedCi
+        } catch (ciErr: any) {
+          // Non-fatal: log but don't block purchase save
+          console.warn('[contract_items save]', ciErr)
+        }
+      }
       showSnack('Сохранено')
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })

@@ -153,6 +153,19 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
             user.role,
         )
 
+    # Phase 26-AA: «поглощение» — если в подчинённых есть SaaS-юзер, наследуем
+    # SaaS-видимость (None = без фильтра). Бизнес-правило: «ты ставишь задачи
+    # superadmin'у → ты видишь то же что и он».
+    if visible - {user.id}:
+        saas_check = await db.execute(
+            select(User.id).where(
+                User.id.in_(visible - {user.id}),
+                User.role.in_(_SAAS_ROLES),
+            )
+        )
+        if saas_check.first() is not None:
+            return None  # bypass фильтра — наследовал SaaS
+
     return visible
 
 

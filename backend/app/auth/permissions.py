@@ -135,44 +135,38 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
 
 
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
-    """Return effective key set (tabs + actions, undifferentiated) — UI-вариант.
+    """Return effective key set (tabs + actions, undifferentiated) — "поглощение".
 
-    Phase 26-P: UI-разрешения вкладок/действий определяются ТОЛЬКО ролью и
-    override'ами самого пользователя. Используется в require_tab/require_action
-    и в authStore.hasTab/hasAction на фронте.
+    Phase 28-Ext (5736ba3) / Phase 26-AA (revert после фидбека пользователя):
+    "Иерархия > роли" — пользователь наследует UNION прав ВСЕХ подчинённых через
+    UserHierarchy. То есть если ты ставишь задачи admin'у — ты получаешь его tabs.
+    Если ставишь задачи superadmin'у — получаешь SaaS-уровень.
 
-    Раньше (Phase 28-Ext, 5736ba3) делался UNION с правами подчинённых через
-    иерархию — это давало руководителю «все вкладки», если хоть один подчинённый
-    был admin/org_admin. Правильно для видимости ДАННЫХ (руководитель видит
-    задачи/закупки подчинённых), но не для UI.
+    Бизнес-семантика: «он наследует все умения тех, кому ставит задачи».
+    Pluton-стиль владения: руководитель видит то же что и подчинённый.
 
-    Для visibility данных используй _get_effective_with_inheritance — он
-    восстанавливает старое поведение UNION'a, нужное для get_view_all_org_ids.
-    """
-    return await _get_effective_simple(user, db, org_id)
+    Лессон: Phase 26-P (7da566a) убирал UNION чтобы ограничить UI Лягину,
+    но это слом business model — иерархия должна давать поглощение.
 
-
-async def _get_effective_with_inheritance(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
-    """UNION-вариант: права user + права всех подчинённых через иерархию.
-
-    Phase 26-W: восстановлен для visibility данных. Используется в
-    get_view_all_org_ids → build_visibility_clause: если у любого из подчинённых
-    есть action 'documents.view_all_in_org' для org → руководитель тоже видит
-    данные этой org (документы подчинённых = его документы).
-
-    НЕ использовать для UI (require_tab/require_action) — для них _get_effective.
+    Если в visible_uids есть SaaS-юзер (superadmin/account_owner) — добавляем
+    также все ключи (через role matrix этого SaaS-уровня).
     """
     effective = await _get_effective_simple(user, db, org_id)
 
     from app.auth.visibility import get_visible_user_ids
     visible = await get_visible_user_ids(user, db)
-    if visible:
-        for sub_uid in visible - {user.id}:
-            sub_user = await db.get(User, sub_uid)
-            if sub_user:
-                effective |= await _get_effective_simple(sub_user, db, org_id)
-
+    if visible is None:
+        # User сам SaaS — _get_effective_simple уже даёт ему максимум
+        return effective
+    for sub_uid in visible - {user.id}:
+        sub_user = await db.get(User, sub_uid)
+        if sub_user:
+            effective |= await _get_effective_simple(sub_user, db, org_id)
     return effective
+
+
+# Phase 26-AA: оставлен alias для обратной совместимости (visibility.py использовал)
+_get_effective_with_inheritance = _get_effective
 
 
 async def get_effective_tabs(

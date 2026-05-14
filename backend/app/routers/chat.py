@@ -42,7 +42,11 @@ async def _send_push_notifications(
     body: str,
     db: AsyncSession,
 ) -> None:
-    """Send Web Push to all subscriptions of given users (fire-and-forget)."""
+    """Send Web Push to all subscriptions of given users (fire-and-forget).
+
+    Phase 26-BB: payload теперь содержит per-recipient unread_count → SW
+    может корректно вызвать navigator.setAppBadge(N) для iOS PWA badge.
+    """
     try:
         from pywebpush import webpush, WebPushException  # type: ignore
     except ImportError:
@@ -61,15 +65,21 @@ async def _send_push_notifications(
     )
     subs = result.scalars().all()
 
-    payload = json.dumps({
-        "title": title,
-        "body": body,
-        "badge": "/pwa-192x192.png",
-        "icon": "/pwa-192x192.png",
-    })
+    # Phase 26-BB: per-user unread_count кэш — _compute_unread_total один раз на user
+    unread_by_user: dict[int, int] = {}
+    for uid in participant_ids:
+        unread_by_user[uid] = await _compute_unread_total(uid, db)
 
     expired_ids: list[int] = []
     for sub in subs:
+        unread = unread_by_user.get(sub.user_id, 0)
+        payload = json.dumps({
+            "title": title,
+            "body": body,
+            "badge": "/pwa-192x192.png",
+            "icon": "/pwa-192x192.png",
+            "unread_count": unread,
+        })
         try:
             await asyncio.to_thread(
                 webpush,

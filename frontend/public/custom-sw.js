@@ -31,9 +31,11 @@ self.addEventListener('push', function(event) {
     data: { url: '/chat' },
   }
 
-  // Set app badge
+  // phase26-bb: Set app badge with actual unread count from payload (iOS PWA 16.4+)
+  const unread = typeof data.unread_count === 'number' ? data.unread_count : 0
   if ('setAppBadge' in self) {
-    self.setAppBadge().catch(() => {})
+    if (unread > 0) self.setAppBadge(unread).catch(() => {})
+    else self.clearAppBadge && self.clearAppBadge().catch(() => {})
   }
 
   event.waitUntil(self.registration.showNotification(title, options))

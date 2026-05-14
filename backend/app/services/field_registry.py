@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional, List
 
 FieldType = Literal['string', 'number', 'currency', 'date', 'datetime', 'boolean', 'enum']
-FieldSource = Literal['purchase', 'purchase_item', 'contractor', 'subsidy', 'feo_category', 'payment', 'bank_payment', 'event', 'computed']
+FieldSource = Literal['purchase', 'purchase_item', 'contract_item', 'contractor', 'subsidy', 'feo_category', 'payment', 'bank_payment', 'event', 'computed']
 AggType = Literal['sum', 'avg', 'count', 'count_distinct', 'min', 'max', 'first']
 
 
@@ -140,6 +140,33 @@ FIELDS: dict[str, FieldDef] = {
     'quarter_of_payment': FieldDef('quarter_of_payment', 'Квартал оплаты', 'string', 'computed', "'Q' || EXTRACT(QUARTER FROM purchases.payment_doc_date)::text", 'Computed'),
     'year_of_payment': FieldDef('year_of_payment', 'Год оплаты', 'number', 'computed', "EXTRACT(YEAR FROM purchases.payment_doc_date)::int", 'Computed'),
     'month_of_payment': FieldDef('month_of_payment', 'Месяц оплаты', 'string', 'computed', "to_char(purchases.payment_doc_date, 'YYYY-MM')", 'Computed'),
+
+    # === ПОЗИЦИИ ДОГОВОРА (Phase 27.1 D-12) ===
+    'contracted_qty': FieldDef(
+        'contracted_qty', 'Кол-во по договору', 'number', 'contract_item',
+        'contract_items.quantity', 'Позиции договора',
+        is_measure=True, agg_default='sum', is_dimension=False,
+    ),
+    'contracted_total': FieldDef(
+        'contracted_total', 'Сумма по договору (позиции)', 'currency', 'contract_item',
+        'contract_items.total', 'Позиции договора',
+        format='rub', is_measure=True, agg_default='sum', is_dimension=False,
+    ),
+    'contract_item_unit_price': FieldDef(
+        'contract_item_unit_price', 'Цена договора за ед.', 'currency', 'contract_item',
+        'contract_items.unit_price', 'Позиции договора',
+        format='rub', is_measure=True, agg_default='avg', is_dimension=False,
+    ),
+    'contract_item_name': FieldDef(
+        'contract_item_name', 'Наименование по договору', 'string', 'contract_item',
+        'contract_items.name', 'Позиции договора',
+        is_dimension=True, is_measure=False,
+    ),
+    'contract_item_unit': FieldDef(
+        'contract_item_unit', 'Ед. измерения (договор)', 'string', 'contract_item',
+        'contract_items.unit', 'Позиции договора',
+        is_dimension=True, is_measure=False,
+    ),
 
     # === BANK PAYMENTS ===
     'bank_payment_number': FieldDef('bank_payment_number', 'Номер платёжки (банк)', 'string', 'bank_payment', 'bank_payments.payment_number', 'Банк'),

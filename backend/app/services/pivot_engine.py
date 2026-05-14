@@ -19,6 +19,7 @@ from app.models.subsidy import Subsidy
 from app.models.feo_category import FeoCategory
 from app.models.bank_statement import BankPayment
 from app.models.user import User
+from app.models.contract_item import ContractItem  # Phase 27.1
 from app.auth.jwt import get_org_filter
 
 try:
@@ -34,6 +35,7 @@ _TABLE_PREFIX_MAP: Dict[str, Any] = {
     'feo_categories': FeoCategory,
     'bank_payments': BankPayment,
     'events': _EVENT_MODEL,
+    'contract_items': ContractItem,  # Phase 27.1
 }
 
 
@@ -55,6 +57,11 @@ def _base_query():
         .outerjoin(feo_l3, and_(FeoCategory.level == 3, feo_l3.id == FeoCategory.id))
         .outerjoin(feo_l2, and_(feo_l3.parent_id == feo_l2.id, feo_l2.level == 2))
         .outerjoin(feo_l1, and_(feo_l2.parent_id == feo_l1.id, feo_l1.level == 1))
+        # Phase 27.1: LEFT JOIN contract_items для полей contracted_qty / contracted_total / etc.
+        # Cardinality: одна закупка → N contract_items → row-multiplication для list-queries.
+        # Для pivot (aggregation с GROUP BY) JOIN корректен: SUM группируется по purchase_id.
+        # Для list-режима — потенциальное дублирование строк; решение: добавить .distinct() если нужно.
+        .outerjoin(ContractItem, Purchase.id == ContractItem.purchase_id)
     )
     return q, feo_l1, feo_l2, feo_l3
 

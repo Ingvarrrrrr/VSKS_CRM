@@ -273,7 +273,8 @@
         </template>
         <template #header.purchase_type="{ column }">
           <ColumnHeaderMenu col-key="purchase_type" :title="column.title" col-type="enum"
-            :items="['Разовый', 'Рамочный', 'Авансовый', 'По счёту']"
+            :items="['one_time', 'framework_cumulative', 'framework_with_amount', 'advance', 'invoice']"
+            :item-labels="{ one_time: 'Разовый', framework_cumulative: 'Рамочный (накопительный)', framework_with_amount: 'Рамочный (с суммой)', advance: 'Авансовый', invoice: 'По счёту' }"
             :model-value="cfg.state.value.filters['purchase_type'] ?? null"
             :sort-by="getSortBy('purchase_type')"
             @update:model-value="v => cfg.setFilter('purchase_type', v)"
@@ -1043,6 +1044,15 @@ function uniqValues(rows: any[], key: string): (string | number | null)[] {
 // Field getters for computed/derived columns where row[key] is undefined.
 const FIELD_GETTERS: Record<string, (r: any) => any> = {
   effective_price: (r) => effectivePrice(r),
+  // purchase_type — виртуальное поле, матчим по purchase_contract_type напрямую
+  purchase_type: (r: any) => {
+    if (r.purchase_method === 'advance') return 'advance'
+    if (r.purchase_basis === 'invoice') return 'invoice'
+    const ct: string = r.purchase_contract_type || ''
+    if (ct === 'framework_cumulative') return 'framework_cumulative'
+    if (ct === 'framework_with_amount') return 'framework_with_amount'
+    return 'one_time'
+  },
 }
 function getRowField(row: any, key: string): any {
   const getter = FIELD_GETTERS[key]

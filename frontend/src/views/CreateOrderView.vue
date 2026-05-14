@@ -500,6 +500,8 @@
             v-model="items"
             v-model:contract-items="contractItemsState"
             :show-contract-columns="canShowContractColumns"
+            :unified-stages-view="canShowContractColumns"
+            :purchase-status="form.status"
             item-shape="purchase"
             :purchase-id="purchaseId"
             :default-unit="'шт.'"

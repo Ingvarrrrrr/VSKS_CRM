@@ -691,3 +691,28 @@ app.include_router(permissions_router.router)
 app.include_router(user_addresses_router.router)
 app.include_router(analytics_router.router)
 app.include_router(report_configs_router.router)
+
+
+@app.get("/api/diag/version")
+async def diag_version():
+    """Phase 26-Z-bootstrap: маркер задеплоенной фазы + git sha."""
+    import os as _os, subprocess as _sp
+    git_sha = "unknown"
+    try:
+        git_sha = _sp.check_output(
+            ['git', '-C', _os.path.dirname(__file__) + '/../..', 'rev-parse', '--short', 'HEAD'],
+            stderr=_sp.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+    except Exception:
+        pass
+    return {
+        "phase": "26-Z-bootstrap",
+        "git_sha": git_sha,
+        "features": [
+            "auto-recompute-on-get-advance",
+            "structured-document-errors",
+            "receipt-as-file-in-acceptance-docs",
+            "contractor-inheritance-purchase-to-items",
+        ],
+    }

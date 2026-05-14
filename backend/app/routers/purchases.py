@@ -434,6 +434,51 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Not found")
+
+    # Phase 26-Z-bootstrap: для advance закупок — silent idempotent recompute если
+    # есть чеки и items с NULL contractor_id ИЛИ receipts без записи в acceptance_docs.
+    if p.purchase_method == 'advance':
+        try:
+            from sqlalchemy import select as _sel
+            from app.models.purchase_receipt import PurchaseReceipt as _PR
+            from app.models.purchase_item import PurchaseItem as _PI
+            receipts_count = (await db.execute(
+                _sel(func.count(_PR.id)).where(_PR.purchase_id == pid)
+            )).scalar() or 0
+            if receipts_count > 0:
+                null_items_count = (await db.execute(
+                    _sel(func.count(_PI.id)).where(
+                        _PI.purchase_id == pid,
+                        _PI.contractor_id.is_(None),
+                    )
+                )).scalar() or 0
+                current_docs = p.acceptance_docs or []
+                receipt_ids_in_docs = {d.get("receipt_id") for d in current_docs if isinstance(d, dict) and d.get("receipt_id")}
+                receipt_ids_actual = set((await db.execute(
+                    _sel(_PR.id).where(_PR.purchase_id == pid)
+                )).scalars().all())
+                need_recompute = bool(null_items_count) or bool(receipt_ids_actual - receipt_ids_in_docs)
+                if need_recompute:
+                    from app.routers.purchase_receipts import _recompute_from_receipts_core
+                    await _recompute_from_receipts_core(pid, db)
+                    # Re-fetch p после recompute с теми же relationships
+                    result = await db.execute(
+                        select(Purchase)
+                        .options(
+                            selectinload(Purchase.contractor),
+                            selectinload(Purchase.feo_category),
+                            selectinload(Purchase.items).selectinload(PurchaseItem.product),
+                            selectinload(Purchase.files),
+                            selectinload(Purchase.event),
+                            selectinload(Purchase.reimbursement_user),
+                        )
+                        .where(Purchase.id == pid)
+                    )
+                    p = result.scalar_one()
+        except Exception as _re:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(f"auto-recompute on GET /purchases/{pid} skipped: {_re}")
+
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))

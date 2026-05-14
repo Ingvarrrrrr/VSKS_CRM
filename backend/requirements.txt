@@ -26,5 +26,3 @@ reportlab==4.2.5
 qrcode[pil]==7.4.2
 pytest==7.4.4
 pytest-asyncio==0.23.3
-pymorphy3>=2.0.0
-petrovich>=1.0.0

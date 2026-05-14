@@ -362,28 +362,14 @@ async def _create_receipt_with_items(
     return receipt
 
 
-# ── endpoints ────────────────────────────────────────────────────────────────
+# ── core helper (Phase 26-Z-bootstrap) ───────────────────────────────────────
 
-@router.post("/{purchase_id}/recompute-from-receipts")
-async def recompute_from_receipts(
-    purchase_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """
-    Phase 26-Z: ручной пересчёт авансовой закупки из её PurchaseReceipt.
-    Идемпотентно. Заполняет:
-    - PurchaseItem.contractor_id/contractor_inn/contractor_name (для всех item с contractor_id IS NULL)
-    - Purchase.contractor_id (если NULL и есть seller_inn в первом чеке)
-    - Purchase.contract_date/contract_number (если NULL и есть в чеке)
-    - acceptance_docs: добавляет запись {type:'Чек', number, date, amount, receipt_id, file_id}
-      для каждого PurchaseReceipt где её ещё нет
-    - PurchaseFile: PNG чека (file_type='acceptance_doc')
-    """
+async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> dict:
+    """Idempotent recompute. Returns stats dict. Не кидает HTTPException."""
     from sqlalchemy.orm import attributes as _orm_attrs
     p = await db.get(Purchase, purchase_id)
     if not p:
-        raise HTTPException(404, "Закупка не найдена")
+        return {"ok": False, "reason": "not_found", "items_updated": 0, "files_attached": 0, "acceptance_docs_added": 0}
 
     receipts_q = await db.execute(
         select(PurchaseReceipt)
@@ -549,6 +535,24 @@ async def recompute_from_receipts(
         "files_attached": files_attached,
         "acceptance_docs_added": acceptance_docs_added,
     }
+
+
+# ── endpoints ────────────────────────────────────────────────────────────────
+
+@router.post("/{purchase_id}/recompute-from-receipts")
+async def recompute_from_receipts(
+    purchase_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Phase 26-Z: ручной пересчёт авансовой закупки из её PurchaseReceipt.
+    Идемпотентно. Thin wrapper над _recompute_from_receipts_core.
+    """
+    p = await db.get(Purchase, purchase_id)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    return await _recompute_from_receipts_core(purchase_id, db)
 
 
 @router.get("/{purchase_id}/receipts", response_model=List[ReceiptOut])

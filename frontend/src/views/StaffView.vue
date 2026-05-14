@@ -100,7 +100,7 @@
                       <div v-for="u in unassignedUsers" :key="u.id"
                         class="d-flex align-center pa-1 rounded unassigned-user-row"
                         @click="openEditUser(u)">
-                        <UserAvatar :avatar-id="u.avatar" :size="26" class="mr-2 flex-shrink-0" />
+                        <UserAvatar :photo-url="u.photo_url" :avatar="u.avatar" :size="26" square class="mr-2 flex-shrink-0" />
                         <div class="flex-1 min-width-0">
                           <span class="text-body-2">{{ u.full_name || u.username }}</span>
                           <span class="text-caption text-medium-emphasis ml-2">{{ u.position || '' }}</span>
@@ -138,9 +138,7 @@
                 <v-list density="compact" v-if="deptMembers.length">
                   <v-list-item v-for="m in deptMembers" :key="m.id" :subtitle="m.position || m.user_role">
                     <template v-slot:prepend>
-                      <v-avatar size="28" :color="getAvatar(getMemberAvatar(m.user_id)).color">
-                        <v-icon :icon="getAvatar(getMemberAvatar(m.user_id)).icon" size="14" color="white" />
-                      </v-avatar>
+                      <UserAvatar :photo-url="getMemberPhotoUrl(m.user_id)" :avatar="getMemberAvatar(m.user_id)" :size="28" square />
                     </template>
                     <v-list-item-title>{{ m.user_name }}</v-list-item-title>
                     <template v-slot:append>
@@ -255,7 +253,7 @@
             @update:expanded="onUserExpanded"
           >
             <template v-slot:item.avatar="{ item }">
-              <UserAvatar :photo-url="item.photo_url" :avatar="item.avatar" :size="32" />
+              <UserAvatar :photo-url="item.photo_url" :avatar="item.avatar" :size="32" square />
             </template>
             <template v-slot:item.role="{ item }">
               <v-chip :color="roleColor(item.role)" size="small" variant="tonal">
@@ -1115,6 +1113,11 @@ const unassignedExpanded = ref(true)
 function getMemberAvatar(userId: number): string | undefined {
   const u = users.value.find(x => x.id === userId)
   return u?.avatar
+}
+
+function getMemberPhotoUrl(userId: number): string | null | undefined {
+  const u = users.value.find(x => x.id === userId)
+  return u?.photo_url
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,6 +1,10 @@
 <template>
-  <v-avatar :size="size" :color="!photoUrl ? iconCfg.color : undefined" style="flex-shrink:0">
-    <img v-if="photoUrl" :src="photoUrl" alt="фото" class="avatar-photo" />
+  <v-avatar
+    :size="size"
+    :color="!photoUrl ? iconCfg.color : undefined"
+    :style="square ? { borderRadius: '10px', flexShrink: 0 } : { flexShrink: 0 }"
+  >
+    <img v-if="photoUrl" :src="photoUrl" alt="фото" :class="square ? 'avatar-photo-square' : 'avatar-photo'" />
     <v-icon v-else :icon="iconCfg.icon" :size="iconSize" color="white" />
   </v-avatar>
 </template>
@@ -23,7 +27,8 @@ const props = withDefaults(defineProps<{
   photoUrl?: string | null
   avatar?: string | null
   size?: number | string
-}>(), { size: 32 })
+  square?: boolean
+}>(), { size: 32, square: false })
 
 const iconCfg = computed(() =>
   AVATARS.find(a => a.id === props.avatar) || { icon: 'mdi-account', color: '#9E9E9E' }
@@ -40,5 +45,11 @@ const iconSize = computed(() => {
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
+}
+.avatar-photo-square {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
 }
 </style>

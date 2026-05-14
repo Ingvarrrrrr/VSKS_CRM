@@ -53,11 +53,20 @@
           @click="selectRoom(room)"
         >
           <template #prepend>
-            <v-avatar :color="roomColor(room)" size="44">
-              <span class="text-subtitle-1 font-weight-bold text-white">
-                {{ roomInitial(room) }}
-              </span>
-            </v-avatar>
+            <v-badge
+              :model-value="room.unread_count > 0"
+              :content="room.unread_count > 99 ? '99+' : room.unread_count"
+              color="error"
+              offset-x="6"
+              offset-y="6"
+              overlap
+            >
+              <v-avatar :color="roomColor(room)" size="44">
+                <span class="text-subtitle-1 font-weight-bold text-white">
+                  {{ roomInitial(room) }}
+                </span>
+              </v-avatar>
+            </v-badge>
           </template>
 
           <v-list-item-title class="font-weight-medium" :class="{ 'room-has-unread': room.unread_count > 0 }">
@@ -72,12 +81,16 @@
               <span v-if="room.last_message" class="text-caption text-medium-emphasis mb-1">
                 {{ formatTime(room.last_message.created_at) }}
               </span>
-              <v-badge
+              <v-chip
                 v-if="room.unread_count > 0"
-                :content="room.unread_count"
-                color="primary"
-                inline
-              />
+                color="error"
+                size="small"
+                variant="flat"
+                class="font-weight-bold unread-chip"
+                density="compact"
+              >
+                {{ room.unread_count > 99 ? '99+' : room.unread_count }}
+              </v-chip>
               <v-menu location="bottom end">
                 <template #activator="{ props: menuProps }">
                   <v-btn
@@ -1287,5 +1300,11 @@ onUnmounted(() => {
 .room-has-unread {
   font-weight: 700 !important;
   color: rgb(var(--v-theme-primary));
+}
+.unread-chip {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px !important;
+  font-size: 12px;
 }
 </style>

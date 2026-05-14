@@ -421,6 +421,11 @@
           {{ formatMoney(effectivePrice(item)) }}
         </template>
 
+        <!-- phase26-m: для рамочного — framework_contract_total (max_amount or SUM) -->
+        <template #item.contract_price="{ item }">
+          {{ formatMoney(FIELD_GETTERS.contract_price(item)) }}
+        </template>
+
         <template #item.contract_date="{ item }">
           {{ item.contract_date ? formatDate(item.contract_date) : '—' }}
         </template>
@@ -861,6 +866,7 @@ interface Purchase {
   responsible_person?: string
   assigned_user_id?: number
   contract_price?: number
+  framework_contract_total?: number | string | null
   delivery_payment_amount?: number
   status: string
   substatus?: string
@@ -1087,6 +1093,12 @@ function uniqValues(rows: any[], key: string): (string | number | null)[] {
 // Field getters for computed/derived columns where row[key] is undefined.
 const FIELD_GETTERS: Record<string, (r: any) => any> = {
   effective_price: (r) => effectivePrice(r),
+  // phase26-m: для рамочного показываем суммарную цену договора (max_amount or SUM)
+  contract_price: (r: any) => {
+    const isFw = (r.purchase_contract_type || '').startsWith('framework')
+    if (isFw && r.framework_contract_total != null) return Number(r.framework_contract_total)
+    return r.contract_price != null ? Number(r.contract_price) : null
+  },
   // purchase_type — виртуальное поле, матчим по purchase_contract_type напрямую
   purchase_type: (r: any) => {
     if (r.purchase_method === 'advance') return 'advance'

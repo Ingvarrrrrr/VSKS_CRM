@@ -75,9 +75,24 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
         raise HTTPException(404, detail={"code": "PURCHASE_NOT_FOUND",
                                           "message": f"Закупка #{pid} не найдена"})
     await db.execute(delete(ContractItem).where(ContractItem.purchase_id == pid))
+
+    # phase26-dd: validate source_item_id existence — фронт может слать ID
+    # старых purchase_items, которые уже удалены в update_purchase bulk replace.
+    from app.models.purchase_item import PurchaseItem
+    src_ids = {it.source_item_id for it in items if getattr(it, 'source_item_id', None)}
+    existing_src_ids: set = set()
+    if src_ids:
+        rows = await db.execute(
+            select(PurchaseItem.id).where(PurchaseItem.id.in_(src_ids))
+        )
+        existing_src_ids = {r[0] for r in rows.all()}
+
     created = []
     for it in items:
         payload = it.model_dump(exclude_none=True)
+        # Drop stale source_item_id silently — purchase_item уже не существует
+        if payload.get("source_item_id") and payload["source_item_id"] not in existing_src_ids:
+            payload.pop("source_item_id", None)
         if not payload.get("product_id") and payload.get("name"):
             matched = await find_matching_product(db, payload["name"], org_id=p.org_id)
             if matched:

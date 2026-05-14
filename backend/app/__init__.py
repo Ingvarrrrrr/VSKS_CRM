@@ -282,6 +282,34 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 26-DD: FK contract_items.source_item_id → SET NULL ON DELETE.
+    # Раньше RESTRICT — update_purchase delete-then-insert ломал FK от contract_items,
+    # которые ссылались на старые purchase_items.
+    try:
+        from sqlalchemy import text as _text
+        from .database import engine as _engine
+        async with _engine.begin() as conn:
+            await conn.execute(_text("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.referential_constraints
+                        WHERE constraint_name = 'contract_items_source_item_id_fkey'
+                          AND delete_rule != 'SET NULL'
+                    ) THEN
+                        ALTER TABLE contract_items
+                            DROP CONSTRAINT contract_items_source_item_id_fkey;
+                        ALTER TABLE contract_items
+                            ADD CONSTRAINT contract_items_source_item_id_fkey
+                            FOREIGN KEY (source_item_id) REFERENCES purchase_items(id)
+                            ON DELETE SET NULL;
+                    END IF;
+                END $$;
+            """))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 26-DD FK ALTER skipped (non-fatal): {e}")
+
     # Phase 28 → Phase 26-Y: idempotent seed для action 'documents.view_all_in_org'
     # (без него руководители без отдела не видят документы своей org → Цыганов кейс).
     try:

@@ -12,6 +12,7 @@ export interface ContractItem {
   unit: string | null
   unit_price: number | null
   total: number | null
+  vat_rate?: string | null       // Fix 27.1.3: НДС ставка per-item
   match_confirmed: boolean
   created_at?: string | null
   updated_at?: string | null

@@ -143,7 +143,9 @@
                         <th style="min-width:90px">Кол-во</th>
                         <th style="min-width:80px">Ед.</th>
                         <th style="min-width:110px">Цена ед., ₽</th>
-                        <th style="min-width:110px">Сумма, ₽</th>
+                        <th style="min-width:100px">НДС %</th>
+                        <th style="min-width:110px">НДС сумма, ₽</th>
+                        <th style="min-width:120px">Сумма с НДС, ₽</th>
                         <th style="min-width:200px">Действия</th>
                       </tr>
                     </thead>
@@ -156,7 +158,7 @@
                             <v-textarea
                               v-model="item.item_name"
                               density="compact" variant="outlined" hide-details clearable readonly
-                              rows="1" auto-grow class="my-1" style="cursor:pointer;min-width:200px"
+                              rows="1" auto-grow class="my-1 flex-grow-1" style="cursor:pointer;min-width:200px"
                               placeholder="Нажмите для выбора..."
                               :disabled="props.readonly"
                               @click="openProductPicker(idx)"
@@ -186,9 +188,21 @@
                             variant="outlined" hide-details class="my-1" :disabled="props.readonly"
                             @update:model-value="calcItemTotal(idx)" />
                         </td>
-                        <td class="text-caption font-weight-medium">
-                          {{ item.total_price != null ? Number(item.total_price).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                        <!-- Fix 4/5: НДС % column -->
+                        <td>
+                          <v-combobox v-model="item.vat_rate"
+                            :items="VAT_RATE_OPTIONS"
+                            item-title="title" item-value="value"
+                            density="compact" variant="outlined" hide-details class="my-1"
+                            style="min-width:90px" :disabled="props.readonly"
+                            placeholder="НДС %"
+                            @update:model-value="onVatRateChange(idx, $event)"
+                          />
                         </td>
+                        <!-- Fix 4/5: НДС сумма column -->
+                        <td class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
+                        <!-- Fix 4/5: Сумма с НДС column -->
+                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
                         <td>
                           <div class="d-flex align-center ga-1 flex-wrap">
                             <!-- Тип -->
@@ -200,14 +214,6 @@
                             <v-text-field v-model="item.country_origin" density="compact"
                               variant="outlined" hide-details class="my-1" placeholder="Россия"
                               style="min-width:120px" :disabled="props.readonly" />
-                            <!-- НДС per_item -->
-                            <v-select v-if="props.vatMode === 'per_item'"
-                              v-model="item.vat_rate"
-                              :items="[{ title: 'Без НДС', value: null },{ title: '0%', value: '0%' },{ title: '10%', value: '10%' },{ title: '20%', value: '20%' }]"
-                              density="compact" variant="outlined" hide-details class="my-1"
-                              style="min-width:100px" :disabled="props.readonly"
-                              @update:model-value="emitUpdate"
-                            />
                             <!-- Контрагент (advance_report column mode) -->
                             <template v-if="showContractorColumn">
                               <v-autocomplete
@@ -265,15 +271,37 @@
                             @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
                           />
                         </td>
-                        <td class="text-caption font-weight-medium">
-                          {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                        <!-- Fix 4/5: НДС % column (Договор) -->
+                        <td>
+                          <v-combobox
+                            :model-value="getContractItemFor(idx)?.vat_rate ?? null"
+                            :items="VAT_RATE_OPTIONS"
+                            item-title="title" item-value="value"
+                            density="compact" variant="outlined" hide-details class="my-1"
+                            style="min-width:90px" :disabled="props.readonly"
+                            placeholder="НДС %"
+                            @update:model-value="(v: any) => {
+                              const ci = getContractItemFor(idx)
+                              if (!ci) return
+                              let rate: string | null
+                              if (v == null || v === '' || v === 'Без НДС') { rate = null }
+                              else { const s = String(v); rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s }
+                              ;(ci as any).vat_rate = rate
+                              emitContractItemsUpdate()
+                            }"
+                          />
                         </td>
+                        <!-- Fix 4/5: НДС сумма column (Договор) -->
+                        <td class="text-caption">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                        <!-- Fix 4/5: Сумма с НДС column (Договор) -->
+                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}</td>
                         <td>
                           <div class="d-flex align-center ga-1 flex-wrap">
-                            <!-- NEW: rematch autocomplete -->
+                            <!-- Fix 2: rematch autocomplete with item-title/item-value + #selection slot -->
                             <v-autocomplete
                               :items="rematchOptions"
                               :model-value="getContractItemFor(idx)?.source_item_id ?? null"
+                              item-title="title" item-value="value"
                               density="compact" variant="outlined" hide-details
                               placeholder="Связать с ТЗ №..." style="min-width:160px"
                               :disabled="props.readonly"
@@ -281,7 +309,11 @@
                                 const ci = getContractItemFor(idx)
                                 if (ci) rematchContractItem(localContractItems.indexOf(ci), v)
                               }"
-                            />
+                            >
+                              <template #selection="{ item: selItem }">
+                                <span class="text-truncate text-caption">{{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id}` : '') }}</span>
+                              </template>
+                            </v-autocomplete>
                             <!-- split row button -->
                             <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
                               <template #activator="{ props: tip }">
@@ -308,8 +340,13 @@
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
+                          <!-- Fix 4/5: НДС % readonly (Поставка) -->
+                          <td class="text-caption text-grey-darken-1">{{ (getContractItemFor(idx) as any)?.vat_rate ?? '—' }}</td>
+                          <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
+                          <td class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                          <!-- Fix 4/5: Сумма с НДС readonly (Поставка) -->
                           <td class="text-caption text-grey-darken-1 font-weight-medium">
-                            {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                            {{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}
                           </td>
                           <td>
                             <v-tooltip location="top">
@@ -321,7 +358,7 @@
                           </td>
                         </template>
                         <template v-else>
-                          <td colspan="6" class="text-caption text-grey-lighten-1 text-center py-1">
+                          <td colspan="9" class="text-caption text-grey-lighten-1 text-center py-1">
                             Поставок ещё нет — появятся в Phase 27 (delivery_items)
                           </td>
                         </template>
@@ -464,10 +501,13 @@
                     variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
                 </td>
                 <td v-if="props.vatMode === 'per_item'">
-                  <v-select v-model="item.vat_rate"
-                    :items="[{ title: 'Без НДС', value: null },{ title: '0%', value: '0%' },{ title: '10%', value: '10%' },{ title: '20%', value: '20%' }]"
+                  <v-combobox v-model="item.vat_rate"
+                    :items="VAT_RATE_OPTIONS"
+                    item-title="title" item-value="value"
                     density="compact" variant="outlined" hide-details class="my-1"
-                    :disabled="props.readonly" @update:model-value="emitUpdate" />
+                    style="min-width:100px" :disabled="props.readonly"
+                    placeholder="НДС %"
+                    @update:model-value="onVatRateChange(idx, $event)" />
                 </td>
                 <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
                   <v-autocomplete
@@ -1227,6 +1267,7 @@ interface EditorItem {
   unit_price: number | null
   total_price: number | null
   country_origin: string
+  vat_rate?: string | null       // Fix 3/4/5: НДС ставка per-item
   match_confirmed?: boolean
   contractor_id?: number | null
   contractor_inn?: string | null
@@ -1275,6 +1316,49 @@ interface PriceLink {
 
 const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
 const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
+
+// Fix 3 + Fix 4/5: VAT options (5/10/22/Без НДС/custom)
+const VAT_RATE_OPTIONS = [
+  { title: '5%', value: '5%' },
+  { title: '10%', value: '10%' },
+  { title: '22%', value: '22%' },
+  { title: 'Без НДС', value: null },
+]
+
+function parseVatRatePercent(rate: string | null | undefined): number {
+  if (!rate || rate === 'Без НДС') return 0
+  const m = String(rate).match(/^(\d+(?:\.\d+)?)\s*%?$/)
+  return m ? parseFloat(m[1]) : 0
+}
+
+function vatAmount(item: EditorItem | ContractItem): number {
+  const total = Number((item as any).total_price ?? (item as any).total ?? 0)
+  const pct = parseVatRatePercent((item as any).vat_rate)
+  return Number((total * pct / 100).toFixed(2))
+}
+
+function totalWithVat(item: EditorItem | ContractItem): number {
+  const total = Number((item as any).total_price ?? (item as any).total ?? 0)
+  return Number((total + vatAmount(item)).toFixed(2))
+}
+
+function fmtRub(n: number | null | undefined): string {
+  if (n == null || isNaN(Number(n))) return '—'
+  return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+}
+
+function onVatRateChange(idx: number, v: any) {
+  const item = localItems.value[idx]
+  if (!item) return
+  if (v == null || v === '' || v === 'Без НДС') {
+    item.vat_rate = null
+  } else {
+    const s = String(v)
+    // Normalize: if user typed just a number without %, add %
+    item.vat_rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s
+  }
+  calcItemTotal(idx)
+}
 
 // Export COUNTRIES so template can use it if needed (not currently rendered but kept for completeness)
 void COUNTRIES

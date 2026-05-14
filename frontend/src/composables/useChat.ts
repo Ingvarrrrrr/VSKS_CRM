@@ -255,6 +255,23 @@ export function initChat() {
     // Also fetch immediately on init
     pollBadgeCount()
   }
+
+  // phase26-cc: на iOS Safari WS закрывается когда приложение в фоне.
+  // При возврате (visibilitychange/focus) — немедленный reconnect и refresh unread.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        if (!wsConnected.value) connect()
+        pollBadgeCount()
+      }
+    })
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      if (!wsConnected.value) connect()
+      pollBadgeCount()
+    })
+  }
 }
 
 export function destroyChat() {

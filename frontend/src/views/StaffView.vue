@@ -499,7 +499,7 @@
                 <div class="text-caption font-weight-medium mb-1 px-1" style="color:#7b1fa2">
                   <v-icon size="12" class="mr-1">mdi-domain</v-icon>{{ group.org_name }}
                 </div>
-                <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" style="background:rgba(0,0,0,0.04);border-left:3px solid #9c27b0;position:relative">
+                <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" :style="{ background: 'rgba(0,0,0,0.04)', position: 'relative', borderLeft: '4px solid rgb(var(--v-theme-' + orgColor(group.org_id) + '))' }">
                   <div class="d-flex align-center mb-2">
                     <v-chip size="small" color="purple" variant="tonal">{{ entry.dept_name || 'Без отдела' }}</v-chip>
                     <v-spacer />

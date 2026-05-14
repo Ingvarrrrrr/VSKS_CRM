@@ -221,6 +221,71 @@ async def _ensure_user_addresses_table(conn) -> None:
         print(f"  ⚠️   user_addresses table ensure failed: {e}")
 
 
+async def _ensure_contract_items_table(conn) -> None:
+    """Phase 27.1: ensure contract_items table exists (idempotent).
+
+    Pattern из _ensure_user_addresses_table. asyncpg НЕ принимает multi-statement
+    в одном text() — каждый CREATE/INDEX отдельным execute (Phase 27.1 Pitfall 2).
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS contract_items ("
+            " id SERIAL PRIMARY KEY,"
+            " purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,"
+            " source_item_id INTEGER REFERENCES purchase_items(id) ON DELETE SET NULL,"
+            " contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,"
+            " product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,"
+            " name TEXT NOT NULL,"
+            " quantity NUMERIC(15,4),"
+            " unit VARCHAR(50),"
+            " unit_price NUMERIC(15,2),"
+            " total NUMERIC(15,2),"
+            " match_confirmed BOOLEAN NOT NULL DEFAULT TRUE,"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " updated_at TIMESTAMPTZ"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_contract_items_purchase_id "
+            "ON contract_items (purchase_id)"
+        ))
+        print("  \u2705  contract_items table ensured")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   contract_items table ensure failed: {e}")
+
+
+async def _backfill_contract_items_from_purchase_items(conn) -> int:
+    """Phase 27.1 D-06: idempotent backfill 1\u21941 \u0434\u043b\u044f legacy \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted+.
+
+    Returns: \u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e backfilled contract_items (\u0434\u043b\u044f \u043b\u043e\u0433\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f).
+    """
+    # \u0428\u0430\u0433 1: \u0441\u043e\u0437\u0434\u0430\u0442\u044c contract_items \u0434\u043b\u044f \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted/ordered/delivered/paid \u0431\u0435\u0437 contract_items
+    result = await conn.execute(text(
+        "INSERT INTO contract_items"
+        " (purchase_id, source_item_id, product_id, name, quantity, unit, unit_price, total, match_confirmed)"
+        " SELECT pi.purchase_id, pi.id, pi.product_id, pi.item_name,"
+        "        pi.quantity, pi.unit, pi.unit_price, pi.total_price, TRUE"
+        " FROM purchase_items pi"
+        " JOIN purchases p ON p.id = pi.purchase_id"
+        " WHERE p.status IN ('contracted', 'ordered', 'delivered', 'paid')"
+        "   AND NOT EXISTS ("
+        "       SELECT 1 FROM contract_items ci WHERE ci.purchase_id = pi.purchase_id"
+        "   )"
+    ))
+    # \u0428\u0430\u0433 2: \u043f\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0442\u044c contract_price \u0434\u043b\u044f non-framework-head (D-07)
+    await conn.execute(text(
+        "UPDATE purchases p"
+        " SET contract_price = ("
+        "     SELECT COALESCE(SUM(ci.total), p.contract_price)"
+        "     FROM contract_items ci WHERE ci.purchase_id = p.id"
+        " )"
+        " WHERE p.status IN ('contracted','ordered','delivered','paid')"
+        "   AND (p.purchase_contract_type NOT IN ('framework_cumulative','framework_limited')"
+        "        OR p.parent_purchase_id IS NOT NULL)"
+    ))
+    return result.rowcount or 0
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)
@@ -231,6 +296,10 @@ async def main(apply: bool = False) -> int:
         # Phase 25: ensure user_addresses table exists
         if apply:
             await _ensure_user_addresses_table(conn)
+
+        # Phase 27.1: ensure contract_items table exists
+        if apply:
+            await _ensure_contract_items_table(conn)
 
         # Fetch all existing columns from the DB
         result = await conn.execute(text("""

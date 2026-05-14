@@ -311,6 +311,24 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 22 bank_payments backfill skipped (non-fatal): {e}")
 
+    # Phase 27.1: contract_items table + idempotent backfill (non-fatal pattern из Phase 22)
+    try:
+        from check_schema import _ensure_contract_items_table, _backfill_contract_items_from_purchase_items
+        from .database import engine as _engine
+        async with _engine.begin() as conn:
+            await _ensure_contract_items_table(conn)
+            backfilled = await _backfill_contract_items_from_purchase_items(conn)
+            if backfilled:
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    f"Phase 27.1 backfill: {backfilled} contract_items inserted from legacy purchase_items"
+                )
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(
+            f"Phase 27.1 contract_items setup skipped (non-fatal): {e}"
+        )
+
     # Phase 24 RESTORE: backfill contract_date/number для advance purchases
     # с receipts но без основания. Идемпотентно — skip если 0 строк нуждаются.
     try:

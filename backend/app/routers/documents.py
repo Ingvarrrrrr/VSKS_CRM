@@ -21,6 +21,83 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Phase 26-V: падежные склонения для шаблонов СЗ.
+# pymorphy3 — для общих слов (должность), petrovich — для ФИО.
+_morph = None
+_petro = None
+
+def _get_morph():
+    global _morph
+    if _morph is None:
+        try:
+            from pymorphy3 import MorphAnalyzer
+            _morph = MorphAnalyzer()
+        except Exception:
+            _morph = False
+    return _morph or None
+
+def _get_petro():
+    global _petro
+    if _petro is None:
+        try:
+            from petrovich.main import Petrovich
+            from petrovich.enums import Case, Gender
+            _petro = (Petrovich(), Case, Gender)
+        except Exception:
+            _petro = False
+    return _petro or None
+
+def _to_gen_word(word: str) -> str:
+    """Склонить одно слово в родительный падеж через pymorphy3."""
+    morph = _get_morph()
+    if not morph or not word:
+        return word
+    try:
+        parsed = morph.parse(word)[0]
+        inflected = parsed.inflect({'gent'})
+        if inflected:
+            out = inflected.word
+            if word[0].isupper():
+                out = out[0].upper() + out[1:]
+            return out
+    except Exception:
+        pass
+    return word
+
+def _to_gen_phrase(phrase: str) -> str:
+    """Склонить фразу (должность) в родительный падеж — каждое слово отдельно."""
+    if not phrase:
+        return phrase
+    import re as _re
+    parts = _re.split(r'(\s+|-)', phrase)
+    return ''.join(_to_gen_word(p) if p.strip() and p != '-' else p for p in parts)
+
+def _to_gen_fio(full_name: str) -> str:
+    """Склонить ФИО (Фамилия Имя Отчество) в родительный падеж через petrovich."""
+    petro_pack = _get_petro()
+    if not petro_pack or not full_name:
+        return full_name
+    petro, Case, Gender = petro_pack
+    parts = full_name.strip().split()
+    if not parts:
+        return full_name
+    try:
+        gender = Gender.MALE
+        if len(parts) >= 3 and parts[2].endswith(('вна', 'чна')):
+            gender = Gender.FEMALE
+        elif len(parts) >= 3 and parts[2].endswith('вич'):
+            gender = Gender.MALE
+        result = []
+        if len(parts) >= 1:
+            result.append(petro.lastname(parts[0], Case.GENITIVE, gender))
+        if len(parts) >= 2:
+            result.append(petro.firstname(parts[1], Case.GENITIVE, gender))
+        if len(parts) >= 3:
+            result.append(petro.middlename(parts[2], Case.GENITIVE, gender))
+        return ' '.join(result)
+    except Exception:
+        return _to_gen_phrase(full_name)
+
 router = APIRouter(prefix="/api/purchases", tags=["documents"])
 guide_router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -834,6 +911,9 @@ async def generate_document(
             "signature_img": signature_img,
             "decided_date": decided_date,
             "note": note,
+            # Phase 26-V: родительный падеж
+            "full_name_gen": _to_gen_fio(full_name),
+            "role_name_gen": _to_gen_phrase(a.role_name or ""),
         })
 
     c = p.contractor
@@ -1132,6 +1212,12 @@ async def generate_document(
         # Phase 23.1: subject_kind for universal contract.docx auto-switch
         "subject_kind": subject_kind,
     }
+
+    # Phase 26-V: родительный падеж для инициатора и ответственного
+    context["initiator_name_gen"] = _to_gen_fio(context.get("initiator_name", ""))
+    context["initiator_position_gen"] = _to_gen_phrase(context.get("initiator_role", ""))
+    context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)
+    context["responsible_position_gen"] = _to_gen_phrase(p.responsible_position or "" if hasattr(p, "responsible_position") else "")
 
     # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
     def _g(*sources, default=""):
@@ -1879,6 +1965,14 @@ TEMPLATE_VARIABLES = [
     ("", "ЧЕКИ — АВАНСОВЫЙ ОТЧЁТ (только для закупок с purchase_method=advance)", "", ""),
     ("{{receipts}}", "Список InlineImage чеков по порядку загрузки — для авансовых отчётов", "{% for r in receipts %}{{ r }}{% endfor %}", "(изображения чеков)"),
     ("{{receipt_images}}", "Алиас receipts — список изображений чеков", "{% for img in receipt_images %}{{ img }}{% endfor %}", "(изображения чеков)"),
+    # ── Родительный падеж (Phase 26-V) ──
+    ("", "РОДИТЕЛЬНЫЙ ПАДЕЖ (Phase 26-V)", "", ""),
+    ("{{initiator_name_gen}}", "ФИО инициатора в родительном падеже", "{{initiator_name_gen}}", "Иванова И.И."),
+    ("{{initiator_position_gen}}", "Должность инициатора в родительном падеже", "{{initiator_position_gen}}", "начальника отдела"),
+    ("{{responsible_name_gen}}", "ФИО ответственного в родительном падеже", "{{responsible_name_gen}}", "Петрова П.П."),
+    ("{{responsible_position_gen}}", "Должность ответственного в родительном падеже", "{{responsible_position_gen}}", "главного специалиста"),
+    ("{{a.full_name_gen}}", "ФИО согласующего в родительном падеже (внутри цикла)", "{{a.full_name_gen}}", "Сидорова С.С."),
+    ("{{a.role_name_gen}}", "Должность согласующего в родительном падеже (внутри цикла)", "{{a.role_name_gen}}", "директора по правовым вопросам"),
     # ── Служебные ──
     ("", "СЛУЖЕБНЫЕ", "", ""),
     ("{{today}}", "Сегодняшняя дата", "{{today}}", "13.05.2026"),

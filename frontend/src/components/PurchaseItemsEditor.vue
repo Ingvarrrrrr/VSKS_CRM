@@ -56,18 +56,20 @@
                   @update:model-value="toggleSelectAll" />
               </th>
               <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-              <th style="min-width:420px">Наименование</th>
-              <th style="min-width:180px">Тип</th>
-              <th style="min-width:140px">Кол-во</th>
-              <th style="min-width:140px">Ед. изм.</th>
-              <th style="min-width:150px">Цена ед., ₽</th>
-              <th style="min-width:150px">Сумма, ₽</th>
-              <th style="min-width:150px">Страна происхождения</th>
+              <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
+              <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
+              <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
+              <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
+              <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
+              <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
+              <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
               <!-- U-3: per-item НДС колонка -->
               <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
+              <!-- Phase 26-V: ИНН колонка для advance_report -->
+              <th v-if="showContractorColumn" :style="resizeStyle('inn')">ИНН<span class="col-resize-handle" @mousedown="onResizeStart($event, 'inn')">&nbsp;</span></th>
               <!-- Phase 26-X: Контрагент колонка для advance_report -->
-              <th v-if="showContractorColumn" style="min-width:200px">Контрагент</th>
-              <th style="width:48px"></th>
+              <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
+              <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
               <!-- Phase 27.1 D-04: Договор columns -->
               <template v-if="props.showContractColumns">
                 <th style="min-width:280px;border-left:2px solid #e0e0e0">Наименование (договор)</th>
@@ -215,6 +217,14 @@
                   @update:model-value="emitUpdate"
                 />
               </td>
+              <!-- Phase 26-V: ИНН column for advance_report -->
+              <td v-if="showContractorColumn" style="max-width:130px">
+                <v-text-field
+                  :model-value="item.contractor_inn || (item.contractor_id ? contractors.find(c => c.id === item.contractor_id)?.inn || '' : '')"
+                  readonly density="compact" variant="plain" hide-details
+                  style="max-width:130px" placeholder="ИНН"
+                />
+              </td>
               <!-- Phase 26-X: dedicated Контрагент column for advance_report -->
               <td v-if="showContractorColumn" style="min-width:200px">
                 <v-autocomplete
@@ -305,7 +315,7 @@
               </template>
             </tr>
             <tr v-if="!localItems.length">
-              <td :colspan="props.showContractColumns ? 15 : (showContractorColumn ? 11 : 10)" class="text-center text-medium-emphasis py-4">
+              <td :colspan="props.showContractColumns ? 16 : (showContractorColumn ? 12 : 10)" class="text-center text-medium-emphasis py-4">
                 Нет позиций. Нажмите «Добавить позицию».
               </td>
             </tr>
@@ -316,7 +326,7 @@
               <td class="py-2 font-weight-bold text-blue-darken-2">
                 {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
               </td>
-              <td :colspan="showContractorColumn ? 3 : 2"></td>
+              <td :colspan="showContractorColumn ? 4 : 2"></td>
               <td v-if="props.showContractColumns" colspan="5"></td>
             </tr>
           </tfoot>
@@ -1020,6 +1030,7 @@ import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
+import { useResizableColumns } from '@/composables/useResizableColumns'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -1305,6 +1316,12 @@ const contractorPickerPrefillInn = ref('')
 
 // showContractorColumn: advance_report → отдельная колонка всегда видна
 const showContractorColumn = computed(() => props.formMode === 'advance_report')
+
+// Phase 26-V: resizable columns
+const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {
+  name: 320, type: 120, qty: 90, unit: 90, price: 130, sum: 130,
+  country: 150, inn: 130, contractor: 200, actions: 80,
+})
 
 async function loadContractors() {
   try {
@@ -2431,6 +2448,19 @@ async function doSmartImport() {
 </script>
 
 <style scoped>
+/* Phase 26-V: resizable column handles */
+.col-resize-handle {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+}
+.col-resize-handle:hover {
+  background: rgba(var(--v-theme-primary), 0.3);
+}
+th { position: relative; }
+
 /* ── Import column-mapping table (imap) ─────────────────── */
 .imap-grid {
   display: flex;

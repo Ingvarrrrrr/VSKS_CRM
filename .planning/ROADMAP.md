@@ -505,7 +505,7 @@ Plans:
 6. Эталонная сводная «План/Договор» строится через Phase 25 Report Builder (новый source 'contract_item' в field_registry + JOIN в pivot_engine + calc_columns contract_savings)
 7. Docxtpl шаблоны договора получают переменные `{{contract_items}}` (loop) + `{{contract_items_total}}` с fallback на purchase_items (D-08)
 
-**Plans:** 3/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 - [x] 27.1-01-PLAN.md — ContractItem model + check_schema._ensure_contract_items_table + idempotent backfill SQL + Pydantic schemas + Wave 0 tests (Wave 0)

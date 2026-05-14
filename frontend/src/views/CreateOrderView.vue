@@ -5302,6 +5302,10 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
         match_confirmed: i.match_confirmed !== false,
+        // Phase 26-V: contractor fields from receipt autofill
+        contractor_id: i.contractor_id ?? null,
+        contractor_inn: i.contractor_inn || null,
+        contractor_name: i.contractor_name || null,
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
@@ -5488,7 +5492,11 @@ async function onQrDetected(qr: string) {
       { method: 'POST', body: { qr } as any },
     )
     await loadReceipts()
-    if (isEdit.value) await loadPurchase()
+    if (isEdit.value) {
+      await new Promise(r => setTimeout(r, 50))
+      await loadPurchase()
+      console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`)
+    }
     if (created?.id && existingIds.has(created.id)) {
       showSnack('Этот чек уже был загружен ранее', 'warning')
     } else {
@@ -5542,7 +5550,11 @@ async function onJsonReceiptUpload(e: Event) {
   }
   input.value = ''
   await loadReceipts()
-  if (isEdit.value && purchaseId.value) await loadPurchase()
+  if (isEdit.value && purchaseId.value) {
+    await new Promise(r => setTimeout(r, 50))
+    await loadPurchase()
+    console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`)
+  }
   const parts: string[] = []
   if (added) parts.push(`добавлено: ${added}`)
   if (dups) parts.push(`уже было: ${dups}`)

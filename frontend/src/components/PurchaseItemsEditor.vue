@@ -65,8 +65,6 @@
               <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
               <!-- U-3: per-item НДС колонка -->
               <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
-              <!-- Phase 26-V: ИНН колонка для advance_report -->
-              <th v-if="showContractorColumn" :style="resizeStyle('inn')">ИНН<span class="col-resize-handle" @mousedown="onResizeStart($event, 'inn')">&nbsp;</span></th>
               <!-- Phase 26-X: Контрагент колонка для advance_report -->
               <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
               <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
@@ -217,45 +215,48 @@
                   @update:model-value="emitUpdate"
                 />
               </td>
-              <!-- Phase 26-V: ИНН column for advance_report -->
-              <td v-if="showContractorColumn" style="max-width:130px">
-                <v-text-field
-                  :model-value="item.contractor_inn || (item.contractor_id ? contractors.find(c => c.id === item.contractor_id)?.inn || '' : '')"
-                  readonly density="compact" variant="plain" hide-details
-                  style="max-width:130px" placeholder="ИНН"
-                />
-              </td>
-              <!-- Phase 26-X: dedicated Контрагент column for advance_report -->
-              <td v-if="showContractorColumn" style="min-width:200px">
+              <!-- Phase 26-Y: dedicated Контрагент column for advance_report (идентично CreateOrderView) -->
+              <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
                 <v-autocomplete
                   :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
                   :items="contractors"
-                  :custom-filter="contractorFilter"
                   item-title="name"
                   item-value="id"
                   return-object
-                  density="compact"
                   variant="outlined"
-                  hide-details
+                  density="compact"
                   clearable
+                  auto-select-first
+                  hide-details
                   class="my-1"
-                  placeholder="Контрагент..."
-                  prepend-inner-icon="mdi-store"
-                  no-data-text="Не найден"
+                  :custom-filter="contractorFilter"
+                  :loading="contractorLookupLoading[idx] === true"
+                  :menu-props="{ maxWidth: 500 }"
+                  placeholder="Поставщик. Поиск по названию или ИНН..."
                   :disabled="props.readonly"
-                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
                   @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
                 >
+                  <template #item="{ item: i, props: itemProps }">
+                    <v-list-item v-bind="itemProps" :title="undefined">
+                      <template #title>
+                        <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ i.raw.name }}</span>
+                      </template>
+                      <template #subtitle>
+                        <span v-if="i.raw.inn" class="text-caption">ИНН: {{ i.raw.inn }}</span>
+                      </template>
+                    </v-list-item>
+                  </template>
+                  <template #append-inner>
+                    <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                      title="Добавить контрагента" :disabled="props.readonly"
+                      @click.stop="openContractorQuickCreate(idx)" />
+                  </template>
                   <template #no-data>
                     <v-list-item>
                       <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">
                         Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.
-                        Или нажмите «Создать нового».
                       </v-alert>
-                      <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
-                        @click.stop="openContractorQuickCreate(idx)">
-                        Создать нового
-                      </v-btn>
                     </v-list-item>
                   </template>
                 </v-autocomplete>
@@ -316,7 +317,7 @@
               </template>
             </tr>
             <tr v-if="!localItems.length">
-              <td :colspan="props.showContractColumns ? 16 : (showContractorColumn ? 12 : 10)" class="text-center text-medium-emphasis py-4">
+              <td :colspan="props.showContractColumns ? 15 : (showContractorColumn ? 11 : 10)" class="text-center text-medium-emphasis py-4">
                 Нет позиций. Нажмите «Добавить позицию».
               </td>
             </tr>
@@ -327,7 +328,7 @@
               <td class="py-2 font-weight-bold text-blue-darken-2">
                 {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
               </td>
-              <td :colspan="showContractorColumn ? 4 : 2"></td>
+              <td :colspan="showContractorColumn ? 3 : 2"></td>
               <td v-if="props.showContractColumns" colspan="5"></td>
             </tr>
           </tfoot>
@@ -1315,13 +1316,16 @@ const contractorPickerIdx = ref(-1)
 const contractorPickerPrefillName = ref('')
 const contractorPickerPrefillInn = ref('')
 
+// Per-row loading state для INN lookup
+const contractorLookupLoading = ref<Record<number, boolean>>({})
+
 // showContractorColumn: advance_report → отдельная колонка всегда видна
 const showContractorColumn = computed(() => props.formMode === 'advance_report')
 
 // Phase 26-V: resizable columns
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {
   name: 320, type: 120, qty: 90, unit: 90, price: 130, sum: 130,
-  country: 150, inn: 130, contractor: 200, actions: 80,
+  country: 150, contractor: 200, actions: 80,
 })
 
 async function loadContractors() {
@@ -1420,7 +1424,8 @@ async function onContractorSearchInput(idx: number, search: string) {
   if (!/^\d{10}$|^\d{12}$/.test(q)) return
   // Если уже в массиве contractors есть с таким inn — autocomplete сам отфильтрует
   if (contractors.value.some(c => c.inn === q)) return
-  _innLookupTimer = setTimeout(async () => {
+  _innLookupTimer = window.setTimeout(async () => {
+    contractorLookupLoading.value[idx] = true
     try {
       const found = await apiFetch<Contractor>(`/contractors/lookup-inn/${q}`)
       if (found && found.id) {
@@ -1436,8 +1441,10 @@ async function onContractorSearchInput(idx: number, search: string) {
       }
     } catch {
       // ФНС не нашёл / network — молча игнорируем, user может ввести вручную
+    } finally {
+      contractorLookupLoading.value[idx] = false
     }
-  }, 600)
+  }, 600) as unknown as number
 }
 
 onMounted(async () => {

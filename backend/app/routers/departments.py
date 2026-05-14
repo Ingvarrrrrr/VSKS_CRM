@@ -131,15 +131,26 @@ async def department_tree(
     depts = (await db.execute(q)).scalars().all()
 
     dept_ids = [d.id for d in depts]
-    # Load all members
+    # Load all members from DepartmentMember
     members = []
     if dept_ids:
         members = (await db.execute(
             select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
         )).scalars().all()
 
+    # 7g: Also load users linked via user_organizations.dept_id (UNION source)
+    uo_dept_rows = []
+    if dept_ids:
+        uo_dept_rows = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.dept_id.in_(dept_ids),
+            )
+        )).scalars().all()
+
     # Load user names + positions
     user_ids = {m.user_id for m in members}
+    for uo in uo_dept_rows:
+        user_ids.add(uo.user_id)
     for d in depts:
         if d.head_user_id:
             user_ids.add(d.head_user_id)
@@ -169,6 +180,9 @@ async def department_tree(
             "children": [],
         }
 
+    # Track which (dept_id, user_id) pairs already added to avoid duplicates
+    added_pairs: set = set()
+
     for m in members:
         u = users_map.get(m.user_id, {})
         entry = {
@@ -178,6 +192,22 @@ async def department_tree(
         }
         if m.department_id in by_id:
             by_id[m.department_id]["members"].append(entry)
+            added_pairs.add((m.department_id, m.user_id))
+
+    # 7g: Add users from user_organizations.dept_id if not already present
+    for uo in uo_dept_rows:
+        if uo.dept_id not in by_id:
+            continue
+        if (uo.dept_id, uo.user_id) in added_pairs:
+            continue
+        u = users_map.get(uo.user_id, {})
+        entry = {
+            "member_id": None, "user_id": uo.user_id,
+            "name": u.get("name", "?"), "role": u.get("role"),
+            "position": uo.position or u.get("position"),
+        }
+        by_id[uo.dept_id]["members"].append(entry)
+        added_pairs.add((uo.dept_id, uo.user_id))
 
     roots = []
     for d in depts:

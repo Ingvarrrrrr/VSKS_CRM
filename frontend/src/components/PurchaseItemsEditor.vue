@@ -20,11 +20,35 @@
       </div>
     </div>
 
+    <!-- Phase 27.1 D-01: Contract items toolbar (only when showContractColumns) -->
+    <div v-if="props.showContractColumns && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
+      <v-btn
+        variant="tonal" prepend-icon="mdi-content-copy" size="small" color="success"
+        :loading="contractItemCopying"
+        :disabled="localContractItems.length > 0 && localItems.length === 0"
+        @click="handleCopyFromPurchase"
+      >
+        Скопировать из заявки
+      </v-btn>
+      <v-btn
+        variant="tonal" prepend-icon="mdi-file-import" size="small" color="primary"
+        @click="openContractImportDialog"
+      >
+        Импорт из файла/QR
+      </v-btn>
+    </div>
+
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
       <div class="overflow-x-auto">
         <v-table density="compact">
           <thead>
+            <!-- Phase 27.1 D-04: group header row when side-by-side is active -->
+            <tr v-if="props.showContractColumns">
+              <th colspan="2"></th>
+              <th colspan="8" style="border-right:2px solid #e0e0e0;text-align:center;font-weight:700;color:#1565C0">Заявка</th>
+              <th colspan="5" style="text-align:center;font-weight:700;color:#2E7D32">Договор</th>
+            </tr>
             <tr>
               <th style="width:36px;padding:0 4px;text-align:center">
                 <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
@@ -40,6 +64,14 @@
               <th style="min-width:150px">Сумма, ₽</th>
               <th style="min-width:150px">Страна происхождения</th>
               <th style="width:48px"></th>
+              <!-- Phase 27.1 D-04: Договор columns -->
+              <template v-if="props.showContractColumns">
+                <th style="min-width:280px;border-left:2px solid #e0e0e0">Наименование (договор)</th>
+                <th style="min-width:120px">Кол-во</th>
+                <th style="min-width:130px">Цена ед., ₽</th>
+                <th style="min-width:130px">Сумма, ₽</th>
+                <th style="width:48px"></th>
+              </template>
             </tr>
           </thead>
           <tbody>
@@ -141,9 +173,58 @@
                   :disabled="props.readonly"
                   @click="removeItem(idx)" />
               </td>
+              <!-- Phase 27.1 D-04: Договор columns side-by-side -->
+              <template v-if="props.showContractColumns">
+                <td style="min-width:280px;border-left:2px solid #e0e0e0">
+                  <v-text-field
+                    :model-value="getContractItemFor(idx)?.name ?? ''"
+                    density="compact" variant="plain" hide-details placeholder="Наименование по договору"
+                    :disabled="props.readonly"
+                    @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
+                  />
+                  <v-chip
+                    v-if="getContractItemFor(idx)?.source_item_id != null"
+                    size="x-small" color="info" variant="tonal" class="mt-1"
+                  >
+                    Связано с ТЗ №{{ getContractItemFor(idx)?.source_item_id }}
+                  </v-chip>
+                </td>
+                <td style="min-width:120px">
+                  <v-text-field
+                    :model-value="getContractItemFor(idx)?.quantity ?? ''"
+                    type="number" density="compact" variant="plain" hide-details
+                    :disabled="props.readonly"
+                    @update:model-value="(v: string) => updateContractField(idx, 'quantity', Number(v))"
+                  />
+                </td>
+                <td style="min-width:130px">
+                  <v-text-field
+                    :model-value="getContractItemFor(idx)?.unit_price ?? ''"
+                    type="number" density="compact" variant="plain" hide-details
+                    :disabled="props.readonly"
+                    @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
+                  />
+                </td>
+                <td style="min-width:130px" class="text-caption">
+                  {{ getContractItemFor(idx)?.total != null ? Number(getContractItemFor(idx)?.total).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—' }}
+                </td>
+                <td>
+                  <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-btn
+                        v-bind="tip"
+                        icon="mdi-arrow-split-vertical"
+                        size="x-small" variant="text" color="orange"
+                        title="Разделить строку договора"
+                        @click="splitContractRow(idx)"
+                      />
+                    </template>
+                  </v-tooltip>
+                </td>
+              </template>
             </tr>
             <tr v-if="!localItems.length">
-              <td colspan="10" class="text-center text-medium-emphasis py-4">
+              <td :colspan="props.showContractColumns ? 15 : 10" class="text-center text-medium-emphasis py-4">
                 Нет позиций. Нажмите «Добавить позицию».
               </td>
             </tr>
@@ -155,9 +236,27 @@
                 {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
               </td>
               <td colspan="2"></td>
+              <td v-if="props.showContractColumns" colspan="5"></td>
             </tr>
           </tfoot>
         </v-table>
+      </div>
+
+      <!-- Phase 27.1 D-04: Savings badge under the table -->
+      <div v-if="props.showContractColumns && contractItemsTotal > 0" class="mt-3 d-flex ga-2 flex-wrap align-center">
+        <v-chip color="primary" variant="tonal" size="small">
+          Сумма позиций договора: {{ contractItemsTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
+        </v-chip>
+        <v-chip color="info" variant="tonal" size="small">
+          НМЦД заявки: {{ purchasePlannedTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
+        </v-chip>
+        <v-chip
+          v-if="contractSavings != null"
+          :color="Number(contractSavings) >= 0 ? 'success' : 'error'"
+          variant="tonal" size="small"
+        >
+          Экономия: {{ contractSavings.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽ ({{ contractSavingsPercent }}%)
+        </v-chip>
       </div>
     </template>
 
@@ -766,6 +865,8 @@ import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import type { ContractItem } from '@/types/contractItem'
+import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -833,6 +934,8 @@ void COUNTRIES
 
 const props = withDefaults(defineProps<{
   modelValue: EditorItem[]
+  contractItems?: ContractItem[]        // Phase 27.1 D-04: contract_items for side-by-side
+  showContractColumns?: boolean         // Phase 27.1 D-04: render «Договор» column group
   itemShape: 'purchase' | 'wish'
   purchaseId?: number | null
   allowedItemTypes?: string[]
@@ -845,6 +948,8 @@ const props = withDefaults(defineProps<{
   supportsPhotoUpload?: boolean
   readonly?: boolean
 }>(), {
+  contractItems: () => [],
+  showContractColumns: false,
   allowedItemTypes: () => ['товар', 'услуга', 'работа'],
   defaultItemType: 'товар',
   defaultUnit: 'шт.',
@@ -859,6 +964,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
+  'update:contractItems': [items: ContractItem[]]  // Phase 27.1 D-04
   'item-added': [item: EditorItem]
   'item-removed': [idx: number]
   'product-created': [product: Product]
@@ -880,6 +986,130 @@ watch(
 function emitUpdate() {
   emit('update:modelValue', [...localItems.value])
   emit('items-changed')
+}
+
+// ── Phase 27.1 D-04: Contract items side-by-side ─────────────────────────────
+
+const localContractItems = ref<ContractItem[]>([...(props.contractItems || [])])
+
+watch(
+  () => props.contractItems,
+  (v) => { localContractItems.value = [...(v || [])] },
+  { deep: true },
+)
+
+function emitContractItemsUpdate() {
+  emit('update:contractItems', [...localContractItems.value])
+}
+
+// Import mode: when true, results of import dialog go to localContractItems instead of localItems
+const contractItemImportMode = ref(false)
+
+const contractItemsTotal = computed(() =>
+  localContractItems.value.reduce((s, ci) => s + Number(ci.total || 0), 0),
+)
+
+const purchasePlannedTotal = computed(() =>
+  localItems.value.reduce((s, it) => s + Number(it.total_price || 0), 0),
+)
+
+const contractSavings = computed(() => {
+  const tz = purchasePlannedTotal.value
+  const ci = contractItemsTotal.value
+  if (!tz || !ci) return null
+  return tz - ci
+})
+
+const contractSavingsPercent = computed(() => {
+  const tz = purchasePlannedTotal.value
+  const sv = contractSavings.value
+  if (!tz || sv == null) return null
+  return ((sv / tz) * 100).toFixed(1)
+})
+
+function getContractItemFor(rowIdx: number): ContractItem | undefined {
+  // First try to match by source_item_id ↔ purchase_item id
+  const pid = (localItems.value[rowIdx] as any)?.id as number | undefined
+  if (pid != null) {
+    const linked = localContractItems.value.find(ci => ci.source_item_id === pid)
+    if (linked) return linked
+  }
+  // Fallback: positional match
+  return localContractItems.value[rowIdx]
+}
+
+function updateContractField(rowIdx: number, field: keyof ContractItem, value: unknown) {
+  const ci = getContractItemFor(rowIdx)
+  if (!ci) {
+    // Create a new contract_item linked to this row
+    const newCi: ContractItem = {
+      id: 0,
+      purchase_id: props.purchaseId || 0,
+      source_item_id: (localItems.value[rowIdx] as any)?.id ?? null,
+      contract_id: null,
+      product_id: null,
+      name: (localItems.value[rowIdx] as any)?.item_name || '',
+      quantity: null,
+      unit: null,
+      unit_price: null,
+      total: null,
+      match_confirmed: true,
+    }
+    ;(newCi as any)[field] = value
+    localContractItems.value.push(newCi)
+  } else {
+    ;(ci as any)[field] = value
+    // Auto-recalc total = qty × unit_price
+    if (field === 'quantity' || field === 'unit_price') {
+      ci.total = Math.round(Number(ci.quantity || 0) * Number(ci.unit_price || 0) * 100) / 100
+    }
+  }
+  emitContractItemsUpdate()
+}
+
+const contractItemCopying = ref(false)
+
+async function handleCopyFromPurchase() {
+  if (!props.purchaseId) {
+    showSnack('Сохраните закупку перед копированием позиций', 'warning')
+    return
+  }
+  contractItemCopying.value = true
+  try {
+    const result = await apiCopyFromPurchase(props.purchaseId)
+    localContractItems.value = result
+    emit('update:contractItems', result)
+    showSnack(`Скопировано ${result.length} позиций из заявки`)
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка копирования'
+    showSnack(msg, 'error')
+  } finally {
+    contractItemCopying.value = false
+  }
+}
+
+function openContractImportDialog() {
+  // D-02: reuse existing import dialog, routing output to localContractItems
+  contractItemImportMode.value = true
+  openSmartImportDialog()
+}
+
+function splitContractRow(rowIdx: number) {
+  // D-05: split one contract row into 2 with same source_item_id
+  const ci = getContractItemFor(rowIdx)
+  if (!ci) return
+  const half = Math.round(Number(ci.quantity || 0) / 2 * 1000) / 1000
+  const halfTotal = Math.round(half * Number(ci.unit_price || 0) * 100) / 100
+  const newCi: ContractItem = {
+    ...ci,
+    id: 0,
+    quantity: half,
+    total: halfTotal,
+  }
+  ci.quantity = half
+  ci.total = halfTotal
+  localContractItems.value.push(newCi)
+  emitContractItemsUpdate()
 }
 
 // Snackbar
@@ -1838,6 +2068,29 @@ async function doSmartImport() {
 
   // If user applied custom column mapping OR no purchaseId, add items directly from re-mapped preview
   if (columnMappingApplied.value || !props.purchaseId) {
+    // Phase 27.1 D-02: if import was triggered for contract items, route to localContractItems
+    if (contractItemImportMode.value) {
+      const newContractItems: ContractItem[] = smartImportPreview.value.map(row => ({
+        id: 0,
+        purchase_id: props.purchaseId || 0,
+        source_item_id: null,
+        contract_id: null,
+        product_id: null,
+        name: row.item_name || row.name || '',
+        quantity: row.quantity ?? null,
+        unit: row.unit ?? null,
+        unit_price: row.unit_price ?? null,
+        total: row.total_price ?? row.total ?? null,
+        match_confirmed: false,
+      }))
+      localContractItems.value = newContractItems
+      contractItemImportMode.value = false
+      emitContractItemsUpdate()
+      smartImportResult.value = { added: newContractItems.length, matched_catalog: 0, unmatched: newContractItems.length }
+      showSnack(`${newContractItems.length} позиций договора импортированы.`, 'info')
+      itemsImportDialog.value = false
+      return
+    }
     const newItems: EditorItem[] = smartImportPreview.value.map(row => {
       const item: EditorItem = {
         product_id: null,

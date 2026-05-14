@@ -1375,7 +1375,22 @@
                   density="compact"
                   hide-details="auto"
                   @update:model-value="onAcceptanceDocTypeAdd($event)"
-                />
+                >
+                  <template #item="{ props: itemProps, item }">
+                    <v-list-item v-bind="itemProps" :title="item.raw">
+                      <template #append>
+                        <v-btn
+                          v-if="!BUILTIN_ACCEPTANCE_DOC_TYPES.includes(item.raw)"
+                          icon="mdi-close"
+                          size="x-small"
+                          variant="text"
+                          color="error"
+                          @click.stop="deleteCustomDocType(item.raw)"
+                        />
+                      </template>
+                    </v-list-item>
+                  </template>
+                </v-combobox>
               </v-col>
               <v-col cols="12" md="2">
                 <v-text-field v-model="doc.number" label="Номер" variant="outlined" density="compact" hide-details />
@@ -3338,6 +3353,12 @@ function onAcceptanceDocTypeAdd(val: string | null) {
   if (acceptanceDocTypes.value.includes(v)) return
   customDocTypes.value = [...customDocTypes.value, v]
   try { localStorage.setItem('acceptance_doc_types_custom', JSON.stringify(customDocTypes.value)) } catch {}
+}
+function deleteCustomDocType(val: string) {
+  if (BUILTIN_ACCEPTANCE_DOC_TYPES.includes(val)) return  // системные нельзя удалять
+  customDocTypes.value = customDocTypes.value.filter(t => t !== val)
+  try { localStorage.setItem('acceptance_doc_types_custom', JSON.stringify(customDocTypes.value)) } catch {}
+  // если этот тип был выбран в каком-то документе — оставляем значение (не чистим форму)
 }
 
 // 26-F2: показывать блок чеков и в обычной закупке

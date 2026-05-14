@@ -1,7 +1,6 @@
 <template>
   <div
     class="col-header-menu"
-    :style="align === 'end' ? 'flex-direction: row-reverse' : ''"
   >
     <span class="col-header-menu__title">{{ title }}</span>
 

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-last_updated: "2026-05-14T08:01:53.170Z"
+last_updated: "2026-05-14T08:10:34.066Z"
 progress:
   total_phases: 19
   completed_phases: 11
   total_plans: 74
-  completed_plans: 64
+  completed_plans: 65
 ---
 
 # STATE.md — VSKS_CRM
@@ -16,7 +16,7 @@ progress:
 ## Current Position
 
 Phase: 27.1 (contract-items) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Next action: `/gsd:plan-phase 27.1` сначала (contract_items — вставлена ПЕРЕД 27 как зависимость), затем `/gsd:plan-phase 27`. UAT Phase 26 параллельно (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`).
 Resume file: None
 Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
@@ -246,6 +246,8 @@ Recently closed:
 - [Phase 17-permission-system-override]: Plan 17-09: E2E uses inline loginAs(page,user,pwd) helper — existing helpers.ts login() is hardcoded to admin/admin123; keeps plan scope to two declared files
 - [Phase 27.1]: ContractItem uses _ensure_*_table pattern (not alembic) + non-fatal lifespan startup
 - [Phase 27.1]: Backfill uses NOT EXISTS guard; framework head excluded by purchase_contract_type check (D-07)
+- [Phase 27.1-contract-items]: contract_items.router registered BEFORE purchases.router in __init__.py (line 505 vs 506) to prevent catch-all /{purchase_id} from intercepting /contract-items path
+- [Phase 27.1-contract-items]: D-06 strict 422 guard CONTRACT_ITEMS_REQUIRED placed AFTER field guards, BEFORE p.status=target_status in purchase_transitions.py
 
 ## Blockers
 

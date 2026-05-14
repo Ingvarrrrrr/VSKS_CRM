@@ -4501,6 +4501,10 @@ async function loadFrameworkContractsForInvoice() {
 function onFrameworkInvoiceSelect(c: FrameworkContract | null) {
   if (c) {
     form.contract_id = c.id
+    // phase26-j-3: autofill denormalized fields from selected contract
+    if (c.number) form.contract_number = c.number
+    if (c.date) form.contract_date = c.date
+    if (c.contract_type) form.purchase_contract_type = c.contract_type
   } else {
     form.contract_id = null
   }
@@ -5065,9 +5069,10 @@ function selectContractType(type: 'single' | 'framework', contract?: FrameworkCo
   } else if (contract) {
     form.purchase_contract_type = contract.contract_type as string || 'framework_cumulative'
     form.contract_id = contract.id
-    // Prefill contract data
+    // phase26-j-3: autofill denormalized fields from selected contract
     if (contract.number) form.contract_number = contract.number
     if (contract.date) form.contract_date = contract.date
+    if (contract.contract_type) form.purchase_contract_type = contract.contract_type
     if (contract.max_amount) form.contract_price = contract.max_amount
     if (contract.subject) form.subject = contract.subject
     if ((contract as any).purchase_method) form.purchase_method = (contract as any).purchase_method

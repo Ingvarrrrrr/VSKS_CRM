@@ -1268,7 +1268,7 @@
     </v-dialog>
 
     <!-- ── Templates Dialog (multi-type) ── -->
-    <v-dialog v-model="showTemplateDialog" max-width="600" scrollable>
+    <v-dialog v-model="showTemplateDialog" max-width="1100" scrollable>
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-file-document-multiple-outline" color="indigo" class="mr-2" />
@@ -1332,10 +1332,10 @@
                 />
                 <v-data-table
                   :headers="[
-                    { title: 'Переменная', key: 'var', width: '22%' },
-                    { title: 'Описание', key: 'description', width: '28%' },
-                    { title: 'Пример записи в шаблоне', key: 'example_template', width: '25%' },
-                    { title: 'Что получится', key: 'example_result', width: '25%' },
+                    { title: 'Переменная', key: 'var', width: '280px', minWidth: '280px' },
+                    { title: 'Описание', key: 'description' },
+                    { title: 'Пример записи в шаблоне', key: 'example_template', width: '22%' },
+                    { title: 'Что получится', key: 'example_result', width: '20%' },
                   ]"
                   :items="filteredVars"
                   density="compact"
@@ -1344,8 +1344,12 @@
                   class="text-caption"
                 >
                   <template #item.var="{ item }">
-                    <div class="d-flex align-center gap-1">
-                      <code class="text-caption">{{ item.var }}</code>
+                    <div class="d-flex align-center gap-1" style="white-space: nowrap; min-width: 260px;">
+                      <v-tooltip :text="item.var" location="top">
+                        <template #activator="{ props: tProps }">
+                          <code class="text-caption text-truncate" style="max-width: 210px; display: inline-block;" v-bind="tProps">{{ item.var }}</code>
+                        </template>
+                      </v-tooltip>
                       <v-btn
                         icon size="x-small" variant="text"
                         :title="'Копировать ' + item.var"

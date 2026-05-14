@@ -131,6 +131,65 @@ def _sum_items_price(p) -> float:
     return total
 
 
+async def _build_contract_items_context(p, db) -> dict:
+    """Phase 27.1 CD-5: build docxtpl context entries for {{contract_items}} loop.
+
+    Returns dict with keys:
+      - contract_items: list[dict] for loop in template (fields num/name/quantity/unit/unit_price/total)
+      - contract_items_total: formatted string like "150 000,00 ₽"
+      - contract_items_total_numeric: float for arithmetic in template
+      - contract_item_count: int, len of contract_items list
+
+    Fallback (D-08 deprecated alias): if purchase has no contract_items —
+    populate from purchase_items so legacy templates keep working.
+    """
+    from app.models.contract_item import ContractItem as _ContractItem
+    ci_query = await db.execute(
+        select(_ContractItem)
+        .where(_ContractItem.purchase_id == p.id)
+        .order_by(_ContractItem.id)
+    )
+    contract_items_db = ci_query.scalars().all()
+
+    result_list = []
+    total_numeric = 0.0
+    if contract_items_db:
+        # Primary path: contract_items exist — use them
+        for idx, ci in enumerate(contract_items_db, start=1):
+            tot = float(ci.total) if ci.total else 0.0
+            result_list.append({
+                "num": idx,
+                "name": ci.name or "",
+                "quantity": float(ci.quantity) if ci.quantity else "",
+                "unit": ci.unit or "",
+                "unit_price": _fmt_money(ci.unit_price),
+                "total": _fmt_money(ci.total),
+                "total_numeric": tot,
+            })
+            total_numeric += tot
+    else:
+        # D-08 fallback: contract_items empty — use purchase_items as deprecated alias
+        for idx, item in enumerate(getattr(p, "items", None) or [], start=1):
+            tot = float(item.total_price) if item.total_price else 0.0
+            result_list.append({
+                "num": idx,
+                "name": item.item_name or "",
+                "quantity": float(item.quantity) if item.quantity else "",
+                "unit": item.unit or "",
+                "unit_price": _fmt_money(item.unit_price),
+                "total": _fmt_money(item.total_price),
+                "total_numeric": tot,
+            })
+            total_numeric += tot
+
+    return {
+        "contract_items": result_list,
+        "contract_items_total": _fmt_money(total_numeric),
+        "contract_items_total_numeric": total_numeric,
+        "contract_item_count": len(result_list),
+    }
+
+
 async def _resolve_user_dept(user, db, org_id: Optional[int] = None) -> str:
     """Возвращает название отдела пользователя для шаблона СЗ.
 
@@ -433,12 +492,14 @@ async def generate_document(
         )
 
     # Load purchase with related data
+    from app.models.contract_item import ContractItem as _ContractItem  # Phase 27.1 CD-5
     result = await db.execute(
         select(Purchase)
         .options(
             selectinload(Purchase.items).selectinload(PurchaseItem.product),
             selectinload(Purchase.contractor),
             selectinload(Purchase.feo_category),
+            selectinload(Purchase.contract_items),  # Phase 27.1 CD-5: eager-load for docxtpl context
         )
         .where(Purchase.id == pid)
     )
@@ -1117,6 +1178,10 @@ async def generate_document(
         # contractor_full_name — полное официальное название (fallback на name)
         "contractor_full_name":               (c.full_name or c.name or "") if c else "",
     })
+
+    # Phase 27.1 CD-5: contract_items loop context (+ D-08 fallback on purchase_items)
+    ci_ctx = await _build_contract_items_context(p, db)
+    context.update(ci_ctx)
 
     try:
         tpl.render(context)

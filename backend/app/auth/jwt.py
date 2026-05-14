@@ -101,8 +101,15 @@ def require_role(*roles):
     return checker
 
 def get_org_filter(current_user: User) -> Optional[List[int]]:
-    """Returns None for superadmin without selection, list of org_ids otherwise."""
-    if current_user.role == 'superadmin':
+    """Returns None for SaaS roles without selection, list of org_ids otherwise.
+
+    Phase 26-Z: account_owner был ошибочно в обычной org-фильтрации, хотя по
+    OWNER_ROLES/_SAAS_ROLES должен видеть всё. Цыганов (account_owner) без
+    привязки к отделу не видел закупок, потому что _active_org_ids был пуст
+    или фильтровал только его явные org'и.
+    """
+    # SaaS-роли — без фильтра по умолчанию, опционально с активной выборкой
+    if current_user.role in ('superadmin', 'account_owner'):
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
     # For all other roles: use contour org_ids from JWT if available

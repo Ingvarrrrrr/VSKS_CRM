@@ -497,11 +497,10 @@ async def create_purchase(
                 amount=alloc.amount,
             ))
 
-    # Contract price: для разовых (single) и авансовых (advance) — авто-пересчёт из items
+    # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
+    # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
     _items_sum_create = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
-    _is_single_contract_create = not p.purchase_contract_type or p.purchase_contract_type == "single"
-    _is_advance_create = p.purchase_method == "advance"
-    if (_is_single_contract_create or _is_advance_create) and _items_sum_create:
+    if _items_sum_create:
         p.contract_price = _items_sum_create
 
     # Budget history write hook — record initial planned_total_price
@@ -592,10 +591,9 @@ async def update_purchase(
     if "acceptance_docs" in data.model_fields_set:
         flag_modified(p, "acceptance_docs")
 
-    # Contract price: для разовых (single) и авансовых (advance) — авто-пересчёт из items
-    is_single_contract = not p.purchase_contract_type or p.purchase_contract_type == "single"
-    is_advance = p.purchase_method == "advance"
-    if (is_single_contract or is_advance) and items_sum:
+    # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
+    # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
+    if items_sum:
         p.contract_price = items_sum
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below

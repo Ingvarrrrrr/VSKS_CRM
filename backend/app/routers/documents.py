@@ -1183,6 +1183,34 @@ async def generate_document(
     ci_ctx = await _build_contract_items_context(p, db)
     context.update(ci_ctx)
 
+    # Phase 26-R: receipts images for advance reports' service note
+    if p.purchase_method == "advance":
+        import tempfile as _tempfile
+        from app.models.purchase_receipt import PurchaseReceipt as _PurchaseReceipt
+        from app.routers.purchase_receipts import _render_receipt_png as _rrpng
+        _receipts_q = await db.execute(
+            select(_PurchaseReceipt)
+            .where(_PurchaseReceipt.purchase_id == p.id)
+            .order_by(_PurchaseReceipt.id.asc())
+        )
+        _receipts = _receipts_q.scalars().all()
+        receipt_images = []
+        for _r in _receipts:
+            try:
+                _png_bytes = _rrpng(_r)
+                _tmp = _tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                _tmp.write(_png_bytes)
+                _tmp.close()
+                receipt_images.append(InlineImage(tpl, _tmp.name, width=_Cm(8.0)))
+            except Exception as _re:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(f"render receipt {_r.id} skipped: {_re}")
+        context["receipts"] = receipt_images
+        context["receipt_images"] = receipt_images  # alias
+    else:
+        context["receipts"] = []
+        context["receipt_images"] = []
+
     try:
         tpl.render(context)
 
@@ -1803,6 +1831,10 @@ TEMPLATE_VARIABLES = [
     ("{{item.photo}}", "Фото товара (картинка)", "{{item.photo}}", "(изображение)"),
     ("{{items_count}}", "Общее количество позиций", "{{items_count}}", "3"),
     ("{{item_names}}", "Перечень названий через запятую", "{{item_names}}", "Услуги связи, Интернет, Хостинг"),
+    # ── Чеки (авансовый отчёт) ──
+    ("", "ЧЕКИ — АВАНСОВЫЙ ОТЧЁТ (только для закупок с purchase_method=advance)", "", ""),
+    ("{{receipts}}", "Список InlineImage чеков по порядку загрузки — для авансовых отчётов", "{% for r in receipts %}{{ r }}{% endfor %}", "(изображения чеков)"),
+    ("{{receipt_images}}", "Алиас receipts — список изображений чеков", "{% for img in receipt_images %}{{ img }}{% endfor %}", "(изображения чеков)"),
     # ── Служебные ──
     ("", "СЛУЖЕБНЫЕ", "", ""),
     ("{{today}}", "Сегодняшняя дата", "{{today}}", "13.05.2026"),

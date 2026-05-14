@@ -65,6 +65,8 @@
               <th style="min-width:150px">Страна происхождения</th>
               <!-- U-3: per-item НДС колонка -->
               <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
+              <!-- Phase 26-X: Контрагент колонка для advance_report -->
+              <th v-if="showContractorColumn" style="min-width:200px">Контрагент</th>
               <th style="width:48px"></th>
               <!-- Phase 27.1 D-04: Договор columns -->
               <template v-if="props.showContractColumns">
@@ -134,13 +136,41 @@
                     </template>
                   </v-tooltip>
                 </div>
-                <v-chip
-                  v-if="item.contractor_name"
-                  size="x-small" variant="tonal" color="indigo" class="mt-1"
-                  prepend-icon="mdi-store"
-                >
-                  {{ item.contractor_name }}
-                </v-chip>
+                <!-- Phase 26-X: inline contractor picker when not in dedicated column mode -->
+                <template v-if="!showContractorColumn">
+                  <v-autocomplete
+                    :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                    :items="contractors"
+                    :custom-filter="contractorFilter"
+                    item-title="name"
+                    item-value="id"
+                    return-object
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    clearable
+                    class="mt-1"
+                    style="min-width:200px"
+                    placeholder="Контрагент (магазин)..."
+                    prepend-inner-icon="mdi-store"
+                    no-data-text="Не найден"
+                    :disabled="props.readonly"
+                    @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                    @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                  >
+                    <template #no-data>
+                      <v-list-item>
+                        <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
+                          Контрагент не найден в БД.
+                        </v-alert>
+                        <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
+                          @click.stop="openContractorQuickCreate(idx)">
+                          Создать нового
+                        </v-btn>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </template>
               </td>
               <td>
                 <v-select v-model="item.item_type"
@@ -184,6 +214,40 @@
                   :disabled="props.readonly"
                   @update:model-value="emitUpdate"
                 />
+              </td>
+              <!-- Phase 26-X: dedicated Контрагент column for advance_report -->
+              <td v-if="showContractorColumn" style="min-width:200px">
+                <v-autocomplete
+                  :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                  :items="contractors"
+                  :custom-filter="contractorFilter"
+                  item-title="name"
+                  item-value="id"
+                  return-object
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  class="my-1"
+                  placeholder="Контрагент..."
+                  prepend-inner-icon="mdi-store"
+                  no-data-text="Не найден"
+                  :disabled="props.readonly"
+                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                  @update:search="(s: string) => onContractorSearchInput(idx, s)"
+                >
+                  <template #no-data>
+                    <v-list-item>
+                      <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
+                        Контрагент не найден в БД.
+                      </v-alert>
+                      <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
+                        @click.stop="openContractorQuickCreate(idx)">
+                        Создать нового
+                      </v-btn>
+                    </v-list-item>
+                  </template>
+                </v-autocomplete>
               </td>
               <td>
                 <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
@@ -241,7 +305,7 @@
               </template>
             </tr>
             <tr v-if="!localItems.length">
-              <td :colspan="props.showContractColumns ? 15 : 10" class="text-center text-medium-emphasis py-4">
+              <td :colspan="props.showContractColumns ? 15 : (showContractorColumn ? 11 : 10)" class="text-center text-medium-emphasis py-4">
                 Нет позиций. Нажмите «Добавить позицию».
               </td>
             </tr>
@@ -252,7 +316,7 @@
               <td class="py-2 font-weight-bold text-blue-darken-2">
                 {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
               </td>
-              <td colspan="2"></td>
+              <td :colspan="showContractorColumn ? 3 : 2"></td>
               <td v-if="props.showContractColumns" colspan="5"></td>
             </tr>
           </tfoot>
@@ -348,13 +412,39 @@
                     </template>
                   </v-tooltip>
                 </div>
-                <v-chip
-                  v-if="item.contractor_name"
-                  size="x-small" variant="tonal" color="indigo" class="mt-1"
-                  prepend-icon="mdi-store"
+                <!-- Phase 26-X: inline contractor picker in wish table -->
+                <v-autocomplete
+                  :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                  :items="contractors"
+                  :custom-filter="contractorFilter"
+                  item-title="name"
+                  item-value="id"
+                  return-object
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  class="mt-1"
+                  style="min-width:180px"
+                  placeholder="Контрагент (магазин)..."
+                  prepend-inner-icon="mdi-store"
+                  no-data-text="Не найден"
+                  :disabled="props.readonly"
+                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
+                  @update:search="(s: string) => onContractorSearchInput(idx, s)"
                 >
-                  {{ item.contractor_name }}
-                </v-chip>
+                  <template #no-data>
+                    <v-list-item>
+                      <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
+                        Контрагент не найден в БД.
+                      </v-alert>
+                      <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
+                        @click.stop="openContractorQuickCreate(idx)">
+                        Создать нового
+                      </v-btn>
+                    </v-list-item>
+                  </template>
+                </v-autocomplete>
               </td>
               <td>
                 <v-select v-model="item.item_type"
@@ -867,6 +957,52 @@
       </v-card>
     </v-dialog>
 
+    <!-- ===== Contractor quick-create dialog (Phase 26-X) ===== -->
+    <v-dialog v-model="contractorPickerDialog" max-width="480" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-4 d-flex align-center justify-space-between">
+          <span><v-icon icon="mdi-store-plus" class="mr-2" />Новый контрагент</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="contractorPickerDialog = false" />
+        </v-card-title>
+        <v-card-text class="px-4 pb-2">
+          <v-alert type="info" density="compact" variant="tonal" class="mb-3 text-caption">
+            Контрагент не найден в БД. Заполните минимальные данные для создания.
+          </v-alert>
+          <v-text-field
+            v-model="contractorPickerForm.name"
+            label="Наименование *"
+            variant="outlined" density="compact"
+            :rules="[v => !!v || 'Обязательное поле']"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="contractorPickerForm.inn"
+            label="ИНН"
+            variant="outlined" density="compact" class="mb-2"
+          />
+          <v-text-field
+            v-model="contractorPickerForm.kpp"
+            label="КПП"
+            variant="outlined" density="compact" class="mb-2"
+          />
+          <v-text-field
+            v-model="contractorPickerForm.address"
+            label="Адрес"
+            variant="outlined" density="compact"
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="contractorPickerDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="contractorPickerSaving"
+            :disabled="!contractorPickerForm.name.trim()"
+            @click="saveContractorQuickCreate">
+            Создать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ===== Snackbar ===== -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
@@ -886,6 +1022,14 @@ import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
+
+interface Contractor {
+  id: number
+  name: string
+  inn?: string | null
+  kpp?: string | null
+  address?: string | null
+}
 
 interface EditorItem {
   product_id: number | null
@@ -966,6 +1110,7 @@ const props = withDefaults(defineProps<{
   readonly?: boolean
   vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
   uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
+  formMode?: string                          // Phase 26-X: 'advance_report' → показывать колонку Контрагент
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -981,6 +1126,7 @@ const props = withDefaults(defineProps<{
   purchaseId: null,
   vatMode: 'uniform',
   uniformVatRate: null,
+  formMode: 'default',
 })
 
 const emit = defineEmits<{
@@ -1142,12 +1288,126 @@ function showSnack(text: string, color = 'success') {
 // Products catalogue
 const products = ref<Product[]>([])
 
+// ── Contractors catalogue ────────────────────────────────────────────────────
+
+const contractors = ref<Contractor[]>([])
+const contractorPickerDialog = ref(false)
+const contractorPickerSaving = ref(false)
+const contractorPickerForm = reactive({
+  name: '',
+  inn: '',
+  kpp: '',
+  address: '',
+})
+const contractorPickerIdx = ref(-1)
+const contractorPickerPrefillName = ref('')
+const contractorPickerPrefillInn = ref('')
+
+// showContractorColumn: advance_report → отдельная колонка всегда видна
+const showContractorColumn = computed(() => props.formMode === 'advance_report')
+
+async function loadContractors() {
+  try {
+    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=2000')
+  } catch (e) {
+    console.warn('[PurchaseItemsEditor] Could not load contractors:', e)
+  }
+}
+
+function contractorFilter(_value: string, query: string, item?: any): boolean {
+  if (!query.trim()) return true
+  const q = query.toLowerCase().trim()
+  const name = (item?.raw?.name || '').toLowerCase()
+  const inn = (item?.raw?.inn || '').toLowerCase()
+  return name.includes(q) || inn.includes(q)
+}
+
+function onItemContractorSelect(idx: number, val: Contractor | null) {
+  const item = localItems.value[idx]
+  if (!item) return
+  if (!val) {
+    item.contractor_id = null
+    item.contractor_name = null
+    item.contractor_inn = null
+  } else {
+    item.contractor_id = val.id
+    item.contractor_name = val.name
+    item.contractor_inn = val.inn || null
+  }
+  emitUpdate()
+}
+
+function openContractorQuickCreate(idx: number, prefillName?: string, prefillInn?: string) {
+  contractorPickerIdx.value = idx
+  contractorPickerPrefillName.value = prefillName || ''
+  contractorPickerPrefillInn.value = prefillInn || ''
+  Object.assign(contractorPickerForm, {
+    name: prefillName || '',
+    inn: prefillInn || '',
+    kpp: '',
+    address: '',
+  })
+  contractorPickerDialog.value = true
+}
+
+async function saveContractorQuickCreate() {
+  if (!contractorPickerForm.name.trim()) return
+  contractorPickerSaving.value = true
+  try {
+    const saved = await apiFetch<Contractor>('/contractors/', {
+      method: 'POST',
+      body: {
+        name: contractorPickerForm.name.trim(),
+        inn: contractorPickerForm.inn.trim() || null,
+        kpp: contractorPickerForm.kpp.trim() || null,
+        address: contractorPickerForm.address.trim() || null,
+      },
+    })
+    await loadContractors()
+    if (contractorPickerIdx.value >= 0) {
+      onItemContractorSelect(contractorPickerIdx.value, saved)
+    }
+    contractorPickerDialog.value = false
+    showSnack(`Контрагент «${saved.name}» создан`)
+  } catch (e: any) {
+    const msg = e?.payload?.message || e?.detail || e?.message || 'Ошибка создания контрагента'
+    showSnack(typeof msg === 'string' ? msg : JSON.stringify(msg), 'error')
+  } finally {
+    contractorPickerSaving.value = false
+  }
+}
+
+// Lookup contractor by INN from the local list
+async function tryLookupContractorByInn(inn: string): Promise<Contractor | null> {
+  if (!inn || inn.length < 10) return null
+  const found = contractors.value.find(c => c.inn === inn)
+  if (found) return found
+  try {
+    const res = await apiFetch<Contractor>(`/contractors/lookup-inn/${inn}`)
+    return res || null
+  } catch {
+    return null
+  }
+}
+
+// When user types INN in contractor autocomplete search, try to auto-lookup
+async function onContractorSearchInput(idx: number, search: string) {
+  const cleaned = (search || '').replace(/\D/g, '')
+  if (cleaned.length === 10 || cleaned.length === 12) {
+    const found = await tryLookupContractorByInn(cleaned)
+    if (found) {
+      onItemContractorSelect(idx, found)
+    }
+  }
+}
+
 onMounted(async () => {
   try {
     products.value = await apiFetch<Product[]>('/products/')
   } catch (e) {
     console.warn('[PurchaseItemsEditor] Could not load products:', e)
   }
+  await loadContractors()
 })
 
 // ── Totals ───────────────────────────────────────────────────────────────────

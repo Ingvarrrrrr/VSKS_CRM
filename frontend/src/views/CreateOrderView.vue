@@ -500,6 +500,7 @@
             :supports-photo-upload="true"
             :vat-mode="form.vat_mode"
             :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
+            :form-mode="formMode"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"

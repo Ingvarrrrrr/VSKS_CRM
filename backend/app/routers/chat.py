@@ -347,12 +347,16 @@ async def get_rooms(
         data = await _build_room_out(room, current_user.id, db)
         enriched.append(data)
 
-    # Sort by last message desc (rooms without messages go last)
+    # Phase 26-T: сначала комнаты с непрочитанными (по убыванию unread_count),
+    # затем по последнему сообщению — чтобы badge на /chat сразу выводил
+    # комнату с unread наверх и пользователь видел где именно сообщение.
     def sort_key(r):
+        unread = r.get("unread_count", 0) or 0
         lm = r.get("last_message")
-        if lm:
-            return lm.get("id", 0)
-        return 0
+        last_id = lm.get("id", 0) if lm else 0
+        # Кортеж: сначала unread (desc), потом last_message_id (desc).
+        # reverse=True развернёт оба порядка.
+        return (unread, last_id)
 
     enriched.sort(key=sort_key, reverse=True)
     return enriched

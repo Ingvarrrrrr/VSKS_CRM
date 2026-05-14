@@ -60,7 +60,7 @@
             </v-avatar>
           </template>
 
-          <v-list-item-title class="font-weight-medium">
+          <v-list-item-title class="font-weight-medium" :class="{ 'room-has-unread': room.unread_count > 0 }">
             {{ roomDisplayName(room) }}
           </v-list-item-title>
           <v-list-item-subtitle class="text-truncate">
@@ -1282,5 +1282,10 @@ onUnmounted(() => {
 }
 .message-image-link {
   display: block;
+}
+/* phase26-t: выделить комнату с непрочитанными сообщениями */
+.room-has-unread {
+  font-weight: 700 !important;
+  color: rgb(var(--v-theme-primary));
 }
 </style>

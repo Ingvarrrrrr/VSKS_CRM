@@ -123,13 +123,15 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
         if (isMobile) {
           return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
         }
-        // word-wrap: длинный текст переносится на новые строки, ячейка растёт по высоте.
-        // overflow-wrap: anywhere ломает даже слова без пробелов (длинные ИНН/UUID/etc).
+        // Phase 26-EEE: overflow-wrap: break-word (вместо anywhere) — перенос только
+        // по пробелам/дефисам, целые слова остаются неразорваны. Раньше «anywhere»
+        // ломало «ОБЩЕСТВО» в «ОБЩЕСТ\nВО» при узких колонках — выглядело ужасно.
+        // word-break: normal — не ломаем CJK/нестандартные кодировки.
         const cellStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-wrap: break-word; overflow-wrap: anywhere;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: break-word;`
           : ''
         const headerStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-wrap: break-word;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: break-word;`
           : ''
         return {
           ...def,

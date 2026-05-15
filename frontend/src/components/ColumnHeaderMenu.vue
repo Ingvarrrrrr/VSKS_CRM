@@ -404,10 +404,18 @@ function onBoolChange(v: boolean | null) {
 
 .col-header-menu__title {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   min-width: 0;
+  /* Phase 26-EEE: разрешаем перенос в 2 строки по словам (раньше nowrap+ellipsis
+     обрезал «Реестр договоров» в «Реестр…»). Через -webkit-line-clamp ограничиваем
+     2 строки максимум — на узких колонках с очень длинным title не разъезжается. */
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-height: 1.15;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .col-header-menu__chip {

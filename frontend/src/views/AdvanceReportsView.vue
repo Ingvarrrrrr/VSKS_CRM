@@ -342,10 +342,10 @@
           <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
             {{ item.reimbursement_user_name }}
           </v-chip>
-          <span v-else-if="(item as any).responsible_person" class="text-caption text-medium-emphasis">
+          <v-chip v-else-if="(item as any).responsible_person" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
             {{ (item as any).responsible_person }}
-          </span>
-          <span v-else class="text-caption">—</span>
+          </v-chip>
+          <span v-else class="text-medium-emphasis">—</span>
         </template>
 
         <template #item.subsidy_name="{ item }">

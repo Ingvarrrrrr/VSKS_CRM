@@ -207,26 +207,80 @@ async def transition_status(
             )
 
     # Phase 27.1 D-06: CONTRACT_ITEMS_REQUIRED — strict gate before contracted transition
+    # Phase 26-MM: для авансовых отчётов чек/закр.документ заменяет договор — смягчить guard.
     if target_status == "contracted":
         ci_count_res = await db.execute(
             select(func.count()).select_from(ContractItem).where(ContractItem.purchase_id == pid)
         )
         ci_count = ci_count_res.scalar() or 0
         if ci_count == 0:
-            raise HTTPException(
-                422,
-                detail={
-                    "code": "CONTRACT_ITEMS_REQUIRED",
-                    "message": (
-                        "Для перехода в статус «Заключён договор» необходимо заполнить позиции "
-                        "договора. Используйте кнопку «Скопировать из заявки» или «Импорт из "
-                        "файла/QR» в карточке закупки."
-                    ),
-                    "missing_fields": ["contract_items"],
-                    "status": "contracted",
-                    "status_label": "Заключён договор",
-                },
-            )
+            if p.purchase_method == 'advance':
+                from app.models.purchase_receipt import PurchaseReceipt
+                from app.models.purchase_item import PurchaseItem
+                receipts_count = (await db.execute(
+                    select(func.count()).select_from(PurchaseReceipt).where(PurchaseReceipt.purchase_id == pid)
+                )).scalar() or 0
+                has_acceptance_docs = bool(p.acceptance_docs)
+                if receipts_count == 0 and not has_acceptance_docs:
+                    raise HTTPException(
+                        422,
+                        detail={
+                            "code": "CONTRACT_ITEMS_REQUIRED",
+                            "message": (
+                                "Для авансового отчёта загрузите чек (сканировать QR / "
+                                "загрузить чек / вручную) или прикрепите закрывающий документ "
+                                "перед переходом в «Заключён договор»."
+                            ),
+                            "missing_fields": ["receipts_or_acceptance_docs"],
+                            "status": "contracted",
+                            "status_label": "Заключён договор",
+                        },
+                    )
+                # Авто-создать ContractItem из PurchaseItem (idempotent)
+                pi_q = await db.execute(
+                    select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
+                )
+                for pi in pi_q.scalars().all():
+                    exists_ci = (await db.execute(
+                        select(ContractItem).where(
+                            ContractItem.purchase_id == pid,
+                            ContractItem.source_item_id == pi.id,
+                        ).limit(1)
+                    )).scalar_one_or_none()
+                    if exists_ci:
+                        continue
+                    db.add(ContractItem(
+                        purchase_id=pid,
+                        source_item_id=pi.id,
+                        name=pi.item_name or "Позиция",
+                        quantity=pi.quantity,
+                        unit=pi.unit or 'шт.',
+                        unit_price=pi.unit_price,
+                        total=pi.total_price,
+                        match_confirmed=True,
+                    ))
+                await db.flush()
+                # Re-check count после autocreate
+                ci_count_res2 = await db.execute(
+                    select(func.count()).select_from(ContractItem).where(ContractItem.purchase_id == pid)
+                )
+                ci_count = ci_count_res2.scalar() or 0
+            # Если всё ещё 0 (не advance, или advance без purchase_items) — strict guard
+            if ci_count == 0:
+                raise HTTPException(
+                    422,
+                    detail={
+                        "code": "CONTRACT_ITEMS_REQUIRED",
+                        "message": (
+                            "Для перехода в статус «Заключён договор» необходимо заполнить позиции "
+                            "договора. Используйте кнопку «Скопировать из заявки» или «Импорт из "
+                            "файла/QR» в карточке закупки."
+                        ),
+                        "missing_fields": ["contract_items"],
+                        "status": "contracted",
+                        "status_label": "Заключён договор",
+                    },
+                )
         # Phase 27.1 D-07: recompute contract_price (если не рамочный головной)
         is_framework_head = (
             p.purchase_contract_type in ('framework_cumulative', 'framework_limited')

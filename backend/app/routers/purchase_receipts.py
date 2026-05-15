@@ -318,6 +318,8 @@ async def _create_receipt_with_items(
             matched_existing.contractor_id = contractor_id_for_items
             matched_existing.contractor_inn = seller_inn
             matched_existing.contractor_name = seller_name
+            if it.get('vat_rate') and not matched_existing.vat_rate:
+                matched_existing.vat_rate = it.get('vat_rate')
             existing_unlinked.remove(matched_existing)
             continue  # пропустить создание нового PurchaseItem
 
@@ -340,6 +342,7 @@ async def _create_receipt_with_items(
             contractor_inn=seller_inn,
             contractor_name=seller_name,
             receipt_id=receipt.id,  # Phase 26-BB
+            vat_rate=it.get('vat_rate'),
         ))
 
     await db.commit()
@@ -577,6 +580,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
                 contractor_inn=c_inn,
                 contractor_name=c_name,
                 receipt_id=r.id,
+                vat_rate=ri.get('vat_rate'),
             ))
             items_autocreated += 1
     if items_autocreated:
@@ -1296,45 +1300,62 @@ def _register_cyrillic_font() -> str:
 
 
 def _extract_items_from_proverkacheka_html(html: str) -> list:
-    """Phase 26-EE: парсер HTML-таблицы товаров от proverkacheka.com.
-    Структура: <tr class="b-check_vblock-first b-check_item"><td>№</td><td>name</td><td>price</td><td>qty</td><td>sum</td></tr>
-    NB: price/qty/sum здесь уже в рублях (не копейках), потому что proverkacheka форматирует их как строки.
+    """Phase 26-EE/MM: парсер HTML-таблицы товаров от proverkacheka.com.
+    Парсит и НДС-строки (b-check_vblock-last с 'НДС со ставкой X%').
     """
     if not html or not isinstance(html, str):
         return []
     import re as _re
+
+    def _clean(s):
+        s = _re.sub(r'<[^>]+>', '', s)
+        s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        return s.strip()
+
     out = []
-    # Ищем строки с классом b-check_item (НЕ b-check_vblock-last, т.к. там НДС/итого)
-    item_rows = _re.findall(
-        r'<tr[^>]*class="[^"]*b-check_vblock-first[^"]*b-check_item[^"]*"[^>]*>(.*?)</tr>',
+    current_item = None
+    # Все строки с классом b-check_item (товары + НДС)
+    all_rows = _re.findall(
+        r'<tr[^>]*class="([^"]*b-check_item[^"]*)"[^>]*>(.*?)</tr>',
         html,
         flags=_re.DOTALL,
     )
-    for row in item_rows:
+    for class_attr, row in all_rows:
         cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, flags=_re.DOTALL)
-        if len(cells) < 5:
-            continue
-        # cells: [№, name, price, qty, sum]
-        def _clean(s):
-            s = _re.sub(r'<[^>]+>', '', s)  # strip tags
-            s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-            return s.strip()
-        try:
-            name = _clean(cells[1])
-            price = float(_clean(cells[2]).replace(',', '.').replace(' ', '') or 0)
-            qty = float(_clean(cells[3]).replace(',', '.').replace(' ', '') or 1)
-            sm = float(_clean(cells[4]).replace(',', '.').replace(' ', '') or 0)
-            if not name:
+        cleaned = [_clean(c) for c in cells]
+        is_first = 'b-check_vblock-first' in class_attr
+        is_last = 'b-check_vblock-last' in class_attr
+        if is_first and len(cleaned) >= 5:
+            # Новая позиция: cells [№, name, price, qty, sum]
+            try:
+                name = cleaned[1]
+                price = float(cleaned[2].replace(',', '.').replace(' ', '') or 0)
+                qty = float(cleaned[3].replace(',', '.').replace(' ', '') or 1)
+                sm = float(cleaned[4].replace(',', '.').replace(' ', '') or 0)
+                if not name:
+                    current_item = None
+                    continue
+                current_item = {
+                    'name': name,
+                    'quantity': qty,
+                    'qty': qty,
+                    'price': price,
+                    'sum': sm,
+                    'vat_rate': None,
+                }
+                out.append(current_item)
+            except Exception:
+                current_item = None
                 continue
-            out.append({
-                'name': name,
-                'quantity': qty,
-                'qty': qty,
-                'price': price,
-                'sum': sm,
-            })
-        except Exception:
-            continue
+        elif is_last and current_item is not None:
+            # НДС-строка позиции: ищем "НДС со ставкой X%"
+            for c in cleaned:
+                m = _re.search(r'НДС\s*со\s*ставкой\s*(\d+(?:[.,]\d+)?)\s*%', c)
+                if m:
+                    rate = m.group(1).replace(',', '.')
+                    current_item['vat_rate'] = f"{rate}%"
+                    break
+            current_item = None  # next first opens new item
     return out
 
 

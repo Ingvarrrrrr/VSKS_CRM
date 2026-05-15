@@ -262,7 +262,8 @@ async def _create_receipt_with_items(
         if existing_c:
             contractor_id_for_items = existing_c.id
         else:
-            new_c = _Contractor(inn=seller_inn, name=seller_name or f"ИНН {seller_inn}")
+            # Phase 26-CCC: auto-enrich через ЕГРЮЛ (короткое name + full_name + ...)
+            new_c = await _create_or_enrich_contractor_from_receipt(seller_inn, seller_name, db)
             db.add(new_c)
             await db.flush()
             contractor_id_for_items = new_c.id
@@ -480,6 +481,70 @@ async def _create_receipt_with_items(
 
 # ── core helper (Phase 26-Z-bootstrap) ───────────────────────────────────────
 
+async def _create_or_enrich_contractor_from_receipt(seller_inn: str, seller_name: str, db: AsyncSession):
+    """Phase 26-CCC: создаёт новый Contractor из данных чека.
+
+    Сначала пытается обогатить через ЕГРЮЛ (короткое name из поля c +
+    full_name из поля n + ОГРН/КПП/адрес/форма/подписант).
+    При ошибке/timeout — fallback на seller_name из чека.
+
+    Возвращает Contractor (НЕ flushed — вызывающий делает db.add + flush).
+    Никогда не raise: ЕГРЮЛ-вызов завёрнут в try/except.
+    """
+    from app.models.contractor import Contractor as _Ctr
+    import logging as _lg_egrul
+    _log = _lg_egrul.getLogger(__name__)
+
+    egrul_data = None
+    try:
+        import httpx as _httpx_egrul
+        import asyncio as _asyncio_egrul
+        async with _httpx_egrul.AsyncClient(timeout=8, verify=False) as client:
+            resp1 = await client.post(
+                "https://egrul.nalog.ru/",
+                json={"query": seller_inn, "region": "", "page": ""},
+            )
+            token = resp1.json().get("t")
+            if token:
+                for _ in range(3):
+                    await _asyncio_egrul.sleep(0.8)
+                    resp2 = await client.get(f"https://egrul.nalog.ru/search-result/{token}")
+                    rows = resp2.json().get("rows", [])
+                    if rows:
+                        row = rows[0]
+                        egrul_data = {
+                            "name": row.get("c") or row.get("n"),
+                            "full_name": row.get("n"),
+                            "ogrn": row.get("o"),
+                            "kpp": row.get("p"),
+                            "address": row.get("a"),
+                            "org_type": (
+                                "ИП" if len(seller_inn) == 12
+                                else ("Юр.лицо" if row.get("o") else None)
+                            ),
+                            "signatory": row.get("g"),
+                        }
+                        break
+    except Exception as e:
+        _log.warning(
+            f"ЕГРЮЛ lookup для ИНН {seller_inn} не удался ({e}); "
+            f"fallback на seller_name из чека"
+        )
+
+    if egrul_data and egrul_data.get("name"):
+        return _Ctr(
+            inn=seller_inn,
+            name=egrul_data["name"],
+            full_name=egrul_data.get("full_name"),
+            ogrn=egrul_data.get("ogrn"),
+            kpp=egrul_data.get("kpp"),
+            address=egrul_data.get("address"),
+            org_type=egrul_data.get("org_type"),
+            signatory=egrul_data.get("signatory"),
+        )
+    return _Ctr(inn=seller_inn, name=seller_name or f"ИНН {seller_inn}")
+
+
 async def _compute_purchase_snapshot_hash(purchase_id: int, db: AsyncSession) -> str:
     """Phase 26-YY: SHA-1 от состояния items+receipts закупки.
 
@@ -566,7 +631,10 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             select(_Ctr).where(_Ctr.inn == first_receipt.seller_inn)
         )).scalar_one_or_none()
         if not c_row:
-            c_row = _Ctr(inn=first_receipt.seller_inn, name=first_receipt.seller_name or f"ИНН {first_receipt.seller_inn}")
+            # Phase 26-CCC: auto-enrich через ЕГРЮЛ
+            c_row = await _create_or_enrich_contractor_from_receipt(
+                first_receipt.seller_inn, first_receipt.seller_name, db
+            )
             db.add(c_row)
             await db.flush()
         p.contractor_id = c_row.id
@@ -590,7 +658,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             select(_Ctr).where(_Ctr.inn == r.seller_inn)
         )).scalar_one_or_none()
         if not c_row:
-            c_row = _Ctr(inn=r.seller_inn, name=r.seller_name or f"ИНН {r.seller_inn}")
+            # Phase 26-CCC: auto-enrich через ЕГРЮЛ
+            c_row = await _create_or_enrich_contractor_from_receipt(r.seller_inn, r.seller_name, db)
             db.add(c_row)
             await db.flush()
         receipt_to_contractor[r.id] = (c_row.id, r.seller_inn, r.seller_name)

@@ -697,6 +697,72 @@ async def lookup_inn(
         raise HTTPException(502, f"Ошибка запроса к ФНС: {str(e)[:200]}")
 
 
+@router.post("/enrich-all-from-egrul")
+async def enrich_all_contractors_from_egrul(
+    limit: int = Query(50, ge=1, le=500, description="Сколько контрагентов обработать за один запуск"),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Phase 26-CCC: bulk backfill.
+
+    Для всех Contractor где name длиннее 80 символов И full_name пустое
+    И ИНН задан → попытка ЕГРЮЛ enrich (короткое name в Contractor.name,
+    длинное в Contractor.full_name + ОГРН/КПП/адрес/форма/подписант).
+
+    Идемпотентно: не перезаписывает уже заполненные поля.
+    Запускать batch'ами через ?limit=N (max 500). Возвращает stats.
+    """
+    from app.routers.purchase_receipts import _create_or_enrich_contractor_from_receipt
+
+    rows = (await db.execute(
+        select(Contractor)
+        .where(func.length(Contractor.name) > 80)
+        .where(Contractor.full_name.is_(None))
+        .where(Contractor.inn.is_not(None))
+        .limit(limit)
+    )).scalars().all()
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+    for c in rows:
+        try:
+            new_c = await _create_or_enrich_contractor_from_receipt(c.inn, c.name, db)
+            # Применяем только если ЕГРЮЛ реально дал более короткое имя
+            if new_c.name and new_c.name != c.name and len(new_c.name) < len(c.name):
+                # Сохраняем старое длинное в full_name если оно ещё пустое
+                if not c.full_name:
+                    c.full_name = c.name
+                c.name = new_c.name
+                # Если ЕГРЮЛ вернул более точное full_name — используем его
+                if new_c.full_name:
+                    c.full_name = new_c.full_name
+                if not c.ogrn and new_c.ogrn:
+                    c.ogrn = new_c.ogrn
+                if not c.kpp and new_c.kpp:
+                    c.kpp = new_c.kpp
+                if not c.address and new_c.address:
+                    c.address = new_c.address
+                if not c.org_type and new_c.org_type:
+                    c.org_type = new_c.org_type
+                if not c.signatory and new_c.signatory:
+                    c.signatory = new_c.signatory
+                enriched += 1
+            else:
+                skipped += 1
+        except Exception:
+            failed += 1
+
+    await db.commit()
+    return {
+        "ok": True,
+        "enriched": enriched,
+        "skipped_no_change": skipped,
+        "failed": failed,
+        "total_processed": len(rows),
+    }
+
+
 @router.post("/enrich-from-fns/{contractor_id}")
 async def enrich_contractor_from_fns(
     contractor_id: int,

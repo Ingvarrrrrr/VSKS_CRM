@@ -5410,6 +5410,29 @@ const loadPurchase = async () => {
     form.contractor_id = data.contractor_id
   }
 
+  // Phase 26-EE: hydrate per-item contractors. Если у позиций stoit contractor_id,
+  // которого нет в локальном contractors массиве — frontend autocomplete показывает пустоту.
+  // Это критический баг для employee, у которых /contractors отдаёт фильтрованный список.
+  try {
+    const itemContractorIds = Array.from(new Set(
+      (data.items || [])
+        .map((it: any) => it.contractor_id)
+        .filter((cid: any) => cid && !contractors.value.some(c => c.id === cid))
+    )) as number[]
+    if (itemContractorIds.length) {
+      const fetched = await Promise.all(
+        itemContractorIds.map(cid =>
+          apiFetch<Contractor>(`/contractors/${cid}`).catch(() => null as any)
+        )
+      )
+      for (const f of fetched) {
+        if (f && f.id && !contractors.value.some(c => c.id === f.id)) {
+          contractors.value.push(f)
+        }
+      }
+    }
+  } catch {}
+
   // Phase 26-AA: дозагрузить ответственного и возмещателя, если их нет в orgUsersList.
   // Сценарий: employee не имеет прав видеть пользователя, который назначен другим
   // (например, Цыганов id=8 у employee Лягина). Без этого v-autocomplete с item-value=id

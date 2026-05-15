@@ -1225,6 +1225,49 @@ def _register_cyrillic_font() -> str:
     return "Helvetica"
 
 
+def _extract_items_from_proverkacheka_html(html: str) -> list:
+    """Phase 26-EE: парсер HTML-таблицы товаров от proverkacheka.com.
+    Структура: <tr class="b-check_vblock-first b-check_item"><td>№</td><td>name</td><td>price</td><td>qty</td><td>sum</td></tr>
+    NB: price/qty/sum здесь уже в рублях (не копейках), потому что proverkacheka форматирует их как строки.
+    """
+    if not html or not isinstance(html, str):
+        return []
+    import re as _re
+    out = []
+    # Ищем строки с классом b-check_item (НЕ b-check_vblock-last, т.к. там НДС/итого)
+    item_rows = _re.findall(
+        r'<tr[^>]*class="[^"]*b-check_vblock-first[^"]*b-check_item[^"]*"[^>]*>(.*?)</tr>',
+        html,
+        flags=_re.DOTALL,
+    )
+    for row in item_rows:
+        cells = _re.findall(r'<td[^>]*>(.*?)</td>', row, flags=_re.DOTALL)
+        if len(cells) < 5:
+            continue
+        # cells: [№, name, price, qty, sum]
+        def _clean(s):
+            s = _re.sub(r'<[^>]+>', '', s)  # strip tags
+            s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            return s.strip()
+        try:
+            name = _clean(cells[1])
+            price = float(_clean(cells[2]).replace(',', '.').replace(' ', '') or 0)
+            qty = float(_clean(cells[3]).replace(',', '.').replace(' ', '') or 1)
+            sm = float(_clean(cells[4]).replace(',', '.').replace(' ', '') or 0)
+            if not name:
+                continue
+            out.append({
+                'name': name,
+                'quantity': qty,
+                'qty': qty,
+                'price': price,
+                'sum': sm,
+            })
+        except Exception:
+            continue
+    return out
+
+
 def _extract_items(raw) -> list:
     """Pull items out of the raw_json regardless of FNS shape variant."""
     if not isinstance(raw, dict):
@@ -1243,32 +1286,41 @@ def _extract_items(raw) -> list:
             items_src = rcpt.get('items')
     if items_src is None:
         items_src = raw.get('items')
-    if not isinstance(items_src, list):
-        return []
-    out = []
-    for it in items_src:
-        if not isinstance(it, dict):
-            continue
-        try:
-            qty = float(it.get('quantity') or 1)
-        except Exception:
-            qty = 1.0
-        try:
-            price = float(it.get('price') or 0) / 100.0
-        except Exception:
-            price = 0.0
-        try:
-            sm = float(it.get('sum') or 0) / 100.0
-        except Exception:
-            sm = 0.0
-        out.append({
-            'name': str(it.get('name') or '').strip(),
-            'quantity': qty,
-            'qty': qty,  # alias for backwards compat
-            'price': price,
-            'sum': sm,
-        })
-    return out
+    if isinstance(items_src, list) and items_src:
+        out = []
+        for it in items_src:
+            if not isinstance(it, dict):
+                continue
+            try:
+                qty = float(it.get('quantity') or 1)
+            except Exception:
+                qty = 1.0
+            try:
+                price = float(it.get('price') or 0) / 100.0
+            except Exception:
+                price = 0.0
+            try:
+                sm = float(it.get('sum') or 0) / 100.0
+            except Exception:
+                sm = 0.0
+            out.append({
+                'name': str(it.get('name') or '').strip(),
+                'quantity': qty,
+                'qty': qty,
+                'price': price,
+                'sum': sm,
+            })
+        if out:
+            return out
+    # Phase 26-EE fallback: proverkacheka.com HTML
+    pv = raw.get('proverkacheka')
+    if isinstance(pv, dict):
+        data = pv.get('data')
+        if isinstance(data, dict):
+            html = data.get('html')
+            if html:
+                return _extract_items_from_proverkacheka_html(html)
+    return []
 
 
 def _render_fallback_pdf(r) -> bytes:

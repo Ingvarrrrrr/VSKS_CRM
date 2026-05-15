@@ -1141,6 +1141,156 @@ async def import_items_mapped(
     }
 
 
+# ---------------------------------------------------------------------------
+# Image import helpers (Phase 26-PP)
+# ---------------------------------------------------------------------------
+
+def _try_decode_qr(image_bytes: bytes) -> str | None:
+    """Попытаться декодировать QR-код из изображения.
+
+    Сначала pyzbar, потом cv2.QRCodeDetector. Возвращает строку QR или None.
+    Все импорты в try/except — если библиотек нет, вернуть None без ошибок.
+    """
+    # pyzbar
+    try:
+        from pyzbar.pyzbar import decode as _pyzbar_decode
+        from PIL import Image as _PILImage
+        import io as _io
+        img = _PILImage.open(_io.BytesIO(image_bytes))
+        decoded = _pyzbar_decode(img)
+        for d in decoded:
+            data = d.data
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", errors="replace")
+            if data:
+                return data
+    except Exception:
+        pass
+
+    # cv2 fallback
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+        arr = _np.frombuffer(image_bytes, dtype=_np.uint8)
+        img_cv = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+        if img_cv is not None:
+            detector = _cv2.QRCodeDetector()
+            data, _, _ = detector.detectAndDecode(img_cv)
+            if data:
+                return data
+    except Exception:
+        pass
+
+    return None
+
+
+def _smart_import_image_ocr(content: bytes, filename: str) -> dict:
+    """Stage 1 OCR для изображений: tesseract → regex-парсинг строк чека.
+
+    Возвращает preview-словарь (без сохранения в БД).
+    Бросает HTTPException если OCR пустой или ничего не распознано.
+    """
+    import re
+
+    # Открыть изображение через Pillow
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось открыть изображение: {e}")
+
+    # OCR
+    try:
+        import pytesseract
+        ocr_text = pytesseract.image_to_string(img, lang="rus+eng")
+    except Exception as e:
+        raise HTTPException(
+            400,
+            f"Ошибка OCR (tesseract установлен?): {e}. "
+            "Попробуйте QR-чек ФНС или загрузите Excel/PDF."
+        )
+
+    if not ocr_text or not ocr_text.strip():
+        raise HTTPException(
+            400,
+            "На изображении не распознан текст. "
+            "Попробуйте QR-чек ФНС или загрузите Excel/PDF с позициями."
+        )
+
+    # Эвристика: каждая строка — потенциальная позиция
+    # Паттерны: «Название  N шт  X руб», «Название  X руб», «1  Название  N  X  Y»
+    items = []
+    lines = [ln.strip() for ln in ocr_text.splitlines() if ln.strip()]
+
+    # Паттерн: число-разделитель-название-число(кол-во)-число(цена)-число(сумма)
+    # Или проще: ищем строки с хотя бы одним числом-рублём
+    PRICE_RE = re.compile(
+        r"(?P<name>.+?)\s+"
+        r"(?:(?P<qty>\d+(?:[.,]\d+)?)\s*(?:шт|кг|л|м|уп|уп\.|ед|ед\.)\s*)?"
+        r"(?:x|х|×)?\s*"
+        r"(?P<price>\d[\d\s]*(?:[.,]\d{1,2})?)\s*(?:руб|₽|р\.?)?",
+        re.IGNORECASE | re.UNICODE,
+    )
+    SKIP_WORDS = re.compile(
+        r"^(итого|total|сумма|кассир|кассa|чек|receipt|дата|дата:|inn|инн|"
+        r"тел|телефон|спасибо|магазин|адрес|режим|номер|фн:|фд:|фпд:|"
+        r"кку|ккт|ооо|ип |ооо )",
+        re.IGNORECASE,
+    )
+
+    for line in lines:
+        if SKIP_WORDS.match(line):
+            continue
+        m = PRICE_RE.search(line)
+        if not m:
+            continue
+        name = m.group("name").strip(" -–•·")
+        # Слишком короткое название — пропустить
+        if len(name) < 3:
+            continue
+        qty_raw = m.group("qty")
+        price_raw = m.group("price")
+        try:
+            price_clean = price_raw.replace(" ", "").replace(",", ".")
+            price_val = float(price_clean)
+        except Exception:
+            price_val = None
+        try:
+            qty_val = float((qty_raw or "1").replace(",", "."))
+        except Exception:
+            qty_val = 1.0
+
+        items.append({
+            "item_name": name[:500],
+            "item_type": "товар",
+            "quantity": qty_val,
+            "unit": "шт",
+            "unit_price": price_val,
+            "total_price": round(price_val * qty_val, 2) if price_val else None,
+        })
+
+    if not items:
+        raise HTTPException(
+            400,
+            "На изображении текст распознан, но позиции товаров не обнаружены. "
+            "Качество OCR для чеков невысокое — рекомендуем использовать QR-код ФНС "
+            "(приложение «Проверка чека ФНС России») или загрузить Excel/PDF."
+        )
+
+    return {
+        "preview": items,
+        "total_rows": len(items),
+        "file_type": "image_ocr",
+        "columns_found": ["item_name", "quantity", "unit_price", "total_price"],
+        "warning": (
+            "Распознавание через OCR имеет ограниченную точность. "
+            "Рекомендуется проверить позиции перед сохранением. "
+            "Для лучшего результата используйте QR-код ФНС на чеке."
+        ),
+    }
+
+
 @router.post("/{pid}/items/import-smart")
 async def import_items_smart(
     pid: int,
@@ -1160,9 +1310,78 @@ async def import_items_smart(
     content = await file.read()
     filename = (file.filename or "").lower()
 
-    allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".html", ".htm")
+    IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+    allowed_ext = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".html", ".htm") + IMAGE_EXTS
     if not any(filename.endswith(ext) for ext in allowed_ext):
-        raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS, HTML")
+        raise HTTPException(400, "Поддерживаются файлы: PDF, DOCX, XLSX/XLS, HTML, JPG/PNG (фото чека)")
+
+    # ── Image pipeline ──────────────────────────────────────────────────────────
+    if any(filename.endswith(ext) for ext in IMAGE_EXTS):
+        # HEIC: graceful error if pillow-heif not available
+        if filename.endswith((".heic", ".heif")):
+            try:
+                import pillow_heif  # noqa: F401
+                pillow_heif.register_heif_opener()
+            except ImportError:
+                raise HTTPException(
+                    400,
+                    "Формат HEIC временно не поддерживается. "
+                    "Пожалуйста, конвертируйте изображение в JPG перед загрузкой."
+                )
+
+        # Stage 0: попробовать QR-декодирование (чек ФНС)
+        qr_str = _try_decode_qr(content)
+        if qr_str:
+            # Делегируем на proverkacheka pipeline (те же helpers что from-qr-fetch)
+            from app.routers.purchase_receipts import (
+                _create_receipt_with_items as _r_create_receipt,
+                _parse_fns_json_receipt,
+                _parse_qr_string,
+            )
+            import os as _os
+            import httpx as _httpx
+            token = _os.getenv("PROVERKACHEKA_TOKEN", "").strip()
+            if not token:
+                raise HTTPException(
+                    503,
+                    "QR-код найден, но PROVERKACHEKA_TOKEN не настроен. "
+                    "Обратитесь к администратору или импортируйте Excel/PDF."
+                )
+            try:
+                async with _httpx.AsyncClient(timeout=30.0) as _client:
+                    _resp = await _client.post(
+                        "https://proverkacheka.com/api/v1/check/get",
+                        data={"qrraw": qr_str, "token": token},
+                    )
+                    _resp.raise_for_status()
+                    _payload = _resp.json()
+            except Exception as exc:
+                raise HTTPException(502, f"Ошибка запроса к proverkacheka.com: {exc}")
+            if not isinstance(_payload, dict) or _payload.get("code") != 1:
+                _msg = (_payload or {}).get("data", "") if isinstance(_payload, dict) else ""
+                raise HTTPException(400, f"Чек не найден в ФНС: {_msg or 'неизвестная ошибка'}")
+            _body = _payload.get("data") or {}
+            _receipt_obj = _body.get("json") if isinstance(_body, dict) else None
+            if not isinstance(_receipt_obj, dict):
+                raise HTTPException(502, "Ответ proverkacheka.com без данных чека")
+            _data = _parse_fns_json_receipt(_receipt_obj)
+            if not _data.get("fiscal_drive_number"):
+                _qr_data = _parse_qr_string(qr_str)
+                for _k, _v in _qr_data.items():
+                    if _v and not _data.get(_k):
+                        _data[_k] = _v
+            receipt = await _r_create_receipt(
+                pid, _data, "qr_scan", {"qr": qr_str, "proverkacheka": _payload}, db
+            )
+            return {
+                "ok": True,
+                "source": "qr_fns",
+                "receipt_id": receipt.id,
+                "message": "Чек успешно импортирован по QR-коду ФНС. Позиции добавлены в закупку.",
+            }
+
+        # Stage 1: OCR через tesseract
+        return _smart_import_image_ocr(content, filename)
 
     if filename.endswith(".pdf"):
         file_type = "pdf"

@@ -801,6 +801,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 import { useAppSearch } from '@/composables/useAppSearch'
 import FileDropZone from '@/components/FileDropZone.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
@@ -1445,7 +1446,12 @@ const loadContracts = async () => {
 }
 
 const loadSubsidies = async () => { subsidies.value = await apiFetch<Subsidy[]>('/subsidies/') }
-const loadContractors = async () => { contractors.value = await apiFetch<Contractor[]>('/contractors/') }
+// Phase 26-YY: Pinia кэш (TTL 5 мин) — один запрос за сессию, переиспользуется во всех views
+const contractorsStore = useContractorsStore()
+const loadContractors = async () => {
+  await contractorsStore.ensureLoaded()
+  contractors.value = contractorsStore.list as Contractor[]
+}
 
 const loadPurchasesForContract = async (contractId: number) => {
   const c = contracts.value.find(x => x.id === contractId) as any

@@ -480,12 +480,63 @@ async def _create_receipt_with_items(
 
 # ── core helper (Phase 26-Z-bootstrap) ───────────────────────────────────────
 
+async def _compute_purchase_snapshot_hash(purchase_id: int, db: AsyncSession) -> str:
+    """Phase 26-YY: SHA-1 от состояния items+receipts закупки.
+
+    Используется как cheap-gate перед запуском fuzzy/autocreate/dedup в
+    _recompute_from_receipts_core. Если hash не изменился — пропускаем O(N×M×K).
+    """
+    import hashlib
+    from app.models.purchase_item import PurchaseItem as _PI
+    from app.models.purchase_receipt import PurchaseReceipt as _PR
+    items_q = await db.execute(
+        select(_PI.id, _PI.item_name, _PI.total_price, _PI.receipt_id, _PI.contractor_id, _PI.match_confirmed)
+        .where(_PI.purchase_id == purchase_id)
+        .order_by(_PI.id.asc())
+    )
+    items_parts = [
+        f"i:{r[0]}:{r[1] or ''}:{r[2] or 0}:{r[3] or 0}:{r[4] or 0}:{int(bool(r[5]))}"
+        for r in items_q.all()
+    ]
+    receipts_q = await db.execute(
+        select(_PR.id, _PR.fiscal_document_number, _PR.total_sum, _PR.seller_inn)
+        .where(_PR.purchase_id == purchase_id)
+        .order_by(_PR.id.asc())
+    )
+    receipts_parts = [
+        f"r:{r[0]}:{r[1] or ''}:{r[2] or 0}:{r[3] or ''}"
+        for r in receipts_q.all()
+    ]
+    payload = "|".join(items_parts + receipts_parts)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
 async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> dict:
     """Idempotent recompute. Returns stats dict. Не кидает HTTPException."""
     from sqlalchemy.orm import attributes as _orm_attrs
     p = await db.get(Purchase, purchase_id)
     if not p:
         return {"ok": False, "reason": "not_found", "items_updated": 0, "files_attached": 0, "acceptance_docs_added": 0}
+
+    # Phase 26-YY: snapshot-hash gate — skip если состояние items+receipts не
+    # изменилось с прошлого прогона. Это резко удешевляет повторный GET карточки
+    # (без новых чеков/правок) — O(1) SELECT'ов вместо O(N×M×K) fuzzy.
+    try:
+        current_hash = await _compute_purchase_snapshot_hash(purchase_id, db)
+        if p.recompute_snapshot_hash and p.recompute_snapshot_hash == current_hash:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "snapshot_unchanged",
+                "items_updated": 0,
+                "items_autocreated": 0,
+                "items_deduplicated": 0,
+                "files_attached": 0,
+                "acceptance_docs_added": 0,
+            }
+    except Exception as _hash_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"snapshot hash compute failed: {_hash_e}")
 
     receipts_q = await db.execute(
         select(PurchaseReceipt)
@@ -783,6 +834,16 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
     except Exception as _ci_exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(f"recompute contract_items autocreate skipped: {_ci_exc}")
+
+    # Phase 26-YY: сохранить новый snapshot hash чтобы следующий GET без изменений
+    # данных skip'нул всю эту работу.
+    try:
+        await db.flush()
+        new_hash = await _compute_purchase_snapshot_hash(purchase_id, db)
+        p.recompute_snapshot_hash = new_hash
+    except Exception as _save_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"snapshot hash save failed: {_save_e}")
 
     await db.commit()
     return {

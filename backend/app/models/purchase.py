@@ -111,6 +111,10 @@ class Purchase(Base):
     # Phase 26-U-3: НДС режим — 'uniform' (одинаковый) или 'per_item' (для каждого товара)
     vat_mode = Column(String(20), nullable=True, default='uniform', server_default='uniform')
 
+    # Phase 26-YY: snapshot-hash гейт для auto-recompute (SHA-1 от items+receipts).
+    # Если current_hash == recompute_snapshot_hash → skip fuzzy/autocreate/dedup.
+    recompute_snapshot_hash = Column(String(64), nullable=True)
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки

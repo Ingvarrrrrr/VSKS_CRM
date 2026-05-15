@@ -567,6 +567,19 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-U-3 vat columns skipped (non-fatal): {e}")
 
+    # Phase 26-YY: idempotent ALTER — purchases.recompute_snapshot_hash (SHA-1 гейт
+    # auto-recompute из purchase_receipts._recompute_from_receipts_core).
+    try:
+        from sqlalchemy import text as _text3
+        from .database import engine as _engine3
+        async with _engine3.begin() as conn:
+            await conn.execute(_text3(
+                "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS recompute_snapshot_hash VARCHAR(64)"
+            ))
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-YY snapshot_hash column skipped (non-fatal): {e}")
+
     # Phase 26-CC: propagate purchase.contractor_id → items.contractor_id для advance.
     # Если на уровне закупки контрагент проставлен вручную, items без contractor_id
     # должны его наследовать. Самый дешёвый backfill — без чтения raw_json.

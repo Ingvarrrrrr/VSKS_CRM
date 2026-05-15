@@ -902,6 +902,7 @@
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -1499,11 +1500,17 @@ const loadSubsidies = async () => {
 
 const ordersTableRef = ref<any>(null)
 
+const contractorsStore = useContractorsStore()
+
 onMounted(async () => {
   loadOrders()
   loadSubsidies()
   loadFilterPresets()
-  try { contractors.value = await apiFetch<Contractor[]>('/contractors/') } catch { contractors.value = [] }
+  // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин) — один запрос за сессию
+  try {
+    await contractorsStore.ensureLoaded()
+    contractors.value = contractorsStore.list
+  } catch { contractors.value = [] }
   // Link task mode
   if (route.query.link_task) {
     linkTaskId.value = Number(route.query.link_task)

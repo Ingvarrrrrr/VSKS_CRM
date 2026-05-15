@@ -268,6 +268,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
@@ -614,18 +615,20 @@ async function loadConfig(id: number) {
 watch([filters, groupBy], reload, { deep: true })
 
 // Init
+const contractorsStore = useContractorsStore()
 onMounted(async () => {
   try {
     const f = await apiFetch<any>('/analytics/fields')
     fields.value = f.fields
     groups.value = f.groups
     openGroups.value = [...f.groups]
-    const [subs, ctrs] = await Promise.all([
+    // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин) — один запрос за сессию
+    const [subs] = await Promise.all([
       apiFetch<any>('/subsidies/'),
-      apiFetch<any>('/contractors/?limit=500'),
+      contractorsStore.ensureLoaded(),
     ])
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
-    contractors.value = Array.isArray(ctrs) ? ctrs : ctrs.items || []
+    contractors.value = contractorsStore.list
     const idParam = route.params.id
     if (idParam) await loadConfig(Number(idParam))
   } catch (e: any) {

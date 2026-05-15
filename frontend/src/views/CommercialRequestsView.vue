@@ -365,6 +365,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
@@ -415,6 +416,7 @@ const showColumnPicker = ref(false)
 const requests = ref<CommercialRequest[]>([])
 const purchases = ref<Purchase[]>([])
 const contractors = ref<Contractor[]>([])
+const contractorsStore = useContractorsStore()
 const loading = ref(false)
 const filterStatus = ref('')
 const search = ref('')
@@ -534,7 +536,9 @@ async function openCreateDialog() {
   if (contractors.value.length === 0) {
     createDialog.loadingContractors = true
     try {
-      contractors.value = await apiFetch<Contractor[]>('/contractors/')
+      // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин)
+      await contractorsStore.ensureLoaded()
+      contractors.value = contractorsStore.list as Contractor[]
     } finally {
       createDialog.loadingContractors = false
     }
@@ -563,6 +567,7 @@ async function saveQuickContractor() {
       },
     })
     contractors.value.push(created)
+    contractorsStore.invalidate()  // Phase 26-YY: следующий ensureLoaded() возьмёт свежий список
     createDialog.recipient_ids = [...createDialog.recipient_ids, created.id]
     quickContractor.show = false
     showSnack(`Контрагент «${created.name}» добавлен`)

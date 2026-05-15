@@ -3034,6 +3034,7 @@
 import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
@@ -4980,16 +4981,19 @@ const needsContract = computed(() => form.status === 'work_in_progress')
 const needsAcceptance = computed(() => form.status === 'contracted')
 const needsPayment = computed(() => form.status === 'delivered')
 
+const contractorsStore = useContractorsStore()
+
 const loadRefs = async () => {
-  const [subs, cons, feos, prods, evts] = await Promise.all([
+  // Phase 26-YY: контрагенты через Pinia store (TTL 5 мин) — один запрос за сессию
+  const [subs, _cons, feos, prods, evts] = await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/'),
-    apiFetch<Contractor[]>('/contractors/'),
+    contractorsStore.ensureLoaded(),
     apiFetch<FeoCategory[]>('/feo-categories/'),
     apiFetch<Product[]>('/products/'),
     apiFetch<EventItem[]>('/events/'),
   ])
   subsidies.value = subs
-  contractors.value = cons
+  contractors.value = contractorsStore.list
   allFeoCategories.value = feos
   products.value = prods
   allEvents.value = evts
@@ -5028,6 +5032,7 @@ async function saveNewContractor() {
   try {
     const created = await apiFetch<Contractor>('/contractors/', { method: 'POST', body: { ...addContractorForm } })
     contractors.value.push(created)
+    contractorsStore.invalidate()  // Phase 26-YY: следующий ensureLoaded() возьмёт свежий список
     form.contractor_id = created.id
     contractorInn.value = created.inn || ''
     addContractorDialog.value = false

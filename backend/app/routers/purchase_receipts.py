@@ -1263,7 +1263,8 @@ def _extract_items(raw) -> list:
             sm = 0.0
         out.append({
             'name': str(it.get('name') or '').strip(),
-            'qty': qty,
+            'quantity': qty,
+            'qty': qty,  # alias for backwards compat
             'price': price,
             'sum': sm,
         })

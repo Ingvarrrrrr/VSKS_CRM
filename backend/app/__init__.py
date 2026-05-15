@@ -1027,6 +1027,70 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
     return result
 
 
+@app.post("/api/diag/recompute/{pid}")
+async def diag_recompute_single(pid: int, current_user=Depends(get_current_user)):
+    """Phase 26-DD: ручной recompute одной закупки доступен ЛЮБОЙ авторизованной роли,
+    с подробным отчётом включая sample raw_json. Для отладки 575/582 без admin токена."""
+    from sqlalchemy import select as _sel
+    from .models.purchase import Purchase as _Purchase
+    from .models.purchase_item import PurchaseItem as _PI
+    from .models.purchase_receipt import PurchaseReceipt as _PR
+    from app.routers.purchase_receipts import (
+        _recompute_from_receipts_core, _extract_items
+    )
+    import json as _json
+
+    async with async_session() as db:
+        p = await db.get(_Purchase, pid)
+        if not p:
+            raise HTTPException(404, "Закупка не найдена")
+        # Snapshot ДО
+        items_before = (await db.execute(
+            _sel(_PI).where(_PI.purchase_id == pid)
+        )).scalars().all()
+        receipts = (await db.execute(
+            _sel(_PR).where(_PR.purchase_id == pid).order_by(_PR.id.asc())
+        )).scalars().all()
+        before = {
+            "items_count": len(items_before),
+            "items_with_contractor": sum(1 for i in items_before if i.contractor_id),
+            "items_with_receipt_id": sum(1 for i in items_before if i.receipt_id),
+            "receipts_count": len(receipts),
+            "receipts_raw_items_count": [len(_extract_items(r.raw_json or {})) for r in receipts],
+            "purchase_contractor_id": p.contractor_id,
+        }
+        # Sample raw_json первого чека (truncated)
+        sample = None
+        if receipts:
+            r0 = receipts[0]
+            raw_str = _json.dumps(r0.raw_json or {}, ensure_ascii=False)[:1500]
+            sample = {
+                "receipt_id": r0.id,
+                "seller_inn": r0.seller_inn,
+                "seller_name": r0.seller_name,
+                "raw_json_truncated": raw_str,
+                "extracted_items": _extract_items(r0.raw_json or {})[:5],
+            }
+        # Запуск
+        result = await _recompute_from_receipts_core(pid, db)
+        # Snapshot ПОСЛЕ
+        items_after = (await db.execute(
+            _sel(_PI).where(_PI.purchase_id == pid)
+        )).scalars().all()
+        after = {
+            "items_count": len(items_after),
+            "items_with_contractor": sum(1 for i in items_after if i.contractor_id),
+            "items_with_receipt_id": sum(1 for i in items_after if i.receipt_id),
+        }
+        return {
+            "ok": True,
+            "before": before,
+            "recompute_result": result,
+            "after": after,
+            "sample_receipt": sample,
+        }
+
+
 @app.get("/api/diag/purchase/{pid}")
 async def diag_purchase(pid: int, current_user=Depends(get_current_user)):
     """Sample данных о закупке для диагностики backfills (admin/superadmin only)."""

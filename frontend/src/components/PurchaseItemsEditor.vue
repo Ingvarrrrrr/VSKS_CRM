@@ -2763,8 +2763,16 @@ async function doSmartPreview() {
       throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
     }
     const data = await resp.json()
+    // QR ФНС: чек сразу создан на сервере (без preview), закрываем диалог
+    if (data.source === 'qr_fns') {
+      showSnack(data.message || 'Чек импортирован по QR ФНС', 'success')
+      emit('reload-requested')
+      itemsImportDialog.value = false
+      return
+    }
     smartImportPreview.value = data.preview || []
     smartImportColumns.value = data.columns_found || []
+    if (data.warning) showSnack(data.warning, 'warning')
     if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
   } catch (e: any) {
     showSnack(e.message || 'Ошибка распознавания', 'error')

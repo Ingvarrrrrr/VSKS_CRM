@@ -851,12 +851,24 @@ async def list_contractors(
     search: str = Query(None),
     limit: int = Query(200, ge=1, le=1000),
 ):
-    q = select(Contractor).order_by(Contractor.name)
+    q = select(Contractor)
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
     if search:
-        q = q.where(Contractor.name.ilike(f"%{search}%") | Contractor.inn.ilike(f"%{search}%"))
+        from sqlalchemy import case
+        term = f"%{search}%"
+        prefix = f"{search}%"
+        relevance = case(
+            (Contractor.name.ilike(prefix), 0),
+            (Contractor.inn.ilike(prefix), 1),
+            (Contractor.name.ilike(term), 2),
+            else_=3,
+        )
+        q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
+        q = q.order_by(relevance, Contractor.name)
+    else:
+        q = q.order_by(Contractor.name)
     result = await db.execute(q.limit(limit))
     return result.scalars().all()
 

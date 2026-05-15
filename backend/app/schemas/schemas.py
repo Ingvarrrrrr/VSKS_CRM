@@ -1305,6 +1305,7 @@ class ContractItemUpdate(BaseModel):
 class ContractItemOut(ContractItemBase):
     id: int
     purchase_id: int
+    source_item_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

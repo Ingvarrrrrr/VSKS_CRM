@@ -514,6 +514,7 @@
             :vat-mode="form.vat_mode"
             :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
             :form-mode="formMode"
+            :contractors="contractors"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"

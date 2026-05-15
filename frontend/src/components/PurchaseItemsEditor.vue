@@ -242,7 +242,7 @@
                           <v-textarea
                             :model-value="getContractItemFor(idx)?.name ?? ''"
                             density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
-                            rows="1" auto-grow class="my-1" style="min-width:200px"
+                            rows="1" auto-grow class="my-1 flex-grow-1" style="min-width:200px"
                             :disabled="props.readonly"
                             @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
                           />
@@ -1385,6 +1385,7 @@ const props = withDefaults(defineProps<{
   vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
   uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
   formMode?: string                          // Phase 26-X: 'advance_report' → показывать колонку Контрагент
+  contractors?: Contractor[]                 // Phase 26-JJ: shared contractors state from parent
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1620,7 +1621,14 @@ const products = ref<Product[]>([])
 
 // ── Contractors catalogue ────────────────────────────────────────────────────
 
-const contractors = ref<Contractor[]>([])
+// Phase 26-JJ: localContractors holds hydrated-per-id + live-search results.
+// contractors computed merges props.contractors (parent shared state) with local — no duplicates.
+const localContractors = ref<Contractor[]>([])
+const contractors = computed<Contractor[]>(() => {
+  if (!props.contractors) return localContractors.value
+  const seen = new Set(props.contractors.map((c: Contractor) => c.id))
+  return [...props.contractors, ...localContractors.value.filter((c: Contractor) => !seen.has(c.id))]
+})
 const contractorPickerDialog = ref(false)
 const contractorPickerSaving = ref(false)
 const contractorPickerForm = reactive({
@@ -1645,11 +1653,23 @@ const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-edito
   country: 150, contractor: 200, actions: 80,
 })
 
+// Phase 26-JJ: NO bulk load. Hydrate only known contractor_id from current items.
+// If props.contractors is provided — parent already manages the list.
 async function loadContractors() {
-  try {
-    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=1000')
-  } catch (e) {
-    console.warn('[PurchaseItemsEditor] Could not load contractors:', e)
+  if (props.contractors) return  // shared state from parent — parent will hydrate
+  const ids = Array.from(new Set(
+    (props.modelValue || [])
+      .map((it: any) => it.contractor_id)
+      .filter((id: any) => typeof id === 'number' && id > 0)
+  )) as number[]
+  if (!ids.length) return
+  const fetched = await Promise.all(
+    ids.map((id: number) => apiFetch<Contractor>(`/contractors/${id}`).catch(() => null as any))
+  )
+  for (const c of fetched) {
+    if (c && c.id && !localContractors.value.some((x: Contractor) => x.id === c.id)) {
+      localContractors.value.push(c)
+    }
   }
 }
 
@@ -1702,7 +1722,10 @@ async function saveContractorQuickCreate() {
         address: contractorPickerForm.address.trim() || null,
       },
     })
-    await loadContractors()
+    // Phase 26-JJ: loadContractors теперь не делает bulk load — добавляем нового контрагента напрямую
+    if (saved && saved.id && !localContractors.value.some((c: Contractor) => c.id === saved.id)) {
+      localContractors.value.push(saved)
+    }
     if (contractorPickerIdx.value >= 0) {
       onItemContractorSelect(contractorPickerIdx.value, saved)
     }
@@ -1729,39 +1752,60 @@ async function tryLookupContractorByInn(inn: string): Promise<Contractor | null>
   }
 }
 
-// When user types INN in contractor autocomplete search, try to auto-lookup
+// Phase 26-JJ: live server-search + INN lookup
 let _innLookupTimer: ReturnType<typeof setTimeout> | null = null
+let _searchTimer: ReturnType<typeof setTimeout> | null = null
 async function onContractorSearchInput(idx: number, search: string) {
-  if (_innLookupTimer) {
-    clearTimeout(_innLookupTimer)
-    _innLookupTimer = null
-  }
+  if (_innLookupTimer) { clearTimeout(_innLookupTimer); _innLookupTimer = null }
+  if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null }
+
   const q = (search || '').trim()
-  // Только цифры, длина 10 или 12
-  if (!/^\d{10}$|^\d{12}$/.test(q)) return
-  // Если уже в массиве contractors есть с таким inn — autocomplete сам отфильтрует
-  if (contractors.value.some(c => c.inn === q)) return
-  _innLookupTimer = window.setTimeout(async () => {
+  if (!q) return
+
+  // Цифровой ИНН (10/12) — отдельный путь через lookup-inn
+  if (/^\d{10}$|^\d{12}$/.test(q)) {
+    if (contractors.value.some((c: Contractor) => c.inn === q)) return
+    _innLookupTimer = window.setTimeout(async () => {
+      contractorLookupLoading.value[idx] = true
+      try {
+        const found = await apiFetch<Contractor>(`/contractors/lookup-inn/${q}`)
+        if (found && found.id) {
+          if (!localContractors.value.some((c: Contractor) => c.id === found.id)) {
+            localContractors.value.push(found)
+          }
+          const item = localItems.value[idx]
+          if (item && !item.contractor_id) {
+            onItemContractorSelect(idx, found)
+          }
+        }
+      } catch {
+        // ФНС не нашёл / network — молча игнорируем
+      } finally {
+        contractorLookupLoading.value[idx] = false
+      }
+    }, 600) as unknown as number
+    return
+  }
+
+  // Текстовый поиск — server-side через /contractors/?search=...
+  if (q.length < 2) return
+  _searchTimer = window.setTimeout(async () => {
     contractorLookupLoading.value[idx] = true
     try {
-      const found = await apiFetch<Contractor>(`/contractors/lookup-inn/${q}`)
-      if (found && found.id) {
-        // Добавляем в локальный массив, если ещё не там
-        if (!contractors.value.some(c => c.id === found.id)) {
-          contractors.value.push(found)
-        }
-        // Auto-select для этой строки, если contractor ещё не выбран
-        const item = localItems.value[idx]
-        if (item && !item.contractor_id) {
-          onItemContractorSelect(idx, found)
+      const results = await apiFetch<Contractor[]>(`/contractors/?search=${encodeURIComponent(q)}&limit=50`)
+      if (Array.isArray(results)) {
+        for (const c of results) {
+          if (c.id && !localContractors.value.some((x: Contractor) => x.id === c.id)) {
+            localContractors.value.push(c)
+          }
         }
       }
     } catch {
-      // ФНС не нашёл / network — молча игнорируем, user может ввести вручную
+      // network — молча игнорируем
     } finally {
       contractorLookupLoading.value[idx] = false
     }
-  }, 600) as unknown as number
+  }, 300) as unknown as number
 }
 
 onMounted(async () => {

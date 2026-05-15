@@ -1129,10 +1129,35 @@ async def diag_recompute_single(pid: int, current_user=Depends(get_current_user)
         items_after = (await db.execute(
             _sel(_PI).where(_PI.purchase_id == pid)
         )).scalars().all()
+        # Phase 26-FF: per-item info + contractor resolvability
+        from .models.contractor import Contractor as _Ctr
+        items_detail = []
+        for it in items_after:
+            c_resolvable = False
+            c_inn = None
+            c_name = None
+            if it.contractor_id:
+                c_row = await db.get(_Ctr, it.contractor_id)
+                if c_row:
+                    c_resolvable = True
+                    c_inn = c_row.inn
+                    c_name = c_row.name
+            items_detail.append({
+                "item_id": it.id,
+                "name": (it.item_name or "")[:60],
+                "contractor_id": it.contractor_id,
+                "contractor_inn_in_item": it.contractor_inn,
+                "contractor_name_in_item": (it.contractor_name or "")[:60] if it.contractor_name else None,
+                "receipt_id": it.receipt_id,
+                "contractor_resolvable_in_db": c_resolvable,
+                "contractor_inn_resolved": c_inn,
+                "contractor_name_resolved": (c_name or "")[:60] if c_name else None,
+            })
         after = {
             "items_count": len(items_after),
             "items_with_contractor": sum(1 for i in items_after if i.contractor_id),
             "items_with_receipt_id": sum(1 for i in items_after if i.receipt_id),
+            "items_detail": items_detail,
         }
         return {
             "ok": True,

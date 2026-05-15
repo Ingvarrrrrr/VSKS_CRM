@@ -411,14 +411,11 @@
           <span class="text-body-2">{{ itemDisplayName(item) }}</span>
         </template>
 
-        <!-- № — для авансовых дублируем реестровый номер -->
+        <!-- № — единая registry-нумерация (phase26-bbb) -->
         <template #item.purchase_number="{ item }">
-          <div>
-            <span>{{ item.purchase_number ?? '—' }}</span>
-            <div v-if="item.purchase_method === 'advance' && item.registry_number" class="text-caption text-purple-darken-2">
-              {{ item.registry_number }}
-            </div>
-          </div>
+          <span class="text-caption" style="color:#7c3aed; font-family:monospace; white-space:nowrap">
+            {{ item.registry_number || `#${item.id}` }}
+          </span>
         </template>
 
         <!-- Тип закупки -->

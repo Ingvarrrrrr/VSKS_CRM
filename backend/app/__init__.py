@@ -580,6 +580,22 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-YY snapshot_hash column skipped (non-fatal): {e}")
 
+    # Phase 26-BBB: backfill purchases.registry_number для записей без него.
+    # Формат «РЕЕ-{year}-{id:05d}» — тот же что и для новых (purchases.py auto-gen,
+    # ~стр. 590-592). В модели Purchase нет created_at → year берётся из NOW().
+    try:
+        from sqlalchemy import text as _text_bbb
+        from .database import engine as _engine_bbb
+        async with _engine_bbb.begin() as conn:
+            await conn.execute(_text_bbb("""
+                UPDATE purchases
+                SET registry_number = 'РЕЕ-' || EXTRACT(YEAR FROM NOW())::int || '-' || LPAD(id::text, 5, '0')
+                WHERE registry_number IS NULL OR registry_number = ''
+            """))
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"Phase 26-BBB registry_number backfill skipped (non-fatal): {e}")
+
     # Phase 26-CC: propagate purchase.contractor_id → items.contractor_id для advance.
     # Если на уровне закупки контрагент проставлен вручную, items без contractor_id
     # должны его наследовать. Самый дешёвый backfill — без чтения raw_json.

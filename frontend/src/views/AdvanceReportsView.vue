@@ -294,13 +294,10 @@
         </template>
         <!-- End ColumnHeaderMenu slots -->
 
-        <template #item.index="{ item, index }">
-          <div class="text-medium-emphasis" style="line-height:1.2">
-            <div class="text-caption">{{ item.purchase_number || (index + 1) }}</div>
-            <div v-if="item.registry_number" class="text-caption" style="font-size:11px;color:#7c3aed">
-              {{ item.registry_number }}
-            </div>
-          </div>
+        <template #item.index="{ item }">
+          <span class="text-caption" style="color:#7c3aed; font-family:monospace; white-space:nowrap">
+            {{ item.registry_number || `#${item.id}` }}
+          </span>
         </template>
 
         <template #item.displayName="{ item }">

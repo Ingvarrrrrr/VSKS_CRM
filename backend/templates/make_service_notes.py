@@ -502,18 +502,23 @@ def add_body_advance(doc):
     p_endfor = new_para(doc, space_after=6)
     add_marker(p_endfor, "{% endfor %}", size=10)
 
-    # Phase 26-S: Чеки (InlineImage'ы) — последовательно по порядку загрузки
+    # Phase 26-HH: Чеки (InlineImage'ы) — paragraph-block синтаксис docxtpl ({%p ... %}).
+    # Каждое изображение чека идёт в отдельном параграфе ТОЧНО в этом месте.
+    # Раньше использовался обычный {% for %} что ломало inline-вставку картинок.
     p_receipts_hdr = new_para(doc, space_before=4, space_after=2)
     add_text(p_receipts_hdr, "Приложенные чеки:", bold=True)
 
+    # {%p for r in receipts %} — открывающий тег paragraph-loop'а
     p_for_r = new_para(doc, space_after=0)
-    add_marker(p_for_r, "{% for r in receipts %}", size=10)
+    add_marker(p_for_r, "{%p for r in receipts %}", size=10)
 
-    p_img = new_para(doc, space_after=2)
+    # Параграф с placeholder'ом — docxtpl заменит {{ r }} на изображение InlineImage
+    p_img = new_para(doc, space_after=4, align=WD_ALIGN_PARAGRAPH.CENTER)
     add_placeholder(p_img, "{{ r }}")
 
+    # {%p endfor %} — закрывающий тег
     p_endfor_r = new_para(doc, space_after=6)
-    add_marker(p_endfor_r, "{% endfor %}", size=10)
+    add_marker(p_endfor_r, "{%p endfor %}", size=10)
 
 
 # ─── ГЛАВНАЯ ФУНКЦИЯ ─────────────────────────────────────────────────────────

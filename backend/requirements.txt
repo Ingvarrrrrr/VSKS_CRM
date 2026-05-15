@@ -24,7 +24,6 @@ ocrmypdf>=15.0
 beautifulsoup4==4.12.3
 reportlab==4.2.5
 qrcode[pil]==7.4.2
-pymorphy3>=2.0.0
 petrovich>=1.0.0
 pytest==7.4.4
 pytest-asyncio==0.23.3

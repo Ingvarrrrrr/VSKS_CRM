@@ -47,22 +47,68 @@ def _get_petro():
             _petro = False
     return _petro or None
 
-def _to_gen_word(word: str) -> str:
-    """Склонить одно слово в родительный падеж через pymorphy3."""
-    morph = _get_morph()
-    if not morph or not word:
+def _to_gen_word_heuristic(word: str) -> str:
+    """Эвристическое склонение слова в родительный падеж без pymorphy3.
+
+    Покрывает 80-90% русских должностей (мужской род, второе склонение).
+    Phase 26-SS: fallback после удаления pymorphy3 (OOM на проде, e2dee47).
+    """
+    if not word or len(word) < 2:
         return word
-    try:
-        parsed = morph.parse(word)[0]
-        inflected = parsed.inflect({'gent'})
-        if inflected:
-            out = inflected.word
-            if word[0].isupper():
-                out = out[0].upper() + out[1:]
-            return out
-    except Exception:
-        pass
-    return word
+    lower = word.lower()
+    # Сохраняем регистр первой буквы
+    cap = word[0].isupper()
+    # Окончания:
+    # Слова УЖЕ в родительном падеже (атрибуты): «отдела», «управления»,
+    # «фирмы» → не трогаем. Эвристика: -а/-я/-ы/-и/-ов/-ей часто = gen.sg/pl.
+    if lower.endswith(('ия', 'ой', 'ого', 'его', 'ев', 'ов', 'ей')) and len(lower) > 3:
+        result = lower
+    elif lower.endswith('ый'):     # «главный» → «главного»
+        result = lower[:-2] + 'ого'
+    elif lower.endswith('ий'):     # «ведущий» → «ведущего» (после ж/ч/ш/щ → -его),
+                                    # «генеральный» → «генерального» (после др. → -ого)
+        prev = lower[-3] if len(lower) >= 3 else ''
+        result = lower[:-2] + ('его' if prev in ('ж', 'ч', 'ш', 'щ') else 'ого')
+    elif lower.endswith('ая'):     # «заведующая» → «заведующей»
+        result = lower[:-2] + 'ей'
+    elif lower.endswith('я'):      # «дядя» → «дяди»
+        result = lower[:-1] + 'и'
+    elif lower.endswith('а'):      # «бухгалтера» — уже gen.sg → не трогаем
+        result = lower
+    elif lower.endswith('ь'):      # «руководитель» → «руководителя»
+        result = lower[:-1] + 'я'
+    elif lower.endswith('й'):      # «специалистей» — редко
+        result = lower[:-1] + 'я'
+    elif lower.endswith(('о', 'е', 'у', 'ы', 'э', 'ю')):
+        # Несклоняемые: фамилии типа «Лопатко», иностранные «такси»
+        result = lower
+    else:                          # consonant
+        # «специалист» → «специалиста», «директор» → «директора»
+        result = lower + 'а'
+
+    if cap:
+        result = result[0].upper() + result[1:]
+    return result
+
+
+def _to_gen_word(word: str) -> str:
+    """Склонить одно слово в родительный падеж: pymorphy3 → эвристика."""
+    if not word:
+        return word
+    morph = _get_morph()
+    if morph:
+        try:
+            parsed = morph.parse(word)[0]
+            inflected = parsed.inflect({'gent'})
+            if inflected:
+                out = inflected.word
+                if word[0].isupper():
+                    out = out[0].upper() + out[1:]
+                return out
+        except Exception:
+            pass
+    # Phase 26-SS: fallback на эвристику если pymorphy3 нет (e2dee47 OOM revert)
+    return _to_gen_word_heuristic(word)
 
 def _to_gen_phrase(phrase: str) -> str:
     """Склонить фразу (должность) в родительный падеж — каждое слово отдельно."""

@@ -42,7 +42,7 @@ export const useContractorsStore = defineStore('contractors', {
       }
       this.loading = true
       try {
-        const data = await apiFetch<Contractor[]>('/contractors/?limit=2000')
+        const data = await apiFetch<Contractor[]>('/contractors/?limit=5000')
         this.list = Array.isArray(data) ? data : []
         this.loadedAt = Date.now()
       } catch (e) {

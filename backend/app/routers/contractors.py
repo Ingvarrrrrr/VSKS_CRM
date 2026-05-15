@@ -849,7 +849,7 @@ async def list_contractors(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     search: str = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=5000),
 ):
     q = select(Contractor)
     org_ids = get_org_filter(current_user)

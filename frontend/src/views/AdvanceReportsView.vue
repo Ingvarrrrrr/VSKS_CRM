@@ -308,32 +308,30 @@
         </template>
 
         <template #item.contractor_name="{ item }">
-          <!-- V-3: Все уникальные контрагенты из items (до 3 chip-ов inline + tooltip) -->
-          <div class="d-flex flex-wrap align-center" style="gap:2px">
-            <template v-if="(item as any)._unique_contractors_full_list?.length">
-              <v-chip
-                v-for="(name, idx) in (item as any)._unique_contractors_full_list.slice(0, 3)"
-                :key="idx"
-                size="x-small"
-                :color="(item as any)._unique_contractors_full_list.length > 1 ? 'orange' : 'indigo'"
-                variant="tonal"
-                prepend-icon="mdi-store"
-              >
-                {{ name }}
-              </v-chip>
-              <v-tooltip v-if="(item as any)._unique_contractors_full_list.length > 3" location="top">
-                <template #activator="{ props: tip }">
-                  <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal">
-                    +{{ (item as any)._unique_contractors_full_list.length - 3 }} ещё
-                  </v-chip>
-                </template>
-                <span>{{ (item as any)._unique_contractors_full_list.slice(3).join(', ') }}</span>
-              </v-tooltip>
-            </template>
+          <!-- U-1: Контрагент = продавец из items чека, а не получатель возмещения -->
+          <div>
+            <!-- Единственный контрагент из items -->
+            <v-chip
+              v-if="(item as any)._unique_item_contractor_count === 1"
+              size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-store"
+            >
+              {{ (item as any)._unique_item_contractor_name }}
+            </v-chip>
+            <!-- Несколько контрагентов из items -->
+            <v-tooltip v-else-if="(item as any)._unique_item_contractor_count > 1" location="top">
+              <template #activator="{ props: tip }">
+                <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+                  {{ (item as any)._unique_item_contractor_name }} +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
+                </v-chip>
+              </template>
+              <span>{{ (item as any)._all_item_contractor_names }}</span>
+            </v-tooltip>
+            <!-- Fallback: legacy contractor_name -->
             <span v-else class="text-caption">
               {{ (item as any).multi_contractor_label || item.contractor_name || '—' }}
             </span>
-            <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis" style="font-size:11px;width:100%">
+            <!-- Получатель возмещения — дополняет, не подменяет -->
+            <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis mt-0" style="font-size:11px">
               <v-icon size="12" color="purple">mdi-account</v-icon>
               возмещ.: {{ (item as any).reimbursement_user_name }}
             </div>
@@ -366,20 +364,6 @@
 
         <template #item.executionDate="{ item }">
           {{ item.executionDate ? new Date(item.executionDate).toLocaleDateString('ru-RU') : '—' }}
-        </template>
-
-        <template #item.delivery_date="{ item }">
-          {{ (item as any)._advance_delivery_date ? new Date((item as any)._advance_delivery_date).toLocaleDateString('ru-RU') : '—' }}
-        </template>
-
-        <template #item.acceptance_doc_name="{ item }">
-          <span :title="((item as any)._acceptance_docs_list?.length ? (item as any)._acceptance_docs_list.map((d: any) => `${d.type || 'Док'} №${d.number || ''} от ${d.date || ''}`).join('; ') : '')">
-            {{ (item as any)._acceptance_doc_display_name || '—' }}
-          </span>
-        </template>
-
-        <template #item.acceptance_doc_date="{ item }">
-          {{ (item as any)._acceptance_doc_display_date ? new Date((item as any)._acceptance_doc_display_date).toLocaleDateString('ru-RU') : '—' }}
         </template>
 
         <!-- Expanded row: состав (items + receipts info) -->
@@ -482,8 +466,6 @@ interface Purchase {
   planned_total_price?: number
   delivery_date?: string
   acceptance_doc_date?: string
-  acceptance_doc_name?: string
-  acceptance_docs?: any[]
   last_receipt_date?: string
   purchase_method?: string
   purchase_contract_type?: string
@@ -675,32 +657,6 @@ const enrichedItems = computed(() => items.value.map(p => {
     .filter((n: any): n is string => !!n)
   const uniqueContractors = [...new Set(itemContractors)]
   const uniqueCount = uniqueContractors.length
-
-  // V-1: acceptance_docs[] (phase26-u-4 JSONB) — закрывающие документы (чеки авансовых)
-  const accDocsRaw = (p as any).acceptance_docs
-  const accDocs: any[] = Array.isArray(accDocsRaw) ? accDocsRaw : []
-  let accDocDisplayName = ''
-  if (accDocs.length > 0) {
-    const first = accDocs[0]
-    const type = first?.type || 'Док'
-    const num = first?.number ? `№${first.number}` : ''
-    accDocDisplayName = `${type} ${num}`.trim()
-    if (accDocs.length > 1) accDocDisplayName += ` +${accDocs.length - 1}`
-  } else if (p.acceptance_doc_name) {
-    accDocDisplayName = p.acceptance_doc_name
-  }
-  let accDocDisplayDate: string | null = null
-  if (accDocs.length > 0) {
-    const dates = accDocs.map((d: any) => d?.date).filter((d: any): d is string => !!d).sort()
-    accDocDisplayDate = dates.length ? dates[dates.length - 1] : null
-  }
-  if (!accDocDisplayDate && p.acceptance_doc_date) accDocDisplayDate = p.acceptance_doc_date
-
-  // V-2: дата поставки для авансовых = last_receipt_date (макс дата чека)
-  const advanceDeliveryDate = p.purchase_method === 'advance'
-    ? (p.last_receipt_date || p.delivery_date || null)
-    : (p.delivery_date || null)
-
   return {
     ...p,
     displayName: p.subject || p.item_name || '—',
@@ -708,11 +664,6 @@ const enrichedItems = computed(() => items.value.map(p => {
     _unique_item_contractor_count: uniqueCount,
     _unique_item_contractor_name: uniqueCount > 0 ? uniqueContractors[0] : null,
     _all_item_contractor_names: uniqueContractors.join(', '),
-    _unique_contractors_full_list: uniqueContractors,
-    _acceptance_docs_list: accDocs,
-    _acceptance_doc_display_name: accDocDisplayName,
-    _acceptance_doc_display_date: accDocDisplayDate,
-    _advance_delivery_date: advanceDeliveryDate,
   }
 }))
 

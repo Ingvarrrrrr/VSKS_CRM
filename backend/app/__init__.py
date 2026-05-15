@@ -282,6 +282,89 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 26-QQ: idempotent dedup контрагентов по ИНН + UNIQUE constraint.
+    # Объединяет дубли (одинаковый INN), перевешивает FK на keep_id (MIN id),
+    # удаляет дубли. Затем создаёт partial unique index чтобы новые дубли не появлялись.
+    try:
+        from sqlalchemy import text as _text
+        from .database import engine as _engine
+        async with _engine.begin() as conn:
+            # 1. Find duplicate groups
+            groups = (await conn.execute(_text("""
+                SELECT TRIM(inn) AS norm_inn, ARRAY_AGG(id ORDER BY id) AS ids, COUNT(*) AS n
+                FROM contractors
+                WHERE inn IS NOT NULL AND TRIM(inn) != ''
+                GROUP BY TRIM(inn)
+                HAVING COUNT(*) > 1
+            """))).all()
+
+            if len(groups) > 200:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Phase 26-QQ contractor dedup: {len(groups)} duplicate groups — too many, skip auto-merge"
+                )
+            elif groups:
+                # FK columns referencing contractors.id (вычислено grep'ом моделей)
+                FK_TABLES = [
+                    ("bank_payments", "matched_contractor_id"),
+                    ("commercial_requests", "contractor_id"),
+                    ("contracts", "contractor_id"),
+                    ("organizations", "contractor_id"),
+                    ("purchases", "contractor_id"),
+                    ("purchase_items", "contractor_id"),
+                    ("subsidies", "contractor_id"),
+                    ("subsidy_contractor_overrides", "contractor_id"),
+                ]
+                total_merged = 0
+                for row in groups:
+                    norm_inn, ids, n = row.norm_inn, list(row.ids), row.n
+                    keep_id = ids[0]
+                    dup_ids = ids[1:]
+                    # Rewire FK для каждой dup-таблицы
+                    for tbl, col in FK_TABLES:
+                        try:
+                            await conn.execute(_text(
+                                f"UPDATE {tbl} SET {col} = :keep WHERE {col} = ANY(:dups)"
+                            ), {"keep": keep_id, "dups": dup_ids})
+                        except Exception as inner_e:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                f"Phase 26-QQ rewire {tbl}.{col} failed (table may not exist): {inner_e}"
+                            )
+                    # Merge пустых полей в keep (берём заполнения из дублей)
+                    await conn.execute(_text("""
+                        UPDATE contractors keep SET
+                            name = COALESCE(NULLIF(keep.name, ''), dup.name),
+                            kpp = COALESCE(NULLIF(keep.kpp, ''), dup.kpp),
+                            ogrn = COALESCE(NULLIF(keep.ogrn, ''), dup.ogrn),
+                            address = COALESCE(NULLIF(keep.address, ''), dup.address),
+                            phone = COALESCE(NULLIF(keep.phone, ''), dup.phone),
+                            email = COALESCE(NULLIF(keep.email, ''), dup.email),
+                            signatory = COALESCE(NULLIF(keep.signatory, ''), dup.signatory)
+                        FROM contractors dup
+                        WHERE keep.id = :keep AND dup.id = ANY(:dups)
+                    """), {"keep": keep_id, "dups": dup_ids})
+                    # Удалить дубли
+                    await conn.execute(_text(
+                        "DELETE FROM contractors WHERE id = ANY(:dups)"
+                    ), {"dups": dup_ids})
+                    total_merged += len(dup_ids)
+                import logging
+                logging.getLogger(__name__).info(
+                    f"Phase 26-QQ dedup: merged {total_merged} duplicate contractors across {len(groups)} INN groups"
+                )
+
+            # 2. Partial unique index — предотвращает новые дубли при race condition.
+            #    Phase 26-OO defense in create_contractor — это второй уровень защиты.
+            await conn.execute(_text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_contractors_inn_unique
+                ON contractors (TRIM(inn))
+                WHERE inn IS NOT NULL AND TRIM(inn) != ''
+            """))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 26-QQ contractor dedup skipped (non-fatal): {e}")
+
     # Phase 26-DD: FK contract_items.source_item_id → SET NULL ON DELETE.
     # Раньше RESTRICT — update_purchase delete-then-insert ломал FK от contract_items,
     # которые ссылались на старые purchase_items.

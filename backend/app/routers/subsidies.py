@@ -462,6 +462,78 @@ async def list_subsidy_templates(
     return result
 
 
+def _normalize_docx_template(path: str) -> dict:
+    """Strip Word-internal markers that split jinja-placeholders across runs.
+
+    Word inserts <w:proofErr/>, bookmarks, comments, lastRenderedPageBreak
+    between runs inside `{{ var }}` / `{% ... %}` blocks during user editing.
+    For text placeholders docxtpl can recover, but for InlineImage the tag
+    MUST be inside a single contiguous run — otherwise the drawing element
+    is silently dropped.
+
+    Touches ONLY xml files where jinja syntax may live (document/header/
+    footer/footnotes/endnotes). Avoiding [Content_Types].xml and *.rels —
+    rewriting those breaks the package and was the root cause of the
+    Phase 26-VV revert.
+
+    Writes the cleaned bytes through a tempfile + atomic replace so the
+    on-disk file stays valid even if a write is interrupted.
+    """
+    import zipfile as _zipfile
+    import tempfile as _tempfile
+
+    JINJA_BEARING = ('word/document.xml',)
+    JINJA_BEARING_PREFIXES = ('word/header', 'word/footer')
+    JINJA_BEARING_SUFFIXES = ('word/footnotes.xml', 'word/endnotes.xml')
+
+    def _is_jinja_bearing(name: str) -> bool:
+        if name in JINJA_BEARING or name in JINJA_BEARING_SUFFIXES:
+            return True
+        return any(name.startswith(p) and name.endswith('.xml') for p in JINJA_BEARING_PREFIXES)
+
+    stats = {"proofErr": 0, "bookmark": 0, "comment": 0, "pageBreak": 0}
+    tmp_fd, tmp_path = _tempfile.mkstemp(suffix=".docx", dir=os.path.dirname(path) or None)
+    os.close(tmp_fd)
+    try:
+        with _zipfile.ZipFile(path, 'r') as zin:
+            with _zipfile.ZipFile(tmp_path, 'w', _zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if _is_jinja_bearing(item.filename):
+                        xml = data.decode('utf-8', errors='replace')
+                        before_proof = xml.count('<w:proofErr')
+                        xml = re.sub(r'<w:proofErr\s[^/]*?/>', '', xml)
+                        stats["proofErr"] += before_proof - xml.count('<w:proofErr')
+
+                        before_bm = xml.count('<w:bookmark')
+                        xml = re.sub(r'<w:bookmarkStart\s[^/]*?/>', '', xml)
+                        xml = re.sub(r'<w:bookmarkEnd\s[^/]*?/>', '', xml)
+                        stats["bookmark"] += before_bm - xml.count('<w:bookmark')
+
+                        before_cm = xml.count('<w:comment')
+                        xml = re.sub(r'<w:commentRangeStart\s[^/]*?/>', '', xml)
+                        xml = re.sub(r'<w:commentRangeEnd\s[^/]*?/>', '', xml)
+                        xml = re.sub(r'<w:commentReference\s[^/]*?/>', '', xml)
+                        stats["comment"] += before_cm - xml.count('<w:comment')
+
+                        before_pb = xml.count('<w:lastRenderedPageBreak')
+                        xml = re.sub(r'<w:lastRenderedPageBreak\s*/>', '', xml)
+                        stats["pageBreak"] += before_pb - xml.count('<w:lastRenderedPageBreak')
+
+                        data = xml.encode('utf-8')
+                    zout.writestr(item, data)
+        os.replace(tmp_path, path)
+        logger.info("docx normalize %s: %s", path, stats)
+    except Exception as e:
+        logger.warning("docx normalize failed for %s: %s", path, e)
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+    return stats
+
+
 def _repair_docx_template(path: str) -> list[str]:
     """Fix common Jinja2 errors in uploaded .docx templates.
 
@@ -560,8 +632,15 @@ async def upload_subsidy_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    norm_stats = _normalize_docx_template(dest)
     repairs = _repair_docx_template(dest)
-    return {"ok": True, "doc_type": doc_type, "label": SUPPORTED_DOC_TYPES[doc_type], "repairs": repairs}
+    return {
+        "ok": True,
+        "doc_type": doc_type,
+        "label": SUPPORTED_DOC_TYPES[doc_type],
+        "repairs": repairs,
+        "normalized": norm_stats,
+    }
 
 
 @router.get("/{subsidy_id}/templates/{doc_type}/download")
@@ -629,8 +708,41 @@ async def upload_global_template(
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    norm_stats = _normalize_docx_template(dest)
     repairs = _repair_docx_template(dest)
-    return {"ok": True, "doc_type": doc_type, "repairs": repairs}
+    return {"ok": True, "doc_type": doc_type, "repairs": repairs, "normalized": norm_stats}
+
+
+@router.post("/templates/normalize-all")
+async def normalize_all_existing_templates(
+    current_user=Depends(require_action('subsidy.edit')),
+):
+    """One-shot migration: normalize every existing .docx template in place.
+
+    Walks SUBSIDY_TEMPLATES_BASE and TEMPLATES_BASE, strips Word-internal
+    markers from each file. Idempotent — safe to call multiple times.
+    """
+    processed = []
+    errors = []
+
+    def _walk_and_normalize(root: str):
+        if not os.path.isdir(root):
+            return
+        for dirpath, _dirs, files in os.walk(root):
+            for fn in files:
+                if not fn.endswith(".docx"):
+                    continue
+                fpath = os.path.join(dirpath, fn)
+                try:
+                    stats = _normalize_docx_template(fpath)
+                    processed.append({"path": fpath, "stripped": stats})
+                except Exception as e:
+                    errors.append({"path": fpath, "error": str(e)})
+
+    _walk_and_normalize(SUBSIDY_TEMPLATES_BASE)
+    _walk_and_normalize(TEMPLATES_BASE)
+
+    return {"ok": True, "processed": len(processed), "errors": len(errors), "details": processed, "error_details": errors}
 
 
 @router.get("/{subsidy_id}/history")

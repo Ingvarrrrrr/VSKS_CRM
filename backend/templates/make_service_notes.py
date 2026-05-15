@@ -502,22 +502,40 @@ def add_body_advance(doc):
     p_endfor = new_para(doc, space_after=6)
     add_marker(p_endfor, "{% endfor %}", size=10)
 
-    # Phase 26-NN (revert от LL): простой {% for %} без таблицы и без {% tr %}.
-    # Lessons.md (2026-05-15): {% tr %} ломается если кастомный шаблон загружен
-    # в БД и tr оказался вне ячейки таблицы. Также при ручном редактировании
-    # пользователем структура таблицы повреждается. Делаем максимально простой
-    # и надёжный вариант — последовательные параграфы по одному чеку.
+    # Phase 26-RR: статичная таблица 1×2 + {% for %} в каждой ячейке (без {% tr %}).
+    # Lessons.md (2026-05-15): запрещено использовать {% tr %}. Решение —
+    # фиксированная таблица, бэк делит receipts на left_receipts/right_receipts.
     p_receipts_hdr = new_para(doc, space_before=6, space_after=2)
     add_text(p_receipts_hdr, "Приложенные чеки:", bold=True)
 
-    p_for_r = new_para(doc, space_after=0)
-    add_marker(p_for_r, "{% for r in receipts %}", size=10)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.autofit = False
+    left_cell = tbl.rows[0].cells[0]
+    right_cell = tbl.rows[0].cells[1]
+    left_cell.width = Cm(7.5)
+    right_cell.width = Cm(7.5)
 
-    p_img = new_para(doc, align=WD_ALIGN_PARAGRAPH.CENTER, space_after=4)
-    add_placeholder(p_img, "{{ r }}", size=10)
+    # Левая ячейка: цикл по left_receipts
+    left_p1 = left_cell.paragraphs[0]
+    left_p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_marker(left_p1, "{% for r in left_receipts %}", size=10)
+    left_p2 = left_cell.add_paragraph()
+    left_p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_placeholder(left_p2, "{{ r }}", size=10)
+    left_p3 = left_cell.add_paragraph()
+    left_p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_marker(left_p3, "{% endfor %}", size=10)
 
-    p_endfor_r = new_para(doc, space_after=4)
-    add_marker(p_endfor_r, "{% endfor %}", size=10)
+    # Правая ячейка: цикл по right_receipts
+    right_p1 = right_cell.paragraphs[0]
+    right_p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_marker(right_p1, "{% for r in right_receipts %}", size=10)
+    right_p2 = right_cell.add_paragraph()
+    right_p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_placeholder(right_p2, "{{ r }}", size=10)
+    right_p3 = right_cell.add_paragraph()
+    right_p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_marker(right_p3, "{% endfor %}", size=10)
 
 
 # ─── ГЛАВНАЯ ФУНКЦИЯ ─────────────────────────────────────────────────────────

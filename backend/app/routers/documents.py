@@ -1320,10 +1320,17 @@ async def generate_document(
                 _right = receipt_images[_i + 1] if _i + 1 < len(receipt_images) else None
                 receipt_pairs.append({'left': _left, 'right': _right})
             context["receipt_pairs"] = receipt_pairs
+            # Phase 26-RR: split на 2 потока для статичной таблицы 1×2 в шаблоне.
+            # left_receipts = чётные позиции (1,3,5...), right_receipts = нечётные (2,4,6...)
+            # → 2 колонки чередуются по порядку загрузки.
+            context["left_receipts"] = receipt_images[::2]
+            context["right_receipts"] = receipt_images[1::2]
         else:
             context["receipts"] = []
             context["receipt_images"] = []
             context["receipt_pairs"] = []
+            context["left_receipts"] = []
+            context["right_receipts"] = []
     except HTTPException:
         raise
     except Exception as _ctx_exc:

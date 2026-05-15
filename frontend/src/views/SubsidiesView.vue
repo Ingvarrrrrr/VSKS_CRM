@@ -1964,8 +1964,30 @@ async function loadTemplateVars() {
     templateVars.value = await apiFetch<TemplateVar[]>('/documents/template-vars')
   } catch (e) { console.error('loadTemplateVars:', e) }
 }
-function copyVar(text: string) {
-  navigator.clipboard?.writeText(text)
+async function copyVar(text: string) {
+  // phase26-mm: на HTTP-only проде navigator.clipboard undefined.
+  // Fallback на document.execCommand('copy') через временный textarea.
+  let ok = false
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      ta.style.top = '0'
+      ta.style.left = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      try { ok = document.execCommand('copy') } catch { ok = false }
+      document.body.removeChild(ta)
+    }
+  } catch { ok = false }
+  if (ok) showSnack(`Скопировано: ${text}`, 'success')
+  else showSnack(`Не удалось скопировать. Выделите и нажмите Ctrl+C: ${text}`, 'error')
 }
 
 // Template management state

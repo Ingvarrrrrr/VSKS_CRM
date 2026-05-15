@@ -80,6 +80,11 @@ def _parse_fns_json_receipt(raw: dict) -> dict:
             'price': _kop_to_rub(it.get('price')),
             'sum': _kop_to_rub(it.get('sum')),
             'nds': it.get('nds'),
+            # Phase 26-fff: map ФФД nds-code → vat_rate string at parse time so
+            # _create_receipt_with_items / _recompute_from_receipts_core can
+            # write it into PurchaseItem.vat_rate. Без этого vat_rate всегда
+            # был None для JSON-импорта (только HTML-парсер ставил vat_rate).
+            'vat_rate': _nds_code_to_rate_str(it.get('nds')),
         })
 
     fd_num = r.get('fiscalDocumentNumber')
@@ -719,29 +724,50 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                     contractor_inn=c_inn,
                     contractor_name=c_name,
                     receipt_id=r.id,
-                    vat_rate=ri.get('vat_rate'),
+                    # Phase 26-fff: fallback на nds-код если vat_rate отсутствует
+                    # в raw_json (старые чеки, импортированные ДО маппинга)
+                    vat_rate=ri.get('vat_rate') or _nds_code_to_rate_str(ri.get('nds')),
                 ))
                 items_autocreated += 1
         if items_autocreated:
             await db.flush()
 
-    # Шаг A: items с receipt_id → overwrite contractor если mismatch
+    # Шаг A: items с receipt_id → overwrite contractor если mismatch +
+    # backfill vat_rate из nds-кода raw_json (Phase 26-fff)
     linked_items_q = await db.execute(
         select(_PI).where(
             _PI.purchase_id == purchase_id,
             _PI.receipt_id.is_not(None),
         )
     )
+    receipt_by_id = {r.id: r for r in receipts}
     for it in linked_items_q.scalars().all():
         pack = receipt_to_contractor.get(it.receipt_id)
-        if not pack:
-            continue
-        cid, c_inn, c_name = pack
-        if it.contractor_id != cid:
-            it.contractor_id = cid
-            it.contractor_inn = c_inn
-            it.contractor_name = c_name
-            items_updated += 1
+        if pack:
+            cid, c_inn, c_name = pack
+            if it.contractor_id != cid:
+                it.contractor_id = cid
+                it.contractor_inn = c_inn
+                it.contractor_name = c_name
+                items_updated += 1
+        # vat_rate fallback: если NULL — найти соответствующий ri по name fuzzy
+        # и поставить из nds-кода
+        if not it.vat_rate:
+            r = receipt_by_id.get(it.receipt_id)
+            if r:
+                raw_items = _extract_items(r.raw_json or {})
+                best_ri = None
+                best_score = 0
+                for ri in raw_items:
+                    s = _items_match_score(it, ri)
+                    if s >= 2 and s > best_score:
+                        best_score = s
+                        best_ri = ri
+                if best_ri:
+                    new_rate = best_ri.get('vat_rate') or _nds_code_to_rate_str(best_ri.get('nds'))
+                    if new_rate:
+                        it.vat_rate = new_rate
+                        items_updated += 1
 
     # Шаг B: items без receipt_id → fuzzy match по raw_json чеков
     unlinked_q = await db.execute(

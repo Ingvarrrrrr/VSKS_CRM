@@ -1383,7 +1383,14 @@ async def generate_document(
                 .order_by(_PurchaseReceipt.id.asc())
             )
             _receipts = _receipts_q.scalars().all()
-            receipt_images = []
+            # Phase 26-fff: одно превью PNG используется для нескольких InlineImage
+            # с разной шириной — для разных layouts в шаблоне.
+            #   default (6.5cm) → одиночная колонка/полный текст СЗ
+            #   small (4.5cm)   → 2-колоночная таблица с узкими ячейками
+            #   full  (14cm)    → отдельная страница на чек
+            receipt_images = []        # default 6.5 cm — backward compat
+            receipt_images_small = []  # 4.5 cm — для 2-col layouts
+            receipt_images_full = []   # 14 cm — для full-width layouts
             for _r in _receipts:
                 try:
                     _png_bytes = _rrpng(_r)
@@ -1391,26 +1398,33 @@ async def generate_document(
                     _tmp.write(_png_bytes)
                     _tmp.close()
                     receipt_images.append(InlineImage(tpl, _tmp.name, width=_Cm(6.5)))
+                    receipt_images_small.append(InlineImage(tpl, _tmp.name, width=_Cm(4.5)))
+                    receipt_images_full.append(InlineImage(tpl, _tmp.name, width=_Cm(14)))
                 except Exception as _re:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(f"render receipt {_r.id} skipped: {_re}")
             context["receipts"] = receipt_images
             context["receipt_images"] = receipt_images  # alias
+            context["receipts_small"] = receipt_images_small
+            context["receipts_full"] = receipt_images_full
             # Phase 26-LL: chunked в пары для таблицы 2 колонки в шаблоне СЗ
             receipt_pairs = []
-            for _i in range(0, len(receipt_images), 2):
-                _left = receipt_images[_i]
-                _right = receipt_images[_i + 1] if _i + 1 < len(receipt_images) else None
+            for _i in range(0, len(receipt_images_small), 2):
+                _left = receipt_images_small[_i]
+                _right = receipt_images_small[_i + 1] if _i + 1 < len(receipt_images_small) else None
                 receipt_pairs.append({'left': _left, 'right': _right})
             context["receipt_pairs"] = receipt_pairs
             # Phase 26-RR: split на 2 потока для статичной таблицы 1×2 в шаблоне.
-            # left_receipts = чётные позиции (1,3,5...), right_receipts = нечётные (2,4,6...)
-            # → 2 колонки чередуются по порядку загрузки.
-            context["left_receipts"] = receipt_images[::2]
-            context["right_receipts"] = receipt_images[1::2]
+            # left/right берут МАЛЫЕ изображения (4.5 cm) — таблица 2-колоночная,
+            # узкие ячейки. Старый шаблон с _Cm(6.5) клипал картинку и пользователь
+            # видел пустую узкую полоску.
+            context["left_receipts"] = receipt_images_small[::2]
+            context["right_receipts"] = receipt_images_small[1::2]
         else:
             context["receipts"] = []
             context["receipt_images"] = []
+            context["receipts_small"] = []
+            context["receipts_full"] = []
             context["receipt_pairs"] = []
             context["left_receipts"] = []
             context["right_receipts"] = []
@@ -2083,8 +2097,12 @@ TEMPLATE_VARIABLES = [
     ("{{item_names}}", "Перечень названий через запятую", "{{item_names}}", "Услуги связи, Интернет, Хостинг"),
     # ── Чеки (авансовый отчёт) ──
     ("", "ЧЕКИ — АВАНСОВЫЙ ОТЧЁТ (только для закупок с purchase_method=advance)", "", ""),
-    ("{{receipts}}", "Список InlineImage чеков по порядку загрузки — для авансовых отчётов", "{% for r in receipts %}{{ r }}{% endfor %}", "(изображения чеков)"),
-    ("{{receipt_images}}", "Алиас receipts — список изображений чеков", "{% for img in receipt_images %}{{ img }}{% endfor %}", "(изображения чеков)"),
+    ("{{receipts}}", "Список InlineImage чеков (ширина 6.5 см) — стандартная колонка", "{% for r in receipts %}{{ r }}{% endfor %}", "(изображения чеков 6.5 см)"),
+    ("{{receipt_images}}", "Алиас receipts — список изображений чеков 6.5 см", "{% for img in receipt_images %}{{ img }}{% endfor %}", "(изображения чеков 6.5 см)"),
+    ("{{receipts_small}}", "Чеки 4.5 см — для узких ячеек 2-колоночных таблиц", "{% for r in receipts_small %}{{ r }}{% endfor %}", "(маленькие чеки 4.5 см)"),
+    ("{{receipts_full}}", "Чеки 14 см — для full-width страниц (один чек на страницу)", "{% for r in receipts_full %}{{ r }}{% endfor %}", "(полноширинные чеки 14 см)"),
+    ("{{left_receipts}}", "Чёткые позиции чеков 4.5 см (1-й, 3-й, ...) — левая колонка таблицы 1×2", "{% for r in left_receipts %}{{ r }}{% endfor %}", "(чеки 1,3,5...)"),
+    ("{{right_receipts}}", "Нечёткие позиции чеков 4.5 см (2-й, 4-й, ...) — правая колонка таблицы 1×2", "{% for r in right_receipts %}{{ r }}{% endfor %}", "(чеки 2,4,6...)"),
     # ── Родительный падеж (Phase 26-V) ──
     ("", "РОДИТЕЛЬНЫЙ ПАДЕЖ (Phase 26-V)", "", ""),
     ("{{initiator_name_gen}}", "ФИО инициатора в родительном падеже", "{{initiator_name_gen}}", "Иванова И.И."),

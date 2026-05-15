@@ -893,6 +893,30 @@ async def create_contractor(
 ):
     d = data.model_dump()
     d['org_id'] = get_single_org_id(current_user) or current_user.org_id
+
+    # phase26-oo: дедуп по ИНН — фронт-quick-add часто вызывает POST даже когда
+    # контрагент уже есть в БД (race condition или забытый lookup). Возвращаем
+    # существующего вместо создания дубля.
+    inn = (d.get('inn') or '').strip()
+    if inn:
+        existing_q = await db.execute(
+            select(Contractor).where(Contractor.inn == inn)
+        )
+        existing = existing_q.scalars().first()
+        if existing:
+            # Обновим пустые поля если в новом запросе они заполнены (best-effort merge)
+            updated = False
+            for field in ('name', 'kpp', 'ogrn', 'address', 'phone', 'email', 'signatory'):
+                new_val = d.get(field)
+                old_val = getattr(existing, field, None)
+                if new_val and not old_val:
+                    setattr(existing, field, new_val)
+                    updated = True
+            if updated:
+                await db.commit()
+                await db.refresh(existing)
+            return existing
+
     c = Contractor(**d)
     db.add(c)
     await db.commit()

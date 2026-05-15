@@ -539,41 +539,11 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
             await db.flush()
         receipt_to_contractor[r.id] = (c_row.id, r.seller_inn, r.seller_name)
 
-    # Phase 26-WW dedup: удалить точные дубликаты PurchaseItem (если recompute запустился
-    # дважды и наплодил). Группа дубликатов = одинаковые (item_name, total_price, receipt_id)
-    # внутри одного purchase. Оставляем минимальный id, остальные DELETE.
-    dedup_q = await db.execute(
-        select(_PI.id, _PI.item_name, _PI.total_price, _PI.receipt_id)
-        .where(_PI.purchase_id == purchase_id)
-        .order_by(_PI.id.asc())
-    )
-    seen = {}  # key=(name, total, receipt_id) → first id
-    ids_to_delete = []
-    for row in dedup_q.all():
-        iid, name, total, rid = row
-        key = (str(name or '').strip().lower(), str(total or ''), rid)
-        if key in seen:
-            ids_to_delete.append(iid)
-        else:
-            seen[key] = iid
-    items_deduplicated = 0
-    if ids_to_delete:
-        from app.models.contract_item import ContractItem as _CI
-        from sqlalchemy import update as _sa_update, delete as _sa_delete
-        # Снять FK ContractItem.source_item_id → SET NULL, иначе FK violation
-        try:
-            await db.execute(
-                _sa_update(_CI)
-                .where(_CI.source_item_id.in_(ids_to_delete))
-                .values(source_item_id=None)
-            )
-        except Exception:
-            pass
-        await db.execute(
-            _sa_delete(_PI).where(_PI.id.in_(ids_to_delete))
-        )
-        items_deduplicated = len(ids_to_delete)
-        await db.flush()
+    # Phase 26-WW-2 dedup: вынесено в helper _dedup_purchase_items_core (см. ниже).
+    # Ключ нормализуется через float+round чтобы Decimal('392') и Decimal('392.00')
+    # совпадали.
+    _dedup_res = await _dedup_purchase_items_core(purchase_id, db)
+    items_deduplicated = _dedup_res.get("deduplicated", 0)
 
     # Phase 26-WW: если у Purchase УЖЕ есть PurchaseItem (даже legacy без receipt_id),
     # не создавать новые из raw_json — fuzzy match (шаг B ниже) привяжет их к receipt'ам.
@@ -829,6 +799,49 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
     }
 
 
+# ── dedup helper (Phase 26-WW-2) ─────────────────────────────────────────────
+
+async def _dedup_purchase_items_core(purchase_id: int, db: AsyncSession) -> dict:
+    """Удаляет точные дубликаты PurchaseItem (name+total+receipt_id), оставляя min(id).
+    Идемпотентно. НЕ commit — caller отвечает."""
+    from sqlalchemy import select as _sel, update as _sa_upd, delete as _sa_del
+    from app.models.purchase_item import PurchaseItem as _PI
+    from app.models.contract_item import ContractItem as _CI
+
+    def _norm_total(v):
+        try:
+            return round(float(v or 0), 2)
+        except Exception:
+            return 0.0
+
+    rows = (await db.execute(
+        _sel(_PI.id, _PI.item_name, _PI.total_price, _PI.receipt_id)
+        .where(_PI.purchase_id == purchase_id)
+        .order_by(_PI.id.asc())
+    )).all()
+    seen = {}
+    ids_to_delete = []
+    for r in rows:
+        iid, name, total, rid = r
+        key = (str(name or '').strip().lower(), _norm_total(total), rid)
+        if key in seen:
+            ids_to_delete.append(iid)
+        else:
+            seen[key] = iid
+    if not ids_to_delete:
+        return {"ok": True, "deduplicated": 0, "kept": len(seen)}
+    # Снять FK ContractItem.source_item_id → SET NULL
+    try:
+        await db.execute(
+            _sa_upd(_CI).where(_CI.source_item_id.in_(ids_to_delete)).values(source_item_id=None)
+        )
+    except Exception:
+        pass
+    await db.execute(_sa_del(_PI).where(_PI.id.in_(ids_to_delete)))
+    await db.flush()
+    return {"ok": True, "deduplicated": len(ids_to_delete), "kept": len(seen)}
+
+
 # ── endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/{purchase_id}/recompute-from-receipts")
@@ -845,6 +858,21 @@ async def recompute_from_receipts(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
     return await _recompute_from_receipts_core(purchase_id, db)
+
+
+@router.post("/{purchase_id}/dedup-items")
+async def dedup_items_endpoint(
+    purchase_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Phase 26-WW-2: ручное удаление точных дубликатов PurchaseItem.
+    Идемпотентно. Возвращает {ok, deduplicated, kept}.
+    Нужен потому что auto-recompute (_recompute_from_receipts_core) триггерится
+    в purchases.py только при null_items / mismatch / orphan_receipts."""
+    res = await _dedup_purchase_items_core(purchase_id, db)
+    await db.commit()
+    return res
 
 
 @router.get("/{purchase_id}/receipts", response_model=List[ReceiptOut])

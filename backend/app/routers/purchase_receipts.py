@@ -345,6 +345,43 @@ async def _create_receipt_with_items(
     await db.commit()
     await db.refresh(receipt)
 
+    # Phase 26-II: для advance закупок — автосоздать ContractItem (стадия «Договор»)
+    # параллельно каждой PurchaseItem (стадия «ТЗ»), копируя name/qty/price.
+    # Для авансовых чек одновременно играет роль и ТЗ, и Договора, и Поставки.
+    try:
+        p_check = await db.get(Purchase, purchase_id)
+        if p_check and p_check.purchase_method == 'advance':
+            from app.models.contract_item import ContractItem as _CI
+            new_items_q = await db.execute(
+                select(PurchaseItem).where(
+                    PurchaseItem.purchase_id == purchase_id,
+                    PurchaseItem.receipt_id == receipt.id,
+                )
+            )
+            for pi in new_items_q.scalars().all():
+                exists_ci = (await db.execute(
+                    select(_CI).where(
+                        _CI.purchase_id == purchase_id,
+                        _CI.source_item_id == pi.id,
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if exists_ci:
+                    continue
+                db.add(_CI(
+                    purchase_id=purchase_id,
+                    source_item_id=pi.id,
+                    name=pi.item_name or "Позиция",
+                    quantity=pi.quantity,
+                    unit=pi.unit or 'шт.',
+                    unit_price=pi.unit_price,
+                    total=pi.total_price,
+                    match_confirmed=True,
+                ))
+            await db.commit()
+    except Exception as _ci_exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(f"contract_items autocreate skipped: {_ci_exc}")
+
     # Auto-fill contract_date / contract_number for advance purchases.
     # First receipt sets the basis; bank_payment match will override later.
     p = await db.get(Purchase, purchase_id)
@@ -697,6 +734,38 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
         p.acceptance_docs = existing_docs
         _orm_attrs.flag_modified(p, "acceptance_docs")
 
+    # Phase 26-II: ContractItem autocreate (стадия «Договор» = копия ТЗ для advance)
+    contract_items_created = 0
+    try:
+        if p.purchase_method == 'advance':
+            from app.models.contract_item import ContractItem as _CI
+            all_items = (await db.execute(
+                select(PurchaseItem).where(PurchaseItem.purchase_id == purchase_id)
+            )).scalars().all()
+            for pi in all_items:
+                exists_ci = (await db.execute(
+                    select(_CI).where(
+                        _CI.purchase_id == purchase_id,
+                        _CI.source_item_id == pi.id,
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if exists_ci:
+                    continue
+                db.add(_CI(
+                    purchase_id=purchase_id,
+                    source_item_id=pi.id,
+                    name=pi.item_name or "Позиция",
+                    quantity=pi.quantity,
+                    unit=pi.unit or 'шт.',
+                    unit_price=pi.unit_price,
+                    total=pi.total_price,
+                    match_confirmed=True,
+                ))
+                contract_items_created += 1
+    except Exception as _ci_exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(f"recompute contract_items autocreate skipped: {_ci_exc}")
+
     await db.commit()
     return {
         "ok": True,
@@ -705,6 +774,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
         "items_updated": items_updated,
         "items_linked_by_fuzzy": items_linked_by_fuzzy,
         "items_autocreated": items_autocreated,
+        "contract_items_created": contract_items_created,
         "files_attached": files_attached,
         "acceptance_docs_added": acceptance_docs_added,
     }

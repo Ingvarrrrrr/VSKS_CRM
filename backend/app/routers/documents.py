@@ -786,7 +786,45 @@ async def generate_document(
     try:
         from docxtpl import DocxTemplate, InlineImage
         from docx.shared import Cm as _Cm
-        tpl = DocxTemplate(template_path)
+
+        # Phase 26-UU: нормализация шаблона перед загрузкой.
+        # Word вставляет <w:proofErr> между runs внутри jinja-placeholder'ов
+        # ({{ r }} → <w:t>{{ r</w:t><w:proofErr/><w:t> }}</w:t>). Это разделяет
+        # placeholder на 2 run'a и ломает InlineImage rendering (docxtpl не
+        # может вставить drawing в split-run). Удаляем proofErr — безопасно,
+        # это только Word'овские маркеры грамматики, визуально не видны.
+        import zipfile as _zipfile
+        import io as _io
+        import re as _re_norm
+        _norm_path = template_path
+        try:
+            _buf_in = _io.BytesIO()
+            with open(template_path, 'rb') as _fr:
+                _buf_in.write(_fr.read())
+            _buf_in.seek(0)
+            _buf_out = _io.BytesIO()
+            with _zipfile.ZipFile(_buf_in, 'r') as _zin:
+                with _zipfile.ZipFile(_buf_out, 'w', _zipfile.ZIP_DEFLATED) as _zout:
+                    for _item in _zin.namelist():
+                        _data = _zin.read(_item)
+                        if _item == 'word/document.xml':
+                            _xml = _data.decode('utf-8', errors='replace')
+                            # Убираем proofErr теги (один или парные)
+                            _xml = _re_norm.sub(r'<w:proofErr [^/]*?/>', '', _xml)
+                            # Также убираем <w:bookmarkStart/> и <w:bookmarkEnd/> внутри placeholder'ов
+                            # (они тоже могут разделить run'ы)
+                            _data = _xml.encode('utf-8')
+                        _zout.writestr(_item, _data)
+            _buf_out.seek(0)
+            # docxtpl принимает file-like
+            tpl = DocxTemplate(_buf_out)
+        except Exception as _norm_e:
+            # Если нормализация упала — fallback на оригинал
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"docx normalization failed for {template_path}: {_norm_e}. Using original."
+            )
+            tpl = DocxTemplate(template_path)
     except HTTPException:
         raise
     except Exception as e:

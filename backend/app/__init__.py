@@ -1027,6 +1027,58 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
     return result
 
 
+@app.get("/api/diag/advance-overview")
+async def diag_advance_overview(current_user=Depends(get_current_user)):
+    """Overview всех advance закупок: pid, registry_number, items в purchase_items vs contract_items,
+    receipts_count, contractor. Чтобы найти где реально лежат данные."""
+    from sqlalchemy import select as _sel, func as _func, text as _text
+    from .models.purchase import Purchase as _Purchase
+    from .models.purchase_item import PurchaseItem as _PI
+    from .models.purchase_receipt import PurchaseReceipt as _PR
+
+    async with async_session() as db:
+        advances = (await db.execute(
+            _sel(_Purchase).where(_Purchase.purchase_method == 'advance').order_by(_Purchase.id.desc())
+        )).scalars().all()
+        rows = []
+        for p in advances:
+            pi_count = (await db.execute(
+                _sel(_func.count(_PI.id)).where(_PI.purchase_id == p.id)
+            )).scalar() or 0
+            r_count = (await db.execute(
+                _sel(_func.count(_PR.id)).where(_PR.purchase_id == p.id)
+            )).scalar() or 0
+            # contract_items count через raw SQL — модель может быть в другом месте
+            try:
+                ci_count = (await db.execute(
+                    _text("SELECT COUNT(*) FROM contract_items WHERE purchase_id = :pid"),
+                    {"pid": p.id}
+                )).scalar() or 0
+            except Exception:
+                ci_count = -1  # таблицы нет
+            rows.append({
+                "id": p.id,
+                "registry_number": p.registry_number,
+                "purchase_number": p.purchase_number,
+                "purchase_method": p.purchase_method,
+                "contractor_id": p.contractor_id,
+                "purchase_items_count": pi_count,
+                "contract_items_count": ci_count,
+                "receipts_count": r_count,
+            })
+        # Также — все PurchaseReceipt и их purchase_id (где реально лежат чеки)
+        all_receipts = (await db.execute(
+            _sel(_PR.id, _PR.purchase_id, _PR.seller_inn, _PR.seller_name, _PR.total_sum)
+            .order_by(_PR.id.desc()).limit(30)
+        )).all()
+        receipts_summary = [
+            {"id": r.id, "purchase_id": r.purchase_id, "seller_inn": r.seller_inn,
+             "seller_name": (r.seller_name or "")[:60], "total": float(r.total_sum or 0)}
+            for r in all_receipts
+        ]
+        return {"advances": rows, "recent_receipts": receipts_summary}
+
+
 @app.post("/api/diag/recompute/{pid}")
 async def diag_recompute_single(pid: int, current_user=Depends(get_current_user)):
     """Phase 26-DD: ручной recompute одной закупки доступен ЛЮБОЙ авторизованной роли,

@@ -1364,7 +1364,8 @@ def _render_receipt_pdf(r) -> bytes:
     bold_name = "DejaVu-Bold" if font_name == "DejaVu" else "Helvetica-Bold"
 
     raw = _get_raw_receipt(r)
-    items_data = list(raw.get('items') or [])
+    # Phase 26-EE: fallback на _extract_items для proverkacheka HTML
+    items_data = list(raw.get('items') or []) or _extract_items(r.raw_json or {})
 
     # Dynamic height — A5 width (148mm) is enough; height grows with content.
     width = 148 * mm
@@ -1586,6 +1587,9 @@ def _render_receipt_png(r) -> bytes:
 
     raw = _get_raw_receipt(r)
     items_data = [it for it in (raw.get('items') or []) if isinstance(it, dict)]
+    # Phase 26-EE: fallback на _extract_items для proverkacheka HTML
+    if not items_data:
+        items_data = _extract_items(r.raw_json or {})
 
     width = 600
 

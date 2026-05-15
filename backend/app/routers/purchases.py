@@ -89,6 +89,13 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
         final_unit_price=item.final_unit_price,
         final_total=item.final_total,
         country_origin=item.country_origin,
+        # Phase 26-V/W/BB: contractor + match + receipt linkage — критично для UI
+        contractor_id=item.contractor_id,
+        contractor_inn=item.contractor_inn,
+        contractor_name=item.contractor_name,
+        match_confirmed=item.match_confirmed if item.match_confirmed is not None else True,
+        receipt_id=getattr(item, 'receipt_id', None),
+        vat_rate=getattr(item, 'vat_rate', None),
         product_name=product_name,
         product_photo_url=product_photo_url,
         product_description=product_description,

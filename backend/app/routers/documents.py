@@ -1351,7 +1351,29 @@ async def generate_document(
 
     try:
         tpl.render(context)
+    except Exception as render_err:
+        # phase26-nn: auto-fallback на базовый шаблон если кастомный из БД сломан.
+        # Lessons.md (2026-05-15): кастомные шаблоны с {% tr %} вне таблицы или
+        # повреждённой структурой валят TemplateSyntaxError → user видит белый экран.
+        # Безопаснее упасть на базовый из репо и предупредить.
+        is_custom_template = bool(template_path and template_path.startswith(SUBSIDY_TEMPLATES_DIR))
+        if is_custom_template:
+            base_path = os.path.join(TEMPLATES_DIR, f"{doc_type}.docx")
+            if os.path.exists(base_path) and base_path != template_path:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Custom template {template_path} render failed ({type(render_err).__name__}: {render_err}). "
+                    f"Falling back to base template {base_path}."
+                )
+                tpl = DocxTemplate(base_path)
+                template_path = base_path
+                tpl.render(context)
+            else:
+                raise
+        else:
+            raise
 
+    try:
         # Post-process: fix approvers table if docxtpl loop didn't render all rows
         if doc_type == "approval_sheet" and len(approvers_list) > 0:
             from docx import Document as _DocxDoc

@@ -842,6 +842,29 @@ async def enrich_contractors_from_receipts(
     }
 
 
+@router.post("/sync-denormalized-names")
+async def sync_denormalized_contractor_names(
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Phase 26-CCC-3: синхронизировать PurchaseItem.contractor_name
+    (denormalized snapshot из чека) с актуальным Contractor.name по contractor_id.
+
+    Нужно после обогащения Contractor.name через ЕГРЮЛ — иначе в UI реестров
+    остаются длинные старые имена из чеков, хотя в Contractor уже короткое.
+    """
+    from sqlalchemy import text as _text
+    result = await db.execute(_text("""
+        UPDATE purchase_items
+        SET contractor_name = c.name
+        FROM contractors c
+        WHERE purchase_items.contractor_id = c.id
+          AND (purchase_items.contractor_name IS DISTINCT FROM c.name)
+    """))
+    await db.commit()
+    return {"ok": True, "updated_rows": result.rowcount}
+
+
 @router.post("/enrich-from-fns/{contractor_id}")
 async def enrich_contractor_from_fns(
     contractor_id: int,

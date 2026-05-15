@@ -12,6 +12,36 @@
     <meta name="apple-mobile-web-app-title" content="VSKS CRM" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/png" href="/pwa-192x192.png" />
+
+    <!-- Phase 26-FFF: one-time SW + cache cleanup для пользователей со старым bundle.
+         Срабатывает максимум 1 раз (флаг в localStorage). Помогает тем кто впервые
+         получил свежий index.html (после убирания html из precache в vite.config). -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('phase26_fff_done') === '1') return;
+          if (!('serviceWorker' in navigator) || !('caches' in window)) {
+            localStorage.setItem('phase26_fff_done', '1');
+            return;
+          }
+          Promise.all([
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            }),
+            caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            })
+          ]).then(function () {
+            localStorage.setItem('phase26_fff_done', '1');
+            window.location.reload();
+          }).catch(function () {
+            localStorage.setItem('phase26_fff_done', '1');
+          });
+        } catch (e) {
+          try { localStorage.setItem('phase26_fff_done', '1'); } catch (_) { /* noop */ }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

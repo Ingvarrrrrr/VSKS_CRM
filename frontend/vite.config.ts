@@ -38,17 +38,17 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        // Phase 26-FFF: убрали 'html' из globPatterns — index.html больше не precached.
+        // Раньше старый index.html отдавался из SW-кэша → ссылки на старые JS/CSS →
+        // пользователь не получал свежие коммиты без Ctrl+F5. Теперь NetworkFirst через
+        // runtimeCaching ниже: сначала пробуем сеть (timeout 3s), fallback на кэш только
+        // если оффлайн. Assets (JS/CSS) precache'ятся как обычно — у них immutable hash.
+        globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         importScripts: ['/custom-sw.js'],
-        // Новый SW сразу заменяет старый и берёт под контроль все открытые вкладки.
-        // После каждого deploy клиенты получают свежий bundle без ручных действий.
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        // SPA-fallback: любой navigation попадает на index.html (precache),
-        // но ТОЛЬКО не для /api/* (они проксируются NetworkOnly ниже).
-        navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/deploy\//],
         runtimeCaching: [
           {
@@ -57,13 +57,17 @@ export default defineConfig({
             handler: 'NetworkOnly',
           },
           {
-            // API: NetworkFirst с коротким таймаутом 3 сек.
-            // Online (типичный случай) → всегда свежие данные.
-            // Slow/offline → fallback на cache (UX не блокируется).
-            // Cache очищается при каждом deploy через custom-sw.js activate handler
-            // (clientsClaim удаляет старый api-cache) — поэтому stale от старого
-            // backend не задерживается. networkTimeoutSeconds 3 (было 10) → быстрее
-            // выявляются live-данные и cache обновляется.
+            // Phase 26-FFF: index.html / любой navigate → NetworkFirst. Свежий HTML
+            // → свежие asset-ссылки → новый bundle подхватывается без жёсткой перезагрузки.
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'html-cache',
+              networkTimeoutSeconds: 3,
+              expiration: { maxEntries: 5, maxAgeSeconds: 60 * 60 * 24 },
+            },
+          },
+          {
             urlPattern: /^\/api\//,
             handler: 'NetworkFirst',
             options: {

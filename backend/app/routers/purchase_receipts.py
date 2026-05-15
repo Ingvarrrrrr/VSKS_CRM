@@ -18,7 +18,7 @@ from io import BytesIO
 from typing import List
 
 import httpx
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -511,8 +511,12 @@ async def _compute_purchase_snapshot_hash(purchase_id: int, db: AsyncSession) ->
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> dict:
-    """Idempotent recompute. Returns stats dict. Не кидает HTTPException."""
+async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, force: bool = False) -> dict:
+    """Idempotent recompute. Returns stats dict. Не кидает HTTPException.
+
+    force=True — байпасит snapshot-hash gate (нужно когда меняется внешняя
+    логика парсинга, например НДС-маппинг в phase26-aaa-2, и старые позиции
+    нужно перезаполнить из raw_json несмотря на неизменный hash items)."""
     from sqlalchemy.orm import attributes as _orm_attrs
     p = await db.get(Purchase, purchase_id)
     if not p:
@@ -521,9 +525,10 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
     # Phase 26-YY: snapshot-hash gate — skip если состояние items+receipts не
     # изменилось с прошлого прогона. Это резко удешевляет повторный GET карточки
     # (без новых чеков/правок) — O(1) SELECT'ов вместо O(N×M×K) fuzzy.
+    # При force=True пропускаем проверку (см. docstring выше).
     try:
         current_hash = await _compute_purchase_snapshot_hash(purchase_id, db)
-        if p.recompute_snapshot_hash and p.recompute_snapshot_hash == current_hash:
+        if not force and p.recompute_snapshot_hash and p.recompute_snapshot_hash == current_hash:
             return {
                 "ok": True,
                 "skipped": True,
@@ -908,17 +913,22 @@ async def _dedup_purchase_items_core(purchase_id: int, db: AsyncSession) -> dict
 @router.post("/{purchase_id}/recompute-from-receipts")
 async def recompute_from_receipts(
     purchase_id: int,
+    force: bool = Query(False, description="Байпас snapshot-hash gate. Использовать после изменений логики парсинга (например НДС-маппинг)."),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """
     Phase 26-Z: ручной пересчёт авансовой закупки из её PurchaseReceipt.
     Идемпотентно. Thin wrapper над _recompute_from_receipts_core.
+
+    Параметр ?force=true (Phase 26-AAA-3) — байпасит snapshot-hash gate,
+    нужно для ретроактивного обновления старых позиций при изменении
+    логики парсинга (например после фикса НДС 22%/5%/7% маппинга).
     """
     p = await db.get(Purchase, purchase_id)
     if not p:
         raise HTTPException(404, "Закупка не найдена")
-    return await _recompute_from_receipts_core(purchase_id, db)
+    return await _recompute_from_receipts_core(purchase_id, db, force=force)
 
 
 @router.post("/{purchase_id}/dedup-items")

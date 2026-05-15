@@ -1295,7 +1295,31 @@ NDS_LABEL_RU = {
     5: "НДС 0%",
     6: "НДС не облагается",
     7: "НДС не облагается",
+    # ФФД 1.2, расширение прошивки касс для ставки 22% (РФ, с 01.01.2026):
+    11: "НДС 22%",
+    12: "НДС 22/122",
 }
+
+# Карта кодов ФФД → строка ставки для PurchaseItem.vat_rate.
+# None — без НДС (коды 5, 6, 7) или неизвестный код: ставка не определена.
+NDS_CODE_TO_RATE_STR = {
+    1: "20%",
+    2: "10%",
+    3: "20/120",
+    4: "10/110",
+    5: "0%",
+    11: "22%",
+    12: "22/122",
+}
+
+
+def _nds_code_to_rate_str(code) -> str | None:
+    """Маппит код ФФД 'nds' в строку ставки ('22%', '20%', ...).
+    None для 'без НДС' (6, 7) и неизвестных кодов."""
+    try:
+        return NDS_CODE_TO_RATE_STR.get(int(code))
+    except (TypeError, ValueError):
+        return None
 TAXATION_RU = {
     1: "ОСН",
     2: "УСН доход",
@@ -1534,6 +1558,8 @@ def _extract_items(raw) -> list:
                 'qty': qty,
                 'price': price,
                 'sum': sm,
+                'nds': it.get('nds'),
+                'vat_rate': _nds_code_to_rate_str(it.get('nds')),
             })
         if out:
             return out

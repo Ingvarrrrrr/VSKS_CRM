@@ -143,9 +143,9 @@
                         <th style="min-width:90px">Кол-во</th>
                         <th style="min-width:80px">Ед.</th>
                         <th style="min-width:110px">Цена ед., ₽</th>
-                        <th style="min-width:100px">НДС %</th>
-                        <th style="min-width:110px">НДС сумма, ₽</th>
-                        <th style="min-width:120px">Сумма с НДС, ₽</th>
+                        <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС %</th>
+                        <th v-if="showVatColumnsInExpandRow" style="min-width:110px">НДС сумма, ₽</th>
+                        <th style="min-width:120px">{{ showVatColumnsInExpandRow ? 'Сумма с НДС, ₽' : 'Сумма, ₽' }}</th>
                         <th style="min-width:200px">Действия</th>
                       </tr>
                     </thead>
@@ -189,7 +189,7 @@
                             @update:model-value="calcItemTotal(idx)" />
                         </td>
                         <!-- Fix 4/5: НДС % column -->
-                        <td>
+                        <td v-if="showVatColumnsInExpandRow">
                           <v-combobox v-model="item.vat_rate"
                             :items="VAT_RATE_OPTIONS"
                             item-title="title" item-value="value"
@@ -200,7 +200,7 @@
                           />
                         </td>
                         <!-- Fix 4/5: НДС сумма column -->
-                        <td class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
+                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
                         <!-- Fix 4/5: Сумма с НДС column -->
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
                         <td>
@@ -272,7 +272,7 @@
                           />
                         </td>
                         <!-- Fix 4/5: НДС % column (Договор) -->
-                        <td>
+                        <td v-if="showVatColumnsInExpandRow">
                           <v-combobox
                             :model-value="getContractItemFor(idx)?.vat_rate ?? null"
                             :items="VAT_RATE_OPTIONS"
@@ -292,7 +292,7 @@
                           />
                         </td>
                         <!-- Fix 4/5: НДС сумма column (Договор) -->
-                        <td class="text-caption">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
                         <!-- Fix 4/5: Сумма с НДС column (Договор) -->
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}</td>
                         <td>
@@ -341,9 +341,9 @@
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
                           <!-- Fix 4/5: НДС % readonly (Поставка) -->
-                          <td class="text-caption text-grey-darken-1">{{ (getContractItemFor(idx) as any)?.vat_rate ?? '—' }}</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (getContractItemFor(idx) as any)?.vat_rate ?? '—' }}</td>
                           <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
-                          <td class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
                           <!-- Fix 4/5: Сумма с НДС readonly (Поставка) -->
                           <td class="text-caption text-grey-darken-1 font-weight-medium">
                             {{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}
@@ -370,8 +370,8 @@
                           <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.quantity ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit_price ?? '—' }}</td>
-                          <td class="text-caption text-grey-darken-1">—</td>
-                          <td class="text-caption text-grey-darken-1">—</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.vat_rate ?? '—' }}</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount((localItems[idx] as any) ?? {})) }}</td>
                           <td class="text-caption text-grey-darken-1 font-weight-medium">{{ fmtRub(Number((localItems[idx] as any)?.total_price ?? 0)) }}</td>
                           <td></td>
                         </template>
@@ -1668,6 +1668,16 @@ const showContractorColumn = computed(() => props.formMode === 'advance_report')
 
 // isAdvance: для авансовых закупок Договор/Поставка sub-rows показывают данные из ТЗ
 const isAdvance = computed(() => props.formMode === 'advance_report')
+
+// Phase 26-NN: для авансовых отчётов, если ни у одной позиции нет vat_rate
+// (чек от ИП на УСН или НДС не извлёкся) — скрываем НДС-колонки в expand-row.
+// Для не-авансовых — колонки НДС всегда видны.
+const showVatColumnsInExpandRow = computed(() => {
+  if (!isAdvance.value) return true
+  return (localItems.value || []).some((it: any) =>
+    it?.vat_rate && String(it.vat_rate).trim() !== ''
+  )
+})
 
 // Phase 26-V: resizable columns
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {

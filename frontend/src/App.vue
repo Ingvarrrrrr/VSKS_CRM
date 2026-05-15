@@ -122,6 +122,40 @@ onMounted(async () => {
   .v-data-table-virtual > .v-table__wrapper > table {
     table-layout: fixed;
   }
+  /* Phase 26-HHH: nuclear CSS с !important — пробивает любые scoped стили,
+     Vuetify defaults, inline styles от useColumnConfig. Перенос ТОЛЬКО по
+     пробелам/дефисам, целые слова остаются неразорваны.
+     word-break: keep-all не позволяет ломать слово даже посреди слова
+     (CJK тоже не ломаются). overflow-wrap: break-word — только по пробелу. */
+  .v-data-table td,
+  .v-data-table-virtual td {
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: break-word !important;
+    text-overflow: clip !important;
+    vertical-align: top !important;
+  }
+  .v-data-table th,
+  .v-data-table-virtual th {
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: break-word !important;
+    text-overflow: clip !important;
+    vertical-align: middle !important;
+    line-height: 1.2 !important;
+  }
+  /* Заголовки колонок через ColumnHeaderMenu: разрешаем 2 строки */
+  .col-header-menu__title {
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: break-word !important;
+    text-overflow: clip !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    line-height: 1.15 !important;
+  }
 }
 /* На mobile отменяем agressive overflow-wrap (видимо унаследовано) и принудительный wrap
    чтобы текст не ломался посимвольно. Контент перепрыгивает horizontal-scroll. */

@@ -1076,8 +1076,21 @@ async def generate_document(
         vat_amount_val = 0.0
 
     # НДС info for approval sheet
+    # Phase 26-TT: для авансового отчёта не придумывать «НДС не облагается» если
+    # в чеке/items нет данных VAT — пишем только то, что реально есть.
+    is_advance = (p.purchase_method == 'advance')
+    items_with_vat = [it for it in (p.items or []) if getattr(it, 'vat_rate', None)]
+
     if vat_app:
         vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+    elif is_advance:
+        # Авансовый: данные из чеков ФНС; если в чеке нет НДС — не пишем ничего лишнего.
+        if items_with_vat:
+            # Per-item VAT — показать сводку по факту
+            unique_rates = sorted({str(it.vat_rate) for it in items_with_vat if it.vat_rate})
+            vat_info_line = f"НДС по позициям: {', '.join(unique_rates)}"
+        else:
+            vat_info_line = ""  # пусто — не придумываем
     else:
         art = (p.vat_exemption_article or "").strip()
         vat_info_line = f"НДС не облагается" + (f" ({art})" if art else "")

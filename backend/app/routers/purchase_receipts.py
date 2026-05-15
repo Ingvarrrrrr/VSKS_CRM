@@ -539,52 +539,96 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
             await db.flush()
         receipt_to_contractor[r.id] = (c_row.id, r.seller_inn, r.seller_name)
 
+    # Phase 26-WW dedup: удалить точные дубликаты PurchaseItem (если recompute запустился
+    # дважды и наплодил). Группа дубликатов = одинаковые (item_name, total_price, receipt_id)
+    # внутри одного purchase. Оставляем минимальный id, остальные DELETE.
+    dedup_q = await db.execute(
+        select(_PI.id, _PI.item_name, _PI.total_price, _PI.receipt_id)
+        .where(_PI.purchase_id == purchase_id)
+        .order_by(_PI.id.asc())
+    )
+    seen = {}  # key=(name, total, receipt_id) → first id
+    ids_to_delete = []
+    for row in dedup_q.all():
+        iid, name, total, rid = row
+        key = (str(name or '').strip().lower(), str(total or ''), rid)
+        if key in seen:
+            ids_to_delete.append(iid)
+        else:
+            seen[key] = iid
+    items_deduplicated = 0
+    if ids_to_delete:
+        from app.models.contract_item import ContractItem as _CI
+        from sqlalchemy import update as _sa_update, delete as _sa_delete
+        # Снять FK ContractItem.source_item_id → SET NULL, иначе FK violation
+        try:
+            await db.execute(
+                _sa_update(_CI)
+                .where(_CI.source_item_id.in_(ids_to_delete))
+                .values(source_item_id=None)
+            )
+        except Exception:
+            pass
+        await db.execute(
+            _sa_delete(_PI).where(_PI.id.in_(ids_to_delete))
+        )
+        items_deduplicated = len(ids_to_delete)
+        await db.flush()
+
+    # Phase 26-WW: если у Purchase УЖЕ есть PurchaseItem (даже legacy без receipt_id),
+    # не создавать новые из raw_json — fuzzy match (шаг B ниже) привяжет их к receipt'ам.
+    # Иначе получаем дубликаты: 4 legacy + 4 autocreate = 8.
+    existing_total = (await db.execute(
+        select(func.count()).select_from(_PI).where(_PI.purchase_id == purchase_id)
+    )).scalar_one()
+
     # Phase 26-DD: если в БД для receipt НЕТ привязанных PurchaseItem,
     # но raw_json содержит товары — создать PurchaseItem из raw_json.
     # Это закрывает кейс «чек загружен, items_data не распарсился при импорте».
     items_autocreated = 0
-    for r in receipts:
-        linked_count = (await db.execute(
-            select(_PI).where(_PI.purchase_id == purchase_id, _PI.receipt_id == r.id)
-        )).scalars().all()
-        if linked_count:
-            continue  # уже есть items этого чека
-        raw_items = _extract_items(r.raw_json or {})
-        if not raw_items:
-            continue
-        pack = receipt_to_contractor.get(r.id)
-        cid, c_inn, c_name = pack if pack else (None, r.seller_inn, r.seller_name)
-        for idx, ri in enumerate(raw_items, start=1):
-            try:
-                qty = _Dec(str(ri.get('quantity') or 1))
-            except Exception:
-                qty = _Dec('1')
-            try:
-                price = _Dec(str(ri.get('price') or 0))
-            except Exception:
-                price = _Dec('0')
-            try:
-                total = _Dec(str(ri.get('sum') or ri.get('total') or (qty * price)))
-            except Exception:
-                total = _Dec('0')
-            raw_name = (str(ri.get('name') or f"Позиция {idx}"))[:5000]
-            db.add(_PI(
-                purchase_id=purchase_id,
-                item_name=raw_name,
-                quantity=qty,
-                unit='шт.',
-                unit_price=price,
-                total_price=total,
-                match_confirmed=False,
-                contractor_id=cid,
-                contractor_inn=c_inn,
-                contractor_name=c_name,
-                receipt_id=r.id,
-                vat_rate=ri.get('vat_rate'),
-            ))
-            items_autocreated += 1
-    if items_autocreated:
-        await db.flush()
+    if not existing_total:
+        for r in receipts:
+            linked_count = (await db.execute(
+                select(_PI).where(_PI.purchase_id == purchase_id, _PI.receipt_id == r.id)
+            )).scalars().all()
+            if linked_count:
+                continue  # уже есть items этого чека
+            raw_items = _extract_items(r.raw_json or {})
+            if not raw_items:
+                continue
+            pack = receipt_to_contractor.get(r.id)
+            cid, c_inn, c_name = pack if pack else (None, r.seller_inn, r.seller_name)
+            for idx, ri in enumerate(raw_items, start=1):
+                try:
+                    qty = _Dec(str(ri.get('quantity') or 1))
+                except Exception:
+                    qty = _Dec('1')
+                try:
+                    price = _Dec(str(ri.get('price') or 0))
+                except Exception:
+                    price = _Dec('0')
+                try:
+                    total = _Dec(str(ri.get('sum') or ri.get('total') or (qty * price)))
+                except Exception:
+                    total = _Dec('0')
+                raw_name = (str(ri.get('name') or f"Позиция {idx}"))[:5000]
+                db.add(_PI(
+                    purchase_id=purchase_id,
+                    item_name=raw_name,
+                    quantity=qty,
+                    unit='шт.',
+                    unit_price=price,
+                    total_price=total,
+                    match_confirmed=False,
+                    contractor_id=cid,
+                    contractor_inn=c_inn,
+                    contractor_name=c_name,
+                    receipt_id=r.id,
+                    vat_rate=ri.get('vat_rate'),
+                ))
+                items_autocreated += 1
+        if items_autocreated:
+            await db.flush()
 
     # Шаг A: items с receipt_id → overwrite contractor если mismatch
     linked_items_q = await db.execute(
@@ -778,6 +822,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession) -> d
         "items_updated": items_updated,
         "items_linked_by_fuzzy": items_linked_by_fuzzy,
         "items_autocreated": items_autocreated,
+        "items_deduplicated": items_deduplicated,
         "contract_items_created": contract_items_created,
         "files_attached": files_attached,
         "acceptance_docs_added": acceptance_docs_added,

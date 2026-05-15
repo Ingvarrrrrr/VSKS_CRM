@@ -788,9 +788,28 @@ async def generate_document(
         from docx.shared import Cm as _Cm
 
         # Templates are normalized at upload time (subsidies.py
-        # _normalize_docx_template) — proofErr / bookmark / comment /
-        # lastRenderedPageBreak markers are already stripped on disk, so
-        # docxtpl reads the cleaned file directly.
+        # _normalize_docx_template). For files uploaded BEFORE that fix
+        # landed we lazily rewrite them on first render: scan + replace +
+        # atomic rename, so subsequent renders hit the fast path with no
+        # extra IO and InlineImage placeholders sit in a single contiguous
+        # run (required for the drawing element to be inserted).
+        try:
+            import zipfile as _zf
+            needs_norm = False
+            with _zf.ZipFile(template_path, 'r') as _zin:
+                for _name in _zin.namelist():
+                    if _name == 'word/document.xml' or _name.startswith('word/header') or _name.startswith('word/footer'):
+                        _bytes = _zin.read(_name)
+                        if b'<w:proofErr' in _bytes or b'<w:bookmark' in _bytes or b'<w:commentRange' in _bytes or b'<w:lastRenderedPageBreak' in _bytes:
+                            needs_norm = True
+                            break
+            if needs_norm:
+                from app.routers.subsidies import _normalize_docx_template as _norm
+                _stats = _norm(template_path)
+                logger.info("lazy normalize on render %s: %s", template_path, _stats)
+        except Exception as _scan_e:
+            logger.warning("lazy normalize scan failed for %s: %s", template_path, _scan_e)
+
         tpl = DocxTemplate(template_path)
     except HTTPException:
         raise

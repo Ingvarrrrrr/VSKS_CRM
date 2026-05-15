@@ -1,15 +1,14 @@
-// Phase 26-YY: клиентский кэш контрагентов с TTL 5 минут.
-// Цель — не дёргать GET /api/contractors/ при каждом mount view'а
-// (раньше это было mount-time bulk load 200+ rows на каждой странице).
+// Phase 26-ZZ: server-side search контрагентов вместо bulk-load.
+// На больших каталогах bulk-load каталога не масштабируется. Read views
+// используют purchase.contractor_name из backend JOIN, фронту нечего
+// догружать. Выбор/фильтр — server-search с debounce на стороне view'а.
 //
 // Использование:
 //   import { useContractorsStore } from '@/stores/contractors'
-//   const contractorsStore = useContractorsStore()
-//   await contractorsStore.ensureLoaded()
-//   contractors.value = contractorsStore.list
-//
-// Свежие данные при необходимости (после CRUD в ContractorsView):
-//   contractorsStore.invalidate()
+//   const store = useContractorsStore()
+//   await store.search('сбербанк', 50)              // server search + cache fill
+//   const c = store.getById(42)                      // sync, из cache
+//   store.putToCache({ id: 1, name: '...' })         // ручное пополнение из purchase JSON
 import { defineStore } from 'pinia'
 import { apiFetch } from '@/api'
 
@@ -20,40 +19,57 @@ interface Contractor {
   [k: string]: any
 }
 
-const TTL_MS = 5 * 60 * 1000
-
 export const useContractorsStore = defineStore('contractors', {
   state: () => ({
-    list: [] as Contractor[],
-    loadedAt: 0 as number,
-    loading: false as boolean,
+    cache: new Map<number, Contractor>(),
+    searchResults: [] as Contractor[],
+    searching: false as boolean,
+    _searchAbort: null as AbortController | null,
   }),
   getters: {
-    getById: (s) => (id: number) => s.list.find(c => c.id === id),
-    isFresh: (s) => s.loadedAt > 0 && (Date.now() - s.loadedAt) < TTL_MS,
+    getById: (s) => (id: number): Contractor | null => s.cache.get(id) || null,
   },
   actions: {
-    async ensureLoaded(force = false) {
-      if (!force && this.isFresh && this.list.length) return this.list
-      if (this.loading) {
-        // Параллельный вызов — ждём окончания текущей загрузки, не делаем второй запрос
-        while (this.loading) await new Promise(r => setTimeout(r, 50))
-        return this.list
+    putToCache(c: Contractor) {
+      if (c && c.id) this.cache.set(c.id, c)
+    },
+    putManyToCache(arr: Contractor[]) {
+      if (!Array.isArray(arr)) return
+      for (const c of arr) this.putToCache(c)
+    },
+    async search(q: string, limit = 50): Promise<Contractor[]> {
+      // Отменяем in-flight запрос — пользователь продолжает печатать
+      if (this._searchAbort) {
+        try { this._searchAbort.abort() } catch {}
       }
-      this.loading = true
+      const ctrl = new AbortController()
+      this._searchAbort = ctrl
+      this.searching = true
       try {
-        const data = await apiFetch<Contractor[]>('/contractors/?limit=5000')
-        this.list = Array.isArray(data) ? data : []
-        this.loadedAt = Date.now()
-      } catch (e) {
-        console.error('contractors load failed', e)
+        const qParam = q ? `&search=${encodeURIComponent(q)}` : ''
+        const data = await apiFetch<Contractor[]>(
+          `/contractors/?limit=${limit}${qParam}`,
+          { signal: ctrl.signal }
+        )
+        if (ctrl.signal.aborted) return this.searchResults
+        const arr = Array.isArray(data) ? data : []
+        this.searchResults = arr
+        this.putManyToCache(arr)
+        return arr
+      } catch (e: any) {
+        if (e?.name === 'AbortError') return this.searchResults
+        console.error('contractors search failed', e)
+        return this.searchResults
       } finally {
-        this.loading = false
+        if (this._searchAbort === ctrl) {
+          this._searchAbort = null
+          this.searching = false
+        }
       }
-      return this.list
     },
     invalidate() {
-      this.loadedAt = 0
+      this.cache.clear()
+      this.searchResults = []
     },
   },
 })

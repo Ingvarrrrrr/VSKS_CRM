@@ -439,7 +439,6 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
-import { useContractorsStore } from '@/stores/contractors'
 import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
@@ -762,21 +761,19 @@ function clearFilters() {
   clearAllFilters()
 }
 
-const contractorsStore = useContractorsStore()
-
+// Phase 26-ZZ: bulk-load контрагентов убран. usedContractors computed
+// dedupe-by-name из items, не требует справочника.
 async function load() {
   loading.value = true
   try {
-    // Phase 26-YY: контрагенты через Pinia store (TTL 5 мин) — один запрос за сессию
-    const [purchasesData, subsidiesData, _contractors, usersData] = await Promise.all([
+    // Phase 26-ZZ: bulk-load контрагентов убран — usedContractors берёт имена из items
+    const [purchasesData, subsidiesData, usersData] = await Promise.all([
       apiFetch<Purchase[]>('/purchases/?purchase_method=advance'),
       apiFetch<Subsidy[]>('/subsidies/'),
-      contractorsStore.ensureLoaded(),
       apiFetch<any[]>('/users/').catch(() => []),
     ])
     items.value = purchasesData
     subsidies.value = subsidiesData
-    contractors.value = contractorsStore.list
     allUsers.value = Array.isArray(usersData) ? usersData : []
   } catch {
     snack.text = 'Ошибка загрузки'; snack.color = 'error'; snack.show = true

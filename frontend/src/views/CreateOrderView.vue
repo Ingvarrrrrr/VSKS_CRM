@@ -4984,16 +4984,15 @@ const needsPayment = computed(() => form.status === 'delivered')
 const contractorsStore = useContractorsStore()
 
 const loadRefs = async () => {
-  // Phase 26-YY: контрагенты через Pinia store (TTL 5 мин) — один запрос за сессию
-  const [subs, _cons, feos, prods, evts] = await Promise.all([
+  // Phase 26-ZZ: контрагенты через server-search (см. onContractorSearch).
+  // Локальный contractors.value наполняется по мере поиска и ad-hoc fetch'ей.
+  const [subs, feos, prods, evts] = await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/'),
-    contractorsStore.ensureLoaded(),
     apiFetch<FeoCategory[]>('/feo-categories/'),
     apiFetch<Product[]>('/products/'),
     apiFetch<EventItem[]>('/events/'),
   ])
   subsidies.value = subs
-  contractors.value = contractorsStore.list
   allFeoCategories.value = feos
   products.value = prods
   allEvents.value = evts
@@ -5032,7 +5031,7 @@ async function saveNewContractor() {
   try {
     const created = await apiFetch<Contractor>('/contractors/', { method: 'POST', body: { ...addContractorForm } })
     contractors.value.push(created)
-    contractorsStore.invalidate()  // Phase 26-YY: следующий ensureLoaded() возьмёт свежий список
+    contractorsStore.putToCache(created)  // Phase 26-ZZ: и в Pinia cache для глобального resolve
     form.contractor_id = created.id
     contractorInn.value = created.inn || ''
     addContractorDialog.value = false
@@ -5142,22 +5141,18 @@ function onAddContractorInnChange(val: string) {
   }
 }
 
-const contractorSearchLoading = ref(false)
+const contractorSearchLoading = computed(() => contractorsStore.searching)
 let _contractorSearchTimeout: any = null
 function onContractorSearch(query: string) {
   clearTimeout(_contractorSearchTimeout)
   if (!query || query.length < 2) return
+  // Phase 26-ZZ: server-search через store с отменой in-flight + cache
   _contractorSearchTimeout = setTimeout(async () => {
-    contractorSearchLoading.value = true
-    try {
-      const list = await apiFetch<Contractor[]>(`/contractors/?search=${encodeURIComponent(query)}&limit=50`)
-      // Merge with existing (keep selected contractor)
-      const existing = new Set(contractors.value.map(c => c.id))
-      for (const c of list) {
-        if (!existing.has(c.id)) contractors.value.push(c)
-      }
-    } catch {} finally {
-      contractorSearchLoading.value = false
+    const list = await contractorsStore.search(query, 50)
+    // Merge with existing local array (хранит selected + per-item lookups)
+    const existing = new Set(contractors.value.map(c => c.id))
+    for (const c of list) {
+      if (!existing.has(c.id)) contractors.value.push(c as Contractor)
     }
   }, 300)
 }

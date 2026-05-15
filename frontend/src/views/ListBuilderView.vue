@@ -82,13 +82,17 @@
             <v-col cols="6">
               <v-autocomplete
                 v-model="filters.contractor_id"
-                :items="contractors"
+                :items="contractorOptions"
+                :loading="contractorsStore.searching"
                 item-title="name"
                 item-value="id"
                 label="Контрагент"
                 density="compact"
                 hide-details
                 multiple
+                no-filter
+                hide-no-data
+                @update:search="onContractorSearch"
               />
             </v-col>
             <v-col cols="6">
@@ -290,7 +294,28 @@ const rowsCount = ref(0)
 const loading = ref(false)
 
 const subsidies = ref<any[]>([])
-const contractors = ref<any[]>([])
+// Phase 26-ZZ: server-side search контрагентов (вместо bulk-load).
+// Опции дропдауна = последний search-результат + selected (из cache по id).
+const contractorsStore = useContractorsStore()
+const contractorOptions = computed(() => {
+  const seen = new Set<number>()
+  const out: any[] = []
+  for (const c of contractorsStore.searchResults) {
+    if (!seen.has(c.id)) { seen.add(c.id); out.push(c) }
+  }
+  // Добавим уже выбранные id из cache (чтобы chip-показывал name, а не id)
+  for (const id of filters.value.contractor_id || []) {
+    if (seen.has(id)) continue
+    const c = contractorsStore.getById(id)
+    if (c) { seen.add(id); out.push(c) }
+  }
+  return out
+})
+let _contractorSearchTimer: any = null
+function onContractorSearch(q: string) {
+  if (_contractorSearchTimer) clearTimeout(_contractorSearchTimer)
+  _contractorSearchTimer = setTimeout(() => contractorsStore.search(q, 50), 300)
+}
 
 const configId = ref<number | null>(null)
 const configName = ref('')
@@ -615,20 +640,15 @@ async function loadConfig(id: number) {
 watch([filters, groupBy], reload, { deep: true })
 
 // Init
-const contractorsStore = useContractorsStore()
 onMounted(async () => {
   try {
     const f = await apiFetch<any>('/analytics/fields')
     fields.value = f.fields
     groups.value = f.groups
     openGroups.value = [...f.groups]
-    // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин) — один запрос за сессию
-    const [subs] = await Promise.all([
-      apiFetch<any>('/subsidies/'),
-      contractorsStore.ensureLoaded(),
-    ])
+    // Phase 26-ZZ: контрагенты — server-search в дропдауне, не bulk
+    const subs = await apiFetch<any>('/subsidies/')
     subsidies.value = Array.isArray(subs) ? subs : subs.items || []
-    contractors.value = contractorsStore.list
     const idParam = route.params.id
     if (idParam) await loadConfig(Number(idParam))
   } catch (e: any) {

@@ -1823,7 +1823,6 @@
 import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
-import { useContractorsStore } from '@/stores/contractors'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
@@ -2466,7 +2465,7 @@ async function saveQuickContractor() {
     for (const f of fields) { if (qcForm.value[f]) body[f] = (qcForm.value[f] as string).trim() }
     const created = await apiFetch<any>('/contractors/', { method: 'POST', body })
     contractors.value.push({ id: created.id, name: created.name, inn: created.inn })
-    contractorsStore.invalidate()  // Phase 26-YY: следующий ensureLoaded() возьмёт свежий список
+    // Phase 26-ZZ: добавляем созданного в кэш — selected chip покажет name
     form.value.contractor_id = created.id
     editForm.value.contractor_id = created.id
     quickContractorDialog.value = false
@@ -2898,15 +2897,11 @@ function onContractorSearch(query: string) {
 }
 
 // ── Data load ─────────────────────────────────────
-const contractorsStore = useContractorsStore()
+// Phase 26-ZZ: bulk-load контрагентов убран. Локальный contractors массив
+// наполняется через server-search (onContractorSearch) и ad-hoc fetch при edit.
 async function loadAll() {
   loading.value = true
   try {
-    // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин)
-    try {
-      await contractorsStore.ensureLoaded()
-      contractors.value = contractorsStore.list as any[]
-    } catch {}
     const charts = await apiFetch<any>('/dashboard/charts')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,

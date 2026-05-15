@@ -139,15 +139,17 @@
           <div class="d-flex align-center gap-2 mb-2">
             <v-autocomplete
               v-model="createDialog.recipient_ids"
-              :items="contractors"
+              :items="contractorOptions"
               item-title="name"
               item-value="id"
               label="Найти контрагента"
               variant="outlined" density="compact"
               multiple hide-selected hide-details
-              :loading="createDialog.loadingContractors"
+              :loading="contractorsStore.searching || createDialog.loadingContractors"
               class="flex-grow-1"
-              no-data-text="Не найдено"
+              no-data-text="Введите название для поиска"
+              no-filter
+              @update:search="onContractorSearch"
             />
             <v-btn
               icon="mdi-account-plus-outline"
@@ -461,7 +463,35 @@ const editEmailValue = ref('')
 const savingEmail = ref(false)
 
 function getContractor(id: number) {
-  return contractors.value.find(c => c.id === id)
+  // Phase 26-ZZ: ищем сперва в локальном массиве (был при создании quick),
+  // затем в Pinia cache (наполняется server-search'ем).
+  return contractors.value.find(c => c.id === id) || contractorsStore.getById(id) || undefined
+}
+
+// Phase 26-ZZ: опции дропдауна = последний search-результат + уже выбранные
+const contractorOptions = computed(() => {
+  const seen = new Set<number>()
+  const out: Contractor[] = []
+  for (const c of contractorsStore.searchResults) {
+    if (!seen.has(c.id)) { seen.add(c.id); out.push(c) }
+  }
+  // Добавим selected (важно для multi-select: chip нужен в items, иначе пропадает)
+  for (const id of createDialog.recipient_ids) {
+    if (seen.has(id)) continue
+    const c = getContractor(id)
+    if (c) { seen.add(id); out.push(c) }
+  }
+  // Локально созданные quick-контрагенты (могут быть вне последнего search)
+  for (const c of contractors.value) {
+    if (!seen.has(c.id)) { seen.add(c.id); out.push(c) }
+  }
+  return out
+})
+
+let _contractorSearchTimer: any = null
+function onContractorSearch(q: string) {
+  if (_contractorSearchTimer) clearTimeout(_contractorSearchTimer)
+  _contractorSearchTimer = setTimeout(() => contractorsStore.search(q, 50), 300)
 }
 
 function startEditEmail(id: number) {
@@ -533,16 +563,8 @@ async function openCreateDialog() {
       createDialog.loadingPurchases = false
     }
   }
-  if (contractors.value.length === 0) {
-    createDialog.loadingContractors = true
-    try {
-      // Phase 26-YY: Pinia кэш контрагентов (TTL 5 мин)
-      await contractorsStore.ensureLoaded()
-      contractors.value = contractorsStore.list as Contractor[]
-    } finally {
-      createDialog.loadingContractors = false
-    }
-  }
+  // Phase 26-ZZ: bulk-load убран — пользователь начнёт печатать имя и
+  // сработает onContractorSearch (server-side search через store).
 }
 
 function openQuickContractor() {
@@ -567,7 +589,7 @@ async function saveQuickContractor() {
       },
     })
     contractors.value.push(created)
-    contractorsStore.invalidate()  // Phase 26-YY: следующий ensureLoaded() возьмёт свежий список
+    contractorsStore.putToCache(created)  // Phase 26-ZZ: и в Pinia cache для глобального resolve
     createDialog.recipient_ids = [...createDialog.recipient_ids, created.id]
     quickContractor.show = false
     showSnack(`Контрагент «${created.name}» добавлен`)

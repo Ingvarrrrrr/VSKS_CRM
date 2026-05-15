@@ -763,6 +763,85 @@ async def enrich_all_contractors_from_egrul(
     }
 
 
+@router.post("/enrich-from-receipts")
+async def enrich_contractors_from_receipts(
+    limit: int = Query(50, ge=1, le=500, description="Сколько ИНН из чеков обработать за один запуск"),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Phase 26-CCC-2: обогащение через ЕГРЮЛ для ВСЕХ контрагентов,
+    которые встречаются в PurchaseReceipt.seller_inn.
+
+    Отличия от /enrich-all-from-egrul:
+    - Берёт ИНН не из Contractor.inn, а из уникальных PurchaseReceipt.seller_inn.
+    - ПЕРЕЗАПИСЫВАЕТ Contractor.name на короткое из ЕГРЮЛ (даже если текущее
+      короткое — синхронизируем с актуальным ЕГРЮЛ-значением).
+    - Заполняет full_name и остальные пустые поля.
+    """
+    from app.routers.purchase_receipts import _create_or_enrich_contractor_from_receipt
+    from app.models.purchase_receipt import PurchaseReceipt
+
+    # Уникальные ИНН продавцов из чеков
+    inns_q = await db.execute(
+        select(PurchaseReceipt.seller_inn)
+        .where(PurchaseReceipt.seller_inn.is_not(None))
+        .distinct()
+        .limit(limit)
+    )
+    inns = [r[0] for r in inns_q.all() if r[0]]
+
+    enriched = 0
+    name_shortened = 0
+    not_found = 0
+    failed = 0
+    for inn in inns:
+        try:
+            c_row = (await db.execute(
+                select(Contractor).where(Contractor.inn == inn).limit(1)
+            )).scalar_one_or_none()
+            if not c_row:
+                not_found += 1
+                continue
+            new_c = await _create_or_enrich_contractor_from_receipt(inn, c_row.name, db)
+            if not new_c.name:
+                failed += 1
+                continue
+            # ПЕРЕЗАПИСЫВАЕМ name на короткое из ЕГРЮЛ (Phase 26-CCC-2)
+            if new_c.name != c_row.name:
+                # Сохраняем длинное в full_name если оно ещё пустое
+                if not c_row.full_name and len(c_row.name) > len(new_c.name):
+                    c_row.full_name = c_row.name
+                c_row.name = new_c.name
+                name_shortened += 1
+            # full_name обновляем если ЕГРЮЛ дал более полное
+            if new_c.full_name and (not c_row.full_name or len(new_c.full_name) > len(c_row.full_name or '')):
+                c_row.full_name = new_c.full_name
+            # Прочие поля — только если пусты
+            if not c_row.ogrn and new_c.ogrn:
+                c_row.ogrn = new_c.ogrn
+            if not c_row.kpp and new_c.kpp:
+                c_row.kpp = new_c.kpp
+            if not c_row.address and new_c.address:
+                c_row.address = new_c.address
+            if not c_row.org_type and new_c.org_type:
+                c_row.org_type = new_c.org_type
+            if not c_row.signatory and new_c.signatory:
+                c_row.signatory = new_c.signatory
+            enriched += 1
+        except Exception:
+            failed += 1
+
+    await db.commit()
+    return {
+        "ok": True,
+        "total_inns_from_receipts": len(inns),
+        "enriched": enriched,
+        "name_shortened": name_shortened,
+        "contractor_not_found": not_found,
+        "failed": failed,
+    }
+
+
 @router.post("/enrich-from-fns/{contractor_id}")
 async def enrich_contractor_from_fns(
     contractor_id: int,

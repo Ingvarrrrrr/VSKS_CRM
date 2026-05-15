@@ -216,7 +216,7 @@ async def transition_status(
         if ci_count == 0:
             if p.purchase_method == 'advance':
                 from app.models.purchase_receipt import PurchaseReceipt
-                from app.models.purchase_item import PurchaseItem
+                # PurchaseItem уже импортирован на уровне модуля
                 receipts_count = (await db.execute(
                     select(func.count()).select_from(PurchaseReceipt).where(PurchaseReceipt.purchase_id == pid)
                 )).scalar() or 0

@@ -787,40 +787,52 @@ async def generate_document(
         from docxtpl import DocxTemplate, InlineImage
         from docx.shared import Cm as _Cm
 
-        # Phase 26-UU: нормализация шаблона перед загрузкой.
-        # Word вставляет <w:proofErr> между runs внутри jinja-placeholder'ов
-        # ({{ r }} → <w:t>{{ r</w:t><w:proofErr/><w:t> }}</w:t>). Это разделяет
-        # placeholder на 2 run'a и ломает InlineImage rendering (docxtpl не
-        # может вставить drawing в split-run). Удаляем proofErr — безопасно,
-        # это только Word'овские маркеры грамматики, визуально не видны.
+        # Phase 26-UU/VV: нормализация шаблона — удаление мусорных Word-элементов
+        # которые ломают docxtpl InlineImage. Сохраняем в TEMP файл (не BytesIO —
+        # docxtpl надёжнее работает с file path).
+        # Удаляем элементы, разделяющие jinja-placeholder между runs:
+        #   - <w:proofErr/> (грамматика)
+        #   - <w:bookmarkStart/>, <w:bookmarkEnd/>
+        #   - <w:commentRangeStart/>, <w:commentRangeEnd/>
+        #   - <w:lastRenderedPageBreak/>
+        # Все они визуально не отображаются, только маркеры для Word.
         import zipfile as _zipfile
-        import io as _io
         import re as _re_norm
-        _norm_path = template_path
+        import tempfile as _tempfile
+        import os as _os_norm
+        import logging as _logging
+        _norm_tmp_path = None
         try:
-            _buf_in = _io.BytesIO()
-            with open(template_path, 'rb') as _fr:
-                _buf_in.write(_fr.read())
-            _buf_in.seek(0)
-            _buf_out = _io.BytesIO()
-            with _zipfile.ZipFile(_buf_in, 'r') as _zin:
-                with _zipfile.ZipFile(_buf_out, 'w', _zipfile.ZIP_DEFLATED) as _zout:
+            _stats = {"proofErr": 0, "bookmark": 0, "comment": 0, "pageBreak": 0}
+            _norm_tmp_fd, _norm_tmp_path = _tempfile.mkstemp(suffix=".docx")
+            _os_norm.close(_norm_tmp_fd)
+            with _zipfile.ZipFile(template_path, 'r') as _zin:
+                with _zipfile.ZipFile(_norm_tmp_path, 'w', _zipfile.ZIP_DEFLATED) as _zout:
                     for _item in _zin.namelist():
                         _data = _zin.read(_item)
-                        if _item == 'word/document.xml':
+                        if _item.endswith('.xml'):
                             _xml = _data.decode('utf-8', errors='replace')
-                            # Убираем proofErr теги (один или парные)
-                            _xml = _re_norm.sub(r'<w:proofErr [^/]*?/>', '', _xml)
-                            # Также убираем <w:bookmarkStart/> и <w:bookmarkEnd/> внутри placeholder'ов
-                            # (они тоже могут разделить run'ы)
-                            _data = _xml.encode('utf-8')
+                            _new = _re_norm.sub(r'<w:proofErr [^/]*?/>', '', _xml)
+                            _stats["proofErr"] += (_xml.count('<w:proofErr') - _new.count('<w:proofErr'))
+                            _xml = _new
+                            _new = _re_norm.sub(r'<w:bookmarkStart [^/]*?/>', '', _xml)
+                            _new = _re_norm.sub(r'<w:bookmarkEnd [^/]*?/>', '', _new)
+                            _stats["bookmark"] += (_xml.count('<w:bookmark') - _new.count('<w:bookmark'))
+                            _xml = _new
+                            _new = _re_norm.sub(r'<w:commentRangeStart [^/]*?/>', '', _xml)
+                            _new = _re_norm.sub(r'<w:commentRangeEnd [^/]*?/>', '', _new)
+                            _new = _re_norm.sub(r'<w:commentReference [^/]*?/>', '', _new)
+                            _stats["comment"] += (_xml.count('<w:comment') - _new.count('<w:comment'))
+                            _xml = _new
+                            _new = _re_norm.sub(r'<w:lastRenderedPageBreak\s*/>', '', _xml)
+                            _stats["pageBreak"] += (_xml.count('<w:lastRenderedPageBreak') - _new.count('<w:lastRenderedPageBreak'))
+                            _data = _new.encode('utf-8')
                         _zout.writestr(_item, _data)
-            _buf_out.seek(0)
-            # docxtpl принимает file-like
-            tpl = DocxTemplate(_buf_out)
+            _logging.getLogger(__name__).info(
+                f"docx normalized: {template_path} → stripped {_stats}"
+            )
+            tpl = DocxTemplate(_norm_tmp_path)
         except Exception as _norm_e:
-            # Если нормализация упала — fallback на оригинал
-            import logging as _logging
             _logging.getLogger(__name__).warning(
                 f"docx normalization failed for {template_path}: {_norm_e}. Using original."
             )

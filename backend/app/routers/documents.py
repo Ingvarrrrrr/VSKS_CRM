@@ -1307,15 +1307,23 @@ async def generate_document(
                     _tmp = _tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     _tmp.write(_png_bytes)
                     _tmp.close()
-                    receipt_images.append(InlineImage(tpl, _tmp.name, width=_Cm(8.0)))
+                    receipt_images.append(InlineImage(tpl, _tmp.name, width=_Cm(6.5)))
                 except Exception as _re:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(f"render receipt {_r.id} skipped: {_re}")
             context["receipts"] = receipt_images
             context["receipt_images"] = receipt_images  # alias
+            # Phase 26-LL: chunked в пары для таблицы 2 колонки в шаблоне СЗ
+            receipt_pairs = []
+            for _i in range(0, len(receipt_images), 2):
+                _left = receipt_images[_i]
+                _right = receipt_images[_i + 1] if _i + 1 < len(receipt_images) else None
+                receipt_pairs.append({'left': _left, 'right': _right})
+            context["receipt_pairs"] = receipt_pairs
         else:
             context["receipts"] = []
             context["receipt_images"] = []
+            context["receipt_pairs"] = []
     except HTTPException:
         raise
     except Exception as _ctx_exc:

@@ -433,6 +433,14 @@
           <span class="text-caption">{{ purchaseMethodLabel(item.purchase_method) }}</span>
         </template>
 
+        <!-- Кому возмещать (фиолетовый chip, единый стиль) -->
+        <template #item.reimbursement_user_name="{ item }">
+          <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
+            {{ item.reimbursement_user_name }}
+          </v-chip>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
         <!-- Контрагент / Подотчётное лицо -->
         <template #item.contractor_name="{ item }">
           <template v-if="item.purchase_method === 'advance'">

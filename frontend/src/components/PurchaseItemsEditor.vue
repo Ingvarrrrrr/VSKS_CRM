@@ -240,7 +240,7 @@
                         <td><v-chip color="success" size="x-small" variant="tonal">Договор</v-chip></td>
                         <td>
                           <v-textarea
-                            :model-value="getContractItemFor(idx)?.name ?? ''"
+                            :model-value="getContractItemFor(idx)?.name ?? (isAdvance ? (localItems[idx] as any)?.item_name ?? '' : '')"
                             density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
                             rows="1" auto-grow class="my-1 flex-grow-1" style="min-width:200px"
                             :disabled="props.readonly"
@@ -249,7 +249,7 @@
                         </td>
                         <td>
                           <v-text-field
-                            :model-value="getContractItemFor(idx)?.quantity ?? ''"
+                            :model-value="getContractItemFor(idx)?.quantity ?? (isAdvance ? (localItems[idx] as any)?.quantity ?? '' : '')"
                             type="number" density="compact" variant="outlined" hide-details
                             :disabled="props.readonly"
                             @update:model-value="(v: string) => updateContractField(idx, 'quantity', Number(v))"
@@ -257,7 +257,7 @@
                         </td>
                         <td>
                           <v-text-field
-                            :model-value="getContractItemFor(idx)?.unit ?? ''"
+                            :model-value="getContractItemFor(idx)?.unit ?? (isAdvance ? (localItems[idx] as any)?.unit ?? '' : '')"
                             density="compact" variant="outlined" hide-details
                             :disabled="props.readonly"
                             @update:model-value="(v: string) => updateContractField(idx, 'unit', v)"
@@ -265,7 +265,7 @@
                         </td>
                         <td>
                           <v-text-field
-                            :model-value="getContractItemFor(idx)?.unit_price ?? ''"
+                            :model-value="getContractItemFor(idx)?.unit_price ?? (isAdvance ? (localItems[idx] as any)?.unit_price ?? '' : '')"
                             type="number" density="compact" variant="outlined" hide-details
                             :disabled="props.readonly"
                             @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
@@ -356,6 +356,24 @@
                               </template>
                             </v-tooltip>
                           </td>
+                        </template>
+                        <template v-else-if="isAdvance">
+                          <!-- advance: показываем данные из ТЗ вместо заглушки -->
+                          <td>
+                            <v-textarea
+                              :model-value="(localItems[idx] as any)?.item_name ?? ''"
+                              density="compact" variant="outlined" hide-details readonly
+                              rows="1" auto-grow class="my-1" style="min-width:200px"
+                              bg-color="grey-lighten-4"
+                            />
+                          </td>
+                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.quantity ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit_price ?? '—' }}</td>
+                          <td class="text-caption text-grey-darken-1">—</td>
+                          <td class="text-caption text-grey-darken-1">—</td>
+                          <td class="text-caption text-grey-darken-1 font-weight-medium">{{ fmtRub(Number((localItems[idx] as any)?.total_price ?? 0)) }}</td>
+                          <td></td>
                         </template>
                         <template v-else>
                           <td colspan="9" class="text-caption text-grey-lighten-1 text-center py-1">
@@ -1047,14 +1065,15 @@
             <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
               <div class="text-body-2">
                 <strong>Умный импорт</strong> — автоматически распознаёт наименования, количество и цены из файла.<br>
-                Поддерживаются Excel, Word, PDF, HTML. Распознавание производится без LLM, на основе эвристик.
+                Поддерживаются Excel, Word, PDF, HTML, <strong>JPG/PNG/WEBP</strong> (фото чека с QR ФНС или текстом).<br>
+                <span class="text-medium-emphasis">Для фото чека: лучший результат даёт QR-код ФНС (приложение «Проверка чека»). OCR-распознавание текста менее точно.</span>
               </div>
             </v-alert>
             <div class="mb-4">
               <v-file-input
                 v-model="smartImportFileList"
                 label="Выберите файл для умного импорта"
-                accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm"
+                accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
                 variant="outlined" density="compact" prepend-icon="mdi-file-document-outline"
                 show-size clearable
                 @update:model-value="onSmartFileChange"
@@ -1646,6 +1665,9 @@ const contractorLookupLoading = ref<Record<number, boolean>>({})
 
 // showContractorColumn: advance_report → отдельная колонка всегда видна
 const showContractorColumn = computed(() => props.formMode === 'advance_report')
+
+// isAdvance: для авансовых закупок Договор/Поставка sub-rows показывают данные из ТЗ
+const isAdvance = computed(() => props.formMode === 'advance_report')
 
 // Phase 26-V: resizable columns
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {

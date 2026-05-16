@@ -1622,12 +1622,30 @@ function isDeliveryFilled(idx: number): boolean {
   return isDelivered(idx) && !!getContractItemFor(idx)
 }
 
-const rematchOptions = computed(() =>
-  localItems.value.map((it, i) => ({
+const rematchOptions = computed(() => {
+  const base = localItems.value.map((it, i) => ({
     title: `№${i + 1}: ${(it.item_name || '').slice(0, 50) || '(без имени)'}`,
     value: (it as any).id ?? i,
   }))
-)
+  // Phase 26-nnn: orphan-заглушки. source_item_id у ContractItem может
+  // указывать на удалённую PurchaseItem (после dedup phase26-ww или
+  // ручного удаления строки ТЗ). Без заглушки Vuetify autocomplete не
+  // находит item в items[] и рендерит raw value (голый id типа "1281")
+  // — выглядит как "номер БД вместо названия". Добавляем виртуальный
+  // option для каждого orphan source_item_id чтобы #selection slot
+  // получил selItem с осмысленным title.
+  const baseValues = new Set(base.map(o => o.value))
+  const orphanIds = new Set<number>()
+  for (const ci of localContractItems.value) {
+    const sid = (ci as any).source_item_id
+    if (sid != null && !baseValues.has(sid)) orphanIds.add(sid)
+  }
+  const orphans = Array.from(orphanIds).map(id => ({
+    title: `№${id} (исходная позиция удалена)`,
+    value: id,
+  }))
+  return [...base, ...orphans]
+})
 
 // Snackbar
 const snack = reactive({ show: false, text: '', color: 'success' })

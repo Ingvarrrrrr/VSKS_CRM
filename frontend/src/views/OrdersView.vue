@@ -422,25 +422,21 @@
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
-        <!-- Контрагент / Подотчётное лицо -->
+        <!-- Контрагент (поставщик/продавец). Phase 26-nnn:
+             Для авансовых раньше показывали reimbursement_user_name (получателя
+             возмещения) — это ПУТАНИЦА. Контрагент = продавец/поставщик; кому
+             возмещать = отдельная колонка key='reimbursement_user_name'.
+             Multi-contractor label остаётся (если у items[] несколько продавцов
+             из разных чеков). Без chip-обёртки — обычный текст переносится по
+             глобальному CSS overflow-wrap: anywhere. -->
         <template #item.contractor_name="{ item }">
-          <template v-if="item.purchase_method === 'advance'">
-            <v-chip v-if="item.reimbursement_user_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account">
-              {{ item.reimbursement_user_name }}
-            </v-chip>
-            <v-chip v-else-if="(item as any).multi_contractor_label === 'Множественный контрагент'" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
-              {{ (item as any).multi_contractor_label }}
-            </v-chip>
-            <div v-else class="text-body-2">
-              <v-icon size="x-small" color="purple" class="mr-1">mdi-account-cash</v-icon>
-              {{ (item as any).multi_contractor_label || advancePersonLabel(item) }}
-            </div>
-          </template>
-          <template v-else>
-            <span class="text-body-2">
-              {{ item.contractor_name || '—' }}
-            </span>
-          </template>
+          <span v-if="(item as any).multi_contractor_label === 'Множественный контрагент'"
+                class="text-body-2" style="color: var(--v-theme-warning, #f57c00)">
+            {{ (item as any).multi_contractor_label }}
+          </span>
+          <span v-else class="text-body-2">
+            {{ item.contractor_name || '—' }}
+          </span>
         </template>
 
         <template #item.status="{ item }">

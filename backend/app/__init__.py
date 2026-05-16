@@ -530,6 +530,43 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-BB receipt_id column setup skipped (non-fatal): {e}")
 
+    # Phase 26-mmm: sync denorm-полей purchases ← contracts при старте.
+    # Чинит исторические рассинхронизации (contract_number/date/contractor_id
+    # из соседних контрактов после ручных правок до Phase 26-j-1, когда
+    # _sync_purchase_from_contract либо не вызывался, либо не копировал
+    # contractor_id — это явно наблюдалось в проде: purchase #802 имел
+    # contract_number='51802 ОП/КОР' но contract_date='27.05.2021' от
+    # соседнего договора 110677/КОР, в реестре «Контрагент» = пусто).
+    # Идемпотентно: вызывает _sync_purchase_from_contract который перезаписывает
+    # только если значения отличаются от contract.*. Non-fatal (Phase 22 pattern).
+    try:
+        from sqlalchemy import select as _sel
+        from .database import async_session as _async_session
+        from .models.purchase import Purchase as _Purchase
+        from .routers.purchases import _sync_purchase_from_contract as _sync_pc
+        async with _async_session() as _db:
+            _rows = (await _db.execute(
+                _sel(_Purchase).where(_Purchase.contract_id.is_not(None))
+            )).scalars().all()
+            _updated = 0
+            for _p in _rows:
+                _before = (_p.contract_number, _p.contract_date, _p.purchase_contract_type, _p.contractor_id)
+                await _sync_pc(_p, _db)
+                _after = (_p.contract_number, _p.contract_date, _p.purchase_contract_type, _p.contractor_id)
+                if _before != _after:
+                    _updated += 1
+            if _updated:
+                await _db.commit()
+            import logging as _lg
+            _lg.getLogger(__name__).info(
+                f"Phase 26-mmm backfill: {_updated}/{len(_rows)} purchases sync'нуты из contracts"
+            )
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(
+            f"Phase 26-mmm purchase←contract sync skipped (non-fatal): {e}"
+        )
+
     # Phase 24 RESTORE: backfill contract_date/number для advance purchases
     # с receipts но без основания. Идемпотентно — skip если 0 строк нуждаются.
     try:

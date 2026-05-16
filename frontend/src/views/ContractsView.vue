@@ -1373,14 +1373,15 @@ const groups = [
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns, setFilter: cfgSetFilter, clearAllFilters: cfgClearAllFilters, activeFilterCount: cfgActiveFilterCount } = useColumnConfig('contracts', allColumns)
 // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
 const tableHeaders = computed(() => {
+  // Phase 26-LLL: actions ВТОРОЙ колонкой (после № п/п) — не уезжает за horizontal scroll.
+  // Раньше push в конец → при широкой таблице иконка удаления была невидима.
   const base: any[] = [
     { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
-    ...visibleHeaders.value,
   ]
-  // Phase 26-III: per-row delete иконка справа (только для админов).
   if (isAdmin) {
-    base.push({ title: '', key: 'actions', width: 60, sortable: false })
+    base.push({ title: 'Действия', key: 'actions', width: 80, sortable: false })
   }
+  base.push(...visibleHeaders.value)
   return base
 })
 const showColumnPicker = ref(false)

@@ -66,7 +66,8 @@
       </v-chip>
     </v-chip-group>
 
-    <v-data-table
+    <v-card variant="outlined">
+      <v-data-table
         :headers="visibleHeaders"
         :items="filteredItems"
         :loading="loading"
@@ -103,6 +104,7 @@
           </div>
         </template>
       </v-data-table>
+    </v-card>
 
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}

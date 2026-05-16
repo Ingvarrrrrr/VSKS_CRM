@@ -22,7 +22,8 @@
     />
 
     <!-- Table -->
-    <v-data-table
+    <v-card variant="outlined">
+      <v-data-table
         :headers="visibleHeaders"
         :items="incidents"
         :loading="loading"
@@ -59,6 +60,7 @@
           </div>
         </template>
       </v-data-table>
+    </v-card>
 
     <!-- Detail dialog -->
     <v-dialog v-model="detailDialog.show" max-width="700" scrollable>

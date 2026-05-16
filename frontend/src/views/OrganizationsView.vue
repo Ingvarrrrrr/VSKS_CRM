@@ -20,7 +20,8 @@
       <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
     </div>
 
-    <v-data-table
+    <v-card variant="outlined">
+      <v-data-table
         :headers="visibleHeaders"
         :items="orgs"
         :loading="loading"
@@ -57,6 +58,7 @@
           </div>
         </template>
       </v-data-table>
+    </v-card>
 
     <!-- Edit org dialog -->
     <v-dialog v-model="editOrgDialog" max-width="640" scrollable>

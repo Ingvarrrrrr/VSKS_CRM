@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES
@@ -178,3 +178,71 @@ async def get_comparison(
         planned=[FeoPlannedItemOut.model_validate(r) for r in planned_rows],
         actual=actual_out,
     )
+
+
+@router.get("/residuals")
+async def get_feo_residuals(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """
+    Returns per-FeoPlannedItem residual for a given subsidy.
+    Response: list of {feo_item_id, name, category_id, planned_amount,
+                        used_amount, residual, linked_purchase_ids}
+    """
+    # All active planned items for this subsidy
+    items_q = (
+        select(FeoPlannedItem, FeoCategory.id.label("cat_id"))
+        .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
+        .where(FeoCategory.subsidy_id == subsidy_id)
+        .where(FeoPlannedItem.is_active == True)
+        .order_by(FeoPlannedItem.id)
+    )
+    rows = (await db.execute(items_q)).all()
+
+    if not rows:
+        return []
+
+    item_ids = [r.FeoPlannedItem.id for r in rows]
+
+    # Aggregate used amounts per feo_planned_item_id
+    used_q = (
+        select(
+            PurchaseItem.feo_planned_item_id,
+            sqlfunc.coalesce(sqlfunc.sum(PurchaseItem.total_price), 0).label("used"),
+        )
+        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+        .group_by(PurchaseItem.feo_planned_item_id)
+    )
+    used_rows = (await db.execute(used_q)).all()
+    used_map: dict[int, float] = {r.feo_planned_item_id: float(r.used) for r in used_rows}
+
+    # Collect linked purchase item ids per feo_planned_item_id
+    links_q = (
+        select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
+        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+    )
+    links_rows = (await db.execute(links_q)).all()
+    links_map: dict[int, list] = {}
+    for lr in links_rows:
+        links_map.setdefault(lr.feo_planned_item_id, [])
+        if lr.purchase_id not in links_map[lr.feo_planned_item_id]:
+            links_map[lr.feo_planned_item_id].append(lr.purchase_id)
+
+    result = []
+    for r in rows:
+        item = r.FeoPlannedItem
+        planned = float(item.amount or 0)
+        used = used_map.get(item.id, 0.0)
+        result.append({
+            "feo_item_id": item.id,
+            "name": item.name,
+            "category_id": item.feo_category_id,
+            "planned_amount": planned,
+            "used_amount": used,
+            "residual": planned - used,
+            "linked_purchase_ids": links_map.get(item.id, []),
+        })
+
+    return result

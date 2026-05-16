@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.feo_category import FeoCategory
+from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
@@ -208,6 +209,26 @@ async def dashboard_charts(
         subsidy_q = subsidy_q.where(Subsidy.org_id.in_(org_ids))
     subsidy_result = await db.execute(subsidy_q)
 
+    # FEO planned sum per subsidy
+    feo_planned_q = (
+        select(
+            FeoCategory.subsidy_id,
+            func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("feo_planned_sum"),
+        )
+        .join(FeoPlannedItem, FeoPlannedItem.feo_category_id == FeoCategory.id)
+        .where(FeoPlannedItem.is_active == True)
+        .group_by(FeoCategory.subsidy_id)
+    )
+    if org_ids is not None:
+        feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    feo_planned_result = await db.execute(feo_planned_q)
+    feo_planned_map: dict[int, float] = {
+        row.subsidy_id: float(row.feo_planned_sum)
+        for row in feo_planned_result
+    }
+
     subsidy_stats = []
     for row in subsidy_result:
         calc = await calculate_budget_from_categories(db, row.id)
@@ -231,6 +252,7 @@ async def dashboard_charts(
             "total_paid": float(row.total_paid),
             "total_plan_schedule": float(row.total_plan_schedule),
             "total_ordered": float(row.total_ordered),
+            "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01
             "feo_budget_total": calc,
             "feo_filled": calc > 0,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,

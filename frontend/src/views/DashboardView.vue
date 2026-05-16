@@ -485,6 +485,7 @@
                   <th>Субсидия</th>
                   <th class="text-right">Бюджет</th>
                   <th class="text-right">Запланировано</th>
+                  <th class="text-right text-caption">ФЭО план</th>
                   <th class="text-right">Заказано</th>
                   <th class="text-right">Оплачено</th>
                   <th class="text-right">Остаток</th>
@@ -505,6 +506,7 @@
                   </td>
                   <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
                   <td class="text-right text-warning">{{ formatCurrency(s.plan_schedule) }}</td>
+                  <td class="text-right text-blue-grey">{{ formatCurrency(s.total_feo_planned ?? 0) }}</td>
                   <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
                   <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
                   <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
@@ -530,6 +532,7 @@
                   <td><strong>ИТОГО</strong></td>
                   <td class="text-right"><strong>{{ formatCurrency(totalBudget) }}</strong></td>
                   <td class="text-right text-warning"><strong>{{ formatCurrency(totalPlanSchedule) }}</strong></td>
+                  <td class="text-right text-blue-grey"><strong>{{ formatCurrency(totalFeoPlanned) }}</strong></td>
                   <td class="text-right text-primary"><strong>{{ formatCurrency(totalOrdered) }}</strong></td>
                   <td class="text-right text-success"><strong>{{ formatCurrency(totalPaid) }}</strong></td>
                   <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
@@ -1028,6 +1031,7 @@ interface SubsidyRow {
   id: number; name: string; shortName: string; description: string; year: number
   budget: number; contracted: number; paid: number; planned: number
   plan_schedule: number; ordered: number
+  total_feo_planned: number  // 12-01
 }
 
 const allSubsidies    = ref<SubsidyRow[]>([])
@@ -1098,6 +1102,7 @@ const totalPaid         = computed(() => filteredSubsidies.value.reduce((s, x) =
 const totalPlanned      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
 const totalPlanSchedule = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule, 0))
 const totalOrdered      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.ordered, 0))
+const totalFeoPlanned   = computed(() => filteredSubsidies.value.reduce((s: number, x: SubsidyRow) => s + (x.total_feo_planned ?? 0), 0))  // 12-01
 const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
@@ -1122,6 +1127,11 @@ const kpiCards = computed(() => [
     key: 'plan_schedule', label: 'Запланировано', value: animPlanSchedule.value,
     icon: 'mdi-calendar-clock',
     badge: `${pct(totalPlanSchedule.value, totalBudget.value)}%`
+  },
+  {
+    key: 'feo_planned', label: 'ФЭО план', value: totalFeoPlanned.value,
+    icon: 'mdi-clipboard-list-outline',
+    badge: `${pct(totalFeoPlanned.value, totalBudget.value)}%`
   },
   {
     key: 'ordered', label: 'Заказано', value: animOrdered.value,
@@ -1674,6 +1684,7 @@ async function loadAll() {
       planned: s.total_planned,
       plan_schedule: s.total_plan_schedule ?? 0,
       ordered: s.total_ordered ?? 0,
+      total_feo_planned: s.total_feo_planned ?? 0,  // 12-01
     }))
 
     statusCounts.value = chartsData.status_counts

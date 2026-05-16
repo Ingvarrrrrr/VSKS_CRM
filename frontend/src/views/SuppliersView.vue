@@ -19,8 +19,7 @@
     />
 
     <!-- Table -->
-    <v-card variant="outlined">
-      <v-data-table
+    <v-data-table
         :headers="visibleHeaders"
         :items="filteredSuppliers"
         :loading="loading"
@@ -43,7 +42,6 @@
           </div>
         </template>
       </v-data-table>
-    </v-card>
 
     <!-- Create/Edit dialog -->
     <v-dialog v-model="formDialog.show" max-width="560" scrollable>

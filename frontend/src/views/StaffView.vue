@@ -240,8 +240,7 @@
           </div>
         </v-alert>
 
-        <v-card variant="outlined">
-          <v-data-table
+        <v-data-table
             :headers="visibleHeaders"
             :items="filteredUsers"
             :loading="usersLoading"
@@ -320,7 +319,6 @@
               </tr>
             </template>
           </v-data-table>
-        </v-card>
       </v-window-item>
 
       <!-- ═══════════════════════════════════════════════════════ -->

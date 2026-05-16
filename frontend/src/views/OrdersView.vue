@@ -184,8 +184,7 @@
     </v-alert>
 
     <!-- Table -->
-    <v-card variant="outlined">
-      <v-data-table
+    <v-data-table
         ref="ordersTableRef"
         :headers="tableHeaders"
         :items="filteredOrdersWithRowNum"
@@ -582,7 +581,6 @@
           </div>
         </template>
       </v-data-table>
-    </v-card>
 
     <!-- Delete dialog -->
     <v-dialog v-model="deleteDialog.show" max-width="420">

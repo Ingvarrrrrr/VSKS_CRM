@@ -1,6 +1,5 @@
 <template>
-  <v-card variant="outlined">
-    <v-data-table
+  <v-data-table
       :headers="taskListHeaders"
       :items="tasks"
       density="compact"
@@ -43,7 +42,6 @@
         <v-btn v-else icon="mdi-pencil" variant="text" size="small" @click.stop="$emit('open-task', item)" />
       </template>
     </v-data-table>
-  </v-card>
 </template>
 
 <script setup lang="ts">

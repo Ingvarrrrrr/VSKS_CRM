@@ -39,8 +39,7 @@
     </v-card>
 
     <!-- Table -->
-    <v-card variant="outlined">
-      <v-data-table
+    <v-data-table
         :headers="visibleHeaders"
         :items="filteredRequests"
         :loading="loading"
@@ -93,7 +92,6 @@
           </div>
         </template>
       </v-data-table>
-    </v-card>
 
     <!-- Create Dialog -->
     <v-dialog v-model="createDialog.show" max-width="680" scrollable>

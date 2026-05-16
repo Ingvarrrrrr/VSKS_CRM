@@ -295,7 +295,11 @@
         <!-- End ColumnHeaderMenu slots -->
 
         <template #item.index="{ item }">
-          <span class="text-caption" style="color:#7c3aed; font-family:monospace; white-space:nowrap">
+          <!-- Phase 26-hhh: убран white-space:nowrap — позволить overflow-wrap:anywhere
+               из useColumnConfig разорвать длинный реестровый номер по ширине
+               ячейки (140px), как в OrdersView. Раньше nowrap заставлял текст
+               вылезать в соседнюю колонку и сливаться с наименованием. -->
+          <span class="text-caption" style="color:#7c3aed; font-family:monospace">
             {{ item.registry_number || `#${item.id}` }}
           </span>
         </template>
@@ -533,7 +537,7 @@ const allColumns: ColumnDef[] = [
   // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-select', width: 40, group: 'core' },
   { title: '', key: 'data-table-expand', width: 40, group: 'core' },
-  { title: '№', key: 'index', width: 55, sortable: false, group: 'core' },
+  { title: '№', key: 'index', width: 140, sortable: false, group: 'core' },
   { title: 'Наименование', key: 'displayName', group: 'core' },
   { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
   { title: 'Кому возмещать', key: 'reimbursement_user_name', group: 'core' },

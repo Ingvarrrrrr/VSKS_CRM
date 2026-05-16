@@ -350,6 +350,12 @@
             prepend-inner-icon="mdi-phone" placeholder="8-999-999-99-99"
             hint="Формат: 8-999-999-99-99. Для связи и интеграции с Telegram" persistent-hint
           />
+          <v-text-field
+            :model-value="formatPhoneRu(createDialog.work_phone)"
+            @update:model-value="createDialog.work_phone = unformatPhone($event)"
+            label="Рабочий телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone-classic" placeholder="8-999-999-99-99"
+          />
           <v-text-field v-model="createDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-send" placeholder="123456789"
             hint="Числовой ID чата Telegram (узнать: написать боту @userinfobot)" persistent-hint />
@@ -457,6 +463,12 @@
             label="Телефон" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-phone" placeholder="8-999-999-99-99"
             hint="Формат: 8-999-999-99-99" persistent-hint
+          />
+          <v-text-field
+            :model-value="formatPhoneRu(editDialog.work_phone)"
+            @update:model-value="editDialog.work_phone = unformatPhone($event)"
+            label="Рабочий телефон" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-phone-classic" placeholder="8-999-999-99-99"
           />
           <v-text-field v-model="editDialog.telegram_id" label="Telegram Chat ID" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-send" placeholder="123456789"
@@ -1164,7 +1176,7 @@ async function onUserExpanded(expanded: number[]) {
 
 const createDialog = reactive({
   show: false, full_name: '', email: '', password: '', password_confirm: '',
-  role: 'employee', city: '', department: '', position: '', phone: '', telegram_id: '', avatar: '', saving: false,
+  role: 'employee', city: '', department: '', position: '', phone: '', work_phone: '', telegram_id: '', avatar: '', saving: false,
   org_id: null as number | null, subsidy_id: null as number | null,
 })
 // Pre-load dicts when superadmin picks an org in createDialog
@@ -1176,7 +1188,7 @@ const isSuperadmin = computed(() => currentRole === 'superadmin')
 
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
-  department: '', position: '', phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
+  department: '', position: '', phone: '', work_phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
   exclude_from_directory: false,
@@ -1512,6 +1524,7 @@ function openCreateUser() {
   createDialog.department = ''
   createDialog.position = ''
   createDialog.phone = ''
+  createDialog.work_phone = ''
   createDialog.telegram_id = ''
   createDialog.avatar = ''
   createDialog.org_id = currentOrgId
@@ -1546,6 +1559,7 @@ async function saveUser() {
         department: normalizeDepartment(createDialog.department) || null,
         position: createDialog.position || null,
         phone: unformatPhone(createDialog.phone) || null,
+        work_phone: unformatPhone(createDialog.work_phone) || null,
         telegram_id: createDialog.telegram_id || null,
         avatar: createDialog.avatar || randomAvatarId(),
         org_id: isSuperadmin.value ? createDialog.org_id : null,
@@ -1581,6 +1595,7 @@ async function openEditUser(item: UserItem) {
   editDialog.avatar = item.avatar || ''
   editDialog.inn = item.inn || ''
   editDialog.phone = (item as any).phone || ''
+  editDialog.work_phone = (item as any).work_phone || ''
   editDialog.telegram_id = (item as any).telegram_id || ''
   editDialog.max_chat_id = (item as any).max_chat_id || ''
   editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
@@ -1725,6 +1740,7 @@ async function saveEditUser() {
       avatar: editDialog.avatar || null,
       inn: editDialog.inn || null,
       phone: unformatPhone(editDialog.phone) || null,
+      work_phone: unformatPhone(editDialog.work_phone) || null,
       telegram_id: editDialog.telegram_id || null,
       max_chat_id: editDialog.max_chat_id || null,
       exclude_from_directory: editDialog.exclude_from_directory,

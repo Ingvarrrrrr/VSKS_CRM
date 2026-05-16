@@ -1697,6 +1697,55 @@ def _extract_items(raw) -> list:
     return []
 
 
+def _items_for_render(r) -> list:
+    """Items normalized to rubles for renderer use.
+
+    raw_json items могут быть либо в копейках (original FFD JSON path)
+    либо уже в рублях (proverkacheka.com fallback через _extract_items).
+    Этот helper делает единый source of truth для рендеров.
+    """
+    raw = _get_raw_receipt(r)
+    raw_items = raw.get('items') if isinstance(raw, dict) else None
+    if isinstance(raw_items, list) and raw_items:
+        # Original FFD shape — price/sum в копейках
+        out = []
+        for it in raw_items:
+            if not isinstance(it, dict):
+                continue
+            try:
+                price_rub = float(it.get('price') or 0) / 100.0
+            except Exception:
+                price_rub = 0.0
+            try:
+                sum_rub = float(it.get('sum') or 0) / 100.0
+            except Exception:
+                sum_rub = 0.0
+            # ndsSum тоже из копеек FFD
+            nds_sum_kop = it.get('ndsSum')
+            try:
+                nds_sum_rub = float(nds_sum_kop) / 100.0 if nds_sum_kop is not None else None
+            except Exception:
+                nds_sum_rub = None
+            out.append({**it, 'price_rub': price_rub, 'sum_rub': sum_rub, 'nds_sum_rub': nds_sum_rub})
+        return out
+    # Fallback path — _extract_items already returns price/sum в рублях
+    items = _extract_items(r.raw_json or {})
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        try:
+            price_rub = float(it.get('price') or 0)
+        except Exception:
+            price_rub = 0.0
+        try:
+            sum_rub = float(it.get('sum') or 0)
+        except Exception:
+            sum_rub = 0.0
+        out.append({**it, 'price_rub': price_rub, 'sum_rub': sum_rub, 'nds_sum_rub': None})
+    return out
+
+
 def _render_fallback_pdf(r) -> bytes:
     """Minimal PDF when raw_json is missing or rendering threw."""
     from reportlab.lib.pagesizes import A6
@@ -1738,8 +1787,7 @@ def _render_receipt_pdf(r) -> bytes:
     bold_name = "DejaVu-Bold" if font_name == "DejaVu" else "Helvetica-Bold"
 
     raw = _get_raw_receipt(r)
-    # Phase 26-EE: fallback на _extract_items для proverkacheka HTML
-    items_data = list(raw.get('items') or []) or _extract_items(r.raw_json or {})
+    items_data = _items_for_render(r)
 
     # Dynamic height — A5 width (148mm) is enough; height grows with content.
     width = 148 * mm
@@ -1815,20 +1863,10 @@ def _render_receipt_pdf(r) -> bytes:
             qty = float(it.get('quantity') or 1)
         except Exception:
             qty = 1.0
-        try:
-            price = float(it.get('price') or 0) / 100.0
-        except Exception:
-            price = 0.0
-        try:
-            sm = float(it.get('sum') or 0) / 100.0
-        except Exception:
-            sm = 0.0
+        price = float(it.get('price_rub') or 0)
+        sm = float(it.get('sum_rub') or 0)
         nds_code = it.get('nds')
-        nds_sum_kop = it.get('ndsSum')
-        try:
-            nds_sum_rub = float(nds_sum_kop) / 100.0 if nds_sum_kop is not None else None
-        except Exception:
-            nds_sum_rub = None
+        nds_sum_rub = it.get('nds_sum_rub')  # уже в рублях
         product_type = it.get('productType')
         payment_type = it.get('paymentType')
         name = (it.get('name') or '').strip()
@@ -1960,10 +1998,7 @@ def _render_receipt_png(r) -> bytes:
     import qrcode
 
     raw = _get_raw_receipt(r)
-    items_data = [it for it in (raw.get('items') or []) if isinstance(it, dict)]
-    # Phase 26-EE: fallback на _extract_items для proverkacheka HTML
-    if not items_data:
-        items_data = _extract_items(r.raw_json or {})
+    items_data = _items_for_render(r)
 
     width = 600
 
@@ -2084,20 +2119,10 @@ def _render_receipt_png(r) -> bytes:
             qty = float(it.get('quantity') or 1)
         except Exception:
             qty = 1.0
-        try:
-            price = float(it.get('price') or 0) / 100.0
-        except Exception:
-            price = 0.0
-        try:
-            sm = float(it.get('sum') or 0) / 100.0
-        except Exception:
-            sm = 0.0
+        price = float(it.get('price_rub') or 0)
+        sm = float(it.get('sum_rub') or 0)
         nds_code = it.get('nds')
-        nds_sum_kop = it.get('ndsSum')
-        try:
-            nds_sum_rub = float(nds_sum_kop) / 100.0 if nds_sum_kop is not None else None
-        except Exception:
-            nds_sum_rub = None
+        nds_sum_rub = it.get('nds_sum_rub')  # уже в рублях
         product_type = it.get('productType')
         payment_type = it.get('paymentType')
         name = (it.get('name') or '').strip()

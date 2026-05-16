@@ -204,14 +204,6 @@
         @click:row="(_, { item }) => router.push(`/orders/${item.id}/edit`)"
       >
         <!-- Column header menus -->
-        <template #header.purchase_number="{ column }">
-          <ColumnHeaderMenu col-key="purchase_number" :title="column.title" col-type="text"
-            :model-value="cfg.state.value.filters['purchase_number'] ?? null"
-            :sort-by="getSortBy('purchase_number')"
-            @update:model-value="v => cfg.setFilter('purchase_number', v)"
-            @sort="dir => applySort('purchase_number', dir)"
-            @hide="toggleVisible('purchase_number', false)" />
-        </template>
         <template #header.registry_number="{ column }">
           <ColumnHeaderMenu col-key="registry_number" :title="column.title" col-type="text"
             :model-value="cfg.state.value.filters['registry_number'] ?? null"
@@ -409,13 +401,6 @@
         <!-- Display name (first item or legacy item_name) -->
         <template #item.display_name="{ item }">
           <span class="text-body-2">{{ itemDisplayName(item) }}</span>
-        </template>
-
-        <!-- № — единая registry-нумерация (phase26-bbb) -->
-        <template #item.purchase_number="{ item }">
-          <span class="text-caption" style="color:#7c3aed; font-family:monospace; white-space:nowrap">
-            {{ item.registry_number || `#${item.id}` }}
-          </span>
         </template>
 
         <!-- Тип закупки -->
@@ -1048,8 +1033,7 @@ const allColumns: ColumnDef[] = [
   // core — видимые по умолчанию
   // _rownum добавляется отдельно через tableHeaders computed (всегда первая колонка, не зависит от LS)
   { title: '', key: 'data-table-expand', width: 48, sortable: false, group: 'core' },
-  { title: '№', key: 'purchase_number', width: 60, group: 'core' },
-  { title: 'Реестр. №', key: 'registry_number', width: 120, group: 'core' },
+  { title: 'Реестр. №', key: 'registry_number', width: 140, group: 'core' },
   { title: 'Предмет договора', key: 'subject', group: 'core' },
   { title: 'Контрагент', key: 'contractor_name', group: 'core' },
   { title: 'Субсидия', key: 'subsidy_name', group: 'core' },

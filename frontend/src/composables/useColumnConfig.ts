@@ -123,15 +123,15 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
         if (isMobile) {
           return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
         }
-        // Phase 26-EEE: overflow-wrap: break-word (вместо anywhere) — перенос только
-        // по пробелам/дефисам, целые слова остаются неразорваны. Раньше «anywhere»
-        // ломало «ОБЩЕСТВО» в «ОБЩЕСТ\nВО» при узких колонках — выглядело ужасно.
-        // word-break: normal — не ломаем CJK/нестандартные кодировки.
+        // Phase 26-JJJ: hybrid wrap — слова первым приоритетом, разрыв по букве
+        // если слово целиком не помещается. word-break: normal сохраняет слова,
+        // overflow-wrap: anywhere позволяет разорвать слово как fallback (стандартное
+        // браузерное поведение: сначала пробуем word boundaries, потом chars).
         const cellStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: break-word;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
           : ''
         const headerStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: break-word;`
+          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
           : ''
         return {
           ...def,

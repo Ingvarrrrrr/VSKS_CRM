@@ -118,28 +118,6 @@ onMounted(async () => {
    На mobile оставляем auto-layout — таблица сама подгоняет ширины под контент,
    при необходимости включается горизонтальный scroll. */
 @media (min-width: 960px) {
-  /* Phase 26-NNN: ограничиваем высоту scroll-обёртки таблицы → горизонтальный
-     ползунок всегда виден в нижней части viewport, а не «спрятан» после
-     последней строки + пагинации (когда таблица длиннее экрана пришлось бы
-     докручивать страницу вниз чтобы добраться до ползунка). 100vh - 280px
-     оставляет место под header (64) + breadcrumbs/title (~70) + filters (~80) +
-     pagination (~60). На очень маленьких высотах окна (<600px) отключаем. */
-  @media (min-height: 600px) {
-    .v-data-table > .v-table__wrapper,
-    .v-data-table-virtual > .v-table__wrapper {
-      max-height: calc(100vh - 280px) !important;
-      overflow: auto !important;
-    }
-    /* Sticky header → при вертикальной прокрутке внутри таблицы заголовки колонок
-       остаются вверху видимыми (иначе скролл по строкам теряет контекст). */
-    .v-data-table thead th,
-    .v-data-table-virtual thead th {
-      position: sticky !important;
-      top: 0 !important;
-      z-index: 2 !important;
-      background: rgb(var(--v-theme-surface)) !important;
-    }
-  }
   .v-data-table > .v-table__wrapper > table,
   .v-data-table-virtual > .v-table__wrapper > table {
     table-layout: fixed;

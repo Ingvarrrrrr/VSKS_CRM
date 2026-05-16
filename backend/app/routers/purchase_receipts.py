@@ -1678,11 +1678,19 @@ def _extract_items(raw) -> list:
             })
         if out:
             return out
-    # Phase 26-EE fallback: proverkacheka.com HTML
+    # Phase 26-EE fallback: proverkacheka.com (JSON приоритетнее HTML — содержит
+    # точные nds-коды; HTML парсер не извлекает nds=11 для ставки 22% т.к. в
+    # рендере proverkacheka нет строки "НДС со ставкой 22%")
     pv = raw.get('proverkacheka')
     if isinstance(pv, dict):
         data = pv.get('data')
         if isinstance(data, dict):
+            # Phase 26-ggg: JSON путь приоритет
+            pvj = data.get('json')
+            if isinstance(pvj, dict):
+                json_items = pvj.get('items')
+                if isinstance(json_items, list) and json_items:
+                    return _extract_items({'items': json_items})
             html = data.get('html')
             if html:
                 return _extract_items_from_proverkacheka_html(html)

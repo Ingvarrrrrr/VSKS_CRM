@@ -150,6 +150,75 @@ guide_router = APIRouter(prefix="/api/documents", tags=["documents"])
 TEMPLATES_DIR = "/app/templates"
 SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 
+# Phase 26-ggg: sentinel-маркер для post-render таблицы чеков.
+# Пользователь ставит {{ receipts_table }} в шаблон одним параграфом;
+# context подставляет эту строку; postprocess находит её и заменяет
+# параграф на настоящую docx-таблицу с PNG чеков в каждой ячейке.
+RECEIPTS_TABLE_MARKER = "[[RECEIPTS_TABLE_2COL]]"
+
+
+def _insert_receipts_table_if_marker(
+    doc,
+    png_paths: list,
+    *,
+    cols: int = 2,
+    col_width_cm: float = 8.0,
+    img_width_cm: float = 7.5,
+) -> bool:
+    """Find paragraph containing RECEIPTS_TABLE_MARKER and replace it with
+    a real 2-col docx table containing the receipt PNGs.
+
+    Idempotent: if marker not present — no-op. If png_paths empty — marker
+    is cleared but no table is inserted. Returns True if table was inserted.
+
+    Why this exists: docxtpl InlineImage in a paragraph creates inline
+    images that clip in narrow cells / overlap with surrounding text
+    (Word renders very tall pictures behind subsequent paragraphs). A
+    proper <w:tbl> with fixed col widths and an InlineShape inside each
+    <w:tc> guarantees layout integrity.
+    """
+    from docx.shared import Cm as _Cm
+
+    target_para = None
+    for p in doc.paragraphs:
+        if RECEIPTS_TABLE_MARKER in p.text:
+            target_para = p
+            break
+    if target_para is None:
+        return False
+
+    if not png_paths:
+        # marker present but no receipts — clear marker text and leave para
+        for r in target_para.runs:
+            if RECEIPTS_TABLE_MARKER in r.text:
+                r.text = r.text.replace(RECEIPTS_TABLE_MARKER, "")
+        return False
+
+    rows = (len(png_paths) + cols - 1) // cols
+    table = doc.add_table(rows=rows, cols=cols)
+    table.autofit = False
+    for row in table.rows:
+        for c_idx in range(cols):
+            row.cells[c_idx].width = _Cm(col_width_cm)
+
+    for idx, png_path in enumerate(png_paths):
+        r, c = divmod(idx, cols)
+        cell = table.rows[r].cells[c]
+        # Cell creation always gives one empty paragraph — clear its runs
+        # then add the picture inside a fresh run.
+        para = cell.paragraphs[0]
+        for run in list(para.runs):
+            run.text = ""
+        para.add_run().add_picture(png_path, width=_Cm(img_width_cm))
+
+    # Move the freshly appended table from end-of-doc to the marker location,
+    # then delete the marker paragraph.
+    target_xml = target_para._p
+    table_xml = table._tbl
+    target_xml.addnext(table_xml)
+    target_xml.getparent().remove(target_xml)
+    return True
+
 DOC_TYPES = {
     "service_note_delivery": ("service_note_delivery.docx", "SZ_Vydacha"),
     "service_note_payment":  ("service_note_payment.docx",  "SZ_Oplata"),
@@ -1368,6 +1437,7 @@ async def generate_document(
 
     # Phase 27.1 CD-5: contract_items loop context (+ D-08 fallback on purchase_items)
     # Phase 26-U: wrap pre-render context building — any exception → structured DOCUMENT_GENERATION_FAILED
+    receipt_png_paths: list[str] = []  # Phase 26-ggg: scope outside try для post-render таблицы
     try:
         ci_ctx = await _build_contract_items_context(p, db)
         context.update(ci_ctx)
@@ -1391,12 +1461,14 @@ async def generate_document(
             receipt_images = []        # default 6.5 cm — backward compat
             receipt_images_small = []  # 4.5 cm — для 2-col layouts
             receipt_images_full = []   # 14 cm — для full-width layouts
+            receipt_png_paths = []     # Phase 26-ggg: пути PNG для post-render таблицы
             for _r in _receipts:
                 try:
                     _png_bytes = _rrpng(_r)
                     _tmp = _tempfile.NamedTemporaryFile(suffix=".png", delete=False)
                     _tmp.write(_png_bytes)
                     _tmp.close()
+                    receipt_png_paths.append(_tmp.name)
                     receipt_images.append(InlineImage(tpl, _tmp.name, width=_Cm(6.5)))
                     receipt_images_small.append(InlineImage(tpl, _tmp.name, width=_Cm(4.5)))
                     receipt_images_full.append(InlineImage(tpl, _tmp.name, width=_Cm(14)))
@@ -1407,6 +1479,12 @@ async def generate_document(
             context["receipt_images"] = receipt_images  # alias
             context["receipts_small"] = receipt_images_small
             context["receipts_full"] = receipt_images_full
+            # Phase 26-ggg: sentinel-маркер. Пользователь ставит {{ receipts_table }}
+            # в шаблон одним параграфом — после render текст становится
+            # RECEIPTS_TABLE_MARKER, post-process находит и заменяет на
+            # настоящую docx-таблицу 2-col с PNG чеков в каждой ячейке.
+            # Решает проблему clip'а inline-images в узких ячейках/параграфах.
+            context["receipts_table"] = RECEIPTS_TABLE_MARKER
             # Phase 26-LL: chunked в пары для таблицы 2 колонки в шаблоне СЗ
             receipt_pairs = []
             for _i in range(0, len(receipt_images_small), 2):
@@ -1428,6 +1506,8 @@ async def generate_document(
             context["receipt_pairs"] = []
             context["left_receipts"] = []
             context["right_receipts"] = []
+            context["receipts_table"] = ""  # marker отсутствует — paragraph будет пустой
+            receipt_png_paths = []
     except HTTPException:
         raise
     except Exception as _ctx_exc:
@@ -1553,14 +1633,18 @@ async def generate_document(
                         if note_val and len(cells) >= 4:
                             _set_cell_text(cells[-1], note_val)
 
+                # Phase 26-ggg: receipts table (no-op если маркер отсутствует)
+                _insert_receipts_table_if_marker(_doc, receipt_png_paths)
                 buf = BytesIO()
                 _doc.save(buf)
                 buf.seek(0)
             else:
+                _insert_receipts_table_if_marker(tpl.docx, receipt_png_paths)
                 buf = BytesIO()
                 tpl.save(buf)
                 buf.seek(0)
         else:
+            _insert_receipts_table_if_marker(tpl.docx, receipt_png_paths)
             buf = BytesIO()
             tpl.save(buf)
             buf.seek(0)

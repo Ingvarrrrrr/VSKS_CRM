@@ -3129,12 +3129,20 @@ function isSectionVisible(key: string): boolean {
   return !formModeHidden.value.has(key) && !isOrgHidden(key)
 }
 
+// Phase 26-ggg: показывать registry_number (РЕЕ-2026-00806) вместо
+// purchase_number (582) в заголовке когда оба есть. Fallback на #purchase_number
+// для legacy/draft записей без registry_number.
+const purchaseTitleLabel = computed(() => {
+  return (form as any).registry_number
+    || `#${form.purchase_number || route.params.id}`
+})
+
 const pageTitle = computed(() => {
   if (formMode.value === 'service_note_delivery')
-    return isEdit.value ? `Служебная записка #${form.purchase_number || route.params.id}` : 'Новая служебная записка на выдачу'
+    return isEdit.value ? `Служебная записка ${purchaseTitleLabel.value}` : 'Новая служебная записка на выдачу'
   if (formMode.value === 'advance_report')
-    return isEdit.value ? `Авансовый отчёт #${form.purchase_number || route.params.id}` : 'Новый авансовый отчёт'
-  return isEdit.value ? `Закупка #${form.purchase_number || route.params.id}` : 'Новая закупка'
+    return isEdit.value ? `Авансовый отчёт ${purchaseTitleLabel.value}` : 'Новый авансовый отчёт'
+  return isEdit.value ? `Закупка ${purchaseTitleLabel.value}` : 'Новая закупка'
 })
 
 const backRoute = computed(() => {

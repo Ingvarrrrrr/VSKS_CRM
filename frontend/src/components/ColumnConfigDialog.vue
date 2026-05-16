@@ -38,7 +38,7 @@
           variant="outlined"
           hide-details
           label="№"
-          style="max-width: 80px;"
+          style="min-width: 110px; max-width: 110px;"
           class="mr-2"
           @update:model-value="setPosition(col.key, $event as number)"
         />

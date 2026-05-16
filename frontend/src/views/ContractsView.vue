@@ -1336,6 +1336,9 @@ const allColumns: ColumnDef[] = [
   // (_rownum добавляется отдельно через tableHeaders computed — всегда первая колонка,
   //  не зависит от useColumnConfig localStorage state)
   { title: '', key: 'data-table-expand', width: 40, sortable: false, group: 'core' },
+  // Phase 26-MMM: actions — обычная колонка через useColumnConfig (двигается/скрывается).
+  // Раньше была hardcoded в tableHeaders.computed → нельзя было переместить.
+  ...(isAdmin ? [{ title: 'Действия', key: 'actions', width: 80, sortable: false, group: 'core' as const }] : []),
   { title: '№ документа', key: 'number', group: 'core' },
   { title: 'Дата', key: 'date', width: 110, group: 'core' },
   { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },
@@ -1373,16 +1376,12 @@ const groups = [
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns, setFilter: cfgSetFilter, clearAllFilters: cfgClearAllFilters, activeFilterCount: cfgActiveFilterCount } = useColumnConfig('contracts', allColumns)
 // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
 const tableHeaders = computed(() => {
-  // Phase 26-LLL: actions ВТОРОЙ колонкой (после № п/п) — не уезжает за horizontal scroll.
-  // Раньше push в конец → при широкой таблице иконка удаления была невидима.
-  const base: any[] = [
+  // Phase 26-MMM: actions теперь часть allColumns → проходит через useColumnConfig.
+  // Здесь только _rownum (sequential row #) — спец-колонка, не настраивается.
+  return [
     { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+    ...visibleHeaders.value,
   ]
-  if (isAdmin) {
-    base.push({ title: 'Действия', key: 'actions', width: 80, sortable: false })
-  }
-  base.push(...visibleHeaders.value)
-  return base
 })
 const showColumnPicker = ref(false)
 

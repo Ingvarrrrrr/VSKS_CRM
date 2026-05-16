@@ -183,6 +183,12 @@
       </div>
     </v-alert>
 
+    <!-- Phase 26-iii: scrollable wrapper — горизонтальный scrollbar
+         появляется ВНУТРИ контейнера сразу под таблицей (как в Договорах
+         когда колонок > viewport). Без wrapper'a Vuetify v-data-table
+         растягивается на ширину контента и scrollbar уходит на body
+         браузера за пределы видимой области. -->
+    <div class="orders-table-scroll" style="overflow-x: auto">
     <!-- Table -->
     <v-data-table
         ref="ordersTableRef"
@@ -581,6 +587,7 @@
           </div>
         </template>
       </v-data-table>
+    </div>
 
     <!-- Delete dialog -->
     <v-dialog v-model="deleteDialog.show" max-width="420">

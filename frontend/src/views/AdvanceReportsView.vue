@@ -108,6 +108,9 @@
       </v-chip>
     </v-chip-group>
 
+    <!-- Phase 26-iii: scroll wrapper — горизонтальный scrollbar внутри
+         контейнера, не на body браузера (как в OrdersView/ContractsView) -->
+    <div class="ar-table-scroll" style="overflow-x: auto">
     <v-data-table
         v-model="selected"
         v-model:expanded="expandedRows"
@@ -415,6 +418,7 @@
           </div>
         </template>
       </v-data-table>
+    </div>
 
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}

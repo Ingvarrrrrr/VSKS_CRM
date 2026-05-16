@@ -198,6 +198,36 @@
                 <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportFeoToExcel">Выгрузить</v-btn>
                 <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
                 <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+                <!-- 12-04: Version history -->
+                <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
+                  История
+                </v-btn>
+                <!-- 12-04: Export dropdown -->
+                <v-menu>
+                  <template #activator="{ props: menuProps }">
+                    <v-btn size="small" variant="outlined" color="teal" prepend-icon="mdi-export" append-icon="mdi-chevron-down" v-bind="menuProps">
+                      Экспорт
+                    </v-btn>
+                  </template>
+                  <v-list density="compact">
+                    <v-list-item prepend-icon="mdi-microsoft-excel" @click="exportPlanGraphExcel">
+                      <v-list-item-title>Excel (.xlsx)</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
+                      <v-list-item-title>Word (шаблон)</v-list-item-title>
+                    </v-list-item>
+                    <v-divider />
+                    <v-list-item prepend-icon="mdi-upload-outline">
+                      <v-list-item-title>
+                        <label style="cursor:pointer">
+                          Загрузить шаблон .docx
+                          <input type="file" accept=".docx" style="display:none"
+                            @change="(e: any) => { if (e.target.files[0]) uploadTemplate(e.target.files[0]) }" />
+                        </label>
+                      </v-list-item-title>
+                    </v-list-item>
+                  </v-list>
+                </v-menu>
                 <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="feoForm.parentId = null; showAddFeoDialog = true">Добавить</v-btn>
               </div>
             </div>
@@ -226,6 +256,7 @@
                       Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
+                    <th class="feo-th feo-th-num">ОСТАТОК</th>
                     <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
                   </tr>
                 </thead>
@@ -340,6 +371,22 @@
                         >
                           {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
                         </span>
+                      </td>
+
+                      <!-- 12-04: Остаток (residual) -->
+                      <td class="feo-td feo-td-num">
+                        <template v-if="node.level === 3">
+                          <div v-for="item in Object.values(feoResiduals).filter((r: any) => r.category_id === node.id)" :key="(item as any).feo_item_id">
+                            <span
+                              :style="(item as any).residual < 0 ? 'color:#EF4444;font-weight:700;font-size:11px' : (item as any).residual === 0 ? 'color:#22C55E;font-size:11px' : 'font-size:11px'"
+                              :title="`${(item as any).name}: план ${formatCurrency((item as any).planned_amount)}, факт ${formatCurrency((item as any).used_amount)}`"
+                            >
+                              {{ (item as any).residual < 0 ? '−' : '' }}{{ formatCurrency(Math.abs((item as any).residual)) }}
+                            </span>
+                          </div>
+                          <span v-if="!Object.values(feoResiduals).some((r: any) => r.category_id === node.id)" class="feo-amount-empty">—</span>
+                        </template>
+                        <span v-else class="feo-amount-empty">—</span>
                       </td>
 
                       <!-- Действия -->
@@ -1816,6 +1863,99 @@
 
     <BudgetHistoryDialog ref="historyDialogRef" />
 
+    <!-- 12-04: Version History Dialog -->
+    <v-dialog v-model="showVersionHistoryDialog" max-width="720" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon icon="mdi-history" size="20" color="blue-grey" class="mr-2" />
+          История план-графика
+          <v-spacer />
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="showVersionHistoryDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text style="min-height:200px">
+          <div v-if="versionHistoryLoading" class="d-flex justify-center py-8">
+            <v-progress-circular indeterminate color="blue-grey" />
+          </div>
+          <div v-else-if="versionHistoryList.length === 0" class="text-center text-medium-emphasis py-8">
+            Нет сохранённых версий
+          </div>
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Версия</th>
+                <th>Дата</th>
+                <th>Автор</th>
+                <th class="text-right">Всего план, ₽</th>
+                <th class="text-right">Факт, ₽</th>
+                <th>Примечание</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="v in versionHistoryList" :key="v.id">
+                <td><v-chip size="x-small" color="blue-grey" variant="tonal">v{{ v.version_number }}</v-chip></td>
+                <td style="font-size:12px">{{ v.created_at ? new Date(v.created_at).toLocaleString('ru') : '—' }}</td>
+                <td style="font-size:12px">{{ v.created_by_name || '—' }}</td>
+                <td class="text-right" style="font-size:12px">{{ formatCurrency(v.total_planned) }}</td>
+                <td class="text-right" style="font-size:12px">{{ formatCurrency(v.total_used) }}</td>
+                <td style="font-size:12px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ v.note || '—' }}</td>
+                <td>
+                  <v-btn size="x-small" variant="text" color="blue" icon="mdi-eye-outline"
+                    title="Просмотр снимка"
+                    @click="viewVersionSnapshot(v.id)" />
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- 12-04: Version Snapshot Dialog -->
+    <v-dialog v-model="showVersionSnapshotDialog" max-width="900" scrollable>
+      <v-card v-if="selectedVersionSnapshot">
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon icon="mdi-database-eye" size="20" color="blue" class="mr-2" />
+          Снимок версии v{{ selectedVersionSnapshot.version_number }}
+          <v-spacer />
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="showVersionSnapshotDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <v-table density="compact" style="font-size:12px">
+            <thead>
+              <tr style="background:#EFF6FF">
+                <th>Наименование</th>
+                <th class="text-right">Планово, ₽</th>
+                <th class="text-right">Факт, ₽</th>
+                <th class="text-right">Остаток, ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in selectedVersionSnapshot.snapshot?.items || []" :key="item.feo_item_id">
+                <td>{{ item.name }}</td>
+                <td class="text-right">{{ formatCurrency(item.planned_amount) }}</td>
+                <td class="text-right">{{ formatCurrency(item.used_amount) }}</td>
+                <td class="text-right"
+                  :style="item.residual < 0 ? 'color:#EF4444;font-weight:bold' : item.residual === 0 ? 'color:#22C55E' : ''">
+                  {{ formatCurrency(item.residual) }}
+                </td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr style="background:#EFF6FF;font-weight:bold">
+                <td>Итого</td>
+                <td class="text-right">{{ formatCurrency(selectedVersionSnapshot.snapshot?.total_planned || 0) }}</td>
+                <td class="text-right">{{ formatCurrency(selectedVersionSnapshot.snapshot?.total_used || 0) }}</td>
+                <td class="text-right">{{ formatCurrency((selectedVersionSnapshot.snapshot?.total_planned || 0) - (selectedVersionSnapshot.snapshot?.total_used || 0)) }}</td>
+              </tr>
+            </tfoot>
+          </v-table>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -1906,6 +2046,34 @@ const purchaseTotals  = ref<Record<number, number>>({})
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
+
+// 12-04: Residuals state
+const feoResiduals = ref<Record<number, {
+  feo_item_id: number
+  name: string
+  category_id: number
+  planned_amount: number
+  used_amount: number
+  residual: number
+  linked_purchase_ids: number[]
+}>>({})
+const residualsLoading = ref(false)
+
+// 12-04: Version history state
+const showVersionHistoryDialog = ref(false)
+const versionHistoryList = ref<Array<{
+  id: number
+  version_number: number
+  created_at: string
+  created_by_name: string
+  note: string
+  total_planned: number
+  total_used: number
+  item_count: number
+}>>([])
+const versionHistoryLoading = ref(false)
+const selectedVersionSnapshot = ref<any>(null)
+const showVersionSnapshotDialog = ref(false)
 
 const showAddDialog      = ref(false)
 const showEditDialog     = ref(false)
@@ -3079,12 +3247,99 @@ async function loadFeo(subsidyId: number) {
 }
 
 // ── Actions ───────────────────────────────────────
+// 12-04: load FEO residuals for selected subsidy
+async function loadResiduals() {
+  if (!selectedId.value) return
+  residualsLoading.value = true
+  try {
+    const data = await apiFetch<any[]>(`/feo-planned-items/residuals?subsidy_id=${selectedId.value}`)
+    const byItemId: Record<number, any> = {}
+    for (const item of data) {
+      byItemId[item.feo_item_id] = item
+    }
+    feoResiduals.value = byItemId
+  } catch (e) {
+    console.error('Failed to load residuals', e)
+  } finally {
+    residualsLoading.value = false
+  }
+}
+
+async function loadVersionHistory() {
+  if (!selectedId.value) return
+  versionHistoryLoading.value = true
+  try {
+    versionHistoryList.value = await apiFetch<any[]>(`/subsidies/${selectedId.value}/plan-graph/versions`)
+  } finally {
+    versionHistoryLoading.value = false
+  }
+}
+
+async function openVersionHistory() {
+  await loadVersionHistory()
+  showVersionHistoryDialog.value = true
+}
+
+async function viewVersionSnapshot(verId: number) {
+  selectedVersionSnapshot.value = await apiFetch<any>(`/subsidies/${selectedId.value}/plan-graph/versions/${verId}`)
+  showVersionSnapshotDialog.value = true
+}
+
+function exportPlanGraphExcel() {
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/subsidies/${selectedId.value}/plan-graph/export`
+  fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    .then(r => r.blob())
+    .then(blob => {
+      const bUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = bUrl
+      a.click()
+      URL.revokeObjectURL(bUrl)
+    })
+}
+
+async function exportPlanGraphDocx() {
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/subsidies/${selectedId.value}/plan-graph/export-docx`
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}))
+    showSnack(err.message || 'Шаблон не загружен', 'error')
+    return
+  }
+  const blob = await r.blob()
+  const bUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = bUrl
+  a.click()
+  URL.revokeObjectURL(bUrl)
+}
+
+async function uploadTemplate(file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const token = localStorage.getItem('token') || ''
+  const r = await fetch(`/api/subsidies/${selectedId.value}/plan-graph/template`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  })
+  const data = await r.json()
+  if (r.ok) {
+    showSnack('Шаблон загружен')
+  } else {
+    showSnack(data.message || 'Ошибка загрузки', 'error')
+  }
+}
+
 function toggleSelect(id: number) {
   if (selectedId.value === id) { selectedId.value = null; globalSubsidyId.value = null; return }
   selectedId.value = id
   globalSubsidyId.value = id
   loadFeo(id)
   loadEvents(id)
+  loadResiduals()  // 12-04
 }
 
 // Sync: global → local
@@ -3093,8 +3348,10 @@ watch(globalSubsidyId, (id: number | null) => {
     selectedId.value = id
     loadFeo(id)
     loadEvents(id)
+    loadResiduals()  // 12-04
   } else if (id === null) {
     selectedId.value = null
+    feoResiduals.value = {}  // 12-04
   }
 })
 

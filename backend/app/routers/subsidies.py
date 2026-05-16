@@ -1,9 +1,21 @@
+import io
 import os
 import re
 import shutil
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+except ImportError:
+    openpyxl = None
+
+try:
+    from docxtpl import DocxTemplate
+except ImportError:
+    DocxTemplate = None
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import select, delete, func, text
@@ -880,3 +892,290 @@ async def create_plan_graph_version_manual(
     await _create_plan_graph_version(subsidy_id, db, current_user, note=note or "Ручная публикация")
     await db.commit()
     return {"ok": True, "message": "Версия план-графика сохранена"}
+
+
+# ── Plan-Graph Export (Phase 12-04) ───────────────────────────────────────────
+
+TEMPLATE_DIR = "media/plan_graph_templates"
+
+
+@router.get("/{subsidy_id}/plan-graph/export")
+async def export_plan_graph_excel(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export plan-graph as Excel file with full FEO hierarchy."""
+    if openpyxl is None:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа")
+
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    from app.models.purchase_item import PurchaseItem as _PI
+    from app.models.purchase import Purchase as _P
+    from app.models.contractor import Contractor as _C
+
+    cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+        .order_by(FeoCategory.level, FeoCategory.id)
+    )).scalars().all()
+
+    items = (await db.execute(
+        select(_FPI)
+        .join(FeoCategory, _FPI.feo_category_id == FeoCategory.id)
+        .where(FeoCategory.subsidy_id == subsidy_id)
+        .where(_FPI.is_active == True)
+        .order_by(_FPI.id)
+    )).scalars().all()
+
+    item_ids = [i.id for i in items]
+    used_map: dict[int, float] = {}
+    if item_ids:
+        used_rows = (await db.execute(
+            select(
+                _PI.feo_planned_item_id,
+                func.coalesce(func.sum(_PI.total_price), 0).label("used"),
+            )
+            .where(_PI.feo_planned_item_id.in_(item_ids))
+            .group_by(_PI.feo_planned_item_id)
+        )).all()
+        used_map = {r.feo_planned_item_id: float(r.used) for r in used_rows}
+
+    contractor_map: dict[int, str] = {}
+    if item_ids:
+        c_rows = (await db.execute(
+            select(_PI.feo_planned_item_id, _C.name.label("cname"))
+            .join(_P, _PI.purchase_id == _P.id)
+            .join(_C, _P.contractor_id == _C.id)
+            .where(_PI.feo_planned_item_id.in_(item_ids))
+            .distinct()
+        )).all()
+        for r in c_rows:
+            if r.feo_planned_item_id not in contractor_map:
+                contractor_map[r.feo_planned_item_id] = r.cname
+
+    items_by_cat: dict[int, list] = {}
+    for item in items:
+        items_by_cat.setdefault(item.feo_category_id, []).append(item)
+
+    cats_by_parent: dict = {}
+    for c in cats:
+        cats_by_parent.setdefault(c.parent_id, []).append(c)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "План-график"
+
+    HEADER_FILL  = PatternFill("solid", fgColor="1E3A5F")
+    HEADER_FONT  = Font(color="FFFFFF", bold=True, size=9)
+    L1_FILL      = PatternFill("solid", fgColor="DBEAFE")
+    L1_FONT      = Font(bold=True, size=9)
+    L2_FILL      = PatternFill("solid", fgColor="F0F9FF")
+    L2_FONT      = Font(bold=True, size=9, color="0C4A6E")
+    L3_FILL      = PatternFill("solid", fgColor="F0FDF4")
+    L3_FONT      = Font(size=9, color="166534")
+    ITEM_FONT    = Font(size=9)
+    RED_FONT     = Font(size=9, color="EF4444", bold=True)
+    CENTER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT_ALIGN   = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    RIGHT_ALIGN  = Alignment(horizontal="right", vertical="center")
+    THIN_BORDER  = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    HEADERS = [
+        "№", "Направление расходов", "Тип расходов", "Наименование",
+        "Ед.", "Кол-во план", "Плановая сумма, ₽",
+        "Фактическая сумма, ₽", "Остаток, ₽",
+        "% исполнения", "Исполнитель", "Статус",
+    ]
+    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 12, 30, 15]
+
+    ws.append(HEADERS)
+    for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER_ALIGN
+        cell.border = THIN_BORDER
+        ws.column_dimensions[cell.column_letter].width = width
+    ws.row_dimensions[1].height = 32
+    ws.freeze_panes = "A2"
+
+    row_num = 2
+    seq = 0
+
+    def _write_row(values, fill, font, height=20):
+        nonlocal row_num
+        for col_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell.fill = fill
+            cell.font = font
+            cell.border = THIN_BORDER
+            cell.alignment = RIGHT_ALIGN if col_idx >= 6 else LEFT_ALIGN
+        ws.row_dimensions[row_num].height = height
+        row_num += 1
+
+    def _traverse(cat, direction_name="", type_name=""):
+        nonlocal seq
+        if cat.level == 1:
+            direction_name = cat.name
+            _write_row(
+                [cat.code or "", cat.name, "", "", "", "", "", "", "", "", "", ""],
+                L1_FILL, L1_FONT, height=22
+            )
+        elif cat.level == 2:
+            type_name = cat.name
+            _write_row(
+                ["", direction_name, cat.name, "", "", "", "", "", "", "", "", ""],
+                L2_FILL, L2_FONT
+            )
+        elif cat.level == 3:
+            _write_row(
+                ["", direction_name, type_name, cat.name, "", "", "", "", "", "", "", ""],
+                L3_FILL, L3_FONT
+            )
+            for item in items_by_cat.get(cat.id, []):
+                seq += 1
+                planned = float(item.amount or 0)
+                used = used_map.get(item.id, 0.0)
+                residual = planned - used
+                pct = round(used / planned * 100) if planned > 0 else 0
+                contractor = contractor_map.get(item.id, "")
+                status = "Выполнено" if pct >= 100 else ("В работе" if used > 0 else "Не начато")
+                font = RED_FONT if used > planned else ITEM_FONT
+                _write_row(
+                    [
+                        seq, direction_name, type_name, item.name,
+                        item.unit or "", float(item.quantity or 0),
+                        round(planned, 2), round(used, 2), round(residual, 2),
+                        f"{pct}%", contractor, status,
+                    ],
+                    PatternFill(), font
+                )
+
+        for child in cats_by_parent.get(cat.id, []):
+            _traverse(child, direction_name, type_name)
+
+    for root in cats_by_parent.get(None, []):
+        _traverse(root)
+
+    ws.insert_rows(1)
+    title_cell = ws.cell(row=1, column=1, value=f"ПЛАН-ГРАФИК — {sub.name} ({sub.year})")
+    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    ws.merge_cells(f"A1:{chr(64 + len(HEADERS))}1")
+    title_cell.alignment = CENTER_ALIGN
+    ws.row_dimensions[1].height = 28
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_name = sub.name.replace(" ", "_").replace("/", "_")[:40]
+    filename = f"plan_graph_{safe_name}_{sub.year}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{subsidy_id}/plan-graph/template")
+async def upload_plan_graph_template(
+    subsidy_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Upload a .docx Word template for this subsidy's plan-graph export."""
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(400, "Только .docx файлы поддерживаются")
+
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
+    dest = os.path.join(TEMPLATE_DIR, f"subsidy_{subsidy_id}.docx")
+    content = await file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    return {"ok": True, "template_path": dest, "message": "Шаблон загружен"}
+
+
+@router.get("/{subsidy_id}/plan-graph/export-docx")
+async def export_plan_graph_docx(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fill the uploaded .docx template via docxtpl and return the filled document."""
+    if DocxTemplate is None:
+        raise HTTPException(500, "docxtpl не установлен")
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    template_path = os.path.join(TEMPLATE_DIR, f"subsidy_{subsidy_id}.docx")
+    if not os.path.exists(template_path):
+        raise HTTPException(404, "Шаблон не загружен. Загрузите через POST /plan-graph/template")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа")
+
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+    from datetime import datetime as _dt
+
+    latest_ver = (await db.execute(
+        select(_PGV)
+        .where(_PGV.subsidy_id == subsidy_id)
+        .order_by(_PGV.version_number.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if latest_ver and latest_ver.snapshot:
+        snap = latest_ver.snapshot
+        items_ctx = snap.get("items", [])
+        total_planned = snap.get("total_planned", 0)
+        total_used = snap.get("total_used", 0)
+    else:
+        items_ctx = []
+        total_planned = 0.0
+        total_used = 0.0
+
+    context = {
+        "subsidy_name": sub.name,
+        "subsidy_year": sub.year,
+        "items": items_ctx,
+        "total_planned": f"{total_planned:,.2f}",
+        "total_used": f"{total_used:,.2f}",
+        "total_residual": f"{total_planned - total_used:,.2f}",
+        "export_date": _dt.now().strftime("%d.%m.%Y"),
+    }
+
+    doc = DocxTemplate(template_path)
+    doc.render(context)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    safe_name = sub.name.replace(" ", "_").replace("/", "_")[:40]
+    filename = f"plan_graph_{safe_name}_{sub.year}.docx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

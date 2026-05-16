@@ -1035,7 +1035,7 @@ const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 48, sortable: false, group: 'core' },
   { title: 'Реестр. №', key: 'registry_number', width: 140, group: 'core' },
   { title: 'Предмет договора', key: 'subject', group: 'core' },
-  { title: 'Контрагент', key: 'contractor_name', group: 'core' },
+  { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
   { title: 'Субсидия', key: 'subsidy_name', group: 'core' },
   { title: 'Цена', key: 'effective_price', align: 'end', sortable: false, group: 'core' },
   { title: '№ договора', key: 'contract_number', group: 'core' },

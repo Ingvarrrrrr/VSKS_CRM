@@ -1340,7 +1340,7 @@ const allColumns: ColumnDef[] = [
   { title: 'Дата', key: 'date', width: 110, group: 'core' },
   { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },
   { title: 'Способ', key: 'purchase_method', width: 130, group: 'core' },
-  { title: 'Контрагент', key: 'contractor_name', group: 'core' },
+  { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
   { title: 'Субсидия', key: 'subsidy_name', group: 'core' },
   { title: 'Предельная сумма', key: 'max_amount', align: 'end', width: 140, group: 'core' },
   { title: 'Заказано', key: 'total_ordered', align: 'end', width: 120, group: 'core' },

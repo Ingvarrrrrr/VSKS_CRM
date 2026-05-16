@@ -535,7 +535,7 @@ const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 40, group: 'core' },
   { title: '№', key: 'index', width: 55, sortable: false, group: 'core' },
   { title: 'Наименование', key: 'displayName', group: 'core' },
-  { title: 'Контрагент', key: 'contractor_name', group: 'core' },
+  { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
   { title: 'Кому возмещать', key: 'reimbursement_user_name', group: 'core' },
   { title: 'Субсидия', key: 'subsidy_name', width: 160, group: 'core' },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end', group: 'core' },

@@ -520,6 +520,24 @@
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
           />
+          <!-- 12-02: FEO auto-match suggestion chips -->
+          <div v-if="feoMatchSuggestions.length" class="px-4 pb-2">
+            <div class="text-caption text-medium-emphasis mb-1">Похожие позиции ФЭО плана:</div>
+            <v-chip
+              v-for="match in feoMatchSuggestions"
+              :key="match.suggested_item_id"
+              size="x-small"
+              color="teal"
+              variant="tonal"
+              prepend-icon="mdi-link-variant"
+              closable
+              class="mr-1 mb-1"
+              @click:close="feoMatchSuggestions = feoMatchSuggestions.filter(m => m.suggested_item_id !== match.suggested_item_id)"
+              @click="applyFeoMatch(match.item_index, match.suggested_item_id)"
+            >
+              {{ match.item_name }} → {{ match.suggested_name }} ({{ Math.round(match.confidence * 100) }}%). Привязать?
+            </v-chip>
+          </div>
         </v-card-text>
       </v-card>
 
@@ -3066,6 +3084,30 @@ const isEdit = computed(() => !!route.params.id)
 const purchaseId = computed(() => Number(route.params.id) || null)
 // Phase 23.5: флаг загрузки данных закупки — скрывает заголовок до получения данных с сервера
 const purchaseLoaded = ref(false)
+
+// 12-02: FEO auto-match suggestions
+const feoMatchSuggestions = ref<Array<{
+  item_index: number
+  purchase_item_id: number
+  item_name: string
+  suggested_item_id: number
+  suggested_name: string
+  confidence: number
+}>>([])
+
+async function applyFeoMatch(itemIndex: number, feoItemId: number) {
+  const match = feoMatchSuggestions.value.find(m => m.item_index === itemIndex)
+  if (!match) return
+  try {
+    await apiFetch(`/feo-planned-items/map?purchase_item_id=${match.purchase_item_id}&planned_item_id=${feoItemId}`, {
+      method: 'POST',
+    })
+    feoMatchSuggestions.value = feoMatchSuggestions.value.filter(m => m.item_index !== itemIndex)
+    showSnack('Позиция привязана к плану ФЭО')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка привязки', 'error')
+  }
+}
 
 // Phase 26: Автосохранение — refs declared early, watch+activation moved BELOW form reactive (~line 3033) to avoid TDZ
 const autosaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -5976,6 +6018,10 @@ const doSave = async (adminOverride: boolean) => {
     const qs = adminOverride ? '?admin_override=true' : ''
     if (isEdit.value) {
       const updated = await apiFetch<any>(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
+      // 12-02: capture FEO match suggestions
+      if (updated.suggested_feo_matches?.length) {
+        feoMatchSuggestions.value = updated.suggested_feo_matches
+      }
       if (updated.registry_number) form.registry_number = updated.registry_number
       if (updated.contract_number) form.contract_number = updated.contract_number
       if (updated.purchase_number) form.purchase_number = updated.purchase_number

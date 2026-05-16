@@ -1,3 +1,4 @@
+import difflib
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import select, func, delete, or_
@@ -60,6 +61,57 @@ async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
     ни org_id (data-issue), что приводило к 403 при autosave формы закупки.
     """
     return user is not None
+
+
+async def _auto_match_feo_item(
+    item_name: str,
+    purchase_subsidy_id: Optional[int],
+    purchase_feo_category_id: Optional[int],
+    db: AsyncSession,
+) -> Optional[tuple]:
+    """
+    Find best matching FeoPlannedItem for item_name.
+    Returns (feo_planned_item_id, matched_name, confidence) or None.
+    Threshold: 0.6.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    from app.models.feo_category import FeoCategory as _FC
+
+    if not item_name:
+        return None
+
+    if purchase_feo_category_id:
+        q = select(_FPI).where(
+            _FPI.feo_category_id == purchase_feo_category_id,
+            _FPI.is_active == True,
+        )
+    elif purchase_subsidy_id:
+        q = (
+            select(_FPI)
+            .join(_FC, _FPI.feo_category_id == _FC.id)
+            .where(_FC.subsidy_id == purchase_subsidy_id, _FPI.is_active == True)
+        )
+    else:
+        return None
+
+    candidates = (await db.execute(q)).scalars().all()
+    if not candidates:
+        return None
+
+    name_lower = item_name.lower().strip()
+    best_score = 0.0
+    best_item = None
+    for cand in candidates:
+        score = difflib.SequenceMatcher(
+            None, name_lower, cand.name.lower().strip()
+        ).ratio()
+        if score > best_score:
+            best_score = score
+            best_item = cand
+
+    if best_score >= 0.6 and best_item is not None:
+        return (best_item.id, best_item.name, round(best_score, 2))
+    return None
 
 
 # Status workflow
@@ -654,7 +706,7 @@ async def create_purchase(
     return p
 
 
-@router.put("/{pid}", response_model=PurchaseOut)
+@router.put("/{pid}")
 async def update_purchase(
     pid: int,
     data: PurchaseCreate,
@@ -709,7 +761,20 @@ async def update_purchase(
 
     if not admin_override and data.purchase_basis != 'service_note':
         budget_amount = p.total_nmck if is_contracted else items_sum
-        await _check_budget(data.subsidy_id, budget_amount or data.planned_total_price, pid, db)
+        # 12-02: per-item FEO budget check
+        _feo_check_items = [
+            {"feo_planned_item_id": i.feo_planned_item_id, "amount": i.total_price}
+            for i in items_data
+            if i.feo_planned_item_id and i.total_price
+        ]
+        await _check_budget(
+            data.subsidy_id,
+            budget_amount or data.planned_total_price,
+            pid,
+            db,
+            feo_items=_feo_check_items,
+            is_admin=current_user.role in ADMIN_ROLES,
+        )
 
     # If contract_id or type changed, reset seq so it gets re-assigned
     old_contract_id = p.contract_id
@@ -771,6 +836,31 @@ async def update_purchase(
                 _it.contractor_inn = _ctr_put.inn
                 _it.contractor_name = _ctr_put.name
 
+    # 12-02: Auto-match FEO items for purchase items without feo_planned_item_id
+    suggested_feo_matches = []
+    await db.flush()  # ensure new items are visible
+    _flushed_items = (await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
+    )).scalars().all()
+    for idx, pi in enumerate(_flushed_items):
+        if pi.feo_planned_item_id is not None:
+            continue  # already linked
+        match = await _auto_match_feo_item(
+            pi.item_name,
+            p.subsidy_id,
+            p.feo_category_id,
+            db,
+        )
+        if match:
+            suggested_feo_matches.append({
+                "item_index": idx,
+                "purchase_item_id": pi.id,
+                "item_name": pi.item_name,
+                "suggested_item_id": match[0],
+                "suggested_name": match[1],
+                "confidence": match[2],
+            })
+
     # Replace subsidy allocations
     await db.execute(delete(PurchaseSubsidyAllocation).where(PurchaseSubsidyAllocation.purchase_id == pid))
     if data.subsidy_allocations:
@@ -803,6 +893,12 @@ async def update_purchase(
 
     await db.commit()
     await db.refresh(p)
+    # 12-02: Return suggestions if any
+    if suggested_feo_matches:
+        from app.schemas.schemas import PurchaseOut as _POut
+        base = _POut.model_validate(p).model_dump()
+        base["suggested_feo_matches"] = suggested_feo_matches
+        return base
     return p
 
 

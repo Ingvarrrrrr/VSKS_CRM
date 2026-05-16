@@ -37,6 +37,7 @@ from typing import Optional
 from decimal import Decimal
 
 from app.models.purchase import Purchase
+from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 
 # ---------------------------------------------------------------------------
@@ -87,39 +88,76 @@ async def _check_budget(
     amount: Optional[Decimal],
     exclude_pid: Optional[int],
     db: AsyncSession,
+    feo_items: Optional[list] = None,
+    is_admin: bool = False,
 ) -> None:
     """Raises 422 if adding `amount` to subsidy total would exceed its budget.
 
     Args:
         subsidy_id: ID of the Subsidy to check against. If None, returns silently.
         amount: The planned_total_price being added/updated. If None, returns silently.
-        exclude_pid: Purchase ID to exclude from the running SUM (pass the
-            current purchase ID during UPDATE so existing spend is not double-
-            counted).
+        exclude_pid: Purchase ID to exclude from the running SUM.
         db: Active async DB session.
+        feo_items: list of {"feo_planned_item_id": int, "amount": Decimal} for per-item check.
+        is_admin: If True, skip FEO-item-level check (admin bypass).
 
     Raises:
-        HTTPException(422): When total existing spend + amount > subsidy.budget.
+        HTTPException(422): When budget exceeded.
     """
-    if not subsidy_id or not amount:
+    # ── 1. Subsidy-level check (unchanged) ──
+    if subsidy_id and amount:
+        subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
+        subsidy = subsidy_r.scalar_one_or_none()
+        if subsidy:
+            q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
+                Purchase.subsidy_id == subsidy_id
+            )
+            if exclude_pid:
+                q = q.where(Purchase.id != exclude_pid)
+            total_r = await db.execute(q)
+            total = Decimal(str(total_r.scalar() or 0))
+            amt = Decimal(str(amount))
+            budget = Decimal(str(subsidy.budget))
+            if total + amt > budget:
+                remaining = budget - total
+                raise HTTPException(
+                    422,
+                    f"Превышение бюджета субсидии «{subsidy.name}». "
+                    f"Доступно: {remaining:,.2f} ₽, запрашивается: {amt:,.2f} ₽"
+                )
+
+    # ── 2. FEO-item-level check (non-admin only) ──
+    if is_admin or not feo_items:
         return
-    subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
-    subsidy = subsidy_r.scalar_one_or_none()
-    if not subsidy:
-        return
-    q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
-        Purchase.subsidy_id == subsidy_id
-    )
-    if exclude_pid:
-        q = q.where(Purchase.id != exclude_pid)
-    total_r = await db.execute(q)
-    total = Decimal(str(total_r.scalar() or 0))
-    amt = Decimal(str(amount))
-    budget = Decimal(str(subsidy.budget))
-    if total + amt > budget:
-        remaining = budget - total
-        raise HTTPException(
-            422,
-            f"Превышение бюджета субсидии «{subsidy.name}». "
-            f"Доступно: {remaining:,.2f} ₽, запрашивается: {amt:,.2f} ₽"
+
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+
+    for entry in feo_items:
+        fpi_id = entry.get("feo_planned_item_id")
+        item_amount = entry.get("amount")
+        if not fpi_id or not item_amount:
+            continue
+
+        planned = (await db.execute(
+            select(_FPI).where(_FPI.id == fpi_id)
+        )).scalar_one_or_none()
+        if not planned or not planned.amount:
+            continue
+
+        used_q = select(
+            func.coalesce(func.sum(PurchaseItem.total_price), 0)
+        ).join(Purchase, PurchaseItem.purchase_id == Purchase.id).where(
+            PurchaseItem.feo_planned_item_id == fpi_id
         )
+        if exclude_pid:
+            used_q = used_q.where(Purchase.id != exclude_pid)
+        used = Decimal(str((await db.execute(used_q)).scalar() or 0))
+        new_amt = Decimal(str(item_amount))
+
+        if used + new_amt > Decimal(str(planned.amount)):
+            remaining = Decimal(str(planned.amount)) - used
+            raise HTTPException(
+                422,
+                f"Превышение плана по позиции «{planned.name}». "
+                f"Доступный остаток: {remaining:,.2f} ₽, запрашивается: {new_amt:,.2f} ₽"
+            )

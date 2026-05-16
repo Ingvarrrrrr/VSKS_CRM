@@ -211,6 +211,12 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Персонал', tab_key: 'staff' }
     },
     {
+      path: '/directory',
+      name: 'staff-directory',
+      component: () => import('@/views/StaffDirectoryView.vue'),
+      meta: { requiresAuth: true, title: 'Справочник сотрудников', tab_key: 'staff_directory' },
+    },
+    {
       path: '/hierarchy',
       name: 'hierarchy',
       component: () => import('../views/HierarchyView.vue'),

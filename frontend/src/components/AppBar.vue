@@ -459,6 +459,7 @@ const _allMenuItems = [
   { title: 'Категории ФЭО', icon: 'mdi-folder-tree', route: '/feo-categories', tab_key: 'feo_categories' },
   { title: 'Запросы КП', icon: 'mdi-email-send-outline', route: '/commercial-requests', tab_key: 'commercial_requests' },
   { title: 'Персонал', icon: 'mdi-account-group', route: '/staff', tab_key: 'staff' },
+  { title: 'Справочник', icon: 'mdi-account-multiple-outline', route: '/directory', tab_key: 'staff_directory' },
   { title: 'Отчёты', icon: 'mdi-file-chart', route: '/reports', tab_key: 'reports' },
   { title: 'Реестры', icon: 'mdi-table', route: '/reports/lists', tab_key: 'reports' },
   { title: 'Сводные', icon: 'mdi-pivot', route: '/reports/pivots', tab_key: 'reports' },

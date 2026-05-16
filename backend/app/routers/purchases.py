@@ -16,7 +16,7 @@ from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, Pu
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked

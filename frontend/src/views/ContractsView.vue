@@ -398,6 +398,17 @@
         </v-chip>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
+      <!-- Phase 26-III: per-row delete -->
+      <template #item.actions="{ item }">
+        <v-btn
+          v-if="isAdmin"
+          icon="mdi-delete"
+          variant="text"
+          size="small"
+          color="error"
+          @click.stop="confirmDelete(item)"
+        />
+      </template>
       <!-- Expanded: закупки по договору -->
       <template #expanded-row="{ columns, item }">
         <tr>
@@ -1361,10 +1372,17 @@ const groups = [
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns, setFilter: cfgSetFilter, clearAllFilters: cfgClearAllFilters, activeFilterCount: cfgActiveFilterCount } = useColumnConfig('contracts', allColumns)
 // _rownum — всегда первая колонка, не зависит от useColumnConfig состояния
-const tableHeaders = computed(() => [
-  { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
-  ...visibleHeaders.value,
-])
+const tableHeaders = computed(() => {
+  const base: any[] = [
+    { title: '№ п/п', key: '_rownum', width: 60, sortable: false },
+    ...visibleHeaders.value,
+  ]
+  // Phase 26-III: per-row delete иконка справа (только для админов).
+  if (isAdmin) {
+    base.push({ title: '', key: 'actions', width: 60, sortable: false })
+  }
+  return base
+})
 const showColumnPicker = ref(false)
 
 // ── Column header filters & sort ──────────────────────────────────────────

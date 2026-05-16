@@ -130,16 +130,16 @@ onMounted(async () => {
   .v-data-table td,
   .v-data-table-virtual td {
     white-space: normal !important;
-    word-break: keep-all !important;
-    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
     text-overflow: clip !important;
     vertical-align: top !important;
   }
   .v-data-table th,
   .v-data-table-virtual th {
     white-space: normal !important;
-    word-break: keep-all !important;
-    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
     text-overflow: clip !important;
     vertical-align: middle !important;
     line-height: 1.2 !important;
@@ -147,8 +147,8 @@ onMounted(async () => {
   /* Заголовки колонок через ColumnHeaderMenu: разрешаем 2 строки */
   .col-header-menu__title {
     white-space: normal !important;
-    word-break: keep-all !important;
-    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
     text-overflow: clip !important;
     display: -webkit-box !important;
     -webkit-line-clamp: 2 !important;
@@ -173,8 +173,8 @@ onMounted(async () => {
     /* word-break: keep-all не ломает слова по букве (ИНН/UUID останутся целыми);
        overflow-wrap: break-word ломает только по пробелам. */
     white-space: normal !important;
-    word-break: keep-all !important;
-    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
   }
   /* Header bars views (Реестр договоров + кнопки) — на mobile flex-wrap, чтобы
      заголовок и кнопки не наезжали друг на друга. */

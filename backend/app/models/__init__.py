@@ -43,3 +43,4 @@ from app.models.purchase_receipt import PurchaseReceipt  # noqa: F401
 from app.models.user_address import UserAddress  # noqa: F401
 from app.models.report_config import ReportConfig  # noqa: F401
 from app.models.contract_item import ContractItem  # noqa: F401 — Phase 27.1: register ContractItem in Base.metadata
+from app.models.plan_graph_version import PlanGraphVersion  # noqa: F401 — Phase 12-03: plan-graph versioning

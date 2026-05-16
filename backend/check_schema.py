@@ -315,6 +315,30 @@ async def _backfill_contract_items_from_purchase_items(conn) -> int:
     return result.rowcount or 0
 
 
+async def _ensure_plan_graph_versions_table(conn) -> None:
+    """Phase 12-03: ensure plan_graph_versions table exists (idempotent)."""
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS plan_graph_versions ("
+            " id SERIAL PRIMARY KEY,"
+            " subsidy_id INTEGER NOT NULL REFERENCES subsidies(id) ON DELETE CASCADE,"
+            " version_number INTEGER NOT NULL,"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " created_by_name VARCHAR(200),"
+            " snapshot JSONB NOT NULL,"
+            " note TEXT"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_plan_graph_versions_subsidy_id "
+            "ON plan_graph_versions (subsidy_id)"
+        ))
+        print("  \u2705  plan_graph_versions table ensured")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   plan_graph_versions table ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)
@@ -329,6 +353,10 @@ async def main(apply: bool = False) -> int:
         # Phase 27.1: ensure contract_items table exists
         if apply:
             await _ensure_contract_items_table(conn)
+
+        # Phase 12-03: ensure plan_graph_versions table exists
+        if apply:
+            await _ensure_plan_graph_versions_table(conn)
 
         # Fetch all existing columns from the DB
         result = await conn.execute(text("""

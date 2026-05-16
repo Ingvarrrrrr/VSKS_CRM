@@ -21,7 +21,7 @@ from app.schemas.schemas import (
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 
@@ -784,3 +784,99 @@ async def get_budget_history(
             for r in rows
         ],
     }
+
+
+# ── Plan-Graph Version endpoints (Phase 12-03) ────────────────────────────────
+
+@router.get("/{subsidy_id}/plan-graph/versions")
+async def list_plan_graph_versions(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return list of plan-graph versions for a subsidy (summary, no full snapshot)."""
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа к субсидии")
+
+    vers = (await db.execute(
+        select(_PGV)
+        .where(_PGV.subsidy_id == subsidy_id)
+        .order_by(_PGV.version_number.desc())
+        .limit(100)
+    )).scalars().all()
+
+    out = []
+    for v in vers:
+        snap = v.snapshot or {}
+        out.append({
+            "id": v.id,
+            "version_number": v.version_number,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "created_by_name": v.created_by_name,
+            "note": v.note,
+            "total_planned": snap.get("total_planned", 0),
+            "total_used": snap.get("total_used", 0),
+            "item_count": len(snap.get("items", [])),
+        })
+    return out
+
+
+@router.get("/{subsidy_id}/plan-graph/versions/{version_id}")
+async def get_plan_graph_version(
+    subsidy_id: int,
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return full snapshot for a specific plan-graph version."""
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа к субсидии")
+
+    ver = (await db.execute(
+        select(_PGV).where(
+            _PGV.id == version_id,
+            _PGV.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+
+    if not ver:
+        raise HTTPException(404, "Версия план-графика не найдена")
+
+    return {
+        "id": ver.id,
+        "subsidy_id": ver.subsidy_id,
+        "version_number": ver.version_number,
+        "created_at": ver.created_at.isoformat() if ver.created_at else None,
+        "created_by_id": ver.created_by_id,
+        "created_by_name": ver.created_by_name,
+        "note": ver.note,
+        "snapshot": ver.snapshot,
+    }
+
+
+@router.post("/{subsidy_id}/plan-graph/versions")
+async def create_plan_graph_version_manual(
+    subsidy_id: int,
+    note: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(*ADMIN_ROLES)),
+):
+    """Manually publish a plan-graph version (admin only)."""
+    from app.routers.purchases import _create_plan_graph_version
+    await _create_plan_graph_version(subsidy_id, db, current_user, note=note or "Ручная публикация")
+    await db.commit()
+    return {"ok": True, "message": "Версия план-графика сохранена"}

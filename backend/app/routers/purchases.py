@@ -114,6 +114,103 @@ async def _auto_match_feo_item(
     return None
 
 
+async def _create_plan_graph_version(
+    subsidy_id: int,
+    db: AsyncSession,
+    user,
+    note: Optional[str] = None,
+) -> None:
+    """
+    Build a snapshot of all active FeoPlannedItems for the subsidy with residuals
+    and save as a new PlanGraphVersion row. Increments version_number.
+    Caller must commit after this call.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    from app.models.feo_category import FeoCategory as _FC
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+
+    # Fetch all active FEO items for this subsidy
+    items_q = (
+        select(_FPI, _FC.id.label("cat_id"))
+        .join(_FC, _FPI.feo_category_id == _FC.id)
+        .where(_FC.subsidy_id == subsidy_id, _FPI.is_active == True)
+        .order_by(_FPI.id)
+    )
+    rows = (await db.execute(items_q)).all()
+
+    if not rows:
+        return  # nothing to version
+
+    item_ids = [r._FPI.id for r in rows]
+
+    # Aggregate used amounts
+    used_q = (
+        select(
+            PurchaseItem.feo_planned_item_id,
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+        )
+        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+        .group_by(PurchaseItem.feo_planned_item_id)
+    )
+    used_map: dict[int, float] = {
+        r.feo_planned_item_id: float(r.used)
+        for r in (await db.execute(used_q)).all()
+    }
+
+    # Collect linked purchase ids
+    links_q = (
+        select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
+        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+    )
+    links_map: dict[int, list] = {}
+    for lr in (await db.execute(links_q)).all():
+        links_map.setdefault(lr.feo_planned_item_id, [])
+        if lr.purchase_id not in links_map[lr.feo_planned_item_id]:
+            links_map[lr.feo_planned_item_id].append(lr.purchase_id)
+
+    snapshot_items = []
+    total_planned = 0.0
+    total_used = 0.0
+    for r in rows:
+        item = r._FPI
+        planned = float(item.amount or 0)
+        used = used_map.get(item.id, 0.0)
+        total_planned += planned
+        total_used += used
+        snapshot_items.append({
+            "feo_item_id": item.id,
+            "name": item.name,
+            "category_id": item.feo_category_id,
+            "planned_amount": planned,
+            "used_amount": used,
+            "residual": planned - used,
+            "linked_purchase_ids": links_map.get(item.id, []),
+        })
+
+    snapshot = {
+        "subsidy_id": subsidy_id,
+        "total_planned": total_planned,
+        "total_used": total_used,
+        "items": snapshot_items,
+    }
+
+    # Get next version_number
+    max_ver_q = select(
+        func.coalesce(func.max(_PGV.version_number), 0)
+    ).where(_PGV.subsidy_id == subsidy_id)
+    next_ver = int((await db.execute(max_ver_q)).scalar() or 0) + 1
+
+    pgv = _PGV(
+        subsidy_id=subsidy_id,
+        version_number=next_ver,
+        created_by_id=getattr(user, "id", None),
+        created_by_name=getattr(user, "full_name", None) or getattr(user, "username", None),
+        snapshot=snapshot,
+        note=note,
+    )
+    db.add(pgv)
+
+
 # Status workflow
 STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
 VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
@@ -890,6 +987,15 @@ async def update_purchase(
                 changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
                 reason=None,
             ))
+
+    # 12-03: Auto-create plan-graph version if any items are FEO-linked
+    if p.subsidy_id and any(i.feo_planned_item_id for i in items_data if i.feo_planned_item_id):
+        await _create_plan_graph_version(
+            subsidy_id=p.subsidy_id,
+            db=db,
+            user=current_user,
+            note=f"Авто-версия при сохранении закупки #{p.purchase_number or p.id}",
+        )
 
     await db.commit()
     await db.refresh(p)

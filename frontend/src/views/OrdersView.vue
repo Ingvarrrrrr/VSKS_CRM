@@ -1478,30 +1478,6 @@ const loadSubsidies = async () => {
 
 const ordersTableRef = ref<any>(null)
 
-// Phase 26-jjj: mirror scrollbar выше таблицы (sticky-видимый горизонтальный
-// ползунок). Берёт scrollWidth настоящего .v-table__wrapper, sync'ится двусторонне.
-const mirrorScrollRef = ref<HTMLElement | null>(null)
-const tableScrollWidth = ref(0)
-function initMirrorScroll() {
-  const wrapper = document.querySelector('.orders-table .v-table__wrapper') as HTMLElement | null
-  const mirror = mirrorScrollRef.value
-  if (!wrapper || !mirror) return
-  const update = () => { tableScrollWidth.value = wrapper.scrollWidth }
-  update()
-  let syncing = false
-  mirror.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    wrapper.scrollLeft = mirror.scrollLeft
-    syncing = false
-  })
-  wrapper.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    mirror.scrollLeft = wrapper.scrollLeft
-    syncing = false
-  })
-  try { new ResizeObserver(update).observe(wrapper) } catch {}
-}
-
 // Phase 26-ZZ: bulk-load контрагентов убран. Фильтр контрагентов
 // dedupe-by-name из orders, не требует справочника.
 onMounted(async () => {
@@ -1544,7 +1520,6 @@ onMounted(async () => {
       addResizeHandles(el)
       restoreTableWidths(el)
     }
-    initMirrorScroll()
   }, 500)
 })
 
@@ -1844,22 +1819,6 @@ async function doExport() {
 
 <style scoped>
 .orders-clickable :deep(tbody tr) { cursor: pointer; }
-/* Phase 26-jjj: sticky mirror scrollbar выше таблицы (паттерн ProductsView) */
-.mirror-hscroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  height: 16px;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
-  margin-bottom: 4px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-}
-.orders-table :deep(.v-table__wrapper) {
-  scrollbar-width: none;
-}
-.orders-table :deep(.v-table__wrapper::-webkit-scrollbar) {
-  display: none;
-}
 .import-result-row {
   display: flex; gap: 16px; justify-content: center; margin: 16px 0;
 }

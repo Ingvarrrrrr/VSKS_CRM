@@ -128,7 +128,46 @@ onMounted(async () => {
     .v-data-table > .v-table__wrapper,
     .v-data-table-virtual > .v-table__wrapper {
       max-height: calc(100vh - 280px) !important;
-      overflow: auto !important;
+      /* Phase 26-kkk: scroll вместо auto — scrollbars (горизонтальный +
+         вертикальный) видны ВСЕГДА внутри таблицы, даже когда контента
+         для скролла нет (track появляется как disabled). Это даёт визуальный
+         сигнал что таблица скроллится — пользователь больше не теряет
+         scrollbar в виде "тонкой исчезающей полоски" Chromium-default. */
+      overflow: scroll !important;
+      /* Резерв места под scrollbar (Chromium 94+/Firefox 97+) — таблица
+         не "прыгает" при переключении видимости scrollbar. */
+      scrollbar-gutter: stable;
+      /* Firefox — толщина + контрастный thumb-цвет */
+      scrollbar-width: auto;
+      scrollbar-color: rgba(var(--v-theme-on-surface), 0.35) rgba(var(--v-theme-on-surface), 0.05);
+    }
+    /* WebKit (Chromium / Safari / Edge) — всегда визуально различим thumb */
+    .v-data-table > .v-table__wrapper::-webkit-scrollbar,
+    .v-data-table-virtual > .v-table__wrapper::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+    .v-data-table > .v-table__wrapper::-webkit-scrollbar-track,
+    .v-data-table-virtual > .v-table__wrapper::-webkit-scrollbar-track {
+      background: rgba(var(--v-theme-on-surface), 0.05);
+      border-radius: 6px;
+    }
+    .v-data-table > .v-table__wrapper::-webkit-scrollbar-thumb,
+    .v-data-table-virtual > .v-table__wrapper::-webkit-scrollbar-thumb {
+      background: rgba(var(--v-theme-on-surface), 0.35);
+      border-radius: 6px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .v-data-table > .v-table__wrapper::-webkit-scrollbar-thumb:hover,
+    .v-data-table-virtual > .v-table__wrapper::-webkit-scrollbar-thumb:hover {
+      background: rgba(var(--v-theme-on-surface), 0.55);
+      background-clip: padding-box;
+      border: 2px solid transparent;
+    }
+    .v-data-table > .v-table__wrapper::-webkit-scrollbar-corner,
+    .v-data-table-virtual > .v-table__wrapper::-webkit-scrollbar-corner {
+      background: rgba(var(--v-theme-on-surface), 0.05);
     }
     /* Sticky header → при вертикальной прокрутке внутри таблицы заголовки колонок
        остаются вверху видимыми (иначе скролл по строкам теряет контекст). */

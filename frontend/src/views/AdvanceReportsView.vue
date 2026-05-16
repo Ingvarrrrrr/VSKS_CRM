@@ -108,12 +108,7 @@
       </v-chip>
     </v-chip-group>
 
-    <!-- Phase 26-jjj: sticky mirror horizontal scrollbar (паттерн ProductsView) -->
-    <div ref="mirrorScrollRef" class="mirror-hscroll">
-      <div :style="{ width: tableScrollWidth + 'px', height: '1px' }" />
-    </div>
     <v-data-table
-        class="advance-table"
         v-model="selected"
         v-model:expanded="expandedRows"
         :headers="tableHeaders"
@@ -440,7 +435,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
@@ -786,51 +781,5 @@ async function load() {
   }
 }
 
-// Phase 26-jjj: mirror scrollbar sticky выше таблицы (паттерн ProductsView)
-const mirrorScrollRef = ref<HTMLElement | null>(null)
-const tableScrollWidth = ref(0)
-function initMirrorScroll() {
-  const wrapper = document.querySelector('.advance-table .v-table__wrapper') as HTMLElement | null
-  const mirror = mirrorScrollRef.value
-  if (!wrapper || !mirror) return
-  const update = () => { tableScrollWidth.value = wrapper.scrollWidth }
-  update()
-  let syncing = false
-  mirror.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    wrapper.scrollLeft = mirror.scrollLeft
-    syncing = false
-  })
-  wrapper.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    mirror.scrollLeft = wrapper.scrollLeft
-    syncing = false
-  })
-  try { new ResizeObserver(update).observe(wrapper) } catch {}
-}
-
-onMounted(async () => {
-  await load()
-  await nextTick()
-  setTimeout(initMirrorScroll, 400)
-})
+onMounted(load)
 </script>
-
-<style scoped>
-/* Phase 26-jjj: sticky mirror scrollbar (паттерн ProductsView) */
-.mirror-hscroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  height: 16px;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
-  margin-bottom: 4px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-}
-.advance-table :deep(.v-table__wrapper) {
-  scrollbar-width: none;
-}
-.advance-table :deep(.v-table__wrapper::-webkit-scrollbar) {
-  display: none;
-}
-</style>

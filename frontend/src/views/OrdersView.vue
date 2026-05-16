@@ -183,18 +183,9 @@
       </div>
     </v-alert>
 
-    <!-- Phase 26-jjj: mirror horizontal scrollbar — sticky-видимый ползунок
-         НАД таблицей (одинаковый паттерн с ProductsView). Native scrollbar
-         внутри .v-table__wrapper скрыт (см. <style>), оба sync'ятся через
-         initMirrorScroll(). Это решает проблему «scrollbar только внизу
-         страницы вне viewport» когда таблица шире экрана. -->
-    <div ref="mirrorScrollRef" class="mirror-hscroll">
-      <div :style="{ width: tableScrollWidth + 'px', height: '1px' }" />
-    </div>
     <!-- Table -->
     <v-data-table
         ref="ordersTableRef"
-        class="orders-table"
         :headers="tableHeaders"
         :items="filteredOrdersWithRowNum"
         :loading="loading"

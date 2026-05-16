@@ -5,7 +5,6 @@ import { createPinia } from 'pinia'
 import router from './router'
 import VueApexCharts from 'vue3-apexcharts'
 import { vResizableColumns } from './directives/resizable-columns'
-import { initStickyHscroll } from './setup/sticky-hscroll'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -18,11 +17,6 @@ app.use(VueApexCharts)
 app.directive('resizable-columns', vResizableColumns)
 
 app.mount('#app')
-
-// Phase 26-QQQ: sticky-bottom fake scrollbar для всех .v-table__wrapper.
-// Цепляется через MutationObserver — работает в любых view, включая
-// тех что создаются после mount (роутинг).
-initStickyHscroll()
 
 // Phase 26-DDD: PWA auto-update без необходимости Ctrl+F5.
 // Workbox `registerType: 'autoUpdate' + skipWaiting + clientsClaim` гарантирует

@@ -118,16 +118,36 @@ onMounted(async () => {
    На mobile оставляем auto-layout — таблица сама подгоняет ширины под контент,
    при необходимости включается горизонтальный scroll. */
 @media (min-width: 960px) {
-  /* Phase 26-QQQ: max-height на .v-table__wrapper убран — sticky horizontal scroll
-     теперь обеспечивает JS-фейк-скроллбар (frontend/src/setup/sticky-hscroll.ts),
-     прибитый position:fixed bottom:0. Работает независимо от высоты таблицы
-     и DOM-структуры (v-card обёртки, промежуточные wrapper'ы Vuetify). */
-  /* Естественный горизонтальный скролл всё равно нужен внутри обёртки — fake
-     синхронизируется с el.scrollLeft. */
-  .v-data-table .v-table__wrapper,
-  .v-data-table-virtual .v-table__wrapper,
-  .v-table .v-table__wrapper {
-    overflow-x: auto !important;
+  /* Phase 26-NNN/OOO: ограничиваем высоту scroll-обёртки таблицы → горизонтальный
+     ползунок всегда виден в нижней части viewport, а не «спрятан» после
+     последней строки + пагинации. 100vh - 280px оставляет место под header (64) +
+     breadcrumbs/title (~70) + filters (~80) + pagination (~60).
+     OOO: убран '>' (direct child) — в OrdersView/AdvanceReports v-data-table
+     обёрнут в v-card, и Vuetify иногда вставляет промежуточные wrapper'ы между
+     .v-data-table и .v-table__wrapper. Loose селектор покрывает оба случая. */
+  @media (min-height: 600px) {
+    .v-data-table .v-table__wrapper,
+    .v-data-table-virtual .v-table__wrapper,
+    .v-table .v-table__wrapper {
+      max-height: calc(100vh - 280px) !important;
+      overflow: auto !important;
+    }
+    /* Sticky header → при вертикальной прокрутке внутри таблицы заголовки колонок
+       остаются вверху видимыми (иначе скролл по строкам теряет контекст). */
+    .v-data-table thead th,
+    .v-data-table-virtual thead th,
+    .v-table thead th {
+      position: sticky !important;
+      top: 0 !important;
+      z-index: 2 !important;
+      background: rgb(var(--v-theme-surface)) !important;
+    }
+    /* v-card-обёртка над таблицей: убираем overflow:hidden чтобы sticky-эффекты
+       и тени скроллбара не клиппировались скруглёнными углами карточки. */
+    .v-card:has(> .v-data-table),
+    .v-card:has(> .v-table) {
+      overflow: visible !important;
+    }
   }
   .v-data-table > .v-table__wrapper > table,
   .v-data-table-virtual > .v-table__wrapper > table {

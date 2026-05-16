@@ -14,6 +14,7 @@ class User(Base):
     department = Column(String(200), nullable=True)  # Отдел (единый источник правды)
     position = Column(String(200), nullable=True)    # Должность (единый источник правды)
     phone = Column(String(30), nullable=True)         # Телефон (+7...)
+    work_phone = Column(String(30), nullable=True)    # Стационарный/рабочий телефон (Phase 18)
     telegram_id = Column(String(100), nullable=True)  # Telegram chat_id (числовой)
     max_chat_id = Column(String(100), nullable=True)  # MAX (VK) chat_id
     avatar = Column(String(20), nullable=True)        # Аватарка (id из набора)

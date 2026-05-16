@@ -32,6 +32,7 @@ class UserCreate(BaseModel):
     department: Optional[str] = None
     position: Optional[str] = None
     phone: Optional[str] = None
+    work_phone: Optional[str] = None
     telegram_id: Optional[str] = None
     max_chat_id: Optional[str] = None
     avatar: Optional[str] = None
@@ -46,6 +47,7 @@ class UserUpdate(BaseModel):
     department: Optional[str] = None
     position: Optional[str] = None
     phone: Optional[str] = None
+    work_phone: Optional[str] = None
     telegram_id: Optional[str] = None
     max_chat_id: Optional[str] = None
     email: Optional[str] = None
@@ -70,6 +72,7 @@ class UserOut(BaseModel):
     department: Optional[str] = None
     position: Optional[str] = None
     phone: Optional[str] = None
+    work_phone: Optional[str] = None
     telegram_id: Optional[str] = None
     max_chat_id: Optional[str] = None
     email: Optional[str] = None

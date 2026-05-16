@@ -18,6 +18,7 @@ from .routers import (
     tasks, departments, delivery_addresses, hierarchy, billing,
     wishes, purchase_export, purchase_items_import, purchase_members,
     permissions as permissions_router,
+    staff_directory,
 )
 from .routers import wish_documents
 from .routers import user_addresses as user_addresses_router
@@ -449,6 +450,28 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 26-Q permission seed skipped (non-fatal): {e}")
 
+    # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionTab, RolePermission
+        async with async_session() as db:
+            ex = await db.execute(_sel(PermissionTab).where(PermissionTab.tab_key == 'staff_directory'))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionTab(tab_key='staff_directory', title='Справочник сотрудников'))
+                await db.commit()
+            ALL_SD_ROLES = ['superadmin', 'admin', 'org_admin', 'manager', 'employee']
+            for role_name in ALL_SD_ROLES:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == 'staff_directory',
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key='staff_directory', granted=True))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 18 staff_directory tab seed skipped (non-fatal): {e}")
+
     # Phase 22 RESTORE: backfill typed-fields для legacy bank_payments c payment_date IS NULL
     # Идемпотентно — skip если все строки уже типизированы. Запускается на каждом старте.
     try:
@@ -874,6 +897,7 @@ async def _save_incident(request: Request, message: str, details: str,
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(staff_directory.router)
 app.include_router(contractors.router)
 app.include_router(contracts.router)
 # Phase 27.1: contract_items MUST be registered BEFORE purchases.router

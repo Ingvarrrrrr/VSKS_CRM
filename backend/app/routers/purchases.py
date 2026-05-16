@@ -30,10 +30,13 @@ router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
 async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
-    """Когда установлен contract_id — копируем number/date/contract_type из contracts в purchases.
+    """Когда установлен contract_id — копируем number/date/contract_type/contractor_id из contracts в purchases.
 
     Поля в purchases являются денормализованным снапшотом (для list-view без JOIN),
     но при наличии FK должны строго следовать связанному контракту.
+
+    Phase 26-lll: contractor_id ОБЯЗАТЕЛЬНО синхронизируется — иначе в реестре
+    закупок колонка «Контрагент» пустая (—), хотя в договоре контрагент есть.
     """
     if not p.contract_id:
         return
@@ -46,6 +49,10 @@ async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
         p.contract_date = c.date
     if c.contract_type:
         p.purchase_contract_type = c.contract_type
+    if c.contractor_id and not p.contractor_id:
+        # Не перетираем уже установленного контрагента (multi-contractor сценарии),
+        # только заполняем NULL.
+        p.contractor_id = c.contractor_id
 
 
 async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
@@ -1690,3 +1697,45 @@ async def split_purchase(
         raise HTTPException(500, f"Ошибка разбиения закупки: {e}")
 
     return {"source_purchase_id": pid, "purchase_ids": created_ids, "count": len(created_ids)}
+
+
+@router.post("/sync-from-contracts")
+async def sync_all_purchases_from_contracts(
+    only_mismatched: bool = Query(True, description="Только закупки где denorm-поля расходятся с contract"),
+    current_user=Depends(require_action('purchases.edit')),
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 26-lll: глобальный backfill денормализованных полей purchases из contracts.
+
+    Для каждой purchase с contract_id IS NOT NULL прогоняет
+    _sync_purchase_from_contract — выравнивает contract_number / contract_date /
+    purchase_contract_type / contractor_id с реальным contracts.*.
+
+    Чинит исторические рассинхронизации до Phase 26-j-1 (sync на save) и до
+    Phase 26-k-2 (UPDATE 2 row backfill — недостаточно). Также покрывает баг
+    «Контрагент пустой в реестре закупок» — раньше sync не копировал
+    contractor_id из contract.
+    """
+    q = await db.execute(
+        select(Purchase).where(Purchase.contract_id.is_not(None))
+    )
+    purchases_list = q.scalars().all()
+    stats = {"total": len(purchases_list), "updated": 0, "skipped_no_contract": 0, "details": []}
+    for p in purchases_list:
+        before = (p.contract_number, p.contract_date, p.purchase_contract_type, p.contractor_id)
+        await _sync_purchase_from_contract(p, db)
+        after = (p.contract_number, p.contract_date, p.purchase_contract_type, p.contractor_id)
+        if before != after:
+            stats["updated"] += 1
+            if len(stats["details"]) < 50:  # cap response size
+                stats["details"].append({
+                    "purchase_id": p.id,
+                    "registry_number": p.registry_number,
+                    "contract_id": p.contract_id,
+                    "before": {"number": before[0], "date": str(before[1]) if before[1] else None,
+                               "type": before[2], "contractor_id": before[3]},
+                    "after": {"number": after[0], "date": str(after[1]) if after[1] else None,
+                              "type": after[2], "contractor_id": after[3]},
+                })
+    await db.commit()
+    return stats

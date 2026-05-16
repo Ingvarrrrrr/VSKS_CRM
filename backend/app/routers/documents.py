@@ -1249,23 +1249,17 @@ async def generate_document(
         "execution_term_changed": _fmt_date(p.execution_term_changed),
         "delivery_date": _fmt_date(p.delivery_date),
         "country_origin": p.country_origin or "",
-        # Акт приёмки — если нет закрывающих документов, подставляем данные договора
-        # (статус «Заказано» — оплата до поставки, документов ещё нет)
-        "acceptance_doc_name": (
-            p.acceptance_doc_name
-            if p.acceptance_doc_name
-            else "договору"
-        ),
-        "acceptance_doc_number": (
-            p.acceptance_doc_number
-            if p.acceptance_doc_number
-            else (p.contract_number or "")
-        ),
-        "acceptance_doc_date": (
-            _fmt_date(p.acceptance_doc_date)
-            if p.acceptance_doc_date
-            else (_fmt_date(p.contract_date) if p.contract_date else "")
-        ),
+        # Акт приёмки. Phase 26-lll: УБРАН fallback acceptance_doc_* → contract_*.
+        # Раньше при пустом acceptance_doc_name шаблон СЗ на оплату по
+        # {{acceptance_doc_name}} {{acceptance_doc_number}} от {{acceptance_doc_date}}
+        # подставлял «договору 51802 ОП/КОР от 27.05.2021» — семантически неверно
+        # (оплата по акту ≠ оплата по договору) + рассинхронизированные snapshot-поля
+        # давали даты от других контрактов. Теперь шаблон получает пустую строку,
+        # и пользователь сразу видит что закрывающий документ не указан.
+        # Если нужны данные договора — использовать явные {{contract_number}}/{{contract_date}}.
+        "acceptance_doc_name":   p.acceptance_doc_name or "",
+        "acceptance_doc_number": p.acceptance_doc_number or "",
+        "acceptance_doc_date":   _fmt_date(p.acceptance_doc_date) or "",
         "acceptance_doc_amount": (
             _fmt_money(p.acceptance_doc_amount)
             if p.acceptance_doc_amount

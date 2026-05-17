@@ -1,4 +1,5 @@
 import os
+import shutil
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -147,6 +148,115 @@ async def download_contract_template(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=f"contract_template_subsidy_{sid}.docx",
     )
+
+
+@router.post("/{sid}/approvers/copy-from/{source_sid}")
+async def copy_approvers_from(
+    sid: int,
+    source_sid: int,
+    replace: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Копирует ВСЕХ согласующих из source_sid → sid.
+    replace=true — удалить существующих перед копированием.
+    replace=false — добавить в конец (с правкой order_num).
+    """
+    if sid == source_sid:
+        raise HTTPException(400, "Целевая и источник — одна субсидия")
+    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(source_sid, db, current_user)
+
+    if replace:
+        existing = (await db.execute(
+            select(SubsidyApprover).where(SubsidyApprover.subsidy_id == sid)
+        )).scalars().all()
+        for a in existing:
+            await db.delete(a)
+        await db.flush()
+        max_order = -1
+    else:
+        max_order_row = (await db.execute(
+            select(SubsidyApprover.order_num)
+            .where(SubsidyApprover.subsidy_id == sid)
+            .order_by(SubsidyApprover.order_num.desc())
+            .limit(1)
+        )).scalar()
+        max_order = max_order_row if max_order_row is not None else -1
+
+    source_approvers = (await db.execute(
+        select(SubsidyApprover)
+        .where(SubsidyApprover.subsidy_id == source_sid)
+        .order_by(SubsidyApprover.order_num, SubsidyApprover.id)
+    )).scalars().all()
+
+    copied = 0
+    for src in source_approvers:
+        max_order += 1
+        new_a = SubsidyApprover(
+            subsidy_id=sid,
+            role_name=src.role_name,
+            user_id=src.user_id,
+            full_name=src.full_name,
+            is_default=src.is_default,
+            can_initiate=src.can_initiate,
+            show_feo_path=src.show_feo_path,
+            order_num=max_order,
+        )
+        db.add(new_a)
+        copied += 1
+
+    await db.commit()
+    return {"copied": copied, "replaced": replace}
+
+
+@router.post("/{sid}/templates/copy-from/{source_sid}")
+async def copy_templates_from(
+    sid: int,
+    source_sid: int,
+    doc_types: str | None = None,
+    replace: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Копирует кастомные .docx шаблоны из source_sid → sid.
+    doc_types: CSV (например "contract,service_note_payment") — если задан, копируются только эти.
+    replace=false — пропустить doc_type если у target уже есть свой кастом.
+    replace=true — перезаписать.
+    """
+    if sid == source_sid:
+        raise HTTPException(400, "Целевая и источник — одна субсидия")
+    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(source_sid, db, current_user)
+
+    src_dir = os.path.join(SUBSIDY_TEMPLATES_DIR, str(source_sid))
+    dst_dir = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid))
+
+    if not os.path.isdir(src_dir):
+        return {"copied": [], "skipped": [], "reason": "В исходной субсидии нет кастомных шаблонов"}
+
+    os.makedirs(dst_dir, exist_ok=True)
+
+    requested_types = set(doc_types.split(",")) if doc_types else None
+    copied = []
+    skipped = []
+    for fn in os.listdir(src_dir):
+        if not fn.endswith(".docx"):
+            continue
+        doc_type = fn[:-5]  # strip .docx
+        if requested_types and doc_type not in requested_types:
+            continue
+        src_path = os.path.join(src_dir, fn)
+        dst_path = os.path.join(dst_dir, fn)
+        if os.path.exists(dst_path) and not replace:
+            skipped.append(doc_type)
+            continue
+        shutil.copy2(src_path, dst_path)
+        copied.append(doc_type)
+
+    return {"copied": copied, "skipped": skipped}
 
 
 @router.delete("/{sid}/contract-template")

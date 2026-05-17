@@ -1227,11 +1227,54 @@
         </v-card-text>
         <v-divider />
         <v-card-actions class="px-4 py-3">
+          <v-btn variant="outlined" color="indigo" prepend-icon="mdi-content-copy"
+                 @click="openCopyApproversDialog">
+            Скопировать из другой субсидии
+          </v-btn>
+          <v-spacer />
           <v-btn color="teal" variant="tonal" prepend-icon="mdi-plus" @click="startAddApprover">
             Добавить
           </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="showApproversDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Copy Approvers Sub-dialog ── -->
+    <v-dialog v-model="showCopyApproversDialog" max-width="520">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 pb-2">
+          <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
+          Скопировать согласующих из другой субсидии
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showCopyApproversDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <v-autocomplete
+            v-model="copyApprovers.sourceId"
+            :items="copySourceSubsidies"
+            item-title="name"
+            item-value="id"
+            label="Источник (другая субсидия)"
+            variant="outlined" density="compact"
+          />
+          <v-checkbox
+            v-model="copyApprovers.replace"
+            label="Заменить существующих (иначе добавить в конец)"
+            hide-details density="compact"
+          />
+          <v-alert v-if="copyApprovers.error" type="error" variant="tonal" density="compact" class="mt-2">
+            {{ copyApprovers.error }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="showCopyApproversDialog = false">Отмена</v-btn>
+          <v-btn color="indigo" :loading="copyApprovers.loading"
+                 :disabled="!copyApprovers.sourceId"
+                 @click="confirmCopyApprovers">
+            Скопировать
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1423,7 +1466,50 @@
             Руководство по переменным
           </v-btn>
           <v-spacer />
+          <v-btn variant="outlined" color="indigo" prepend-icon="mdi-content-copy"
+                 @click="openCopyTemplatesDialog">
+            Скопировать из другой субсидии
+          </v-btn>
+          <v-spacer />
           <v-btn variant="text" @click="showTemplateDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Copy Templates Sub-dialog ── -->
+    <v-dialog v-model="showCopyTemplatesDialog" max-width="520">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 pb-2">
+          <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
+          Скопировать шаблоны из другой субсидии
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showCopyTemplatesDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <v-autocomplete
+            v-model="copyTemplates.sourceId"
+            :items="copySourceSubsidiesForTemplates"
+            item-title="name"
+            item-value="id"
+            label="Источник (другая субсидия)"
+            variant="outlined" density="compact"
+          />
+          <v-checkbox
+            v-model="copyTemplates.replace"
+            label="Перезаписать существующие шаблоны"
+            hide-details density="compact"
+          />
+          <v-alert v-if="copyTemplates.error" type="error" variant="tonal" density="compact" class="mt-2">
+            {{ copyTemplates.error }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="showCopyTemplatesDialog = false">Отмена</v-btn>
+          <v-btn color="indigo" :loading="copyTemplates.loading"
+                 :disabled="!copyTemplates.sourceId"
+                 @click="confirmCopyTemplates">
+            Скопировать
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2105,6 +2191,74 @@ const approverForm = ref<{
 }>({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null })
 
 const approverUsersList = ref<Array<{ id: number; full_name: string }>>([])
+
+// ── Copy Approvers state ──────────────────────────
+const showCopyApproversDialog = ref(false)
+const copyApprovers = ref<{ sourceId: number | null; replace: boolean; loading: boolean; error: string }>({
+  sourceId: null, replace: false, loading: false, error: '',
+})
+const copySourceSubsidies = computed(() =>
+  (allSubsidies.value || []).filter(s => s.id !== approversSubsidy.value?.id)
+)
+function openCopyApproversDialog() {
+  copyApprovers.value = { sourceId: null, replace: false, loading: false, error: '' }
+  showCopyApproversDialog.value = true
+}
+async function confirmCopyApprovers() {
+  if (!approversSubsidy.value?.id || !copyApprovers.value.sourceId) return
+  copyApprovers.value.loading = true
+  copyApprovers.value.error = ''
+  try {
+    const result = await apiFetch<{ copied: number; replaced: boolean }>(
+      `/subsidies/${approversSubsidy.value.id}/approvers/copy-from/${copyApprovers.value.sourceId}?replace=${copyApprovers.value.replace}`,
+      { method: 'POST' }
+    )
+    showCopyApproversDialog.value = false
+    showSnack(`Скопировано: ${result.copied} согласующих${result.replaced ? ' (с заменой)' : ''}`, 'success')
+    const list = await apiFetch<SubsidyApprover[]>(`/subsidies/${approversSubsidy.value.id}/approvers`)
+    approversList.value = list
+  } catch (e: any) {
+    copyApprovers.value.error = e?.payload?.message || e?.message || 'Ошибка копирования'
+  } finally {
+    copyApprovers.value.loading = false
+  }
+}
+
+// ── Copy Templates state ──────────────────────────
+const showCopyTemplatesDialog = ref(false)
+const copyTemplates = ref<{ sourceId: number | null; replace: boolean; loading: boolean; error: string }>({
+  sourceId: null, replace: false, loading: false, error: '',
+})
+const copySourceSubsidiesForTemplates = computed(() =>
+  (allSubsidies.value || []).filter(s => s.id !== templateSubsidy.value?.id)
+)
+function openCopyTemplatesDialog() {
+  copyTemplates.value = { sourceId: null, replace: false, loading: false, error: '' }
+  showCopyTemplatesDialog.value = true
+}
+async function confirmCopyTemplates() {
+  if (!templateSubsidy.value?.id || !copyTemplates.value.sourceId) return
+  copyTemplates.value.loading = true
+  copyTemplates.value.error = ''
+  try {
+    const result = await apiFetch<{ copied: string[]; skipped: string[]; reason?: string }>(
+      `/subsidies/${templateSubsidy.value.id}/templates/copy-from/${copyTemplates.value.sourceId}?replace=${copyTemplates.value.replace}`,
+      { method: 'POST' }
+    )
+    showCopyTemplatesDialog.value = false
+    if (result.reason) {
+      showSnack(result.reason, 'error')
+    } else {
+      const skippedNote = result.skipped.length ? `, пропущено: ${result.skipped.length}` : ''
+      showSnack(`Скопировано шаблонов: ${result.copied.length}${skippedNote}`, 'success')
+    }
+    await openTemplateDialog(templateSubsidy.value)
+  } catch (e: any) {
+    copyTemplates.value.error = e?.payload?.message || e?.message || 'Ошибка копирования'
+  } finally {
+    copyTemplates.value.loading = false
+  }
+}
 
 async function loadApproverUsers() {
   if (approverUsersList.value.length) return

@@ -875,15 +875,11 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
         filled_count = await _enrich_contract_from_purchases(c, db)
         if filled_count > 0:
             enriched += 1
-    # Phase 27.1.7: re-link orphan ContractItem.source_item_id → existing PurchaseItem
-    # по item_name match. После recompute (Phase 26-ww) PurchaseItem'ы могут быть
-    # пересозданы с новыми id'шками — ContractItem.source_item_id указывает на
-    # несуществующие записи. Re-link по точному имени.
+    # Phase 27.1.8: расширенный relink orphan ContractItem.source_item_id с fallback'ами
     from app.models.contract_item import ContractItem as _CI
     from app.models.purchase_item import PurchaseItem as _PI
-    from sqlalchemy import select as _select
+    from sqlalchemy import select as _select, func as _func
 
-    # Найти ContractItem'ы где source_item_id не существует в PurchaseItem
     orphans_q = await db.execute(_select(_CI).where(_CI.source_item_id.isnot(None)))
     orphans_all = orphans_q.scalars().all()
     existing_pi_ids = set((await db.execute(_select(_PI.id))).scalars().all())
@@ -891,15 +887,52 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
 
     relinked = 0
     for ci in orphans:
-        # Найти PurchaseItem с тем же purchase_id и совпадающим name
-        if not ci.purchase_id or not ci.name:
+        if not ci.purchase_id:
             continue
-        candidate = (await db.execute(
-            _select(_PI).where(
-                _PI.purchase_id == ci.purchase_id,
-                _PI.item_name == ci.name,
-            ).limit(1)
-        )).scalar_one_or_none()
+
+        candidate = None
+
+        # Pass 1: exact name match (был в 27.1.7)
+        if ci.name:
+            candidate = (await db.execute(
+                _select(_PI).where(
+                    _PI.purchase_id == ci.purchase_id,
+                    _PI.item_name == ci.name,
+                ).limit(1)
+            )).scalar_one_or_none()
+
+        # Pass 2: case-insensitive trimmed match
+        if not candidate and ci.name:
+            normalized_ci_name = ci.name.strip().lower()
+            candidate = (await db.execute(
+                _select(_PI).where(
+                    _PI.purchase_id == ci.purchase_id,
+                    _func.lower(_func.trim(_PI.item_name)) == normalized_ci_name,
+                ).limit(1)
+            )).scalar_one_or_none()
+
+        # Pass 3: 1-to-1 fallback — если у Purchase ровно один PI и один orphan CI с тем же purchase_id, безусловно связать
+        if not candidate:
+            all_pi_in_purchase = (await db.execute(
+                _select(_PI).where(_PI.purchase_id == ci.purchase_id)
+            )).scalars().all()
+            all_ci_in_purchase_orphan = [
+                o for o in orphans
+                if o.purchase_id == ci.purchase_id
+            ]
+            if len(all_pi_in_purchase) == 1 and len(all_ci_in_purchase_orphan) == 1:
+                candidate = all_pi_in_purchase[0]
+
+        # Pass 4: match по qty + unit_price (если совпадают точно)
+        if not candidate and ci.quantity is not None and ci.unit_price is not None:
+            candidate = (await db.execute(
+                _select(_PI).where(
+                    _PI.purchase_id == ci.purchase_id,
+                    _PI.quantity == ci.quantity,
+                    _PI.unit_price == ci.unit_price,
+                ).limit(1)
+            )).scalar_one_or_none()
+
         if candidate:
             ci.source_item_id = candidate.id
             relinked += 1

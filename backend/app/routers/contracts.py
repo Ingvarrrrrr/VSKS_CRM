@@ -26,15 +26,17 @@ async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     Returns: count of fields filled (для diag). 0 если нечего обогащать.
 
     Заполняет только NULL поля — не перезаписывает то что user явно ввёл.
-    Полей: subject, max_amount, start_date, end_date, purchase_method, item_type.
+    Полей: subject, max_amount, start_date, end_date, purchase_method, item_type, contractor_id.
     """
     from app.models.purchase import Purchase as _P
 
+    # Phase 27.1.12: добавлен contractor_id в проверку all-filled
     # Если все поля заполнены — выйти
     if all([
         c.subject, c.max_amount is not None,
         c.start_date, c.end_date,
         c.purchase_method, c.item_type,
+        c.contractor_id is not None,  # NEW
     ]):
         return 0
 
@@ -45,6 +47,11 @@ async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
         return 0
 
     filled = 0
+    # Phase 27.1.12: заполнить contractor_id из Purchase (только если NULL)
+    if c.contractor_id is None and p.contractor_id is not None:
+        c.contractor_id = p.contractor_id
+        filled += 1
+
     if not c.subject:
         v = p.subject or str(p.purchase_number or '')
         if v:

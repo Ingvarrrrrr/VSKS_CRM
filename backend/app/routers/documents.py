@@ -323,6 +323,73 @@ def _sum_items_price(p) -> float:
     return total
 
 
+def _build_acceptance_doc_context(p, doc_type: str, doc_indices_csv: str | None) -> dict:
+    """Phase 27.2-01: build acceptance_doc_* context entries.
+
+    For service_note_payment / service_note_advance:
+      - читаем acceptance_docs JSONB (source of truth после Phase 26-H);
+      - если doc_indices задан — фильтруем по индексам;
+      - first doc → name/number/date; сумма всех selected → amount.
+    Для остальных doc_type и при отсутствии JSONB-данных — legacy fallback.
+    """
+    SZ_TYPES = ("service_note_payment", "service_note_advance")
+
+    def _legacy_amount():
+        return _fmt_money(
+            p.acceptance_doc_amount
+            or p.contract_price
+            or p.planned_total_price
+            or p.total_nmck
+            or _sum_items_price(p)
+            or 0
+        )
+
+    if doc_type in SZ_TYPES:
+        raw_docs: list = p.acceptance_docs or []
+        if raw_docs:
+            # Filter by doc_indices if provided
+            if doc_indices_csv:
+                try:
+                    indices = [int(i.strip()) for i in doc_indices_csv.split(",") if i.strip().isdigit()]
+                    selected = [raw_docs[i] for i in indices if 0 <= i < len(raw_docs)]
+                except Exception:
+                    selected = raw_docs
+            else:
+                selected = raw_docs
+
+            if selected:
+                first = selected[0]
+                raw_date = first.get("date") or ""
+                # date may be ISO string "2026-05-08" or already a date object
+                if isinstance(raw_date, str) and raw_date:
+                    try:
+                        from datetime import date as _date
+                        fmt_date = _date.fromisoformat(raw_date).strftime("%d.%m.%Y")
+                    except ValueError:
+                        fmt_date = raw_date
+                else:
+                    fmt_date = _fmt_date(raw_date)
+                total_amount = sum(float(d.get("amount") or 0) for d in selected)
+                return {
+                    "acceptance_doc_name":   first.get("name") or "",
+                    "acceptance_doc_number": first.get("number") or "",
+                    "acceptance_doc_date":   fmt_date,
+                    "acceptance_doc_amount": _fmt_money(total_amount) if total_amount else _legacy_amount(),
+                }
+
+    # Legacy fallback (all other doc_types OR no JSONB data)
+    return {
+        "acceptance_doc_name":   p.acceptance_doc_name or "",
+        "acceptance_doc_number": p.acceptance_doc_number or "",
+        "acceptance_doc_date":   _fmt_date(p.acceptance_doc_date) or "",
+        "acceptance_doc_amount": (
+            _fmt_money(p.acceptance_doc_amount)
+            if p.acceptance_doc_amount
+            else _legacy_amount()
+        ),
+    }
+
+
 async def _build_contract_items_context(p, db) -> dict:
     """Phase 27.1 CD-5: build docxtpl context entries for {{contract_items}} loop.
 
@@ -654,6 +721,7 @@ async def generate_document(
     responsible_name: Optional[str] = Query(default=None, description="ФИО ответственного исполнителя (переопределяет поле закупки)"),
     tz_override_mode: Optional[str] = Query(default=None, description="Переопределить режим ТЗ: 'exact' или '44fz'"),
     merge: Optional[str] = Query(default=None, description="Phase 19.06: merge with another doc_type (e.g. 'tech_spec_contract') — appends its paragraphs/tables as a new section after the primary doc"),
+    doc_indices: Optional[str] = Query(default=None, description="Phase 27.2: CSV индексов acceptance_docs для СЗ на оплату/аванс (напр. '0,2,3')"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -1250,27 +1318,9 @@ async def generate_document(
         "delivery_date": _fmt_date(p.delivery_date),
         "country_origin": p.country_origin or "",
         # Акт приёмки. Phase 26-lll: УБРАН fallback acceptance_doc_* → contract_*.
-        # Раньше при пустом acceptance_doc_name шаблон СЗ на оплату по
-        # {{acceptance_doc_name}} {{acceptance_doc_number}} от {{acceptance_doc_date}}
-        # подставлял «договору 51802 ОП/КОР от 27.05.2021» — семантически неверно
-        # (оплата по акту ≠ оплата по договору) + рассинхронизированные snapshot-поля
-        # давали даты от других контрактов. Теперь шаблон получает пустую строку,
-        # и пользователь сразу видит что закрывающий документ не указан.
-        # Если нужны данные договора — использовать явные {{contract_number}}/{{contract_date}}.
-        "acceptance_doc_name":   p.acceptance_doc_name or "",
-        "acceptance_doc_number": p.acceptance_doc_number or "",
-        "acceptance_doc_date":   _fmt_date(p.acceptance_doc_date) or "",
-        "acceptance_doc_amount": (
-            _fmt_money(p.acceptance_doc_amount)
-            if p.acceptance_doc_amount
-            else _fmt_money(
-                p.contract_price
-                or p.planned_total_price
-                or p.total_nmck            # SUM(items.total_price) — always set when items exist
-                or _sum_items_price(p)     # manual fallback if total_nmck is NULL
-                or 0
-            )
-        ),
+        # Phase 27.2-01: для СЗ на оплату/аванс читаем acceptance_docs JSONB
+        # (source of truth после Phase 26-H). Legacy plain-поля — только fallback.
+        **_build_acceptance_doc_context(p, doc_type, doc_indices),
         # Платёж
         "payment_doc_number": p.payment_doc_number or "",
         "payment_doc_date": _fmt_date(p.payment_doc_date),

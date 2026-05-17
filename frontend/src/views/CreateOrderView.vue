@@ -5426,6 +5426,7 @@ const loadPurchase = async () => {
     items.value = data.items.map((i: any) => {
       const prod = i.product_id ? products.value.find(p => p.id === i.product_id) : null
       return {
+        id: i.id,  // Phase 27.1.13: КРИТИЧЕСКИЙ FIX — без id orphan resolution не работает (rematch dropdown показывал "№1281 связь не найдена" даже когда PI существовал)
         product_id: i.product_id ?? null,
         item_name: i.item_name || '',
         item_type: i.item_type || 'товар',

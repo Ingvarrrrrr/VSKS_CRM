@@ -488,7 +488,7 @@
                       <td>
                         <v-btn v-if="p.items?.length" :icon="expandedPurchases[p.id] ? 'mdi-chevron-up' : 'mdi-chevron-down'"
                           variant="text" size="x-small" @click.stop="expandedPurchases[p.id] = !expandedPurchases[p.id]" />
-                        {{ p.purchase_number || p.id }}
+                        {{ p.registry_number || p.purchase_number || p.id }}
                       </td>
                       <td class="text-caption">{{ p.subject || p.item_name || '—' }}</td>
                       <td class="text-right">{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
@@ -916,7 +916,7 @@ interface Contract {
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface PurchaseItem { item_name: string; quantity?: number; unit_price?: number; total_price?: number }
-interface Purchase { id: number; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; items?: PurchaseItem[] }
+interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; items?: PurchaseItem[] }
 
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
@@ -1671,6 +1671,7 @@ const enrichResult = ref<{
   scanned_purchases: number
   enriched_existing: number
   scanned_contracts: number
+  relinked_orphans: number
 } | null>(null)
 
 watch(enrichDialog, (v) => { if (!v) enrichResult.value = null })
@@ -1683,12 +1684,13 @@ const doEnrich = async () => {
       scanned_purchases: number
       enriched_existing: number
       scanned_contracts: number
+      relinked_orphans: number
     }>('/contracts/bulk-enrich-from-purchases', { method: 'POST' })
     enrichResult.value = res
     if (res.enriched_existing > 0 || res.created > 0) {
       await loadContracts()
     }
-    showSnack(`Обогащено: ${res.enriched_existing}, создано: ${res.created}`)
+    showSnack(`Обогащено: ${res.enriched_existing}, создано: ${res.created}, связей восстановлено: ${res.relinked_orphans || 0}`)
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка обогащения', 'error')
   } finally {
@@ -1826,7 +1828,15 @@ async function doImportMapped() {
   }
 }
 
-onMounted(() => { loadContracts(); loadSubsidies() })
+onMounted(async () => {
+  // Phase 27.1.7: auto-enrich pending contracts on view load (idempotent, fire-and-forget)
+  try {
+    await apiFetch('/contracts/bulk-enrich-from-purchases', { method: 'POST' })
+  } catch (_) {
+    // 403 для не-admin — игнорируем, не критично
+  }
+  loadContracts(); loadSubsidies()
+})
 </script>
 
 <style scoped>

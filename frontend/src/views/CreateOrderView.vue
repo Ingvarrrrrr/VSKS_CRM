@@ -1403,38 +1403,10 @@
           <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить закрывающий документ</v-btn>
         </v-card-title>
         <v-card-text>
-          <!-- Загрузка файлов по типам -->
-          <div v-if="isEdit && purchaseId" class="mb-4">
-            <div v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type" class="d-flex align-center gap-2 py-2 border-b">
-              <v-icon size="18" :color="sec.color">{{ sec.icon }}</v-icon>
-              <span class="text-body-2 font-weight-medium" style="min-width:120px">{{ sec.label }}</span>
-              <v-btn size="x-small" variant="tonal" :color="sec.color" prepend-icon="mdi-upload"
-                :loading="uploading && pendingSectionUpload === sec.type" @click="uploadForSection(sec.type)">
-                Загрузить
-              </v-btn>
-              <v-spacer />
-              <!-- Файлы этого типа -->
-              <div class="d-flex flex-wrap gap-1">
-                <template v-for="f in filesByType(sec.type)" :key="f.id">
-                  <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
-                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
-                    <v-icon start size="14">mdi-file</v-icon>
-                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
-                    <template #append>
-                      <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
-                        <template #activator="{ props: tp }">
-                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
-                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
-                        </template>
-                      </v-tooltip>
-                    </template>
-                  </v-chip>
-                </template>
-              </div>
-            </div>
-            <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-              style="display:none" @change="uploadSectionFile" />
-          </div>
+          <!-- Phase 26-ppp: кнопки «Загрузить» для типов документов (Договор/Акт/УПД/...)
+               перенесены в секцию «Документы к закупке» (один блок upload вместо
+               двух мест). Здесь оставляем ТОЛЬКО реквизиты (тип/№/дата/сумма) —
+               связь с файлом по-прежнему есть через doc.file_id paperclip-кнопку. -->
 
           <!-- Реквизиты закрывающих документов -->
           <div v-for="(doc, idx) in acceptanceDocs" :key="idx" class="mb-3">
@@ -1624,6 +1596,41 @@
       <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
         <v-card-text>
+          <!-- Phase 26-ppp: typed-upload секции перенесены сюда из «Закрывающие
+               документы» — единая точка загрузки всех файлов закупки.
+               Каждая кнопка «Загрузить» назначает file_type (contract/act/upd/
+               invoice/order/etc) при upload. Файлы списком ниже. -->
+          <div v-if="purchaseId" class="mb-4">
+            <div v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type" class="d-flex align-center gap-2 py-2 border-b">
+              <v-icon size="18" :color="sec.color">{{ sec.icon }}</v-icon>
+              <span class="text-body-2 font-weight-medium" style="min-width:140px">{{ sec.label }}</span>
+              <v-btn size="x-small" variant="tonal" :color="sec.color" prepend-icon="mdi-upload"
+                :loading="uploading && pendingSectionUpload === sec.type" @click="uploadForSection(sec.type)">
+                Загрузить
+              </v-btn>
+              <v-spacer />
+              <div class="d-flex flex-wrap gap-1">
+                <template v-for="f in filesByType(sec.type)" :key="f.id">
+                  <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
+                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
+                    <v-icon start size="14">mdi-file</v-icon>
+                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
+                    <template #append>
+                      <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
+                        <template #activator="{ props: tp }">
+                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
+                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
+                        </template>
+                      </v-tooltip>
+                    </template>
+                  </v-chip>
+                </template>
+              </div>
+            </div>
+            <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+              style="display:none" @change="uploadSectionFile" />
+          </div>
+
           <FileDropZone accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true"
             hint="PDF, Word, Excel, JPEG, PNG — перетащите или нажмите"
             @files="onDocFilesDropped" class="mb-3">

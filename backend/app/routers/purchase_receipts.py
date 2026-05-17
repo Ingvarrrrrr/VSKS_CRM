@@ -997,6 +997,70 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         import logging as _logging
         _logging.getLogger(__name__).warning(f"recompute contract_items autocreate skipped: {_ci_exc}")
 
+    # Phase 27.1.8: после dedup/recreate PI — relink ContractItem.source_item_id
+    # где старые id'шки были обнулены dedup'ером или остались orphan'ами.
+    # Inline relink устраняет orphan'ы на корню в той же транзакции.
+    try:
+        from app.models.contract_item import ContractItem as _CI_
+        from sqlalchemy import select as _sel_ci, func as _func_ci
+
+        # Найти все CI этого purchase у которых source_item_id = NULL (обнулены dedup'ером)
+        # или указывают на несуществующий PI (orphan после пересоздания)
+        all_ci_q = await db.execute(
+            _sel_ci(_CI_).where(_CI_.purchase_id == purchase_id)
+        )
+        all_ci_for_purchase = all_ci_q.scalars().all()
+
+        # Текущие PI для этого purchase (после всех операций выше)
+        current_pi_rows = (await db.execute(
+            _sel_ci(_PI).where(_PI.purchase_id == purchase_id)
+        )).scalars().all()
+        current_pi_ids = {pi.id for pi in current_pi_rows}
+
+        ci_to_relink = [
+            ci for ci in all_ci_for_purchase
+            if ci.source_item_id is None or ci.source_item_id not in current_pi_ids
+        ]
+
+        relinked_inline = 0
+        for ci in ci_to_relink:
+            candidate = None
+
+            # Pass 1: exact name match
+            if ci.name:
+                for pi in current_pi_rows:
+                    if pi.item_name == ci.name:
+                        candidate = pi
+                        break
+
+            # Pass 2: case-insensitive trimmed match
+            if not candidate and ci.name:
+                normalized = ci.name.strip().lower()
+                for pi in current_pi_rows:
+                    if pi.item_name and pi.item_name.strip().lower() == normalized:
+                        candidate = pi
+                        break
+
+            # Pass 3: 1-to-1 fallback
+            if not candidate:
+                other_orphans = [c for c in ci_to_relink if c.purchase_id == purchase_id]
+                if len(current_pi_rows) == 1 and len(other_orphans) == 1:
+                    candidate = current_pi_rows[0]
+
+            # Pass 4: qty + unit_price exact match
+            if not candidate and ci.quantity is not None and ci.unit_price is not None:
+                for pi in current_pi_rows:
+                    if pi.quantity == ci.quantity and pi.unit_price == ci.unit_price:
+                        candidate = pi
+                        break
+
+            if candidate:
+                ci.source_item_id = candidate.id
+                relinked_inline += 1
+    except Exception as _relink_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"recompute inline ci relink skipped: {_relink_e}")
+
     # Phase 26-YY: сохранить новый snapshot hash чтобы следующий GET без изменений
     # данных skip'нул всю эту работу.
     try:

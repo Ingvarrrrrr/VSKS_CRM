@@ -26,6 +26,15 @@
         <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" @click="checkDuplicates" :loading="dupLoading">
           Проверить дубли
         </v-btn>
+        <v-btn
+          v-if="isAdmin"
+          variant="outlined"
+          prepend-icon="mdi-database-refresh"
+          color="purple"
+          @click="enrichDialog = true"
+        >
+          Обогатить из закупок
+        </v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-excel-outline" color="success" @click="exportDialog = true">
           Скачать реестр
         </v-btn>
@@ -720,6 +729,35 @@
           <v-btn variant="text" @click="migrateDialog = false">Закрыть</v-btn>
           <v-btn v-if="!migrateResult" color="primary" variant="tonal" :loading="migrating" @click="doMigrate">
             Запустить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Bulk enrich dialog -->
+    <v-dialog v-model="enrichDialog" max-width="520">
+      <v-card>
+        <v-card-title>Обогатить договоры из связанных закупок</v-card-title>
+        <v-card-text>
+          <p v-if="!enrichResult">
+            Найдёт все договоры где не заполнены поля (Предмет / Сумма / Даты / Способ / Товары-услуги),
+            и подтянет значения из привязанных закупок.
+            <br><br>
+            <strong>Не перезаписывает</strong> уже заполненные поля.
+            Безопасно запускать многократно.
+          </p>
+          <v-alert v-if="enrichResult" type="success" variant="tonal">
+            Обогащено договоров: <strong>{{ enrichResult.enriched_existing }}</strong>
+            (из {{ enrichResult.scanned_contracts }} проверенных).
+            <br>
+            Также создано {{ enrichResult.created }} новых договоров из чеков.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn variant="text" @click="enrichDialog = false">Закрыть</v-btn>
+          <v-btn v-if="!enrichResult" color="primary" variant="tonal"
+            :loading="enriching" @click="doEnrich">
+            Запустить обогащение
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1622,6 +1660,39 @@ const doMigrate = async () => {
     showSnack(e?.detail || 'Ошибка миграции', 'error')
   } finally {
     migrating.value = false
+  }
+}
+
+// ── Bulk enrich ────────────────────────────────────────────────────────────
+const enrichDialog = ref(false)
+const enriching = ref(false)
+const enrichResult = ref<{
+  created: number
+  scanned_purchases: number
+  enriched_existing: number
+  scanned_contracts: number
+} | null>(null)
+
+watch(enrichDialog, (v) => { if (!v) enrichResult.value = null })
+
+const doEnrich = async () => {
+  enriching.value = true
+  try {
+    const res = await apiFetch<{
+      created: number
+      scanned_purchases: number
+      enriched_existing: number
+      scanned_contracts: number
+    }>('/contracts/bulk-enrich-from-purchases', { method: 'POST' })
+    enrichResult.value = res
+    if (res.enriched_existing > 0 || res.created > 0) {
+      await loadContracts()
+    }
+    showSnack(`Обогащено: ${res.enriched_existing}, создано: ${res.created}`)
+  } catch (e: any) {
+    showSnack(e?.detail || e?.message || 'Ошибка обогащения', 'error')
+  } finally {
+    enriching.value = false
   }
 }
 

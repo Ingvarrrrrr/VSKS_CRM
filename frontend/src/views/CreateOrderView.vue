@@ -2893,6 +2893,51 @@
       </v-card>
     </v-dialog>
 
+    <!-- Phase 27.2-02: Диалог выбора закрывающих документов перед скачиванием СЗ -->
+    <v-dialog v-model="acceptanceDocPickerDialog" max-width="520" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon icon="mdi-file-check-outline" color="teal" class="mr-2" />
+          Выберите закрывающие документы
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="acceptanceDocPickerDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <p class="text-body-2 text-medium-emphasis mb-3">
+            Отметьте документы, по которым формируется служебная записка на оплату.
+            Сумма будет сложена автоматически.
+          </p>
+          <v-list density="compact">
+            <v-list-item v-for="(doc, idx) in acceptanceDocs" :key="idx">
+              <template #prepend>
+                <v-checkbox-btn v-model="acceptanceDocPickerSelected" :value="idx" />
+              </template>
+              <v-list-item-title class="text-body-2">
+                {{ doc.name }} {{ doc.number }} от {{ doc.date || '—' }}
+              </v-list-item-title>
+              <v-list-item-subtitle v-if="doc.amount != null">
+                {{ Number(doc.amount).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
+              </v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="pa-4">
+          <v-spacer />
+          <v-btn variant="text" @click="acceptanceDocPickerDialog = false">Отмена</v-btn>
+          <v-btn
+            color="teal"
+            variant="tonal"
+            prepend-icon="mdi-download"
+            :disabled="!acceptanceDocPickerSelected.length"
+            @click="confirmAcceptanceDocDownload"
+          >
+            Скачать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Диалог добавления ответственного исполнителя -->
     <v-dialog v-model="addResponsibleDialog" max-width="400">
       <v-card>
@@ -3746,6 +3791,43 @@ const converting = ref(false)
 const uploading = ref(false)
 const docLoading = ref<string | null>(null)
 
+// ── Phase 27.2-02: Acceptance doc picker (select closing docs before СЗ download) ──
+const acceptanceDocPickerDialog   = ref(false)
+const acceptanceDocPickerDocType  = ref<'service_note_payment' | 'service_note_advance'>('service_note_payment')
+const acceptanceDocPickerSelected = ref<number[]>([])
+// pending initiator_id to append after acceptance doc selection
+const acceptanceDocPickerInitiatorId = ref<number | null>(null)
+
+async function openAcceptanceDocPicker(
+  type: 'service_note_payment' | 'service_note_advance',
+  initiatorId: number | null,
+) {
+  if (acceptanceDocs.value.length > 1) {
+    acceptanceDocPickerDocType.value = type
+    acceptanceDocPickerInitiatorId.value = initiatorId
+    // Default: all selected
+    acceptanceDocPickerSelected.value = acceptanceDocs.value.map((_, i) => i)
+    acceptanceDocPickerDialog.value = true
+  } else {
+    // Single or zero docs — skip picker, download directly
+    const params = initiatorId ? `?initiator_id=${initiatorId}` : ''
+    await downloadDoc(type, params)
+  }
+}
+
+async function confirmAcceptanceDocDownload() {
+  acceptanceDocPickerDialog.value = false
+  const type = acceptanceDocPickerDocType.value
+  const initiatorId = acceptanceDocPickerInitiatorId.value
+  const indices = [...acceptanceDocPickerSelected.value].sort((a, b) => a - b)
+  const parts: string[] = []
+  if (initiatorId) parts.push(`initiator_id=${initiatorId}`)
+  if (indices.length && indices.length < acceptanceDocs.value.length) {
+    parts.push(`doc_indices=${indices.join(',')}`)
+  }
+  await downloadDoc(type, parts.length ? `?${parts.join('&')}` : '')
+}
+
 // ── Doc picker (approver selection before download) ──
 interface DocApprover { id: number; role_name: string; full_name: string; order_num: number; is_default: boolean; can_initiate: boolean }
 const docPickerDialog      = ref(false)
@@ -3939,7 +4021,10 @@ async function confirmDocDownload() {
   const initiatorId = pickerInitiatorId.value
   docPickerDialog.value = false
 
-  if (type.startsWith('service_note')) {
+  if (type === 'service_note_payment' || type === 'service_note_advance') {
+    // Phase 27.2-02: если несколько закр.документов — показать picker
+    await openAcceptanceDocPicker(type, initiatorId)
+  } else if (type.startsWith('service_note')) {
     const params = initiatorId ? `?initiator_id=${initiatorId}` : ''
     await downloadDoc(type, params)
   } else {

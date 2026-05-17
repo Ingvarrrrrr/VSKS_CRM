@@ -1352,15 +1352,20 @@ function parseVatRatePercent(rate: string | null | undefined): number {
   return m ? parseFloat(m[1]) : 0
 }
 
+// Phase 27.1.16: формулы НДС переопределены — unit_price / total_price из чека ФФД ВКЛЮЧАЮТ НДС.
+// vatAmount = выделение НДС из суммы С НДС: total * pct / (100 + pct).
+// Пример: total=392 ₽ с НДС 22% → vatAmount = 392 * 22 / 122 = 70,69 ₽.
+// totalWithVat возвращает total_price напрямую (он уже с НДС).
 function vatAmount(item: EditorItem | ContractItem): number {
   const total = Number((item as any).total_price ?? (item as any).total ?? 0)
   const pct = parseVatRatePercent((item as any).vat_rate)
-  return Number((total * pct / 100).toFixed(2))
+  if (pct <= 0) return 0
+  return Number((total * pct / (100 + pct)).toFixed(2))
 }
 
 function totalWithVat(item: EditorItem | ContractItem): number {
-  const total = Number((item as any).total_price ?? (item as any).total ?? 0)
-  return Number((total + vatAmount(item)).toFixed(2))
+  // total_price УЖЕ с НДС (стандарт: цена из чека/договора включает НДС)
+  return Number((item as any).total_price ?? (item as any).total ?? 0)
 }
 
 function fmtRub(n: number | null | undefined): string {

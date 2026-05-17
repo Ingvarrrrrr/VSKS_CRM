@@ -299,6 +299,13 @@ async def _create_receipt_with_items(
                     number=expected_number,
                     date=purchase_for_contract.contract_date,
                     status='active',
+                    # Phase 27.1.5: заполнить ВСЕ доступные поля из Purchase
+                    subject=purchase_for_contract.subject or str(purchase_for_contract.purchase_number or ''),
+                    max_amount=purchase_for_contract.total_nmck or purchase_for_contract.contract_price or purchase_for_contract.planned_total_price,
+                    start_date=purchase_for_contract.contract_date,
+                    end_date=purchase_for_contract.execution_term,
+                    purchase_method=purchase_for_contract.purchase_method if purchase_for_contract.purchase_method in ('single', 'competitive') else 'single',
+                    item_type=purchase_for_contract.item_type or 'товар',
                 )
                 db.add(new_contract)
                 await db.flush()

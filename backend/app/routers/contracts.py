@@ -782,13 +782,47 @@ async def backfill_contracts_from_receipts(db: AsyncSession = Depends(get_db)):
             number=expected_number,
             date=p.created_at.date() if getattr(p, 'created_at', None) else None,
             status='active',
+            # Phase 27.1.5: заполнить ВСЕ доступные поля из Purchase
+            subject=p.subject or str(p.purchase_number or ''),
+            max_amount=p.total_nmck or p.contract_price or p.planned_total_price,
+            start_date=p.contract_date,
+            end_date=p.execution_term,
+            purchase_method=p.purchase_method if p.purchase_method in ('single', 'competitive') else 'single',
+            item_type=p.item_type or 'товар',
         )
         db.add(new_contract)
         await db.flush()
         p.contract_id = new_contract.id
         created += 1
+    # Phase 27.1.5: enrich existing minimal Contracts (Phase 27.1.4 created without subject/max_amount)
+    from app.models.contract import Contract as _C
+    from app.models.purchase import Purchase as _P
+    contracts_to_enrich = (await db.execute(
+        select(_C).where(
+            _C.subject.is_(None),
+            _C.max_amount.is_(None),
+            _C.contractor_id.isnot(None),
+        )
+    )).scalars().all()
+    enriched = 0
+    for c in contracts_to_enrich:
+        p_row = (await db.execute(
+            select(_P).where(_P.contract_id == c.id).limit(1)
+        )).scalar_one_or_none()
+        if not p_row:
+            continue
+        c.subject = p_row.subject or str(p_row.purchase_number or '')
+        c.max_amount = p_row.total_nmck or p_row.contract_price or p_row.planned_total_price
+        c.start_date = p_row.contract_date
+        c.end_date = p_row.execution_term
+        if p_row.purchase_method in ('single', 'competitive'):
+            c.purchase_method = p_row.purchase_method
+        else:
+            c.purchase_method = 'single'
+        c.item_type = p_row.item_type or 'товар'
+        enriched += 1
     await db.commit()
-    return {"created": created, "scanned": len(rows)}
+    return {"created": created, "scanned": len(rows), "enriched_existing": enriched}
 
 
 async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:

@@ -297,30 +297,36 @@
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}</td>
                         <td>
                           <div class="d-flex align-center ga-1 flex-wrap">
-                            <!-- Fix 2: rematch autocomplete with item-title/item-value + #selection slot -->
-                            <v-autocomplete
-                              :items="rematchOptions"
-                              :model-value="getContractItemFor(idx)?.source_item_id ?? null"
-                              item-title="title" item-value="value"
-                              density="compact" variant="outlined" hide-details
-                              placeholder="Связать с ТЗ №..." style="min-width:160px"
-                              :disabled="props.readonly"
-                              @update:model-value="(v: number | null) => {
-                                const ci = getContractItemFor(idx)
-                                if (ci) rematchContractItem(localContractItems.indexOf(ci), v)
-                              }"
-                            >
-                              <template #selection="{ item: selItem }">
-                                <span class="text-truncate text-caption">{{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id}` : '') }}</span>
-                              </template>
-                            </v-autocomplete>
-                            <!-- split row button -->
-                            <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
-                              <template #activator="{ props: tip }">
-                                <v-btn v-bind="tip" icon="mdi-arrow-split-vertical" size="x-small" variant="text" color="orange"
-                                  @click="splitContractRow(idx)" />
-                              </template>
-                            </v-tooltip>
+                            <!-- Phase 26-ooo: rematch скрыт для авансовых отчётов —
+                                 там позиции 1:1 автогенерируются из чека, выбор
+                                 ТЗ-позиции не нужен и сбивает пользователя
+                                 (показывало "№X (исходная позиция удалена)" после
+                                 dedup phase26-ww-2). Split-row тоже не нужен. -->
+                            <template v-if="!isAdvance">
+                              <v-autocomplete
+                                :items="rematchOptions"
+                                :model-value="getContractItemFor(idx)?.source_item_id ?? null"
+                                item-title="title" item-value="value"
+                                density="compact" variant="outlined" hide-details
+                                placeholder="Связать с ТЗ №..." style="min-width:160px"
+                                :disabled="props.readonly"
+                                @update:model-value="(v: number | null) => {
+                                  const ci = getContractItemFor(idx)
+                                  if (ci) rematchContractItem(localContractItems.indexOf(ci), v)
+                                }"
+                              >
+                                <template #selection="{ item: selItem }">
+                                  <span class="text-truncate text-caption">{{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id}` : '') }}</span>
+                                </template>
+                              </v-autocomplete>
+                              <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
+                                <template #activator="{ props: tip }">
+                                  <v-btn v-bind="tip" icon="mdi-arrow-split-vertical" size="x-small" variant="text" color="orange"
+                                    @click="splitContractRow(idx)" />
+                                </template>
+                              </v-tooltip>
+                            </template>
+                            <span v-else class="text-caption text-medium-emphasis">из чека</span>
                           </div>
                         </td>
                       </tr>

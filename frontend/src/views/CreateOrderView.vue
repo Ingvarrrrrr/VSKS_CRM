@@ -3511,7 +3511,9 @@ function ensurePlaceholderDoc() {
 }
 
 // 26-F4b: combobox с inline-add для типа документа
-const BUILTIN_ACCEPTANCE_DOC_TYPES = ['АКТ', 'УПД', 'СЧФ', 'ТТН', 'Счёт', 'Накладная', 'Платежное поручение']
+// Phase 26-ooo: добавлен «Чек» (fiscal receipt) — auto-add'ится из импорта чеков
+// авансовых отчётов, должен быть в списке системных
+const BUILTIN_ACCEPTANCE_DOC_TYPES = ['АКТ', 'УПД', 'СЧФ', 'ТТН', 'Счёт', 'Накладная', 'Платежное поручение', 'Чек']
 const customDocTypes = ref<string[]>(JSON.parse(localStorage.getItem('acceptance_doc_types_custom') || '[]'))
 const acceptanceDocTypes = computed(() => [
   ...BUILTIN_ACCEPTANCE_DOC_TYPES,

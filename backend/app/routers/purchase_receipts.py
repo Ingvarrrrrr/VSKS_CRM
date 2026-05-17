@@ -449,7 +449,11 @@ async def _create_receipt_with_items(
             _logging.getLogger(__name__).warning(f"receipt {receipt.id} file attach skipped: {_attach_exc}")
             pf_id = None
 
-        # U-4: auto-add чек в acceptance_docs (только для авансовых, дедуп по receipt_id)
+        # U-4: auto-add чек в acceptance_docs (только для авансовых)
+        # Phase 26-ooo: усиленный дедуп — раньше дедуп был только по receipt_id,
+        # но в acceptance_docs могли быть legacy/manual записи того же чека без
+        # receipt_id (после ручного импорта/migration), и они дублировались.
+        # Теперь дедуп также по (type='Чек' + number=fiscal_document_number + amount).
         new_doc = {
             "type": "Чек",
             "number": str(receipt.fiscal_document_number or ""),
@@ -460,7 +464,27 @@ async def _create_receipt_with_items(
             "file_id": pf_id,
         }
         existing_docs = list(p.acceptance_docs or [])
-        if not any(d.get("receipt_id") == receipt.id for d in existing_docs):
+
+        def _is_same_receipt_doc(d, rcpt_id, fd_num, amt):
+            if d.get("receipt_id") == rcpt_id:
+                return True
+            # Fallback: совпадение по type+number+amount (legacy без receipt_id)
+            if (
+                d.get("type") == "Чек"
+                and str(d.get("number") or "") == str(fd_num or "")
+                and fd_num
+            ):
+                try:
+                    return abs(float(d.get("amount") or 0) - float(amt or 0)) < 0.01
+                except (TypeError, ValueError):
+                    return True  # number совпал — считаем дубликатом
+            return False
+
+        rcpt_id = receipt.id
+        fd_num = receipt.fiscal_document_number
+        amt = float(receipt.total_sum) if receipt.total_sum is not None else 0
+
+        if not any(_is_same_receipt_doc(d, rcpt_id, fd_num, amt) for d in existing_docs):
             existing_docs.append(new_doc)
             p.acceptance_docs = existing_docs
             _orm_attrs.flag_modified(p, "acceptance_docs")

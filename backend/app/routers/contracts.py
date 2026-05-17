@@ -20,6 +20,56 @@ import calendar
 from pydantic import BaseModel, Field
 from app.routers.purchase_budget import _assign_framework_seq
 
+async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
+    """Auto-fill ПУСТЫЕ optional fields на Contract из любой связанной Purchase.
+
+    Returns: count of fields filled (для diag). 0 если нечего обогащать.
+
+    Заполняет только NULL поля — не перезаписывает то что user явно ввёл.
+    Полей: subject, max_amount, start_date, end_date, purchase_method, item_type.
+    """
+    from app.models.purchase import Purchase as _P
+
+    # Если все поля заполнены — выйти
+    if all([
+        c.subject, c.max_amount is not None,
+        c.start_date, c.end_date,
+        c.purchase_method, c.item_type,
+    ]):
+        return 0
+
+    p = (await db.execute(
+        select(_P).where(_P.contract_id == c.id).limit(1)
+    )).scalar_one_or_none()
+    if not p:
+        return 0
+
+    filled = 0
+    if not c.subject:
+        v = p.subject or str(p.purchase_number or '')
+        if v:
+            c.subject = v
+            filled += 1
+    if c.max_amount is None:
+        v = p.total_nmck or p.contract_price or p.planned_total_price
+        if v is not None:
+            c.max_amount = v
+            filled += 1
+    if not c.start_date and p.contract_date:
+        c.start_date = p.contract_date
+        filled += 1
+    if not c.end_date and p.execution_term:
+        c.end_date = p.execution_term
+        filled += 1
+    if not c.purchase_method:
+        c.purchase_method = p.purchase_method if p.purchase_method in ('single', 'competitive') else 'single'
+        filled += 1
+    if not c.item_type:
+        c.item_type = p.item_type or 'товар'
+        filled += 1
+    return filled
+
+
 RU_MONTHS_GEN = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря",
@@ -180,6 +230,10 @@ async def create_contract(
     c = Contract(**dump)
     db.add(c)
     await db.flush()
+
+    # Phase 27.1.6: auto-fill empty fields from linked purchases (если уже привязаны)
+    await _enrich_contract_from_purchases(c, db)
+
     for sid in extra_ids:
         db.add(ContractSubsidy(contract_id=c.id, subsidy_id=sid))
     await db.commit()
@@ -237,6 +291,10 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
         await db.delete(es)
     for sid in extra_ids:
         db.add(ContractSubsidy(contract_id=cid, subsidy_id=sid))
+
+    # Phase 27.1.6: auto-fill пустые fields из связанных Purchase
+    await _enrich_contract_from_purchases(c, db)
+
     await db.commit()
     result2 = await db.execute(
         select(Contract).options(

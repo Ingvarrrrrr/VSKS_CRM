@@ -1051,6 +1051,9 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                         existing_ci.source_item_id = pi.id
                     if existing_ci.contract_id is None and p.contract_id is not None:
                         existing_ci.contract_id = p.contract_id
+                    # NEW Phase 27.1.17: auto-fill vat_rate если пустое
+                    if existing_ci.vat_rate is None and pi.vat_rate:
+                        existing_ci.vat_rate = pi.vat_rate
                     # Не перезаписывать name/qty/price — это могут быть user edits
                 else:
                     db.add(_CI(
@@ -1062,6 +1065,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                         unit=pi.unit or 'шт.',
                         unit_price=pi.unit_price,
                         total=pi.total_price,
+                        vat_rate=pi.vat_rate,  # NEW Phase 27.1.17
                         match_confirmed=True,
                     ))
                     contract_items_created += 1

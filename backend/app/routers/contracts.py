@@ -979,6 +979,19 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
             ci.source_item_id = candidate.id
             relinked += 1
 
+    # Phase 27.1.17: enrich ContractItem.vat_rate из связанной PurchaseItem (для legacy без vat_rate)
+    from app.models.contract_item import ContractItem as _CI_vat
+    from app.models.purchase_item import PurchaseItem as _PI_vat
+    ci_no_vat = (await db.execute(
+        _select(_CI_vat).where(_CI_vat.vat_rate.is_(None), _CI_vat.source_item_id.isnot(None))
+    )).scalars().all()
+    vat_filled = 0
+    for ci in ci_no_vat:
+        pi = await db.get(_PI_vat, ci.source_item_id)
+        if pi and pi.vat_rate:
+            ci.vat_rate = pi.vat_rate
+            vat_filled += 1
+
     await db.commit()
     return {
         "created": created,
@@ -987,6 +1000,7 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
         "scanned_contracts": len(contracts_to_enrich),
         "relinked_orphans": relinked,
         "purchases_linked": purchases_linked,
+        "vat_filled": vat_filled,
     }
 
 

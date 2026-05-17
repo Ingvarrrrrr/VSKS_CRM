@@ -875,12 +875,42 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
         filled_count = await _enrich_contract_from_purchases(c, db)
         if filled_count > 0:
             enriched += 1
+    # Phase 27.1.7: re-link orphan ContractItem.source_item_id → existing PurchaseItem
+    # по item_name match. После recompute (Phase 26-ww) PurchaseItem'ы могут быть
+    # пересозданы с новыми id'шками — ContractItem.source_item_id указывает на
+    # несуществующие записи. Re-link по точному имени.
+    from app.models.contract_item import ContractItem as _CI
+    from app.models.purchase_item import PurchaseItem as _PI
+    from sqlalchemy import select as _select
+
+    # Найти ContractItem'ы где source_item_id не существует в PurchaseItem
+    orphans_q = await db.execute(_select(_CI).where(_CI.source_item_id.isnot(None)))
+    orphans_all = orphans_q.scalars().all()
+    existing_pi_ids = set((await db.execute(_select(_PI.id))).scalars().all())
+    orphans = [ci for ci in orphans_all if ci.source_item_id not in existing_pi_ids]
+
+    relinked = 0
+    for ci in orphans:
+        # Найти PurchaseItem с тем же purchase_id и совпадающим name
+        if not ci.purchase_id or not ci.name:
+            continue
+        candidate = (await db.execute(
+            _select(_PI).where(
+                _PI.purchase_id == ci.purchase_id,
+                _PI.item_name == ci.name,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if candidate:
+            ci.source_item_id = candidate.id
+            relinked += 1
+
     await db.commit()
     return {
         "created": created,
         "scanned_purchases": len(rows),
         "enriched_existing": enriched,
         "scanned_contracts": len(contracts_to_enrich),
+        "relinked_orphans": relinked,
     }
 
 

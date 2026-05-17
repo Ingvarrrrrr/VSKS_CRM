@@ -221,6 +221,31 @@ async def list_files(
     return [_file_out(f) for f in result.scalars().all()]
 
 
+async def _try_regen_receipt_png(db, pid: int, fid: int, pf) -> bool:
+    """Phase 27.1.11: regenerate PNG receipt file from raw_json if file is missing on disk.
+    Returns True if file was successfully regenerated. Idempotent."""
+    try:
+        from app.routers.purchase_receipts import _render_receipt_png
+        from app.models.purchase_receipt import PurchaseReceipt as _PR
+        from app.models.purchase import Purchase as _P
+        from sqlalchemy import select as _s
+        p_row = (await db.execute(_s(_P).where(_P.id == pid))).scalar_one_or_none()
+        if p_row and p_row.acceptance_docs:
+            for ad in p_row.acceptance_docs:
+                if ad.get("file_id") == fid and ad.get("receipt_id"):
+                    rcpt = await db.get(_PR, ad["receipt_id"])
+                    if rcpt:
+                        png_bytes = _render_receipt_png(rcpt)
+                        os.makedirs(os.path.dirname(pf.filepath), exist_ok=True)
+                        with open(pf.filepath, 'wb') as _f:
+                            _f.write(png_bytes)
+                        return True
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning(f"regen receipt PNG failed pid={pid} fid={fid}: {_e}")
+    return False
+
+
 @router.get("/{pid}/files/{fid}/download")
 async def download_file(
     pid: int,
@@ -235,7 +260,11 @@ async def download_file(
     if not pf:
         raise HTTPException(404, "Файл не найден")
     if not os.path.exists(pf.filepath):
-        raise HTTPException(404, "Файл не найден на диске")
+        # Phase 27.1.11: fallback — regenerate PNG from receipt raw_json if missing
+        if pf.file_type == 'acceptance_doc' and pf.mime_type == 'image/png':
+            await _try_regen_receipt_png(db, pid, fid, pf)
+        if not os.path.exists(pf.filepath):
+            raise HTTPException(404, "Файл не найден на диске")
     return FileResponse(pf.filepath, filename=pf.filename,
                         media_type=pf.mime_type or "application/octet-stream")
 
@@ -254,7 +283,11 @@ async def view_file(
     if not pf:
         raise HTTPException(404, "Файл не найден")
     if not os.path.exists(pf.filepath):
-        raise HTTPException(404, "Файл не найден на диске")
+        # Phase 27.1.11: fallback — regenerate PNG from receipt raw_json if missing
+        if pf.file_type == 'acceptance_doc' and pf.mime_type == 'image/png':
+            await _try_regen_receipt_png(db, pid, fid, pf)
+        if not os.path.exists(pf.filepath):
+            raise HTTPException(404, "Файл не найден на диске")
     return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
                         headers={"Content-Disposition": f"inline; filename=\"{pf.filename}\""})
 

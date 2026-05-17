@@ -750,6 +750,10 @@
             Обогащено договоров: <strong>{{ enrichResult.enriched_existing }}</strong>
             (из {{ enrichResult.scanned_contracts }} проверенных).
             <br>
+            Связей контракт↔закупка восстановлено: <strong>{{ enrichResult.purchases_linked || 0 }}</strong>
+            <br>
+            Связей позиций восстановлено: <strong>{{ enrichResult.relinked_orphans || 0 }}</strong>
+            <br>
             Также создано {{ enrichResult.created }} новых договоров из чеков.
           </v-alert>
         </v-card-text>
@@ -1330,6 +1334,7 @@ const contractTypeItems = [
 const purchaseMethodItems = [
   { value: 'single',      label: 'Единственный поставщик' },
   { value: 'competitive', label: 'Конкурсная процедура' },
+  { value: 'advance',     label: 'Авансовый платёж' },
 ]
 const statusItems = [
   { value: 'active', label: 'Активен' },
@@ -1671,7 +1676,8 @@ const enrichResult = ref<{
   scanned_purchases: number
   enriched_existing: number
   scanned_contracts: number
-  relinked_orphans: number
+  relinked_orphans?: number
+  purchases_linked?: number
 } | null>(null)
 
 watch(enrichDialog, (v) => { if (!v) enrichResult.value = null })
@@ -1684,13 +1690,14 @@ const doEnrich = async () => {
       scanned_purchases: number
       enriched_existing: number
       scanned_contracts: number
-      relinked_orphans: number
+      relinked_orphans?: number
+      purchases_linked?: number
     }>('/contracts/bulk-enrich-from-purchases', { method: 'POST' })
     enrichResult.value = res
     if (res.enriched_existing > 0 || res.created > 0) {
       await loadContracts()
     }
-    showSnack(`Обогащено: ${res.enriched_existing}, создано: ${res.created}, связей восстановлено: ${res.relinked_orphans || 0}`)
+    showSnack(`Обогащено: ${res.enriched_existing}, создано: ${res.created}, связей восстановлено: ${res.relinked_orphans || 0}, закупок привязано: ${res.purchases_linked || 0}`)
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка обогащения', 'error')
   } finally {

@@ -131,6 +131,18 @@ async def list_contracts(
         if c.contractor:
             d.contractor_name = c.contractor.name
             d.contractor_inn = c.contractor.inn
+        elif not d.contractor_name:
+            # Phase 27.1.4: fallback — pull contractor from linked purchases
+            # (advance imports без явного Contract.contractor_id)
+            from app.models.purchase import Purchase as _P
+            from app.models.contractor import Contractor as _C
+            row = (await db.execute(
+                select(_C.name, _C.inn).select_from(_P).join(_C, _C.id == _P.contractor_id)
+                .where(_P.contract_id == c.id, _P.contractor_id.isnot(None))
+                .limit(1)
+            )).first()
+            if row:
+                d.contractor_name, d.contractor_inn = row
         if c.subsidy:
             d.subsidy_name = c.subsidy.name
         d.extra_subsidies = [
@@ -733,6 +745,51 @@ async def generate_monthly_stages(
 
 
 # ── Non-router helper ──────────────────────────────────────────────────────────
+
+@router.post("/backfill-from-receipts", dependencies=[Depends(require_role('admin'))])
+async def backfill_contracts_from_receipts(db: AsyncSession = Depends(get_db)):
+    """Phase 27.1.4: создаёт Contract row для legacy авансовых закупок без contract_id.
+
+    Запустить вручную один раз после деплоя (admin-only, idempotent).
+    Contract.number = nullable=False, поэтому даём дефолт из purchase_number или AVANS-{id}.
+    contract_type: 'single' (разовая поставка по авансовому отчёту).
+    """
+    from app.models.purchase_receipt import PurchaseReceipt as _PR
+    rows_result = await db.execute(
+        select(Purchase).join(_PR, _PR.purchase_id == Purchase.id)
+        .where(Purchase.contract_id.is_(None), Purchase.contractor_id.isnot(None))
+        .distinct()
+    )
+    rows = rows_result.scalars().all()
+
+    created = 0
+    for p in rows:
+        # Idempotency guard: если уже есть Contract с таким же contractor_id + subsidy_id
+        # и number = ожидаемому значению — пропустить
+        expected_number = str(p.purchase_number) if p.purchase_number else f"AVANS-{p.id}"
+        existing_q = await db.execute(
+            select(Contract).where(
+                Contract.number == expected_number,
+                Contract.contractor_id == p.contractor_id,
+            ).limit(1)
+        )
+        if existing_q.scalar_one_or_none():
+            continue
+        new_contract = Contract(
+            contractor_id=p.contractor_id,
+            subsidy_id=p.subsidy_id,
+            contract_type='single',
+            number=expected_number,
+            date=p.created_at.date() if getattr(p, 'created_at', None) else None,
+            status='active',
+        )
+        db.add(new_contract)
+        await db.flush()
+        p.contract_id = new_contract.id
+        created += 1
+    await db.commit()
+    return {"created": created, "scanned": len(rows)}
+
 
 async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
     """Find-or-create a Contract for this purchase and link it via purchase.contract_id.

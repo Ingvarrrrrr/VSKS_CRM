@@ -273,6 +273,37 @@ async def _create_receipt_with_items(
             await db.flush()
             contractor_id_for_items = new_c.id
 
+    # Phase 27.1.4: auto-create Contract row для авансовой закупки
+    # чтобы /api/contracts отображал contractor_name без NULL (красная плашка).
+    # Только если у закупки нет contract_id, но есть contractor.
+    if contractor_id_for_items:
+        purchase_for_contract = await db.get(Purchase, purchase_id)
+        if purchase_for_contract and not purchase_for_contract.contract_id:
+            from app.models.contract import Contract as _Contract
+            expected_number = (
+                str(purchase_for_contract.purchase_number)
+                if purchase_for_contract.purchase_number
+                else f"AVANS-{purchase_id}"
+            )
+            existing_contract_q = await db.execute(
+                select(_Contract).where(
+                    _Contract.number == expected_number,
+                    _Contract.contractor_id == contractor_id_for_items,
+                ).limit(1)
+            )
+            if not existing_contract_q.scalar_one_or_none():
+                new_contract = _Contract(
+                    contractor_id=contractor_id_for_items,
+                    subsidy_id=purchase_for_contract.subsidy_id,
+                    contract_type='single',
+                    number=expected_number,
+                    date=purchase_for_contract.contract_date,
+                    status='active',
+                )
+                db.add(new_contract)
+                await db.flush()
+                purchase_for_contract.contract_id = new_contract.id
+
     valid_cols = {c.key for c in PurchaseReceipt.__table__.columns}
     receipt_kwargs = {k: v for k, v in data.items() if k in valid_cols}
 

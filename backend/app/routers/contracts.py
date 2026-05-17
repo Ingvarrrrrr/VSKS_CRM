@@ -804,13 +804,16 @@ async def generate_monthly_stages(
 
 # ── Non-router helper ──────────────────────────────────────────────────────────
 
-@router.post("/backfill-from-receipts", dependencies=[Depends(require_role('admin'))])
-async def backfill_contracts_from_receipts(db: AsyncSession = Depends(get_db)):
-    """Phase 27.1.4: создаёт Contract row для legacy авансовых закупок без contract_id.
+@router.post("/bulk-enrich-from-purchases", dependencies=[Depends(require_role('admin'))])
+async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db)):
+    """
+    Two-phase batch operation для legacy:
 
-    Запустить вручную один раз после деплоя (admin-only, idempotent).
-    Contract.number = nullable=False, поэтому даём дефолт из purchase_number или AVANS-{id}.
-    contract_type: 'single' (разовая поставка по авансовому отчёту).
+    Phase 1 — create Contract для Purchase'ов с receipts (но без contract_id).
+              Это покрывает авансовые импорты из Phase 27.1.4 эпохи.
+
+    Phase 2 — enrich existing Contract'ы где ХОТЯ БЫ ОДНО optional поле NULL.
+              Покрывает любые legacy договоры (созданные вручную или через миграцию).
     """
     from app.models.purchase_receipt import PurchaseReceipt as _PR
     rows_result = await db.execute(
@@ -852,35 +855,39 @@ async def backfill_contracts_from_receipts(db: AsyncSession = Depends(get_db)):
         await db.flush()
         p.contract_id = new_contract.id
         created += 1
-    # Phase 27.1.5: enrich existing minimal Contracts (Phase 27.1.4 created without subject/max_amount)
+    # Phase 27.1.6: enrich existing Contracts где ХОТЯ БЫ ОДНО optional поле NULL
+    from sqlalchemy import or_
     from app.models.contract import Contract as _C
-    from app.models.purchase import Purchase as _P
     contracts_to_enrich = (await db.execute(
         select(_C).where(
-            _C.subject.is_(None),
-            _C.max_amount.is_(None),
-            _C.contractor_id.isnot(None),
+            or_(
+                _C.subject.is_(None),
+                _C.max_amount.is_(None),
+                _C.start_date.is_(None),
+                _C.end_date.is_(None),
+                _C.purchase_method.is_(None),
+                _C.item_type.is_(None),
+            )
         )
     )).scalars().all()
     enriched = 0
     for c in contracts_to_enrich:
-        p_row = (await db.execute(
-            select(_P).where(_P.contract_id == c.id).limit(1)
-        )).scalar_one_or_none()
-        if not p_row:
-            continue
-        c.subject = p_row.subject or str(p_row.purchase_number or '')
-        c.max_amount = p_row.total_nmck or p_row.contract_price or p_row.planned_total_price
-        c.start_date = p_row.contract_date
-        c.end_date = p_row.execution_term
-        if p_row.purchase_method in ('single', 'competitive'):
-            c.purchase_method = p_row.purchase_method
-        else:
-            c.purchase_method = 'single'
-        c.item_type = p_row.item_type or 'товар'
-        enriched += 1
+        filled_count = await _enrich_contract_from_purchases(c, db)
+        if filled_count > 0:
+            enriched += 1
     await db.commit()
-    return {"created": created, "scanned": len(rows), "enriched_existing": enriched}
+    return {
+        "created": created,
+        "scanned_purchases": len(rows),
+        "enriched_existing": enriched,
+        "scanned_contracts": len(contracts_to_enrich),
+    }
+
+
+@router.post("/backfill-from-receipts", deprecated=True, dependencies=[Depends(require_role('admin'))])
+async def backfill_from_receipts_legacy(db: AsyncSession = Depends(get_db)):
+    """Deprecated alias. Use /bulk-enrich-from-purchases."""
+    return await bulk_enrich_contracts_from_purchases(db)
 
 
 async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:

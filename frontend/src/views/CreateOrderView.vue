@@ -5442,6 +5442,7 @@ const loadPurchase = async () => {
         contractor_id: i.contractor_id ?? null,
         contractor_inn: i.contractor_inn || null,
         contractor_name: i.contractor_name || null,
+        vat_rate: i.vat_rate ?? null,  // Phase 27.1.15: НДС % per-item из чека ФФД 1.2 (Phase 26-AAA парсил → не подтягивался во фронт)
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,

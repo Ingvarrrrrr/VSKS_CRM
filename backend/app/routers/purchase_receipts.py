@@ -506,9 +506,14 @@ async def _create_receipt_with_items(
         def _is_same_receipt_doc(d, rcpt_id, fd_num, amt):
             if d.get("receipt_id") == rcpt_id:
                 return True
-            # Fallback: совпадение по type+number+amount (legacy без receipt_id)
-            if (
+            # Phase 27.1.12: учесть legacy format где type отсутствует но name="Чек"
+            is_check_doc = (
                 d.get("type") == "Чек"
+                or (d.get("type") is None and d.get("name") == "Чек")
+            )
+            # Fallback: совпадение по (type/name)="Чек"+number+amount (legacy без receipt_id)
+            if (
+                is_check_doc
                 and str(d.get("number") or "") == str(fd_num or "")
                 and fd_num
             ):
@@ -868,11 +873,16 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
     existing_docs = list(p.acceptance_docs or [])
     docs_changed = False
 
-    # Phase 27.1.11: cleanup pre-existing duplicates в acceptance_docs (по type+number+amount)
+    # Phase 27.1.11 / Phase 27.1.12: cleanup pre-existing duplicates в acceptance_docs
+    # (по type+number+amount), включая legacy format где type=None но name="Чек"
     seen_keys: set = set()
     deduped_docs = []
     for d in existing_docs:
-        if d.get("type") == "Чек":
+        is_check = (
+            d.get("type") == "Чек"
+            or (d.get("type") is None and d.get("name") == "Чек")
+        )
+        if is_check:
             key = (str(d.get("number") or ""), float(d.get("amount") or 0))
             if key in seen_keys and key[0]:  # дубликат с непустым number
                 docs_changed = True
@@ -881,7 +891,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         deduped_docs.append(d)
     existing_docs = deduped_docs
 
-    # Phase 27.1.11: helper — dedup не только по receipt_id, но и по (type='Чек'+number+amount)
+    # Phase 27.1.11 / Phase 27.1.12: helper — dedup не только по receipt_id,
+    # но и по (type/name='Чек'+number+amount), включая legacy format без type
     def _is_existing_doc_for_receipt(rcpt, existing_list):
         fd_num = rcpt.fiscal_document_number
         amt = float(rcpt.total_sum) if rcpt.total_sum is not None else 0
@@ -889,9 +900,14 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             # Exact match по receipt_id
             if d.get("receipt_id") == rcpt.id:
                 return d
-            # Fallback: совпадение по type+number+amount (legacy без receipt_id)
-            if (
+            # Phase 27.1.12: учесть legacy format где type отсутствует но name="Чек"
+            is_check_doc = (
                 d.get("type") == "Чек"
+                or (d.get("type") is None and d.get("name") == "Чек")
+            )
+            # Fallback: совпадение по (type/name)="Чек"+number+amount (legacy без receipt_id)
+            if (
+                is_check_doc
                 and str(d.get("number") or "") == str(fd_num or "")
                 and fd_num
             ):
@@ -1002,7 +1018,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         p.acceptance_docs = existing_docs
         _orm_attrs.flag_modified(p, "acceptance_docs")
 
-    # Phase 26-II: ContractItem autocreate (стадия «Договор» = копия ТЗ для advance)
+    # Phase 26-II / Phase 27.1.12: ContractItem find-or-update вместо create-always
+    # (устранение дублей для advance-закупок при повторном recompute)
     contract_items_created = 0
     try:
         if p.purchase_method == 'advance':
@@ -1010,26 +1027,44 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             all_items = (await db.execute(
                 select(PurchaseItem).where(PurchaseItem.purchase_id == purchase_id)
             )).scalars().all()
+            # Загрузить все существующие CI для этой закупки (один запрос)
+            all_existing_ci = (await db.execute(
+                select(_CI).where(_CI.purchase_id == purchase_id)
+            )).scalars().all()
             for pi in all_items:
-                exists_ci = (await db.execute(
-                    select(_CI).where(
-                        _CI.purchase_id == purchase_id,
-                        _CI.source_item_id == pi.id,
-                    ).limit(1)
-                )).scalar_one_or_none()
-                if exists_ci:
-                    continue
-                db.add(_CI(
-                    purchase_id=purchase_id,
-                    source_item_id=pi.id,
-                    name=pi.item_name or "Позиция",
-                    quantity=pi.quantity,
-                    unit=pi.unit or 'шт.',
-                    unit_price=pi.unit_price,
-                    total=pi.total_price,
-                    match_confirmed=True,
-                ))
-                contract_items_created += 1
+                existing_ci = None
+                # Pass 1: exact match по source_item_id
+                for ci in all_existing_ci:
+                    if ci.source_item_id == pi.id:
+                        existing_ci = ci
+                        break
+                # Pass 2: fallback по name (orphan source_item_id)
+                if not existing_ci and pi.item_name:
+                    for ci in all_existing_ci:
+                        if (ci.source_item_id is None or ci.source_item_id not in {x.id for x in all_items}):
+                            if ci.name and ci.name.strip().lower() == pi.item_name.strip().lower():
+                                existing_ci = ci
+                                break
+                if existing_ci:
+                    # Update — link к актуальному PI + sync contract_id если NULL
+                    if existing_ci.source_item_id != pi.id:
+                        existing_ci.source_item_id = pi.id
+                    if existing_ci.contract_id is None and p.contract_id is not None:
+                        existing_ci.contract_id = p.contract_id
+                    # Не перезаписывать name/qty/price — это могут быть user edits
+                else:
+                    db.add(_CI(
+                        purchase_id=purchase_id,
+                        contract_id=p.contract_id,
+                        source_item_id=pi.id,
+                        name=pi.item_name or "Позиция",
+                        quantity=pi.quantity,
+                        unit=pi.unit or 'шт.',
+                        unit_price=pi.unit_price,
+                        total=pi.total_price,
+                        match_confirmed=True,
+                    ))
+                    contract_items_created += 1
     except Exception as _ci_exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(f"recompute contract_items autocreate skipped: {_ci_exc}")

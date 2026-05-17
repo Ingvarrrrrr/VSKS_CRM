@@ -282,7 +282,7 @@
                         <!-- Fix 4/5: НДС % column (Договор) -->
                         <td v-if="showVatColumnsInExpandRow">
                           <v-combobox
-                            :model-value="getContractItemFor(idx)?.vat_rate ?? null"
+                            :model-value="getContractItemFor(idx)?.vat_rate ?? localItems[idx]?.vat_rate ?? null"
                             :items="VAT_RATE_OPTIONS"
                             item-title="title" item-value="value"
                             density="compact" variant="outlined" hide-details class="my-1"
@@ -300,9 +300,9 @@
                           />
                         </td>
                         <!-- Fix 4/5: НДС сумма column (Договор) -->
-                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmountForStage(idx, 'contract')) }}</td>
                         <!-- Fix 4/5: Сумма с НДС column (Договор) -->
-                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}</td>
+                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVatForStage(idx, 'contract')) }}</td>
                         <td>
                           <div class="d-flex align-center ga-1 flex-wrap" style="font-size:11px">
                             <v-chip
@@ -334,12 +334,12 @@
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
                           <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
                           <!-- Fix 4/5: НДС % readonly (Поставка) -->
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (getContractItemFor(idx) as any)?.vat_rate ?? '—' }}</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ effectiveVatRate(idx, 'delivery') ?? '—' }}</td>
                           <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount(getContractItemFor(idx) as any ?? {})) }}</td>
+                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmountForStage(idx, 'delivery')) }}</td>
                           <!-- Fix 4/5: Сумма с НДС readonly (Поставка) -->
                           <td class="text-caption text-grey-darken-1 font-weight-medium">
-                            {{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}
+                            {{ fmtRub(totalWithVatForStage(idx, 'delivery')) }}
                           </td>
                           <td>
                             <div class="d-flex align-center ga-1 flex-wrap">
@@ -1366,6 +1366,36 @@ function vatAmount(item: EditorItem | ContractItem): number {
 function totalWithVat(item: EditorItem | ContractItem): number {
   // total_price УЖЕ с НДС (стандарт: цена из чека/договора включает НДС)
   return Number((item as any).total_price ?? (item as any).total ?? 0)
+}
+
+// Phase 27.1.17: per-stage helpers с fallback vat_rate на PurchaseItem
+function effectiveVatRate(idx: number, stage: 'contract' | 'delivery'): string | null {
+  const ci = getContractItemFor(idx)
+  return ci?.vat_rate ?? localItems.value[idx]?.vat_rate ?? null
+}
+
+function vatAmountForStage(idx: number, stage: 'tz' | 'contract' | 'delivery'): number {
+  let rate: string | null = null
+  let total = 0
+  if (stage === 'tz') {
+    const pi = localItems.value[idx]
+    rate = pi?.vat_rate ?? null
+    total = Number((pi as any)?.total_price ?? 0)
+  } else if (stage === 'contract') {
+    rate = effectiveVatRate(idx, 'contract')
+    total = Number(getContractItemFor(idx)?.total ?? 0)
+  } else {
+    rate = effectiveVatRate(idx, 'delivery')
+    total = Number(getContractItemFor(idx)?.total ?? 0)
+  }
+  if (!rate) return 0
+  const pct = parseVatRatePercent(rate)
+  if (pct <= 0) return 0
+  return Number((total * pct / (100 + pct)).toFixed(2))
+}
+
+function totalWithVatForStage(idx: number, stage: 'contract' | 'delivery'): number {
+  return Number(getContractItemFor(idx)?.total ?? 0)
 }
 
 function fmtRub(n: number | null | undefined): string {

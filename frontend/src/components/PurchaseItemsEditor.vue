@@ -1502,14 +1502,88 @@ const contractSavingsPercent = computed(() => {
   return ((sv / tz) * 100).toFixed(1)
 })
 
-function getContractItemFor(rowIdx: number): ContractItem | undefined {
-  // First try to match by source_item_id ↔ purchase_item id
-  const pid = (localItems.value[rowIdx] as any)?.id as number | undefined
-  if (pid != null) {
-    const linked = localContractItems.value.find(ci => ci.source_item_id === pid)
-    if (linked) return linked
+// Phase 27.1.10: dynamic resolution orphan source_item_id → actual PurchaseItem.id
+// по item_name OR qty+unit_price match. Backend может ещё не успеть relink — UI решает сам.
+const resolvedContractLinks = computed(() => {
+  // Map: ContractItem.id → resolved PurchaseItem.id (или null)
+  const out = new Map<number, number | null>()
+  const piById = new Map<number, any>()
+  const piByNormName = new Map<string, any>()
+  const piByQtyPrice = new Map<string, any>()
+
+  for (const pi of localItems.value) {
+    const pid = (pi as any).id
+    if (pid != null) piById.set(pid, pi)
+    const norm = ((pi as any).item_name || '').trim().toLowerCase()
+    if (norm) piByNormName.set(norm, pi)
+    const qty = Number((pi as any).quantity || 0)
+    const price = Number((pi as any).unit_price || 0)
+    if (qty > 0 && price > 0) {
+      piByQtyPrice.set(`${qty}|${price}`, pi)
+    }
   }
-  // Fallback: positional match
+
+  for (const ci of localContractItems.value) {
+    const ciId = (ci as any).id
+    if (ciId == null) continue
+
+    const srcId = (ci as any).source_item_id
+
+    // Case 1: existing valid link
+    if (srcId != null && piById.has(srcId)) {
+      out.set(ciId, srcId)
+      continue
+    }
+
+    // Case 2: orphan — try resolve by name
+    const ciName = ((ci as any).name || '').trim().toLowerCase()
+    if (ciName && piByNormName.has(ciName)) {
+      const matched = piByNormName.get(ciName)
+      out.set(ciId, (matched as any).id ?? null)
+      continue
+    }
+
+    // Case 3: orphan — try resolve by qty+price
+    const ciQty = Number((ci as any).quantity || 0)
+    const ciPrice = Number((ci as any).unit_price || 0)
+    if (ciQty > 0 && ciPrice > 0 && piByQtyPrice.has(`${ciQty}|${ciPrice}`)) {
+      const matched = piByQtyPrice.get(`${ciQty}|${ciPrice}`)
+      out.set(ciId, (matched as any).id ?? null)
+      continue
+    }
+
+    // Case 4: 1-to-1 unconditional fallback
+    if (localItems.value.length === 1 && localContractItems.value.length === 1) {
+      const onlyPi = localItems.value[0]
+      out.set(ciId, (onlyPi as any).id ?? null)
+      continue
+    }
+
+    out.set(ciId, null)
+  }
+
+  return out
+})
+
+function getContractItemFor(rowIdx: number): ContractItem | undefined {
+  const pi = localItems.value[rowIdx]
+  const pid = (pi as any)?.id
+  if (pid == null) return localContractItems.value[rowIdx]
+
+  // Direct match по source_item_id
+  let linked = localContractItems.value.find(ci => (ci as any).source_item_id === pid)
+  if (linked) return linked
+
+  // Reverse lookup через resolved links — может быть orphan CI который должен связаться с этим PI
+  for (const ci of localContractItems.value) {
+    const ciId = (ci as any).id
+    if (ciId == null) continue
+    if (resolvedContractLinks.value.get(ciId) === pid) {
+      return ci
+    }
+  }
+
+  // Positional fallback
   return localContractItems.value[rowIdx]
 }
 
@@ -1648,10 +1722,30 @@ const rematchOptions = computed(() => {
     const sid = (ci as any).source_item_id
     if (sid != null && !baseValues.has(sid)) orphanIds.add(sid)
   }
-  const orphans = Array.from(orphanIds).map(id => ({
-    title: `№${id} (связь не найдена)`,
-    value: id,
-  }))
+  const orphans = Array.from(orphanIds).map(id => {
+    // Найти ContractItem с этим orphan source_item_id и попытаться отрезолвить через resolvedContractLinks
+    const ci = localContractItems.value.find(c => (c as any).source_item_id === id)
+    if (ci) {
+      const ciId = (ci as any).id
+      if (ciId != null) {
+        const resolved = resolvedContractLinks.value.get(ciId)
+        if (resolved != null) {
+          const matchedPi = localItems.value.find(pi => (pi as any).id === resolved)
+          if (matchedPi) {
+            const idx = localItems.value.indexOf(matchedPi)
+            return {
+              title: `№${idx + 1}: ${((matchedPi as any).item_name || '').slice(0, 50) || '(без имени)'} (восстановлено)`,
+              value: id,  // Keep orphan id чтобы autocomplete found match. При save — fix через rematchContractItem.
+            }
+          }
+        }
+      }
+    }
+    return {
+      title: `№${id} (связь не найдена)`,
+      value: id,
+    }
+  })
   return [...base, ...orphans]
 })
 
@@ -1879,6 +1973,23 @@ onMounted(async () => {
     console.warn('[PurchaseItemsEditor] Could not load products:', e)
   }
   await loadContractors()
+
+  // Phase 27.1.10: auto-fix orphan source_item_id'ы при mount
+  // — обновляем UI state синхронно с resolved map'ом + emit чтобы при ближайшем save в БД persist'илось правильно
+  let changed = false
+  for (const ci of localContractItems.value) {
+    const ciId = (ci as any).id
+    if (ciId == null) continue
+    const resolved = resolvedContractLinks.value.get(ciId)
+    const current = (ci as any).source_item_id
+    if (resolved != null && resolved !== current) {
+      (ci as any).source_item_id = resolved
+      changed = true
+    }
+  }
+  if (changed) {
+    emit('update:contractItems', [...localContractItems.value])
+  }
 })
 
 // ── Totals ───────────────────────────────────────────────────────────────────

@@ -316,7 +316,9 @@
                                 }"
                               >
                                 <template #selection="{ item: selItem }">
-                                  <span class="text-truncate text-caption">{{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id}` : '') }}</span>
+                                  <span class="text-truncate text-caption" :class="{ 'text-warning': isOrphanLink(idx) }">
+                                    {{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id} (связь не найдена)` : 'Не связано') }}
+                                  </span>
                                 </template>
                               </v-autocomplete>
                               <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
@@ -1647,11 +1649,17 @@ const rematchOptions = computed(() => {
     if (sid != null && !baseValues.has(sid)) orphanIds.add(sid)
   }
   const orphans = Array.from(orphanIds).map(id => ({
-    title: `№${id} (исходная позиция удалена)`,
+    title: `№${id} (связь не найдена)`,
     value: id,
   }))
   return [...base, ...orphans]
 })
+
+function isOrphanLink(idx: number): boolean {
+  const ci = getContractItemFor(idx)
+  if (!ci || ci.source_item_id == null) return false
+  return !localItems.value.some(it => (it as any).id === ci.source_item_id)
+}
 
 // Snackbar
 const snack = reactive({ show: false, text: '', color: 'success' })

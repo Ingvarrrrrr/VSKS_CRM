@@ -866,50 +866,87 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
     from app.models.purchase_file import PurchaseFile as _PF
     UPLOAD_DIR = _os.environ.get('UPLOAD_DIR', '/data/uploads')
     existing_docs = list(p.acceptance_docs or [])
-    existing_receipt_ids = {d.get("receipt_id") for d in existing_docs if d.get("receipt_id")}
     docs_changed = False
 
+    # Phase 27.1.11: cleanup pre-existing duplicates в acceptance_docs (по type+number+amount)
+    seen_keys: set = set()
+    deduped_docs = []
+    for d in existing_docs:
+        if d.get("type") == "Чек":
+            key = (str(d.get("number") or ""), float(d.get("amount") or 0))
+            if key in seen_keys and key[0]:  # дубликат с непустым number
+                docs_changed = True
+                continue  # skip дубликат
+            seen_keys.add(key)
+        deduped_docs.append(d)
+    existing_docs = deduped_docs
+
+    # Phase 27.1.11: helper — dedup не только по receipt_id, но и по (type='Чек'+number+amount)
+    def _is_existing_doc_for_receipt(rcpt, existing_list):
+        fd_num = rcpt.fiscal_document_number
+        amt = float(rcpt.total_sum) if rcpt.total_sum is not None else 0
+        for d in existing_list:
+            # Exact match по receipt_id
+            if d.get("receipt_id") == rcpt.id:
+                return d
+            # Fallback: совпадение по type+number+amount (legacy без receipt_id)
+            if (
+                d.get("type") == "Чек"
+                and str(d.get("number") or "") == str(fd_num or "")
+                and fd_num
+            ):
+                try:
+                    if abs(float(d.get("amount") or 0) - float(amt or 0)) < 0.01:
+                        return d
+                except (TypeError, ValueError):
+                    return d
+        return None
+
     for r in receipts:
-        if r.id in existing_receipt_ids:
-            # Запись уже есть, но проверим file_id
-            for d in existing_docs:
-                if d.get("receipt_id") == r.id and not d.get("file_id"):
-                    # Попробовать прикрепить файл
-                    try:
-                        png_bytes = _render_receipt_png(r)
-                        content_hash = _hashlib.sha256(png_bytes).hexdigest()
-                        existing_pf = (await db.execute(
-                            select(_PF).where(_PF.purchase_id == purchase_id, _PF.content_hash == content_hash).limit(1)
-                        )).scalar_one_or_none()
-                        if existing_pf:
-                            d["file_id"] = existing_pf.id
-                            docs_changed = True
-                        else:
-                            dest_dir = _os.path.join(UPLOAD_DIR, str(purchase_id))
-                            _os.makedirs(dest_dir, exist_ok=True)
-                            receipt_label = f"check_{r.fiscal_document_number or r.id}.png"
-                            dest_path = _os.path.join(dest_dir, receipt_label)
-                            with open(dest_path, 'wb') as _f:
-                                _f.write(png_bytes)
-                            pf = _PF(
-                                purchase_id=purchase_id,
-                                filename=receipt_label,
-                                original_name=f"Чек № {r.fiscal_document_number or r.id}.png",
-                                filepath=dest_path,
-                                mime_type='image/png',
-                                size=len(png_bytes),
-                                file_type='acceptance_doc',
-                                doc_format='scan',
-                                content_hash=content_hash,
-                                is_active=True,
-                            )
-                            db.add(pf)
-                            await db.flush()
-                            d["file_id"] = pf.id
-                            files_attached += 1
-                            docs_changed = True
-                    except Exception:
-                        pass
+        existing_doc = _is_existing_doc_for_receipt(r, existing_docs)
+        if existing_doc is not None:
+            # Запись уже есть — обновить receipt_id если нужно
+            if not existing_doc.get("receipt_id"):
+                existing_doc["receipt_id"] = r.id
+                docs_changed = True
+            # Проверим file_id
+            if not existing_doc.get("file_id"):
+                # Попробовать прикрепить файл
+                try:
+                    png_bytes = _render_receipt_png(r)
+                    content_hash = _hashlib.sha256(png_bytes).hexdigest()
+                    existing_pf = (await db.execute(
+                        select(_PF).where(_PF.purchase_id == purchase_id, _PF.content_hash == content_hash).limit(1)
+                    )).scalar_one_or_none()
+                    if existing_pf:
+                        existing_doc["file_id"] = existing_pf.id
+                        docs_changed = True
+                    else:
+                        dest_dir = _os.path.join(UPLOAD_DIR, str(purchase_id))
+                        _os.makedirs(dest_dir, exist_ok=True)
+                        receipt_label = f"check_{r.fiscal_document_number or r.id}.png"
+                        dest_path = _os.path.join(dest_dir, receipt_label)
+                        with open(dest_path, 'wb') as _f:
+                            _f.write(png_bytes)
+                        pf = _PF(
+                            purchase_id=purchase_id,
+                            filename=receipt_label,
+                            original_name=f"Чек № {r.fiscal_document_number or r.id}.png",
+                            filepath=dest_path,
+                            mime_type='image/png',
+                            size=len(png_bytes),
+                            file_type='acceptance_doc',
+                            doc_format='scan',
+                            content_hash=content_hash,
+                            is_active=True,
+                        )
+                        db.add(pf)
+                        await db.flush()
+                        existing_doc["file_id"] = pf.id
+                        files_attached += 1
+                        docs_changed = True
+                except Exception:
+                    pass
             continue
 
         # Новая запись

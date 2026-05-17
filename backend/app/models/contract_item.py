@@ -34,6 +34,7 @@ class ContractItem(Base):
     unit = Column(String(50))
     unit_price = Column(Numeric(15, 2))
     total = Column(Numeric(15, 2))
+    vat_rate = Column(String(20), nullable=True)  # Phase 27.1.17: НДС ставка ('22%', '10%', 'Без НДС', custom)
     match_confirmed = Column(
         Boolean, nullable=False, default=True, server_default=text("TRUE"),
     )

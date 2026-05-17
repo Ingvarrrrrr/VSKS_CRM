@@ -249,6 +249,10 @@ async def _ensure_contract_items_table(conn) -> None:
             "CREATE INDEX IF NOT EXISTS ix_contract_items_purchase_id "
             "ON contract_items (purchase_id)"
         ))
+        # Phase 27.1.17: добавить vat_rate если нет
+        await conn.execute(text(
+            "ALTER TABLE contract_items ADD COLUMN IF NOT EXISTS vat_rate VARCHAR(20)"
+        ))
         print("  \u2705  contract_items table ensured")
     except Exception as e:
         print(f"  \u26a0\ufe0f   contract_items table ensure failed: {e}")

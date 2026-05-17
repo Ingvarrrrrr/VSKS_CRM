@@ -1286,6 +1286,7 @@ class ContractItemBase(BaseModel):
     unit: Optional[str] = None
     unit_price: Optional[Decimal] = None
     total: Optional[Decimal] = None
+    vat_rate: Optional[str] = None  # Phase 27.1.17
     match_confirmed: bool = True
 
 
@@ -1302,6 +1303,7 @@ class ContractItemUpdate(BaseModel):
     unit: Optional[str] = None
     unit_price: Optional[Decimal] = None
     total: Optional[Decimal] = None
+    vat_rate: Optional[str] = None  # Phase 27.1.17
     match_confirmed: Optional[bool] = None
 
 

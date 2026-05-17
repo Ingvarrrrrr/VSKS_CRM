@@ -1559,6 +1559,24 @@ const resolvedContractLinks = computed(() => {
       continue
     }
 
+    // Case 5: substring match — name содержится в item_name или наоборот
+    if (ciName) {
+      let foundSubstr = false
+      for (const pi of localItems.value) {
+        const piName = ((pi as any).item_name || '').trim().toLowerCase()
+        if (!piName) continue
+        if (piName.includes(ciName) || ciName.includes(piName)) {
+          const piId = (pi as any).id
+          if (piId != null) {
+            out.set(ciId, piId)
+            foundSubstr = true
+            break
+          }
+        }
+      }
+      if (foundSubstr) continue
+    }
+
     out.set(ciId, null)
   }
 
@@ -1976,7 +1994,8 @@ onMounted(async () => {
 
   // Phase 27.1.10: auto-fix orphan source_item_id'ы при mount
   // — обновляем UI state синхронно с resolved map'ом + emit чтобы при ближайшем save в БД persist'илось правильно
-  let changed = false
+  let changed = 0
+  const orphans: any[] = []
   for (const ci of localContractItems.value) {
     const ciId = (ci as any).id
     if (ciId == null) continue
@@ -1984,11 +2003,26 @@ onMounted(async () => {
     const current = (ci as any).source_item_id
     if (resolved != null && resolved !== current) {
       (ci as any).source_item_id = resolved
-      changed = true
+      changed++
+    }
+    // Phase 27.1.11: логируем unresolved orphans для отладки на проде
+    if (current != null && resolved == null) {
+      orphans.push({
+        contract_item_id: ciId,
+        contract_item_name: (ci as any).name,
+        contract_item_qty: (ci as any).quantity,
+        contract_item_price: (ci as any).unit_price,
+        broken_source_item_id: current,
+        available_pi_count: localItems.value.length,
+      })
     }
   }
-  if (changed) {
+  if (changed > 0) {
     emit('update:contractItems', [...localContractItems.value])
+    console.info(`[PurchaseItemsEditor] auto-resolved ${changed} orphan source_item_id(s)`)
+  }
+  if (orphans.length > 0) {
+    console.warn('[PurchaseItemsEditor] unresolved orphans:', orphans)
   }
 })
 

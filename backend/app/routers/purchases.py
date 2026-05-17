@@ -338,6 +338,7 @@ async def list_purchases(
     search: Optional[str] = Query(None),
     purchase_method: Optional[str] = Query(None),
     purchase_basis: Optional[str] = Query(None),
+    framework_seq: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -391,6 +392,8 @@ async def list_purchases(
         q = q.where(Purchase.purchase_method == purchase_method)
     if purchase_basis:
         q = q.where(Purchase.purchase_basis == purchase_basis)
+    if framework_seq is not None:
+        q = q.where(Purchase.framework_seq == framework_seq)
     # Hide purchases that were split into children unless explicitly requested
     if status != "split":
         q = q.where(Purchase.status != "split")
@@ -883,7 +886,19 @@ async def update_purchase(
     # If contract_id or type changed, reset seq so it gets re-assigned
     old_contract_id = p.contract_id
     old_type = p.purchase_contract_type
-    for k, v in data.model_dump(exclude={"items", "subsidy_allocations"}, exclude_unset=True).items():
+    payload_dict = data.model_dump(exclude={"items", "subsidy_allocations"}, exclude_unset=True)
+    # Phase 27.1.4: race-defence — если payload приходит с contractor_id=None,
+    # а в БД он был установлен И contract_id не меняется → игнорируем stale null.
+    # Это защищает от race в editFrameworkSeq: форма шлёт PUT до завершения async fetch контрагента.
+    if (
+        'contractor_id' in payload_dict
+        and payload_dict['contractor_id'] is None
+        and p.contractor_id is not None
+        and payload_dict.get('contract_id', p.contract_id) == p.contract_id
+    ):
+        payload_dict.pop('contractor_id')
+
+    for k, v in payload_dict.items():
         # Don't overwrite frozen total_nmck
         if is_contracted and k in ("total_nmck", "planned_total_price"):
             continue

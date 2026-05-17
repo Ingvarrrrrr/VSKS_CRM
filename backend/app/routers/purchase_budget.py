@@ -72,8 +72,32 @@ async def _assign_framework_seq(
     """
     if p.purchase_contract_type not in FRAMEWORK_TYPES or not p.contract_id:
         return
+
+    # Phase 27.1.4: validate manual override для уникальности перед принятием
     if p.framework_seq is not None:
-        return  # already set (manual override)
+        dup_q = select(Purchase.id).where(
+            Purchase.contract_id == p.contract_id,
+            Purchase.framework_seq == p.framework_seq,
+            Purchase.id != (p.id or -1),
+        )
+        if exclude_id:
+            dup_q = dup_q.where(Purchase.id != exclude_id)
+        dup_id = (await db.execute(dup_q)).scalar_one_or_none()
+        if dup_id:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "FRAMEWORK_SEQ_DUPLICATE",
+                    "message": (
+                        f"Порядковый номер {p.framework_seq} уже занят закупкой "
+                        f"#{dup_id} в этом рамочном договоре."
+                    ),
+                    "existing_purchase_id": dup_id,
+                }
+            )
+        return  # manual override валидно — не пересчитываем
+
+    # Auto-assign: следующий после максимального seq в этом договоре
     q = select(func.coalesce(func.max(Purchase.framework_seq), 0)).where(
         Purchase.contract_id == p.contract_id
     )

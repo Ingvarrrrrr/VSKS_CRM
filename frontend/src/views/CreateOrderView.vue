@@ -4752,7 +4752,7 @@ function enableContractNumberEdit() {
   }
 }
 
-function editFrameworkSeq() {
+async function editFrameworkSeq() {
   const current = form.framework_seq
   const input = prompt(`Изменить порядковый номер в рамочном договоре?\nТекущий: ${current ?? '—'}\n\nВведите новый номер (или оставьте пустым для автоназначения):`)
   if (input === null) return // отмена
@@ -4760,14 +4760,35 @@ function editFrameworkSeq() {
     if (confirm('Номер будет назначен автоматически при сохранении. Продолжить?')) {
       form.framework_seq = null
     }
-  } else {
-    const num = parseInt(input, 10)
-    if (isNaN(num) || num < 1) {
-      showSnack('Номер должен быть целым числом больше 0', 'warning')
-      return
-    }
-    form.framework_seq = num
+    return
   }
+
+  const num = parseInt(input, 10)
+  if (isNaN(num) || num < 1) {
+    showSnack('Номер должен быть целым числом больше 0', 'warning')
+    return
+  }
+
+  // Phase 27.1.4: проверить дубль на сервере перед принятием нового номера
+  if (form.contract_id && num !== current) {
+    try {
+      const check = await apiFetch<any>(
+        `/purchases/?contract_id=${form.contract_id}&framework_seq=${num}`
+      )
+      const existing = (Array.isArray(check) ? check : check.items || [])
+        .find((p: any) => p.id !== purchaseId.value)
+      if (existing) {
+        const confirmed = window.confirm(
+          `Номер ${num} уже занят закупкой ${existing.registry_number || `#${existing.id}`}.\n\n` +
+          `Если продолжить — после сохранения сервер может вернуть ошибку.\n\n` +
+          `Точно установить этот номер?`
+        )
+        if (!confirmed) return
+      }
+    } catch {}
+  }
+
+  form.framework_seq = num
 }
 
 function onContractTypeChange() {
@@ -5275,12 +5296,25 @@ const onInnInput = (val: string) => {
 
 const loadPurchase = async () => {
   const data = await apiFetch<any>(`/purchases/${purchaseId.value}`)
+
+  // Phase 27.1.4: prefetch contractor СИНХРОННО до Object.assign
+  // чтобы избежать race с editFrameworkSeq save (форма шлёт PUT до завершения fetch)
+  if (data.contractor_id) {
+    let c = contractors.value.find(c => c.id === data.contractor_id)
+    if (!c) {
+      try {
+        const fetched = await apiFetch<Contractor>(`/contractors/${data.contractor_id}`)
+        contractors.value.push(fetched)
+      } catch {}
+    }
+  }
+
   Object.assign(form, {
     purchase_method: data.purchase_method || '',
     purchase_basis: data.purchase_basis || '',
     item_type: data.item_type || 'товар',
     subsidy_id: data.subsidy_id ?? null,
-    contractor_id: null, // Set after contractor loaded to avoid showing ID
+    contractor_id: data.contractor_id ?? null, // Phase 27.1.4: set directly (prefetched above)
     registry_number: data.registry_number || '',
     feo_category_id: data.feo_category_id ?? null,
     subject: data.subject || '',
@@ -5455,19 +5489,11 @@ const loadPurchase = async () => {
   // Load uploaded files
   uploadedFiles.value = data.files || []
 
-  // Auto-fill INN — ensure contractor is in the list BEFORE setting contractor_id
+  // Auto-fill INN — contractor was prefetched above (Phase 27.1.4), just set INN
   if (data.contractor_id) {
-    let c = contractors.value.find(c => c.id === data.contractor_id)
-    if (!c) {
-      try {
-        const fetched = await apiFetch<Contractor>(`/contractors/${data.contractor_id}`)
-        contractors.value.push(fetched)
-        c = fetched
-      } catch {}
-    }
+    const c = contractors.value.find(c => c.id === data.contractor_id)
     contractorInn.value = c?.inn || ''
-    // Re-set contractor_id AFTER contractor is in list (fixes autocomplete showing ID)
-    form.contractor_id = data.contractor_id
+    // form.contractor_id already set in Object.assign above (race-safe)
   }
 
   // Phase 26-EE: hydrate per-item contractors. Если у позиций stoit contractor_id,
@@ -6071,7 +6097,23 @@ const doSave = async (adminOverride: boolean) => {
       router.push(editPath)
     }
   } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка сохранения', 'error')
+    // Phase 27.1.4: handle 409 FRAMEWORK_SEQ_DUPLICATE
+    const errCode = e?.code || e?.body?.code || e?.detail?.code
+    if (errCode === 'FRAMEWORK_SEQ_DUPLICATE') {
+      const msg = e?.message || e?.body?.message || 'Порядковый номер уже занят другой закупкой.'
+      const existingId = e?.existing_purchase_id || e?.body?.existing_purchase_id
+      const autoFix = window.confirm(
+        `${msg}\n\nНажмите OK чтобы сохранить с автоматическим номером, или Отмена чтобы изменить вручную.`
+      )
+      if (autoFix) {
+        form.framework_seq = null
+        saving.value = false
+        await doSave(adminOverride)
+        return
+      }
+    } else {
+      showSnack(e?.message || e?.detail || 'Ошибка сохранения', 'error')
+    }
   } finally {
     saving.value = false
   }

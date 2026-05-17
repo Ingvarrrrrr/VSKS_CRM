@@ -315,6 +315,51 @@ async def _backfill_contract_items_from_purchase_items(conn) -> int:
     return result.rowcount or 0
 
 
+async def _ensure_framework_seq_unique_index(conn) -> None:
+    """Phase 27.1.4: partial unique index on (contract_id, framework_seq) WHERE both NOT NULL.
+
+    ПЕРЕД созданием индекса — bump дубликаты (перенумеровать), иначе CREATE INDEX упадёт.
+    Idempotent: IF NOT EXISTS гарантирует повторный запуск без ошибки.
+    """
+    try:
+        # Шаг 1: найти группы дублей и перенумеровать (оставить min(id), остальным → MAX+offset)
+        dup_result = await conn.execute(text("""
+            SELECT contract_id, framework_seq, array_agg(id ORDER BY id) AS ids
+            FROM purchases
+            WHERE contract_id IS NOT NULL AND framework_seq IS NOT NULL
+            GROUP BY contract_id, framework_seq
+            HAVING COUNT(*) > 1
+        """))
+        dup_rows = dup_result.fetchall()
+        if dup_rows:
+            print(f"  ⚠️   framework_seq: found {len(dup_rows)} duplicate group(s), bumping...")
+            for row in dup_rows:
+                contract_id, framework_seq, ids = row
+                # Keep min(id) with original seq, bump others
+                # Find max framework_seq for this contract to safely offset
+                max_seq_result = await conn.execute(text(
+                    "SELECT COALESCE(MAX(framework_seq), 0) FROM purchases WHERE contract_id = :cid"
+                ), {"cid": contract_id})
+                max_seq = max_seq_result.scalar() or 0
+                # ids is sorted asc — first is the keeper, rest get bumped
+                for offset, dup_id in enumerate(ids[1:], start=1):
+                    new_seq = max_seq + offset + 1000  # safe offset above current max
+                    await conn.execute(text(
+                        "UPDATE purchases SET framework_seq = :seq WHERE id = :id"
+                    ), {"seq": new_seq, "id": dup_id})
+            print(f"  ✅  framework_seq duplicates resolved")
+
+        # Шаг 2: создать partial unique index (idempotent)
+        await conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_framework_seq
+            ON purchases (contract_id, framework_seq)
+            WHERE contract_id IS NOT NULL AND framework_seq IS NOT NULL
+        """))
+        print("  ✅  uq_purchase_framework_seq partial unique index ensured (Phase 27.1.4)")
+    except Exception as e:
+        print(f"  ⚠️   uq_purchase_framework_seq ensure failed: {e}")
+
+
 async def _ensure_plan_graph_versions_table(conn) -> None:
     """Phase 12-03: ensure plan_graph_versions table exists (idempotent)."""
     try:
@@ -353,6 +398,10 @@ async def main(apply: bool = False) -> int:
         # Phase 27.1: ensure contract_items table exists
         if apply:
             await _ensure_contract_items_table(conn)
+
+        # Phase 27.1.4: partial unique index on (contract_id, framework_seq) WHERE both NOT NULL
+        if apply:
+            await _ensure_framework_seq_unique_index(conn)
 
         # Phase 12-03: ensure plan_graph_versions table exists
         if apply:

@@ -118,16 +118,13 @@ onMounted(async () => {
    На mobile оставляем auto-layout — таблица сама подгоняет ширины под контент,
    при необходимости включается горизонтальный scroll. */
 @media (min-width: 960px) {
-  /* Phase 26-NNN: ограничиваем высоту scroll-обёртки таблицы → горизонтальный
-     ползунок всегда виден в нижней части viewport, а не «спрятан» после
-     последней строки + пагинации (когда таблица длиннее экрана пришлось бы
-     докручивать страницу вниз чтобы добраться до ползунка). 100vh - 280px
-     оставляет место под header (64) + breadcrumbs/title (~70) + filters (~80) +
-     pagination (~60). На очень маленьких высотах окна (<600px) отключаем. */
+  /* Phase 27.1.5: 400px вместо 280px чтобы покрыть views с большим header'ом
+     (OrdersView: status chips + 2 filter row ≈ 400px над таблицей).
+     На очень маленьких высотах окна (<600px) отключаем. */
   @media (min-height: 600px) {
     .v-data-table > .v-table__wrapper,
     .v-data-table-virtual > .v-table__wrapper {
-      max-height: calc(100vh - 280px) !important;
+      max-height: calc(100vh - 400px) !important;
       /* Phase 26-kkk: scroll вместо auto — scrollbars (горизонтальный +
          вертикальный) видны ВСЕГДА внутри таблицы, даже когда контента
          для скролла нет (track появляется как disabled). Это даёт визуальный

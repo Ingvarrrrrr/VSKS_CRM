@@ -232,6 +232,14 @@
                                 </template>
                               </v-autocomplete>
                             </template>
+                            <!-- ТЗ contractor chip (non-advance mode, if contractor set from Phase 24 D-05) -->
+                            <v-chip
+                              v-if="!showContractorColumn && item.contractor_id && contractorNameById(item.contractor_id)"
+                              size="x-small" color="info" variant="tonal"
+                              prepend-icon="mdi-store" class="text-truncate" style="max-width:160px"
+                            >
+                              {{ contractorNameById(item.contractor_id) }}
+                            </v-chip>
                           </div>
                         </td>
                       </tr>
@@ -296,39 +304,16 @@
                         <!-- Fix 4/5: Сумма с НДС column (Договор) -->
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}</td>
                         <td>
-                          <div class="d-flex align-center ga-1 flex-wrap">
-                            <!-- Phase 26-ooo: rematch скрыт для авансовых отчётов —
-                                 там позиции 1:1 автогенерируются из чека, выбор
-                                 ТЗ-позиции не нужен и сбивает пользователя
-                                 (показывало "№X (исходная позиция удалена)" после
-                                 dedup phase26-ww-2). Split-row тоже не нужен. -->
-                            <template v-if="!isAdvance">
-                              <v-autocomplete
-                                :items="rematchOptions"
-                                :model-value="getContractItemFor(idx)?.source_item_id ?? null"
-                                item-title="title" item-value="value"
-                                density="compact" variant="outlined" hide-details
-                                placeholder="Связать с ТЗ №..." style="min-width:160px"
-                                :disabled="props.readonly"
-                                @update:model-value="(v: number | null) => {
-                                  const ci = getContractItemFor(idx)
-                                  if (ci) rematchContractItem(localContractItems.indexOf(ci), v)
-                                }"
-                              >
-                                <template #selection="{ item: selItem }">
-                                  <span class="text-truncate text-caption" :class="{ 'text-warning': isOrphanLink(idx) }">
-                                    {{ selItem?.raw?.title || selItem?.title || (getContractItemFor(idx)?.source_item_id != null ? `№${getContractItemFor(idx)?.source_item_id} (связь не найдена)` : 'Не связано') }}
-                                  </span>
-                                </template>
-                              </v-autocomplete>
-                              <v-tooltip v-if="!props.readonly" text="Разделить строку договора" location="top">
-                                <template #activator="{ props: tip }">
-                                  <v-btn v-bind="tip" icon="mdi-arrow-split-vertical" size="x-small" variant="text" color="orange"
-                                    @click="splitContractRow(idx)" />
-                                </template>
-                              </v-tooltip>
-                            </template>
-                            <span v-else class="text-caption text-medium-emphasis">из чека</span>
+                          <div class="d-flex align-center ga-1 flex-wrap" style="font-size:11px">
+                            <v-chip
+                              v-if="contractStageContractorName(idx)"
+                              size="x-small" color="success" variant="tonal"
+                              prepend-icon="mdi-store"
+                              class="text-truncate" style="max-width:180px"
+                            >
+                              {{ contractStageContractorName(idx) }}
+                            </v-chip>
+                            <span v-else class="text-medium-emphasis text-caption">—</span>
                           </div>
                         </td>
                       </tr>
@@ -357,12 +342,21 @@
                             {{ fmtRub(totalWithVat(getContractItemFor(idx) as any ?? {})) }}
                           </td>
                           <td>
-                            <v-tooltip location="top">
-                              <template #default>Автозаполнено из договора. Реальный ввод появится в Phase 27 (delivery_items).</template>
-                              <template #activator="{ props: tip }">
-                                <v-icon v-bind="tip" icon="mdi-information-outline" size="small" color="grey" />
-                              </template>
-                            </v-tooltip>
+                            <div class="d-flex align-center ga-1 flex-wrap">
+                              <v-chip
+                                v-if="deliveryStageContractorName(idx)"
+                                size="x-small" color="purple" variant="tonal"
+                                prepend-icon="mdi-truck-delivery" class="text-truncate" style="max-width:140px"
+                              >
+                                {{ deliveryStageContractorName(idx) }}
+                              </v-chip>
+                              <v-tooltip location="top" text="Появится в Phase 27 (delivery_items). Будет создавать «Поставка 1» + «Поставка 2» для частичных поставок.">
+                                <template #activator="{ props: tp }">
+                                  <v-btn v-bind="tp" icon="mdi-arrow-split-vertical" size="x-small" variant="text"
+                                    color="grey" disabled />
+                                </template>
+                              </v-tooltip>
+                            </div>
                           </td>
                         </template>
                         <template v-else-if="isAdvance">
@@ -1771,6 +1765,27 @@ function isOrphanLink(idx: number): boolean {
   const ci = getContractItemFor(idx)
   if (!ci || ci.source_item_id == null) return false
   return !localItems.value.some(it => (it as any).id === ci.source_item_id)
+}
+
+// ── Phase 27.1.14: per-stage contractor chip helpers ──────────────────────────
+
+function contractorNameById(cid: number | null | undefined): string {
+  if (cid == null) return ''
+  const c = contractors.value?.find(c => c.id === cid)
+  return c?.name || ''
+}
+
+function contractStageContractorName(idx: number): string {
+  // Договор stage: из PurchaseItem.contractor_id (для авансовых из чека Phase 24 D-05)
+  // FALLBACK: пусто (Purchase.contractor_id можно передать через props в будущем)
+  const pi = localItems.value[idx] as any
+  if (pi?.contractor_id) return contractorNameById(pi.contractor_id)
+  return ''
+}
+
+function deliveryStageContractorName(idx: number): string {
+  // Поставка stage: fallback на Договор-контрагента (DeliveryItem Phase 27 ещё не реализован)
+  return contractStageContractorName(idx)
 }
 
 // Snackbar
@@ -3200,6 +3215,19 @@ th { position: relative; }
 .nested-stages-table {
   border: 1px solid #e0e0e0;
   border-radius: 4px;
+}
+.nested-stages-table :deep(.v-text-field input),
+.nested-stages-table :deep(.v-combobox input),
+.nested-stages-table :deep(.v-text-field .v-field__input),
+.nested-stages-table :deep(.v-combobox .v-field__input) {
+  font-size: 12px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+  min-height: 32px !important;
+}
+.nested-stages-table :deep(.v-field) {
+  --v-field-padding-start: 8px;
+  --v-field-padding-end: 8px;
 }
 .stage-tz-row td {
   background: rgba(25, 118, 210, 0.04);

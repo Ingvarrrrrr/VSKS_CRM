@@ -31,6 +31,7 @@ SECTIONS = [
         ("purchase_method",   "{{ purchase_method }}",   "Способ закупки (текст): «Единственный поставщик» / «Конкурсная процедура»"),
         ("subject",           "{{ subject }}",           "Предмет договора / услуги"),
         ("service_name",      "{{ service_name }}",      "То же, что subject — алиас для договора"),
+        ("service_name_gen",  "{{ service_name_gen }}",  "Предмет в родительном падеже (морфология)"),
         ("status",            "{{ status }}",            "Статус закупки"),
         ("purchase_basis",    "{{ purchase_basis }}",    "Основание: «план-график» / «служебная записка»"),
         ("responsible_person","{{ responsible_person }}","ФИО ответственного исполнителя"),

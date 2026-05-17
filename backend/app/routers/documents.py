@@ -118,6 +118,45 @@ def _to_gen_phrase(phrase: str) -> str:
     parts = _re.split(r'(\s+|-)', phrase)
     return ''.join(_to_gen_word(p) if p.strip() and p != '-' else p for p in parts)
 
+def _inflect_phrase_genitive(phrase: str) -> str:
+    """
+    Склоняет фразу в родительный падеж пословно (для subject/service_name).
+    Примеры:
+      «Канцелярские принадлежности» → «канцелярских принадлежностей»
+      «Оказание полиграфических услуг» → «оказания полиграфических услуг»
+    Сохраняет регистр первой буквы первого слова.
+    Аббревиатуры (ООО), числа, латиница — пропускаются как есть.
+    """
+    if not phrase or not phrase.strip():
+        return ""
+    morph = _get_morph()
+    if not morph:
+        return phrase
+    import re as _re2
+    # Токенизация: русские слова (с дефисом) / прочие токены / пробелы
+    tokens = _re2.findall(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*|\S+|\s+", phrase)
+    out = []
+    first_word_idx = None
+    was_upper = False
+    for tok in tokens:
+        if _re2.fullmatch(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*", tok):
+            if first_word_idx is None:
+                first_word_idx = len(out)
+                was_upper = tok[0].isupper()
+            try:
+                parsed = morph.parse(tok)[0]
+                infl = parsed.inflect({'gent'})
+                out.append(infl.word if infl else tok.lower())
+            except Exception:
+                out.append(tok.lower())
+        else:
+            out.append(tok)
+    # Восстановить регистр первой буквы первого слова
+    if first_word_idx is not None and was_upper and out[first_word_idx]:
+        out[first_word_idx] = out[first_word_idx][0].upper() + out[first_word_idx][1:]
+    return "".join(out)
+
+
 def _to_gen_fio(full_name: str) -> str:
     """Склонить ФИО (Фамилия Имя Отчество) в родительный падеж через petrovich."""
     petro_pack = _get_petro()
@@ -1368,6 +1407,7 @@ async def generate_document(
         "contractor_signatory_position": _signatory_position(c.signatory) if c else "",
         # Предмет (сервисное имя)
         "service_name": p.subject or "",
+        "service_name_gen": _inflect_phrase_genitive(p.subject or ""),
         # Срок оказания услуг
         # Phase 19: service_start_date / service_end_date now prefer the real
         # Purchase columns (used by 'range' mode). If those are empty we fall

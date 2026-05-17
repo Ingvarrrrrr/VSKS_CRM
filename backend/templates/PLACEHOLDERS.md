@@ -201,6 +201,7 @@ deadline: "до 30.06.2026 включительно"
 | `{{purchase_method}}` | Способ закупки | Единственный поставщик | purchases.purchase_method |
 | `{{subject}}` | Предмет закупки | Оказание полиграфических услуг | purchases.subject |
 | `{{service_name}}` | Синоним subject | — | purchases.subject |
+| `{{service_name_gen}}` | Предмет в родительном падеже (для «Прошу осуществить закупку ...») | канцелярских принадлежностей | inflect(subject) |
 | `{{purchase_basis}}` | Основание | план-график | purchases.purchase_basis |
 | `{{responsible_person}}` | Ответственный исполнитель | Иванов А.А. | purchases.responsible_person |
 | `{{subsidy_name}}` | Субсидия | ФАДМ_2026 | subsidies.name |

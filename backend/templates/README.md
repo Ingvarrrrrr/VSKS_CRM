@@ -173,6 +173,7 @@ py backend/templates/make_contract_services.py
 | `{{ contractor_short_name }}` | Краткое наименование | Ромашка |
 | `{{ contractor_signatory_position }}` | Должность подписанта | Директор |
 | `{{ service_name }}` | Предмет (синоним subject) | Оказание услуг |
+| `{{ service_name_gen }}` | Предмет в родительном падеже | канцелярских принадлежностей |
 | `{{ period_type }}` | Тип срока | period / date |
 | `{{ service_start_date }}` | Начало оказания услуг | 15.01.2026 |
 | `{{ service_end_date }}` | Конец оказания услуг | 28.02.2026 |
@@ -339,6 +340,7 @@ py backend/templates/make_contract_services.py
 | `{{ delivery_date }}` | Дата поставки | 20.02.2026 |
 | `{{ country_origin }}` | Страна происхождения | Российская Федерация |
 | `{{ service_name }}` | Предмет (синоним subject) | текст |
+| `{{ service_name_gen }}` | Предмет в родительном падеже | канцелярских принадлежностей |
 | `{{ period_type }}` | Тип срока | period / date |
 | `{{ service_start_date }}` | Начало оказания услуг | 15.01.2026 |
 | `{{ service_end_date }}` | Конец оказания услуг | 28.02.2026 |

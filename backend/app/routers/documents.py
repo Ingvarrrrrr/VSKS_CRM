@@ -301,7 +301,7 @@ def _clean_id(v) -> str:
 def _fmt_money(v) -> str:
     if v is None:
         return ""
-    return f"{float(v):,.2f}".replace(",", " ").replace(".", ",") + " ₽"
+    return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
 def _fmt_money_plain(v) -> str:

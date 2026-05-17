@@ -815,6 +815,41 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
     Phase 2 — enrich existing Contract'ы где ХОТЯ БЫ ОДНО optional поле NULL.
               Покрывает любые legacy договоры (созданные вручную или через миграцию).
     """
+    # Phase 27.1.9: re-link Purchase.contract_id для Purchase'ов где contract_number
+    # совпадает с Contract.number но contract_id NULL ИЛИ указывает на другой Contract.
+    # Это закрывает gap когда auto-create Contract (Phase 27.1.4) и Purchase
+    # разъехались (recompute / manual edit / прочее).
+    from app.models.purchase import Purchase as _P2
+    from app.models.contract import Contract as _C2
+    from sqlalchemy import select as _s2
+
+    purchases_with_num = (await db.execute(
+        _s2(_P2).where(_P2.contract_number.isnot(None), _P2.contract_number != '')
+    )).scalars().all()
+
+    all_contracts_for_link = (await db.execute(_s2(_C2))).scalars().all()
+    contract_by_number: dict = {}
+    for c_iter in all_contracts_for_link:
+        if c_iter.number:
+            contract_by_number.setdefault(c_iter.number.strip(), []).append(c_iter)
+
+    purchases_linked = 0
+    for p_iter in purchases_with_num:
+        num = (p_iter.contract_number or '').strip()
+        if not num:
+            continue
+        candidates = contract_by_number.get(num, [])
+        if not candidates:
+            continue
+        best = None
+        if p_iter.contractor_id:
+            best = next((c_c for c_c in candidates if c_c.contractor_id == p_iter.contractor_id), None)
+        if not best:
+            best = candidates[0]
+        if p_iter.contract_id != best.id:
+            p_iter.contract_id = best.id
+            purchases_linked += 1
+
     from app.models.purchase_receipt import PurchaseReceipt as _PR
     rows_result = await db.execute(
         select(Purchase).join(_PR, _PR.purchase_id == Purchase.id)
@@ -944,6 +979,7 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
         "enriched_existing": enriched,
         "scanned_contracts": len(contracts_to_enrich),
         "relinked_orphans": relinked,
+        "purchases_linked": purchases_linked,
     }
 
 

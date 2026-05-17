@@ -1815,6 +1815,21 @@ async function doExport() {
 
 <style scoped>
 .orders-clickable :deep(tbody tr) { cursor: pointer; }
+
+/* Phase 27.1.4: sticky horizontal scrollbar parity с ContractsView.
+   Global CSS (App.vue:113-220) применяется к .v-data-table, но может
+   блокироваться PWA cache или scoped-коллизией. Локальный override — safety fallback. */
+.orders-clickable :deep(.v-table__wrapper) {
+  max-height: calc(100vh - 280px) !important;
+  overflow: scroll !important;
+  scrollbar-gutter: stable;
+}
+.orders-clickable :deep(.v-data-table thead th) {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2 !important;
+  background: rgb(var(--v-theme-surface)) !important;
+}
 .import-result-row {
   display: flex; gap: 16px; justify-content: center; margin: 16px 0;
 }

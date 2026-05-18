@@ -326,6 +326,10 @@ def _build_purchase_clause(user: User, visible_uids: Optional[set[int]], view_al
     # Rules 0,1,2,4: responsible column
     if visible_uids is not None:
         clauses.append(Purchase.assigned_user_id.in_(visible_uids))
+        # 27.4-05: для авансовых отчётов responsible = reimbursement_user_id
+        # (кому возмещение). Без этого employee не видит свои собственные
+        # авансовые отчёты в /advance-reports, т.к. assigned_user_id обычно NULL.
+        clauses.append(Purchase.reimbursement_user_id.in_(visible_uids))
 
     # Rule 5: participation
     clauses.extend(_purchase_participation_clauses(user.id))
@@ -420,6 +424,8 @@ def _build_contract_clause(user: User, visible_uids: Optional[set[int]], view_al
 
     if visible_uids is not None:
         purchase_clauses.append(Purchase.assigned_user_id.in_(visible_uids))
+        # 27.4-05: для авансовых — reimbursement_user_id (см. _build_purchase_clause)
+        purchase_clauses.append(Purchase.reimbursement_user_id.in_(visible_uids))
 
     purchase_clauses.extend(_purchase_participation_clauses(user.id))
 

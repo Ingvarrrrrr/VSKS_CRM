@@ -124,36 +124,39 @@ def _inflect_phrase_genitive(phrase: str) -> str:
     Примеры:
       «Канцелярские принадлежности» → «канцелярских принадлежностей»
       «Оказание полиграфических услуг» → «оказания полиграфических услуг»
-    Сохраняет регистр первой буквы первого слова.
+    Результат ВСЕГДА в нижнем регистре (для вставки внутри фразы:
+    «Прошу осуществить закупку канцелярских принадлежностей.»).
     Аббревиатуры (ООО), числа, латиница — пропускаются как есть.
+    Fallback на per-word эвристику если pymorphy3 недоступен.
     """
     if not phrase or not phrase.strip():
         return ""
     morph = _get_morph()
-    if not morph:
-        return phrase
     import re as _re2
     # Токенизация: русские слова (с дефисом) / прочие токены / пробелы
     tokens = _re2.findall(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*|\S+|\s+", phrase)
     out = []
-    first_word_idx = None
-    was_upper = False
     for tok in tokens:
         if _re2.fullmatch(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)*", tok):
-            if first_word_idx is None:
-                first_word_idx = len(out)
-                was_upper = tok[0].isupper()
-            try:
-                parsed = morph.parse(tok)[0]
-                infl = parsed.inflect({'gent'})
-                out.append(infl.word if infl else tok.lower())
-            except Exception:
-                out.append(tok.lower())
+            # Аббревиатуры (все буквы заглавные, ≥2 символа): не склонять
+            if len(tok) >= 2 and tok.isupper():
+                out.append(tok)
+                continue
+            inflected = None
+            if morph:
+                try:
+                    parsed = morph.parse(tok.lower())[0]
+                    infl = parsed.inflect({'gent'})
+                    if infl:
+                        inflected = infl.word
+                except Exception:
+                    pass
+            # Fallback: per-word эвристика (если pymorphy3 не сработал)
+            if not inflected:
+                inflected = _to_gen_word_heuristic(tok.lower())
+            out.append(inflected.lower())
         else:
             out.append(tok)
-    # Восстановить регистр первой буквы первого слова
-    if first_word_idx is not None and was_upper and out[first_word_idx]:
-        out[first_word_idx] = out[first_word_idx][0].upper() + out[first_word_idx][1:]
     return "".join(out)
 
 

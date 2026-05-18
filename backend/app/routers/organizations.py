@@ -309,6 +309,32 @@ async def toggle_org_active(
     return {"id": org.id, "is_active": org.is_active}
 
 
+@router.get("/api/organizations/{org_id}", response_model=OrganizationOut)
+async def get_organization(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """27.4-03: получить одну Organization по id — доступно любому authenticated.
+    Нужно для preview Заказчика в CreateOrderView (раньше employee получал 403 на /organizations/).
+    Visibility: superadmin → любая; иначе только org_id ∈ visible_orgs пользователя."""
+    res = await db.execute(
+        select(Organization)
+        .options(selectinload(Organization.contractor))
+        .where(Organization.id == org_id)
+    )
+    org = res.scalar_one_or_none()
+    if not org:
+        raise HTTPException(404, "Организация не найдена")
+    if current_user.role not in ('superadmin', 'account_owner'):
+        from app.auth.jwt import get_org_filter
+        visible = get_org_filter(current_user)
+        if visible is not None and org_id not in visible:
+            raise HTTPException(403, "Нет доступа к этой организации")
+    uc = (await db.execute(select(func.count()).where(User.org_id == org.id))).scalar() or 0
+    return _merge_org_with_contractor(org, user_count=uc)
+
+
 @router.delete("/api/organizations/{org_id}", status_code=204)
 async def delete_organization(
     org_id: int,

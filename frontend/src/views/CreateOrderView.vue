@@ -3625,8 +3625,8 @@ watch(() => form.subsidy_id, async (sid) => {
   try {
     const subsidy = subsidies.value.find(s => s.id === sid)
     if (!subsidy?.org_id) { customerPreview.value = null; return }
-    const orgs = await apiFetch<any[]>('/organizations/')
-    customerPreview.value = orgs.find(o => o.id === subsidy.org_id) ?? null
+    // 27.4-03: GET одной org по id (раньше дёргали list — 403 для employee)
+    customerPreview.value = await apiFetch<any>(`/organizations/${subsidy.org_id}`)
   } catch { customerPreview.value = null }
 }, { immediate: true })
 

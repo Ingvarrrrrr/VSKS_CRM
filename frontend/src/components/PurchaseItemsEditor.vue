@@ -2453,6 +2453,15 @@ async function saveFullProduct() {
     products.value = await apiFetch<Product[]>('/products/')
     if (fullProductIdx.value >= 0) {
       onItemProductSelect(fullProductIdx.value, saved)
+      // 27.4-14: моментальная запись привязки в БД (без ожидания общего «Сохранить»),
+      // иначе после F5 product_id вернётся в null.
+      const linkItem = localItems.value[fullProductIdx.value]
+      if (props.purchaseId && (linkItem as any)?.id && saved.id) {
+        try {
+          await apiFetch(`/purchases/${props.purchaseId}/items/${(linkItem as any).id}/set-product`,
+            { method: 'POST', body: { product_id: saved.id } })
+        } catch (e) { console.warn('Failed to persist product_id link', e) }
+      }
     }
     emit('product-created', saved)
     showSnack(isEdit ? `Товар "${saved.name}" обновлён` : `Товар "${saved.name}" добавлен в каталог`)

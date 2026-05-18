@@ -23,6 +23,7 @@ from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.product_matcher import find_matching_product
 from typing import List, Optional
+from pydantic import BaseModel
 from decimal import Decimal
 from datetime import datetime, date
 from app.models.user_hierarchy import UserHierarchy
@@ -1197,6 +1198,38 @@ async def patch_purchase(
         await db.commit()
         await db.refresh(p)
     return {"id": p.id, "changed": changed}
+
+
+class _SetProductBody(BaseModel):
+    product_id: Optional[int] = None  # None — снять привязку
+
+
+@router.post("/{pid}/items/{item_id}/set-product")
+async def set_item_product(
+    pid: int,
+    item_id: int,
+    body: _SetProductBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """27.4-14: точечная запись PurchaseItem.product_id без full PUT.
+    Вызывается фронтом сразу после «Добавить в каталог» / выбора товара,
+    чтобы привязка пережила F5 без необходимости нажимать общий «Сохранить»."""
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование")
+    it = await db.get(PurchaseItem, item_id)
+    if not it or it.purchase_id != pid:
+        raise HTTPException(404, "Позиция не найдена")
+    if body.product_id is not None:
+        prod = await db.get(Product, body.product_id)
+        if not prod:
+            raise HTTPException(404, "Товар каталога не найден")
+        it.product_id = body.product_id
+        it.match_confirmed = True
+    else:
+        it.product_id = None
+    await db.commit()
+    return {"ok": True, "item_id": item_id, "product_id": it.product_id}
 
 
 @router.delete("/bulk")

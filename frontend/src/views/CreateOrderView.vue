@@ -3087,10 +3087,16 @@
             </v-expansion-panel>
           </v-expansion-panels>
         </v-card-text>
-        <v-card-actions class="pa-4">
-          <v-btn variant="tonal" color="primary" prepend-icon="mdi-book-open-variant"
-            href="/subsidies" target="_self" @click="docErrorDialog = false">
-            Открыть «Шаблоны»
+        <v-card-actions class="pa-4 flex-wrap">
+          <v-btn variant="tonal" color="primary" prepend-icon="mdi-content-copy"
+            @click="copyDocError">
+            Скопировать ошибку
+          </v-btn>
+          <v-btn variant="text" prepend-icon="mdi-file-document-edit-outline"
+            :href="form.subsidy_id ? `/subsidies?openTemplates=${form.subsidy_id}` : '/subsidies'"
+            target="_self" @click="docErrorDialog = false"
+            v-if="docErrorInfo?.template_source?.includes('субсидии') || docErrorInfo?.code === 'TEMPLATE_RENDER_ERROR'">
+            Редактор шаблонов субсидии
           </v-btn>
           <v-spacer />
           <v-btn @click="docErrorDialog = false">Закрыть</v-btn>
@@ -6460,6 +6466,50 @@ const deleteFile = async (fid: number) => {
     showSnack('Файл удалён')
   } catch {
     showSnack('Ошибка удаления', 'error')
+  }
+}
+
+const copyDocError = async () => {
+  if (!docErrorInfo.value) return
+  const i = docErrorInfo.value as any
+  const lines = [
+    'Ошибка генерации документа',
+    `Покупка: #${purchaseId.value} (субсидия id=${form.subsidy_id ?? '—'})`,
+    `Шаблон: ${i.template ?? ''} (${i.template_source ?? ''})`,
+    `Код: ${i.code ?? ''}${i.correlation_id ? ` · correlation_id=${i.correlation_id}` : ''}`,
+    `Класс: ${i.error_class ?? ''}`,
+    '',
+    'Сообщение:',
+    i.message ?? '',
+    '',
+    'Сырой текст:',
+    i.error_raw ?? '',
+  ]
+  if (i.hint) {
+    lines.push('', 'Подсказка:', i.hint)
+  }
+  if (i.traceback) {
+    lines.push('', 'Traceback:', String(i.traceback).slice(0, 4000))
+  }
+  const txt = lines.join('\n')
+  try {
+    await navigator.clipboard.writeText(txt)
+    showSnack('Текст ошибки скопирован в буфер обмена', 'success')
+  } catch {
+    // Fallback для http-контекста или ограничений permission
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = txt
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      showSnack('Текст ошибки скопирован', 'success')
+    } catch {
+      showSnack('Не удалось скопировать. Выделите текст в блоке «Технические детали» и Ctrl+C', 'error')
+    }
   }
 }
 

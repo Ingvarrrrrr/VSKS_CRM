@@ -101,6 +101,18 @@ async def list_subsidies(
     # (POST/PUT/DELETE/templates) remain gated by require_tab('subsidies').
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
     org_ids = get_org_filter(current_user)
+    # 27.4-06: hard fallback для не-SaaS-ролей. Если JWT не содержит org_id/org_ids
+    # И users.org_id = NULL — get_org_filter вернёт None → раньше employee видел ВСЕ
+    # субсидии. Теперь подтягиваем все его memberships из user_organizations; если
+    # их тоже нет — возвращаем пустой список (не привязан → ничего не видит).
+    if org_ids is None and current_user.role not in ('superadmin', 'account_owner'):
+        from app.models.user_organization import UserOrganization
+        uo_rows = (await db.execute(
+            select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
+        )).all()
+        org_ids = list({r[0] for r in uo_rows if r[0]})
+        if not org_ids:
+            return []
     if org_ids is not None:
         q = q.where(Subsidy.org_id.in_(org_ids))
     result = await db.execute(q)

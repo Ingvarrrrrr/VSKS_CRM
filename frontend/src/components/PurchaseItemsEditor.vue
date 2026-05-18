@@ -115,6 +115,11 @@
                     </template>
                   </v-tooltip>
                   <v-icon v-else-if="item.product_id" color="success" icon="mdi-check" size="small" />
+                  <v-tooltip v-else-if="item.item_name" text="Позиция не привязана к каталогу — выберите товар или создайте новый" location="top">
+                    <template #activator="{ props: tip }">
+                      <v-icon v-bind="tip" color="warning" icon="mdi-alert" size="small" />
+                    </template>
+                  </v-tooltip>
                   <v-icon v-else color="grey" icon="mdi-minus" size="small" />
                 </td>
                 <td @click.stop>

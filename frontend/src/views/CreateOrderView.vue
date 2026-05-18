@@ -295,9 +295,9 @@
                 v-model="form.event_id"
                 :items="filteredEvents"
                 item-title="name" item-value="id"
-                label="Мероприятие"
+                label="Мероприятие *"
                 variant="outlined" density="compact"
-                clearable
+                :rules="[v => !!v || 'Обязательное поле']"
                 hint="К какому мероприятию относится закупка" persistent-hint
               />
             </v-col>

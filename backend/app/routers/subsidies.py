@@ -111,6 +111,9 @@ async def list_subsidies(
             select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
         )).all()
         org_ids = list({r[0] for r in uo_rows if r[0]})
+        # Fallback на legacy users.org_id (Багаутдинов и другие до backfill 26-G)
+        if not org_ids and current_user.org_id:
+            org_ids = [current_user.org_id]
         if not org_ids:
             return []
     if org_ids is not None:

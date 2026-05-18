@@ -48,8 +48,19 @@
                 Только в закупках: {{ reconciliation.purchases_only_count }}
               </v-chip>
               <v-spacer />
-              <v-chip size="small" variant="tonal">Всего: {{ reconciliation.total }}</v-chip>
+              <v-chip size="small" variant="tonal">
+                Показано: {{ filteredReconciliationRows.length }} / {{ reconciliation.total }}
+              </v-chip>
             </div>
+
+            <!-- 27.4-22: filter -->
+            <v-text-field
+              v-model="reconciliationFilter"
+              placeholder="Фильтр по получателю / номеру / статусу..."
+              prepend-inner-icon="mdi-magnify"
+              density="compact" variant="outlined" hide-details clearable
+              class="mb-3" />
+
             <v-table density="compact">
               <thead>
                 <tr>
@@ -60,10 +71,11 @@
                   <th>Получатель</th>
                   <th>Закупки</th>
                   <th>Статус</th>
+                  <th style="width:140px">Действие</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="r in reconciliation.rows" :key="r.payment_number"
+                <tr v-for="r in filteredReconciliationRows" :key="r.payment_number"
                     :class="reconciliationRowClass(r.status)">
                   <td><b>{{ r.payment_number }}</b></td>
                   <td class="text-right">{{ formatMoney(r.registry_amount) }}</td>
@@ -83,6 +95,28 @@
                     <v-chip :color="reconciliationStatusColor(r.status)" size="x-small" variant="flat">
                       {{ reconciliationStatusLabel(r.status) }}
                     </v-chip>
+                  </td>
+                  <td>
+                    <v-btn v-if="(r.registry_ids?.length === 1) && r.status !== 'match'"
+                           size="x-small" variant="tonal" color="primary"
+                           prepend-icon="mdi-link-variant"
+                           @click="openMatchFromReconciliation(r.registry_ids[0])">
+                      Привязать
+                    </v-btn>
+                    <v-menu v-else-if="(r.registry_ids?.length || 0) > 1">
+                      <template #activator="{ props: ap }">
+                        <v-btn v-bind="ap" size="x-small" variant="tonal" color="primary"
+                               prepend-icon="mdi-link-variant" append-icon="mdi-menu-down">
+                          Привязать ({{ r.registry_ids.length }})
+                        </v-btn>
+                      </template>
+                      <v-list density="compact">
+                        <v-list-item v-for="bpId in r.registry_ids" :key="bpId"
+                                     :title="`Платёж #${bpId}`"
+                                     @click="openMatchFromReconciliation(bpId)" />
+                      </v-list>
+                    </v-menu>
+                    <span v-else class="text-medium-emphasis">—</span>
                   </td>
                 </tr>
               </tbody>
@@ -1073,6 +1107,8 @@ function openConfirm(item: BankPayment) {
 
 function onUpdated() {
   loadPayments()
+  // 27.4-22: если диалог сверки открыт — перезагружаем счётчики/строки
+  if (reconciliationDialog.value) openReconciliation()
 }
 
 // ── Unbind ───────────────────────────────────────────────────────────────────
@@ -1131,11 +1167,25 @@ function formatMoney(v: number | null | undefined) {
 const reconciliationDialog = ref(false)
 const reconciliationLoading = ref(false)
 const reconciliation = ref<any>(null)
+// 27.4-22: filter + per-row action
+const reconciliationFilter = ref('')
+
+const filteredReconciliationRows = computed(() => {
+  const rows = reconciliation.value?.rows || []
+  const q = reconciliationFilter.value.trim().toLowerCase()
+  if (!q) return rows
+  return rows.filter((r: any) =>
+    (r.payment_number || '').toLowerCase().includes(q) ||
+    (r.registry_payees || []).some((p: string) => p.toLowerCase().includes(q)) ||
+    reconciliationStatusLabel(r.status).toLowerCase().includes(q)
+  )
+})
 
 async function openReconciliation() {
   reconciliationDialog.value = true
   reconciliationLoading.value = true
   reconciliation.value = null
+  reconciliationFilter.value = ''
   try {
     const url = importId.value
       ? `/payments/reconciliation?import_id=${importId.value}`
@@ -1146,6 +1196,12 @@ async function openReconciliation() {
   } finally {
     reconciliationLoading.value = false
   }
+}
+
+function openMatchFromReconciliation(bpId: number) {
+  // Открываем PaymentMatchDialog поверх сверки (диалог-над-диалогом OK)
+  selectedPaymentId.value = bpId
+  matchDialog.value = true
 }
 
 function reconciliationRowClass(status: string): string {

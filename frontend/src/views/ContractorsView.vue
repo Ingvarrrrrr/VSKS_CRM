@@ -33,6 +33,10 @@
           class="mr-2" :loading="enrichAllLoading" @click="enrichAllFromFns">
           Обновить из ЕГРЮЛ
         </v-btn>
+        <v-btn variant="outlined" color="warning" prepend-icon="mdi-content-duplicate"
+               class="mr-2" @click="openDuplicatesDialog">
+          Найти дубли по ИНН
+        </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openAdd">
           Добавить контрагента
         </v-btn>
@@ -598,6 +602,76 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Duplicates by INN dialog ── -->
+    <v-dialog v-model="showDuplicatesDialog" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 pb-2">
+          <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />
+          Дубликаты контрагентов по ИНН
+          <v-chip size="small" class="ml-2" v-if="duplicatesData">
+            {{ duplicatesData.total_groups }} групп / {{ duplicatesData.total_extra }} лишних строк
+          </v-chip>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="showDuplicatesDialog = false" />
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <v-progress-circular v-if="duplicatesLoading" indeterminate color="warning" class="d-block mx-auto my-6" />
+          <v-alert v-else-if="duplicatesError" type="error" variant="tonal" density="compact">
+            {{ duplicatesError }}
+          </v-alert>
+          <v-alert v-else-if="duplicatesData && duplicatesData.groups.length === 0" type="success" variant="tonal" density="compact">
+            Дубликатов по ИНН не найдено
+          </v-alert>
+          <div v-else-if="duplicatesData">
+            <v-expansion-panels variant="accordion" multiple>
+              <v-expansion-panel v-for="group in duplicatesData.groups" :key="group.inn">
+                <v-expansion-panel-title>
+                  <div class="d-flex align-center" style="width:100%">
+                    <v-chip color="warning" size="small" class="mr-2">ИНН {{ group.inn }}</v-chip>
+                    <span>{{ group.count }} записей</span>
+                  </div>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-table density="compact">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Краткое</th>
+                        <th>Полное</th>
+                        <th>КПП</th>
+                        <th>Адрес</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="c in group.contractors" :key="c.id">
+                        <td>{{ c.id }}</td>
+                        <td>{{ c.name }}</td>
+                        <td class="text-caption">{{ c.full_name }}</td>
+                        <td>{{ c.kpp }}</td>
+                        <td class="text-caption">{{ c.address }}</td>
+                        <td>
+                          <v-btn size="x-small" variant="text" color="primary"
+                                 prepend-icon="mdi-open-in-new"
+                                 @click="openContractorCard(c.id)">
+                            Открыть
+                          </v-btn>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </v-table>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="showDuplicatesDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Snackbar ── -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="4000" location="bottom right">
       {{ snack.text }}
@@ -725,6 +799,30 @@ const contractorIgnoredCols   = ref<number[]>([])
 const contractorDragOverTarget = ref<string | null>(null)
 const contractorImportResult  = ref<{ created: number; updated?: number; skipped: number; skipped_empty?: number; update_details?: string[]; errors?: string[] } | null>(null)
 const contractorImportError   = ref('')
+
+const showDuplicatesDialog = ref(false)
+const duplicatesLoading = ref(false)
+const duplicatesError = ref('')
+const duplicatesData = ref<{groups: any[], total_groups: number, total_extra: number} | null>(null)
+
+async function openDuplicatesDialog() {
+  showDuplicatesDialog.value = true
+  duplicatesData.value = null
+  duplicatesError.value = ''
+  duplicatesLoading.value = true
+  try {
+    duplicatesData.value = await apiFetch('/contractors/duplicates-by-inn')
+  } catch (e: any) {
+    duplicatesError.value = e?.payload?.message || e?.message || 'Ошибка загрузки дублей'
+  } finally {
+    duplicatesLoading.value = false
+  }
+}
+
+function openContractorCard(cid: number) {
+  const c = contractors.value.find((x: any) => x.id === cid)
+  if (c) openEdit(c)
+}
 
 const emptyForm = () => ({
   name: '', full_name: '', inn: '', kpp: '', address: '',

@@ -1012,6 +1012,54 @@ async def parse_contractor_file(
     return result
 
 
+@router.get("/duplicates-by-inn")
+async def list_duplicates_by_inn(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_tab('contractors')),
+):
+    """
+    Группирует контрагентов с непустым ИНН, возвращает только группы где count>1.
+    Сортировка: max count first, потом по ИНН.
+    """
+    groups_rows = (await db.execute(
+        select(Contractor.inn, func.count(Contractor.id).label('cnt'))
+        .where(Contractor.inn.isnot(None))
+        .where(func.trim(Contractor.inn) != '')
+        .group_by(Contractor.inn)
+        .having(func.count(Contractor.id) > 1)
+        .order_by(func.count(Contractor.id).desc(), Contractor.inn)
+    )).all()
+
+    if not groups_rows:
+        return {"groups": [], "total_groups": 0, "total_extra": 0}
+
+    inns = [r[0] for r in groups_rows]
+    details = (await db.execute(
+        select(Contractor).where(Contractor.inn.in_(inns)).order_by(Contractor.inn, Contractor.id)
+    )).scalars().all()
+
+    by_inn: dict = {}
+    for c in details:
+        by_inn.setdefault(c.inn, []).append({
+            "id": c.id,
+            "name": c.name or "",
+            "full_name": c.full_name or "",
+            "kpp": c.kpp or "",
+            "address": c.address or "",
+            "ogrn": c.ogrn or "",
+            "org_type": c.org_type or "",
+        })
+
+    out = []
+    total_extra = 0
+    for inn, cnt in groups_rows:
+        contractors = by_inn.get(inn, [])
+        out.append({"inn": inn, "count": cnt, "contractors": contractors})
+        total_extra += cnt - 1
+
+    return {"groups": out, "total_groups": len(out), "total_extra": total_extra}
+
+
 @router.get("/", response_model=List[ContractorOut])
 async def list_contractors(
     db: AsyncSession = Depends(get_db),

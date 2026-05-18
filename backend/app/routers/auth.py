@@ -38,16 +38,17 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             if not org.is_active and user.role not in ('superadmin', 'account_owner'):
                 raise HTTPException(status_code=403, detail="Подписка организации неактивна")
             org_name = org.name
-    # Include contour org_ids in JWT for all non-superadmin users
-    # account_owner: own org + children (root_org_id = own org) + owned orgs
-    # admin/manager/employee: own org + children (if org has children)
-    if user.role != 'superadmin' and user.org_id:
+    # 27.4-08: контурную видимость (root_org_id == user.org_id → все child orgs)
+    # выдаём ТОЛЬКО account_owner. Раньше employee/admin/manager автоматом видели
+    # АНО и другие дочерние орг'и потому что у них root_org_id указывает на ВСКС.
+    # Багаутдинов (employee ВСКС) видел субсидии АНО через JWT.org_ids.
+    if user.role == 'account_owner' and user.org_id:
         from sqlalchemy import or_ as _or
-        contour_filters = [Organization.root_org_id == user.org_id]
-        if user.role == 'account_owner':
-            contour_filters.append(Organization.owner_user_id == user.id)
         contour_result = await db.execute(
-            select(Organization.id).where(_or(*contour_filters))
+            select(Organization.id).where(_or(
+                Organization.root_org_id == user.org_id,
+                Organization.owner_user_id == user.id,
+            ))
         )
         contour_ids = [r[0] for r in contour_result.all()]
         if user.org_id not in contour_ids:

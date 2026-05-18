@@ -5942,14 +5942,15 @@ async function deleteReceipt(id: number) {
 // ---------------------------------------------------------------------------
 // Autosave draft for new purchases
 // ---------------------------------------------------------------------------
-const DRAFT_KEY = 'purchase_form_draft'
+// 27.4-04: ключ scoped per-user — иначе чужой черновик виден после смены логина в том же браузере.
+const draftKey = () => `purchase_form_draft_u${localStorage.getItem('user_id') || '0'}`
 const draftSaved = ref(false)
-const hasDraft = computed(() => !!localStorage.getItem(DRAFT_KEY))
+const hasDraft = computed(() => !!localStorage.getItem(draftKey()))
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function saveDraft() {
   if (isEdit.value) return
-  localStorage.setItem(DRAFT_KEY, JSON.stringify({ form: { ...form }, items: items.value, contractorInn: contractorInn.value }))
+  localStorage.setItem(draftKey(), JSON.stringify({ form: { ...form }, items: items.value, contractorInn: contractorInn.value }))
   draftSaved.value = true
   setTimeout(() => { draftSaved.value = false }, 2000)
 }
@@ -5957,7 +5958,9 @@ function saveDraft() {
 async function loadDraft() {
   if (isEdit.value) return
   try {
-    const raw = localStorage.getItem(DRAFT_KEY)
+    // 27.4-04: чистим легаси ключ без user_id (мог содержать чужой черновик)
+    try { localStorage.removeItem('purchase_form_draft') } catch {}
+    const raw = localStorage.getItem(draftKey())
     if (!raw) return
     const draft = JSON.parse(raw)
     const formData = draft.form || draft
@@ -5984,7 +5987,9 @@ async function loadDraft() {
 }
 
 function clearDraft() {
-  localStorage.removeItem(DRAFT_KEY)
+  localStorage.removeItem(draftKey())
+  // 27.4-04: чистим легаси ключ (без user_id) тоже
+  try { localStorage.removeItem('purchase_form_draft') } catch {}
 }
 
 watch(form, () => {

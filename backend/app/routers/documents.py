@@ -1406,7 +1406,9 @@ async def generate_document(
         "contract_date_year":  cd_year,
         # Тип контрагента
         "contractor_org_type": (c.org_type or "") if c else "",
-        "contractor_short_name": _short_name(c.name) if c and c.name else "",
+        # Phase 27.2-08: краткое название = поле "Краткое наименование *" из карточки контрагента
+        # напрямую (Contractor.name), без вытаскивания из кавычек.
+        "contractor_short_name": (c.name or "") if c else "",
         "contractor_signatory_position": _signatory_position(c.signatory) if c else "",
         # Предмет (сервисное имя)
         "service_name": p.subject or "",
@@ -1482,8 +1484,10 @@ async def generate_document(
         "customer_full_name":    _g(customer_org.full_name if customer_org else None,
                                     customer_ctr.name if customer_ctr else None,
                                     customer_org.name if customer_org else None),
-        "customer_short_name":   _short_name(_g(customer_org.name if customer_org else None,
-                                                 customer_ctr.name if customer_ctr else None)) or "",
+        # Phase 27.2-08: краткое название Заказчика = поле "Краткое наименование" из карточки
+        # организации/контрагента напрямую, без вытаскивания из кавычек.
+        "customer_short_name":   _g(customer_org.name if customer_org else None,
+                                    customer_ctr.name if customer_ctr else None),
         "customer_address":      _g(customer_org.address if customer_org else None,
                                     customer_ctr.address if customer_ctr else None),
         "customer_postal_address": _g(customer_ctr.postal_address if customer_ctr else None,
@@ -2127,7 +2131,7 @@ TEMPLATE_VARIABLES = [
     ("", "ЗАКАЗЧИК", "", ""),
     ("{{customer_name}}", "Краткое название организации Заказчика", "{{customer_name}}", "АНО «ВСКС»"),
     ("{{customer_full_name}}", "Полное наименование", "{{customer_full_name}}", "Автономная некоммерческая организация «ВСКС»"),
-    ("{{customer_short_name}}", "Из кавычек: «...»", "{{customer_short_name}}", "ВСКС"),
+    ("{{customer_short_name}}", "Краткое наименование Заказчика (из карточки организации)", "{{customer_short_name}}", "АНО «ВСКС»"),
     ("{{customer_address}}", "Юридический адрес", "{{customer_address}}", "г. Москва, ул. Ленина, д. 1"),
     ("{{customer_postal_address}}", "Почтовый адрес", "{{customer_postal_address}}", "г. Москва, ул. Ленина, д. 1"),
     ("{{customer_inn}}", "ИНН Заказчика", "{{customer_inn}}", "7700000001"),
@@ -2149,7 +2153,7 @@ TEMPLATE_VARIABLES = [
     # ── Контрагент ──
     ("", "КОНТРАГЕНТ (ИСПОЛНИТЕЛЬ)", "", ""),
     ("{{contractor_name}}", "Полное наименование контрагента", "{{contractor_name}}", "ООО «Ромашка»"),
-    ("{{contractor_short_name}}", "Краткое наименование", "{{contractor_short_name}}", "Ромашка"),
+    ("{{contractor_short_name}}", "Краткое наименование Подрядчика (из карточки контрагента)", "{{contractor_short_name}}", "ООО «Ромашка»"),
     ("{{contractor_org_type}}", "Тип организации", "{{contractor_org_type}}", "Юр.лицо"),
     ("{{contractor_inn}}", "ИНН контрагента", "{{contractor_inn}}", "7701234567"),
     ("{{contractor_kpp}}", "КПП контрагента", "{{contractor_kpp}}", "770101001"),

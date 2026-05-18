@@ -14,6 +14,7 @@ from app.auth.permissions import (
     require_action,
     require_tab,
     ensure_user_org_access,
+    _active_org,
 )
 from typing import List, Optional
 
@@ -435,6 +436,116 @@ async def delete_my_signature(
     current_user.signature_image = None
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/me/visibility-debug")
+async def visibility_debug(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """27.4-11: диагностика «почему вижу X / могу Y» для current_user.
+
+    Возвращает: JWT-источники org_id, user_organizations memberships,
+    resolved org_ids фильтра, метаданные всех орг (name+inn+root+owner),
+    список всех видимых субсидий с org meta, effective tabs+actions.
+
+    Для диагностики чужих видимых субсидий — смотреть visible_subsidies[].org_id
+    vs legacy_users_org_id: если совпадает → data issue (Subsidy.org_id ошибочно
+    указывает на чужую org).
+    """
+    from app.models.organization import Organization
+    from app.models.subsidy import Subsidy
+    from app.models.user_organization import UserOrganization
+    from app.auth.permissions import get_effective_actions, get_effective_tabs, _active_org
+
+    jwt_org_id = getattr(current_user, '_active_org_id', None)
+    jwt_org_ids = getattr(current_user, '_active_org_ids', None)
+    legacy_org_id = current_user.org_id
+
+    uo_rows = (await db.execute(
+        select(UserOrganization.org_id, UserOrganization.position, UserOrganization.dept_id)
+        .where(UserOrganization.user_id == current_user.id)
+    )).all()
+
+    resolved_org_ids = get_org_filter(current_user)
+
+    all_org_ids = set()
+    for v in (jwt_org_id, legacy_org_id):
+        if v:
+            all_org_ids.add(v)
+    if jwt_org_ids:
+        all_org_ids.update(jwt_org_ids)
+    if resolved_org_ids:
+        all_org_ids.update(resolved_org_ids)
+    all_org_ids.update(r[0] for r in uo_rows if r[0])
+
+    orgs_meta = {}
+    if all_org_ids:
+        rows = (await db.execute(
+            select(
+                Organization.id, Organization.name, Organization.inn,
+                Organization.root_org_id, Organization.owner_user_id,
+            ).where(Organization.id.in_(all_org_ids))
+        )).all()
+        orgs_meta = {
+            r[0]: {"name": r[1], "inn": r[2], "root_org_id": r[3], "owner_user_id": r[4]}
+            for r in rows
+        }
+
+    q = select(Subsidy.id, Subsidy.name, Subsidy.org_id).order_by(Subsidy.id)
+    if resolved_org_ids is not None:
+        q = q.where(Subsidy.org_id.in_(resolved_org_ids))
+    visible_subs_raw = (await db.execute(q)).all()
+
+    sub_org_ids = {s[2] for s in visible_subs_raw if s[2]}
+    sub_org_meta = {}
+    if sub_org_ids:
+        rows = (await db.execute(
+            select(Organization.id, Organization.name, Organization.inn)
+            .where(Organization.id.in_(sub_org_ids))
+        )).all()
+        sub_org_meta = {r[0]: {"name": r[1], "inn": r[2]} for r in rows}
+
+    visible_subsidies = [
+        {
+            "id": s[0],
+            "name": s[1],
+            "org_id": s[2],
+            "org_name": sub_org_meta.get(s[2], {}).get("name") if s[2] else None,
+            "org_inn": sub_org_meta.get(s[2], {}).get("inn") if s[2] else None,
+        }
+        for s in visible_subs_raw
+    ]
+
+    active_org = _active_org(current_user)
+    tabs = await get_effective_tabs(current_user, db, active_org)
+    actions = await get_effective_actions(current_user, db, active_org)
+
+    return {
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "full_name": current_user.full_name,
+            "role": current_user.role,
+            "legacy_users_org_id": legacy_org_id,
+        },
+        "jwt": {
+            "_active_org_id": jwt_org_id,
+            "_active_org_ids": jwt_org_ids,
+        },
+        "user_organizations": [
+            {"org_id": r[0], "position": r[1], "dept_id": r[2]} for r in uo_rows
+        ],
+        "resolved_org_ids_for_filter": resolved_org_ids,
+        "organizations_meta": orgs_meta,
+        "visible_subsidies": visible_subsidies,
+        "visible_subsidies_count": len(visible_subsidies),
+        "effective": {
+            "tabs": sorted(tabs),
+            "actions": sorted(actions),
+            "purchase_status_change_granted": "purchase.status_change" in actions,
+        },
+    }
 
 
 @router.get("/me/photo")

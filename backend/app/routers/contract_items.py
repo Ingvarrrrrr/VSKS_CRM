@@ -94,7 +94,9 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
         if payload.get("source_item_id") and payload["source_item_id"] not in existing_src_ids:
             payload.pop("source_item_id", None)
         if not payload.get("product_id") and payload.get("name"):
-            matched = await find_matching_product(db, payload["name"], org_id=p.org_id)
+            # 27.4-16: Purchase не имеет .org_id напрямую (org через subsidy).
+            # Поиск без org_id — каталог общий для всех орг.
+            matched = await find_matching_product(db, payload["name"])
             if matched:
                 payload["product_id"] = matched.id
                 payload["match_confirmed"] = False

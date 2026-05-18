@@ -96,13 +96,17 @@ async def transition_status(
     current_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else 0
     target_idx = STATUS_ORDER.index(target_status)
 
-    # Role check: only manager+ can transition; 27.4-09: advance owner — exception
+    # 27.4-10: permission 'purchase.status_change' gates transition.
+    # Bypass: advance owner (reimbursement_user_id == current_user.id) always allowed.
     is_advance_owner = (
         getattr(p, 'purchase_method', None) == 'advance'
         and getattr(p, 'reimbursement_user_id', None) == current_user.id
     )
-    if not is_advance_owner and current_user.role not in MANAGER_ROLES:
-        raise HTTPException(403, "Недостаточно прав для смены статуса")
+    if not is_advance_owner:
+        from app.auth.permissions import get_effective_actions, _active_org
+        actions = await get_effective_actions(current_user, db, _active_org(current_user))
+        if 'purchase.status_change' not in actions:
+            raise HTTPException(403, "Нужно разрешение «Изменение статуса закупки»")
 
     # Direction check: forward-only for non-admin
     if target_idx <= current_idx:

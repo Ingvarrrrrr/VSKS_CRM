@@ -450,6 +450,38 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 26-Q permission seed skipped (non-fatal): {e}")
 
+    # Phase 27.4-10: idempotent seed для action 'purchase.status_change'
+    # Дефолт: admin/manager/account_owner/superadmin=TRUE; employee=FALSE.
+    # Управляет возможностью двигать статусы закупок в Канбане и через /transition.
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'purchase.status_change'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Изменение статуса закупки',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', True), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 27.4-10 purchase.status_change seed skipped (non-fatal): {e}")
+
     # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
     try:
         from sqlalchemy import select as _sel

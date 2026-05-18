@@ -250,11 +250,17 @@ async def kanban_status_change(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
 
-    # Only assigned user, managers or admins can change status
-    is_assigned = p.assigned_user_id == current_user.id
-    is_admin_or_manager = current_user.role in MANAGER_ROLES
-    if not is_assigned and not is_admin_or_manager:
-        raise HTTPException(403, "Недостаточно прав")
+    # 27.4-10: permission 'purchase.status_change' gates kanban drag.
+    # Bypass: advance owner (reimbursement_user_id == current_user.id) always allowed.
+    is_advance_owner = (
+        getattr(p, 'purchase_method', None) == 'advance'
+        and getattr(p, 'reimbursement_user_id', None) == current_user.id
+    )
+    if not is_advance_owner:
+        from app.auth.permissions import get_effective_actions, _active_org
+        actions = await get_effective_actions(current_user, db, _active_org(current_user))
+        if 'purchase.status_change' not in actions:
+            raise HTTPException(403, "Нужно разрешение «Изменение статуса закупки»")
 
     old_status = p.status
     p.status = target_status

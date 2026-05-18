@@ -2199,6 +2199,7 @@ TEMPLATE_VARIABLES = [
     ("{{delivery_date}}", "Дата поставки", "{{delivery_date}}", "20.01.2026"),
     ("{{country_origin}}", "Страна происхождения", "{{country_origin}}", "Российская Федерация"),
     ("{{service_name}}", "Предмет (синоним subject)", "{{service_name}}", "Оказание услуг связи"),
+    ("{{service_name_gen}}", "Предмет в родительном падеже («Прошу осуществить закупку ...»)", "{{service_name_gen}}", "оказания услуг связи"),
     ("{{period_type}}", "Тип срока", "{{period_type}}", "date"),
     ("{{service_start_date}}", "Начало оказания услуг", "{{service_start_date}}", "15.01.2026"),
     ("{{service_end_date}}", "Конец оказания услуг", "{{service_end_date}}", "28.02.2026"),

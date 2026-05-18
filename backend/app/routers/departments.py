@@ -263,7 +263,7 @@ async def update_department(
     await db.refresh(dept)
     # If name changed, sync users.department for all members
     if "name" in update and dept.name != old_name:
-        member_ids_q = select(DepartmentMember.user_id).where(DepartmentMember.dept_id == dept_id)
+        member_ids_q = select(DepartmentMember.user_id).where(DepartmentMember.department_id == dept_id)
         await db.execute(
             sa_update(User).where(User.id.in_(member_ids_q)).values(department=dept.name)
         )

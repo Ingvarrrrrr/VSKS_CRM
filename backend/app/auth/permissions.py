@@ -216,3 +216,28 @@ def require_action(action_key: str):
         return user
 
     return checker
+
+
+async def can_manage_purchase(user, purchase, db) -> bool:
+    """27.4-09: True если user имеет право управлять данной закупкой.
+
+    Правила:
+    - superadmin → всегда
+    - admin/account_owner → если purchase видим (через build_visibility_clause)
+    - Любой user → если он автор авансового отчёта (purchase_method='advance' AND reimbursement_user_id == user.id)
+    - manager → если purchase видим И user имеет tab 'purchases'
+    - employee → только свои авансовые отчёты (см. выше)
+    """
+    if not purchase:
+        return False
+    if user.role == 'superadmin':
+        return True
+    # Owner авансового — всегда
+    if (getattr(purchase, 'purchase_method', None) == 'advance'
+            and getattr(purchase, 'reimbursement_user_id', None) == user.id):
+        return True
+    # Manager+ с tab 'purchases'
+    effective = await _get_effective(user, db, _active_org(user))
+    if 'purchases' in effective and user.role in ('admin', 'manager', 'account_owner'):
+        return True
+    return False

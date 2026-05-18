@@ -1225,11 +1225,19 @@ async def bulk_delete_purchases(
 
 
 @router.delete("/{pid}")
-async def delete_purchase(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_tab('purchases'))):
+async def delete_purchase(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Not found")
+    # 27.4-09: авансовый owner может удалить свой отчёт; остальным нужен tab 'purchases'
+    from app.auth.permissions import can_manage_purchase
+    if not await can_manage_purchase(current_user, p, db):
+        raise HTTPException(403, "Нет прав на удаление этой закупки")
     await db.delete(p)
     await db.commit()
     return {"ok": True}

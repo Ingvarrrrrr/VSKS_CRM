@@ -601,6 +601,36 @@ def _repair_docx_template(path: str) -> list[str]:
 
             fixed = re.sub(r'\{\{([^}]+)\}\}', _clean_tag, full)
 
+            # Fix: {{полностью_русский текст}} — снимаем маркеры, оставляем текст
+            def _strip_if_all_non_ascii(m):
+                inner = m.group(1).strip()
+                if not inner:
+                    return m.group(0)
+                # Если ни одного ASCII-идентификаторного символа — это ремарка, не переменная
+                if not re.search(r'[a-zA-Z_]', inner):
+                    return inner
+                return m.group(0)
+            fixed = re.sub(r'\{\{([^}]+)\}\}', _strip_if_all_non_ascii, fixed)
+
+            # Fix: {% русский текст %} — снимаем маркеры если не Jinja keyword
+            _JINJA_KEYWORDS = {
+                'if', 'else', 'elif', 'endif', 'for', 'endfor', 'set',
+                'with', 'endwith', 'tr', 'block', 'endblock', 'macro',
+                'endmacro', 'include', 'extends', 'import', 'from',
+                'do', 'raw', 'endraw', 'call', 'endcall', 'filter',
+                'endfilter', 'autoescape', 'endautoescape',
+            }
+            def _strip_pct_if_no_keyword(m):
+                inner = m.group(1).strip().lstrip('-').rstrip('-').strip()
+                if not inner:
+                    return m.group(0)
+                first = inner.split()[0].lower() if inner.split() else ''
+                # Если первое слово — не Jinja keyword И не похоже на ASCII identifier — ремарка
+                if first not in _JINJA_KEYWORDS and not re.match(r'^[a-zA-Z_]', first):
+                    return inner
+                return m.group(0)
+            fixed = re.sub(r'\{%([^%]+)%\}', _strip_pct_if_no_keyword, fixed)
+
             # Fix doubled text like "г. г." that can result from prior fixes
             fixed = re.sub(r'(\b\w+\.)\s+\1', r'\1', fixed)
 
@@ -763,6 +793,12 @@ async def normalize_all_existing_templates(
                 try:
                     stats = _normalize_docx_template(fpath)
                     processed.append({"path": fpath, "stripped": stats})
+                    try:
+                        repairs = _repair_docx_template(fpath)
+                        if repairs:
+                            processed[-1]["repairs"] = repairs
+                    except Exception as re_err:
+                        errors.append({"path": fpath, "error": f"repair: {re_err}"})
                 except Exception as e:
                     errors.append({"path": fpath, "error": str(e)})
 

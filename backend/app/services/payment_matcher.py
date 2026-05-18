@@ -169,6 +169,22 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
             if matched_purchase:
                 break
 
+        # 27.4-19: amount-based exact match — если ровно одна закупка точно совпадает
+        # по сумме с платежом (contract_price ИЛИ planned_total_price ИЛИ total_nmck)
+        # → авто-привязка. Покрывает Юг-Логистика case: платёж 12090.25 → закупка 775 на 12090.25.
+        if not matched_purchase and bp.amount is not None:
+            from decimal import Decimal as _Dec
+            bp_amt = _Dec(str(bp.amount))
+            exact_matches = []
+            for p in purchases:
+                for fld in (p.contract_price, p.planned_total_price, p.total_nmck):
+                    if fld is not None and _Dec(str(fld)) == bp_amt:
+                        exact_matches.append(p)
+                        break
+            if len(exact_matches) == 1:
+                bp.matched_purchase_id = exact_matches[0].id
+                matched_purchase = True
+
         # Fallback: если у Contract ровно 1 Purchase — авто-привязка
         if not matched_purchase and len(purchases) == 1:
             bp.matched_purchase_id = purchases[0].id

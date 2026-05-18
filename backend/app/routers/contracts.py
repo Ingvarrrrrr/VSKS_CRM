@@ -57,7 +57,9 @@ async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
         if v:
             c.subject = v
             filled += 1
-    if c.max_amount is None:
+    # 27.4-19: framework_cumulative (накопительный) НЕ имеет max_amount —
+    # пропускаем enrich этого поля чтобы не воскрешать «Превышен лимит» после 27.4-17.
+    if c.max_amount is None and c.contract_type != 'framework_cumulative':
         v = p.total_nmck or p.contract_price or p.planned_total_price
         if v is not None:
             c.max_amount = v

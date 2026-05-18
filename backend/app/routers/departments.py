@@ -230,7 +230,9 @@ async def create_department(
         org_id = data.org_id
     else:
         org_id = get_single_org_id(current_user) or current_user.org_id
-    norm_name = data.name.strip().title() if data.name else data.name
+    # 27.4-02: НЕ применяем .title() — он ломает аббревиатуры («отдел МТО» → «Отдел Мто»).
+    # Сохраняем регистр как ввёл пользователь.
+    norm_name = data.name.strip() if data.name else data.name
     dept = Department(
         name=norm_name, org_id=org_id,
         subsidy_id=data.subsidy_id, head_user_id=data.head_user_id,
@@ -256,7 +258,7 @@ async def update_department(
     old_head = dept.head_user_id
     update = data.dict(exclude_unset=True)
     if "name" in update and update["name"]:
-        update["name"] = update["name"].strip().title()
+        update["name"] = update["name"].strip()
     for k, v in update.items():
         setattr(dept, k, v)
     await db.commit()
@@ -827,7 +829,7 @@ async def import_departments_excel(
             if existing:
                 dept_cache[key] = existing
             else:
-                dept = Department(name=dept_name.strip().title(), org_id=org_id, subsidy_id=subsidy_id)
+                dept = Department(name=dept_name.strip(), org_id=org_id, subsidy_id=subsidy_id)
                 db.add(dept)
                 await db.flush()
                 dept_cache[key] = dept

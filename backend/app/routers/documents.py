@@ -1472,6 +1472,23 @@ async def generate_document(
     context["responsible_name_gen"] = _to_gen_fio(resolved_responsible)
     context["responsible_position_gen"] = _to_gen_phrase(p.responsible_position or "" if hasattr(p, "responsible_position") else "")
 
+    # Phase 27.2-10: дедуп тавтологии "отдел Отдела ..." + gent для отдела
+    # Если в должности уже есть корень "отдел*" — убираем leading "Отдел*" из имени отдела.
+    # Пример: «Заместитель начальника отдела» + «Отдела МТО» → «МТО».
+    import re as _re_dept
+    def _strip_redundant_dept_word(position: str, dept: str) -> str:
+        if not dept or not position:
+            return dept or ""
+        if not _re_dept.search(r'\bотдел\w*', position.lower()):
+            return dept
+        return _re_dept.sub(r'^отдел\w*\s+', '', dept, count=1, flags=_re_dept.IGNORECASE)
+
+    _init_pos = context.get("initiator_role", "") or ""
+    _init_dept_raw = context.get("initiator_dept", "") or ""
+    _init_dept_clean = _strip_redundant_dept_word(_init_pos, _init_dept_raw)
+    context["initiator_dept"] = _init_dept_clean
+    context["initiator_dept_gen"] = _inflect_phrase_genitive(_init_dept_clean)
+
     # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
     def _g(*sources, default=""):
         """Coalesce — return first non-empty value."""
@@ -2295,6 +2312,7 @@ TEMPLATE_VARIABLES = [
     ("", "РОДИТЕЛЬНЫЙ ПАДЕЖ (Phase 26-V)", "", ""),
     ("{{initiator_name_gen}}", "ФИО инициатора в родительном падеже", "{{initiator_name_gen}}", "Иванова И.И."),
     ("{{initiator_position_gen}}", "Должность инициатора в родительном падеже", "{{initiator_position_gen}}", "начальника отдела"),
+    ("{{initiator_dept_gen}}", "Отдел инициатора в родительном падеже (с авто-удалением дубля «Отдел» если он уже есть в должности)", "{{initiator_dept_gen}}", "мто"),
     ("{{responsible_name_gen}}", "ФИО ответственного в родительном падеже", "{{responsible_name_gen}}", "Петрова П.П."),
     ("{{responsible_position_gen}}", "Должность ответственного в родительном падеже", "{{responsible_position_gen}}", "главного специалиста"),
     ("{{a.full_name_gen}}", "ФИО согласующего в родительном падеже (внутри цикла)", "{{a.full_name_gen}}", "Сидорова С.С."),

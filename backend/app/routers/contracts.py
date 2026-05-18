@@ -157,12 +157,26 @@ async def list_contracts(
             .where(Purchase.contract_id == c.id)
         )
         total_ordered = ordered_result.scalar() or Decimal("0")
-        # SUM(delivery_payment_amount) — total delivered
-        delivered_result = await db.execute(
-            select(func.coalesce(func.sum(Purchase.delivery_payment_amount), 0))
+        # 27.4-18: total_delivered — приоритет JSONB acceptance_docs[].amount
+        # (после Phase 26-H legacy delivery_payment_amount/acceptance_doc_amount = NULL
+        # для всех новых закупок, агрегат показывал 0 при реально поставленных).
+        delivered_rows = (await db.execute(
+            select(Purchase.delivery_payment_amount, Purchase.acceptance_docs)
             .where(Purchase.contract_id == c.id)
-        )
-        total_delivered = delivered_result.scalar() or Decimal("0")
+        )).all()
+        total_delivered = Decimal("0")
+        for dpa, docs in delivered_rows:
+            if dpa is not None:
+                total_delivered += Decimal(str(dpa))
+                continue
+            if docs:
+                try:
+                    docs_list = docs if isinstance(docs, list) else []
+                    for doc_entry in docs_list:
+                        if isinstance(doc_entry, dict) and doc_entry.get('amount') is not None:
+                            total_delivered += Decimal(str(doc_entry['amount']))
+                except Exception:
+                    pass
         # SUM(payment_amount) — total paid (only for paid-status purchases)
         paid_result = await db.execute(
             select(func.coalesce(func.sum(Purchase.payment_amount), 0))

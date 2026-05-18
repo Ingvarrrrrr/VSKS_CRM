@@ -250,13 +250,32 @@ async def kanban_status_change(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
 
-    # 27.4-10: permission 'purchase.status_change' gates kanban drag.
-    # Bypass: advance owner (reimbursement_user_id == current_user.id) always allowed.
+    # 27.4-12: advance owner bypass — ограничен.
+    # Сотрудник (даже владелец авансового) может двигать ТОЛЬКО forward
+    # и ТОЛЬКО когда покупка уже подтверждена руководством (confirmed+).
     is_advance_owner = (
         getattr(p, 'purchase_method', None) == 'advance'
         and getattr(p, 'reimbursement_user_id', None) == current_user.id
     )
-    if not is_advance_owner:
+    is_manager_plus = current_user.role in MANAGER_ROLES
+    current_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else -1
+    target_idx = STATUS_ORDER.index(target_status)
+    CONFIRMED_IDX = STATUS_ORDER.index("confirmed")
+
+    if is_advance_owner and not is_manager_plus:
+        if current_idx < CONFIRMED_IDX:
+            raise HTTPException(
+                403,
+                "Покупка должна быть подтверждена руководством "
+                "(статус «Подтверждено» или позже) перед изменением сотрудником"
+            )
+        if target_idx <= current_idx:
+            raise HTTPException(
+                403,
+                "Сотрудник может двигать статус только вперёд. "
+                "Откат разрешён только администратору"
+            )
+    elif not is_manager_plus:
         from app.auth.permissions import get_effective_actions, _active_org
         actions = await get_effective_actions(current_user, db, _active_org(current_user))
         if 'purchase.status_change' not in actions:

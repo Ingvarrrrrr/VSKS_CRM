@@ -403,6 +403,37 @@ async def match_bank_payment(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/payments/reconciliation — сверка реестр vs привязанные платежи
+# ---------------------------------------------------------------------------
+
+@router.get("/reconciliation")
+async def reconciliation(
+    import_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_action("payment.confirm")),
+):
+    """27.4-21: построчная сверка по payment_number.
+
+    Возвращает список строк с status:
+    - match (зелёный): есть в реестре и в закупках, суммы совпадают
+    - amount_mismatch (красный): есть в обоих, суммы разные
+    - registry_only (красный): orphan — есть в реестре, нигде не привязан
+    - purchases_only (жёлтый): привязан вручную к закупке, в реестре отсутствует
+    """
+    from app.services.payment_reconciliation import build_reconciliation
+    rows = await build_reconciliation(db, import_id=import_id)
+    return {
+        "import_id": import_id,
+        "total": len(rows),
+        "match_count": sum(1 for r in rows if r["status"] == "match"),
+        "mismatch_count": sum(1 for r in rows if r["status"] == "amount_mismatch"),
+        "registry_only_count": sum(1 for r in rows if r["status"] == "registry_only"),
+        "purchases_only_count": sum(1 for r in rows if r["status"] == "purchases_only"),
+        "rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /api/payments/registry/{bp_id}/match-suggestions — кандидаты для матчинга
 # ---------------------------------------------------------------------------
 

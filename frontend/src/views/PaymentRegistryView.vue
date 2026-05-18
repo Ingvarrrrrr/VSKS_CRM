@@ -9,10 +9,92 @@
         </h1>
         <span class="text-body-2 text-medium-emphasis">{{ totalCount }} записей</span>
       </div>
-      <v-btn prepend-icon="mdi-view-column" variant="outlined" color="primary" @click="showColumnPicker = true">
-        Колонки
-      </v-btn>
+      <div class="d-flex ga-2">
+        <v-btn prepend-icon="mdi-table-check" variant="outlined" color="warning" @click="openReconciliation">
+          Сверка платежей
+        </v-btn>
+        <v-btn prepend-icon="mdi-view-column" variant="outlined" color="primary" @click="showColumnPicker = true">
+          Колонки
+        </v-btn>
+      </div>
     </div>
+
+    <!-- 27.4-21: Reconciliation dialog -->
+    <v-dialog v-model="reconciliationDialog" max-width="1100" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 pb-2">
+          <v-icon start color="warning">mdi-table-check</v-icon>
+          Сверка платежей: реестр vs закупки
+          <span v-if="importId" class="text-caption text-medium-emphasis ml-2">Импорт #{{ importId }}</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="reconciliationDialog = false" />
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <div v-if="reconciliationLoading" class="d-flex justify-center py-6">
+            <v-progress-circular indeterminate color="warning" />
+          </div>
+          <div v-else-if="reconciliation">
+            <div class="d-flex ga-2 mb-3">
+              <v-chip color="success" variant="tonal" size="small" prepend-icon="mdi-check">
+                Совпало: {{ reconciliation.match_count }}
+              </v-chip>
+              <v-chip color="error" variant="tonal" size="small" prepend-icon="mdi-currency-rub">
+                Расходятся суммы: {{ reconciliation.mismatch_count }}
+              </v-chip>
+              <v-chip color="error" variant="tonal" size="small" prepend-icon="mdi-alert">
+                Только в реестре: {{ reconciliation.registry_only_count }}
+              </v-chip>
+              <v-chip color="warning" variant="tonal" size="small" prepend-icon="mdi-help">
+                Только в закупках: {{ reconciliation.purchases_only_count }}
+              </v-chip>
+              <v-spacer />
+              <v-chip size="small" variant="tonal">Всего: {{ reconciliation.total }}</v-chip>
+            </div>
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th>№ платежа</th>
+                  <th class="text-right">Реестр (₽)</th>
+                  <th class="text-right">Привязано (₽)</th>
+                  <th class="text-right">Δ (₽)</th>
+                  <th>Получатель</th>
+                  <th>Закупки</th>
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in reconciliation.rows" :key="r.payment_number"
+                    :class="reconciliationRowClass(r.status)">
+                  <td><b>{{ r.payment_number }}</b></td>
+                  <td class="text-right">{{ formatMoney(r.registry_amount) }}</td>
+                  <td class="text-right">{{ formatMoney(r.purchases_amount) }}</td>
+                  <td class="text-right" :class="r.amount_diff > 0.02 ? 'text-error font-weight-bold' : ''">
+                    {{ r.amount_diff > 0.02 ? formatMoney(r.amount_diff) : '—' }}
+                  </td>
+                  <td class="text-caption">{{ (r.registry_payees || []).join(', ') || '—' }}</td>
+                  <td>
+                    <a v-for="pid in (r.linked_purchase_ids || [])" :key="pid"
+                       :href="`/orders/${pid}/edit`" target="_blank" class="mr-1">
+                      <v-chip size="x-small" color="primary" variant="tonal">#{{ pid }}</v-chip>
+                    </a>
+                    <span v-if="!(r.linked_purchase_ids || []).length" class="text-medium-emphasis">—</span>
+                  </td>
+                  <td>
+                    <v-chip :color="reconciliationStatusColor(r.status)" size="x-small" variant="flat">
+                      {{ reconciliationStatusLabel(r.status) }}
+                    </v-chip>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="reconciliationDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Stale parsed alert: записи где parsed_contract_number совпадает с номером субсидии -->
     <v-alert
@@ -1043,6 +1125,51 @@ function fmtDate(d: string | null) {
 function formatMoney(v: number | null | undefined) {
   if (v == null) return '—'
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(v)
+}
+
+// 27.4-21: Reconciliation state + helpers
+const reconciliationDialog = ref(false)
+const reconciliationLoading = ref(false)
+const reconciliation = ref<any>(null)
+
+async function openReconciliation() {
+  reconciliationDialog.value = true
+  reconciliationLoading.value = true
+  reconciliation.value = null
+  try {
+    const url = importId.value
+      ? `/payments/reconciliation?import_id=${importId.value}`
+      : '/payments/reconciliation'
+    reconciliation.value = await apiFetch<any>(url)
+  } catch (e: any) {
+    error('Ошибка сверки: ' + (e?.payload?.message || e?.message || ''))
+  } finally {
+    reconciliationLoading.value = false
+  }
+}
+
+function reconciliationRowClass(status: string): string {
+  if (status === 'amount_mismatch' || status === 'registry_only') return 'bg-red-lighten-5'
+  if (status === 'purchases_only') return 'bg-amber-lighten-5'
+  return ''
+}
+
+function reconciliationStatusColor(status: string): string {
+  if (status === 'match') return 'success'
+  if (status === 'amount_mismatch') return 'error'
+  if (status === 'registry_only') return 'error'
+  if (status === 'purchases_only') return 'warning'
+  return 'grey'
+}
+
+function reconciliationStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    match: 'OK',
+    amount_mismatch: 'Расхождение сумм',
+    registry_only: 'Только в реестре',
+    purchases_only: 'Только в закупках',
+  }
+  return labels[status] || status
 }
 
 function statusColor(s: string | null) {

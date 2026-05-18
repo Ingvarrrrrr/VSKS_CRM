@@ -646,7 +646,7 @@
             <v-col cols="12">
               <v-text-field v-model="dialog.form.subject" label="Предмет" variant="outlined" density="compact" />
             </v-col>
-            <v-col cols="12" md="6">
+            <v-col v-if="dialog.form.contract_type !== 'framework_cumulative'" cols="12" md="6">
               <v-text-field v-model.number="dialog.form.max_amount" label="Предельная сумма, ₽" type="number" variant="outlined" density="compact" />
             </v-col>
             <v-col cols="12" md="6">

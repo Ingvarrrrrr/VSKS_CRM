@@ -235,6 +235,10 @@ async def create_contract(
     extra_ids = data.extra_subsidy_ids or []
     dump = data.model_dump(exclude={"extra_subsidy_ids"})
     c = Contract(**dump)
+    # 27.4-17: framework_cumulative (накопительный) НЕ имеет предельной суммы —
+    # обнуляем max_amount чтобы не получался ложный «Превышен лимит».
+    if c.contract_type == 'framework_cumulative':
+        c.max_amount = None
     db.add(c)
     await db.flush()
 
@@ -282,6 +286,10 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     extra_ids = data.extra_subsidy_ids or []
     for k, v in data.model_dump(exclude={"extra_subsidy_ids"}).items():
         setattr(c, k, v)
+    # 27.4-17: framework_cumulative (накопительный) НЕ имеет предельной суммы.
+    # Обнуляем max_amount даже если пользователь его прислал — иначе ложный «Превышен лимит».
+    if c.contract_type == 'framework_cumulative':
+        c.max_amount = None
     # Sync changes to linked purchases
     if data.number != old_number or data.date is not None:
         linked = await db.execute(select(Purchase).where(Purchase.contract_id == cid))

@@ -33,6 +33,49 @@
           <div v-if="!payment && loadingPayment" class="text-caption text-medium-emphasis">Загрузка...</div>
         </v-sheet>
 
+        <!-- 27.4-20: Suggested matches block -->
+        <div v-if="suggestions.length" class="mb-4">
+          <div class="text-subtitle-2 mb-2 d-flex align-center">
+            <v-icon start size="small" color="warning">mdi-lightbulb-on</v-icon>
+            Рекомендуемые варианты
+            <v-spacer />
+            <v-btn size="x-small" variant="text" :loading="loadingSuggestions" @click="loadSuggestions">Обновить</v-btn>
+          </div>
+          <v-sheet rounded="lg" border>
+            <v-list density="compact" class="pa-0">
+              <v-list-item
+                v-for="(s, idx) in suggestions"
+                :key="idx"
+                :active="appliedSuggestionIdx === idx"
+                @click="applySuggestion(s, idx)"
+                class="suggestion-item"
+              >
+                <template #prepend>
+                  <v-chip size="x-small" :color="suggestionColor(s.score)" variant="flat" class="mr-2">
+                    {{ s.score }}
+                  </v-chip>
+                </template>
+                <v-list-item-title class="text-body-2 font-weight-medium">
+                  {{ s.label }}
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  {{ s.purchase_names.join(' + ') }}
+                  <span class="text-medium-emphasis ml-1">
+                    ({{ s.purchase_amounts.map((a: number) => formatMoney(a)).join(' + ') }})
+                  </span>
+                </v-list-item-subtitle>
+                <template #append>
+                  <v-icon v-if="appliedSuggestionIdx === idx" color="success">mdi-check-circle</v-icon>
+                  <v-btn v-else size="x-small" variant="tonal" color="primary">Применить</v-btn>
+                </template>
+              </v-list-item>
+            </v-list>
+          </v-sheet>
+          <div class="text-caption text-medium-emphasis mt-1">
+            Клик по варианту → автоматически выберет контракт и закупки. Нажмите «Подтвердить» внизу.
+          </div>
+        </div>
+
         <!-- Contract selection -->
         <div class="mb-4">
           <div class="text-subtitle-2 mb-2">Договор</div>
@@ -225,6 +268,48 @@ const selectedPurchases = ref<number[]>([])
 const savingMatch = ref(false)
 const confirming = ref(false)
 
+// 27.4-20: Match suggestions
+interface MatchSuggestion {
+  purchase_ids: number[]
+  purchase_names: string[]
+  purchase_amounts: number[]
+  score: number
+  kind: string
+  label: string
+}
+const suggestions = ref<MatchSuggestion[]>([])
+const loadingSuggestions = ref(false)
+const appliedSuggestionIdx = ref<number | null>(null)
+
+function suggestionColor(score: number): string {
+  if (score >= 95) return 'success'
+  if (score >= 80) return 'primary'
+  if (score >= 50) return 'warning'
+  return 'grey'
+}
+
+async function loadSuggestions() {
+  if (!props.bankPaymentId) return
+  loadingSuggestions.value = true
+  try {
+    const data = await apiFetch<{candidates: MatchSuggestion[]}>(
+      `/payments/registry/${props.bankPaymentId}/match-suggestions`)
+    suggestions.value = data.candidates || []
+  } catch {
+    suggestions.value = []
+  } finally {
+    loadingSuggestions.value = false
+  }
+}
+
+async function applySuggestion(s: MatchSuggestion, idx: number) {
+  appliedSuggestionIdx.value = idx
+  // Если контракт ещё не выбран — подгрузим закупки нет нужды (purchase_ids известны)
+  selectedPurchases.value = [...s.purchase_ids]
+  // Если контракт известен из payment.matched_contract_id — оставим, иначе подгрузим автоматом
+  // (apply сразу пытается активировать confirm)
+}
+
 // ── Computed ───────────────────────────────────────────────────────────────
 const effectiveContractId = computed<number | null>(() => {
   if (selectedContract.value) return selectedContract.value.id
@@ -260,6 +345,8 @@ function resetState() {
   changingContract.value = false
   purchases.value = []
   selectedPurchases.value = []
+  suggestions.value = []
+  appliedSuggestionIdx.value = null
 }
 
 async function loadPayment() {
@@ -271,6 +358,8 @@ async function loadPayment() {
     if (payment.value.payee_inn) {
       await searchContracts(payment.value.payee_inn)
     }
+    // 27.4-20: подгружаем ранжированные suggestions параллельно
+    loadSuggestions()
   } catch (e: any) {
     error('Не удалось загрузить данные платежа: ' + e.detail)
   } finally {

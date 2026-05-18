@@ -403,6 +403,36 @@ async def match_bank_payment(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/payments/registry/{bp_id}/match-suggestions — кандидаты для матчинга
+# ---------------------------------------------------------------------------
+
+@router.get("/registry/{bp_id}/match-suggestions")
+async def match_suggestions(
+    bp_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_action("payment.confirm")),
+):
+    """27.4-20: ранжированный список кандидатов матча (exact / subset-sum /
+    delivered / split / text). Frontend показывает топ-N с preselected #1
+    для подтверждения одним кликом."""
+    bp = (await db.execute(select(BankPayment).where(BankPayment.id == bp_id))).scalar_one_or_none()
+    if not bp:
+        raise HTTPException(404, "BankPayment не найден")
+    from app.services.match_candidates import build_candidates
+    candidates = await build_candidates(bp, db)
+    return {
+        "bank_payment_id": bp.id,
+        "amount": float(bp.amount) if bp.amount else None,
+        "payee_name": bp.payee_name,
+        "payee_inn": bp.payee_inn,
+        "purpose_text": bp.purpose_text,
+        "matched_contract_id": bp.matched_contract_id,
+        "matched_contractor_id": bp.matched_contractor_id,
+        "candidates": candidates,
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /api/payments/registry/{bp_id}/confirm — подтвердить матч → создать Payment-ы
 # ---------------------------------------------------------------------------
 

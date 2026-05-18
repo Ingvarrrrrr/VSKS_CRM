@@ -356,6 +356,19 @@
         <v-chip v-else size="x-small" color="grey" variant="tonal">Нет</v-chip>
       </template>
 
+      <!-- 27.4-20: Match: Закупка — кликабельный линк -->
+      <template #item.matched_purchase_id="{ item }">
+        <a v-if="item.matched_purchase_id"
+           :href="`/orders/${item.matched_purchase_id}/edit`"
+           target="_blank"
+           class="text-primary text-decoration-none">
+          <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-arrow-right-bold">
+            #{{ item.matched_purchase_id }}
+          </v-chip>
+        </a>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
       <!-- Basis doc date -->
       <template #item.basis_doc_date="{ item }">
         <span class="text-caption">{{ fmtDate(item.basis_doc_date) }}</span>

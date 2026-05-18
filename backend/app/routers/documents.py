@@ -145,10 +145,22 @@ def _inflect_phrase_genitive(phrase: str) -> str:
             inflected = None
             if morph:
                 try:
-                    parsed = morph.parse(tok.lower())[0]
-                    infl = parsed.inflect({'gent'})
-                    if infl:
-                        inflected = infl.word
+                    parses = morph.parse(tok.lower())
+                    # Pymorphy3 возвращает все возможные разборы по убыванию вероятности.
+                    # Для омонимов («принадлежности» = nomn.plur ИЛИ gent.sg) выбираем
+                    # разбор в именительном падеже — иначе inflect({'gent'}) у уже-gent
+                    # вернёт то же слово (баг «принадлежности» → «принадлежности»).
+                    parsed = None
+                    for p in parses:
+                        if 'nomn' in p.tag:
+                            parsed = p
+                            break
+                    if not parsed and parses:
+                        parsed = parses[0]
+                    if parsed:
+                        infl = parsed.inflect({'gent'})
+                        if infl:
+                            inflected = infl.word
                 except Exception:
                     pass
             # Fallback: per-word эвристика (если pymorphy3 не сработал)

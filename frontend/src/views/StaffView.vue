@@ -572,6 +572,95 @@
             class="mb-3"
           />
 
+          <!-- 29-15: Может водить ТС + данные ВУ -->
+          <v-checkbox
+            v-model="editDialog.can_drive"
+            label="Может водить ТС"
+            density="compact"
+            hide-details
+            class="mb-2"
+          />
+          <v-expand-transition>
+            <v-card v-if="editDialog.can_drive" variant="outlined" class="pa-4 mb-4">
+              <div class="text-subtitle-2 font-weight-bold mb-3">Данные водителя</div>
+              <v-row dense>
+                <v-col cols="4">
+                  <v-text-field
+                    v-model="editDialog.license_series"
+                    label="Серия ВУ"
+                    maxlength="10"
+                    variant="outlined"
+                    density="compact"
+                  />
+                </v-col>
+                <v-col cols="8">
+                  <v-text-field
+                    v-model="editDialog.license_number"
+                    label="Номер ВУ"
+                    maxlength="20"
+                    variant="outlined"
+                    density="compact"
+                  />
+                </v-col>
+              </v-row>
+              <v-text-field
+                v-model="editDialog.license_categories"
+                label="Категории (через запятую)"
+                placeholder="A, B, C, D, CE"
+                maxlength="50"
+                variant="outlined"
+                density="compact"
+                class="mb-2"
+              />
+              <v-row dense>
+                <v-col cols="6">
+                  <v-text-field
+                    v-model="editDialog.license_issued_at"
+                    type="date"
+                    label="ВУ выдано"
+                    variant="outlined"
+                    density="compact"
+                  />
+                </v-col>
+                <v-col cols="6">
+                  <v-text-field
+                    v-model="editDialog.license_expires_at"
+                    type="date"
+                    label="ВУ действует до"
+                    variant="outlined"
+                    density="compact"
+                  />
+                </v-col>
+              </v-row>
+              <v-chip
+                v-if="editDialog.license_expires_at && driverLicenseExpiryDays(editDialog.license_expires_at) !== null && driverLicenseExpiryDays(editDialog.license_expires_at)! <= 30"
+                color="warning"
+                size="small"
+                prepend-icon="mdi-alert"
+                class="mb-2"
+              >
+                ВУ истекает через {{ driverLicenseExpiryDays(editDialog.license_expires_at)! }} дн.
+              </v-chip>
+              <v-text-field
+                v-model="editDialog.medical_cert_expires_at"
+                type="date"
+                label="Медсправка действует до"
+                variant="outlined"
+                density="compact"
+                class="mt-2"
+              />
+              <v-chip
+                v-if="editDialog.medical_cert_expires_at && driverMedicalExpiryDays(editDialog.medical_cert_expires_at) !== null && driverMedicalExpiryDays(editDialog.medical_cert_expires_at)! <= 30"
+                color="warning"
+                size="small"
+                prepend-icon="mdi-alert"
+                class="mt-1"
+              >
+                Медсправка истекает через {{ driverMedicalExpiryDays(editDialog.medical_cert_expires_at)! }} дн.
+              </v-chip>
+            </v-card>
+          </v-expand-transition>
+
           <!-- 17-08: «Доступ» section — per-user per-org permission overrides (D-04/D-05.2/D-08) -->
           <UserPermissionsSection
             v-if="editDialog.userId && allOrgEntries.length"
@@ -1130,6 +1219,18 @@ function getMemberPhotoUrl(userId: number): string | null | undefined {
   return u?.photo_url
 }
 
+// 29-15: helpers — days until expiry (null if date invalid/empty)
+function driverLicenseExpiryDays(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const exp = new Date(dateStr)
+  if (isNaN(exp.getTime())) return null
+  const diff = Math.ceil((exp.getTime() - Date.now()) / 86400000)
+  return diff
+}
+function driverMedicalExpiryDays(dateStr: string | null): number | null {
+  return driverLicenseExpiryDays(dateStr)
+}
+
 // ═══════════════════════════════════════════════════════════════
 // TAB 2: USERS STATE
 // ═══════════════════════════════════════════════════════════════
@@ -1205,6 +1306,14 @@ const editDialog = reactive({
   origPosition: '',
   // Diagnostic: departments where this user is head (head_user_id)
   headedDepts: [] as { id: number; name: string; org_name?: string }[],
+  // 29-15: водительские данные
+  can_drive: false,
+  license_series: '',
+  license_number: '',
+  license_categories: '',
+  license_issued_at: null as string | null,
+  license_expires_at: null as string | null,
+  medical_cert_expires_at: null as string | null,
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -1599,6 +1708,14 @@ async function openEditUser(item: UserItem) {
   editDialog.telegram_id = (item as any).telegram_id || ''
   editDialog.max_chat_id = (item as any).max_chat_id || ''
   editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
+  // 29-15: водительские данные
+  editDialog.can_drive = !!(item as any).can_drive
+  editDialog.license_series = (item as any).license_series || ''
+  editDialog.license_number = (item as any).license_number || ''
+  editDialog.license_categories = (item as any).license_categories || ''
+  editDialog.license_issued_at = (item as any).license_issued_at || null
+  editDialog.license_expires_at = (item as any).license_expires_at || null
+  editDialog.medical_cert_expires_at = (item as any).medical_cert_expires_at || null
   editDialog.extraOrgIds = []
   // Resolve dept ID from deptTree by matching name
   const allDepts = flatDepts(deptTree.value)
@@ -1744,6 +1861,14 @@ async function saveEditUser() {
       telegram_id: editDialog.telegram_id || null,
       max_chat_id: editDialog.max_chat_id || null,
       exclude_from_directory: editDialog.exclude_from_directory,
+      // 29-15: водительские данные
+      can_drive: editDialog.can_drive,
+      license_series: editDialog.can_drive ? (editDialog.license_series || null) : null,
+      license_number: editDialog.can_drive ? (editDialog.license_number || null) : null,
+      license_categories: editDialog.can_drive ? (editDialog.license_categories || null) : null,
+      license_issued_at: editDialog.can_drive ? (editDialog.license_issued_at || null) : null,
+      license_expires_at: editDialog.can_drive ? (editDialog.license_expires_at || null) : null,
+      medical_cert_expires_at: editDialog.can_drive ? (editDialog.medical_cert_expires_at || null) : null,
     }
     if (editDialog.password) body.password = editDialog.password
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {

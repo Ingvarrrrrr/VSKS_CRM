@@ -1,4 +1,5 @@
 import asyncio
+import os
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -993,6 +994,42 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"Phase 29 schema bootstrap failed (non-fatal): {e}"
         )
+
+    # Phase 29-08: smoke-render trip templates (Lesson 2026-05-18 — catches Jinja TemplateSyntaxError at boot)
+    # ZERO {% tr %} in templates (Lesson 2026-05-15). Non-fatal: log error, do NOT crash.
+    try:
+        from docxtpl import DocxTemplate as _DocxTpl29
+        _fake_trip_ctx = {
+            'vehicle_plate': 'A001AA77', 'driver_full_name': 'Тест Тестов',
+            'date': '01.01.2026', 'odometer_start': '1000', 'odometer_finish': '1100',
+            'org_name': 'ВСКС', 'route_from': 'Москва', 'route_to': 'Тула',
+            'vehicle_brand_model': 'Test Auto', 'fuel_type': 'AI-92',
+            'driver_license_series': '77 ОТ', 'driver_license_number': '123456',
+            'driver_license_categories': 'B', 'driver_license_issued_at': '01.01.2020',
+            'driver_license_expires_at': '01.01.2030', 'delta_km': '100',
+            'fuel_remaining_start': '30', 'fuel_remaining_finish': '25', 'fuel_issued_l': '10',
+            'initiator_full_name': 'Иванов', 'initiator_position': 'Менеджер',
+            'trip_number': '1', 'trip_date': '01.01.2026',
+            'cargo_name': '', 'cargo_weight_t': '', 'loading_point': '', 'unloading_point': '',
+            'cargo_count': '', 'route': 'Москва → Тула', 'vehicle_color': 'белый', 'mileage': '100',
+            'fuel_brand': 'AI-92', 'fuel_start': '30', 'fuel_finish': '25', 'customer_text': '',
+            'plate': 'A001AA77',
+        }
+        _tpl_dir29 = os.path.join(os.path.dirname(__file__), '..', 'templates')
+        for _tpl_name29 in ['trip_light.docx', 'trip_truck.docx', 'trip_special.docx']:
+            try:
+                _tpl_path29 = os.path.join(_tpl_dir29, _tpl_name29)
+                if os.path.exists(_tpl_path29):
+                    _DocxTpl29(_tpl_path29).render(_fake_trip_ctx)
+                    logging.getLogger(__name__).info(f"Phase 29 trip template smoke-render OK: {_tpl_name29}")
+                else:
+                    logging.getLogger(__name__).warning(f"Phase 29 trip template not found (skip smoke): {_tpl_name29}")
+            except Exception as _e29:
+                logging.getLogger(__name__).error(
+                    f"Phase 29 trip template smoke-render FAILED {_tpl_name29}: {_e29}"
+                )
+    except Exception as _e29_outer:
+        logging.getLogger(__name__).warning(f"Phase 29 smoke-render block failed (non-fatal): {_e29_outer}")
 
     yield
     task.cancel()

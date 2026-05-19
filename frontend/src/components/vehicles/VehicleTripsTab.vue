@@ -482,7 +482,7 @@ async function loadTrips() {
 async function loadAvailableDrivers() {
   loadingDrivers.value = true
   try {
-    const data = await apiFetch('/api/drivers/available')
+    const data = await apiFetch('/drivers/available')
     availableDrivers.value = data?.items ?? []
   } catch {
     availableDrivers.value = []
@@ -580,14 +580,14 @@ async function saveTrip() {
 
   try {
     if (editingTrip.value) {
-      await apiFetch(`/api/trips/${editingTrip.value.id}`, {
+      await apiFetch(`/trips/${editingTrip.value.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       showSnack('Путёвка обновлена')
     } else {
-      await apiFetch('/api/trips', {
+      await apiFetch('/trips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

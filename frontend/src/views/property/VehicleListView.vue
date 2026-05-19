@@ -759,7 +759,7 @@ async function loadVehicles() {
 
 async function loadOrgs() {
   try {
-    const data = await apiFetch<{ items: OrgItem[] }>('/api/organizations/?limit=500')
+    const data = await apiFetch<{ items: OrgItem[] }>('/organizations/?limit=500')
     orgsList.value = data.items ?? []
   } catch {}
 }
@@ -808,7 +808,7 @@ async function doCreate() {
   if (!createDialog.plate || !createDialog.owner_org_id) return
   createDialog.loading = true
   try {
-    const created = await apiFetch<{ id: number }>('/api/vehicles', {
+    const created = await apiFetch<{ id: number }>('/vehicles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

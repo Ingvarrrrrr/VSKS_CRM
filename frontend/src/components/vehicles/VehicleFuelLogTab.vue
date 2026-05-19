@@ -528,7 +528,7 @@ async function uploadReceipt(file: File): Promise<number | null> {
   fd.append('kind', 'other')
   fd.append('name', `Чек ${form.date}`)
   try {
-    const res = await apiFetch<{ id: number }>('/api/vehicle-attachments/upload', {
+    const res = await apiFetch<{ id: number }>('/vehicle-attachments/upload', {
       method: 'POST',
       body: fd,
     })
@@ -560,7 +560,7 @@ async function saveLog() {
     if (form.odometer_km !== null) body.odometer_km = form.odometer_km
     if (receiptId !== null) body.receipt_attachment_id = receiptId
 
-    await apiFetch('/api/fuel-logs/', {
+    await apiFetch('/fuel-logs/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

@@ -345,7 +345,7 @@ async function doPreview() {
     const formData = new FormData()
     formData.append('file', selectedFile.value)
 
-    const data = await apiFetch<ImportPreviewResponse>('/api/vehicles-import/preview', {
+    const data = await apiFetch<ImportPreviewResponse>('/vehicles-import/preview', {
       method: 'POST',
       body: formData,
     })
@@ -379,7 +379,7 @@ async function doCommit() {
       regionOrgMap[regionText] = orgId ?? null
     }
 
-    const data = await apiFetch<ImportCommitResponse>('/api/vehicles-import/commit', {
+    const data = await apiFetch<ImportCommitResponse>('/vehicles-import/commit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

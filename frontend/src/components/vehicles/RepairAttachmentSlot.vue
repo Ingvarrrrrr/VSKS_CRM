@@ -138,7 +138,7 @@ async function onFileSelected(e: Event) {
     fd.append('name', file.name)
     fd.append('file', file)
 
-    const att = await apiFetch<RepairAttachment>('/api/repair-attachments/upload', {
+    const att = await apiFetch<RepairAttachment>('/repair-attachments/upload', {
       method: 'POST',
       body: fd,
     })

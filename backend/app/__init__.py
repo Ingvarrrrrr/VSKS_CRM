@@ -37,6 +37,7 @@ from .routers import report_configs as report_configs_router
 from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
 from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
+from .routers import vehicles_import as vehicles_import_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1239,6 +1240,7 @@ app.include_router(report_configs_router.router)
 app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
 app.include_router(external_drivers.drivers_router)    # /api/drivers/available
 app.include_router(external_drivers.router)            # /api/external-drivers
+app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments

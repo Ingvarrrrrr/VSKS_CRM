@@ -535,6 +535,8 @@ class PurchaseCreate(BaseModel):
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None
     order_date: Optional[date] = None
+    # Phase 28: форма договора для выбора шаблона при генерации
+    contract_form: Optional[str] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -632,6 +634,8 @@ class PurchaseUpdate(BaseModel):
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None
     order_date: Optional[date] = None
+    # Phase 28: форма договора для выбора шаблона при генерации
+    contract_form: Optional[str] = None
 
 
 class PurchaseOut(PurchaseCreate):

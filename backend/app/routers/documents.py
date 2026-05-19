@@ -296,6 +296,15 @@ DOC_TYPES = {
     # (removed — subject_kind auto-detected from purchase_items.product.item_kind)
     "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
     "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
+    # Phase 28: typed contract forms per-subsidy
+    "contract_services_large":      ("contract_services_large.docx",      "Contract_Services_Large"),
+    "contract_services_small":      ("contract_services_small.docx",      "Contract_Services_Small"),
+    "contract_services_food":       ("contract_services_food.docx",       "Contract_Services_Food"),
+    "contract_goods_single":        ("contract_goods_single.docx",        "Contract_Goods_Single"),
+    "contract_gph_individual":      ("contract_gph_individual.docx",      "Contract_GPH_Individual"),
+    "contract_gph_individual_rid":  ("contract_gph_individual_rid.docx",  "Contract_GPH_Individual_RID"),
+    "contract_repair_vehicle":      ("contract_repair_vehicle.docx",      "Contract_Repair_Vehicle"),
+    "contract_repair_framework":    ("contract_repair_framework.docx",    "Contract_Repair_Framework"),
 }
 
 # Phase 19.05: fallback map — if a dedicated template file is missing,
@@ -308,6 +317,16 @@ DOC_TYPE_FALLBACK_FILES = {
     "service_note_advance":     "service_note.docx",
     "tech_spec_request":        "contract_tz.docx",
     "tech_spec_contract":       "contract_tz.docx",
+    # Phase 28: new typed contract forms fall back to universal contract.docx
+    # until per-subsidy templates are uploaded. Prevents 404 for old purchases.
+    "contract_services_large":     "contract.docx",
+    "contract_services_small":     "contract.docx",
+    "contract_services_food":      "contract.docx",
+    "contract_goods_single":       "contract.docx",
+    "contract_gph_individual":     "contract.docx",
+    "contract_gph_individual_rid": "contract.docx",
+    "contract_repair_vehicle":     "contract.docx",
+    "contract_repair_framework":   "contract.docx",
 }
 
 # Fields required to generate a FADM contract; maps field_path → label
@@ -1465,6 +1484,50 @@ async def generate_document(
         # Phase 23.1: subject_kind for universal contract.docx auto-switch
         "subject_kind": subject_kind,
     }
+
+    # Phase 28: расширенные ключи для типовых договоров ─────────────────────────
+    # Все ключи NULL-safe (пустая строка / ноль / пустой список при отсутствии данных).
+    try:
+        # Реквизиты субсидии-грантодателя (для рамочных и региональных договоров)
+        context["subsidy_grantor_name"] = (
+            (subsidy.basis_doc_number or subsidy.name or "")
+            if subsidy else ""
+        )
+        context["subsidy_ministry_name"] = (
+            (getattr(subsidy, "ministry_name", None) or "")
+            if subsidy else ""
+        )
+        context["subsidy_agreement_date"] = (
+            _fmt_date(getattr(subsidy, "basis_doc_date", None))
+            if subsidy else ""
+        )
+
+        # Реквизиты физ.лица (ГПХ) — TBD поля; пока пустые строки
+        context["contractor_passport_series"]       = ""
+        context["contractor_passport_number"]       = ""
+        context["contractor_passport_issuer"]       = ""
+        context["contractor_passport_issued_date"]  = ""
+        context["contractor_snils"]                 = ""
+        context["contractor_registration_address"]  = ""
+        context["contractor_birth_date"]            = ""
+
+        # Комиссия закупки (для протокола) — TBD; пока пустые значения
+        context["commission_members"]       = []
+        context["commission_member_1_name"] = ""
+        context["commission_member_2_name"] = ""
+        context["commission_member_3_name"] = ""
+
+        # Прочие (TBD или умолчания)
+        context["advance_amount"]              = 0
+        context["acceptance_term_days"]        = 5
+        context["penalty_rate"]                = 0.1
+        context["procurement_protocol_number"] = ""
+        context["procurement_order_number"]    = ""
+        context["repair_request_number"]       = ""
+        context["contractor_ogrnip_date"]      = ""
+    except Exception as _e28:
+        import logging as _log28
+        _log28.getLogger(__name__).warning("Phase 28 context keys failed: %s", _e28)
 
     # Phase 26-V: родительный падеж для инициатора и ответственного
     context["initiator_name_gen"] = _to_gen_fio(context.get("initiator_name", ""))

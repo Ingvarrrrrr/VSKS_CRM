@@ -1088,6 +1088,8 @@ PATCHABLE_FIELDS = {
     "assigned_user_id",
     # Phase 26-K: доп. соглашение и дата заказа
     "agreement_number", "agreement_date", "order_date",
+    # Phase 28: форма договора (выбор шаблона при генерации)
+    "contract_form",
 }
 
 

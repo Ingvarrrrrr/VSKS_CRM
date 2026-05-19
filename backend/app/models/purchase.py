@@ -115,6 +115,11 @@ class Purchase(Base):
     # Если current_hash == recompute_snapshot_hash → skip fuzzy/autocreate/dedup.
     recompute_snapshot_hash = Column(String(64), nullable=True)
 
+    # Phase 28: форма договора для выбора нужного шаблона при генерации документа.
+    # Значения: 'services_large' | 'services_small' | 'services_food' | 'goods_single'
+    # | 'gph_individual' | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
+    contract_form = Column(String(50), nullable=True)
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки

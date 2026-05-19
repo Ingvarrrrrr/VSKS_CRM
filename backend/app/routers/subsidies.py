@@ -466,6 +466,15 @@ SUPPORTED_DOC_TYPES = {
     "tech_spec_contract":       "ТЗ для договора",
     "approval_sheet":           "Лист согласования",
     "order_purchase":           "Приказ на закупку",
+    # Phase 28: typed contract forms per-subsidy
+    "contract_services_large":      "Договор услуг (большая отчётность)",
+    "contract_services_small":      "Договор услуг (малая отчётность)",
+    "contract_services_food":       "Договор услуг (питание)",
+    "contract_goods_single":        "Договор поставки (разовый)",
+    "contract_gph_individual":      "Договор ГПХ с физ.лицом (без РИД)",
+    "contract_gph_individual_rid":  "Договор ГПХ с физ.лицом (+РИД)",
+    "contract_repair_vehicle":      "Договор на ремонт ТС",
+    "contract_repair_framework":    "Рамочный договор на ремонт ТС",
 }
 
 

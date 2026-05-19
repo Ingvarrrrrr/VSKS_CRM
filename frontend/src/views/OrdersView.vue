@@ -540,7 +540,15 @@
           <tr>
             <td :colspan="columns.length" class="pa-0 bg-grey-lighten-5">
               <div class="pa-3">
-                <v-table density="compact" class="rounded border">
+                <v-table density="compact" class="rounded border expand-items-table">
+                  <colgroup>
+                    <col style="width: auto">
+                    <col style="width: 140px">
+                    <col style="width: 110px">
+                    <col style="width: 80px">
+                    <col style="width: 160px">
+                    <col style="width: 160px">
+                  </colgroup>
                   <thead>
                     <tr class="bg-grey-lighten-4">
                       <th>Наименование позиции</th>
@@ -1831,4 +1839,15 @@ async function doExport() {
 .fz-11 { font-size: 11px; }
 .export-col-check { min-width: 180px; max-width: 220px; }
 .border-b { border-bottom: 1px solid var(--crm-border-strong); }
+.expand-items-table :deep(table) { table-layout: fixed; }
+.expand-items-table :deep(td),
+.expand-items-table :deep(th) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expand-items-table :deep(td:first-child) {
+  white-space: normal;
+  word-break: break-word;
+}
 </style>

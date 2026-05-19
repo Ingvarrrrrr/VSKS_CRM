@@ -330,6 +330,30 @@
               <v-col cols="6" md="3">
                 <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
               </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field
+                  v-model.number="form.warranty_period_days"
+                  type="number"
+                  label="Срок гарантии (раб.дней)"
+                  hint="{{warranty_period_days}} в шаблонах. По умолчанию 15."
+                  persistent-hint
+                  density="compact"
+                  variant="outlined"
+                  @blur="flushAutosaveOnBlur"
+                />
+              </v-col>
+            </v-row>
+            <!-- Договор задним числом — для всех форм договора -->
+            <v-row v-if="form.contract_form" class="mt-1">
+              <v-col cols="12" md="6">
+                <v-checkbox
+                  v-model="form.is_retroactive"
+                  label="Договор задним числом (ст. 425 ГК РФ)"
+                  hint="Если включено, в шаблон добавляется пункт о применении условий с даты начала услуг до подписания договора. {{is_retroactive}}"
+                  persistent-hint
+                  density="compact"
+                />
+              </v-col>
             </v-row>
             <!-- Ремонт ТС: дата ОГРНИП + номер заявки -->
             <v-row v-if="['repair_vehicle', 'repair_framework'].includes(form.contract_form)" class="mt-1">
@@ -3487,6 +3511,8 @@ const form = reactive({
   commission_member_2_name: null as string | null,
   commission_member_3_name: null as string | null,
   advance_amount: null as number | null,
+  warranty_period_days: null as number | null,
+  is_retroactive: false as boolean,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3553,6 +3579,8 @@ function serializeFormForAutosave() {
     commission_member_2_name: f.commission_member_2_name || null,
     commission_member_3_name: f.commission_member_3_name || null,
     advance_amount: f.advance_amount ?? null,
+    warranty_period_days: f.warranty_period_days ?? null,
+    is_retroactive: f.is_retroactive ?? false,
   })
 }
 
@@ -5616,6 +5644,8 @@ const loadPurchase = async () => {
     commission_member_2_name: data.commission_member_2_name || null,
     commission_member_3_name: data.commission_member_3_name || null,
     advance_amount: data.advance_amount != null ? Number(data.advance_amount) : null,
+    warranty_period_days: data.warranty_period_days ?? null,
+    is_retroactive: data.is_retroactive ?? false,
   })
 
   // Save frozen НМЦД from DB

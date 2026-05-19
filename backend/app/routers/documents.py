@@ -1526,6 +1526,12 @@ async def generate_document(
         context["procurement_order_number"]    = ""
         context["repair_request_number"]       = (p.repair_request_number or "").strip()
         context["contractor_ogrnip_date"]      = _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else ""
+        # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
+        context["warranty_period_days"]        = p.warranty_period_days if p.warranty_period_days is not None else 15
+        context["is_retroactive"]              = bool(p.is_retroactive)
+        # Phase 28: subsidy-specific clauses (пункты из субсидии — раздельный учёт и т.п.)
+        context["subsidy_extra_clause_1"]      = (subsidy.extra_contract_clause_1 or '').strip() if subsidy else ''
+        context["subsidy_extra_clause_2"]      = (subsidy.extra_contract_clause_2 or '').strip() if subsidy else ''
     except Exception as _e28:
         import logging as _log28
         _log28.getLogger(__name__).warning("Phase 28 context keys failed: %s", _e28)

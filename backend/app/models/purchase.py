@@ -120,6 +120,10 @@ class Purchase(Base):
     # | 'gph_individual' | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
     contract_form = Column(String(50), nullable=True)
 
+    # Phase 28: гарантия договора + ретроактивный флаг (комментарии пользователя 2026-05-19)
+    warranty_period_days = Column(Integer, nullable=True)   # срок гарантии товара/услуги в раб.днях (для договора)
+    is_retroactive = Column(Boolean, nullable=False, server_default='false')  # договор задним числом — применяется ст. 425 ГК блок
+
     # Phase 28: contract-specific поля (условия конкретного договора)
     acceptance_term_days = Column(Integer, nullable=True)         # срок приёмки товара (поставка)
     penalty_rate = Column(Numeric(5, 3), nullable=True)           # неустойка в процентах (например 0.1 = 0.1%/день)

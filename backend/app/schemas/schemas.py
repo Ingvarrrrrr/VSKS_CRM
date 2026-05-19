@@ -152,6 +152,9 @@ class SubsidyCreate(BaseModel):
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
+    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
+    extra_contract_clause_1: Optional[str] = None
+    extra_contract_clause_2: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -182,6 +185,9 @@ class SubsidyUpdate(BaseModel):
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
+    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
+    extra_contract_clause_1: Optional[str] = None
+    extra_contract_clause_2: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -220,6 +226,9 @@ class SubsidyOut(BaseModel):
     # Phase 28: реквизиты грантодателя для шаблонов договоров
     grantor_name: Optional[str] = None
     ministry_name: Optional[str] = None
+    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
+    extra_contract_clause_1: Optional[str] = None
+    extra_contract_clause_2: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -563,6 +572,9 @@ class PurchaseCreate(BaseModel):
     commission_member_2_name: Optional[str] = None
     commission_member_3_name: Optional[str] = None
     advance_amount: Optional[Decimal] = None
+    # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
+    warranty_period_days: Optional[int] = None
+    is_retroactive: Optional[bool] = False
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -671,6 +683,9 @@ class PurchaseUpdate(BaseModel):
     commission_member_2_name: Optional[str] = None
     commission_member_3_name: Optional[str] = None
     advance_amount: Optional[Decimal] = None
+    # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
+    warranty_period_days: Optional[int] = None
+    is_retroactive: Optional[bool] = None
 
 
 class PurchaseOut(PurchaseCreate):

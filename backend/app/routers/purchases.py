@@ -1095,6 +1095,8 @@ PATCHABLE_FIELDS = {
     'repair_request_number',
     'commission_member_1_name', 'commission_member_2_name', 'commission_member_3_name',
     'advance_amount',
+    # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
+    'warranty_period_days', 'is_retroactive',
 }
 
 

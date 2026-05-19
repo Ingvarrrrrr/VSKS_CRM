@@ -283,6 +283,65 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 22 permission seed skipped (non-fatal): {e}")
 
+    # Phase 29: vehicles tab + 6 actions (idempotent permission seed)
+    try:
+        from sqlalchemy import select as _sel29
+        from .models.permission import PermissionTab as _PT29, PermissionAction as _PA29, RolePermission as _RP29
+        async with async_session() as db:
+            # 1. Tab
+            ex = await db.execute(_sel29(_PT29).where(_PT29.tab_key == 'vehicles'))
+            if not ex.scalar_one_or_none():
+                db.add(_PT29(tab_key='vehicles', title='Имущество'))
+            await db.commit()
+            # 2. Actions
+            for _ak29, _desc29 in [
+                ('vehicle.edit',           'Редактирование карточки ТС'),
+                ('vehicle.delete',         'Удаление ТС'),
+                ('vehicle.import',         'Импорт Excel реестра ТС'),
+                ('vehicle.odometer.write', 'Ввод пробега'),
+                ('vehicle.repair.write',   'Добавление ремонтов'),
+                ('vehicle.trip.create',    'Создание путевых листов'),
+            ]:
+                ex = await db.execute(_sel29(_PA29).where(_PA29.action_key == _ak29))
+                if not ex.scalar_one_or_none():
+                    db.add(_PA29(action_key=_ak29, description=_desc29))
+            await db.commit()
+            # 3. Role defaults
+            # (key, role_name, granted)
+            # viewer role — tab visibility only, no actions
+            _ROLE_PERMS_29 = [
+                # tab visibility: superadmin/account_owner/admin/org_admin/manager/employee/viewer
+                *[('vehicles', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager', 'employee', 'viewer']],
+                # vehicle.edit: admin+ yes; manager yes; employee explicit no
+                *[('vehicle.edit', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager']],
+                ('vehicle.edit', 'employee', False),
+                # vehicle.delete: admin+ only
+                *[('vehicle.delete', r, True) for r in ['superadmin', 'account_owner', 'admin']],
+                *[('vehicle.delete', r, False) for r in ['org_admin', 'manager', 'employee']],
+                # vehicle.import: admin/org_admin yes; manager/employee explicit no
+                *[('vehicle.import', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin']],
+                *[('vehicle.import', r, False) for r in ['manager', 'employee']],
+                # vehicle.odometer.write: all active roles yes
+                *[('vehicle.odometer.write', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager', 'employee']],
+                # vehicle.repair.write: admin/manager yes; employee explicit no
+                *[('vehicle.repair.write', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager']],
+                ('vehicle.repair.write', 'employee', False),
+                # vehicle.trip.create: admin/manager yes; employee explicit no
+                *[('vehicle.trip.create', r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager']],
+                ('vehicle.trip.create', 'employee', False),
+            ]
+            for _key29, _role29, _granted29 in _ROLE_PERMS_29:
+                ex = await db.execute(_sel29(_RP29).where(
+                    _RP29.role_name == _role29,
+                    _RP29.key == _key29,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(_RP29(role_name=_role29, key=_key29, granted=_granted29))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Phase 29 permission seed skipped (non-fatal): {e}")
+
     # Phase 26-QQ: idempotent dedup контрагентов по ИНН + UNIQUE constraint.
     # Объединяет дубли (одинаковый INN), перевешивает FK на keep_id (MIN id),
     # удаляет дубли. Затем создаёт partial unique index чтобы новые дубли не появлялись.

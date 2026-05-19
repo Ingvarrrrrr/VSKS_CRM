@@ -1225,6 +1225,15 @@ class BankPaymentOut(BaseModel):
     matched_purchase_id: Optional[int] = None
     matched_subsidy_id: Optional[int] = None
     matched_confirmed: bool = False
+    # 27.4-23: enriched human-readable значения для колонок «Match: ...»
+    matched_contractor_name: Optional[str] = None
+    matched_subsidy_name: Optional[str] = None
+    matched_contract_number: Optional[str] = None
+    matched_contract_subject: Optional[str] = None
+    matched_contract_date: Optional[str] = None
+    matched_purchase_number: Optional[int] = None
+    matched_purchase_item_name: Optional[str] = None
+    matched_purchase_amount: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 

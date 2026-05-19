@@ -244,6 +244,9 @@ async def list_bank_payment_registry(
 ):
     from app.models.organization import Organization
     from app.models.contractor import Contractor as ContractorModel
+    from app.models.contract import Contract as ContractModel
+    from app.models.subsidy import Subsidy as SubsidyModel
+    from app.models.purchase import Purchase as PurchaseModel
 
     filters = []
     if import_id is not None:
@@ -296,11 +299,71 @@ async def list_bank_payment_registry(
         inn_name_cache[inn] = None  # type: ignore[assignment]
         return None
 
+    # 27.4-23: batch-обогащение match-колонок именами/предметами/суммами
+    contractor_ids = {bp.matched_contractor_id for bp in rows if bp.matched_contractor_id}
+    subsidy_ids = {bp.matched_subsidy_id for bp in rows if bp.matched_subsidy_id}
+    contract_ids = {bp.matched_contract_id for bp in rows if bp.matched_contract_id}
+    purchase_ids = {bp.matched_purchase_id for bp in rows if bp.matched_purchase_id}
+
+    contractor_map: dict[int, str] = {}
+    if contractor_ids:
+        r = await db.execute(select(ContractorModel.id, ContractorModel.name).where(ContractorModel.id.in_(contractor_ids)))
+        contractor_map = {row[0]: row[1] for row in r.all()}
+
+    subsidy_map: dict[int, str] = {}
+    if subsidy_ids:
+        r = await db.execute(select(SubsidyModel.id, SubsidyModel.name).where(SubsidyModel.id.in_(subsidy_ids)))
+        subsidy_map = {row[0]: row[1] for row in r.all()}
+
+    contract_map: dict[int, dict] = {}
+    if contract_ids:
+        r = await db.execute(
+            select(ContractModel.id, ContractModel.number, ContractModel.date, ContractModel.subject, ContractModel.max_amount)
+            .where(ContractModel.id.in_(contract_ids))
+        )
+        for row in r.all():
+            contract_map[row[0]] = {
+                "number": row[1],
+                "date": row[2].isoformat() if row[2] else None,
+                "subject": row[3],
+                "max_amount": float(row[4]) if row[4] is not None else None,
+            }
+
+    purchase_map: dict[int, dict] = {}
+    if purchase_ids:
+        r = await db.execute(
+            select(
+                PurchaseModel.id,
+                PurchaseModel.purchase_number,
+                PurchaseModel.item_name,
+                PurchaseModel.contract_price,
+                PurchaseModel.planned_total_price,
+            ).where(PurchaseModel.id.in_(purchase_ids))
+        )
+        for row in r.all():
+            amt = row[3] if row[3] is not None else row[4]
+            purchase_map[row[0]] = {
+                "purchase_number": row[1],
+                "item_name": row[2],
+                "amount": float(amt) if amt is not None else None,
+            }
+
     out = []
     for bp in rows:
         d = BankPaymentOut.model_validate(bp).model_dump()
         d["payer_name_resolved"] = await _resolve_inn(bp.payer_inn)
         d["payee_name_resolved"] = await _resolve_inn(bp.payee_inn)
+        # 27.4-23: match-enrichment
+        d["matched_contractor_name"] = contractor_map.get(bp.matched_contractor_id) if bp.matched_contractor_id else None
+        d["matched_subsidy_name"] = subsidy_map.get(bp.matched_subsidy_id) if bp.matched_subsidy_id else None
+        c = contract_map.get(bp.matched_contract_id) if bp.matched_contract_id else None
+        d["matched_contract_number"] = c["number"] if c else None
+        d["matched_contract_subject"] = c["subject"] if c else None
+        d["matched_contract_date"] = c["date"] if c else None
+        p = purchase_map.get(bp.matched_purchase_id) if bp.matched_purchase_id else None
+        d["matched_purchase_number"] = p["purchase_number"] if p else None
+        d["matched_purchase_item_name"] = p["item_name"] if p else None
+        d["matched_purchase_amount"] = p["amount"] if p else None
         out.append(d)
     return out
 

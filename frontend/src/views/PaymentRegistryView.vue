@@ -472,16 +472,68 @@
         <v-chip v-else size="x-small" color="grey" variant="tonal">Нет</v-chip>
       </template>
 
-      <!-- 27.4-20: Match: Закупка — кликабельный линк -->
+      <!-- 27.4-23: Match: Контрагент — название + ИНН-аналог в подписи -->
+      <template #item.matched_contractor_id="{ item }">
+        <div v-if="item.matched_contractor_id">
+          <a :href="`/suppliers?contractor_id=${item.matched_contractor_id}`"
+             target="_blank"
+             class="text-primary text-decoration-none text-body-2"
+             :title="item.matched_contractor_name || ''">
+            {{ item.matched_contractor_name || `#${item.matched_contractor_id}` }}
+          </a>
+          <div class="text-caption text-medium-emphasis">#{{ item.matched_contractor_id }}</div>
+        </div>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
+      <!-- 27.4-23: Match: Субсидия — название -->
+      <template #item.matched_subsidy_id="{ item }">
+        <div v-if="item.matched_subsidy_id">
+          <div class="text-body-2" :title="item.matched_subsidy_name || ''">
+            {{ item.matched_subsidy_name || `#${item.matched_subsidy_id}` }}
+          </div>
+          <div class="text-caption text-medium-emphasis">#{{ item.matched_subsidy_id }}</div>
+        </div>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
+      <!-- 27.4-23: Match: Договор — № + предмет + дата -->
+      <template #item.matched_contract_id="{ item }">
+        <div v-if="item.matched_contract_id">
+          <div class="text-body-2 font-weight-medium">
+            <span v-if="item.matched_contract_number">№ {{ item.matched_contract_number }}</span>
+            <span v-else>#{{ item.matched_contract_id }}</span>
+            <span v-if="item.matched_contract_date" class="text-caption text-medium-emphasis ml-1">
+              от {{ fmtDate(item.matched_contract_date) }}
+            </span>
+          </div>
+          <div v-if="item.matched_contract_subject" class="text-caption text-medium-emphasis" style="max-width:220px"
+               :title="item.matched_contract_subject">
+            {{ item.matched_contract_subject }}
+          </div>
+        </div>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
+      <!-- 27.4-20/23: Match: Закупка — кликабельный № + предмет + сумма -->
       <template #item.matched_purchase_id="{ item }">
-        <a v-if="item.matched_purchase_id"
-           :href="`/orders/${item.matched_purchase_id}/edit`"
-           target="_blank"
-           class="text-primary text-decoration-none">
-          <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-arrow-right-bold">
-            #{{ item.matched_purchase_id }}
-          </v-chip>
-        </a>
+        <div v-if="item.matched_purchase_id">
+          <a :href="`/orders/${item.matched_purchase_id}/edit`"
+             target="_blank"
+             class="text-primary text-decoration-none">
+            <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-arrow-right-bold">
+              <span v-if="item.matched_purchase_number">№ {{ item.matched_purchase_number }}</span>
+              <span v-else>#{{ item.matched_purchase_id }}</span>
+            </v-chip>
+          </a>
+          <div v-if="item.matched_purchase_item_name" class="text-caption text-medium-emphasis mt-1" style="max-width:220px"
+               :title="item.matched_purchase_item_name">
+            {{ item.matched_purchase_item_name }}
+          </div>
+          <div v-if="item.matched_purchase_amount != null" class="text-caption font-weight-medium">
+            {{ formatMoney(item.matched_purchase_amount) }}
+          </div>
+        </div>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
 
@@ -804,6 +856,15 @@ interface BankPayment {
   matched_purchase_id: number | null
   matched_subsidy_id: number | null
   matched_confirmed: boolean
+  // 27.4-23: human-readable enriched поля для match-колонок
+  matched_contractor_name: string | null
+  matched_subsidy_name: string | null
+  matched_contract_number: string | null
+  matched_contract_subject: string | null
+  matched_contract_date: string | null
+  matched_purchase_number: number | null
+  matched_purchase_item_name: string | null
+  matched_purchase_amount: number | null
   created_at: string | null
 }
 
@@ -858,10 +919,10 @@ const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> =
   parsed_kbk:                  { width: 120 },
   matched:                     { width: 90, sortable: false },
   matched_confirmed:           { width: 110, sortable: false },
-  matched_contractor_id:       { width: 120 },
-  matched_contract_id:         { width: 120 },
-  matched_purchase_id:         { width: 120 },
-  matched_subsidy_id:          { width: 120 },
+  matched_contractor_id:       { width: 200, sortable: false },
+  matched_contract_id:         { width: 240, sortable: false },
+  matched_purchase_id:         { width: 240, sortable: false },
+  matched_subsidy_id:          { width: 200, sortable: false },
   created_at:                  { width: 150 },
   actions:                     { sortable: false, width: 110 },
   'data-table-expand':         { width: 48 },

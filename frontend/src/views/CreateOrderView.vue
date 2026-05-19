@@ -206,6 +206,25 @@
                 placeholder="Поставка оборудования..."
                 hint="Краткое описание: что закупается" persistent-hint
               />
+              <v-expand-transition>
+                <v-autocomplete
+                  v-if="showVehicleSelect"
+                  v-model="form.vehicle_id"
+                  :items="vehicleOptions"
+                  item-title="label"
+                  item-value="id"
+                  label="Автомобиль"
+                  prepend-inner-icon="mdi-car"
+                  clearable
+                  variant="outlined"
+                  density="compact"
+                  :loading="vehiclesLoading"
+                  class="mt-2"
+                  hint="Связать закупку с ТС"
+                  persistent-hint
+                  @update:search="onVehicleSearch"
+                />
+              </v-expand-transition>
             </v-col>
             <v-col cols="12" md="4">
               <v-autocomplete
@@ -3513,6 +3532,45 @@ const form = reactive({
   advance_amount: null as number | null,
   warranty_period_days: null as number | null,
   is_retroactive: false as boolean,
+  // Phase 29: связь с ТС
+  vehicle_id: null as number | null,
+})
+
+// Phase 29: Vehicle selector — ключевые слова для автопоказа селекта ТС
+const VEHICLE_KEYWORDS = [
+  'ремонт тс', 'ремонт автомобил', 'заправк', 'техобслуж', 'тех. обслуж',
+  'страхован', 'запчаст', 'шиномонтаж', 'диагностик', 'мойка', 'эвакуатор',
+  'осаго', 'каско', 'технический осмотр',
+]
+const showVehicleSelect = computed(() => {
+  const s = (form.subject || '').toLowerCase()
+  const keywordMatch = VEHICLE_KEYWORDS.some(kw => s.includes(kw))
+  return keywordMatch || !!form.vehicle_id
+})
+const vehicleOptions = ref<Array<{ id: number; label: string }>>([])
+const vehiclesLoading = ref(false)
+let vehicleSearchDebounce: ReturnType<typeof setTimeout> | null = null
+async function loadVehicles(q: string = '') {
+  vehiclesLoading.value = true
+  try {
+    const r = await apiFetch(`/api/vehicles?q=${encodeURIComponent(q)}&limit=30`)
+    const items = r?.items ?? r ?? []
+    vehicleOptions.value = items.map((v: any) => ({
+      id: v.id,
+      label: `${v.plate ?? ''} — ${v.brand ?? ''} ${v.model ?? ''}`.trim(),
+    }))
+  } catch (e: any) {
+    console.error('loadVehicles error', e)
+  } finally {
+    vehiclesLoading.value = false
+  }
+}
+function onVehicleSearch(q: string) {
+  if (vehicleSearchDebounce) clearTimeout(vehicleSearchDebounce)
+  vehicleSearchDebounce = setTimeout(() => loadVehicles(q), 300)
+}
+watch(showVehicleSelect, (v) => {
+  if (v && vehicleOptions.value.length === 0) loadVehicles()
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -5646,6 +5704,8 @@ const loadPurchase = async () => {
     advance_amount: data.advance_amount != null ? Number(data.advance_amount) : null,
     warranty_period_days: data.warranty_period_days ?? null,
     is_retroactive: data.is_retroactive ?? false,
+    // Phase 29: связь с ТС
+    vehicle_id: data.vehicle_id ?? null,
   })
 
   // Save frozen НМЦД from DB
@@ -6346,12 +6406,24 @@ const doSave = async (adminOverride: boolean) => {
           console.warn('[contract_items save]', ciErr)
         }
       }
-      showSnack('Сохранено')
+      if (form.vehicle_id) {
+        const vOpt = vehicleOptions.value.find(v => v.id === form.vehicle_id)
+        showSnack(vOpt ? `Сохранено. Закупка связана с ${vOpt.label}` : 'Сохранено')
+      } else {
+        showSnack('Сохранено')
+      }
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
       clearDraft()
       const hasPostSaveAction = !!sessionStorage.getItem(POST_SAVE_ACTION_KEY)
-      if (!hasPostSaveAction) showSnack('Закупка создана')
+      if (!hasPostSaveAction) {
+        if (form.vehicle_id) {
+          const vOpt = vehicleOptions.value.find(v => v.id === form.vehicle_id)
+          showSnack(vOpt ? `Закупка создана. Связана с ${vOpt.label}` : 'Закупка создана')
+        } else {
+          showSnack('Закупка создана')
+        }
+      }
       const editPath = formMode.value === 'advance_report'
         ? `/advance-reports/${created.id}/edit`
         : formMode.value === 'service_note_delivery'

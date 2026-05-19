@@ -340,6 +340,7 @@ async def list_purchases(
     purchase_method: Optional[str] = Query(None),
     purchase_basis: Optional[str] = Query(None),
     framework_seq: Optional[int] = Query(None),
+    vehicle_id: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -395,6 +396,8 @@ async def list_purchases(
         q = q.where(Purchase.purchase_basis == purchase_basis)
     if framework_seq is not None:
         q = q.where(Purchase.framework_seq == framework_seq)
+    if vehicle_id is not None:
+        q = q.where(Purchase.vehicle_id == vehicle_id)
     # Hide purchases that were split into children unless explicitly requested
     if status != "split":
         q = q.where(Purchase.status != "split")
@@ -1097,6 +1100,8 @@ PATCHABLE_FIELDS = {
     'advance_amount',
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     'warranty_period_days', 'is_retroactive',
+    # Phase 29: связь закупки с ТС
+    'vehicle_id',
 }
 
 

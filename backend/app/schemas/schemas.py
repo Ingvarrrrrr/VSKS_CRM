@@ -583,6 +583,8 @@ class PurchaseCreate(BaseModel):
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
     is_retroactive: Optional[bool] = False
+    # Phase 29: связь с ТС
+    vehicle_id: Optional[int] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -694,6 +696,8 @@ class PurchaseUpdate(BaseModel):
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
     is_retroactive: Optional[bool] = None
+    # Phase 29: связь с ТС
+    vehicle_id: Optional[int] = None
 
 
 class PurchaseOut(PurchaseCreate):

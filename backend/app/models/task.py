@@ -37,6 +37,9 @@ class Task(Base):
     parent_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
     import_to_parent = Column(Boolean, default=False, nullable=False)
+    # Phase 29 D-17: идемпотентный тег для авто-задач по просрочкам ТС
+    # Формат: [VEHICLE:{vehicle_id}:OSAGO_EXPIRY] / [VEHICLE:{vehicle_id}:TO_WARNING] / etc.
+    system_tag = Column(String(200), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

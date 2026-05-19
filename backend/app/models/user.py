@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text, Date
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -29,6 +29,15 @@ class User(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     can_publish = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на публикацию закупок
     exclude_from_directory = Column(Boolean, default=False, nullable=False, server_default="false")  # Не включать в справочник сотрудников
+
+    # Phase 29 D-04: водительские данные (раскрываются при can_drive=True)
+    can_drive = Column(Boolean, default=False, nullable=False, server_default="false")  # Может водить ТС
+    license_series = Column(String(10), nullable=True)           # Серия ВУ
+    license_number = Column(String(20), nullable=True)           # Номер ВУ
+    license_categories = Column(String(50), nullable=True)       # Категории A,B,C,D,CE,M,...
+    license_issued_at = Column(Date, nullable=True)              # Дата выдачи ВУ — _DATE_FIELDS plan 29-09
+    license_expires_at = Column(Date, nullable=True)             # Срок действия ВУ — _DATE_FIELDS plan 29-09
+    medical_cert_expires_at = Column(Date, nullable=True)        # Срок медсправки — _DATE_FIELDS plan 29-09
 
     organization = relationship("Organization", back_populates="users", foreign_keys=[org_id])
 

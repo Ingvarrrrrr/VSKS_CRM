@@ -44,3 +44,13 @@ from app.models.user_address import UserAddress  # noqa: F401
 from app.models.report_config import ReportConfig  # noqa: F401
 from app.models.contract_item import ContractItem  # noqa: F401 — Phase 27.1: register ContractItem in Base.metadata
 from app.models.plan_graph_version import PlanGraphVersion  # noqa: F401 — Phase 12-03: plan-graph versioning
+# Phase 29: Vehicle Fleet models
+from app.models.vehicle import Vehicle  # noqa: F401
+from app.models.vehicle_attachment import VehicleAttachment  # noqa: F401
+from app.models.vehicle_repair import VehicleRepair  # noqa: F401
+from app.models.repair_attachment import RepairAttachment  # noqa: F401
+from app.models.vehicle_field_history import VehicleFieldHistory  # noqa: F401
+from app.models.vehicle_odometer import VehicleOdometer  # noqa: F401
+from app.models.fuel_log import FuelLog  # noqa: F401
+from app.models.external_driver import ExternalDriver  # noqa: F401
+from app.models.trip import Trip  # noqa: F401

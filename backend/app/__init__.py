@@ -34,6 +34,9 @@ from .routers import purchase_receipts
 from .routers import install as install_router
 from .routers import analytics as analytics_router
 from .routers import report_configs as report_configs_router
+from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
+from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
+from .routers import external_drivers
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1220,6 +1223,20 @@ app.include_router(permissions_router.router)
 app.include_router(user_addresses_router.router)
 app.include_router(analytics_router.router)
 app.include_router(report_configs_router.router)
+
+# Phase 29: vehicle fleet routers
+# vehicles_dashboard (/api/vehicles-dashboard) и external_drivers.drivers_router (/api/drivers)
+# регистрируются ПЕРЕД vehicles.router (/api/vehicles/{vehicle_id:int}) — Gotcha 2026-04-20 FastAPI routing
+app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
+app.include_router(external_drivers.drivers_router)    # /api/drivers/available
+app.include_router(external_drivers.router)            # /api/external-drivers
+app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
+app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
+app.include_router(repair_attachments.router)          # /api/repair-attachments
+app.include_router(vehicle_repairs.router)             # /api/vehicle-repairs
+app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
+app.include_router(fuel_logs.router)                   # /api/fuel-logs
+app.include_router(trips.router)                       # /api/trips
 
 
 @app.get("/api/diag/version")

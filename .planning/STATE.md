@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete
-last_updated: "2026-05-16T20:44:36.580Z"
+last_updated: "2026-05-19T18:08:51.332Z"
 progress:
-  total_phases: 19
+  total_phases: 20
   completed_phases: 12
   total_plans: 74
   completed_plans: 68
-  percent: 63
+  percent: 60
 ---
 
 # STATE.md — VSKS_CRM
@@ -19,7 +19,7 @@ progress:
 Phase: 27.1
 Plan: Not started
 Next action: `/gsd:plan-phase 27.1` сначала (contract_items — вставлена ПЕРЕД 27 как зависимость), затем `/gsd:plan-phase 27`. UAT Phase 26 параллельно (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`).
-Resume file: None
+Resume file: .planning/phases/29-vehicle-fleet/29-CONTEXT.md
 Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
 
 ## 2026-05-14 — Phase 26-I ✅ Фидбек 14 мая по фазе 26 (12 коммитов)

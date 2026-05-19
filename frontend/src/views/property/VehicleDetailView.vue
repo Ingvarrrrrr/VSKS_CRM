@@ -125,12 +125,9 @@
               <v-row>
                 <v-col cols="12" md="4">
                   <FieldLabel label="Гос. номер" field-key="plate" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.plate"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
+                  <div class="mt-1">
+                    <LicensePlate v-model="form.plate" :readonly="false" />
+                  </div>
                 </v-col>
                 <v-col cols="12" md="4">
                   <FieldLabel label="Марка" field-key="brand" :vehicle-id="vehicle.id" />
@@ -564,6 +561,7 @@ import VehicleFuelLogTab from '@/components/vehicles/VehicleFuelLogTab.vue'
 import VehicleTripsTab from '@/components/vehicles/VehicleTripsTab.vue'
 import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
 import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
+import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 // ─────────────── Types ───────────────
 

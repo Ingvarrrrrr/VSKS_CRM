@@ -26,6 +26,7 @@ from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.vehicle_field_history import VehicleFieldHistory
+from app.models.organization import Organization
 from app.schemas.vehicle import (
     VehicleOut,
     VehicleListItem,
@@ -160,6 +161,33 @@ def _log_field_changes(
         )
 
 
+async def _fetch_org_names(db: AsyncSession, org_ids: list[int]) -> dict[int, str]:
+    """Fetch {org_id: org_name} for given ids. Empty ids → empty dict."""
+    unique = [i for i in set(org_ids) if i is not None]
+    if not unique:
+        return {}
+    rows = (await db.execute(
+        select(Organization.id, Organization.name).where(Organization.id.in_(unique))
+    )).all()
+    return {r.id: r.name for r in rows}
+
+
+def _enrich_vehicle_out(vehicle: Vehicle, org_map: dict[int, str]) -> VehicleOut:
+    """Build VehicleOut with owner_org_name / assigned_org_name filled from org_map."""
+    out = VehicleOut.model_validate(vehicle)
+    out.owner_org_name = org_map.get(vehicle.owner_org_id)
+    out.assigned_org_name = org_map.get(vehicle.assigned_org_id) if vehicle.assigned_org_id else None
+    return out
+
+
+def _enrich_list_item(vehicle: Vehicle, org_map: dict[int, str]) -> VehicleListItem:
+    """Build VehicleListItem with org names filled."""
+    out = VehicleListItem.model_validate(vehicle)
+    out.owner_org_name = org_map.get(vehicle.owner_org_id)
+    out.assigned_org_name = org_map.get(vehicle.assigned_org_id) if vehicle.assigned_org_id else None
+    return out
+
+
 # ─────────────────────────── Endpoints ──────────────────────────────────────
 
 @router.get("", response_model=dict)
@@ -210,8 +238,17 @@ async def list_vehicles(
     items_q = base_q.order_by(Vehicle.id.desc()).limit(limit).offset(offset)
     items = (await db.execute(items_q)).scalars().all()
 
+    # Enrich with org names (Option C: single lookup dict)
+    all_org_ids = []
+    for v in items:
+        if v.owner_org_id:
+            all_org_ids.append(v.owner_org_id)
+        if v.assigned_org_id:
+            all_org_ids.append(v.assigned_org_id)
+    org_map = await _fetch_org_names(db, all_org_ids)
+
     return {
-        "items": [VehicleListItem.model_validate(v) for v in items],
+        "items": [_enrich_list_item(v, org_map) for v in items],
         "total": total,
     }
 
@@ -250,7 +287,8 @@ async def create_vehicle(
                 },
             )
         raise
-    return VehicleOut.model_validate(vehicle)
+    org_map = await _fetch_org_names(db, [vehicle.owner_org_id, vehicle.assigned_org_id])
+    return _enrich_vehicle_out(vehicle, org_map)
 
 
 @router.patch("/{vehicle_id}", response_model=VehicleOut)
@@ -330,7 +368,8 @@ async def patch_vehicle(
             )
         raise
 
-    return VehicleOut.model_validate(vehicle)
+    org_map = await _fetch_org_names(db, [vehicle.owner_org_id, vehicle.assigned_org_id])
+    return _enrich_vehicle_out(vehicle, org_map)
 
 
 @router.get("/{vehicle_id}/field-history", response_model=List[FieldHistoryOut])
@@ -376,7 +415,8 @@ async def get_vehicle(
     if not vehicle:
         raise HTTPException(status_code=404, detail="ТС не найдено")
     _check_vehicle_visibility(vehicle, current_user)
-    return VehicleOut.model_validate(vehicle)
+    org_map = await _fetch_org_names(db, [vehicle.owner_org_id, vehicle.assigned_org_id])
+    return _enrich_vehicle_out(vehicle, org_map)
 
 
 @router.delete("/{vehicle_id}", status_code=204)

@@ -241,11 +241,13 @@
         />
       </template>
 
-      <!-- plate column: подсветка истекающей страховки -->
+      <!-- plate column: визуальный номерной знак + подсветка истекающей страховки -->
       <template #item.plate="{ item }">
-        <span class="font-weight-medium">{{ item.plate }}</span>
-        <v-icon v-if="isInsuranceExpiring(item)" icon="mdi-alert-circle" size="x-small"
-          color="warning" class="ml-1" title="ОСАГО истекает менее чем через 30 дней" />
+        <div class="d-flex align-center gap-1">
+          <LicensePlate :model-value="item.plate" :readonly="true" />
+          <v-icon v-if="isInsuranceExpiring(item)" icon="mdi-alert-circle" size="x-small"
+            color="warning" title="ОСАГО истекает менее чем через 30 дней" />
+        </div>
       </template>
 
       <!-- brand_model computed cell -->
@@ -493,6 +495,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import VehicleImportDialog from '@/components/vehicles/VehicleImportDialog.vue'
+import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 // ─────────────── Types ───────────────
 

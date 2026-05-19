@@ -347,7 +347,9 @@ class VehicleOut(BaseModel):
 
     id: int
     owner_org_id: int
+    owner_org_name: Optional[str] = None
     assigned_org_id: Optional[int] = None
+    assigned_org_name: Optional[str] = None
     assigned_text: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
@@ -388,7 +390,9 @@ class VehicleListItem(BaseModel):
 
     id: int
     owner_org_id: int
+    owner_org_name: Optional[str] = None
     assigned_org_id: Optional[int] = None
+    assigned_org_name: Optional[str] = None
     assigned_text: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None

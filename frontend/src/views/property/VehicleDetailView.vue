@@ -443,43 +443,43 @@
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Документы ─────────── -->
-        <v-tabs-window-item value="documents">
-          <div class="pa-6 text-medium-emphasis text-center">Документы — в работе (29-18)</div>
+        <v-tabs-window-item value="documents" :eager="false">
+          <VehicleDocumentsTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Фото ─────────── -->
-        <v-tabs-window-item value="photos">
-          <div class="pa-6 text-medium-emphasis text-center">Фото — в работе (29-18)</div>
+        <v-tabs-window-item value="photos" :eager="false">
+          <VehiclePhotosTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Ремонты ─────────── -->
-        <v-tabs-window-item value="repairs">
-          <div class="pa-6 text-medium-emphasis text-center">Ремонты — в работе (29-18)</div>
+        <v-tabs-window-item value="repairs" :eager="false">
+          <VehicleRepairsTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Пробег ─────────── -->
-        <v-tabs-window-item value="odometer">
-          <div class="pa-6 text-medium-emphasis text-center">Пробег — в работе (29-18)</div>
+        <v-tabs-window-item value="odometer" :eager="false">
+          <VehicleOdometerTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Заправки ─────────── -->
-        <v-tabs-window-item value="fuel">
-          <div class="pa-6 text-medium-emphasis text-center">Заправки — в работе (29-18)</div>
+        <v-tabs-window-item value="fuel" :eager="false">
+          <VehicleFuelLogTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Путёвки ─────────── -->
-        <v-tabs-window-item value="trips">
-          <div class="pa-6 text-medium-emphasis text-center">Путёвки — в работе (29-18)</div>
+        <v-tabs-window-item value="trips" :eager="false">
+          <VehicleTripsTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: История ─────────── -->
-        <v-tabs-window-item value="history">
-          <div class="pa-6 text-medium-emphasis text-center">История изменений — в работе (29-18)</div>
+        <v-tabs-window-item value="history" :eager="false">
+          <VehicleHistoryTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
         <!-- ─────────── Tab: Закупки ─────────── -->
-        <v-tabs-window-item value="purchases">
-          <div class="pa-6 text-medium-emphasis text-center">Связанные закупки — в работе (29-18)</div>
+        <v-tabs-window-item value="purchases" :eager="false">
+          <VehicleRelatedPurchasesTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
       </v-tabs-window>
@@ -556,6 +556,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import FieldHistoryPopover from '@/components/vehicles/FieldHistoryPopover.vue'
+import VehicleDocumentsTab from '@/components/vehicles/VehicleDocumentsTab.vue'
+import VehiclePhotosTab from '@/components/vehicles/VehiclePhotosTab.vue'
+import VehicleRepairsTab from '@/components/vehicles/VehicleRepairsTab.vue'
+import VehicleOdometerTab from '@/components/vehicles/VehicleOdometerTab.vue'
+import VehicleFuelLogTab from '@/components/vehicles/VehicleFuelLogTab.vue'
+import VehicleTripsTab from '@/components/vehicles/VehicleTripsTab.vue'
+import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
+import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
 
 // ─────────────── Types ───────────────
 
@@ -687,6 +695,7 @@ const authStore = useAuthStore()
 const vehicle = ref<Vehicle | null>(null)
 const vehicleOriginal = ref<Vehicle | null>(null)
 const loadingVehicle = ref(false)
+const vehicleId = computed(() => Number(route.params.id) || 0)
 const saving = ref(false)
 const deleting = ref(false)
 const activeTab = ref('general')

@@ -1239,6 +1239,7 @@ async def lifespan(app_: FastAPI):
     # Phase 29-08: smoke-render trip templates (Lesson 2026-05-18 — catches Jinja TemplateSyntaxError at boot)
     # ZERO {% tr %} in templates (Lesson 2026-05-15). Non-fatal: log error, do NOT crash.
     try:
+        import logging  # FIX: `logging` is treated as local inside lifespan (см. import logging в других try-блоках выше) → нужен явный import здесь, иначе UnboundLocalError
         from docxtpl import DocxTemplate as _DocxTpl29
         _fake_trip_ctx = {
             # 29-08 base keys
@@ -1281,6 +1282,7 @@ async def lifespan(app_: FastAPI):
 
     # Phase 29-11: seed vehicles from xlsx Голичкова (idempotent — ON CONFLICT plate DO NOTHING)
     try:
+        import logging  # FIX: `logging` локальный внутри lifespan (см. фикс smoke-render выше)
         from .services.vehicles_seed import seed_vehicles_from_xlsx as _seed_vehicles
         async with async_session() as _db29:
             _vresult = await _seed_vehicles(_db29)

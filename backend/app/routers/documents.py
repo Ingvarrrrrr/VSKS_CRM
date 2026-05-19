@@ -1489,42 +1489,43 @@ async def generate_document(
     # Все ключи NULL-safe (пустая строка / ноль / пустой список при отсутствии данных).
     try:
         # Реквизиты субсидии-грантодателя (для рамочных и региональных договоров)
-        context["subsidy_grantor_name"] = (
-            (subsidy.basis_doc_number or subsidy.name or "")
-            if subsidy else ""
+        # Phase 28: grantor_name / ministry_name берём из новых полей модели Subsidy
+        context["subsidy_grantor_name"] = (subsidy.grantor_name or "").strip() if subsidy else ""
+        context["subsidy_ministry_name"] = (subsidy.ministry_name or "").strip() if subsidy else ""
+        # agreement_date: новое поле отсутствует в модели — используем basis_doc_date
+        _subsidy_agreement_date_obj = (
+            subsidy.basis_doc_date if subsidy and subsidy.basis_doc_date else None
         )
-        context["subsidy_ministry_name"] = (
-            (getattr(subsidy, "ministry_name", None) or "")
-            if subsidy else ""
-        )
-        context["subsidy_agreement_date"] = (
-            _fmt_date(getattr(subsidy, "basis_doc_date", None))
-            if subsidy else ""
-        )
+        context["subsidy_agreement_date"] = _fmt_date(_subsidy_agreement_date_obj) if _subsidy_agreement_date_obj else ""
 
-        # Реквизиты физ.лица (ГПХ) — TBD поля; пока пустые строки
-        context["contractor_passport_series"]       = ""
-        context["contractor_passport_number"]       = ""
-        context["contractor_passport_issuer"]       = ""
-        context["contractor_passport_issued_date"]  = ""
-        context["contractor_snils"]                 = ""
-        context["contractor_registration_address"]  = ""
-        context["contractor_birth_date"]            = ""
+        # Реквизиты физ.лица (ГПХ) — читаем из контрагента
+        context["contractor_passport_series"]       = (c.passport_series or '') if c else ''
+        context["contractor_passport_number"]       = (c.passport_number or '') if c else ''
+        context["contractor_passport_issuer"]       = (c.passport_issuer or '') if c else ''
+        context["contractor_passport_issued_date"]  = _fmt_date(c.passport_issued_date) if c and c.passport_issued_date else ''
+        context["contractor_snils"]                 = (c.snils or '') if c else ''
+        context["contractor_registration_address"]  = (c.registration_address or c.address or c.postal_address or '') if c else ''
+        context["contractor_birth_date"]            = _fmt_date(c.birth_date) if c and c.birth_date else ''
 
-        # Комиссия закупки (для протокола) — TBD; пока пустые значения
-        context["commission_members"]       = []
-        context["commission_member_1_name"] = ""
-        context["commission_member_2_name"] = ""
-        context["commission_member_3_name"] = ""
+        # Комиссия закупки (для протокола) — из полей закупки Phase 28
+        context["commission_member_1_name"] = (p.commission_member_1_name or "").strip()
+        context["commission_member_2_name"] = (p.commission_member_2_name or "").strip()
+        context["commission_member_3_name"] = (p.commission_member_3_name or "").strip()
+        _commission_members = [
+            {"name": p.commission_member_1_name, "role": "Член комиссии"} if p.commission_member_1_name else None,
+            {"name": p.commission_member_2_name, "role": "Член комиссии"} if p.commission_member_2_name else None,
+            {"name": p.commission_member_3_name, "role": "Член комиссии"} if p.commission_member_3_name else None,
+        ]
+        context["commission_members"] = [x for x in _commission_members if x]
 
-        # Прочие (TBD или умолчания)
-        context["advance_amount"]              = 0
-        context["acceptance_term_days"]        = 5
-        context["penalty_rate"]                = 0.1
+        # Прочие условия договора — из полей закупки Phase 28
+        context["advance_amount"]              = _fmt_money(p.advance_amount) if p.advance_amount else ""
+        context["acceptance_term_days"]        = p.acceptance_term_days if p.acceptance_term_days is not None else 5
+        context["penalty_rate"]                = str(p.penalty_rate) if p.penalty_rate is not None else "0.1"
         context["procurement_protocol_number"] = ""
         context["procurement_order_number"]    = ""
-        context["repair_request_number"]       = ""
-        context["contractor_ogrnip_date"]      = ""
+        context["repair_request_number"]       = (p.repair_request_number or "").strip()
+        context["contractor_ogrnip_date"]      = _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else ""
     except Exception as _e28:
         import logging as _log28
         _log28.getLogger(__name__).warning("Phase 28 context keys failed: %s", _e28)

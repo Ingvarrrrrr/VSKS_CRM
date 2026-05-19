@@ -149,6 +149,9 @@ class SubsidyCreate(BaseModel):
     # Phase 22: № и дата документа-основания
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Phase 28: реквизиты грантодателя для шаблонов договоров
+    grantor_name: Optional[str] = None
+    ministry_name: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -176,6 +179,9 @@ class SubsidyUpdate(BaseModel):
     # Phase 22: № и дата документа-основания
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Phase 28: реквизиты грантодателя для шаблонов договоров
+    grantor_name: Optional[str] = None
+    ministry_name: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -211,6 +217,9 @@ class SubsidyOut(BaseModel):
     # Phase 22
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[_Date] = None
+    # Phase 28: реквизиты грантодателя для шаблонов договоров
+    grantor_name: Optional[str] = None
+    ministry_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -321,6 +330,14 @@ class ContractorCreate(BaseModel):
     correspondent_account: Optional[str] = None
     org_type: Optional[str] = None
     manual_product_categories: Optional[List[str]] = None
+    # ГПХ-поля для физ.лица
+    passport_series: Optional[str] = None
+    passport_number: Optional[str] = None
+    passport_issuer: Optional[str] = None
+    passport_issued_date: Optional[_Date] = None
+    snils: Optional[str] = None
+    registration_address: Optional[str] = None
+    birth_date: Optional[_Date] = None
 
 class ContractorOut(ContractorCreate):
     id: int
@@ -537,6 +554,15 @@ class PurchaseCreate(BaseModel):
     order_date: Optional[date] = None
     # Phase 28: форма договора для выбора шаблона при генерации
     contract_form: Optional[str] = None
+    # Phase 28: contract-specific поля (условия конкретного договора)
+    acceptance_term_days: Optional[int] = None
+    penalty_rate: Optional[Decimal] = None
+    contractor_ogrnip_date: Optional[date] = None
+    repair_request_number: Optional[str] = None
+    commission_member_1_name: Optional[str] = None
+    commission_member_2_name: Optional[str] = None
+    commission_member_3_name: Optional[str] = None
+    advance_amount: Optional[Decimal] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -636,6 +662,15 @@ class PurchaseUpdate(BaseModel):
     order_date: Optional[date] = None
     # Phase 28: форма договора для выбора шаблона при генерации
     contract_form: Optional[str] = None
+    # Phase 28: contract-specific поля (условия конкретного договора)
+    acceptance_term_days: Optional[int] = None
+    penalty_rate: Optional[Decimal] = None
+    contractor_ogrnip_date: Optional[date] = None
+    repair_request_number: Optional[str] = None
+    commission_member_1_name: Optional[str] = None
+    commission_member_2_name: Optional[str] = None
+    commission_member_3_name: Optional[str] = None
+    advance_amount: Optional[Decimal] = None
 
 
 class PurchaseOut(PurchaseCreate):

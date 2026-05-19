@@ -1090,6 +1090,11 @@ PATCHABLE_FIELDS = {
     "agreement_number", "agreement_date", "order_date",
     # Phase 28: форма договора (выбор шаблона при генерации)
     "contract_form",
+    # Phase 28: contract-specific поля (условия конкретного договора)
+    'acceptance_term_days', 'penalty_rate', 'contractor_ogrnip_date',
+    'repair_request_number',
+    'commission_member_1_name', 'commission_member_2_name', 'commission_member_3_name',
+    'advance_amount',
 }
 
 
@@ -1103,6 +1108,8 @@ _DATE_FIELDS = {
     "procurement_planned_date", "service_deadline_date", "prepayment_date",
     # Phase 26-K
     "agreement_date", "order_date",
+    # Phase 28
+    "contractor_ogrnip_date",
 }
 _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 

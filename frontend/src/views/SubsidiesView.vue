@@ -864,6 +864,23 @@
               />
             </v-col>
           </v-row>
+          <v-divider class="mt-4 mb-3" />
+          <div class="text-caption text-medium-emphasis mb-2">Реквизиты для шаблонов договоров</div>
+          <v-text-field
+            v-model="editForm.grantor_name"
+            label="Грантодатель (для договоров)"
+            hint="Напр. «Российская Федерация» или «Тверская область». Переменная {{subsidy_grantor_name}}"
+            persistent-hint
+            variant="outlined" density="compact"
+            class="mb-3"
+          />
+          <v-text-field
+            v-model="editForm.ministry_name"
+            label="Министерство-грантодатель (для договоров)"
+            hint="Напр. «МИНИСТЕРСТВОМ МОЛОДЕЖНОЙ ПОЛИТИКИ РФ» (как пишется в тексте договора). Переменная {{subsidy_ministry_name}}"
+            persistent-hint
+            variant="outlined" density="compact"
+          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -2828,7 +2845,7 @@ async function importContractorsFromFile() {
 }
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
 
@@ -3527,6 +3544,8 @@ async function startEdit(s: SubsidyRow) {
     agreement_text: full.agreement_text || '',
     basis_doc_number: full.basis_doc_number || '',
     basis_doc_date: full.basis_doc_date || '',
+    grantor_name: full.grantor_name || '',
+    ministry_name: full.ministry_name || '',
   }
   showEditDialog.value = true
 }
@@ -3560,7 +3579,7 @@ async function updateSubsidy() {
   try {
     await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null })
     })
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge

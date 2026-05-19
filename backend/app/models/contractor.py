@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Date
 from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 
@@ -29,3 +29,11 @@ class Contractor(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     # Категории товаров (ручной ввод): ["Компьютеры", "Мебель"] или ["Все"]
     manual_product_categories = Column(JSONB, nullable=True, default=list)
+    # ГПХ-поля для физ.лица (используются в шаблонах contract_gph_individual ±RID)
+    passport_series = Column(String(10), nullable=True)
+    passport_number = Column(String(20), nullable=True)
+    passport_issuer = Column(Text, nullable=True)
+    passport_issued_date = Column(Date, nullable=True)
+    snils = Column(String(20), nullable=True)
+    registration_address = Column(Text, nullable=True)
+    birth_date = Column(Date, nullable=True)

@@ -120,6 +120,16 @@ class Purchase(Base):
     # | 'gph_individual' | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
     contract_form = Column(String(50), nullable=True)
 
+    # Phase 28: contract-specific поля (условия конкретного договора)
+    acceptance_term_days = Column(Integer, nullable=True)         # срок приёмки товара (поставка)
+    penalty_rate = Column(Numeric(5, 3), nullable=True)           # неустойка в процентах (например 0.1 = 0.1%/день)
+    contractor_ogrnip_date = Column(Date, nullable=True)          # дата присвоения ОГРНИП (договор ремонт ТС с ИП)
+    repair_request_number = Column(String(50), nullable=True)     # номер заявки на ремонт (рамочный)
+    commission_member_1_name = Column(String(200), nullable=True) # член закупочной комиссии 1
+    commission_member_2_name = Column(String(200), nullable=True) # член комиссии 2
+    commission_member_3_name = Column(String(200), nullable=True) # член комиссии 3
+    advance_amount = Column(Numeric(15, 2), nullable=True)        # сумма аванса (для актов «большой отчётности»)
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки

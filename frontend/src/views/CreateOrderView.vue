@@ -317,6 +317,54 @@
               />
             </v-col>
           </v-row>
+          <!-- Phase 28: Условия конкретного договора — видно только если выбрана форма договора -->
+          <template v-if="form.contract_form">
+            <!-- Срок приёмки + неустойка — для поставки и услуг -->
+            <v-row v-if="['goods_single', 'services_large', 'services_small', 'services_food'].includes(form.contract_form)" class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.acceptance_term_days" type="number" label="Срок приёмки (раб. дней)" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+            <!-- Ремонт ТС: дата ОГРНИП + номер заявки -->
+            <v-row v-if="['repair_vehicle', 'repair_framework'].includes(form.contract_form)" class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model="form.contractor_ogrnip_date" type="date" label="Дата ОГРНИП подрядчика" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col v-if="form.contract_form === 'repair_framework'" cols="6" md="3">
+                <v-text-field v-model="form.repair_request_number" label="Номер заявки на ремонт" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+            <!-- Сумма аванса — только для большой отчётности -->
+            <v-row v-if="form.contract_form === 'services_large'" class="mt-1">
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+            <!-- Закупочная комиссия — для всех форм (нужна в Протоколе) -->
+            <v-row class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Закупочная комиссия (для протокола)</div>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_1_name" label="ФИО члена комиссии 1" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_2_name" label="ФИО члена комиссии 2" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_3_name" label="ФИО члена комиссии 3" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+          </template>
           <!-- Тип договора (перенесён из финансовых показателей) -->
           <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
             <v-col cols="12" md="3">
@@ -3430,6 +3478,15 @@ const form = reactive({
   vat_mode: 'uniform' as string,
   // Phase 28: форма договора (определяет шаблон при скачивании)
   contract_form: null as string | null,
+  // Phase 28: contract-specific поля (условия конкретного договора)
+  acceptance_term_days: null as number | null,
+  penalty_rate: null as number | null,
+  contractor_ogrnip_date: null as string | null,
+  repair_request_number: null as string | null,
+  commission_member_1_name: null as string | null,
+  commission_member_2_name: null as string | null,
+  commission_member_3_name: null as string | null,
+  advance_amount: null as number | null,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3487,6 +3544,15 @@ function serializeFormForAutosave() {
     ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
     // Phase 28: форма договора
     contract_form: f.contract_form || null,
+    // Phase 28: contract-specific поля
+    acceptance_term_days: f.acceptance_term_days ?? null,
+    penalty_rate: f.penalty_rate ?? null,
+    contractor_ogrnip_date: f.contractor_ogrnip_date || null,
+    repair_request_number: f.repair_request_number || null,
+    commission_member_1_name: f.commission_member_1_name || null,
+    commission_member_2_name: f.commission_member_2_name || null,
+    commission_member_3_name: f.commission_member_3_name || null,
+    advance_amount: f.advance_amount ?? null,
   })
 }
 
@@ -5541,6 +5607,15 @@ const loadPurchase = async () => {
     vat_mode: data.vat_mode || 'uniform',
     // Phase 28: форма договора
     contract_form: data.contract_form || null,
+    // Phase 28: contract-specific поля
+    acceptance_term_days: data.acceptance_term_days ?? null,
+    penalty_rate: data.penalty_rate != null ? Number(data.penalty_rate) : null,
+    contractor_ogrnip_date: data.contractor_ogrnip_date || null,
+    repair_request_number: data.repair_request_number || null,
+    commission_member_1_name: data.commission_member_1_name || null,
+    commission_member_2_name: data.commission_member_2_name || null,
+    commission_member_3_name: data.commission_member_3_name || null,
+    advance_amount: data.advance_amount != null ? Number(data.advance_amount) : null,
   })
 
   // Save frozen НМЦД from DB

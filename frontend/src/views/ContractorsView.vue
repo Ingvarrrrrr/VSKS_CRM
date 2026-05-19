@@ -356,6 +356,85 @@
             </v-row>
             <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
+            <!-- ── Реквизиты физ.лица (ГПХ) — только для Физ.лицо ── -->
+            <template v-if="form.org_type === 'Физ.лицо'">
+              <div class="section-label mt-4">Реквизиты физ.лица (ГПХ)</div>
+              <v-row dense class="mb-2">
+                <v-col cols="4">
+                  <v-text-field
+                    v-model="form.passport_series"
+                    label="Серия паспорта"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    maxlength="4"
+                    placeholder="1234"
+                  />
+                </v-col>
+                <v-col cols="8">
+                  <v-text-field
+                    v-model="form.passport_number"
+                    label="Номер паспорта"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    maxlength="6"
+                    placeholder="567890"
+                  />
+                </v-col>
+              </v-row>
+              <v-textarea
+                v-model="form.passport_issuer"
+                label="Кем выдан"
+                variant="outlined"
+                density="compact"
+                rows="2"
+                class="mb-2"
+                hide-details
+              />
+              <v-row dense class="mb-2">
+                <v-col cols="6">
+                  <v-text-field
+                    v-model="form.passport_issued_date"
+                    label="Дата выдачи паспорта"
+                    type="date"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  />
+                </v-col>
+                <v-col cols="6">
+                  <v-text-field
+                    v-model="form.birth_date"
+                    label="Дата рождения"
+                    type="date"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  />
+                </v-col>
+              </v-row>
+              <v-text-field
+                v-model="form.snils"
+                label="СНИЛС"
+                variant="outlined"
+                density="compact"
+                class="mb-2"
+                hide-details
+                maxlength="14"
+                placeholder="000-000-000 00"
+              />
+              <v-textarea
+                v-model="form.registration_address"
+                label="Адрес регистрации"
+                variant="outlined"
+                density="compact"
+                rows="2"
+                class="mb-2"
+                hide-details
+              />
+            </template>
+
             <div class="section-label mt-4">Категории товаров</div>
             <v-combobox
               v-model="form.manual_product_categories"
@@ -710,6 +789,13 @@ interface ContractorWithStats {
   product_categories: string[]
   manual_product_categories?: string[]
   org_type?: string
+  passport_series?: string
+  passport_number?: string
+  passport_issuer?: string
+  passport_issued_date?: string
+  snils?: string
+  registration_address?: string
+  birth_date?: string
 }
 
 const CONTRACTOR_TARGET_FIELDS = [
@@ -831,6 +917,8 @@ const emptyForm = () => ({
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
   org_type: '' as string | null,
   manual_product_categories: [] as string[],
+  passport_series: '', passport_number: '', passport_issuer: '',
+  passport_issued_date: '', snils: '', registration_address: '', birth_date: '',
 })
 const form = ref(emptyForm())
 
@@ -1100,6 +1188,13 @@ function openEdit(c: ContractorWithStats) {
     correspondent_account: c.correspondent_account || '',
     org_type:             c.org_type             || '',
     manual_product_categories: mergeCategories(c.manual_product_categories || [], c.product_categories || []),
+    passport_series:      c.passport_series      || '',
+    passport_number:      c.passport_number      || '',
+    passport_issuer:      c.passport_issuer      || '',
+    passport_issued_date: c.passport_issued_date || '',
+    snils:                c.snils                || '',
+    registration_address: c.registration_address || '',
+    birth_date:           c.birth_date           || '',
   }
   dialog.value = true
 }

@@ -1241,6 +1241,7 @@ async def lifespan(app_: FastAPI):
     try:
         from docxtpl import DocxTemplate as _DocxTpl29
         _fake_trip_ctx = {
+            # 29-08 base keys
             'vehicle_plate': 'A001AA77', 'driver_full_name': 'Тест Тестов',
             'date': '01.01.2026', 'odometer_start': '1000', 'odometer_finish': '1100',
             'org_name': 'ВСКС', 'route_from': 'Москва', 'route_to': 'Тула',
@@ -1250,11 +1251,17 @@ async def lifespan(app_: FastAPI):
             'driver_license_expires_at': '01.01.2030', 'delta_km': '100',
             'fuel_remaining_start': '30', 'fuel_remaining_finish': '25', 'fuel_issued_l': '10',
             'initiator_full_name': 'Иванов', 'initiator_position': 'Менеджер',
-            'trip_number': '1', 'trip_date': '01.01.2026',
+            'trip_number': 'VSKS-00001', 'trip_date': '01.01.2026',
             'cargo_name': '', 'cargo_weight_t': '', 'loading_point': '', 'unloading_point': '',
             'cargo_count': '', 'route': 'Москва → Тула', 'vehicle_color': 'белый', 'mileage': '100',
             'fuel_brand': 'AI-92', 'fuel_start': '30', 'fuel_finish': '25', 'customer_text': '',
             'plate': 'A001AA77',
+            # 29-20 extended keys
+            'vehicle_brand': 'Test', 'vehicle_model': 'Auto', 'vehicle_type_label': 'Легковой автомобиль',
+            'vehicle_load_capacity': '', 'date_dmy': '01.01.2026', 'odometer_diff': '100',
+            'fuel_added': '10', 'fuel_norm': '', 'fuel_season': 'зимняя', 'fuel_used_calc': '',
+            'org_address': 'Москва', 'customer_org_name': 'ВСКС', 'customer_org_address': 'Москва',
+            'purpose': '', 'task_description': '',
         }
         _tpl_dir29 = os.path.join(os.path.dirname(__file__), '..', 'templates')
         for _tpl_name29 in ['trip_light.docx', 'trip_truck.docx', 'trip_special.docx']:

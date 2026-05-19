@@ -104,7 +104,7 @@ def _build_trip_context(
     driver,
     org: Optional[Organization],
 ) -> dict:
-    """Build docxtpl render context for all 3 trip templates.
+    """Build docxtpl render context for all 3 trip templates (29-20 extended).
 
     driver is either User (штатный) or ExternalDriver (внешний) or None.
     All values are str to avoid docxtpl coercion issues.
@@ -150,52 +150,98 @@ def _build_trip_context(
 
     # Org
     org_name = (org.name if org else "") or ""
+    org_address = (getattr(org, "address", None) if org else None) or ""
+
+    # Vehicle type label (human-readable, 29-20)
+    _VEHICLE_TYPE_LABELS = {
+        "car_light":   "Легковой автомобиль",
+        "minivan":     "Минивэн",
+        "quadbike":    "Квадроцикл",
+        "truck_van":   "Грузовой (фургон)",
+        "truck_board": "Грузовой (бортовой)",
+        "truck_tank":  "Грузовой (цистерна)",
+        "truck_metal": "Грузовой (металловоз)",
+        "bus":         "Автобус",
+        "special":     "Спецтехника",
+        "snowmobile":  "Снегоход",
+        "boat":        "Лодка (весельная)",
+        "boat_motor":  "Лодка (моторная)",
+        "trailer":     "Прицеп",
+        "other":       "Прочее",
+    }
+    vehicle_type_label = _VEHICLE_TYPE_LABELS.get(vehicle.type or "", vehicle.type or "")
+
+    # Fuel norm & season (29-20: летняя / зимняя)
+    trip_date_obj = trip.date if hasattr(trip.date, "month") else None
+    if trip_date_obj:
+        month = trip_date_obj.month
+        fuel_season = "летняя" if 5 <= month <= 9 else "зимняя"
+    else:
+        fuel_season = "летняя"
+    # fuel_norm: from vehicle props if available, else 0
+    fuel_norm = float(getattr(vehicle, "fuel_consumption_per_100km", None) or 0)
+    fuel_used_calc = round(delta_km * fuel_norm / 100, 2) if fuel_norm else ""
 
     return {
         # Vehicle
-        "vehicle_brand_model": vehicle_brand_model,
-        "plate":               vehicle.plate or "",
-        "vehicle_color":       vehicle.color or "",
-        "fuel_type":           vehicle.fuel_type or "",
+        "vehicle_brand_model":  vehicle_brand_model,
+        "vehicle_brand":        brand,
+        "vehicle_model":        model,
+        "vehicle_type_label":   vehicle_type_label,
+        "plate":                vehicle.plate or "",
+        "vehicle_color":        vehicle.color or "",
+        "fuel_type":            vehicle.fuel_type or "",
+        "vehicle_load_capacity": str(getattr(vehicle, "load_capacity_t", None) or ""),
         # Trip
-        "trip_number":         str(trip.id),
-        "trip_date":           _fmt_date(trip.date),
-        "date":                _fmt_date(trip.date),
+        "trip_number":          f"VSKS-{trip.id:05d}",
+        "trip_date":            _fmt_date(trip.date),
+        "date":                 _fmt_date(trip.date),
+        "date_dmy":             _fmt_date(trip.date),
         # Route
-        "route_from":          route_from,
-        "route_to":            route_to,
-        "route":               route,
+        "route_from":           route_from,
+        "route_to":             route_to,
+        "route":                route,
         # Odometer
-        "odometer_start":      str(odo_start),
-        "odometer_finish":     str(odo_finish),
-        "delta_km":            str(delta_km),
-        "mileage":             str(delta_km),
-        # Fuel
-        "fuel_brand":          vehicle.fuel_type or "",
-        "fuel_start":          str(trip.fuel_remaining_start or ""),
-        "fuel_finish":         str(trip.fuel_remaining_finish or ""),
+        "odometer_start":       str(odo_start),
+        "odometer_finish":      str(odo_finish),
+        "delta_km":             str(delta_km),
+        "mileage":              str(delta_km),
+        "odometer_diff":        str(delta_km),
+        # Fuel (29-20 extended)
+        "fuel_brand":           vehicle.fuel_type or "",
+        "fuel_start":           str(trip.fuel_remaining_start or ""),
+        "fuel_finish":          str(trip.fuel_remaining_finish or ""),
         "fuel_remaining_start": str(trip.fuel_remaining_start or ""),
         "fuel_remaining_finish": str(trip.fuel_remaining_finish or ""),
-        "fuel_issued_l":       str(trip.fuel_issued_l or ""),
+        "fuel_issued_l":        str(trip.fuel_issued_l or ""),
+        "fuel_added":           str(trip.fuel_issued_l or ""),
+        "fuel_norm":            str(fuel_norm) if fuel_norm else "",
+        "fuel_season":          fuel_season,
+        "fuel_used_calc":       str(fuel_used_calc) if fuel_used_calc != "" else "",
         # Cargo (truck templates)
-        "cargo_name":          trip.cargo_name or "",
-        "cargo_weight_t":      str(trip.cargo_weight_t or ""),
-        "cargo_count":         "",
-        "loading_point":       route_from,
-        "unloading_point":     route_to,
+        "cargo_name":           trip.cargo_name or "",
+        "cargo_weight_t":       str(trip.cargo_weight_t or ""),
+        "cargo_count":          "",
+        "loading_point":        route_from,
+        "unloading_point":      route_to,
         # Driver
-        "driver_full_name":         driver_full_name,
-        "driver_license_series":    driver_license_series,
-        "driver_license_number":    driver_license_number,
+        "driver_full_name":          driver_full_name,
+        "driver_license_series":     driver_license_series,
+        "driver_license_number":     driver_license_number,
         "driver_license_categories": driver_license_categories,
-        "driver_license_issued_at": driver_license_issued_at,
+        "driver_license_issued_at":  driver_license_issued_at,
         "driver_license_expires_at": driver_license_expires_at,
-        # Purpose / customer
-        "customer_text":       trip.purpose or "",
+        # Purpose / customer / task
+        "customer_text":        trip.purpose or "",
+        "purpose":              trip.purpose or "",
+        "task_description":     "",
         # Org / initiator
-        "org_name":            org_name,
-        "initiator_full_name": org_name,
-        "initiator_position":  "",
+        "org_name":             org_name,
+        "org_address":          org_address,
+        "customer_org_name":    org_name,
+        "customer_org_address": org_address,
+        "initiator_full_name":  org_name,
+        "initiator_position":   "",
     }
 
 

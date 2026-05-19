@@ -1034,6 +1034,15 @@ async def lifespan(app_: FastAPI):
     except Exception as _e29_outer:
         logging.getLogger(__name__).warning(f"Phase 29 smoke-render block failed (non-fatal): {_e29_outer}")
 
+    # Phase 29-11: seed vehicles from xlsx Голичкова (idempotent — ON CONFLICT plate DO NOTHING)
+    try:
+        from .services.vehicles_seed import seed_vehicles_from_xlsx as _seed_vehicles
+        async with async_session() as _db29:
+            _vresult = await _seed_vehicles(_db29)
+        logging.getLogger(__name__).info(f"Phase 29 vehicles_seed: {_vresult}")
+    except Exception as _e29_seed:
+        logging.getLogger(__name__).warning(f"Phase 29 vehicles_seed skipped (non-fatal): {_e29_seed}")
+
     yield
     task.cancel()
     try:

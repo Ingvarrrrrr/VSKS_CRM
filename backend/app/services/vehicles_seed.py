@@ -227,12 +227,16 @@ async def seed_vehicles_from_xlsx(
         }
     """
     if xlsx_path is None:
-        # Repo root is 4 levels up from this file:
-        # backend/app/services/vehicles_seed.py → backend/app/services → backend/app → backend → repo root
-        repo_root = Path(__file__).parent.parent.parent.parent
-        xlsx_path = str(
-            repo_root / 'Доработки' / 'реестр_транспорта_от_Голичкова_обновление_042026.xlsx'
-        )
+        # In Docker container: /app/seed_data/vehicles_golichkov.xlsx
+        # Local dev: backend/seed_data/vehicles_golichkov.xlsx
+        backend_root = Path(__file__).parent.parent.parent  # /app
+        xlsx_path = str(backend_root / 'seed_data' / 'vehicles_golichkov.xlsx')
+        # Fallback на legacy путь Доработки/ для local dev backward compat
+        if not os.path.exists(xlsx_path):
+            repo_root = Path(__file__).parent.parent.parent.parent
+            legacy_path = str(repo_root / 'Доработки' / 'реестр_транспорта_от_Голичкова_обновление_042026.xlsx')
+            if os.path.exists(legacy_path):
+                xlsx_path = legacy_path
 
     if not os.path.exists(xlsx_path):
         log.info(f"vehicles_seed: xlsx not found at '{xlsx_path}', seeding skipped (non-fatal)")

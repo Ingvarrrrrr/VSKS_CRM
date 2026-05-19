@@ -2,15 +2,63 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 29 planned
-last_updated: "2026-05-19T22:40:00.000Z"
+status: Phase 29 executed (UAT pending)
+last_updated: "2026-05-19T23:30:00.000Z"
 progress:
   total_phases: 21
-  completed_phases: 12
+  completed_phases: 13
   total_plans: 95
-  completed_plans: 68
-  percent: 56
+  completed_plans: 90
+  percent: 80
 ---
+
+# STATE.md — VSKS_CRM
+
+## Current Position
+
+Phase: 29 (Vehicle Fleet) — **EXECUTED ✅** (21/21 plans, 25 atomic commits ac982c9..be45939)
+Plan: VERIFICATION pending — backend autodeploy applies migrations, frontend bundle rebuilds
+Next action: UAT Phase 29 + параллельно UAT остальных pending фаз (27.1.x / 26-I / 25 Report Builder)
+Resume file: .planning/phases/29-vehicle-fleet/PLAN.md
+Plan review: .planning/phases/29-vehicle-fleet/PLAN-REVIEW.md (avg 11.71/12)
+
+## 2026-05-19 — Phase 29 EXECUTED ✅ Vehicle Fleet (21/21 plans, 25 коммитов)
+
+`gsd-executor` (Sonnet) × 21 параллельных/sequential волн → все 21 плана выполнены, **25 atomic commits** (`ac982c9..be45939`) pushed → autodeploy.
+
+**Wave summary:**
+- **W0 (sequential):** 29-01 `ac982c9` (9 моделей) → 29-02 `0462ab6` (check_schema 9 таблиц + ALTER) → 29-03 `463c62b` (permissions seed)
+- **W1 (×7 parallel + finalize):** 29-04 `96ffd27` vehicles CRUD, 29-05 `93dd185` attachments, 29-06 `7a97968` repairs, 29-07 `dadb8fb` odometer+fuel, 29-08 `b0838e6` trips+stubs, 29-09 `1a81c7a` external_drivers, 29-10 `9474b8f` dashboard endpoints + `7cd0fdc` register 9 routers
+- **W1.5 (×3 parallel):** 29-11 `cb047dd` seed xlsx Голичкова, 29-12 `c86815d` import router, 29-13 `8892624` alerts cron (TaskStatus enum compliance verified)
+- **W2 (×3 parallel):** 29-14 `3511447` AppBar+router, 29-15 `4edf179` StaffView can_drive, 29-16 `cb22b08` VehicleListView
+- **W3:** 29-17 `aa44b91` VehicleDetailView shell + FieldHistoryPopover
+- **W3.5 (×8 parallel + wire):** 29-18a `7e1afa4` Documents, 29-18b `fb813ec` Photos, 29-18c `d21682c` Repairs, 29-18d `bcc087f` Odometer, 29-18e `6169afb` FuelLog, 29-18f `40b42d5` Trips, 29-18g `eb63a9d` RelatedPurchases, 29-18h `51ca5f5` History + `6544b56` wire-up
+- **W4 (×3 parallel + main):** 29-19a `bf29179` FuelCanister SVG, 29-19b `7af1e83` MaintenanceWarning pulse-glow, 29-19c `2a9ee5c` VehiclesInRepair + 29-19d `6c75d66` VehicleDashboardView main
+- **W5 (×2 parallel):** 29-20 `f867196` real .docx templates (smoke-render passed) + `be45939` SUMMARY, 29-21 `418d5d1` Purchase.vehicle_id integration
+
+**D-01..D-20 — all 20 decisions delivered.**
+
+**Architectural notes:**
+- TaskStatus enum compliance: 29-13 использует только `[todo, in_progress, review]` для open status check (no phantom `planned`)
+- ENUMs хранятся как VARCHAR (не PG ENUM types) — DO blocks не понадобились
+- system_tag column добавлен в Task (ALTER) — для идемпотентных авто-Tasks
+- 3 stub trip docx templates от 29-08 заменены реальными Минтранс formами в 29-20 (smoke-render всех 3 прошёл)
+- Plate как unique key seed (VIN часто «отсутствует» в xlsx Голичкова)
+- ENUM mapping для VehicleType учитывает все 14 типов из xlsx (car_light/minivan/truck_*/special/bus/quadbike/snowmobile/boat/boat_motor/trailer/other)
+- 11 dashboard виджетов (4 KPI + 3 custom + 4 ApexCharts) в grid-layout-plus с per-user localStorage
+
+**UAT pending Phase 29 (требует пользователь на проде):**
+1. AppBar «Имущество» (mdi-warehouse) видна → submenu Автотранспорт/Оборудование/Прочее
+2. `/property/vehicles` → 51 ТС из реестра Голичкова после seed-on-boot
+3. Импорт Excel: preview → region→org dialog → commit
+4. VehicleDetailView 9 tabs: Общее/Документы/Фото/Ремонты/Пробег/Заправки/Путёвки/История/Связанные закупки
+5. SVG канистра «плещется», карточки с просрочкой ТО «светятся» pulse-glow
+6. Путевые листы скачиваются для 3 типов ТС (легковой/грузовой/специальный)
+7. StaffView чекбокс «Может водить ТС» раскрывает 6 полей ВУ + медсправка
+8. CreateOrderView показывает селект «Автомобиль» если subject содержит ремонт/заправка/ОСАГО keywords
+9. Auto-Tasks за 30 дней до OSAGO/ТО/license/medical expiry создаются в lifespan cron
+
+
 
 # STATE.md — VSKS_CRM
 
@@ -19,7 +67,7 @@ progress:
 Phase: 29 (Vehicle Fleet)
 Plan: 21 plans created (29-01..29-21), PASS WITH NOTES (7 warning, 0 blocker)
 Next action: `/gsd:execute-phase 29` (Wave 0 → 1/1.5 → 2 → 3 → 3.5 → 4 → 5). Параллельно UAT 27.1.x, 26-I, 25 (16 пунктов Report Builder).
-Resume file: .planning/phases/29-vehicle-fleet/PLAN.md
+Resume file: None
 Plan review: .planning/phases/29-vehicle-fleet/PLAN-REVIEW.md (avg 11.71/12)
 Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
 
@@ -32,6 +80,7 @@ Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && g
 **Coverage:** D-01..D-20 — все 20 решений покрыты ≥1 планом. 35/35 файлов из PATTERNS.md ассигнованы планам. 12/12 R-items из RESEARCH.md отражены в task'ах.
 
 **Wave plan (зависимости):**
+
 - W0 (sequential): 29-01 (models) → 29-02 (check_schema) → 29-03 (permissions)
 - W1 (7 параллельно): 29-04..29-10 (CRUD routers)
 - W1.5 (3 параллельно): 29-11 (seed), 29-12 (import), 29-13 (alerts cron)
@@ -42,6 +91,7 @@ Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && g
 - W5: 29-20 (real .docx templates), 29-21 (Purchase ?vehicle_id integration)
 
 **Warnings to address during execution:**
+
 - W1-W3 (29-13): TaskStatus enum strings — открыть `backend/app/models/task.py` ДО выполнения 29-13, зафиксировать exact enum values
 - W6 (29-19): «8 виджетов» в D-16 раскрыты до 11 (4 KPI = 1 «виджет» в decision, но 4 карточки на UI)
 - W7 (29-18): размер плана — может потребоваться разбить на 29-18a/18b если context budget превышен

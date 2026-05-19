@@ -2,25 +2,49 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Milestone complete
-last_updated: "2026-05-19T18:08:51.332Z"
+status: Phase 29 planned
+last_updated: "2026-05-19T22:40:00.000Z"
 progress:
-  total_phases: 20
+  total_phases: 21
   completed_phases: 12
-  total_plans: 74
+  total_plans: 95
   completed_plans: 68
-  percent: 60
+  percent: 56
 ---
 
 # STATE.md — VSKS_CRM
 
 ## Current Position
 
-Phase: 27.1
-Plan: Not started
-Next action: `/gsd:plan-phase 27.1` сначала (contract_items — вставлена ПЕРЕД 27 как зависимость), затем `/gsd:plan-phase 27`. UAT Phase 26 параллельно (11 пунктов в `Sessions/2026-05-13_VSKS_CRM.md`).
-Resume file: .planning/phases/29-vehicle-fleet/29-CONTEXT.md
+Phase: 29 (Vehicle Fleet)
+Plan: 21 plans created (29-01..29-21), PASS WITH NOTES (7 warning, 0 blocker)
+Next action: `/gsd:execute-phase 29` (Wave 0 → 1/1.5 → 2 → 3 → 3.5 → 4 → 5). Параллельно UAT 27.1.x, 26-I, 25 (16 пунктов Report Builder).
+Resume file: .planning/phases/29-vehicle-fleet/PLAN.md
+Plan review: .planning/phases/29-vehicle-fleet/PLAN-REVIEW.md (avg 11.71/12)
 Baseline rollback Phase 26-E: `ae1cddd` (git revert --no-edit ae1cddd..HEAD && git push)
+
+## 2026-05-19 — Phase 29 planned ✅ Vehicle Fleet (21 plans)
+
+`gsd-pattern-mapper` (Haiku) + `gsd-phase-researcher` (Sonnet) → 35/45 patterns mapped + 12 R-items resolved.
+`gsd-planner` (Opus) → 21 PLAN.md files, 7 волн (0/1/1.5/2/3/3.5/4/5).
+`gsd-plan-checker` (Opus) → PASS WITH NOTES, avg score 11.71/12.
+
+**Coverage:** D-01..D-20 — все 20 решений покрыты ≥1 планом. 35/35 файлов из PATTERNS.md ассигнованы планам. 12/12 R-items из RESEARCH.md отражены в task'ах.
+
+**Wave plan (зависимости):**
+- W0 (sequential): 29-01 (models) → 29-02 (check_schema) → 29-03 (permissions)
+- W1 (7 параллельно): 29-04..29-10 (CRUD routers)
+- W1.5 (3 параллельно): 29-11 (seed), 29-12 (import), 29-13 (alerts cron)
+- W2 (3 параллельно): 29-14 (AppBar+router), 29-15 (StaffView can_drive), 29-16 (VehicleListView)
+- W3: 29-17 (VehicleDetailView shell)
+- W3.5: 29-18 (8 tab components)
+- W4: 29-19 (VehicleDashboardView + canister + pulse-glow)
+- W5: 29-20 (real .docx templates), 29-21 (Purchase ?vehicle_id integration)
+
+**Warnings to address during execution:**
+- W1-W3 (29-13): TaskStatus enum strings — открыть `backend/app/models/task.py` ДО выполнения 29-13, зафиксировать exact enum values
+- W6 (29-19): «8 виджетов» в D-16 раскрыты до 11 (4 KPI = 1 «виджет» в decision, но 4 карточки на UI)
+- W7 (29-18): размер плана — может потребоваться разбить на 29-18a/18b если context budget превышен
 
 ## 2026-05-14 — Phase 26-I ✅ Фидбек 14 мая по фазе 26 (12 коммитов)
 

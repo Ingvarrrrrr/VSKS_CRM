@@ -904,6 +904,37 @@ async def lifespan(app_: FastAPI):
         import logging as _lg
         _lg.getLogger(__name__).warning(f"Phase 26-W backfill skipped (non-fatal): {e}")
 
+    # Phase 29: vehicles fleet tables + ALTER purchases/users/tasks
+    try:
+        from check_schema import (
+            _ensure_external_drivers_table, _ensure_vehicles_table,
+            _ensure_vehicle_attachments_table, _ensure_vehicle_repairs_table,
+            _ensure_repair_attachments_table, _ensure_vehicle_field_history_table,
+            _ensure_vehicle_odometer_table, _ensure_fuel_logs_table,
+            _ensure_trips_table, _ensure_purchases_vehicle_id,
+            _ensure_users_driver_columns, _ensure_tasks_system_tag,
+        )
+        from .database import engine as _engine_p29
+        async with _engine_p29.begin() as conn:
+            for fn in [
+                _ensure_external_drivers_table, _ensure_vehicles_table,
+                _ensure_vehicle_attachments_table, _ensure_vehicle_repairs_table,
+                _ensure_repair_attachments_table, _ensure_vehicle_field_history_table,
+                _ensure_vehicle_odometer_table, _ensure_fuel_logs_table,
+                _ensure_trips_table, _ensure_purchases_vehicle_id,
+                _ensure_users_driver_columns, _ensure_tasks_system_tag,
+            ]:
+                try:
+                    await fn(conn)
+                except Exception as e:
+                    logging.getLogger(__name__).warning(
+                        f"Phase 29 schema {fn.__name__} skipped: {e}"
+                    )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"Phase 29 schema bootstrap failed (non-fatal): {e}"
+        )
+
     yield
     task.cancel()
     try:

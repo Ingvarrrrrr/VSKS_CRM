@@ -388,6 +388,424 @@ async def _ensure_plan_graph_versions_table(conn) -> None:
         print(f"  \u26a0\ufe0f   plan_graph_versions table ensure failed: {e}")
 
 
+async def _ensure_external_drivers_table(conn) -> None:
+    """Phase 29-02: ensure external_drivers table exists (idempotent).
+
+    D-15: наёмные водители без аккаунта в системе.
+    Порядок: external_drivers ДО trips (FK driver_external_id).
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS external_drivers ("
+            " id SERIAL PRIMARY KEY,"
+            " full_name VARCHAR(255) NOT NULL,"
+            " phone VARCHAR(30),"
+            " license_series VARCHAR(10),"
+            " license_number VARCHAR(20),"
+            " license_categories VARCHAR(50),"
+            " license_issued_at DATE,"
+            " license_expires_at DATE,"
+            " medical_cert_expires_at DATE,"
+            " org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,"
+            " notes TEXT,"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_external_drivers_full_name"
+            " ON external_drivers (full_name)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_external_drivers_org_id"
+            " ON external_drivers (org_id)"
+        ))
+        print("  \u2705  external_drivers table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   external_drivers table ensure failed: {e}")
+
+
+async def _ensure_vehicles_table(conn) -> None:
+    """Phase 29-02: ensure vehicles table exists (idempotent).
+
+    D-06, D-08, D-20: основная карточка ТС.
+    VARCHAR вместо PG ENUM — проще миграции.
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS vehicles ("
+            " id SERIAL PRIMARY KEY,"
+            " owner_org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,"
+            " assigned_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,"
+            " assigned_text VARCHAR(100),"
+            " brand VARCHAR(100),"
+            " model VARCHAR(100),"
+            " color VARCHAR(50),"
+            " vin VARCHAR(17),"
+            " plate VARCHAR(20) NOT NULL,"
+            " registered_at DATE,"
+            " insurance_until DATE,"
+            " type VARCHAR(30),"
+            " state VARCHAR(20) DEFAULT 'working',"
+            " fuel_type VARCHAR(20),"
+            " fuel_norm_summer DOUBLE PRECISION,"
+            " fuel_norm_winter DOUBLE PRECISION,"
+            " has_tracker BOOLEAN,"
+            " akb_ok BOOLEAN,"
+            " has_radio BOOLEAN,"
+            " mirrors_ok BOOLEAN,"
+            " has_keys BOOLEAN,"
+            " has_first_aid_kit BOOLEAN,"
+            " has_spare_wheel BOOLEAN,"
+            " has_extinguisher BOOLEAN,"
+            " next_to_km INTEGER,"
+            " current_odometer_km INTEGER,"
+            " props JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " CONSTRAINT uq_vehicles_plate UNIQUE (plate)"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_owner_org_id ON vehicles (owner_org_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_assigned_org_id ON vehicles (assigned_org_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_plate ON vehicles (plate)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_state ON vehicles (state)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_type ON vehicles (type)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicles_vin ON vehicles (vin)"
+        ))
+        print("  \u2705  vehicles table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicles table ensure failed: {e}")
+
+
+async def _ensure_vehicle_attachments_table(conn) -> None:
+    """Phase 29-02: ensure vehicle_attachments table exists (idempotent).
+
+    D-07, D-11: документы и фото ТС (bytea + SHA-256 dedup).
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS vehicle_attachments ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " kind VARCHAR(20) NOT NULL DEFAULT 'other',"
+            " name VARCHAR(500) NOT NULL,"
+            " file_data BYTEA NOT NULL,"
+            " mime VARCHAR(100),"
+            " size INTEGER,"
+            " sha256 VARCHAR(64),"
+            " uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " policy_number VARCHAR(50),"
+            " issued_at DATE,"
+            " expires_at DATE"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_attachments_vehicle_id"
+            " ON vehicle_attachments (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_attachments_sha256"
+            " ON vehicle_attachments (sha256)"
+        ))
+        print("  \u2705  vehicle_attachments table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_attachments table ensure failed: {e}")
+
+
+async def _ensure_vehicle_repairs_table(conn) -> None:
+    """Phase 29-02: ensure vehicle_repairs table exists (idempotent).
+
+    D-12, D-18: ремонты ТС + nullable purchase_id FK.
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS vehicle_repairs ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " date DATE NOT NULL,"
+            " description TEXT,"
+            " cost_amount NUMERIC(12,2),"
+            " performed_by_name VARCHAR(255),"
+            " mileage_at_repair INTEGER,"
+            " status VARCHAR(20) NOT NULL DEFAULT 'planned',"
+            " purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_repairs_vehicle_id"
+            " ON vehicle_repairs (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_repairs_status"
+            " ON vehicle_repairs (status)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_repairs_purchase_id"
+            " ON vehicle_repairs (purchase_id)"
+        ))
+        print("  \u2705  vehicle_repairs table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_repairs table ensure failed: {e}")
+
+
+async def _ensure_repair_attachments_table(conn) -> None:
+    """Phase 29-02: ensure repair_attachments table exists (idempotent).
+
+    D-07, D-12: документы по конкретному ремонту ТС.
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS repair_attachments ("
+            " id SERIAL PRIMARY KEY,"
+            " repair_id INTEGER NOT NULL REFERENCES vehicle_repairs(id) ON DELETE CASCADE,"
+            " kind VARCHAR(20) NOT NULL DEFAULT 'other',"
+            " name VARCHAR(500) NOT NULL,"
+            " file_data BYTEA NOT NULL,"
+            " mime VARCHAR(100),"
+            " size INTEGER,"
+            " sha256 VARCHAR(64),"
+            " uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " uploaded_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_repair_attachments_repair_id"
+            " ON repair_attachments (repair_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_repair_attachments_sha256"
+            " ON repair_attachments (sha256)"
+        ))
+        print("  \u2705  repair_attachments table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   repair_attachments table ensure failed: {e}")
+
+
+async def _ensure_vehicle_field_history_table(conn) -> None:
+    """Phase 29-02: ensure vehicle_field_history table exists (idempotent).
+
+    D-10: аудит-лог изменений полей карточки ТС.
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS vehicle_field_history ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " field_key VARCHAR(64) NOT NULL,"
+            " old_value TEXT,"
+            " new_value TEXT,"
+            " changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " comment TEXT"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_field_history_vehicle_id"
+            " ON vehicle_field_history (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_field_history_field_key"
+            " ON vehicle_field_history (field_key)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_field_history_changed_at"
+            " ON vehicle_field_history (changed_at)"
+        ))
+        print("  \u2705  vehicle_field_history table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_field_history table ensure failed: {e}")
+
+
+async def _ensure_vehicle_odometer_table(conn) -> None:
+    """Phase 29-02: ensure vehicle_odometer table exists (idempotent).
+
+    D-13: абсолютные значения пробега, UNIQUE(vehicle_id, date).
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS vehicle_odometer ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " date DATE NOT NULL,"
+            " odometer_km INTEGER NOT NULL,"
+            " entered_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " note TEXT,"
+            " source VARCHAR(20) NOT NULL DEFAULT 'manual',"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " CONSTRAINT uq_vehicle_odometer_vehicle_date UNIQUE (vehicle_id, date)"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_odometer_vehicle_id_date_desc"
+            " ON vehicle_odometer (vehicle_id, date DESC)"
+        ))
+        print("  \u2705  vehicle_odometer table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_odometer table ensure failed: {e}")
+
+
+async def _ensure_fuel_logs_table(conn) -> None:
+    """Phase 29-02: ensure fuel_logs table exists (idempotent).
+
+    D-03, D-20: журнал заправок ТС.
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS fuel_logs ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " date DATE NOT NULL,"
+            " liters NUMERIC(8,2),"
+            " price_per_liter NUMERIC(8,2),"
+            " total_amount NUMERIC(12,2),"
+            " fuel_type VARCHAR(20),"
+            " receipt_attachment_id INTEGER REFERENCES vehicle_attachments(id) ON DELETE SET NULL,"
+            " note TEXT,"
+            " source VARCHAR(20) NOT NULL DEFAULT 'manual',"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fuel_logs_vehicle_id ON fuel_logs (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fuel_logs_vehicle_id_date_desc"
+            " ON fuel_logs (vehicle_id, date DESC)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fuel_logs_date ON fuel_logs (date)"
+        ))
+        print("  \u2705  fuel_logs table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   fuel_logs table ensure failed: {e}")
+
+
+async def _ensure_trips_table(conn) -> None:
+    """Phase 29-02: ensure trips table exists (idempotent).
+
+    D-14, D-15, D-19: путевые листы ТС.
+    CHECK constraint: driver_user_id XOR driver_external_id (D-15).
+    """
+    try:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS trips ("
+            " id SERIAL PRIMARY KEY,"
+            " vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,"
+            " date DATE NOT NULL,"
+            " driver_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " driver_external_id INTEGER REFERENCES external_drivers(id) ON DELETE SET NULL,"
+            " route_from VARCHAR(255),"
+            " route_to VARCHAR(255),"
+            " purpose TEXT,"
+            " odometer_start INTEGER,"
+            " odometer_finish INTEGER,"
+            " fuel_remaining_start NUMERIC(6,2),"
+            " fuel_remaining_finish NUMERIC(6,2),"
+            " fuel_issued_l NUMERIC(6,2),"
+            " cargo_name VARCHAR(255),"
+            " cargo_weight_t NUMERIC(8,2),"
+            " docx_path VARCHAR(500),"
+            " status VARCHAR(20) NOT NULL DEFAULT 'draft',"
+            " created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,"
+            " CONSTRAINT ck_trip_driver_xor"
+            "   CHECK (driver_user_id IS NOT NULL OR driver_external_id IS NOT NULL)"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_trips_vehicle_id ON trips (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_trips_date ON trips (date DESC)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_trips_status ON trips (status)"
+        ))
+        print("  \u2705  trips table ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   trips table ensure failed: {e}")
+
+
+async def _ensure_purchases_vehicle_id(conn) -> None:
+    """Phase 29-02: ALTER purchases — add vehicle_id FK (D-18, idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE purchases ADD COLUMN IF NOT EXISTS"
+            " vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_purchases_vehicle_id"
+            " ON purchases (vehicle_id) WHERE vehicle_id IS NOT NULL"
+        ))
+        print("  \u2705  purchases.vehicle_id column ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   purchases.vehicle_id ensure failed: {e}")
+
+
+async def _ensure_users_driver_columns(conn) -> None:
+    """Phase 29-02: ALTER users — add 7 driver columns (D-04, idempotent).
+
+    asyncpg multi-statement bug: каждый ALTER отдельным execute.
+    """
+    try:
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS"
+            " can_drive BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_series VARCHAR(10)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_number VARCHAR(20)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_categories VARCHAR(50)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_issued_at DATE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_expires_at DATE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS medical_cert_expires_at DATE"
+        ))
+        print("  \u2705  users driver columns ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   users driver columns ensure failed: {e}")
+
+
+async def _ensure_tasks_system_tag(conn) -> None:
+    """Phase 29-02: ALTER tasks — add system_tag column + partial index (D-17, idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS system_tag VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tasks_system_tag"
+            " ON tasks (system_tag) WHERE system_tag IS NOT NULL"
+        ))
+        print("  \u2705  tasks.system_tag column ensured (Phase 29-02)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   tasks.system_tag ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)
@@ -410,6 +828,28 @@ async def main(apply: bool = False) -> int:
         # Phase 12-03: ensure plan_graph_versions table exists
         if apply:
             await _ensure_plan_graph_versions_table(conn)
+
+        # Phase 29-02: vehicle fleet tables + ALTER purchases/users/tasks
+        if apply:
+            # Order matters: external_drivers before trips (FK), vehicles before everything else
+            for _fn in [
+                _ensure_external_drivers_table,
+                _ensure_vehicles_table,
+                _ensure_vehicle_attachments_table,
+                _ensure_vehicle_repairs_table,
+                _ensure_repair_attachments_table,
+                _ensure_vehicle_field_history_table,
+                _ensure_vehicle_odometer_table,
+                _ensure_fuel_logs_table,
+                _ensure_trips_table,
+                _ensure_purchases_vehicle_id,
+                _ensure_users_driver_columns,
+                _ensure_tasks_system_tag,
+            ]:
+                try:
+                    await _fn(conn)
+                except Exception as e:
+                    print(f"  \u26a0\ufe0f   Phase 29-02 {_fn.__name__} failed: {e}")
 
         # Fetch all existing columns from the DB
         result = await conn.execute(text("""

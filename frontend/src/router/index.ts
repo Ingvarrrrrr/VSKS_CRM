@@ -355,6 +355,38 @@ const router = createRouter({
       component: () => import('../views/PaymentRegistryView.vue'),
       meta: { requiresAuth: true, title: 'Реестр платежей', tab_key: 'payment_registry' }
     },
+    // Property / Vehicle fleet (Phase 29)
+    {
+      path: '/property/vehicles',
+      name: 'vehicles',
+      component: () => import('../views/property/VehicleListView.vue'),
+      meta: { requiresAuth: true, title: 'Автотранспорт', tab_key: 'vehicles' }
+    },
+    {
+      path: '/property/vehicles/dashboard',
+      name: 'vehicles-dashboard',
+      component: () => import('../views/property/VehicleDashboardView.vue'),
+      meta: { requiresAuth: true, title: 'Дашборд автопарка', tab_key: 'vehicles' }
+    },
+    {
+      path: '/property/vehicles/:id(\\d+)',
+      name: 'vehicle-detail',
+      component: () => import('../views/property/VehicleDetailView.vue'),
+      props: true,
+      meta: { requiresAuth: true, title: 'Карточка ТС', tab_key: 'vehicles' }
+    },
+    {
+      path: '/property/equipment',
+      name: 'equipment',
+      component: () => import('../views/property/EquipmentPlaceholderView.vue'),
+      meta: { requiresAuth: true, title: 'Оборудование', tab_key: 'vehicles' }
+    },
+    {
+      path: '/property/misc',
+      name: 'misc',
+      component: () => import('../views/property/MiscPlaceholderView.vue'),
+      meta: { requiresAuth: true, title: 'Прочее', tab_key: 'vehicles' }
+    },
   ]
 })
 

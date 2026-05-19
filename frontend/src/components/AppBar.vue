@@ -22,6 +22,45 @@
         <v-icon :icon="nav.icon" size="18" />
         <span class="nav-icon-label">{{ nav.label }}</span>
       </v-btn>
+
+      <!-- Имущество submenu (Phase 29) -->
+      <v-menu v-if="authStore.hasTab('vehicles')" open-on-hover :open-delay="100" :close-delay="150">
+        <template v-slot:activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            variant="text"
+            size="small"
+            class="nav-icon-btn"
+            :class="{ 'nav-icon-btn--active': $route.path.startsWith('/property') }"
+          >
+            <v-icon icon="mdi-warehouse" size="18" />
+            <span class="nav-icon-label">Имущество</span>
+          </v-btn>
+        </template>
+        <v-list density="compact" min-width="180">
+          <v-list-item
+            :to="'/property/vehicles'"
+            prepend-icon="mdi-car"
+            title="Автотранспорт"
+          />
+          <v-list-item
+            :to="'/property/vehicles/dashboard'"
+            prepend-icon="mdi-view-dashboard-outline"
+            title="Дашборд"
+          />
+          <v-divider />
+          <v-list-item
+            :to="'/property/equipment'"
+            prepend-icon="mdi-toolbox-outline"
+            title="Оборудование"
+          />
+          <v-list-item
+            :to="'/property/misc'"
+            prepend-icon="mdi-package-variant-closed"
+            title="Прочее"
+          />
+        </v-list>
+      </v-menu>
     </div>
 
     <v-select
@@ -473,6 +512,10 @@ const _allMenuItems = [
   { title: 'Реестр авансовых отчётов', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
   { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
+  { title: 'Автотранспорт', icon: 'mdi-car', route: '/property/vehicles', tab_key: 'vehicles' },
+  { title: 'Дашборд автопарка', icon: 'mdi-view-dashboard-outline', route: '/property/vehicles/dashboard', tab_key: 'vehicles' },
+  { title: 'Оборудование', icon: 'mdi-toolbox-outline', route: '/property/equipment', tab_key: 'vehicles' },
+  { title: 'Прочее имущество', icon: 'mdi-package-variant-closed', route: '/property/misc', tab_key: 'vehicles' },
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },
 ]

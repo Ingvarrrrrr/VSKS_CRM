@@ -1,9 +1,17 @@
 from io import BytesIO
+from datetime import date as _date_type
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Phase 29 D-04: date fields added to users PATCH (Lesson 2026-05-13)
+_DATE_FIELDS = {
+    "license_issued_at",
+    "license_expires_at",
+    "medical_cert_expires_at",
+}
 from app.database import get_db
 from app.models.user import User
 from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
@@ -263,6 +271,12 @@ async def update_user(
         update_data["telegram_id"] = _re.sub(r'[^0-9]', '', str(update_data["telegram_id"]))
 
     for k, v in update_data.items():
+        # Phase 29 D-04: coerce ISO string → date for driver date fields (Lesson 2026-05-13)
+        if k in _DATE_FIELDS and isinstance(v, str):
+            try:
+                v = _date_type.fromisoformat(v[:10]) if v else None
+            except Exception:
+                v = None
         setattr(user, k, v)
 
     await db.commit()

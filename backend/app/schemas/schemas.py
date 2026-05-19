@@ -55,6 +55,14 @@ class UserUpdate(BaseModel):
     avatar: Optional[str] = None
     inn: Optional[str] = None
     exclude_from_directory: Optional[bool] = None
+    # Phase 29 D-04: driver fields
+    can_drive: Optional[bool] = None
+    license_series: Optional[str] = None
+    license_number: Optional[str] = None
+    license_categories: Optional[str] = None
+    license_issued_at: Optional[_Date] = None
+    license_expires_at: Optional[_Date] = None
+    medical_cert_expires_at: Optional[_Date] = None
 
 class PermissionsOut(BaseModel):
     tabs: List[str] = []

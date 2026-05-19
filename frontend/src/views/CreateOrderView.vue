@@ -182,6 +182,21 @@
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
                 hint="Выберите тип закупки" persistent-hint />
             </v-col>
+            <!-- Phase 28: форма договора — определяет шаблон при скачивании -->
+            <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method !== 'advance'" cols="12" md="3">
+              <v-select
+                v-model="form.contract_form"
+                :items="contractFormOptions"
+                item-title="title"
+                item-value="value"
+                label="Форма договора"
+                variant="outlined"
+                density="compact"
+                clearable
+                hint="Определяет какой шаблон используется при скачивании «Договор» и «Договор+ТЗ»"
+                persistent-hint
+              />
+            </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
               <v-text-field
                 v-model="form.subject"
@@ -1808,21 +1823,26 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-            <!-- Phase 23.1: Единый «Договор» — auto-switch услуги/поставка по item_kind позиций -->
+            <!-- Phase 28: «Договор» — doc_type определяется по form.contract_form, fallback → 'contract' -->
             <v-btn v-if="isSectionVisible('contractor')"
               prepend-icon="mdi-file-document-outline"
               variant="tonal"
               color="indigo"
               size="small"
-              :loading="docLoading === 'contract'"
-              @click="downloadDoc('contract')"
-              title="Договор (универсальный) — тип определяется автоматически по позициям закупки"
+              :loading="docLoading === (form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
+              @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
+              :title="form.contract_form ? 'Форма: ' + (contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form) : 'Договор (универсальный) — тип определяется автоматически по позициям закупки'"
             >
               {{ contractWord }}
             </v-btn>
             <div v-if="isSectionVisible('contractor')" class="text-caption text-medium-emphasis ml-2 d-flex align-center">
-              Тип определяется автоматически по типу позиций
-              <v-tooltip text="Все позиции 'услуга' → договор оказания услуг. Иначе → договор поставки." location="top">
+              <template v-if="form.contract_form">
+                {{ contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form }}
+              </template>
+              <template v-else>
+                Тип определяется автоматически по типу позиций
+              </template>
+              <v-tooltip :text="form.contract_form ? 'Форма договора выбрана явно. Изменить можно в поле «Форма договора» выше.' : 'Все позиции \'услуга\' → договор оказания услуг. Иначе → договор поставки.'" location="top">
                 <template #activator="{ props: tip }">
                   <v-icon v-bind="tip" icon="mdi-information-outline" size="14" class="ml-1" />
                 </template>
@@ -1834,7 +1854,7 @@
               color="indigo-darken-2"
               size="small"
               :loading="docLoading === 'contract_merge'"
-              @click="downloadDoc('contract', '?merge=tech_spec_contract', 'contract_merge')"
+              @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract', '?merge=tech_spec_contract', 'contract_merge')"
               title="Скачать Договор и ТЗ одним файлом"
             >
               {{ contractWord }} + ТЗ
@@ -3408,6 +3428,8 @@ const form = reactive({
   assigned_user_id: null as number | null,
   // Phase 26-U-3: режим НДС
   vat_mode: 'uniform' as string,
+  // Phase 28: форма договора (определяет шаблон при скачивании)
+  contract_form: null as string | null,
 })
 
 // Phase 26: Автосохранение — функции и watcher'ы (form объявлен выше, безопасно)
@@ -3463,6 +3485,8 @@ function serializeFormForAutosave() {
     stage_label: f.stage_label || null,
     // Phase 28 B4: ответственный исполнитель — не шлём null, только валидное id
     ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
+    // Phase 28: форма договора
+    contract_form: f.contract_form || null,
   })
 }
 
@@ -4691,6 +4715,40 @@ const CONTRACT_TYPES = [
   { value: 'framework_cumulative', title: 'Рамочный накопительный' },
   { value: 'framework_with_amount', title: 'Рамочный с суммой' },
 ]
+
+// Phase 28: варианты формы договора — определяют какой шаблон используется при скачивании
+const contractFormOptions = [
+  { value: 'services_large',     title: 'Услуги — большая отчётность' },
+  { value: 'services_small',     title: 'Услуги — малая отчётность' },
+  { value: 'services_food',      title: 'Услуги — питание' },
+  { value: 'goods_single',       title: 'Поставка — разовый договор' },
+  { value: 'gph_individual',     title: 'ГПХ с физ.лицом (без РИД)' },
+  { value: 'gph_individual_rid', title: 'ГПХ с физ.лицом (+РИД)' },
+  { value: 'repair_vehicle',     title: 'Договор на ремонт ТС' },
+  { value: 'repair_framework',   title: 'Рамочный договор на ремонт ТС' },
+]
+
+// Phase 28: маппинг contract_form → doc_type для кнопки «Договор»
+const contractDocTypeMap: Record<string, string> = {
+  services_large:     'contract_services_large',
+  services_small:     'contract_services_small',
+  services_food:      'contract_services_food',
+  goods_single:       'contract_goods_single',
+  gph_individual:     'contract_gph_individual',
+  gph_individual_rid: 'contract_gph_individual_rid',
+  repair_vehicle:     'contract_repair_vehicle',
+  repair_framework:   'contract_repair_framework',
+}
+
+// Phase 28: авто-предложение contract_form при первом выборе item_type
+watch(() => form.item_type, (newType) => {
+  if (form.contract_form) return  // не перезаписываем если уже выбрано
+  if (newType === 'услуга') {
+    form.contract_form = 'services_small'
+  } else if (newType === 'товар' || newType === 'mixed') {
+    form.contract_form = 'goods_single'
+  }
+})
 const frameworkContracts = ref<FrameworkContract[]>([])
 const frameworkDialog = ref(false)
 const frameworkLoading = ref(false)
@@ -5481,6 +5539,8 @@ const loadPurchase = async () => {
     assigned_user_id: data.assigned_user_id ?? null,
     // Phase 26-U-3: НДС режим
     vat_mode: data.vat_mode || 'uniform',
+    // Phase 28: форма договора
+    contract_form: data.contract_form || null,
   })
 
   // Save frozen НМЦД from DB

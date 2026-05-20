@@ -378,55 +378,61 @@ async def seed_vehicles_from_xlsx(
             # ----------------------------------------------------------------
             # INSERT ON CONFLICT (plate) DO NOTHING
             # ----------------------------------------------------------------
-            result = await db.execute(
-                text("""
-                    INSERT INTO vehicles (
-                        owner_org_id, assigned_org_id, assigned_text,
-                        brand, model, color, vin, plate, registered_at,
-                        type, state, insurance_until,
-                        has_tracker, akb_ok, has_radio, mirrors_ok,
-                        has_keys, has_first_aid_kit, has_spare_wheel, has_extinguisher,
-                        props, created_at, updated_at
-                    ) VALUES (
-                        :owner_org_id, NULL, :assigned_text,
-                        :brand, :model, :color, :vin, :plate, :registered_at,
-                        :type, :state, :insurance_until,
-                        :has_tracker, :akb_ok, :has_radio, :mirrors_ok,
-                        :has_keys, :has_first_aid_kit, :has_spare_wheel, :has_extinguisher,
-                        :props::jsonb, NOW(), NOW()
+            try:
+                async with db.begin_nested():
+                    result = await db.execute(
+                        text("""
+                            INSERT INTO vehicles (
+                                owner_org_id, assigned_org_id, assigned_text,
+                                brand, model, color, vin, plate, registered_at,
+                                type, state, insurance_until,
+                                has_tracker, akb_ok, has_radio, mirrors_ok,
+                                has_keys, has_first_aid_kit, has_spare_wheel, has_extinguisher,
+                                props, created_at, updated_at
+                            ) VALUES (
+                                :owner_org_id, NULL, :assigned_text,
+                                :brand, :model, :color, :vin, :plate, :registered_at,
+                                :type, :state, :insurance_until,
+                                :has_tracker, :akb_ok, :has_radio, :mirrors_ok,
+                                :has_keys, :has_first_aid_kit, :has_spare_wheel, :has_extinguisher,
+                                CAST(:props AS jsonb), NOW(), NOW()
+                            )
+                            ON CONFLICT (plate) DO NOTHING
+                        """),
+                        {
+                            'owner_org_id':      owner_org_id,
+                            'assigned_text':     assigned_text,
+                            'brand':             brand,
+                            'model':             model,
+                            'color':             color,
+                            'vin':               vin,
+                            'plate':             plate,
+                            'registered_at':     registered_at,
+                            'type':              v_type,
+                            'state':             v_state,
+                            'insurance_until':   insurance_until,
+                            'has_tracker':       has_tracker,
+                            'akb_ok':            akb_ok,
+                            'has_radio':         has_radio,
+                            'mirrors_ok':        mirrors_ok,
+                            'has_keys':          has_keys,
+                            'has_first_aid_kit': has_first_aid_kit,
+                            'has_spare_wheel':   has_spare_wheel,
+                            'has_extinguisher':  has_extinguisher,
+                            'props':             json.dumps(props, ensure_ascii=False),
+                        },
                     )
-                    ON CONFLICT (plate) DO NOTHING
-                """),
-                {
-                    'owner_org_id':      owner_org_id,
-                    'assigned_text':     assigned_text,
-                    'brand':             brand,
-                    'model':             model,
-                    'color':             color,
-                    'vin':               vin,
-                    'plate':             plate,
-                    'registered_at':     registered_at,
-                    'type':              v_type,
-                    'state':             v_state,
-                    'insurance_until':   insurance_until,
-                    'has_tracker':       has_tracker,
-                    'akb_ok':            akb_ok,
-                    'has_radio':         has_radio,
-                    'mirrors_ok':        mirrors_ok,
-                    'has_keys':          has_keys,
-                    'has_first_aid_kit': has_first_aid_kit,
-                    'has_spare_wheel':   has_spare_wheel,
-                    'has_extinguisher':  has_extinguisher,
-                    'props':             json.dumps(props, ensure_ascii=False),
-                },
-            )
-            if result.rowcount and result.rowcount > 0:
-                inserted += 1
-            else:
-                skipped_existing += 1
+                if result.rowcount and result.rowcount > 0:
+                    inserted += 1
+                else:
+                    skipped_existing += 1
+            except Exception as sql_exc:
+                err_msg = f"row {idx} (plate={plate_raw!r}): SQL: {sql_exc}"
+                log.warning(f"vehicles_seed: SQL error row {idx} — savepoint rolled back: {sql_exc}")
+                errors.append(err_msg)
 
         except Exception as row_exc:
-            err_msg = f"row {idx} (plate={plate_raw!r}): {row_exc}"
+            err_msg = f"row {idx} (plate={plate_raw!r}): parse: {row_exc}"
             log.warning(f"vehicles_seed: skipping malformed row — {err_msg}")
             errors.append(err_msg)
             continue

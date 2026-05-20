@@ -5,6 +5,28 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// 27.4-24: счётчик подряд 5xx/502 ошибок для авто-восстановления PWA из stale-SW кеша.
+// Если 3+ raз подряд получаем 5xx — это сильный сигнал на сломанный кеш / SW: чистим всё и reload.
+let _consecutive5xx = 0
+let _autoRecoveryTriggered = false
+
+export async function forceClearCacheAndReload(): Promise<void> {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map(r => r.unregister().catch(() => {})))
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map(k => caches.delete(k).catch(() => false)))
+    }
+  } catch (e) {
+    console.warn('[recovery] cache clear failed', e)
+  }
+  // localStorage намеренно НЕ чистим — иначе разлогинивает.
+  window.location.reload()
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
     ? JSON.stringify(options.body)
@@ -18,7 +40,31 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       ...(options.headers || {}),
     },
   })
+  // 27.4-24: успешный ответ → сбрасываем счётчик 5xx
+  if (res.ok) _consecutive5xx = 0
   if (!res.ok) {
+    // Счётчик подряд 5xx — если 3+, авто-чистим SW/кеш (stale bundle)
+    if (res.status >= 500 && res.status < 600) {
+      _consecutive5xx += 1
+      if (_consecutive5xx >= 3 && !_autoRecoveryTriggered) {
+        _autoRecoveryTriggered = true
+        console.warn(`[recovery] ${_consecutive5xx} consecutive 5xx, clearing SW caches and reloading`)
+        // Показываем пользователю что мы делаем (не молча)
+        try {
+          window.dispatchEvent(new CustomEvent('api-error', {
+            detail: {
+              code: 'AUTO_RECOVERY',
+              message: 'Похоже что бэкенд или кеш не отвечают. Чистим кеш и перезагружаемся через 2 сек...',
+              details: '',
+              correlation_id: '',
+            },
+          }))
+        } catch {}
+        setTimeout(() => { forceClearCacheAndReload() }, 2000)
+      }
+    } else if (res.status !== 401) {
+      // 4xx (кроме 401) — не сбрасываем, но и не считаем как 5xx
+    }
     if (res.status === 401) {
       localStorage.removeItem('auth_token')
       localStorage.removeItem('user_role')

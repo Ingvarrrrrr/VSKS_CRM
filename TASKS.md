@@ -1,5 +1,28 @@
 # TASKS — VSKS_CRM
 
+## 2026-05-20 — Phase 29.2: UX-фиксы Vehicle Fleet + критический WebSocket leak
+
+- [x] **3 проблемы Vehicle Fleet от юзера**:
+  - [x] VehicleListView (`/property/vehicles`) — пустая таблица при total=36 → useColumnConfig fallback на все колонки при stale ключах в LS (`28a0b64`)
+  - [x] Drill «В РАБОЧЕМ 34» возвращает 0 машин → case-insensitive `func.lower(coalesce(state,""))` + diagnostic log distinct(state) при empty (`457cdd2`)
+  - [x] Drill-диалог белый поверх тёмного дашборда → `.fleet-dash--light` override + `:theme="vuetifyTheme"` на v-dialog (`519a264`)
+
+- [x] **Критический инцидент QueuePool exhaustion** — корневой фикс:
+  - [x] Симптом: `INTERNAL_ERROR` на любом `/api/*` после нескольких часов работы. Traceback: `chat_ws → QueuePool limit of size 5 overflow 10 reached, timeout 30.00`
+  - [x] Первая попытка (неверная): поднял pool 5+10 → 20+40 в database.py (`5535493`) — пользователь подтвердил «не помогло» → revert (`9e2ac23..2e802ac`)
+  - [x] Root cause найден из `docker logs --tail 60`: WebSocket `chat_ws` использовал `db: AsyncSession = Depends(get_db)` → FastAPI держал session на всё время WS-подключения (часы) → 15 вкладок чата исчерпывали pool
+  - [x] Корневой fix `d1f2348`: убрал `Depends(get_db)`, открыл session локально через `async with async_session()` только на 2 init-запроса (load user + unread count), pool 5+10 теперь достаточен
+  - [x] Reapply vehicle fixes (`519a264` theme, `457cdd2` drill, `28a0b64` list) после revert
+  - [x] Force-recreate backend через SSH: `docker compose up -d --force-recreate backend` (Lesson 2026-05-04 — `up -d` без флага не пересоздаёт контейнер)
+
+- [x] **Уроки зафиксированы**:
+  - VAULT/Lessons.md (2026-05-20 WebSocket+Depends leak) — правило «никогда не Depends(get_db) в WS endpoint»
+  - VAULT/05_Gotchas.md — раздел про QueuePool диагностику
+
+**Оценка сессии: ~85%** — три UI-проблемы Vehicle Fleet закрыты + найден и устранён давний архитектурный баг (WebSocket leak висел с момента написания чата). Не дотянуло до 90%: не открывал прод в браузере после finальных fix-коммитов (правило из Lesson 2026-05-11/12), полагался на ответ пользователя «заработало».
+
+**Следующий шаг:** UAT пользователем — открыть `/property/vehicles` (таблица с 25/36 рядами), кликнуть «В РАБОЧЕМ» (должны быть 34 машины), переключить тему. Оставить чат открытым на час — backend не должен лечь.
+
 ## 2026-05-15/16 — Phase 26-VV..YY: реестр авансовых + дубли + ускорение GET
 
 - [~] **Фидбек по реестру авансовых + перформанс**

@@ -561,8 +561,21 @@ async function openCreateDialog() {
       createDialog.loadingPurchases = false
     }
   }
-  // Phase 26-ZZ: bulk-load убран — пользователь начнёт печатать имя и
-  // сработает onContractorSearch (server-side search через store).
+  // 27.4-24: пре-bulk загружаем топ-50 контрагентов (Phase 26-ZZ убрал bulk-load,
+  // но в диалоге КП пользователь хочет видеть список сразу, а не угадывать буквы).
+  // server-side search с пустым q возвращает первые 50 по дефолтной сортировке.
+  createDialog.loadingContractors = true
+  contractorsStore.lastError = null
+  try {
+    const arr = await contractorsStore.search('', 50)
+    if (contractorsStore.lastError) {
+      showSnack('Ошибка загрузки контрагентов: ' + contractorsStore.lastError, 'error')
+    } else if (!arr || arr.length === 0) {
+      showSnack('Контрагенты не найдены. Создайте нового или введите свободный email.', 'warning')
+    }
+  } finally {
+    createDialog.loadingContractors = false
+  }
 }
 
 function openQuickContractor() {

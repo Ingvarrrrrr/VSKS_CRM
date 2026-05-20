@@ -24,6 +24,7 @@ export const useContractorsStore = defineStore('contractors', {
     cache: new Map<number, Contractor>(),
     searchResults: [] as Contractor[],
     searching: false as boolean,
+    lastError: null as string | null,
     _searchAbort: null as AbortController | null,
   }),
   getters: {
@@ -59,7 +60,11 @@ export const useContractorsStore = defineStore('contractors', {
       } catch (e: any) {
         if (e?.name === 'AbortError') return this.searchResults
         console.error('contractors search failed', e)
-        return this.searchResults
+        // 27.4-24: лог ошибки + сохраняем во внутреннем поле для caller'ов,
+        // которые могут проверить store.lastError (без throw, чтобы не ломать
+        // setTimeout-callers без await catch).
+        this.lastError = e?.payload?.message || e?.message || 'Network error'
+        return []
       } finally {
         if (this._searchAbort === ctrl) {
           this._searchAbort = null

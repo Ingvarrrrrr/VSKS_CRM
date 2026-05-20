@@ -9,7 +9,12 @@
       </div>
     </div>
 
-    <div class="split-kanban-columns">
+    <!-- Sticky top scrollbar (mirrors bottom) -->
+    <div ref="topScrollerRef" class="split-kanban-top-scroller">
+      <div class="split-kanban-top-scroller-phantom" :style="{ width: contentWidth + 'px' }" />
+    </div>
+
+    <div ref="columnsRef" class="split-kanban-columns">
       <div
         v-for="(col, idx) in columns"
         :key="col.key"
@@ -106,7 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 // @ts-ignore - vuedraggable types are loose
 import draggable from 'vuedraggable'
 import { apiFetch } from '@/api'
@@ -222,6 +227,49 @@ function finishEditColumn(col: ColumnState) {
   col.editing = false
 }
 
+// ── Sticky top scrollbar sync ────────────────────────────────────────────────
+const topScrollerRef = ref<HTMLDivElement | null>(null)
+const columnsRef = ref<HTMLDivElement | null>(null)
+const contentWidth = ref(0)
+let _syncing = false
+let _resizeObs: ResizeObserver | null = null
+
+function updateContentWidth() {
+  if (!columnsRef.value) return
+  contentWidth.value = columnsRef.value.scrollWidth
+}
+function onTopScroll() {
+  if (_syncing || !columnsRef.value || !topScrollerRef.value) return
+  _syncing = true
+  columnsRef.value.scrollLeft = topScrollerRef.value.scrollLeft
+  _syncing = false
+}
+function onBottomScroll() {
+  if (_syncing || !columnsRef.value || !topScrollerRef.value) return
+  _syncing = true
+  topScrollerRef.value.scrollLeft = columnsRef.value.scrollLeft
+  _syncing = false
+}
+onMounted(() => {
+  nextTick(() => {
+    updateContentWidth()
+    if (columnsRef.value) {
+      columnsRef.value.addEventListener('scroll', onBottomScroll, { passive: true })
+      _resizeObs = new ResizeObserver(() => updateContentWidth())
+      _resizeObs.observe(columnsRef.value)
+    }
+    if (topScrollerRef.value) {
+      topScrollerRef.value.addEventListener('scroll', onTopScroll, { passive: true })
+    }
+  })
+})
+onBeforeUnmount(() => {
+  if (columnsRef.value) columnsRef.value.removeEventListener('scroll', onBottomScroll)
+  if (topScrollerRef.value) topScrollerRef.value.removeEventListener('scroll', onTopScroll)
+  if (_resizeObs) _resizeObs.disconnect()
+})
+watch(columns, () => nextTick(updateContentWidth), { deep: true })
+
 const splitting = ref(false)
 async function onSplit() {
   if (splitting.value) return
@@ -255,6 +303,20 @@ async function onSplit() {
 <style scoped>
 .split-kanban {
   width: 100%;
+}
+.split-kanban-top-scroller {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  margin-bottom: 4px;
+  background: rgba(var(--v-theme-surface), 0.9);
+  backdrop-filter: blur(2px);
+}
+.split-kanban-top-scroller-phantom {
+  height: 1px;
 }
 .split-kanban-columns {
   display: flex;

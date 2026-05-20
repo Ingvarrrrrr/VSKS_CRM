@@ -162,6 +162,13 @@
           </v-list-item-title>
         </v-list-item>
         <v-divider />
+        <!-- 27.4-24: ручная очистка кеша (для "502 на одном компьютере" — stale PWA SW) -->
+        <v-list-item @click="forceClearCache" :title="'Очистить кеш SW и перезагрузить страницу'">
+          <v-list-item-title>
+            <v-icon icon="mdi-broom" class="mr-2" color="warning" />Очистить кеш браузера
+          </v-list-item-title>
+        </v-list-item>
+        <v-divider />
         <v-list-item @click="logout">
           <v-list-item-title>
             <v-icon icon="mdi-logout" class="mr-2" />Выйти
@@ -386,7 +393,7 @@ import SignaturePad from './SignaturePad.vue'
 import ProfilePhotoUpload from './ProfilePhotoUpload.vue'
 import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
-import { apiFetch } from '@/api'
+import { apiFetch, forceClearCacheAndReload } from '@/api'
 import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
 import { useAuthStore } from '../stores/auth'
 
@@ -648,6 +655,12 @@ const logout = () => {
   localStorage.removeItem('selected_org_ids')
   localStorage.removeItem('selected_org_names')
   router.push('/login')
+}
+
+// 27.4-24: ручная очистка PWA-кеша при 502 на одном компе
+async function forceClearCache() {
+  if (!confirm('Очистить кеш и перезагрузить страницу? Авторизация сохранится.')) return
+  await forceClearCacheAndReload()
 }
 
 const goToSubsidy = (subsidyId: number) => {

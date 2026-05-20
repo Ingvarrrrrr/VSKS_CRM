@@ -997,3 +997,208 @@ async def all_vehicles_summary(
         }
         for r in rows
     ]
+
+
+# ─────────────────────────── 11. By-region (Phase 29.1) ──────────────────────
+
+@router.get("/by-region")
+async def by_region(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Phase 29.1: Fleet geography — group vehicles by assigned_text (region string).
+    Returns list sorted by count desc.
+    If fewer than 5 vehicles visible, adds mock_demo flag.
+    """
+    q = (
+        select(
+            func.coalesce(Vehicle.assigned_text, "Не указан").label("region"),
+            Vehicle.state,
+            func.count(Vehicle.id).label("cnt"),
+        )
+        .group_by(func.coalesce(Vehicle.assigned_text, "Не указан"), Vehicle.state)
+        .order_by(func.count(Vehicle.id).desc())
+    )
+    q = _apply_visibility(q, current_user)
+    rows = (await db.execute(q)).all()
+
+    # Aggregate by region
+    region_map: dict = {}
+    for r in rows:
+        rg = r.region
+        if rg not in region_map:
+            region_map[rg] = {"region": rg, "count": 0, "by_state": {}}
+        region_map[rg]["count"] += r.cnt
+        state_key = r.state or "unknown"
+        region_map[rg]["by_state"][state_key] = region_map[rg]["by_state"].get(state_key, 0) + r.cnt
+
+    result = sorted(region_map.values(), key=lambda x: x["count"], reverse=True)
+
+    # штаб_label heuristic — map common region strings
+    _SHTAB = {
+        "Ростов-на-Дону": "штаб РНД, СТО",
+        "ЦУ Москва": "штаб ЦУ",
+        "Луганск": "ФПГ ЛНР",
+        "Донецк": "ФПГ ДНР",
+        "Запорожье": "ФПГ Запорожье",
+        "Иркутск": "ФПГ Иркутск",
+    }
+    for item in result:
+        item["shtab_label"] = _SHTAB.get(item["region"], "")
+
+    total = sum(item["count"] for item in result)
+    mock_demo = total < 5
+
+    return {"items": result, "mock_demo": mock_demo}
+
+
+# ─────────────────────────── 12. Driver reports feed (Phase 29.1 / 30) ───────
+
+@router.get("/driver-reports")
+async def driver_reports(
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Phase 29.1: Feed of recent events for Driver Reports panel.
+    Phase 30 (mobile app) will populate this with real driver checklist submissions.
+    Currently sources from: VehicleOdometer (last updates) + VehicleRepair (recent).
+    Returns [] when empty — UI shows placeholder message.
+    """
+    from app.models.vehicle_odometer import VehicleOdometer
+
+    feed: list[dict] = []
+
+    # Recent odometer updates
+    odo_q = (
+        select(
+            VehicleOdometer.vehicle_id,
+            VehicleOdometer.odometer_km,
+            VehicleOdometer.date,
+            Vehicle.plate,
+            Vehicle.brand,
+            Vehicle.model,
+        )
+        .join(Vehicle, Vehicle.id == VehicleOdometer.vehicle_id)
+        .order_by(VehicleOdometer.created_at.desc())
+        .limit(limit)
+    )
+    odo_q = _apply_visibility(odo_q, current_user)
+    try:
+        odo_rows = (await db.execute(odo_q)).all()
+        for r in odo_rows:
+            feed.append({
+                "vehicle_id": r.vehicle_id,
+                "plate": r.plate or "",
+                "type": "odometer_update",
+                "ic": "ok",
+                "title": f"Пробег обновлён: {r.odometer_km:,} км".replace(",", "\u00a0"),
+                "author": "",
+                "timestamp": r.date.isoformat() if r.date else "",
+            })
+    except Exception:
+        pass
+
+    # Recent repair requests
+    rep_q = (
+        select(
+            VehicleRepair.vehicle_id,
+            VehicleRepair.description,
+            VehicleRepair.date,
+            Vehicle.plate,
+            Vehicle.brand,
+            Vehicle.model,
+        )
+        .join(Vehicle, Vehicle.id == VehicleRepair.vehicle_id)
+        .order_by(VehicleRepair.created_at.desc())
+        .limit(limit)
+    )
+    rep_q = _apply_visibility(rep_q, current_user)
+    try:
+        rep_rows = (await db.execute(rep_q)).all()
+        for r in rep_rows:
+            feed.append({
+                "vehicle_id": r.vehicle_id,
+                "plate": r.plate or "",
+                "type": "issue",
+                "ic": "alert",
+                "title": r.description or "Заявка на ремонт",
+                "author": "",
+                "timestamp": r.date.isoformat() if r.date else "",
+            })
+    except Exception:
+        pass
+
+    # Sort by timestamp desc, take top limit
+    feed.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+    return feed[:limit]
+
+
+# ─────────────────────────── 13. Filter counts (Phase 29.1) ──────────────────
+
+@router.get("/filter-counts")
+async def filter_counts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Phase 29.1: Counts for filter chips in VehicleDashboardView.
+    Returns: all, working, in_repair, not_running, no_report_30d, for_disposal.
+    """
+    from app.models.vehicle_odometer import VehicleOdometer
+
+    today = date.today()
+    cutoff_30d = today - timedelta(days=30)
+
+    # All vehicles count
+    all_q = select(func.count(Vehicle.id))
+    all_q = _apply_visibility(all_q, current_user)
+    total_all = int((await db.execute(all_q)).scalar() or 0)
+
+    # By state counts
+    state_q = (
+        select(Vehicle.state, func.count(Vehicle.id).label("cnt"))
+        .group_by(Vehicle.state)
+    )
+    state_q = _apply_visibility(state_q, current_user)
+    state_rows = (await db.execute(state_q)).all()
+    state_map = {r.state: r.cnt for r in state_rows}
+
+    working = state_map.get("working", 0)
+    in_repair = state_map.get("in_repair", 0) + state_map.get("broken", 0)
+    not_running = (
+        state_map.get("destroyed", 0)
+        + state_map.get("utilized", 0)
+        + state_map.get("needs_repair", 0)
+    )
+
+    # No report in 30d: working vehicles with NO odometer record in last 30 days
+    recent_odo_sq = (
+        select(VehicleOdometer.vehicle_id)
+        .where(VehicleOdometer.date >= cutoff_30d)
+        .distinct()
+    ).subquery("recent_odo")
+
+    no_report_q = (
+        select(func.count(Vehicle.id))
+        .outerjoin(recent_odo_sq, recent_odo_sq.c.vehicle_id == Vehicle.id)
+        .where(recent_odo_sq.c.vehicle_id.is_(None))
+        .where(Vehicle.state == "working")
+    )
+    no_report_q = _apply_visibility(no_report_q, current_user)
+    no_report_30d = int((await db.execute(no_report_q)).scalar() or 0)
+
+    # For disposal: destroyed + utilized
+    for_disposal = state_map.get("destroyed", 0) + state_map.get("utilized", 0)
+
+    return {
+        "all": total_all,
+        "working": working,
+        "in_repair": in_repair,
+        "not_running": not_running,
+        "no_report_30d": no_report_30d,
+        "for_disposal": for_disposal,
+        "mock_demo": total_all < 5,
+    }

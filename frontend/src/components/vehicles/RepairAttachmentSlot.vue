@@ -161,7 +161,7 @@ async function doDelete() {
   if (!pendingDelete.value) return
   deleting.value = true
   try {
-    await apiFetch(`/api/repair-attachments/${pendingDelete.value.id}`, { method: 'DELETE' })
+    await apiFetch(`/repair-attachments/${pendingDelete.value.id}`, { method: 'DELETE' })
     emit('deleted', pendingDelete.value.id)
     deleteDialog.value = false
     success('Файл удалён')

@@ -493,7 +493,7 @@ async function submitForm() {
 
 async function patchStatus(repair: VehicleRepair) {
   try {
-    await apiFetch(`/api/vehicle-repairs/${repair.id}`, {
+    await apiFetch(`/vehicle-repairs/${repair.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: repair.status }),
@@ -515,7 +515,7 @@ async function doDelete() {
   if (!pendingDeleteRepair.value) return
   deleting.value = true
   try {
-    await apiFetch(`/api/vehicle-repairs/${pendingDeleteRepair.value.id}`, { method: 'DELETE' })
+    await apiFetch(`/vehicle-repairs/${pendingDeleteRepair.value.id}`, { method: 'DELETE' })
     repairs.value = repairs.value.filter(r => r.id !== pendingDeleteRepair.value!.id)
     deleteDialog.value = false
     success('Ремонт удалён')
@@ -545,7 +545,7 @@ function searchPurchases(q: string) {
   purchaseSearchTimeout = setTimeout(async () => {
     purchasesLoading.value = true
     try {
-      const data = await apiFetch<any[]>(`/api/purchases?search=${encodeURIComponent(q)}&limit=20`)
+      const data = await apiFetch<any[]>(`/purchases?search=${encodeURIComponent(q)}&limit=20`)
       purchaseItems.value = data.map(p => ({
         id: p.id,
         label: `#${p.id} — ${p.subject ?? p.title ?? ''}`,

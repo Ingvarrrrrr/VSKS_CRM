@@ -468,7 +468,7 @@ function showSnack(text: string, color = 'success') {
 async function loadTrips() {
   loading.value = true
   try {
-    const data = await apiFetch(`/api/trips?vehicle_id=${props.vehicleId}`)
+    const data = await apiFetch(`/trips?vehicle_id=${props.vehicleId}`)
     trips.value = Array.isArray(data) ? data : (data?.items ?? [])
   } catch (e: any) {
     showSnack(e?.payload?.message ?? 'Ошибка загрузки путёвок', 'error')
@@ -614,7 +614,7 @@ async function doDelete() {
   if (!deletingTrip.value) return
   deleting.value = true
   try {
-    await apiFetch(`/api/trips/${deletingTrip.value.id}`, { method: 'DELETE' })
+    await apiFetch(`/trips/${deletingTrip.value.id}`, { method: 'DELETE' })
     deleteDialog.value = false
     showSnack('Путёвка удалена')
     await loadTrips()

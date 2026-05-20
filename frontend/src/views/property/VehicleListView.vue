@@ -750,7 +750,7 @@ async function loadVehicles() {
     if (filterSearch.value.trim()) params.set('q', filterSearch.value.trim())
     if (sortBy.value) { params.set('sort_by', sortBy.value); params.set('sort_desc', String(sortDesc.value)) }
 
-    const data = await apiFetch<VehicleListResponse>(`/api/vehicles?${params.toString()}`)
+    const data = await apiFetch<VehicleListResponse>(`/vehicles?${params.toString()}`)
     vehicles.value = data.items ?? []
     total.value = data.total ?? 0
   } catch (err: any) {

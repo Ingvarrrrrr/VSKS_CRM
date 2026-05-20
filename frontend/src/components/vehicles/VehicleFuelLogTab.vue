@@ -604,7 +604,7 @@ async function doDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    await apiFetch(`/api/fuel-logs/${deleteTarget.value.id}`, { method: 'DELETE' })
+    await apiFetch(`/fuel-logs/${deleteTarget.value.id}`, { method: 'DELETE' })
     showSnack('Запись удалена')
     deleteDialog.value = false
     deleteTarget.value = null

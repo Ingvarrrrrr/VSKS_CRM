@@ -1011,13 +1011,16 @@ async def by_region(
     Returns list sorted by count desc.
     If fewer than 5 vehicles visible, adds mock_demo flag.
     """
+    from sqlalchemy import bindparam as _bindparam
+    _unspec = _bindparam('unspec_region', "Не указан", literal_execute=True)
+    _region_expr = func.coalesce(Vehicle.assigned_text, _unspec)
     q = (
         select(
-            func.coalesce(Vehicle.assigned_text, "Не указан").label("region"),
+            _region_expr.label("region"),
             Vehicle.state,
             func.count(Vehicle.id).label("cnt"),
         )
-        .group_by(func.coalesce(Vehicle.assigned_text, "Не указан"), Vehicle.state)
+        .group_by(_region_expr, Vehicle.state)
         .order_by(func.count(Vehicle.id).desc())
     )
     q = _apply_visibility(q, current_user)

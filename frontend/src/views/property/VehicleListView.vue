@@ -155,6 +155,7 @@
       :items="vehicles"
       :loading="loading"
       :items-length="total"
+      item-value="id"
       density="compact"
       hover
       show-expand

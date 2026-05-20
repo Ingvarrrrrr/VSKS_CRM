@@ -886,6 +886,47 @@ async def drill_vehicles(
             for r in rows
         ]
 
+    elif dimension == "region":
+        # value = assigned_text string → vehicles WHERE assigned_text = value
+        q = (
+            base_q
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(Organization.name.label("owner_org_name"))
+            .where(Vehicle.assigned_text == value)
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r) for r in rows]
+
+    elif dimension == "state":
+        # value = state key string (e.g. 'working', 'in_repair')
+        q = (
+            base_q
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(Organization.name.label("owner_org_name"))
+            .where(Vehicle.state == value)
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r) for r in rows]
+
+    elif dimension == "warning":
+        # value = 'all' → all vehicles with active maintenance warnings
+        today = date.today()
+        horizon = today + timedelta(days=30)
+        q = (
+            base_q
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(Organization.name.label("owner_org_name"))
+            .where(
+                or_(
+                    and_(Vehicle.insurance_until.is_not(None), Vehicle.insurance_until <= horizon),
+                    and_(Vehicle.next_to_km.is_not(None), Vehicle.current_odometer_km.is_not(None),
+                         (Vehicle.next_to_km - Vehicle.current_odometer_km) < 1000),
+                )
+            )
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r) for r in rows]
+
     else:
         return {"items": [], "total": 0, "dimension": dimension, "value": value}
 

@@ -3,6 +3,7 @@
     <!-- Hero: icon + status -->
     <div class="fleet-card__hero">
       <div class="fleet-card__veh-icon">
+        <!-- Грузовик: truck_van / truck_board / truck_tank / truck_metal -->
         <svg viewBox="0 0 90 50" fill="none" v-if="isTruck">
           <rect x="4" y="14" width="50" height="22" rx="2" :fill="vehicleColor" opacity=".85"/>
           <rect x="54" y="20" width="24" height="16" rx="2" :fill="vehicleColor"/>
@@ -12,22 +13,91 @@
           <circle cx="46" cy="40" r="5" fill="#0a0d14"/><circle cx="46" cy="40" r="2" :fill="vehicleColor"/>
           <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
         </svg>
-        <svg viewBox="0 0 90 50" fill="none" v-else-if="isSUV">
+        <!-- Минивэн -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'minivan'">
+          <rect x="8" y="14" width="74" height="24" rx="3" :fill="vehicleColor" opacity=".85"/>
+          <rect x="14" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
+          <rect x="32" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
+          <rect x="50" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
+          <rect x="66" y="18" width="10" height="9" rx="1" fill="#0a0d14"/>
+          <circle cx="22" cy="40" r="5" fill="#0a0d14"/><circle cx="22" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
+          <path d="M8 38 Q8 44 22 44 L66 44 Q82 44 82 38" :fill="vehicleColor" opacity=".3"/>
+        </svg>
+        <!-- Автобус: bus -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'bus'">
+          <rect x="4" y="10" width="82" height="28" rx="3" :fill="vehicleColor" opacity=".9"/>
+          <rect x="8" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
+          <rect x="22" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
+          <rect x="36" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
+          <rect x="50" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
+          <rect x="64" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
+          <rect x="78" y="14" width="6" height="8" rx="1" fill="#0a0d14"/>
+          <circle cx="18" cy="40" r="5" fill="#0a0d14"/><circle cx="18" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="70" cy="40" r="5" fill="#0a0d14"/><circle cx="70" cy="40" r="2" :fill="vehicleColor"/>
+        </svg>
+        <!-- Квадроцикл -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'quadbike'">
+          <rect x="28" y="16" width="34" height="14" rx="4" :fill="vehicleColor" opacity=".9"/>
+          <path d="M22 24 L28 20 L28 28 Z" :fill="vehicleColor" opacity=".7"/>
+          <path d="M62 20 L68 24 L62 28 Z" :fill="vehicleColor" opacity=".7"/>
+          <rect x="34" y="12" width="22" height="8" rx="3" :fill="vehicleColor" opacity=".6"/>
+          <circle cx="18" cy="34" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="18" cy="34" r="3" :fill="vehicleColor"/>
+          <circle cx="72" cy="34" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="72" cy="34" r="3" :fill="vehicleColor"/>
+        </svg>
+        <!-- Снегоход -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'snowmobile'">
+          <rect x="10" y="20" width="60" height="12" rx="6" :fill="vehicleColor" opacity=".85"/>
+          <path d="M16 20 L26 10 L50 10 L60 20" :fill="vehicleColor" opacity=".7"/>
+          <rect x="14" y="12" width="18" height="6" rx="2" fill="#0a0d14"/>
+          <rect x="4" y="34" width="60" height="6" rx="3" :fill="vehicleColor" opacity=".5"/>
+          <circle cx="68" cy="30" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="68" cy="30" r="3" :fill="vehicleColor"/>
+        </svg>
+        <!-- Лодка / моторная лодка -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'boat' || vehicleType === 'boat_motor'">
+          <path d="M10 30 Q10 22 20 22 L70 22 Q80 22 80 30 L75 38 Q45 42 15 38 Z" :fill="vehicleColor" opacity=".85"/>
+          <path d="M30 22 L35 10 L55 10 L60 22" :fill="vehicleColor" opacity=".5"/>
+          <rect x="34" y="10" width="22" height="5" rx="2" fill="#0a0d14" opacity=".8"/>
+          <template v-if="vehicleType === 'boat_motor'">
+            <rect x="74" y="24" width="6" height="12" rx="2" :fill="vehicleColor" opacity=".9"/>
+            <path d="M72 36 Q78 40 84 36" :stroke="vehicleColor" stroke-width="2" fill="none" opacity=".8"/>
+          </template>
+        </svg>
+        <!-- Прицеп -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'trailer'">
+          <rect x="12" y="16" width="66" height="22" rx="2" :fill="vehicleColor" opacity=".8"/>
+          <line x1="8" y1="27" x2="12" y2="27" :stroke="vehicleColor" stroke-width="3"/>
+          <circle cx="30" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="30" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="62" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="62" cy="40" r="2" :fill="vehicleColor"/>
+          <rect x="18" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
+          <rect x="34" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
+          <rect x="50" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
+        </svg>
+        <!-- Спецтехника -->
+        <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'special'">
+          <rect x="4" y="16" width="50" height="22" rx="2" :fill="vehicleColor" opacity=".85"/>
+          <rect x="54" y="20" width="24" height="16" rx="2" :fill="vehicleColor"/>
+          <rect x="58" y="22" width="16" height="7" rx="1" fill="#0a0d14"/>
+          <rect x="26" y="10" width="12" height="8" rx="1" :fill="vehicleColor" opacity=".7"/>
+          <line x1="32" y1="10" x2="32" y2="6" :stroke="vehicleColor" stroke-width="2"/>
+          <circle cx="14" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="14" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="40" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="40" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
+        </svg>
+        <!-- Легковой car_light (SUV-style) и default -->
+        <svg viewBox="0 0 90 50" fill="none" v-else>
           <path d="M8 36 L14 28 Q22 20 38 20 L52 20 Q64 20 72 28 L82 32 L82 36 Z" :fill="vehicleColor" opacity=".9"/>
           <path d="M20 28 Q26 22 38 22 L41 22 L41 28 Z" fill="#0a0d14"/>
           <path d="M43 22 L52 22 Q62 22 68 28 L43 28 Z" fill="#0a0d14"/>
           <circle cx="24" cy="38" r="5" fill="#0a0d14"/><circle cx="24" cy="38" r="2" :fill="vehicleColor"/>
           <circle cx="64" cy="38" r="5" fill="#0a0d14"/><circle cx="64" cy="38" r="2" :fill="vehicleColor"/>
-        </svg>
-        <svg viewBox="0 0 90 50" fill="none" v-else>
-          <rect x="8" y="14" width="74" height="24" rx="3" :fill="vehicleColor" opacity=".9"/>
-          <rect x="14" y="18" width="12" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="28" y="18" width="12" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="42" y="18" width="12" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="56" y="18" width="12" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="70" y="18" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <circle cx="22" cy="40" r="5" fill="#0a0d14"/><circle cx="22" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
         </svg>
       </div>
       <div class="fleet-status" :class="statusClass">
@@ -187,19 +257,18 @@ const emit = defineEmits<{
 
 // ── Vehicle type helpers ─────────────────────────────────────────────────────
 const TRUCK_TYPES = ['truck_van', 'truck_board', 'truck_tank', 'truck_metal']
-const SUV_TYPES = ['car_light', 'special', 'bus']
 
-const isTruck = computed(() => TRUCK_TYPES.includes(props.vehicle.type || ''))
-const isSUV = computed(() => SUV_TYPES.includes(props.vehicle.type || ''))
+const vehicleType = computed(() => props.vehicle.type || '')
+const isTruck = computed(() => TRUCK_TYPES.includes(vehicleType.value))
 
 const vehicleColor = computed(() => {
   switch (props.vehicle.state) {
-    case 'working': return '#6aa6ff'
-    case 'in_repair': return '#f6b34a'
+    case 'working': return '#22c997'
+    case 'in_repair':
+    case 'needs_repair': return '#f6b34a'
     case 'broken':
-    case 'needs_repair': return '#ff5b6a'
     case 'destroyed':
-    case 'utilized': return '#6c7388'
+    case 'utilized': return '#ff5b6a'
     default: return '#6aa6ff'
   }
 })

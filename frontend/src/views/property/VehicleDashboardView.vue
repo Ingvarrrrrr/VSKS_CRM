@@ -17,6 +17,7 @@
         />
       </div>
       <div class="fleet-topbar__actions">
+
         <button class="fleet-btn" @click="onExport">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -33,6 +34,44 @@
       </div>
     </div>
 
+    <!-- ── Filter bar: Тип ТС + Регион ── -->
+    <div class="fleet-filterbar">
+      <div class="fleet-filterbar__item">
+        <label class="fleet-filterbar__label">Тип ТС</label>
+        <select multiple v-model="selectedTypes" class="fleet-filterbar__select" size="1">
+          <option v-for="t in VEHICLE_TYPE_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+        </select>
+        <div class="fleet-filterbar__chips" v-if="selectedTypes.length">
+          <span
+            v-for="t in selectedTypes"
+            :key="t"
+            class="fleet-filterbar__chip"
+            @click="selectedTypes = selectedTypes.filter(x => x !== t)"
+          >{{ VEHICLE_TYPE_LABELS[t] || t }} ×</span>
+        </div>
+      </div>
+      <div class="fleet-filterbar__item">
+        <label class="fleet-filterbar__label">Регион</label>
+        <select multiple v-model="selectedRegions" class="fleet-filterbar__select" size="1">
+          <option v-for="reg in availableRegions" :key="reg" :value="reg">{{ reg }}</option>
+        </select>
+        <div class="fleet-filterbar__chips" v-if="selectedRegions.length">
+          <span
+            v-for="reg in selectedRegions"
+            :key="reg"
+            class="fleet-filterbar__chip"
+            @click="selectedRegions = selectedRegions.filter(x => x !== reg)"
+          >{{ reg }} ×</span>
+        </div>
+      </div>
+      <button
+        v-if="selectedTypes.length || selectedRegions.length"
+        class="fleet-btn"
+        style="align-self:flex-end"
+        @click="selectedTypes = []; selectedRegions = []"
+      >Сбросить</button>
+    </div>
+
     <!-- ── KPI Cards ── -->
     <section class="fleet-kpis">
       <!-- Total -->
@@ -45,7 +84,7 @@
         </div>
       </div>
       <!-- Working -->
-      <div class="fleet-kpi">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Работает')">
         <div class="fleet-kpi__label">В рабочем</div>
         <div class="fleet-kpi__value">{{ filterCounts.working }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--ok">+2 за неделю</div>
@@ -55,7 +94,7 @@
         </div>
       </div>
       <!-- In repair -->
-      <div class="fleet-kpi">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'В ремонте')">
         <div class="fleet-kpi__label">В ремонте</div>
         <div class="fleet-kpi__value">{{ filterCounts.in_repair }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--warn">−1</div>
@@ -65,7 +104,7 @@
         </div>
       </div>
       <!-- Not running -->
-      <div class="fleet-kpi">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Уничтожен')">
         <div class="fleet-kpi__label">Не на ходу / списать</div>
         <div class="fleet-kpi__value">{{ filterCounts.not_running }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+3</div>
@@ -75,7 +114,7 @@
         </div>
       </div>
       <!-- Docs -->
-      <div class="fleet-kpi">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Сломан')">
         <div class="fleet-kpi__label">Документы — истекли/истекают</div>
         <div class="fleet-kpi__value">{{ maintenanceWarnings.length }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+2</div>
@@ -95,7 +134,7 @@
           <small>распределение по штабам и регионам</small>
         </h3>
         <div class="fleet-regions" v-if="regionItems.length">
-          <div class="fleet-reg" v-for="reg in regionItems" :key="reg.region">
+          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region" @click="openDrill('region', reg.region)">
             <div class="fleet-reg__nm">
               {{ reg.region }}
               <small v-if="reg.shtab_label">{{ reg.shtab_label }}</small>
@@ -276,17 +315,45 @@
         </div>
       </div>
     </section>
+
+    <!-- ── Drill-down dialog ── -->
+    <VehicleDrillDialog
+      v-if="drillOpen"
+      v-model="drillOpen"
+      :dimension="drillDimension"
+      :value="drillValue"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import VehicleDrillDialog from '@/components/vehicles/VehicleDrillDialog.vue'
 
 const router = useRouter()
+
+// ── Vehicle type options ─────────────────────────────────────────────────────
+const VEHICLE_TYPE_LABELS: Record<string, string> = {
+  car_light: 'Легковой',
+  minivan: 'Минивэн',
+  truck_van: 'Грузовой фургон',
+  truck_board: 'Грузовой бортовой',
+  truck_tank: 'Грузовой цистерна',
+  truck_metal: 'Грузовой металловоз',
+  bus: 'Автобус',
+  special: 'Спецтехника',
+  quadbike: 'Квадроцикл',
+  snowmobile: 'Снегоход',
+  boat: 'Лодка',
+  boat_motor: 'Лодка с мотором',
+  trailer: 'Прицеп',
+  other: 'Другое',
+}
+const VEHICLE_TYPE_OPTIONS = Object.entries(VEHICLE_TYPE_LABELS).map(([value, label]) => ({ value, label }))
 
 // ── Design constants ─────────────────────────────────────────────────────────
 const IC_ICONS: Record<string, string> = {
@@ -302,6 +369,19 @@ const STATE_LABELS: Record<string, string> = {
 const viewMode = ref<'cards' | 'table' | 'regions'>('cards')
 const searchQuery = ref('')
 const activeFilter = ref<string>('all')
+const selectedTypes = ref<string[]>([])
+const selectedRegions = ref<string[]>([])
+
+// ── Drill dialog ─────────────────────────────────────────────────────────────
+const drillOpen = ref(false)
+const drillDimension = ref('')
+const drillValue = ref('')
+
+function openDrill(dimension: string, value: string) {
+  drillDimension.value = dimension
+  drillValue.value = value
+  drillOpen.value = true
+}
 
 // ── KPI ──────────────────────────────────────────────────────────────────────
 interface KpiData {
@@ -375,6 +455,8 @@ interface RegionItem {
 
 const regionItems = ref<RegionItem[]>([])
 const loadingRegions = ref(false)
+
+const availableRegions = computed(() => regionItems.value.map(r => r.region).filter(Boolean))
 
 const maxRegionCount = computed(() => Math.max(...regionItems.value.map(r => r.count), 1))
 
@@ -490,28 +572,41 @@ async function fetchAllVehicles() {
 const filteredVehicles = computed(() => {
   let list = allVehicles.value
 
-  // Search
+  // Search by plate/brand_model/vin/responsible
   if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    list = list.filter(v =>
-      v.plate?.toLowerCase().includes(q) ||
-      v.brand_model?.toLowerCase().includes(q) ||
-      v.responsible_name?.toLowerCase().includes(q) ||
-      v.vin?.toLowerCase().includes(q)
-    )
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(v => {
+      const hay = `${v.plate} ${v.brand_model} ${v.vin || ''} ${v.responsible_name || ''}`.toLowerCase()
+      return hay.includes(q)
+    })
   }
 
   // Filter chip
   if (activeFilter.value === 'working') {
     list = list.filter(v => v.state === 'working')
   } else if (activeFilter.value === 'in_repair') {
-    list = list.filter(v => v.state === 'in_repair' || v.state === 'broken')
+    list = list.filter(v => ['in_repair', 'broken', 'needs_repair'].includes(v.state))
   } else if (activeFilter.value === 'not_running') {
-    list = list.filter(v => ['destroyed', 'utilized', 'needs_repair'].includes(v.state))
+    list = list.filter(v => ['destroyed', 'utilized'].includes(v.state))
+  } else if (activeFilter.value === 'no_report') {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    list = list.filter(v => {
+      if (!v.last_report_at) return true
+      return new Date(v.last_report_at).getTime() < cutoff
+    })
   } else if (activeFilter.value === 'disposal') {
     list = list.filter(v => v.state === 'destroyed' || v.state === 'utilized')
   }
-  // no_report — would need extra data, show all for now
+
+  // Type filter (multi)
+  if (selectedTypes.value.length) {
+    list = list.filter(v => v.type && selectedTypes.value.includes(v.type))
+  }
+
+  // Region filter (multi)
+  if (selectedRegions.value.length) {
+    list = list.filter(v => v.assigned_text && selectedRegions.value.includes(v.assigned_text))
+  }
 
   return list
 })
@@ -1099,6 +1194,78 @@ onMounted(() => {
 
 .clickable-rows :deep(tr) { cursor: pointer; }
 .clickable-rows :deep(tr:hover td) { background: rgba(106,166,255,.04); }
+
+/* ─── Filter bar ─── */
+.fleet-filterbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.fleet-filterbar__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+}
+
+.fleet-filterbar__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.fleet-filterbar__select {
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 160px;
+}
+
+.fleet-filterbar__select option { background: var(--panel); }
+
+.fleet-filterbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fleet-filterbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(106,166,255,.14);
+  border: 1px solid rgba(106,166,255,.3);
+  color: #cfe1ff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .1s;
+}
+
+.fleet-filterbar__chip:hover { background: rgba(255,91,106,.2); border-color: rgba(255,91,106,.4); color: #ffaab2; }
+
+/* ─── Clickable KPI & region ─── */
+.fleet-kpi--clickable { cursor: pointer; transition: border-color .14s, transform .14s; }
+.fleet-kpi--clickable:hover { border-color: rgba(106,166,255,.4); transform: translateY(-1px); }
+
+.fleet-reg--clickable { cursor: pointer; border-radius: 8px; transition: background .12s; padding: 4px 2px; }
+.fleet-reg--clickable:hover { background: rgba(106,166,255,.06); }
 
 /* ─── Responsive ─── */
 @media (max-width: 1100px) {

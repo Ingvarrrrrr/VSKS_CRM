@@ -795,38 +795,17 @@ async def drill_vehicles(
         items = [_vehicle_item(r) for r in rows]
 
     elif dimension == "donut_state":
-        # value = label (например "Работает") → find internal state key
+        # value = label → find internal state key
         reverse_labels = {v: k for k, v in _STATE_LABELS.items()}
         state_key = reverse_labels.get(value, value)
-        # Robust: case-insensitive + trim (защита от заглавных букв / пробелов в БД)
-        state_norm = state_key.lower().strip() if state_key else ""
         q = (
             base_q
             .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
             .add_columns(Organization.name.label("owner_org_name"))
-            .where(func.lower(func.coalesce(Vehicle.state, "")) == state_norm)
+            .where(Vehicle.state == state_key)
         )
         rows = (await db.execute(q)).all()
         items = [_vehicle_item(r) for r in rows]
-
-        # Phase 29.2 diagnostic: если результат пуст, логируем distinct values
-        # которые видны user'у — это вскроет case/whitespace/NULL mismatch.
-        if not items:
-            try:
-                diag_q = select(Vehicle.state, func.count(Vehicle.id).label("cnt"))
-                diag_q = _apply_visibility(diag_q, current_user)
-                diag_q = diag_q.group_by(Vehicle.state)
-                diag_rows = (await db.execute(diag_q)).all()
-                import logging
-                logging.warning(
-                    f"[vehicles_drill donut_state] EMPTY result; "
-                    f"value={value!r} state_key={state_key!r} state_norm={state_norm!r}; "
-                    f"distinct states in visible DB: "
-                    f"{[(r[0], int(r[1] or 0)) for r in diag_rows]}"
-                )
-            except Exception as exc:
-                import logging
-                logging.warning(f"[vehicles_drill donut_state] diag failed: {exc!r}")
 
     elif dimension == "line_fuel":
         # value = YYYY-MM-DD → vehicles that have a fuel log on that date
@@ -924,7 +903,7 @@ async def drill_vehicles(
             base_q
             .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
             .add_columns(Organization.name.label("owner_org_name"))
-            .where(func.lower(func.coalesce(Vehicle.state, "")) == (value or "").lower().strip())
+            .where(Vehicle.state == value)
         )
         rows = (await db.execute(q)).all()
         items = [_vehicle_item(r) for r in rows]

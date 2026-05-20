@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialogOpen" max-width="900" scrollable :theme="vuetifyTheme">
+  <v-dialog v-model="dialogOpen" max-width="900" scrollable>
     <v-card>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-table-search" size="20" color="primary" class="mr-2" />
@@ -61,7 +61,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
 
 const props = defineProps<{
@@ -77,8 +76,6 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const theme = useTheme()
-const vuetifyTheme = computed(() => theme.global.current.value.dark ? 'dark' : 'light')
 
 const dialogOpen = computed({
   get: () => props.modelValue,

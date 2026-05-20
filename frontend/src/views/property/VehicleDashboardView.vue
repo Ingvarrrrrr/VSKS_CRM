@@ -1,5 +1,5 @@
 <template>
-  <div class="fleet-dash">
+  <div class="fleet-dash" :class="{ 'fleet-dash--light': !isDark }">
     <!-- ── Topbar ── -->
     <div class="fleet-topbar">
       <div class="fleet-crumbs">
@@ -329,12 +329,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleDrillDialog from '@/components/vehicles/VehicleDrillDialog.vue'
 
 const router = useRouter()
+const theme = useTheme()
+const isDark = computed(() => theme.global.current.value.dark)
 
 // ── Vehicle type options ─────────────────────────────────────────────────────
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
@@ -725,6 +728,43 @@ onMounted(() => {
   font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   font-size: 14px;
   box-sizing: border-box;
+}
+
+/* Phase 29.2: light theme overrides */
+.fleet-dash.fleet-dash--light {
+  --bg: #f4f6fb;
+  --bg-2: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f1f4fa;
+  --line: #e2e6f0;
+  --line-2: #cdd3e1;
+  --text: #0f172a;
+  --muted: #6b7280;
+  --muted-2: #94a3b8;
+  --accent: #2563eb;
+  --accent-2: #7c3aed;
+  --ok: #059669;
+  --warn: #d97706;
+  --alert: #dc2626;
+  --info: #0284c7;
+  background: radial-gradient(1200px 600px at 80% -10%, rgba(37,99,235,.05), transparent 60%),
+              radial-gradient(900px 500px at -10% 110%, rgba(124,58,237,.05), transparent 60%),
+              var(--bg);
+}
+
+.fleet-dash.fleet-dash--light .fleet-kpi {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.fleet-dash.fleet-dash--light .fleet-btn--primary {
+  background: linear-gradient(180deg, #3b82f6, #2563eb);
+  border-color: #1d4ed8;
+  color: #fff;
+  box-shadow: 0 8px 22px -10px rgba(37,99,235,.4);
+}
+
+.fleet-dash.fleet-dash--light .fleet-kpi__bar {
+  background: rgba(15, 23, 42, .06);
 }
 
 *, *::before, *::after { box-sizing: border-box; }

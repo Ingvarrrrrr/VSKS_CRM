@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user
 from app.chat_manager import manager
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, async_session
 from app.models.chat_message import ChatMessage, MessageRead
 from app.models.chat_room import ChatParticipant, ChatRoom
 from app.models.user import User
@@ -936,9 +936,18 @@ async def download_file(
 async def chat_ws(
     ws: WebSocket,
     token: str = Query(...),
-    db: AsyncSession = Depends(get_db),
 ):
-    """WebSocket endpoint authenticated via JWT query param ?token=..."""
+    """WebSocket endpoint authenticated via JWT query param ?token=...
+
+    Phase 29.2 — fix QueuePool exhaustion: НЕ берём db через Depends(get_db).
+    WebSocket-подключение живёт часами/днями, пока вкладка чата открыта.
+    При Depends(get_db) DB session держался всё это время → 15 открытых
+    вкладок чата исчерпывали connection pool (5+10) → 500 на всех `/api/*`.
+
+    Теперь session берётся локально только на init (2 запроса), после чего
+    возвращается в pool. Все CRUD-операции чата идут через REST endpoints —
+    у каждого свой short-lived session через Depends(get_db).
+    """
     # 1. Decode JWT
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -950,20 +959,32 @@ async def chat_ws(
         await ws.close(code=4001)
         return
 
-    # 2. Load user from DB
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if not user:
-        await ws.close(code=4001)
+    # 2. Load user + initial unread count — short-lived session, отпускаем сразу.
+    user_id: int | None = None
+    initial_total = 0
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(User).where(User.username == username))
+            user = result.scalar_one_or_none()
+            if not user:
+                await ws.close(code=4001)
+                return
+            user_id = user.id
+            initial_total = await _compute_unread_total(user_id, db)
+    except Exception as e:
+        logger.warning("WS init failed for username=%s: %s", username, e)
+        try:
+            await ws.close(code=4001)
+        except Exception:
+            pass
         return
 
-    # 3. Connect
-    await manager.connect(user.id, ws)
+    # 3. Connect (session уже отпущена — WebSocket дальше живёт БЕЗ DB connection)
+    await manager.connect(user_id, ws)
 
-    # 4. Send initial unread_count event
+    # 4. Send initial unread_count event + keep alive
     try:
-        total = await _compute_unread_total(user.id, db)
-        await ws.send_json({"type": "unread_count", "total_unread": total})
+        await ws.send_json({"type": "unread_count", "total_unread": initial_total})
 
         # 5. Keep alive — all actions are REST; just drain incoming frames
         while True:
@@ -977,7 +998,7 @@ async def chat_ws(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.warning("WS error for user %s: %s", user.id, e)
+        logger.warning("WS error for user %s: %s", user_id, e)
     finally:
         # 6. Disconnect
-        manager.disconnect(user.id, ws)
+        manager.disconnect(user_id, ws)

@@ -11,17 +11,18 @@ export interface LayoutItem {
 }
 
 const DEFAULT_LAYOUT: LayoutItem[] = [
-  { i: 'kpi-vehicles',  x: 0,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
-  { i: 'kpi-fuel',      x: 3,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
-  { i: 'kpi-repairs',   x: 6,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
-  { i: 'kpi-mileage',   x: 9,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
-  { i: 'canister',      x: 0,  y: 4,  w: 3,  h: 10, minW: 2, minH: 8 },
-  { i: 'in_repair',     x: 3,  y: 4,  w: 4,  h: 10, minW: 3, minH: 6 },
-  { i: 'to_warning',    x: 7,  y: 4,  w: 5,  h: 10, minW: 3, minH: 6 },
-  { i: 'bar_org',       x: 0,  y: 14, w: 6,  h: 9,  minW: 4, minH: 6 },
-  { i: 'donut_state',   x: 6,  y: 14, w: 3,  h: 9,  minW: 2, minH: 6 },
-  { i: 'line_fuel',     x: 9,  y: 14, w: 3,  h: 9,  minW: 2, minH: 6 },
-  { i: 'top10_table',   x: 0,  y: 23, w: 12, h: 10, minW: 6, minH: 6 },
+  { i: 'kpi-vehicles',   x: 0,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
+  { i: 'kpi-fuel',       x: 3,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
+  { i: 'kpi-repairs',    x: 6,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
+  { i: 'kpi-mileage',    x: 9,  y: 0,  w: 3,  h: 4,  minW: 2, minH: 3 },
+  { i: 'canister',       x: 0,  y: 4,  w: 3,  h: 10, minW: 2, minH: 8 },
+  { i: 'in_repair',      x: 3,  y: 4,  w: 4,  h: 10, minW: 3, minH: 6 },
+  { i: 'to_warning',     x: 7,  y: 4,  w: 5,  h: 10, minW: 3, minH: 6 },
+  { i: 'bar_org',        x: 0,  y: 14, w: 6,  h: 9,  minW: 4, minH: 6 },
+  { i: 'donut_state',    x: 6,  y: 14, w: 3,  h: 9,  minW: 2, minH: 6 },
+  { i: 'line_fuel',      x: 9,  y: 14, w: 3,  h: 9,  minW: 2, minH: 6 },
+  { i: 'top10_table',    x: 0,  y: 23, w: 12, h: 10, minW: 6, minH: 6 },
+  { i: 'all_vehicles',   x: 0,  y: 33, w: 12, h: 8,  minW: 6, minH: 6 },
 ]
 
 function getStorageKey(): string {
@@ -34,8 +35,12 @@ function loadLayout(): LayoutItem[] | null {
     const raw = localStorage.getItem(getStorageKey())
     if (!raw) return null
     const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed
-    return null
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    // Reset if any DEFAULT widget ID is missing (cache stale after feature evolution)
+    const cachedIds = new Set(parsed.map((l: LayoutItem) => l.i))
+    const allPresent = DEFAULT_LAYOUT.every(d => cachedIds.has(d.i))
+    if (!allPresent) return null
+    return parsed
   } catch {
     return null
   }
@@ -51,12 +56,8 @@ export function useVehicleDashboardLayout() {
   const isEditing = ref(false)
   const layout = ref<LayoutItem[]>(loadLayout() || structuredClone(DEFAULT_LAYOUT))
 
-  // Ensure all default widgets exist in loaded layout
-  const currentIds = new Set(layout.value.map(l => l.i))
-  for (const def of DEFAULT_LAYOUT) {
-    if (!currentIds.has(def.i)) {
-      layout.value.push(structuredClone(def))
-    }
+  function getLayoutItem(id: string): LayoutItem {
+    return layout.value.find(l => l.i === id) || { i: id, x: 0, y: 100, w: 6, h: 4 }
   }
 
   function resetLayout() {
@@ -79,6 +80,7 @@ export function useVehicleDashboardLayout() {
     toggleEditing,
     resetLayout,
     onLayoutUpdated,
+    getLayoutItem,
     DEFAULT_LAYOUT,
   }
 }

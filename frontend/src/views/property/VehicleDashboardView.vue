@@ -106,7 +106,7 @@
       @layout-updated="onLayoutUpdated"
     >
       <!-- ── KPI: Машин всего ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'kpi-vehicles')" key="kpi-vehicles">
+      <GridItem v-bind="getLayoutItem('kpi-vehicles')" key="kpi-vehicles">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Машины
@@ -121,7 +121,7 @@
       </GridItem>
 
       <!-- ── KPI: Стоимость бензина ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'kpi-fuel')" key="kpi-fuel">
+      <GridItem v-bind="getLayoutItem('kpi-fuel')" key="kpi-fuel">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Бензин
@@ -137,7 +137,7 @@
       </GridItem>
 
       <!-- ── KPI: Стоимость ремонтов ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'kpi-repairs')" key="kpi-repairs">
+      <GridItem v-bind="getLayoutItem('kpi-repairs')" key="kpi-repairs">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Ремонты
@@ -153,7 +153,7 @@
       </GridItem>
 
       <!-- ── KPI: Пробег ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'kpi-mileage')" key="kpi-mileage">
+      <GridItem v-bind="getLayoutItem('kpi-mileage')" key="kpi-mileage">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Пробег
@@ -169,7 +169,7 @@
       </GridItem>
 
       <!-- ── Канистра ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'canister')" key="canister">
+      <GridItem v-bind="getLayoutItem('canister')" key="canister">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Канистра
@@ -193,7 +193,7 @@
       </GridItem>
 
       <!-- ── В ремонте ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'in_repair')" key="in_repair">
+      <GridItem v-bind="getLayoutItem('in_repair')" key="in_repair">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> В ремонте
@@ -203,7 +203,7 @@
       </GridItem>
 
       <!-- ── ТО / Предупреждения ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'to_warning')" key="to_warning">
+      <GridItem v-bind="getLayoutItem('to_warning')" key="to_warning">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Предупреждения
@@ -213,7 +213,7 @@
       </GridItem>
 
       <!-- ── Bar: Машины по организациям ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'bar_org')" key="bar_org">
+      <GridItem v-bind="getLayoutItem('bar_org')" key="bar_org">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> По орг.
@@ -249,7 +249,7 @@
       </GridItem>
 
       <!-- ── Donut: Состояние флота ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'donut_state')" key="donut_state">
+      <GridItem v-bind="getLayoutItem('donut_state')" key="donut_state">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Состояние
@@ -280,7 +280,7 @@
       </GridItem>
 
       <!-- ── Line: Расход топлива ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'line_fuel')" key="line_fuel">
+      <GridItem v-bind="getLayoutItem('line_fuel')" key="line_fuel">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> Расход
@@ -310,8 +310,77 @@
         </div>
       </GridItem>
 
+      <!-- ── Table: Все ТС ── -->
+      <GridItem v-bind="getLayoutItem('all_vehicles')" key="all_vehicles">
+        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
+          <div v-if="isEditing" class="widget-drag-handle">
+            <v-icon icon="mdi-drag" size="14" /> Все ТС
+          </div>
+          <v-card class="h-100 d-flex flex-column" elevation="2">
+            <v-card-title class="pb-1 pt-3 px-3 text-subtitle-2 d-flex align-center gap-2">
+              <v-icon icon="mdi-car-multiple" size="18" color="primary" class="mr-1" />
+              Все транспортные средства
+              <v-spacer />
+              <v-text-field
+                v-model="allVehiclesSearch"
+                density="compact"
+                variant="outlined"
+                placeholder="Поиск..."
+                hide-details
+                prepend-inner-icon="mdi-magnify"
+                clearable
+                style="max-width: 220px;"
+              />
+            </v-card-title>
+            <v-divider />
+            <v-card-text class="flex-grow-1 pa-0 overflow-y-auto">
+              <div v-if="loadingAll" class="d-flex justify-center align-center py-6">
+                <v-progress-circular indeterminate color="primary" />
+              </div>
+              <v-alert v-else-if="allVehiclesError" type="error" density="compact" variant="tonal" class="ma-3">
+                {{ allVehiclesError }}
+              </v-alert>
+              <v-data-table
+                v-else
+                :items="allVehicles"
+                :headers="allVehiclesHeaders"
+                :search="allVehiclesSearch"
+                density="compact"
+                :items-per-page="15"
+                class="all-vehicles-table clickable-rows"
+                @click:row="(_: unknown, { item }: { item: AllVehicleRow }) => router.push(`/property/vehicles/${item.vehicle_id}`)"
+              >
+                <template #item.plate="{ item }">
+                  <v-chip size="x-small" variant="tonal" color="primary">{{ item.plate }}</v-chip>
+                </template>
+                <template #item.state="{ item }">
+                  <v-chip size="x-small" :color="ALL_VEH_STATE_COLORS[item.state] || 'default'" variant="tonal">
+                    {{ ALL_VEH_STATE_LABELS[item.state] || item.state }}
+                  </v-chip>
+                </template>
+                <template #item.fuel_cost="{ item }">
+                  {{ fmtCurrency(item.fuel_cost) }}
+                </template>
+                <template #item.repair_cost="{ item }">
+                  {{ fmtCurrency(item.repair_cost) }}
+                </template>
+                <template #item.mileage_km="{ item }">
+                  {{ item.mileage_km.toLocaleString('ru-RU') }} км
+                </template>
+                <template #item.insurance_until="{ item }">
+                  <span :class="item.insurance_overdue ? 'text-error font-weight-bold' : ''">
+                    {{ item.insurance_until || '—' }}
+                    <v-icon v-if="item.insurance_overdue" icon="mdi-alert" size="14" color="error" class="ml-1" />
+                  </span>
+                </template>
+              </v-data-table>
+            </v-card-text>
+          </v-card>
+        </div>
+      </GridItem>
+
       <!-- ── Table: TOP-10 по расходам ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'top10_table')" key="top10_table">
+      <GridItem v-bind="getLayoutItem('top10_table')" key="top10_table">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="14" /> TOP-10
@@ -336,7 +405,8 @@
                 density="compact"
                 :items-per-page="10"
                 hide-default-footer
-                class="top10-table"
+                class="top10-table clickable-rows"
+                @click:row="(_: unknown, { item }: { item: Top10Row }) => drill('top_expenses', String(item.vehicle_id))"
               >
                 <template #item.total_cost="{ item }">
                   {{ fmtCurrency(item.total_cost) }}
@@ -357,12 +427,21 @@
         </div>
       </GridItem>
     </GridLayout>
+
+    <!-- ── Drill-down dialog ── -->
+    <VehicleDrillDialog
+      v-model="drillOpen"
+      :dimension="drillDimension"
+      :value="drillValue"
+      :date-from="getDateRange().from"
+      :date-to="getDateRange().to"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useVehicleDashboardLayout } from '@/composables/useVehicleDashboardLayout'
@@ -370,9 +449,11 @@ import FuelCanisterWidget from '@/components/vehicles/FuelCanisterWidget.vue'
 import VehiclesInRepairWidget from '@/components/vehicles/VehiclesInRepairWidget.vue'
 import MaintenanceWarningWidget from '@/components/vehicles/MaintenanceWarningWidget.vue'
 import VehicleKpiCard from '@/components/vehicles/VehicleKpiCard.vue'
+import VehicleDrillDialog from '@/components/vehicles/VehicleDrillDialog.vue'
 import { apiFetch } from '@/api'
 
 const route = useRoute()
+const router = useRouter()
 const theme = useTheme()
 const isDark = computed(() => theme.global.name.value === 'dark')
 
@@ -382,7 +463,18 @@ const chartMuted = computed(() => isDark.value ? '#94A3B8' : '#6B7280')
 const chartGrid = computed(() => isDark.value ? 'rgba(255,255,255,0.08)' : '#E2E8F0')
 
 // ── Layout ───────────────────────────────────────────────────────────────────
-const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated } = useVehicleDashboardLayout()
+const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, getLayoutItem } = useVehicleDashboardLayout()
+
+// ── Drill-down dialog ────────────────────────────────────────────────────────
+const drillOpen = ref(false)
+const drillDimension = ref('')
+const drillValue = ref('')
+
+function drill(dimension: string, value: string) {
+  drillDimension.value = dimension
+  drillValue.value = value
+  drillOpen.value = true
+}
 
 // ── Period ───────────────────────────────────────────────────────────────────
 const PERIOD_PRESETS = [
@@ -552,6 +644,12 @@ const barOrgOptions = computed(() => ({
     background: 'transparent',
     toolbar: { show: false },
     theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_event: unknown, _ctx: unknown, opts: { dataPointIndex: number }) => {
+        const label = byOrgData.value[opts.dataPointIndex]?.org_name
+        if (label) drill('bar_org', label)
+      },
+    },
   },
   plotOptions: { bar: { borderRadius: 4, horizontal: false } },
   xaxis: {
@@ -567,6 +665,7 @@ const barOrgOptions = computed(() => ({
   colors: ['#3B82F6'],
   tooltip: { theme: isDark.value ? 'dark' : 'light' },
   dataLabels: { enabled: false },
+  states: { active: { filter: { type: 'darken', value: 0.8 } } },
 }))
 
 watch(barOrgMode, fetchByOrg)
@@ -596,6 +695,12 @@ const donutOptions = computed(() => ({
     type: 'donut',
     background: 'transparent',
     theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_event: unknown, _ctx: unknown, opts: { dataPointIndex: number }) => {
+        const label = donutData.value[opts.dataPointIndex]?.label
+        if (label) drill('donut_state', label)
+      },
+    },
   },
   labels: donutData.value.map(r => r.label),
   colors: donutData.value.map(r => r.color),
@@ -646,6 +751,12 @@ const lineOptions = computed(() => ({
     background: 'transparent',
     toolbar: { show: false },
     theme: { mode: isDark.value ? 'dark' : 'light' },
+    events: {
+      dataPointSelection: (_event: unknown, _ctx: unknown, opts: { dataPointIndex: number }) => {
+        const label = lineData.value[opts.dataPointIndex]?.period
+        if (label) drill('line_fuel', label)
+      },
+    },
   },
   stroke: { curve: 'smooth', width: 2 },
   xaxis: {
@@ -701,10 +812,62 @@ async function fetchTop10() {
   }
 }
 
+// ── All vehicles summary table ────────────────────────────────────────────────
+interface AllVehicleRow {
+  vehicle_id: number
+  plate: string
+  brand_model: string
+  state: string
+  owner_org_name: string
+  fuel_cost: number
+  repair_cost: number
+  mileage_km: number
+  insurance_overdue: boolean
+  insurance_until: string | null
+}
+
+const allVehicles = ref<AllVehicleRow[]>([])
+const loadingAll = ref(false)
+const allVehiclesError = ref<string | null>(null)
+const allVehiclesSearch = ref('')
+
+const allVehiclesHeaders = [
+  { title: 'Гос.№', key: 'plate', width: 110 },
+  { title: 'Марка/Модель', key: 'brand_model' },
+  { title: 'Состояние', key: 'state', width: 140 },
+  { title: 'Владелец', key: 'owner_org_name' },
+  { title: 'Бензин ₽', key: 'fuel_cost', align: 'end' as const, width: 110 },
+  { title: 'Ремонты ₽', key: 'repair_cost', align: 'end' as const, width: 110 },
+  { title: 'Пробег км', key: 'mileage_km', align: 'end' as const, width: 100 },
+  { title: 'ОСАГО', key: 'insurance_until', width: 130 },
+]
+
+const ALL_VEH_STATE_LABELS: Record<string, string> = {
+  working: 'Работает', broken: 'Сломан', in_repair: 'В ремонте',
+  needs_repair: 'Треб. ремонта', destroyed: 'Уничтожен', utilized: 'Утилизирован',
+}
+const ALL_VEH_STATE_COLORS: Record<string, string> = {
+  working: 'success', broken: 'error', in_repair: 'warning',
+  needs_repair: 'orange', destroyed: 'grey', utilized: 'purple',
+}
+
+async function fetchAllVehicles() {
+  loadingAll.value = true
+  allVehiclesError.value = null
+  try {
+    const data = await apiFetch<AllVehicleRow[]>('/vehicles-dashboard/all-vehicles-summary' + buildQS())
+    allVehicles.value = data
+  } catch (e: unknown) {
+    allVehiclesError.value = e instanceof Error ? e.message : 'Ошибка загрузки'
+  } finally {
+    loadingAll.value = false
+  }
+}
+
 // ── Aggregate loading state ───────────────────────────────────────────────────
 const anyLoading = computed(() =>
   loadingKpi.value || loadingCanister.value || loadingByOrg.value ||
-  loadingDonut.value || loadingLine.value || loadingTop10.value
+  loadingDonut.value || loadingLine.value || loadingTop10.value || loadingAll.value
 )
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -720,6 +883,7 @@ function fetchAll() {
   fetchDonut()
   fetchLine()
   fetchTop10()
+  fetchAllVehicles()
 }
 
 // ── Debounced watch on filters ────────────────────────────────────────────────
@@ -828,12 +992,22 @@ onMounted(() => {
   pointer-events: none;
 }
 
-.top10-table :deep(th) {
+.top10-table :deep(th),
+.all-vehicles-table :deep(th) {
   font-size: 12px !important;
 }
 
-.top10-table :deep(td) {
+.top10-table :deep(td),
+.all-vehicles-table :deep(td) {
   font-size: 12px !important;
+}
+
+.clickable-rows :deep(tr) {
+  cursor: pointer;
+}
+
+.clickable-rows :deep(tr:hover td) {
+  background: rgba(59, 130, 246, 0.06);
 }
 
 :deep(.vgl-item) {

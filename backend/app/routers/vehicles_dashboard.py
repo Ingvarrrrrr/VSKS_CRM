@@ -733,3 +733,267 @@ async def top_expenses(
         }
         for r in rows
     ]
+
+
+# ─────────────────────────── 9. Drill-down endpoint ──────────────────────────
+
+def _vehicle_item(r, fuel_cost: float = 0.0, repair_cost: float = 0.0) -> dict:
+    return {
+        "vehicle_id": r.id,
+        "plate": r.plate or "",
+        "brand": r.brand or "",
+        "model": r.model or "",
+        "brand_model": f"{r.brand or ''} {r.model or ''}".strip() or (r.plate or ""),
+        "state": r.state or "unknown",
+        "owner_org_name": r.owner_org_name if hasattr(r, "owner_org_name") else "",
+        "fuel_cost": round(fuel_cost, 2),
+        "repair_cost": round(repair_cost, 2),
+    }
+
+
+@router.get("/drill")
+async def drill_vehicles(
+    dimension: str = Query(..., description="bar_org | donut_state | line_fuel | top_expenses"),
+    value: str = Query(..., description="Dimension value to drill into"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """Return list of vehicles matching the clicked dimension+value."""
+    first, last = _current_month_range()
+    d_from = _parse_date(date_from, first)
+    d_to = _parse_date(date_to, last)
+
+    from app.models.purchase import Purchase as PurchaseModel
+
+    OwnerOrg = Organization.__table__.alias("owner_org")
+
+    base_q = (
+        select(
+            Vehicle.id,
+            Vehicle.plate,
+            Vehicle.brand,
+            Vehicle.model,
+            Vehicle.state,
+            Vehicle.owner_org_id,
+        )
+    )
+    base_q = _apply_visibility(base_q, current_user)
+
+    items: list[dict] = []
+
+    if dimension == "bar_org":
+        # value = org_name → vehicles WHERE owner org name = value
+        q = (
+            base_q
+            .join(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(Organization.name.label("owner_org_name"))
+            .where(Organization.name == value)
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r) for r in rows]
+
+    elif dimension == "donut_state":
+        # value = label → find internal state key
+        reverse_labels = {v: k for k, v in _STATE_LABELS.items()}
+        state_key = reverse_labels.get(value, value)
+        q = (
+            base_q
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(Organization.name.label("owner_org_name"))
+            .where(Vehicle.state == state_key)
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r) for r in rows]
+
+    elif dimension == "line_fuel":
+        # value = YYYY-MM-DD → vehicles that have a fuel log on that date
+        fuel_date = _parse_date(value, d_from)
+        fuel_sq = (
+            select(FuelLog.vehicle_id)
+            .where(FuelLog.date == fuel_date)
+            .distinct()
+        ).subquery("fuel_date_veh")
+        fuel_amount_expr = func.coalesce(
+            FuelLog.total_amount, FuelLog.liters * FuelLog.price_per_liter
+        )
+        fuel_agg_sq = (
+            select(
+                FuelLog.vehicle_id,
+                func.coalesce(func.sum(fuel_amount_expr), 0).label("fuel_cost"),
+            )
+            .where(FuelLog.date == fuel_date)
+            .group_by(FuelLog.vehicle_id)
+        ).subquery("fuel_agg_drill")
+        q = (
+            base_q
+            .join(fuel_sq, fuel_sq.c.vehicle_id == Vehicle.id)
+            .outerjoin(fuel_agg_sq, fuel_agg_sq.c.vehicle_id == Vehicle.id)
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(
+                Organization.name.label("owner_org_name"),
+                func.coalesce(fuel_agg_sq.c.fuel_cost, 0).label("fuel_cost"),
+            )
+        )
+        rows = (await db.execute(q)).all()
+        items = [_vehicle_item(r, fuel_cost=float(r.fuel_cost or 0)) for r in rows]
+
+    elif dimension == "top_expenses":
+        # value = vehicle_id string → single vehicle + expense breakdown
+        try:
+            vid = int(value)
+        except ValueError:
+            return {"items": [], "total": 0, "dimension": dimension, "value": value}
+        fuel_amount_expr = func.coalesce(
+            FuelLog.total_amount, FuelLog.liters * FuelLog.price_per_liter
+        )
+        fuel_agg_sq = (
+            select(
+                FuelLog.vehicle_id,
+                func.coalesce(func.sum(fuel_amount_expr), 0).label("fuel_cost"),
+            )
+            .where(FuelLog.date >= d_from, FuelLog.date <= d_to)
+            .group_by(FuelLog.vehicle_id)
+        ).subquery("fuel_agg_te")
+        repair_agg_sq = (
+            select(
+                VehicleRepair.vehicle_id,
+                func.coalesce(
+                    func.sum(func.coalesce(PurchaseModel.contract_price, VehicleRepair.cost_amount, 0)), 0
+                ).label("repair_cost"),
+            )
+            .select_from(VehicleRepair)
+            .outerjoin(PurchaseModel, PurchaseModel.id == VehicleRepair.purchase_id)
+            .where(VehicleRepair.date >= d_from, VehicleRepair.date <= d_to)
+            .group_by(VehicleRepair.vehicle_id)
+        ).subquery("repair_agg_te")
+        q = (
+            base_q
+            .outerjoin(fuel_agg_sq, fuel_agg_sq.c.vehicle_id == Vehicle.id)
+            .outerjoin(repair_agg_sq, repair_agg_sq.c.vehicle_id == Vehicle.id)
+            .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+            .add_columns(
+                Organization.name.label("owner_org_name"),
+                func.coalesce(fuel_agg_sq.c.fuel_cost, 0).label("fuel_cost"),
+                func.coalesce(repair_agg_sq.c.repair_cost, 0).label("repair_cost"),
+            )
+            .where(Vehicle.id == vid)
+        )
+        rows = (await db.execute(q)).all()
+        items = [
+            _vehicle_item(r, fuel_cost=float(r.fuel_cost or 0), repair_cost=float(r.repair_cost or 0))
+            for r in rows
+        ]
+
+    else:
+        return {"items": [], "total": 0, "dimension": dimension, "value": value}
+
+    return {"items": items, "total": len(items), "dimension": dimension, "value": value}
+
+
+# ─────────────────────────── 10. All vehicles summary table ──────────────────
+
+@router.get("/all-vehicles-summary")
+async def all_vehicles_summary(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    owner_org_ids: Optional[str] = Query(None, description="Comma-separated org ids"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Full vehicles table with aggregated fuel cost, repair cost, mileage for the period.
+    No LIMIT — returns all visible vehicles.
+    """
+    first, last = _current_month_range()
+    d_from = _parse_date(date_from, first)
+    d_to = _parse_date(date_to, last)
+
+    extra_org_ids: Optional[List[int]] = None
+    if owner_org_ids:
+        try:
+            extra_org_ids = [int(x.strip()) for x in owner_org_ids.split(",") if x.strip()]
+        except ValueError:
+            extra_org_ids = None
+
+    from app.models.purchase import Purchase as PurchaseModel
+    from app.models.vehicle_odometer import VehicleOdometer
+
+    fuel_expr = func.coalesce(FuelLog.total_amount, FuelLog.liters * FuelLog.price_per_liter)
+
+    fuel_sq = (
+        select(
+            FuelLog.vehicle_id,
+            func.coalesce(func.sum(fuel_expr), 0).label("fuel_cost"),
+        )
+        .where(FuelLog.date >= d_from, FuelLog.date <= d_to)
+        .group_by(FuelLog.vehicle_id)
+    ).subquery("all_veh_fuel")
+
+    repair_sq = (
+        select(
+            VehicleRepair.vehicle_id,
+            func.coalesce(
+                func.sum(func.coalesce(PurchaseModel.contract_price, VehicleRepair.cost_amount, 0)), 0
+            ).label("repair_cost"),
+        )
+        .select_from(VehicleRepair)
+        .outerjoin(PurchaseModel, PurchaseModel.id == VehicleRepair.purchase_id)
+        .where(VehicleRepair.date >= d_from, VehicleRepair.date <= d_to)
+        .group_by(VehicleRepair.vehicle_id)
+    ).subquery("all_veh_repair")
+
+    mileage_sq = (
+        select(
+            VehicleOdometer.vehicle_id,
+            (func.max(VehicleOdometer.odometer_km) - func.min(VehicleOdometer.odometer_km)).label("mileage_km"),
+        )
+        .where(VehicleOdometer.date >= d_from, VehicleOdometer.date <= d_to)
+        .group_by(VehicleOdometer.vehicle_id)
+    ).subquery("all_veh_mileage")
+
+    today = date.today()
+    horizon_30 = today + timedelta(days=30)
+
+    q = (
+        select(
+            Vehicle.id,
+            Vehicle.plate,
+            Vehicle.brand,
+            Vehicle.model,
+            Vehicle.state,
+            Vehicle.insurance_until,
+            Organization.name.label("owner_org_name"),
+            func.coalesce(fuel_sq.c.fuel_cost, 0).label("fuel_cost"),
+            func.coalesce(repair_sq.c.repair_cost, 0).label("repair_cost"),
+            func.coalesce(mileage_sq.c.mileage_km, 0).label("mileage_km"),
+        )
+        .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
+        .outerjoin(fuel_sq, fuel_sq.c.vehicle_id == Vehicle.id)
+        .outerjoin(repair_sq, repair_sq.c.vehicle_id == Vehicle.id)
+        .outerjoin(mileage_sq, mileage_sq.c.vehicle_id == Vehicle.id)
+        .order_by(Vehicle.plate)
+    )
+    q = _apply_visibility(q, current_user)
+    if extra_org_ids:
+        q = q.where(Vehicle.owner_org_id.in_(extra_org_ids))
+
+    rows = (await db.execute(q)).all()
+    return [
+        {
+            "vehicle_id": r.id,
+            "plate": r.plate or "",
+            "brand_model": f"{r.brand or ''} {r.model or ''}".strip() or (r.plate or ""),
+            "state": r.state or "unknown",
+            "owner_org_name": r.owner_org_name or "",
+            "fuel_cost": float(r.fuel_cost or 0),
+            "repair_cost": float(r.repair_cost or 0),
+            "mileage_km": int(r.mileage_km or 0),
+            "insurance_overdue": (
+                r.insurance_until is not None and r.insurance_until < today
+            ),
+            "insurance_until": r.insurance_until.isoformat() if r.insurance_until else None,
+        }
+        for r in rows
+    ]

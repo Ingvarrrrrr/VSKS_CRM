@@ -72,9 +72,15 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
       // Вставляем новые core-колонки в начале visible (они приоритетнее) — порядок
       // в order сохранён, но visible-checklist получает их сразу.
       const visibleWithNewCore = [...newCoreVisible, ...visible]
+      // Defensive: если после всех фильтраций visible пустой — сбрасываем на defaults.
+      // Это случается когда localStorage содержит visible=[] (новая сессия / corrupt state)
+      // или все сохранённые ключи устарели. Без этого v-data-table получает headers=[]
+      // и показывает только paginator (0 строк, 0 заголовков) при непустых данных.
+      const finalVisible = visibleWithNewCore.length > 0 ? visibleWithNewCore : def.visible
+      const finalOrder = order.length > 0 ? order : def.order
       return {
-        visible: visibleWithNewCore,
-        order,
+        visible: finalVisible,
+        order: finalOrder,
         widths: parsed.widths ?? def.widths,
         filters: parsed.filters && typeof parsed.filters === 'object' ? parsed.filters : {},
       }
@@ -112,6 +118,16 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
   const visibleHeaders = computed(() => {
     const cols = toValue(allColumns)
     const isMobile = smAndDown.value
+    // Defensive fallback: если state corrupt / empty → показать все колонки.
+    // Предотвращает рендер таблицы с 0 headers при непустых данных.
+    if (!state.value.order?.length || !state.value.visible?.length) {
+      return cols.map(def => {
+        const w = state.value.widths[def.key] ?? def.width
+        if (isMobile) return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
+        const style = w ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;` : ''
+        return { ...def, width: w, headerProps: style ? { style } : undefined, cellProps: style ? { style, title: undefined } : undefined }
+      })
+    }
     return state.value.order
       .filter(k => state.value.visible.includes(k))
       .map(k => {

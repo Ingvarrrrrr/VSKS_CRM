@@ -118,45 +118,39 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
   const visibleHeaders = computed(() => {
     const cols = toValue(allColumns)
     const isMobile = smAndDown.value
-    // Defensive fallback: если state corrupt / empty → показать все колонки.
-    // Предотвращает рендер таблицы с 0 headers при непустых данных.
-    if (!state.value.order?.length || !state.value.visible?.length) {
-      return cols.map(def => {
-        const w = state.value.widths[def.key] ?? def.width
-        if (isMobile) return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
-        const style = w ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;` : ''
-        return { ...def, width: w, headerProps: style ? { style } : undefined, cellProps: style ? { style, title: undefined } : undefined }
-      })
-    }
-    return state.value.order
-      .filter(k => state.value.visible.includes(k))
-      .map(k => {
-        const def = cols.find(c => c.key === k)
-        if (!def) return null
-        const w = state.value.widths[k] ?? def.width
-        // На mobile: inline width/wrap снимаем — даём таблице auto-layout с horizontal scroll.
-        // Без этого узкие колонки (60-200px на 375px viewport) ломали текст посимвольно.
-        if (isMobile) {
-          return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
-        }
-        // Phase 26-JJJ: hybrid wrap — слова первым приоритетом, разрыв по букве
-        // если слово целиком не помещается. word-break: normal сохраняет слова,
-        // overflow-wrap: anywhere позволяет разорвать слово как fallback (стандартное
-        // браузерное поведение: сначала пробуем word boundaries, потом chars).
-        const cellStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
-          : ''
-        const headerStyle = w
-          ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
-          : ''
-        return {
-          ...def,
-          width: w,
-          headerProps: headerStyle ? { style: headerStyle } : undefined,
-          cellProps: cellStyle ? { style: cellStyle, title: undefined } : undefined,
-        }
-      })
-      .filter(Boolean) as any[]
+
+    // Compute user-selected columns honoring order + visibility,
+    // but only keeping keys that still exist in the current `allColumns`.
+    // This guards against stale keys in localStorage (after rename/refactor).
+    const userSelected = (state.value.order || [])
+      .filter(k => state.value.visible?.includes(k))
+      .map(k => cols.find(c => c.key === k))
+      .filter(Boolean) as ColumnDef[]
+
+    // Defensive fallback: if the user effectively has zero columns
+    // (empty visible, corrupt LS, stale keys) — show all columns.
+    // Prevents rendering an empty `<v-data-table>` with valid data underneath.
+    const finalCols = userSelected.length > 0 ? userSelected : cols
+
+    return finalCols.map(def => {
+      const w = state.value.widths?.[def.key] ?? def.width
+      if (isMobile) {
+        return { ...def, width: undefined, headerProps: undefined, cellProps: undefined }
+      }
+      // Phase 26-JJJ: hybrid wrap — слова first priority, разрыв по букве как fallback.
+      const cellStyle = w
+        ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
+        : ''
+      const headerStyle = w
+        ? `width: ${w}px; min-width: ${w}px; max-width: ${w}px; white-space: normal; word-break: normal; overflow-wrap: anywhere;`
+        : ''
+      return {
+        ...def,
+        width: w,
+        headerProps: headerStyle ? { style: headerStyle } : undefined,
+        cellProps: cellStyle ? { style: cellStyle, title: undefined } : undefined,
+      }
+    })
   })
 
   function toggleVisible(key: string, show?: boolean) {

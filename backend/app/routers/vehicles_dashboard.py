@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -1266,4 +1266,115 @@ async def filter_counts(
         "no_report_30d": no_report_30d,
         "for_disposal": for_disposal,
         "mock_demo": total_all < 5,
+    }
+
+
+# ─────────────────────────── Fine Leaders (Phase 29.3-fines) ─────────────────
+
+
+@router.get("/fine-leaders")
+async def fine_leaders(
+    limit: int = Query(10, ge=1, le=50),
+    period_days: Optional[int] = Query(None, description="Окно за последние N дней; None = все"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Топ водителей по штрафам — пьедестал.
+
+    Матчинг: используем snapshot driver_user_id / driver_external_id из vehicle_fines,
+    а при отсутствии снимка — JOIN trips по DATE(issued_at AT TIME ZONE 'UTC').
+    Группировка по driver_key (user-{id} / ext-{id} / unmatched).
+    Сортировка по fines_total DESC.
+    """
+    period_filter = ""
+    if period_days is not None:
+        period_filter = f"AND f.issued_at >= NOW() - INTERVAL '{int(period_days)} days'"
+
+    sql = text(f"""
+        WITH matched AS (
+            SELECT
+                f.id,
+                f.amount,
+                f.status,
+                COALESCE(f.driver_user_id, t.driver_user_id)         AS user_id,
+                COALESCE(f.driver_external_id, t.driver_external_id) AS ext_id
+            FROM vehicle_fines f
+            LEFT JOIN trips t
+                ON t.vehicle_id = f.vehicle_id
+               AND t.date = (f.issued_at AT TIME ZONE 'UTC')::date
+            WHERE 1=1 {period_filter}
+        )
+        SELECT
+            CASE
+                WHEN user_id IS NOT NULL THEN 'user-' || user_id::text
+                WHEN ext_id  IS NOT NULL THEN 'ext-'  || ext_id::text
+                ELSE 'unmatched'
+            END                                                    AS driver_key,
+            COALESCE(u.full_name, ext.full_name, '— Не определён —') AS driver_name,
+            CASE
+                WHEN user_id IS NOT NULL THEN 'user'
+                WHEN ext_id  IS NOT NULL THEN 'external'
+                ELSE 'unmatched'
+            END                                                    AS driver_kind,
+            COUNT(*)::int                                          AS fines_count,
+            SUM(amount)                                            AS fines_total,
+            COUNT(*) FILTER (WHERE status = 'unpaid')::int         AS unpaid_count,
+            COALESCE(SUM(amount) FILTER (WHERE status = 'unpaid'), 0) AS unpaid_total
+        FROM matched
+        LEFT JOIN users u   ON u.id   = user_id
+        LEFT JOIN external_drivers ext ON ext.id = ext_id
+        GROUP BY driver_key, driver_name, driver_kind
+        ORDER BY fines_total DESC NULLS LAST
+        LIMIT :lim
+    """)
+
+    rows = (await db.execute(sql, {"lim": limit})).mappings().all()
+    return [
+        {
+            "driver_key": r["driver_key"],
+            "driver_name": r["driver_name"],
+            "driver_kind": r["driver_kind"],
+            "fines_count": r["fines_count"],
+            "fines_total": float(r["fines_total"] or 0),
+            "unpaid_count": r["unpaid_count"],
+            "unpaid_total": float(r["unpaid_total"] or 0),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/fines-summary")
+async def fines_summary(
+    period_days: Optional[int] = Query(None, description="Окно за последние N дней; None = все"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """
+    Агрегированные счётчики штрафов по всему автопарку.
+    Используется для KPI-карточек в дашборде.
+    """
+    from app.models.vehicle_fine import VehicleFine
+
+    q = select(
+        func.count(VehicleFine.id).label("total_count"),
+        func.coalesce(func.sum(VehicleFine.amount), 0).label("total_amount"),
+        func.count(VehicleFine.id).filter(VehicleFine.status == "unpaid").label("unpaid_count"),
+        func.coalesce(
+            func.sum(VehicleFine.amount).filter(VehicleFine.status == "unpaid"), 0
+        ).label("unpaid_amount"),
+    )
+    if period_days is not None:
+        from sqlalchemy import func as safunc
+        from datetime import timezone as tz
+        import datetime as dt_mod
+        cutoff = dt_mod.datetime.now(tz.utc) - dt_mod.timedelta(days=period_days)
+        q = q.where(VehicleFine.issued_at >= cutoff)
+
+    row = (await db.execute(q)).first()
+    return {
+        "total_count": row.total_count if row else 0,
+        "total_amount": float(row.total_amount) if row else 0.0,
+        "unpaid_count": row.unpaid_count if row else 0,
+        "unpaid_amount": float(row.unpaid_amount) if row else 0.0,
     }

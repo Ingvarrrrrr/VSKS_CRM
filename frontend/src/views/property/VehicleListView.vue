@@ -510,7 +510,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
@@ -567,7 +567,6 @@ interface FilterPreset {
 // ─────────────── Stores / Composables ───────────────
 
 const router = useRouter()
-const route = useRoute()
 const authStore = useAuthStore()
 const userId = localStorage.getItem('user_id') || 'anon'
 
@@ -959,31 +958,9 @@ watch([page, itemsPerPage], () => { loadVehicles() })
 
 // ─────────────── Lifecycle ───────────────
 
-// Phase 29.3-drill: apply dashboard query-filter on mount.
-// Dashboard plates redirect here with ?state=working|broken|in_repair|destroyed,
-// ?type=minivan|truck_van|..., ?region=<text> (matched via filterSearch).
-function applyDashboardQuery() {
-  const q = route.query
-  if (typeof q.state === 'string' && q.state) filterStates.value = [q.state]
-  else if (Array.isArray(q.state)) filterStates.value = q.state.filter(Boolean) as string[]
-  if (typeof q.type === 'string' && q.type) filterTypes.value = [q.type]
-  else if (Array.isArray(q.type)) filterTypes.value = q.type.filter(Boolean) as string[]
-  if (typeof q.region === 'string' && q.region) filterSearch.value = q.region
-  if (typeof q.q === 'string' && q.q) filterSearch.value = q.q
-}
-
 onMounted(() => {
   loadSavedPresets()
   loadOrgs()
-  applyDashboardQuery()
-  loadVehicles()
-})
-
-// React to route changes (если юзер кликает плашку на /vehicles → /vehicles?state=X
-// без unmount компонента — нужно перенакатить фильтр)
-watch(() => route.query, () => {
-  applyDashboardQuery()
-  page.value = 1
   loadVehicles()
 })
 

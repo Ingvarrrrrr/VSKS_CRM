@@ -84,7 +84,7 @@
         </div>
       </div>
       <!-- Working -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Работает')">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('working')">
         <div class="fleet-kpi__label">В рабочем</div>
         <div class="fleet-kpi__value">{{ filterCounts.working }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--ok">+2 за неделю</div>
@@ -94,7 +94,7 @@
         </div>
       </div>
       <!-- In repair -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'В ремонте')">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('in_repair')">
         <div class="fleet-kpi__label">В ремонте</div>
         <div class="fleet-kpi__value">{{ filterCounts.in_repair }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--warn">−1</div>
@@ -104,7 +104,7 @@
         </div>
       </div>
       <!-- Not running -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Уничтожен')">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('not_running')">
         <div class="fleet-kpi__label">Не на ходу / списать</div>
         <div class="fleet-kpi__value">{{ filterCounts.not_running }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+3</div>
@@ -114,7 +114,7 @@
         </div>
       </div>
       <!-- Docs -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="openDrill('donut_state', 'Сломан')">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('in_repair')">
         <div class="fleet-kpi__label">Документы — истекли/истекают</div>
         <div class="fleet-kpi__value">{{ maintenanceWarnings.length }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+2</div>
@@ -134,7 +134,7 @@
           <small>распределение по штабам и регионам</small>
         </h3>
         <div class="fleet-regions" v-if="regionItems.length">
-          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region" @click="openDrill('region', reg.region)">
+          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region" @click="applyRegionFilter(reg.region)">
             <div class="fleet-reg__nm">
               {{ reg.region }}
               <small v-if="reg.shtab_label">{{ reg.shtab_label }}</small>
@@ -321,13 +321,12 @@
       <FineLeadersPodiumWidget />
     </section>
 
-    <!-- Phase 29.3-drill: VehicleDrillDialog УБРАН — клик по плашке/региону теперь
-         router.push на /property/vehicles с query-фильтром (см. openDrill ниже). -->
+    <!-- Phase 29.3-drill-inline: клик KPI/региона → activeFilter/selectedRegions inline -->
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
@@ -375,27 +374,23 @@ const activeFilter = ref<string>('all')
 const selectedTypes = ref<string[]>([])
 const selectedRegions = ref<string[]>([])
 
-// ── Drill dialog ─────────────────────────────────────────────────────────────
-// Phase 29.3-drill: drill-down диалог УБРАН по фидбэку (всплывающий список не нужен).
-// Клик по плашке → редирект на /property/vehicles с примененным фильтром через query.
-const STATE_LABEL_TO_CODE: Record<string, string> = {
-  'Работает': 'working',
-  'В ремонте': 'in_repair',
-  'Уничтожен': 'destroyed',
-  'Сломан': 'broken',
+// ── Inline drill filter ───────────────────────────────────────────────────────
+// Phase 29.3-drill-inline: клик KPI/региона → активирует chip-фильтр и скроллит к карточкам
+function applyKpiFilter(stateCode: string) {
+  activeFilter.value = stateCode
+  nextTick(() => {
+    document.querySelector('.fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
-
-function openDrill(dimension: string, value: string) {
-  if (dimension === 'donut_state') {
-    const code = STATE_LABEL_TO_CODE[value] ?? ''
-    if (code) router.push({ path: '/property/vehicles', query: { state: code } })
-  } else if (dimension === 'region') {
-    router.push({ path: '/property/vehicles', query: { region: value } })
-  } else if (dimension === 'type') {
-    router.push({ path: '/property/vehicles', query: { type: value } })
+function applyRegionFilter(reg: string) {
+  if (!selectedRegions.value.includes(reg)) {
+    selectedRegions.value = [reg]
   } else {
-    router.push('/property/vehicles')
+    selectedRegions.value = []
   }
+  nextTick(() => {
+    document.querySelector('.fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 // ── KPI ──────────────────────────────────────────────────────────────────────

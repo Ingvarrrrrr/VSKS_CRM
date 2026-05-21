@@ -437,6 +437,29 @@ async def patch_vehicle(
     return _enrich_vehicle_out(vehicle, org_map, org_data)
 
 
+@router.get("/distinct/{field}")
+async def vehicle_distinct_values(
+    field: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /api/vehicles/distinct/{field} — уникальные значения колонки для autocomplete.
+    Только whitelisted поля (защита от SQL-injection через имя колонки)."""
+    ALLOWED = {
+        'brand', 'model', 'color', 'assigned_text',
+        'assignment_basis', 'assignment_doc_number',
+        'pts_number', 'sts_number',
+    }
+    if field not in ALLOWED:
+        raise HTTPException(400, f"Field '{field}' not allowed")
+    col = getattr(Vehicle, field)
+    res = await db.execute(
+        select(col).where(col.isnot(None), col != '').distinct().order_by(col).limit(500)
+    )
+    values = [v for v in res.scalars().all() if v]
+    return values
+
+
 @router.get("/{vehicle_id}/field-history", response_model=List[FieldHistoryOut])
 async def get_vehicle_field_history(
     vehicle_id: int,

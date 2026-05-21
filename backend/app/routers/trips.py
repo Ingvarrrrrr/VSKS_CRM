@@ -41,6 +41,11 @@ from app.models.user import User
 from app.models.external_driver import ExternalDriver
 from app.services.waybill_numbering import generate_waybill_number
 from app.models.organization import Organization
+from app.models.waybill_children import RouteStop, OdometerReading, FuelRefill
+from app.schemas.waybill_workflow import (
+    TechInspectIn, MedInspectIn, PostTripMechanicIn, PostTripDoctorIn,
+    DriverSignIn, RouteStopIn, OdometerReadingIn, FuelRefillIn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +302,62 @@ async def list_trips(
     return [_trip_to_dict(t) for t in visible]
 
 
+# ─────────────────────── GET /api/trips/stats ───────────────────────────────
+# NOTE: Must be declared BEFORE /{trip_id} to avoid FastAPI matching "stats" as int
+
+@router.get("/stats")
+async def waybill_stats(
+    period: str = Query("month", description="day|week|month|year|all"),
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """KPI для журнала путевых листов: total, active, on_review, closed, overdue counts."""
+    from datetime import date, timedelta
+    from sqlalchemy import func as sql_func, case
+
+    today = date.today()
+    if period == "day":
+        date_from = today
+    elif period == "week":
+        date_from = today - timedelta(days=7)
+    elif period == "month":
+        date_from = today.replace(day=1)
+    elif period == "year":
+        date_from = today.replace(month=1, day=1)
+    else:
+        date_from = None
+
+    q = select(
+        sql_func.count(Trip.id).label("total_count"),
+        sql_func.count(
+            case((Trip.status.in_(["tech_inspect", "med_inspect", "in_progress"]), Trip.id))
+        ).label("active_count"),
+        sql_func.count(
+            case((Trip.status == "on_review", Trip.id))
+        ).label("on_review_count"),
+        sql_func.count(
+            case((Trip.status == "closed", Trip.id))
+        ).label("closed_count"),
+        sql_func.count(
+            case((Trip.status == "overdue", Trip.id))
+        ).label("overdue_count"),
+    ).select_from(Trip)
+
+    if date_from is not None:
+        q = q.where(Trip.date >= date_from)
+
+    result = await db.execute(q)
+    row = result.one()
+    return {
+        "period": period,
+        "total_count": row.total_count,
+        "active_count": row.active_count,
+        "on_review_count": row.on_review_count,
+        "closed_count": row.closed_count,
+        "overdue_count": row.overdue_count,
+    }
+
+
 # ─────────────────────── GET /api/trips/{trip_id} ───────────────────────────
 
 @router.get("/{trip_id}")
@@ -529,6 +590,56 @@ async def render_trip(
     )
 
 
+# ─────────────────────── GET /{trip_id}/waybill.docx ────────────────────────
+
+@router.get("/{trip_id}/waybill.docx")
+async def download_waybill_docx(
+    trip_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Скачать путевой лист Минтранс №3 в формате .docx (Phase 30-PR3).
+
+    Включает InlineImage подписи водителя и пустые линии для рукописных подписей
+    механика/медика.
+    """
+    from app.services.waybill_docx import render_waybill_docx
+
+    result = await db.execute(
+        select(Trip)
+        .options(
+            selectinload(Trip.vehicle),
+            selectinload(Trip.driver_user),
+            selectinload(Trip.route_stops),
+        )
+        .where(Trip.id == trip_id)
+    )
+    waybill = result.scalars().first()
+    if not waybill:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Путевой лист не найден"})
+
+    if not _can_see_vehicle(waybill.vehicle, current_user):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "Нет доступа к этому ТС"})
+
+    try:
+        bytes_data = await render_waybill_docx(waybill, db)
+    except FileNotFoundError as e:
+        raise HTTPException(500, detail={"code": "TEMPLATE_MISSING", "message": str(e)})
+    except Exception as e:
+        raise HTTPException(500, detail={
+            "code": "WAYBILL_RENDER_ERROR",
+            "message": str(e),
+            "error_class": e.__class__.__name__,
+        })
+
+    filename = f"waybill_{waybill.number or waybill.id}.docx"
+    return StreamingResponse(
+        BytesIO(bytes_data),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ─────────────────────── Internal helpers ───────────────────────────────────
 
 async def _load_trip_or_404(trip_id: int, db: AsyncSession) -> Trip:
@@ -572,4 +683,434 @@ def _trip_to_dict(trip: Trip) -> dict:
         "status": trip.status,
         "created_at": trip.created_at.isoformat() if trip.created_at else None,
         "created_by_id": trip.created_by_id,
+        # Phase 30 waybill fields
+        "number": trip.number,
+        "date_start": trip.date_start.isoformat() if trip.date_start else None,
+        "date_end": trip.date_end.isoformat() if trip.date_end else None,
+        "planned_mileage_km": trip.planned_mileage_km,
+        "actual_mileage_km": trip.actual_mileage_km,
+        "dispatcher_id": trip.dispatcher_id,
+        "cargo_description": trip.cargo_description,
+        "passengers_count": trip.passengers_count,
+        "pre_trip_mechanic_id": trip.pre_trip_mechanic_id,
+        "pre_trip_mechanic_inspected_at": trip.pre_trip_mechanic_inspected_at.isoformat() if trip.pre_trip_mechanic_inspected_at else None,
+        "pre_trip_mechanic_result": trip.pre_trip_mechanic_result,
+        "pre_trip_doctor_id": trip.pre_trip_doctor_id,
+        "pre_trip_doctor_inspected_at": trip.pre_trip_doctor_inspected_at.isoformat() if trip.pre_trip_doctor_inspected_at else None,
+        "pre_trip_doctor_result": trip.pre_trip_doctor_result,
+        "post_trip_mechanic_id": trip.post_trip_mechanic_id,
+        "post_trip_mechanic_inspected_at": trip.post_trip_mechanic_inspected_at.isoformat() if trip.post_trip_mechanic_inspected_at else None,
+        "post_trip_mechanic_result": trip.post_trip_mechanic_result,
+        "post_trip_doctor_id": trip.post_trip_doctor_id,
+        "post_trip_doctor_inspected_at": trip.post_trip_doctor_inspected_at.isoformat() if trip.post_trip_doctor_inspected_at else None,
+        "post_trip_doctor_result": trip.post_trip_doctor_result,
+        "driver_signed_at": trip.driver_signed_at.isoformat() if trip.driver_signed_at else None,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 30-PR3: Workflow status transition endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Allowed status transitions map
+_ALLOWED_TRANSITIONS: dict[str, list[str]] = {
+    "created":      ["tech_inspect"],
+    "draft":        ["tech_inspect"],  # legacy alias
+    "tech_inspect": ["med_inspect"],
+    "med_inspect":  ["in_progress"],
+    "in_progress":  ["on_review"],    # via driver-sign
+    "on_review":    ["closed"],
+    # Terminal states — no outgoing transitions
+    "closing":      [],
+    "closed":       [],
+    "overdue":      [],
+    "rendered":     [],               # legacy
+}
+
+
+def _assert_status_transition(current: str, target: str) -> None:
+    """Raise 422 if the transition from current → target is not allowed."""
+    allowed = _ALLOWED_TRANSITIONS.get(current, [])
+    if target not in allowed:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "INVALID_STATUS_TRANSITION",
+                "message": f"Нельзя перевести из «{current}» в «{target}». "
+                           f"Разрешённые переходы из «{current}»: {allowed or 'нет (конечный статус)'}",
+            },
+        )
+
+
+# ─────────────────────── POST /{trip_id}/tech-inspect ───────────────────────
+
+@router.post("/{trip_id}/tech-inspect")
+async def tech_inspect(
+    trip_id: int,
+    body: TechInspectIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Механик подтверждает тех. осмотр (pre-trip). Status: created → med_inspect."""
+    trip = await _load_trip_or_404(trip_id, db)
+    _assert_status_transition(trip.status, "tech_inspect")
+
+    mechanic = await db.get(User, body.mechanic_id)
+    if not mechanic:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Механик не найден"})
+
+    trip.pre_trip_mechanic_id = body.mechanic_id
+    trip.pre_trip_mechanic_inspected_at = body.inspected_at
+    trip.pre_trip_mechanic_result = body.result
+    trip.status = "med_inspect"
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ─────────────────────── POST /{trip_id}/med-inspect ────────────────────────
+
+@router.post("/{trip_id}/med-inspect")
+async def med_inspect(
+    trip_id: int,
+    body: MedInspectIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Медик подтверждает медосмотр (pre-trip). Status: med_inspect → in_progress."""
+    trip = await _load_trip_or_404(trip_id, db)
+    _assert_status_transition(trip.status, "med_inspect")
+
+    doctor = await db.get(User, body.doctor_id)
+    if not doctor:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Медик не найден"})
+
+    trip.pre_trip_doctor_id = body.doctor_id
+    trip.pre_trip_doctor_inspected_at = body.inspected_at
+    trip.pre_trip_doctor_result = body.result
+    trip.status = "in_progress"
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ─────────────────────── POST /{trip_id}/post-trip-mechanic ─────────────────
+
+@router.post("/{trip_id}/post-trip-mechanic")
+async def post_trip_mechanic(
+    trip_id: int,
+    body: PostTripMechanicIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Послерейсовый механик. Фиксирует осмотр, статус НЕ меняется."""
+    trip = await _load_trip_or_404(trip_id, db)
+
+    mechanic = await db.get(User, body.mechanic_id)
+    if not mechanic:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Механик не найден"})
+
+    trip.post_trip_mechanic_id = body.mechanic_id
+    trip.post_trip_mechanic_inspected_at = body.inspected_at
+    trip.post_trip_mechanic_result = body.result
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ─────────────────────── POST /{trip_id}/post-trip-doctor ───────────────────
+
+@router.post("/{trip_id}/post-trip-doctor")
+async def post_trip_doctor(
+    trip_id: int,
+    body: PostTripDoctorIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Послерейсовый медик. Фиксирует осмотр, статус НЕ меняется."""
+    trip = await _load_trip_or_404(trip_id, db)
+
+    doctor = await db.get(User, body.doctor_id)
+    if not doctor:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Медик не найден"})
+
+    trip.post_trip_doctor_id = body.doctor_id
+    trip.post_trip_doctor_inspected_at = body.inspected_at
+    trip.post_trip_doctor_result = body.result
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ─────────────────────── POST /{trip_id}/driver-sign ────────────────────────
+
+@router.post("/{trip_id}/driver-sign")
+async def driver_sign(
+    trip_id: int,
+    body: DriverSignIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Водитель ставит электронную подпись. Status: in_progress → on_review."""
+    trip = await _load_trip_or_404(trip_id, db)
+    _assert_status_transition(trip.status, "on_review")
+
+    if not body.signature:
+        raise HTTPException(422, detail={"code": "SIGNATURE_REQUIRED", "message": "Подпись обязательна"})
+
+    trip.driver_signature = body.signature
+    trip.driver_signed_at = body.signed_at
+    trip.status = "on_review"
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ─────────────────────── POST /{trip_id}/close ──────────────────────────────
+
+@router.post("/{trip_id}/close")
+async def close_waybill(
+    trip_id: int,
+    current_user: User = Depends(require_action("vehicle.trip.create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Диспетчер закрывает путевой лист. Status: on_review → closed."""
+    trip = await _load_trip_or_404(trip_id, db)
+    _assert_status_transition(trip.status, "closed")
+
+    trip.status = "closed"
+
+    await db.commit()
+    await db.refresh(trip)
+    return _trip_to_dict(trip)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 30-PR3: Child entity CRUD — route-stops
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{trip_id}/route-stops")
+async def list_route_stops(
+    trip_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список остановок маршрута путевого листа."""
+    trip = await _load_trip_or_404(trip_id, db)
+    result = await db.execute(
+        select(RouteStop).where(RouteStop.waybill_id == trip_id).order_by(RouteStop.ord)
+    )
+    stops = result.scalars().all()
+    return [_route_stop_to_dict(s) for s in stops]
+
+
+@router.post("/{trip_id}/route-stops")
+async def create_route_stop(
+    trip_id: int,
+    body: RouteStopIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Добавить остановку маршрута."""
+    await _load_trip_or_404(trip_id, db)
+    stop = RouteStop(
+        waybill_id=trip_id,
+        ord=body.ord,
+        kind=body.kind,
+        name=body.name,
+        description=body.description,
+        planned_time=body.planned_time,
+        lat=body.lat,
+        lon=body.lon,
+    )
+    db.add(stop)
+    await db.commit()
+    await db.refresh(stop)
+    return _route_stop_to_dict(stop)
+
+
+@router.delete("/route-stops/{stop_id}")
+async def delete_route_stop(
+    stop_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить остановку маршрута."""
+    stop = await db.get(RouteStop, stop_id)
+    if not stop:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Остановка не найдена"})
+    await db.delete(stop)
+    await db.commit()
+    return {"ok": True}
+
+
+def _route_stop_to_dict(s: RouteStop) -> dict:
+    return {
+        "id": s.id,
+        "waybill_id": s.waybill_id,
+        "ord": s.ord,
+        "kind": s.kind,
+        "name": s.name,
+        "description": s.description,
+        "planned_time": s.planned_time.isoformat() if s.planned_time else None,
+        "actual_time": s.actual_time.isoformat() if s.actual_time else None,
+        "lat": float(s.lat) if s.lat is not None else None,
+        "lon": float(s.lon) if s.lon is not None else None,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 30-PR3: Child entity CRUD — odometer-readings
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{trip_id}/odometer-readings")
+async def list_odometer_readings(
+    trip_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список показаний одометра для путевого листа."""
+    await _load_trip_or_404(trip_id, db)
+    result = await db.execute(
+        select(OdometerReading).where(OdometerReading.waybill_id == trip_id).order_by(OdometerReading.recorded_at)
+    )
+    readings = result.scalars().all()
+    return [_odometer_reading_to_dict(r) for r in readings]
+
+
+@router.post("/{trip_id}/odometer-readings")
+async def create_odometer_reading(
+    trip_id: int,
+    body: OdometerReadingIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Добавить показание одометра."""
+    await _load_trip_or_404(trip_id, db)
+    reading = OdometerReading(
+        waybill_id=trip_id,
+        recorded_at=body.recorded_at,
+        location=body.location,
+        mileage_km=body.mileage_km,
+        fuel_remaining_l=body.fuel_remaining_l,
+        note=body.note,
+    )
+    db.add(reading)
+    await db.commit()
+    await db.refresh(reading)
+    return _odometer_reading_to_dict(reading)
+
+
+@router.delete("/odometer-readings/{r_id}")
+async def delete_odometer_reading(
+    r_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить показание одометра."""
+    reading = await db.get(OdometerReading, r_id)
+    if not reading:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Показание одометра не найдено"})
+    await db.delete(reading)
+    await db.commit()
+    return {"ok": True}
+
+
+def _odometer_reading_to_dict(r: OdometerReading) -> dict:
+    return {
+        "id": r.id,
+        "waybill_id": r.waybill_id,
+        "recorded_at": r.recorded_at.isoformat() if r.recorded_at else None,
+        "location": r.location,
+        "mileage_km": r.mileage_km,
+        "fuel_remaining_l": float(r.fuel_remaining_l) if r.fuel_remaining_l is not None else None,
+        "note": r.note,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 30-PR3: Child entity CRUD — fuel-refills
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{trip_id}/fuel-refills")
+async def list_fuel_refills(
+    trip_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список заправок для путевого листа."""
+    await _load_trip_or_404(trip_id, db)
+    result = await db.execute(
+        select(FuelRefill).where(FuelRefill.waybill_id == trip_id).order_by(FuelRefill.refilled_at)
+    )
+    refills = result.scalars().all()
+    return [_fuel_refill_to_dict(r) for r in refills]
+
+
+@router.post("/{trip_id}/fuel-refills")
+async def create_fuel_refill(
+    trip_id: int,
+    body: FuelRefillIn,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Добавить заправку."""
+    await _load_trip_or_404(trip_id, db)
+    import base64
+    photo_bytes = None
+    if body.receipt_photo_data:
+        try:
+            # Strip data-url prefix if present
+            raw = body.receipt_photo_data
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            photo_bytes = base64.b64decode(raw)
+        except Exception:
+            raise HTTPException(422, detail={"code": "INVALID_PHOTO", "message": "Неверный формат фото чека (ожидается base64)"})
+
+    refill = FuelRefill(
+        waybill_id=trip_id,
+        refilled_at=body.refilled_at,
+        station_name=body.station_name,
+        liters=body.liters,
+        amount_rub=body.amount_rub,
+        receipt_photo_data=photo_bytes,
+    )
+    db.add(refill)
+    await db.commit()
+    await db.refresh(refill)
+    return _fuel_refill_to_dict(refill)
+
+
+@router.delete("/fuel-refills/{r_id}")
+async def delete_fuel_refill(
+    r_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить заправку."""
+    refill = await db.get(FuelRefill, r_id)
+    if not refill:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Заправка не найдена"})
+    await db.delete(refill)
+    await db.commit()
+    return {"ok": True}
+
+
+def _fuel_refill_to_dict(r: FuelRefill) -> dict:
+    return {
+        "id": r.id,
+        "waybill_id": r.waybill_id,
+        "refilled_at": r.refilled_at.isoformat() if r.refilled_at else None,
+        "station_name": r.station_name,
+        "liters": float(r.liters) if r.liters is not None else None,
+        "amount_rub": float(r.amount_rub) if r.amount_rub is not None else None,
+        "has_receipt_photo": r.receipt_photo_data is not None,
+    }
+
+

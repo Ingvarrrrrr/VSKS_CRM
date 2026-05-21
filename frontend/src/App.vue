@@ -68,7 +68,13 @@ const authStore = useAuthStore()
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password']
 
 const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)
-const showAppBar = computed(() => isAuthenticated.value && !PUBLIC_ROUTES.includes(route.path))
+// Phase 30 PR4: /m/* routes используют собственный MobileLayout с bottom-tab-bar —
+// desktop AppBar не показывать
+const showAppBar = computed(() =>
+  isAuthenticated.value
+  && !PUBLIC_ROUTES.includes(route.path)
+  && !route.path.startsWith('/m/')
+)
 
 // Restore theme preference + init global table resize
 onMounted(async () => {

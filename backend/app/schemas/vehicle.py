@@ -309,6 +309,14 @@ class VehicleCreate(BaseModel):
     next_to_km: Optional[int] = None
     current_odometer_km: Optional[int] = None
     props: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    # Extended Голичков registry fields (Plan 29-3a2)
+    year_of_manufacture: Optional[int] = None
+    last_to_mileage_km: Optional[int] = None
+    last_to_date: Optional[date] = None
+    pts_number: Optional[str] = None
+    sts_number: Optional[str] = None
+    tech_inspection_until: Optional[date] = None
+    purchase_info: Optional[str] = None
 
 
 class VehiclePatch(BaseModel):
@@ -339,6 +347,14 @@ class VehiclePatch(BaseModel):
     next_to_km: Optional[int] = None
     current_odometer_km: Optional[int] = None
     props: Optional[Dict[str, Any]] = None
+    # Extended Голичков registry fields (Plan 29-3a2)
+    year_of_manufacture: Optional[int] = None
+    last_to_mileage_km: Optional[int] = None
+    last_to_date: Optional[date] = None
+    pts_number: Optional[str] = None
+    sts_number: Optional[str] = None
+    tech_inspection_until: Optional[date] = None
+    purchase_info: Optional[str] = None
 
 
 class VehicleOut(BaseModel):
@@ -374,6 +390,14 @@ class VehicleOut(BaseModel):
     next_to_km: Optional[int] = None
     current_odometer_km: Optional[int] = None
     props: Dict[str, Any] = Field(default_factory=dict)
+    # Extended Голичков registry fields (Plan 29-3a2)
+    year_of_manufacture: Optional[int] = None
+    last_to_mileage_km: Optional[int] = None
+    last_to_date: Optional[date] = None
+    pts_number: Optional[str] = None
+    sts_number: Optional[str] = None
+    tech_inspection_until: Optional[date] = None
+    purchase_info: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     attachments: List[VehicleAttachmentOut] = []
@@ -404,5 +428,11 @@ class VehicleListItem(BaseModel):
     current_odometer_km: Optional[int] = None
     next_to_km: Optional[int] = None
     insurance_until: Optional[date] = None
+    # Extended Голичков registry fields (Plan 29-3a2)
+    year_of_manufacture: Optional[int] = None
+    tech_inspection_until: Optional[date] = None
+    pts_number: Optional[str] = None
+    sts_number: Optional[str] = None
+    purchase_info: Optional[str] = None
     created_at: datetime
     updated_at: datetime

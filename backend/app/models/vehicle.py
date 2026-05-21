@@ -6,6 +6,8 @@ Decisions covered: D-04, D-06, D-08, D-13, D-18, D-20.
 DATE COLUMNS (needed in _DATE_FIELDS for PATCH routers — plans 29-04+):
   - registered_at
   - insurance_until
+  - last_to_date
+  - tech_inspection_until
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, Numeric,
@@ -48,6 +50,15 @@ class Vehicle(Base):
     # Registration & docs
     registered_at = Column(Date, nullable=True)       # DATE — add to _DATE_FIELDS in 29-04
     insurance_until = Column(Date, nullable=True)     # DATE — add to _DATE_FIELDS in 29-04
+
+    # Extended Голичков registry fields (Plan 29-3a2)
+    year_of_manufacture = Column(Integer, nullable=True)       # Год выпуска
+    last_to_mileage_km = Column(Integer, nullable=True)        # Пробег при последнем ТО
+    last_to_date = Column(Date, nullable=True)                 # Дата последнего ТО
+    pts_number = Column(String(50), nullable=True)             # Номер ПТС
+    sts_number = Column(String(50), nullable=True)             # Номер СТС
+    tech_inspection_until = Column(Date, nullable=True)        # Техосмотр действителен до
+    purchase_info = Column(String(200), nullable=True)         # Где/как куплено ("ФПГ Иркутск")
 
     # Type & state: VARCHAR (not PG ENUM) per RISKS: easier migration
     # VehicleType values: car_light / minivan / truck_van / truck_board / truck_tank /

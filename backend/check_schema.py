@@ -791,6 +791,38 @@ async def _ensure_users_driver_columns(conn) -> None:
         print(f"  \u26a0\ufe0f   users driver columns ensure failed: {e}")
 
 
+async def _ensure_vehicles_new_columns(conn) -> None:
+    """Phase 29-3a2: ALTER vehicles — 7 новых колонок из реестра Голичкова (idempotent).
+
+    asyncpg multi-statement bug: каждый ALTER отдельным execute.
+    """
+    try:
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS year_of_manufacture INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS last_to_mileage_km INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS last_to_date DATE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS pts_number VARCHAR(50)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS sts_number VARCHAR(50)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS tech_inspection_until DATE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS purchase_info VARCHAR(200)"
+        ))
+        print("  \u2705  vehicles new columns ensured (Phase 29-3a2)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicles new columns ensure failed: {e}")
+
+
 async def _ensure_tasks_system_tag(conn) -> None:
     """Phase 29-02: ALTER tasks — add system_tag column + partial index (D-17, idempotent)."""
     try:
@@ -845,6 +877,7 @@ async def main(apply: bool = False) -> int:
                 _ensure_purchases_vehicle_id,
                 _ensure_users_driver_columns,
                 _ensure_tasks_system_tag,
+                _ensure_vehicles_new_columns,  # Phase 29-3a2: 7 новых колонок реестра
             ]:
                 try:
                     await _fn(conn)

@@ -39,7 +39,7 @@ router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
 
 # ─────────────────────────── Field classification ───────────────────────────
 
-_DATE_FIELDS = {"registered_at", "insurance_until"}
+_DATE_FIELDS = {"registered_at", "insurance_until", "last_to_date", "tech_inspection_until"}
 _DATETIME_FIELDS: set = set()
 _BOOL_FIELDS = {
     "has_tracker", "akb_ok", "has_radio", "mirrors_ok",
@@ -68,6 +68,9 @@ _PATCHABLE_FIELDS = {
     "has_keys", "has_first_aid_kit", "has_spare_wheel", "has_extinguisher",
     "next_to_km",
     "props",
+    # Extended Голичков registry fields (Plan 29-3a2)
+    "year_of_manufacture", "last_to_mileage_km", "last_to_date",
+    "pts_number", "sts_number", "tech_inspection_until", "purchase_info",
 }
 
 

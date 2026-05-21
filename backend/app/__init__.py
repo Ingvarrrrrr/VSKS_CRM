@@ -1214,11 +1214,13 @@ async def lifespan(app_: FastAPI):
             _ensure_vehicle_odometer_table, _ensure_fuel_logs_table,
             _ensure_trips_table, _ensure_purchases_vehicle_id,
             _ensure_users_driver_columns, _ensure_tasks_system_tag,
+            _ensure_vehicles_new_columns,
         )
         from .database import engine as _engine_p29
         async with _engine_p29.begin() as conn:
             for fn in [
                 _ensure_external_drivers_table, _ensure_vehicles_table,
+                _ensure_vehicles_new_columns,
                 _ensure_vehicle_attachments_table, _ensure_vehicle_repairs_table,
                 _ensure_repair_attachments_table, _ensure_vehicle_field_history_table,
                 _ensure_vehicle_odometer_table, _ensure_fuel_logs_table,

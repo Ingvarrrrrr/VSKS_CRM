@@ -134,8 +134,8 @@
           <small>распределение по штабам и регионам</small>
         </h3>
         <div class="fleet-regions" v-if="regionItems.length">
-          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region" @click="applyRegionFilter(reg.region)">
-            <div class="fleet-reg__nm">
+          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region">
+            <div class="fleet-reg__nm" @click="applyRegionFilter(reg.region)">
               {{ reg.region }}
               <small v-if="reg.shtab_label">{{ reg.shtab_label }}</small>
             </div>
@@ -148,6 +148,8 @@
                 v-if="regSegments(reg).working_w > 0"
                 class="fleet-reg__seg fleet-reg__seg--working"
                 :style="{ width: regSegments(reg).working_pct + '%' }"
+                :title="`${reg.region} — рабочие (${regSegments(reg).working})`"
+                @click.stop="applyRegionAndState(reg.region, 'working')"
               >
                 <span v-if="regSegments(reg).working_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).working }} раб.</span>
               </div>
@@ -155,6 +157,8 @@
                 v-if="regSegments(reg).in_repair_w > 0"
                 class="fleet-reg__seg fleet-reg__seg--repair"
                 :style="{ width: regSegments(reg).in_repair_pct + '%' }"
+                :title="`${reg.region} — в ремонте (${regSegments(reg).inRepair})`"
+                @click.stop="applyRegionAndState(reg.region, 'in_repair')"
               >
                 <span v-if="regSegments(reg).in_repair_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).inRepair }} рем.</span>
               </div>
@@ -162,11 +166,13 @@
                 v-if="regSegments(reg).broken_w > 0"
                 class="fleet-reg__seg fleet-reg__seg--broken"
                 :style="{ width: regSegments(reg).broken_pct + '%' }"
+                :title="`${reg.region} — не на ходу (${regSegments(reg).broken})`"
+                @click.stop="applyRegionAndState(reg.region, 'not_running')"
               >
                 <span v-if="regSegments(reg).broken_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).broken }}</span>
               </div>
             </div>
-            <div class="fleet-reg__cnt">{{ reg.count }}</div>
+            <div class="fleet-reg__cnt" @click="applyRegionFilter(reg.region)">{{ reg.count }}</div>
           </div>
         </div>
         <div class="fleet-empty" v-else>
@@ -369,6 +375,8 @@ const isDark = computed(() => theme.global.current.value.dark)
 // ── Vehicle type options ─────────────────────────────────────────────────────
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
   car_light: 'Легковой',
+  suv: 'Внедорожник',
+  pickup: 'Пикап',
   minivan: 'Минивэн',
   truck_van: 'Грузовой фургон',
   truck_board: 'Грузовой бортовой',
@@ -418,6 +426,13 @@ function applyRegionFilter(reg: string) {
   }
   nextTick(() => {
     document.querySelector('.fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+function applyRegionAndState(region: string, state: 'working' | 'in_repair' | 'not_running') {
+  selectedRegions.value = [region]
+  activeFilter.value = state
+  nextTick(() => {
+    document.querySelector('.fleet-chips-row, .fleet-card-grid, .fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
 }
 
@@ -1044,7 +1059,9 @@ onMounted(() => {
   font-weight: 600;
   font-size: 13px;
   color: var(--text);
+  cursor: pointer;
 }
+.fleet-reg__nm:hover { color: var(--accent); }
 
 .fleet-reg__nm small {
   color: var(--muted);
@@ -1084,6 +1101,9 @@ onMounted(() => {
 .fleet-reg__seg--repair  { background: linear-gradient(90deg, #f6b34a, #ff8a4a); }
 .fleet-reg__seg--broken  { background: linear-gradient(90deg, #ff5b6a, #ff3b8b); }
 
+.fleet-reg__seg { cursor: pointer; }
+.fleet-reg__seg:hover { filter: brightness(1.1); }
+
 .fleet-reg__seg-lbl { padding: 0 8px; }
 
 .fleet-reg__cnt {
@@ -1091,7 +1111,9 @@ onMounted(() => {
   text-align: right;
   font-weight: 700;
   color: var(--text);
+  cursor: pointer;
 }
+.fleet-reg__cnt:hover { color: var(--accent); }
 
 /* Feed */
 .fleet-feed {

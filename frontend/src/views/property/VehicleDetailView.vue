@@ -92,6 +92,10 @@
         <v-tab value="general">Общее</v-tab>
         <v-tab value="documents">Документы</v-tab>
         <v-tab value="photos">Фото</v-tab>
+        <v-tab value="checklists">
+          <v-icon start>mdi-clipboard-check</v-icon>
+          Чек-листы
+        </v-tab>
         <v-tab value="repairs">Ремонты</v-tab>
         <v-tab value="odometer">Пробег</v-tab>
         <v-tab value="fuel">Заправки</v-tab>
@@ -589,6 +593,11 @@
           <VehiclePhotosTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
+        <!-- ─────────── Tab: Чек-листы ─────────── -->
+        <v-tabs-window-item value="checklists" :eager="false">
+          <VehicleChecklistsTab :vehicle-id="vehicleId" />
+        </v-tabs-window-item>
+
         <!-- ─────────── Tab: Ремонты ─────────── -->
         <v-tabs-window-item value="repairs" :eager="false">
           <VehicleRepairsTab :vehicle-id="vehicleId" />
@@ -707,6 +716,7 @@ import VehicleTripsTab from '@/components/vehicles/VehicleTripsTab.vue'
 import VehicleFinesTab from '@/components/vehicles/VehicleFinesTab.vue'
 import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
 import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
+import VehicleChecklistsTab from '@/components/vehicles/VehicleChecklistsTab.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 // ─────────────── Types ───────────────

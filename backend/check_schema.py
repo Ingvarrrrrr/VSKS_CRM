@@ -936,6 +936,21 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_organizations_geo_fields(conn) -> None:
+    """Phase 30: ALTER organizations — add lat/lon/region/head_user_id (idempotent)."""
+    try:
+        await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS lat NUMERIC(9,6)"))
+        await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS lon NUMERIC(9,6)"))
+        await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS region VARCHAR(100)"))
+        await conn.execute(text(
+            "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS"
+            " head_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        print("  \u2705  organizations geo fields ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   organizations geo fields ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)

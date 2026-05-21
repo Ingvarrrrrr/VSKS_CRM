@@ -114,6 +114,11 @@ class OrganizationCreate(BaseModel):
     signatory: Optional[str] = None
     contractor_id: Optional[int] = None
     color: Optional[str] = None
+    # Phase 30: geo + head
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    region: Optional[str] = None
+    head_user_id: Optional[int] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -135,6 +140,11 @@ class OrganizationOut(BaseModel):
     org_phone: Optional[str] = None
     org_email: Optional[str] = None
     color: Optional[str] = None
+    # Phase 30: geo + head
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    region: Optional[str] = None
+    head_user_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):

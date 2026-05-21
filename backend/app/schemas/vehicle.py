@@ -438,6 +438,9 @@ class VehicleOut(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+    # Phase 30: computed station fields
+    current_station_id: Optional[int] = None
+    current_station_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     attachments: List[VehicleAttachmentOut] = []
@@ -483,5 +486,8 @@ class VehicleListItem(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+    # Phase 30: computed station fields
+    current_station_id: Optional[int] = None
+    current_station_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime

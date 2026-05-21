@@ -1306,6 +1306,27 @@ async def lifespan(app_: FastAPI):
     except Exception as _e29_seed:
         logging.getLogger(__name__).warning(f"Phase 29 vehicles_seed skipped (non-fatal): {_e29_seed}")
 
+    # Phase 30: новые таблицы и колонки
+    try:
+        from check_schema import (
+            _ensure_organizations_geo_fields,
+        )
+        from .database import engine as _engine_p30
+        async with _engine_p30.begin() as conn:
+            for fn in [
+                _ensure_organizations_geo_fields,
+            ]:
+                try:
+                    await fn(conn)
+                except Exception as e:
+                    logging.getLogger(__name__).warning(
+                        f"Phase 30 schema {fn.__name__} skipped: {e}"
+                    )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"Phase 30 schema bootstrap failed (non-fatal): {e}"
+        )
+
     yield
     task.cancel()
     try:

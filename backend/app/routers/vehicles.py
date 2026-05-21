@@ -203,6 +203,12 @@ def _enrich_vehicle_out(vehicle: Vehicle, org_map: dict[int, str], org_data: Opt
     if org_data:
         out.owner_org_color = (org_data.get(vehicle.owner_org_id) or {}).get("color")
         out.assigned_org_color = (org_data.get(vehicle.assigned_org_id) or {}).get("color") if vehicle.assigned_org_id else None
+    # Phase 30: current_station = assigned_org если есть, иначе owner_org
+    out.current_station_id = vehicle.assigned_org_id or vehicle.owner_org_id
+    out.current_station_name = (
+        org_map.get(vehicle.assigned_org_id) if vehicle.assigned_org_id
+        else org_map.get(vehicle.owner_org_id)
+    )
     return out
 
 
@@ -214,6 +220,12 @@ def _enrich_list_item(vehicle: Vehicle, org_map: dict[int, str], org_data: Optio
     if org_data:
         out.owner_org_color = (org_data.get(vehicle.owner_org_id) or {}).get("color")
         out.assigned_org_color = (org_data.get(vehicle.assigned_org_id) or {}).get("color") if vehicle.assigned_org_id else None
+    # Phase 30: current_station = assigned_org если есть, иначе owner_org
+    out.current_station_id = vehicle.assigned_org_id or vehicle.owner_org_id
+    out.current_station_name = (
+        org_map.get(vehicle.assigned_org_id) if vehicle.assigned_org_id
+        else org_map.get(vehicle.owner_org_id)
+    )
     return out
 
 

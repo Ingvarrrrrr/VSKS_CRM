@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -24,6 +24,11 @@ class Organization(Base):
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True, index=True)
     # Phase 29.3: HEX цвет организации для UI акцентов (напр. #1976d2)
     color = Column(String(20), nullable=True)
+    # Phase 30: geo координаты штаба (station-mapping)
+    lat = Column(Numeric(9, 6), nullable=True)
+    lon = Column(Numeric(9, 6), nullable=True)
+    region = Column(String(100), nullable=True)
+    head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")

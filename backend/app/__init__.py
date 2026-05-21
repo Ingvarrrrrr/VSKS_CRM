@@ -410,6 +410,39 @@ async def _vehicle_alerts_task_creator():
         await asyncio.sleep(86400)  # 24h
 
 
+async def _waybill_overdue_loop():
+    """Phase 30: Каждый час — путевые листы с date_end < NOW() AND status NOT IN (closed/overdue) → status=overdue."""
+    while True:
+        try:
+            from .database import async_session as _async_session
+            from sqlalchemy import update, text as _text
+            from .models.trip import Trip
+            from datetime import datetime, timezone
+            async with _async_session() as db:
+                now = datetime.now(timezone.utc)
+                res = await db.execute(
+                    update(Trip)
+                    .where(
+                        Trip.date_end.isnot(None),
+                        Trip.date_end < now,
+                        Trip.status.notin_(['closed', 'overdue', 'rendered']),
+                    )
+                    .values(status='overdue')
+                    .returning(Trip.id)
+                )
+                updated = list(res.scalars().all())
+                if updated:
+                    logging.getLogger(__name__).info(
+                        f"Waybill overdue: {len(updated)} путевок переведено в overdue"
+                    )
+                await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Waybill overdue loop error (non-fatal): {e}")
+        await asyncio.sleep(3600)  # 1 час
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     # Локальный import logging САМЫМ ПЕРВЫМ statement: ниже в функции десятки
@@ -426,6 +459,12 @@ async def lifespan(app_: FastAPI):
         import logging as _lg_va
         _lg_va.getLogger(__name__).warning(f"vehicle_alerts task start skipped (non-fatal): {_e_va}")
         task_vehicle_alerts = None
+    # Phase 30: hourly waybill overdue auto-detection
+    try:
+        task_waybill_overdue = asyncio.create_task(_waybill_overdue_loop())
+    except Exception as _e_wo:
+        logging.getLogger(__name__).warning(f"waybill_overdue task start skipped: {_e_wo}")
+        task_waybill_overdue = None
     # Start Telegram bot polling for reply-to-comment routing
     from .routers.telegram_webhook import start_polling as _start_tg_polling
     _start_tg_polling()
@@ -1344,6 +1383,12 @@ async def lifespan(app_: FastAPI):
         task_vehicle_alerts.cancel()
         try:
             await task_vehicle_alerts
+        except asyncio.CancelledError:
+            pass
+    if task_waybill_overdue is not None:
+        task_waybill_overdue.cancel()
+        try:
+            await task_waybill_overdue
         except asyncio.CancelledError:
             pass
 

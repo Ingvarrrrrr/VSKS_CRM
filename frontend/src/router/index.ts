@@ -376,6 +376,12 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Карточка ТС', tab_key: 'vehicles' }
     },
     {
+      path: '/property/vehicles/:id(\\d+)/preview',
+      name: 'vehicle-layout-preview',
+      component: () => import('../views/property/VehicleLayoutPreview.vue'),
+      meta: { requiresAuth: true, title: 'Сравнение layout', tab_key: 'vehicles' }
+    },
+    {
       path: '/property/equipment',
       name: 'equipment',
       component: () => import('../views/property/EquipmentPlaceholderView.vue'),

@@ -308,6 +308,22 @@
         </span>
       </template>
 
+      <!-- actions: compare layouts button -->
+      <template #item.actions="{ item }">
+        <v-tooltip text="Сравнить layouts" location="top">
+          <template #activator="{ props: tip }">
+            <v-btn
+              v-bind="tip"
+              icon="mdi-compare"
+              size="x-small"
+              variant="text"
+              :to="`/property/vehicles/${item.id}/preview`"
+              @click.stop
+            />
+          </template>
+        </v-tooltip>
+      </template>
+
       <!-- Expanded row: краткие детали из props JSONB -->
       <template #expanded-row="{ columns, item }">
         <tr>
@@ -567,6 +583,7 @@ const allColumns: ColumnDef[] = [
   { key: 'current_odometer_km',title: 'Пробег км',       width: 110, group: 'core' },
   { key: 'next_to_km',         title: 'След. ТО км',     width: 110, group: 'all'  },
   { key: 'fuel_type',          title: 'Топливо',         width: 100, group: 'all'  },
+  { key: 'actions',            title: '',                width: 40,  group: 'core' },
 ]
 
 // Используем статичный tableId чтобы избежать race condition: если userId undefined

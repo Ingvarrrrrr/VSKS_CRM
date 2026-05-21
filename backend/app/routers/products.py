@@ -1,7 +1,9 @@
 import os
 import shutil
+import logging
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Body
 from fastapi.responses import FileResponse, StreamingResponse, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,9 +13,12 @@ from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.schemas import ProductCreate, ProductOut, ProductSummaryGroup, ProductSummaryItem
+from app.services.product_matcher import bulk_match, SCORE_AUTO, SCORE_SUGGEST
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
+
+_log = logging.getLogger(__name__)
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -271,6 +276,81 @@ async def delete_product_photo(
         product.photo_url = None
     await db.commit()
     return {"status": "ok", "product_id": product_id}
+
+
+# ---------------------------------------------------------------------------
+# Token-based product matching (Phase 27.4-25)
+# ---------------------------------------------------------------------------
+
+class _MatchCandidate(BaseModel):
+    product_id: int
+    name: str
+    price: Optional[float]
+    score: float
+
+
+class _MatchResultItem(BaseModel):
+    query: str
+    status: str  # 'auto' | 'suggest' | 'create'
+    candidates: List[_MatchCandidate]
+
+
+class _MatchRequest(BaseModel):
+    queries: List[str]
+    limit: int = 3
+
+
+class _MatchResponse(BaseModel):
+    results: List[_MatchResultItem]
+
+
+@router.post("/match", response_model=_MatchResponse)
+async def match_products(
+    body: _MatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Score a list of product name queries against the catalog using token-based fuzzy matching.
+
+    Returns top-k candidates per query with status: 'auto' (score>=0.95),
+    'suggest' (0.60<=score<0.95), or 'create' (no match found).
+    """
+    org_id = get_single_org_id(current_user)
+    q = select(Product.id, Product.name, Product.price)
+    if org_id:
+        q = q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    rows = (await db.execute(q)).all()
+    catalog = [(r.id, r.name or '', float(r.price) if r.price is not None else None) for r in rows]
+
+    top_k = max(1, min(body.limit, 10))
+    results = bulk_match(body.queries, catalog, top_k=top_k)
+
+    _log.info(
+        "POST /api/products/match: %d queries, catalog_size=%d, "
+        "auto=%d suggest=%d create=%d",
+        len(body.queries),
+        len(catalog),
+        sum(1 for r in results if r.status == 'auto'),
+        sum(1 for r in results if r.status == 'suggest'),
+        sum(1 for r in results if r.status == 'create'),
+    )
+
+    return _MatchResponse(results=[
+        _MatchResultItem(
+            query=r.query,
+            status=r.status,
+            candidates=[
+                _MatchCandidate(
+                    product_id=c.product_id,
+                    name=c.name,
+                    price=c.price,
+                    score=c.score,
+                )
+                for c in r.candidates
+            ],
+        )
+        for r in results
+    ])
 
 
 @router.get("/{product_id}", response_model=ProductOut)

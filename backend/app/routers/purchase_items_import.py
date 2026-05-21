@@ -32,6 +32,7 @@ from app.auth.jwt import get_current_user, require_role, get_single_org_id, MANA
 from app.auth.permissions import require_tab
 from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
+from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -654,7 +655,19 @@ async def import_items_excel(
         total_price = (quantity * unit_price) if unit_price else None
 
         # Auto-match or create in catalog
+        # 1) exact match (fast path)
         matched_product = product_by_name.get(item_name.lower().strip())
+        if not matched_product:
+            # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
+            best_score = 0.0
+            best_candidate = None
+            for _key, _p in product_by_name.items():
+                _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
+                if _s > best_score:
+                    best_score = _s
+                    best_candidate = _p
+            if best_score >= _SCORE_AUTO and best_candidate is not None:
+                matched_product = best_candidate
         if matched_product:
             product_id = matched_product.id
             matched_catalog += 1
@@ -1093,7 +1106,19 @@ async def import_items_mapped(
                 description = f"НДС: {vat_str}"
 
             # Auto-match or create in catalog
+            # 1) exact match (fast path)
             matched_product = product_by_name.get(item_name.lower().strip())
+            if not matched_product:
+                # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
+                best_score = 0.0
+                best_candidate = None
+                for _key, _p in product_by_name.items():
+                    _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
+                    if _s > best_score:
+                        best_score = _s
+                        best_candidate = _p
+                if best_score >= _SCORE_AUTO and best_candidate is not None:
+                    matched_product = best_candidate
             if matched_product:
                 product_id = matched_product.id
                 matched_catalog += 1
@@ -1496,7 +1521,19 @@ async def import_items_smart(
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
+        # 1) exact match (fast path)
         matched = product_by_name.get(item_name.lower().strip())
+        if not matched:
+            # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
+            best_score = 0.0
+            best_candidate = None
+            for _key, _p in product_by_name.items():
+                _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
+                if _s > best_score:
+                    best_score = _s
+                    best_candidate = _p
+            if best_score >= _SCORE_AUTO and best_candidate is not None:
+                matched = best_candidate
         if matched:
             product_id = matched.id
             matched_catalog += 1

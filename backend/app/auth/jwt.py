@@ -96,7 +96,7 @@ def require_role(*roles):
             return user
         raise HTTPException(
             status_code=403,
-            detail=f"Доступ только для ролей: {', '.join(roles)} (или иерархически старше). Ваша роль: {user.role}."
+            detail="Недостаточно прав для выполнения операции"
         )
     return checker
 
@@ -150,6 +150,6 @@ def require_superadmin():
             return user
         raise HTTPException(
             status_code=403,
-            detail=f"Эндпоинт требует роль superadmin (или иерархически старше). Ваша роль: {user.role}."
+            detail="Недостаточно прав для выполнения операции"
         )
     return checker

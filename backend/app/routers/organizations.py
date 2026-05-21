@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.jwt import hash_password, get_current_user, require_superadmin, OWNER_ROLES
+from app.auth.jwt import hash_password, get_current_user, require_superadmin, require_role, OWNER_ROLES
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.contractor import Contractor
@@ -236,8 +236,11 @@ async def list_organizations(
     search: Optional[str] = Query(None),
     active_only: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_superadmin()),
+    current_user: User = Depends(get_current_user),
 ):
+    # 29.3-a5: GET LIST доступен любому залогиненному (нужен для dropdown'ов
+    # «Владелец/Эксплуатат» во VehicleListView, VehicleDetailView, StaffView).
+    # Раньше был require_superadmin → admin получал 403, ломая UI dropdown'ы.
     q = select(Organization).options(selectinload(Organization.contractor))
     if search:
         like = f"%{search}%"
@@ -263,7 +266,7 @@ async def update_organization(
     org_id: int,
     data: OrganizationCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_superadmin()),
+    _=Depends(require_role('superadmin', 'admin', 'account_owner')),
 ):
     res = await db.execute(
         select(Organization)
@@ -299,7 +302,7 @@ async def update_organization(
 async def toggle_org_active(
     org_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_superadmin()),
+    _=Depends(require_role('superadmin', 'admin', 'account_owner')),
 ):
     org = await db.get(Organization, org_id)
     if not org:
@@ -339,7 +342,7 @@ async def get_organization(
 async def delete_organization(
     org_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_superadmin()),
+    _=Depends(require_role('superadmin', 'admin', 'account_owner')),
 ):
     org = await db.get(Organization, org_id)
     if not org:

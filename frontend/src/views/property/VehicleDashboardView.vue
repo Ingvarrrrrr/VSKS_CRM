@@ -114,7 +114,7 @@
         </div>
       </div>
       <!-- Docs -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('in_repair')">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('docs_expiring')">
         <div class="fleet-kpi__label">Документы — истекли/истекают</div>
         <div class="fleet-kpi__value">{{ maintenanceWarnings.length }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+2</div>
@@ -229,6 +229,14 @@
       >
         <i class="fleet-chip__dot fleet-chip__dot--muted"></i>
         На списание {{ filterCounts.for_disposal }}
+      </button>
+      <button
+        class="fleet-chip"
+        :class="{ 'fleet-chip--active': activeFilter === 'docs_expiring' }"
+        @click="activeFilter = 'docs_expiring'"
+      >
+        <i class="fleet-chip__dot fleet-chip__dot--alert"></i>
+        Документы {{ maintenanceWarnings.length }}
       </button>
 
       <div class="fleet-filters__spacer"></div>
@@ -445,11 +453,18 @@ const docsPct = computed(() => {
 })
 
 // ── Maintenance warnings ──────────────────────────────────────────────────────
-const maintenanceWarnings = ref<unknown[]>([])
+interface MaintenanceWarning {
+  vehicle_id: number
+  warning_type: string
+  days_left: number | null
+  km_left: number | null
+}
+
+const maintenanceWarnings = ref<MaintenanceWarning[]>([])
 
 async function fetchWarnings() {
   try {
-    maintenanceWarnings.value = await apiFetch<unknown[]>('/vehicles-dashboard/maintenance-warning')
+    maintenanceWarnings.value = await apiFetch<MaintenanceWarning[]>('/vehicles-dashboard/maintenance-warning')
   } catch (e) {
     console.error('[VehicleDash] warnings', e)
   }
@@ -608,6 +623,9 @@ const filteredVehicles = computed(() => {
     })
   } else if (activeFilter.value === 'disposal') {
     list = list.filter(v => v.state === 'destroyed' || v.state === 'utilized')
+  } else if (activeFilter.value === 'docs_expiring') {
+    const warnIds = new Set(maintenanceWarnings.value.map(m => m.vehicle_id))
+    list = list.filter(v => warnIds.has(v.vehicle_id))
   }
 
   // Type filter (multi)

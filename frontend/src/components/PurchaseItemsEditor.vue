@@ -1255,6 +1255,14 @@
       </v-card>
     </v-dialog>
 
+    <!-- ===== Product Match Review Dialog ===== -->
+    <ProductMatchReviewDialog
+      v-model="matchReviewShow"
+      :rows="matchReviewRows"
+      @confirm="onMatchConfirm"
+      @cancel="onMatchCancel"
+    />
+
     <!-- ===== Snackbar ===== -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
@@ -1270,6 +1278,7 @@ import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
@@ -2895,6 +2904,12 @@ const smartImportPreview = ref<any[] | null>(null)
 const smartImportColumns = ref<string[] | null>(null)
 const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
 
+// ── Product match review dialog ───────────────────────────────────────────────
+interface MatchCandidate { product_id: number; name: string; price: number | null; score: number }
+interface MatchRow { query: string; status: 'auto' | 'suggest' | 'create'; candidates: MatchCandidate[]; _choice?: number | '__create__' | null }
+const matchReviewShow = ref(false)
+const matchReviewRows = ref<MatchRow[]>([])
+
 const CRM_MAPPING_FIELDS: Record<string, string> = {
   item_name: 'Наименование',
   quantity: 'Кол-во',
@@ -3032,61 +3047,123 @@ async function doSmartPreview() {
   }
 }
 
+// ── Product match review helpers ─────────────────────────────────────────────
+
+/** Commit items built from preview rows after product matching.
+ *  resolved[i].product_id   — matched catalog id (or null → create_new)
+ *  resolved[i].create_new   — true when backend should create a new catalog entry
+ *  Lines 3042–3098 of the original doSmartImport are refactored into this helper
+ *  so that both "confirmed via dialog" and "bypass" paths share the same commit logic.
+ */
+function commitPreviewItems(resolved: Array<{ query: string; product_id: number | null; create_new: boolean }>) {
+  if (!smartImportPreview.value?.length) return
+  const previewRows = smartImportPreview.value
+
+  // Phase 27.1 D-02: contract items branch
+  if (contractItemImportMode.value) {
+    const newContractItems: ContractItem[] = previewRows.map((row, i) => ({
+      id: 0,
+      purchase_id: props.purchaseId || 0,
+      source_item_id: null,
+      contract_id: null,
+      product_id: resolved[i]?.product_id ?? null,
+      name: row.item_name || row.name || '',
+      quantity: row.quantity ?? null,
+      unit: row.unit ?? null,
+      unit_price: row.unit_price ?? null,
+      total: row.total_price ?? row.total ?? null,
+      match_confirmed: resolved[i]?.product_id != null,
+    }))
+    localContractItems.value = newContractItems
+    contractItemImportMode.value = false
+    emitContractItemsUpdate()
+    smartImportResult.value = { added: newContractItems.length, matched_catalog: resolved.filter(r => r.product_id != null).length, unmatched: resolved.filter(r => r.create_new).length }
+    showSnack(`${newContractItems.length} позиций договора импортированы.`, 'info')
+    itemsImportDialog.value = false
+    return
+  }
+
+  // Normal items branch
+  const newItems: EditorItem[] = previewRows.map((row, i) => {
+    const item: EditorItem = {
+      product_id: resolved[i]?.product_id ?? null,
+      item_name: row.item_name || '',
+      item_type: row.item_type || props.defaultItemType,
+      quantity: row.quantity ?? null,
+      unit: row.unit || props.defaultUnit,
+      unit_price: row.unit_price ?? null,
+      total_price: row.total_price ?? null,
+      country_origin: props.defaultCountry,
+      _selectedProduct: null,
+      _photo_url: undefined,
+      _description: undefined,
+      _description_44fz: undefined,
+    }
+    if (props.itemShape === 'purchase') {
+      item.final_unit_price = null
+      item.final_total = null
+      item.feo_planned_item_id = null
+    }
+    return item
+  })
+  localItems.value.push(...newItems)
+  emitUpdate()
+  const matchedCount = resolved.filter(r => r.product_id != null).length
+  smartImportResult.value = { added: newItems.length, matched_catalog: matchedCount, unmatched: newItems.length - matchedCount }
+  showSnack(`${newItems.length} позиций добавлены в список.`, 'info')
+  itemsImportDialog.value = false
+}
+
+/** Handler for ProductMatchReviewDialog @confirm event */
+function onMatchConfirm(resolved: Array<{ query: string; product_id: number | null; create_new: boolean }>) {
+  matchReviewShow.value = false
+  commitPreviewItems(resolved)
+}
+
+/** Handler for ProductMatchReviewDialog @cancel event */
+function onMatchCancel() {
+  matchReviewShow.value = false
+  // Do not commit anything — leave import dialog open so user sees the preview
+}
+
 async function doSmartImport() {
   if (!smartImportPreview.value?.length) return
 
-  // If user applied custom column mapping OR no purchaseId, add items directly from re-mapped preview
+  // If user applied custom column mapping OR no purchaseId, run product matching first
   if (columnMappingApplied.value || !props.purchaseId) {
-    // Phase 27.1 D-02: if import was triggered for contract items, route to localContractItems
+    // TODO: contract items mode currently bypasses product matching (needs separate design)
     if (contractItemImportMode.value) {
-      const newContractItems: ContractItem[] = smartImportPreview.value.map(row => ({
-        id: 0,
-        purchase_id: props.purchaseId || 0,
-        source_item_id: null,
-        contract_id: null,
-        product_id: null,
-        name: row.item_name || row.name || '',
-        quantity: row.quantity ?? null,
-        unit: row.unit ?? null,
-        unit_price: row.unit_price ?? null,
-        total: row.total_price ?? row.total ?? null,
-        match_confirmed: false,
+      const bypassResolved = smartImportPreview.value.map(row => ({
+        query: row.item_name || row.name || '',
+        product_id: null as number | null,
+        create_new: true,
       }))
-      localContractItems.value = newContractItems
-      contractItemImportMode.value = false
-      emitContractItemsUpdate()
-      smartImportResult.value = { added: newContractItems.length, matched_catalog: 0, unmatched: newContractItems.length }
-      showSnack(`${newContractItems.length} позиций договора импортированы.`, 'info')
-      itemsImportDialog.value = false
+      commitPreviewItems(bypassResolved)
       return
     }
-    const newItems: EditorItem[] = smartImportPreview.value.map(row => {
-      const item: EditorItem = {
-        product_id: null,
-        item_name: row.item_name || '',
-        item_type: row.item_type || props.defaultItemType,
-        quantity: row.quantity ?? null,
-        unit: row.unit || props.defaultUnit,
-        unit_price: row.unit_price ?? null,
-        total_price: row.total_price ?? null,
-        country_origin: props.defaultCountry,
-        _selectedProduct: null,
-        _photo_url: undefined,
-        _description: undefined,
-        _description_44fz: undefined,
-      }
-      if (props.itemShape === 'purchase') {
-        item.final_unit_price = null
-        item.final_total = null
-        item.feo_planned_item_id = null
-      }
-      return item
-    })
-    localItems.value.push(...newItems)
-    emitUpdate()
-    smartImportResult.value = { added: newItems.length, matched_catalog: 0, unmatched: newItems.length }
-    showSnack(`${newItems.length} позиций добавлены в список.`, 'info')
-    itemsImportDialog.value = false
+
+    // Call /api/products/match to get suggestions, then show review dialog
+    const queries: string[] = smartImportPreview.value.map(row => row.item_name || '')
+    smartImportLoading.value = true
+    try {
+      const matchData = await apiFetch<{
+        results: Array<{ query: string; status: 'auto' | 'suggest' | 'create'; candidates: MatchCandidate[] }>
+      }>('/products/match', { method: 'POST', body: { queries } })
+      matchReviewRows.value = matchData.results.map(r => ({ ...r, _choice: undefined }))
+      matchReviewShow.value = true
+    } catch (e: any) {
+      // If match endpoint not available yet, fall back to direct commit without matching
+      // TODO: remove fallback once /api/products/match is stable
+      showSnack('Сопоставление с каталогом недоступно, позиции добавлены без привязки', 'warning')
+      const fallbackResolved = smartImportPreview.value.map(row => ({
+        query: row.item_name || '',
+        product_id: null as number | null,
+        create_new: true,
+      }))
+      commitPreviewItems(fallbackResolved)
+    } finally {
+      smartImportLoading.value = false
+    }
     return
   }
 

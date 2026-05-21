@@ -39,6 +39,7 @@ from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
 from .routers import vehicle_fines
+from .routers import fleet_documents as fleet_documents_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1311,10 +1312,12 @@ async def lifespan(app_: FastAPI):
         from check_schema import (
             _ensure_organizations_geo_fields,
             _ensure_users_driver_extended,
+            _ensure_fleet_documents_table,
         )
         from .database import engine as _engine_p30
         async with _engine_p30.begin() as conn:
             for fn in [
+                _ensure_fleet_documents_table,
                 _ensure_organizations_geo_fields,
                 _ensure_users_driver_extended,
             ]:
@@ -1540,6 +1543,7 @@ app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
 app.include_router(fuel_logs.router)                   # /api/fuel-logs
 app.include_router(trips.router)                       # /api/trips
 app.include_router(vehicle_fines.router)               # /api/vehicle-fines
+app.include_router(fleet_documents_router.router)      # /api/fleet-documents
 
 
 @app.get("/api/diag/version")

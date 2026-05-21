@@ -152,3 +152,9 @@ class Vehicle(Base):
         cascade="all, delete-orphan", lazy="selectin",
         order_by="VehicleFine.issued_at.desc()"
     )
+    # Phase 30: documents
+    fleet_documents = relationship(
+        "FleetDocument", back_populates="vehicle",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="FleetDocument.expires_at.desc().nullslast()"
+    )

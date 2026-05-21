@@ -936,6 +936,70 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_fleet_documents_table(conn) -> None:
+    """Phase 30: CREATE fleet_documents table with migration from vehicle fields (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fleet_documents (
+                id SERIAL PRIMARY KEY,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                type VARCHAR(30) NOT NULL,
+                number VARCHAR(100),
+                issued_at DATE,
+                expires_at DATE,
+                counterparty VARCHAR(200),
+                amount_rub NUMERIC(12, 2),
+                file_url VARCHAR(500),
+                file_data BYTEA,
+                file_name VARCHAR(200),
+                notes TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fleet_documents_vehicle_id ON fleet_documents (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fleet_documents_type ON fleet_documents (type)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fleet_documents_expires_at ON fleet_documents (expires_at)"
+        ))
+        # Идемпотентная миграция данных из Vehicle полей
+        await conn.execute(text("""
+            INSERT INTO fleet_documents (vehicle_id, type, expires_at, created_at)
+            SELECT v.id, 'osago', v.insurance_until, NOW()
+            FROM vehicles v
+            WHERE v.insurance_until IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM fleet_documents d WHERE d.vehicle_id = v.id AND d.type = 'osago')
+        """))
+        await conn.execute(text("""
+            INSERT INTO fleet_documents (vehicle_id, type, number, created_at)
+            SELECT v.id, 'pts', v.pts_number, NOW()
+            FROM vehicles v
+            WHERE v.pts_number IS NOT NULL AND v.pts_number != ''
+              AND NOT EXISTS (SELECT 1 FROM fleet_documents d WHERE d.vehicle_id = v.id AND d.type = 'pts')
+        """))
+        await conn.execute(text("""
+            INSERT INTO fleet_documents (vehicle_id, type, number, created_at)
+            SELECT v.id, 'sts', v.sts_number, NOW()
+            FROM vehicles v
+            WHERE v.sts_number IS NOT NULL AND v.sts_number != ''
+              AND NOT EXISTS (SELECT 1 FROM fleet_documents d WHERE d.vehicle_id = v.id AND d.type = 'sts')
+        """))
+        await conn.execute(text("""
+            INSERT INTO fleet_documents (vehicle_id, type, expires_at, created_at)
+            SELECT v.id, 'to', v.tech_inspection_until, NOW()
+            FROM vehicles v
+            WHERE v.tech_inspection_until IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM fleet_documents d WHERE d.vehicle_id = v.id AND d.type = 'to')
+        """))
+        print("  \u2705  fleet_documents table + migration ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   fleet_documents table ensure failed: {e}")
+
+
 async def _ensure_users_driver_extended(conn) -> None:
     """Phase 30: ALTER users — add 4 extended driver columns (idempotent).
 

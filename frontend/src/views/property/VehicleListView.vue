@@ -778,9 +778,12 @@ async function loadVehicles() {
 }
 
 async function loadOrgs() {
+  // /organizations/ требует superadmin. Используем /auth/my-orgs — admin тоже
+  // получает свои организации (через UserOrgAccess), superadmin — все.
+  // Ответ — массив объектов [{id,name,is_active}], не {items:[]}.
   try {
-    const data = await apiFetch<{ items: OrgItem[] }>('/organizations/?limit=500')
-    orgsList.value = data.items ?? []
+    const data = await apiFetch<OrgItem[] | { items: OrgItem[] }>('/auth/my-orgs')
+    orgsList.value = Array.isArray(data) ? data : (data?.items ?? [])
   } catch {}
 }
 

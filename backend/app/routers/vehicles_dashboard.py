@@ -34,8 +34,42 @@ from app.models.fuel_log import FuelLog
 from app.models.trip import Trip
 from app.models.external_driver import ExternalDriver
 from app.models.organization import Organization
+from app.models.vehicle_transfer_history import VehicleTransferHistory
 
 router = APIRouter(prefix="/api/vehicles-dashboard", tags=["vehicles"])
+
+
+@router.get("/transfer-history-recent")
+async def transfer_history_recent(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """Phase 30 PR2: глобальный список последних передач ТС между штабами.
+    Используется в /fleet/regions журнале передач."""
+    res = await db.execute(
+        select(VehicleTransferHistory).order_by(VehicleTransferHistory.changed_at.desc()).limit(limit)
+    )
+    rows = res.scalars().all()
+    # Resolve org names + vehicle plate
+    out = []
+    for r in rows:
+        veh = await db.get(Vehicle, r.vehicle_id) if r.vehicle_id else None
+        from_org = await db.get(Organization, r.from_assigned_org_id or r.from_owner_org_id) if (r.from_assigned_org_id or r.from_owner_org_id) else None
+        to_org = await db.get(Organization, r.to_assigned_org_id or r.to_owner_org_id) if (r.to_assigned_org_id or r.to_owner_org_id) else None
+        out.append({
+            'id': r.id,
+            'vehicle_id': r.vehicle_id,
+            'vehicle_plate': veh.plate if veh else None,
+            'vehicle_brand_model': f"{veh.brand or ''} {veh.model or ''}".strip() if veh else None,
+            'from_org_name': from_org.name if from_org else (r.from_assigned_text or '—'),
+            'to_org_name': to_org.name if to_org else (r.to_assigned_text or '—'),
+            'basis': r.basis,
+            'doc_number': r.doc_number,
+            'doc_date': r.doc_date.isoformat() if r.doc_date else None,
+            'changed_at': r.changed_at.isoformat() if r.changed_at else None,
+        })
+    return out
 
 
 # ─────────────────────────── Helpers ────────────────────────────────────────

@@ -226,7 +226,8 @@ import { useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
 
-import RussiaMapSvg, { type MapPin, type MapConnection, DEFAULT_PINS } from '@/components/fleet/RussiaMapSvg.vue'
+import RussiaMapSvg from '@/components/fleet/RussiaMapSvg.vue'
+import { type MapPin, type MapConnection, DEFAULT_PINS } from '@/components/fleet/russiaMapPins'
 import KpiCard from '@/components/fleet/KpiCard.vue'
 import GradientAvatar from '@/components/fleet/GradientAvatar.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
@@ -478,7 +479,7 @@ async function fetchTransfers() {
   try {
     // Try global recent endpoint first
     try {
-      const data = await apiFetch<TransferRow[]>('/transfer-history/recent?limit=20')
+      const data = await apiFetch<TransferRow[]>('/vehicles-dashboard/transfer-history-recent?limit=20')
       transfers.value = Array.isArray(data) ? data : []
       return
     } catch {

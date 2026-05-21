@@ -123,16 +123,20 @@ async def create_fine(
 
 @router.get("/", response_model=List[VehicleFineOut])
 async def list_fines(
-    vehicle_id: int = Query(..., description="Фильтр по ТС (обязателен)"),
+    vehicle_id: Optional[int] = Query(None, description="Фильтр по ТС (опционально)"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу: unpaid/paid/disputed"),
+    limit: int = Query(500, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("vehicles")),
 ):
-    """Список штрафов транспортного средства."""
-    result = await db.execute(
-        select(VehicleFine)
-        .where(VehicleFine.vehicle_id == vehicle_id)
-        .order_by(VehicleFine.issued_at.desc())
-    )
+    """Список штрафов. Без фильтров — все штрафы (для /fleet/fines страницы)."""
+    q = select(VehicleFine)
+    if vehicle_id is not None:
+        q = q.where(VehicleFine.vehicle_id == vehicle_id)
+    if status:
+        q = q.where(VehicleFine.status == status)
+    q = q.order_by(VehicleFine.issued_at.desc()).limit(limit)
+    result = await db.execute(q)
     fines = result.scalars().all()
     return [_fine_to_out(f) for f in fines]
 

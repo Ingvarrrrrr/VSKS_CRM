@@ -75,7 +75,7 @@
     <!-- ── KPI Cards ── -->
     <section class="fleet-kpis">
       <!-- Total -->
-      <div class="fleet-kpi">
+      <div class="fleet-kpi fleet-kpi--clickable" @click="resetAllFilters">
         <div class="fleet-kpi__label">Всего в реестре</div>
         <div class="fleet-kpi__value">{{ kpi.total_vehicles }}</div>
         <div class="fleet-kpi__sub">авто, спецтехника, квадроциклы, прицепы</div>
@@ -433,6 +433,15 @@ function applyRegionAndState(region: string, state: 'working' | 'in_repair' | 'n
   activeFilter.value = state
   nextTick(() => {
     document.querySelector('.fleet-chips-row, .fleet-card-grid, .fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+function resetAllFilters() {
+  activeFilter.value = 'all'
+  selectedTypes.value = []
+  selectedRegions.value = []
+  searchQuery.value = ''
+  nextTick(() => {
+    document.querySelector('.fleet-card-grid, .fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
 }
 

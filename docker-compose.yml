@@ -9,8 +9,6 @@ services:
       POSTGRES_PASSWORD: vsks_secret_2024
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vsks -d vsks_crm"]
       interval: 5s
@@ -38,11 +36,12 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - uploads:/app/uploads
       - ./backend/app:/app/app
       - ./backend/templates:/app/templates
+      - ./backend/check_schema.py:/app/check_schema.py
 
   frontend:
     build: ./frontend

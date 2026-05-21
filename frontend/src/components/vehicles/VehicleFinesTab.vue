@@ -261,6 +261,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { apiFetch } from '@/api'
 
 const props = defineProps<{ vehicleId: number }>()
 
@@ -345,22 +346,10 @@ function fmtRub(val: number): string {
   return val.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })
 }
 
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('token') ?? ''
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-}
-
 async function fetchFines(): Promise<void> {
   loading.value = true
   try {
-    const res = await fetch(`/api/vehicle-fines/?vehicle_id=${props.vehicleId}`, {
-      headers: getAuthHeaders(),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data?.detail || `HTTP ${res.status}`)
-    }
-    fines.value = await res.json()
+    fines.value = await apiFetch<VehicleFine[]>(`/vehicle-fines/?vehicle_id=${props.vehicleId}`)
   } catch (e) {
     console.error('[VehicleFinesTab] fetchFines', e)
     showSnack('Ошибка загрузки штрафов', 'error')
@@ -394,18 +383,17 @@ async function saveFine(): Promise<void> {
       location: form.value.location || null,
       comment: form.value.comment || null,
     }
-    const res = await fetch('/api/vehicle-fines/', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      const msg = data?.detail || data?.message || `HTTP ${res.status}`
+    let created: VehicleFine
+    try {
+      created = await apiFetch<VehicleFine>('/vehicle-fines/', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    } catch (apiErr: any) {
+      const msg = apiErr?.payload?.message || apiErr?.message || 'HTTP error'
       saveError.value = typeof msg === 'string' ? msg : JSON.stringify(msg)
       return
     }
-    const created: VehicleFine = await res.json()
     if (created.driver_name) {
       lastMatchedDriver.value = created.driver_name
     }
@@ -425,15 +413,10 @@ async function saveFine(): Promise<void> {
 async function markPaid(fine: VehicleFine): Promise<void> {
   paying.value = fine.id
   try {
-    const res = await fetch(`/api/vehicle-fines/${fine.id}`, {
+    await apiFetch(`/vehicle-fines/${fine.id}`, {
       method: 'PATCH',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ status: 'paid' }),
     })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data?.detail || `HTTP ${res.status}`)
-    }
     await fetchFines()
     showSnack('Штраф отмечен оплаченным')
   } catch (e) {
@@ -446,15 +429,9 @@ async function markPaid(fine: VehicleFine): Promise<void> {
 async function rematchFine(fine: VehicleFine): Promise<void> {
   rematching.value = fine.id
   try {
-    const res = await fetch(`/api/vehicle-fines/${fine.id}/rematch`, {
+    const updated = await apiFetch<VehicleFine>(`/vehicle-fines/${fine.id}/rematch`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data?.detail || `HTTP ${res.status}`)
-    }
-    const updated: VehicleFine = await res.json()
     await fetchFines()
     showSnack(updated.driver_name
       ? `Водитель найден: ${updated.driver_name}`
@@ -475,14 +452,9 @@ async function doDelete(): Promise<void> {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    const res = await fetch(`/api/vehicle-fines/${deleteTarget.value.id}`, {
+    await apiFetch(`/vehicle-fines/${deleteTarget.value.id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-    if (!res.ok && res.status !== 204) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data?.detail || `HTTP ${res.status}`)
-    }
     deleteDialog.value = false
     await fetchFines()
     showSnack('Штраф удалён')

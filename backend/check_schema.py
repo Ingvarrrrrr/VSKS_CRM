@@ -936,6 +936,29 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_users_driver_extended(conn) -> None:
+    """Phase 30: ALTER users — add 4 extended driver columns (idempotent).
+
+    asyncpg multi-statement bug: каждый ALTER отдельным execute.
+    """
+    try:
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS medical_cert_number VARCHAR(50)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_tab_number VARCHAR(20)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS experience_years INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS fleet_role VARCHAR(20)"
+        ))
+        print("  \u2705  users driver extended columns ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   users driver extended columns ensure failed: {e}")
+
+
 async def _ensure_organizations_geo_fields(conn) -> None:
     """Phase 30: ALTER organizations — add lat/lon/region/head_user_id (idempotent)."""
     try:

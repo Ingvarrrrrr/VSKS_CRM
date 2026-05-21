@@ -38,6 +38,11 @@ class User(Base):
     license_issued_at = Column(Date, nullable=True)              # Дата выдачи ВУ — _DATE_FIELDS plan 29-09
     license_expires_at = Column(Date, nullable=True)             # Срок действия ВУ — _DATE_FIELDS plan 29-09
     medical_cert_expires_at = Column(Date, nullable=True)        # Срок медсправки — _DATE_FIELDS plan 29-09
+    # Phase 30: расширенные водительские данные
+    medical_cert_number = Column(String(50), nullable=True)      # Номер медицинской справки
+    driver_tab_number = Column(String(20), nullable=True)        # Табельный номер водителя
+    experience_years = Column(Integer, nullable=True)            # Стаж вождения (лет)
+    fleet_role = Column(String(20), nullable=True)               # driver/mechanic/doctor/dispatcher/head
 
     organization = relationship("Organization", back_populates="users", foreign_keys=[org_id])
 

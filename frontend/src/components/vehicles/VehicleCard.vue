@@ -1,5 +1,5 @@
 <template>
-  <article class="fleet-card" @click="emit('click', vehicle)" :style="orgAccentStyle">
+  <article class="fleet-card fleet-card--clickable" @click="goToCard" :style="orgAccentStyle">
     <!-- Hero: icon + status -->
     <div class="fleet-card__hero">
       <div class="fleet-card__veh-icon">
@@ -104,19 +104,19 @@
 
     <!-- Actions -->
     <div class="fleet-card__actions">
-      <button class="fleet-action" @click.stop="emit('action', { type: 'card', vehicle })">
+      <button class="fleet-action" @click.stop="goToCard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
         Карточка
       </button>
-      <button class="fleet-action" @click.stop="emit('action', { type: 'history', vehicle })">
+      <button class="fleet-action" @click.stop="goToHistory">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>
         История
       </button>
-      <button class="fleet-action" @click.stop="emit('action', { type: 'maintenance', vehicle })">
+      <button class="fleet-action" @click.stop="goToMaintenance">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M6 7v13h12V7"/></svg>
         ТО
       </button>
-      <button class="fleet-action" @click.stop="emit('detail', vehicle)">
+      <button class="fleet-action" @click.stop="goToCard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 1 1-16.8 0 8.4 8.4 0 0 1 16.8 0z"/><path d="M22 22l-3-3"/></svg>
         Подробно
       </button>
@@ -126,6 +126,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import { vehicleCategory, CATEGORY_LABEL } from '@/utils/vehicleCategory'
@@ -169,6 +170,18 @@ const emit = defineEmits<{
   (e: 'detail', v: VehicleCardData): void
   (e: 'action', payload: { type: string; vehicle: VehicleCardData }): void
 }>()
+
+const router = useRouter()
+
+function goToCard() {
+  if (props.vehicle.id) router.push(`/property/vehicles/${props.vehicle.id}`)
+}
+function goToHistory() {
+  if (props.vehicle.id) router.push(`/property/vehicles/${props.vehicle.id}?tab=history`)
+}
+function goToMaintenance() {
+  if (props.vehicle.id) router.push(`/property/vehicles/${props.vehicle.id}?tab=todo`)
+}
 
 // ── Vehicle type helpers ─────────────────────────────────────────────────────
 const vehicleType = computed(() => props.vehicle.type || '')
@@ -371,6 +384,15 @@ function checkState(val: boolean | null | undefined): string {
 .fleet-card:hover {
   transform: translateY(-2px);
   border-color: var(--line-2);
+}
+
+.fleet-card--clickable {
+  cursor: pointer;
+}
+
+.fleet-card--clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
 }
 
 /* Hero */

@@ -936,6 +936,54 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_trips_waybill_columns(conn) -> None:
+    """Phase 30: ALTER trips — add waybill columns (number/dates/dispatcher/осмотры/driver_signature) — idempotent."""
+    try:
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS number VARCHAR(20) UNIQUE"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS date_start TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS date_end TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS planned_mileage_km INTEGER"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS actual_mileage_km INTEGER"))
+        await conn.execute(text(
+            "ALTER TABLE trips ADD COLUMN IF NOT EXISTS"
+            " dispatcher_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS cargo_description TEXT"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS passengers_count INTEGER"))
+        # Pre-trip
+        await conn.execute(text(
+            "ALTER TABLE trips ADD COLUMN IF NOT EXISTS"
+            " pre_trip_mechanic_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS pre_trip_mechanic_inspected_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS pre_trip_mechanic_result TEXT"))
+        await conn.execute(text(
+            "ALTER TABLE trips ADD COLUMN IF NOT EXISTS"
+            " pre_trip_doctor_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS pre_trip_doctor_inspected_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS pre_trip_doctor_result TEXT"))
+        # Post-trip
+        await conn.execute(text(
+            "ALTER TABLE trips ADD COLUMN IF NOT EXISTS"
+            " post_trip_mechanic_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS post_trip_mechanic_inspected_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS post_trip_mechanic_result TEXT"))
+        await conn.execute(text(
+            "ALTER TABLE trips ADD COLUMN IF NOT EXISTS"
+            " post_trip_doctor_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS post_trip_doctor_inspected_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS post_trip_doctor_result TEXT"))
+        # Driver signature
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS driver_signature TEXT"))
+        await conn.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS driver_signed_at TIMESTAMPTZ"))
+        print("  \u2705  trips waybill columns ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   trips waybill columns ensure failed: {e}")
+
+
 async def _ensure_fleet_documents_table(conn) -> None:
     """Phase 30: CREATE fleet_documents table with migration from vehicle fields (idempotent)."""
     try:

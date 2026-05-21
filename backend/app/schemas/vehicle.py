@@ -236,6 +236,14 @@ class TripCreate(BaseModel):
     cargo_name: Optional[str] = None
     cargo_weight_t: Optional[Decimal] = None
     status: str = "draft"
+    # Phase 30: Waybill fields
+    number: Optional[str] = None
+    date_start: Optional[datetime] = None
+    date_end: Optional[datetime] = None
+    planned_mileage_km: Optional[int] = None
+    dispatcher_id: Optional[int] = None
+    cargo_description: Optional[str] = None
+    passengers_count: Optional[int] = None
 
 
 class TripPatch(BaseModel):
@@ -254,6 +262,29 @@ class TripPatch(BaseModel):
     cargo_weight_t: Optional[Decimal] = None
     status: Optional[str] = None
     docx_path: Optional[str] = None
+    # Phase 30: Waybill fields
+    number: Optional[str] = None
+    date_start: Optional[datetime] = None
+    date_end: Optional[datetime] = None
+    planned_mileage_km: Optional[int] = None
+    actual_mileage_km: Optional[int] = None
+    dispatcher_id: Optional[int] = None
+    cargo_description: Optional[str] = None
+    passengers_count: Optional[int] = None
+    pre_trip_mechanic_id: Optional[int] = None
+    pre_trip_mechanic_inspected_at: Optional[datetime] = None
+    pre_trip_mechanic_result: Optional[str] = None
+    pre_trip_doctor_id: Optional[int] = None
+    pre_trip_doctor_inspected_at: Optional[datetime] = None
+    pre_trip_doctor_result: Optional[str] = None
+    post_trip_mechanic_id: Optional[int] = None
+    post_trip_mechanic_inspected_at: Optional[datetime] = None
+    post_trip_mechanic_result: Optional[str] = None
+    post_trip_doctor_id: Optional[int] = None
+    post_trip_doctor_inspected_at: Optional[datetime] = None
+    post_trip_doctor_result: Optional[str] = None
+    driver_signature: Optional[str] = None
+    driver_signed_at: Optional[datetime] = None
 
 
 class TripOut(BaseModel):
@@ -278,6 +309,28 @@ class TripOut(BaseModel):
     status: str
     created_at: datetime
     created_by_id: Optional[int] = None
+    # Phase 30: Waybill fields
+    number: Optional[str] = None
+    date_start: Optional[datetime] = None
+    date_end: Optional[datetime] = None
+    planned_mileage_km: Optional[int] = None
+    actual_mileage_km: Optional[int] = None
+    dispatcher_id: Optional[int] = None
+    cargo_description: Optional[str] = None
+    passengers_count: Optional[int] = None
+    pre_trip_mechanic_id: Optional[int] = None
+    pre_trip_mechanic_inspected_at: Optional[datetime] = None
+    pre_trip_mechanic_result: Optional[str] = None
+    pre_trip_doctor_id: Optional[int] = None
+    pre_trip_doctor_inspected_at: Optional[datetime] = None
+    pre_trip_doctor_result: Optional[str] = None
+    post_trip_mechanic_id: Optional[int] = None
+    post_trip_mechanic_inspected_at: Optional[datetime] = None
+    post_trip_mechanic_result: Optional[str] = None
+    post_trip_doctor_id: Optional[int] = None
+    post_trip_doctor_inspected_at: Optional[datetime] = None
+    post_trip_doctor_result: Optional[str] = None
+    driver_signed_at: Optional[datetime] = None
 
 
 # ─────────────────────── Vehicle ───────────────────────

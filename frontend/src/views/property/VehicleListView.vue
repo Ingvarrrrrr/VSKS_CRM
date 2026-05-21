@@ -115,6 +115,11 @@
             Сохранить фильтр
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-tooltip text="Сбросить настройки колонок" location="top">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn v-bind="tooltipProps" variant="text" size="small" icon="mdi-restore" @click="cfg.reset()" />
+            </template>
+          </v-tooltip>
           <v-chip
             v-if="activeFiltersCount > 0"
             color="deep-orange" variant="tonal" size="small"
@@ -152,7 +157,7 @@
     <!-- Table -->
     <v-data-table-server
       :headers="cfg.visibleHeaders"
-      :items="vehicles"
+      :items="Array.isArray(vehicles) ? vehicles : []"
       :loading="loading"
       :items-length="total"
       item-value="id"
@@ -564,7 +569,11 @@ const allColumns: ColumnDef[] = [
   { key: 'fuel_type',          title: 'Топливо',         width: 100, group: 'all'  },
 ]
 
-const cfg = useColumnConfig(`vehicles_list_u${userId}`, allColumns)
+// Используем статичный tableId чтобы избежать race condition: если userId undefined
+// на mount (auth/me ещё не вернулся), LS-ключ становится "vehicles_list_uundefined"
+// и при следующей загрузке создаётся новый пустой ключ → fallback на allColumns.
+// Per-user изоляция не нужна — localStorage уже per-browser.
+const cfg = useColumnConfig('vehicles_list', allColumns)
 
 // ─────────────── Lookup Maps ───────────────
 
@@ -669,7 +678,7 @@ function clearAllFilters() {
 
 // ─────────────── Filter presets ───────────────
 
-const PRESETS_KEY = `vehicles_list_presets_u${userId}`
+const PRESETS_KEY = 'vehicles_list_presets'
 
 const savedFilterPresets = ref<FilterPreset[]>([])
 

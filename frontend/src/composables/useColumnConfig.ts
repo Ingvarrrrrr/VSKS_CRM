@@ -130,6 +130,12 @@ export function useColumnConfig(tableId: string, allColumns: MaybeRefOrGetter<Co
     // Defensive fallback: if the user effectively has zero columns
     // (empty visible, corrupt LS, stale keys) — show all columns.
     // Prevents rendering an empty `<v-data-table>` with valid data underneath.
+    if (cols.length === 0) {
+      console.warn(`[useColumnConfig:${tableId}] allColumns is empty — table will have no headers`)
+    }
+    if (userSelected.length === 0 && cols.length > 0) {
+      console.warn(`[useColumnConfig:${tableId}] visibleHeaders fallback to allColumns, state was:`, JSON.parse(JSON.stringify(state.value)))
+    }
     const finalCols = userSelected.length > 0 ? userSelected : cols
 
     return finalCols.map(def => {

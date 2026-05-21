@@ -936,6 +936,60 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_waybill_children_tables(conn) -> None:
+    """Phase 30: CREATE waybill child tables — RouteStop, OdometerReading, FuelRefill (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS waybill_route_stops (
+                id SERIAL PRIMARY KEY,
+                waybill_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                ord INTEGER NOT NULL,
+                kind VARCHAR(20) NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                description VARCHAR(500),
+                planned_time TIMESTAMPTZ,
+                actual_time TIMESTAMPTZ,
+                lat NUMERIC(9, 6),
+                lon NUMERIC(9, 6)
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_waybill_route_stops_waybill_id ON waybill_route_stops (waybill_id)"
+        ))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS waybill_odometer_readings (
+                id SERIAL PRIMARY KEY,
+                waybill_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                recorded_at TIMESTAMPTZ NOT NULL,
+                location VARCHAR(200),
+                mileage_km INTEGER NOT NULL,
+                fuel_remaining_l NUMERIC(6, 2),
+                note TEXT
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_waybill_odometer_readings_waybill_id ON waybill_odometer_readings (waybill_id)"
+        ))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS waybill_fuel_refills (
+                id SERIAL PRIMARY KEY,
+                waybill_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                refilled_at TIMESTAMPTZ NOT NULL,
+                station_name VARCHAR(200),
+                liters NUMERIC(6, 2) NOT NULL,
+                amount_rub NUMERIC(10, 2),
+                receipt_photo_url VARCHAR(500),
+                receipt_photo_data BYTEA
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_waybill_fuel_refills_waybill_id ON waybill_fuel_refills (waybill_id)"
+        ))
+        print("  \u2705  waybill child tables ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   waybill child tables ensure failed: {e}")
+
+
 async def _ensure_trips_waybill_columns(conn) -> None:
     """Phase 30: ALTER trips — add waybill columns (number/dates/dispatcher/осмотры/driver_signature) — idempotent."""
     try:

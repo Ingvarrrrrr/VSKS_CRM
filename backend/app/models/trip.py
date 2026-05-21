@@ -125,6 +125,22 @@ class Trip(Base):
     pre_trip_doctor = relationship("User", foreign_keys=[pre_trip_doctor_id], lazy="joined")
     post_trip_mechanic = relationship("User", foreign_keys=[post_trip_mechanic_id], lazy="joined")
     post_trip_doctor = relationship("User", foreign_keys=[post_trip_doctor_id], lazy="joined")
+    # Phase 30: waybill child tables
+    route_stops = relationship(
+        "RouteStop", back_populates="waybill",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="RouteStop.ord"
+    )
+    odometer_readings = relationship(
+        "OdometerReading", back_populates="waybill",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="OdometerReading.recorded_at"
+    )
+    fuel_refills = relationship(
+        "FuelRefill", back_populates="waybill",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="FuelRefill.refilled_at"
+    )
 
 
 # Alias для нового именования (Phase 30): Waybill = Trip (Минтранс №3)

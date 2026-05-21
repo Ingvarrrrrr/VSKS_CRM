@@ -1353,11 +1353,13 @@ async def lifespan(app_: FastAPI):
             _ensure_users_driver_extended,
             _ensure_fleet_documents_table,
             _ensure_trips_waybill_columns,
+            _ensure_waybill_children_tables,
         )
         from .database import engine as _engine_p30
         async with _engine_p30.begin() as conn:
             for fn in [
                 _ensure_trips_waybill_columns,
+                _ensure_waybill_children_tables,
                 _ensure_fleet_documents_table,
                 _ensure_organizations_geo_fields,
                 _ensure_users_driver_extended,

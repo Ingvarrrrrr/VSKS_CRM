@@ -450,6 +450,52 @@ const router = createRouter({
       component: () => import('../views/property/MiscPlaceholderView.vue'),
       meta: { requiresAuth: true, title: 'Прочее', tab_key: 'vehicles' }
     },
+
+    // Phase 30 PR4 — Mobile Driver App (/m/driver/*)
+    {
+      path: '/m/driver',
+      component: () => import('../layouts/MobileLayout.vue'),
+      meta: { requiresAuth: true, mobileOnly: true },
+      children: [
+        {
+          path: '',
+          name: 'm-driver-home',
+          component: () => import('../views/mobile/DriverHomeView.vue'),
+          meta: { title: 'Моя машина' },
+        },
+        {
+          path: 'checklist',
+          name: 'm-driver-checklist',
+          component: () => import('../views/mobile/DriverChecklistView.vue'),
+          meta: { title: 'Чек-лист' },
+        },
+        {
+          path: 'incident',
+          name: 'm-driver-incident',
+          component: () => import('../views/mobile/DriverIncidentView.vue'),
+          meta: { title: 'Рапорт о ЧП' },
+        },
+        {
+          path: 'history',
+          name: 'm-driver-history',
+          component: () => import('../views/mobile/DriverHistoryView.vue'),
+          meta: { title: 'История' },
+        },
+        {
+          path: 'profile',
+          name: 'm-driver-profile',
+          component: () => import('../views/mobile/DriverProfileView.vue'),
+          meta: { title: 'Профиль' },
+        },
+      ],
+    },
+    // waybill detail — outside MobileLayout (full-screen), implemented by PR4-B
+    {
+      path: '/m/driver/waybills/:id',
+      name: 'm-driver-waybill',
+      component: () => import('../views/mobile/DriverWaybillView.vue'),
+      meta: { mobileOnly: true },
+    },
   ]
 })
 

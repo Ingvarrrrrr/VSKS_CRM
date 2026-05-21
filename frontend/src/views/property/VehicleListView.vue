@@ -1,5 +1,18 @@
 <template>
   <v-container fluid class="pa-6">
+    <!-- Trip picker banner -->
+    <v-alert
+      v-if="showTripBanner"
+      type="info"
+      variant="tonal"
+      class="mb-3"
+      closable
+      @click:close="showTripBanner = false"
+    >
+      <strong>Выберите ТС для путевого листа.</strong>
+      Кликните на машину — откроется её карточка, вкладка «Путёвки», там кнопка «+ Добавить путёвку».
+    </v-alert>
+
     <!-- Header -->
     <div class="d-flex align-center justify-space-between mb-6">
       <div>
@@ -510,7 +523,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
@@ -567,7 +580,11 @@ interface FilterPreset {
 // ─────────────── Stores / Composables ───────────────
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
+
+// Trip picker banner — показывается если открыли список через кнопку «Путевой лист»
+const showTripBanner = ref(false)
 const userId = localStorage.getItem('user_id') || 'anon'
 
 // Column config
@@ -964,6 +981,13 @@ watch([page, itemsPerPage], () => { loadVehicles() })
 onMounted(() => {
   loadSavedPresets()
   loadOrgs()
+  // Если открыли через кнопку «Путевой лист» — показать подсказку и активировать фильтр working
+  if (route.query.pick_for === 'trip') {
+    showTripBanner.value = true
+    if (route.query.state === 'working') {
+      filterStates.value = ['working']
+    }
+  }
   loadVehicles()
 })
 

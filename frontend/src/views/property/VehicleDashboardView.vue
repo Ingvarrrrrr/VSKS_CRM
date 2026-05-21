@@ -25,6 +25,12 @@
           </svg>
           Экспорт
         </button>
+        <button class="fleet-btn" @click="goToTripPicker">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+          Путевой лист
+        </button>
         <button class="fleet-btn fleet-btn--primary" @click="router.push('/property/vehicles/new')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>
@@ -756,6 +762,11 @@ function fmtTs(ts: string): string {
 function onExport() {
   // placeholder — wire up full export in a future plan
   console.log('[VehicleDash] export')
+}
+
+function goToTripPicker() {
+  // Переход в список ТС с фильтром «Рабочие» — юзер кликает машину → карточка → вкладка «Путёвки»
+  router.push({ path: '/property/vehicles', query: { state: 'working', pick_for: 'trip' } })
 }
 
 function onCardAction(payload: { type: string; vehicle: ReturnType<typeof toCardData> }) {

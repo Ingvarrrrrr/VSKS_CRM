@@ -139,49 +139,68 @@
           География эксплуатации
           <small>распределение по штабам и регионам</small>
         </h3>
-        <div class="fleet-regions-grid" v-if="regionItems.length">
-          <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region">
-            <div class="fleet-reg__nm" @click="applyRegionFilter(reg.region)">
-              {{ reg.region }}
-              <small v-if="reg.shtab_label">{{ reg.shtab_label }}</small>
+        <!-- Geography tiles grid -->
+        <div class="fleet-reg-tiles" v-if="regionItems.length">
+          <div
+            class="fleet-reg-tile"
+            v-for="reg in visibleRegionItems"
+            :key="reg.region"
+            :class="{ 'fleet-reg-tile--active': selectedRegions.includes(reg.region) }"
+            :title="`${reg.region} — всего ${reg.count}\nРабочих: ${regSegments(reg).working}\nВ ремонте: ${regSegments(reg).inRepair}${regSegments(reg).broken ? '\nНе на ходу: ' + regSegments(reg).broken : ''}`"
+            @click="applyRegionFilter(reg.region)"
+          >
+            <!-- Header: region name -->
+            <div class="fleet-reg-tile__nm">{{ reg.region }}</div>
+            <!-- Center: total count -->
+            <div class="fleet-reg-tile__cnt">{{ reg.count }}</div>
+            <!-- Footer: status dots -->
+            <div class="fleet-reg-tile__dots">
+              <!-- Working: green -->
+              <template v-if="regSegments(reg).working > 0">
+                <span
+                  v-for="n in Math.min(regSegments(reg).working, REG_DOT_MAX)"
+                  :key="'w' + n"
+                  class="fleet-reg-tile__dot fleet-reg-tile__dot--working"
+                ></span>
+                <span v-if="regSegments(reg).working > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).working - REG_DOT_MAX }}</span>
+              </template>
+              <!-- In repair: yellow -->
+              <template v-if="regSegments(reg).inRepair > 0">
+                <span
+                  v-for="n in Math.min(regSegments(reg).inRepair, REG_DOT_MAX)"
+                  :key="'r' + n"
+                  class="fleet-reg-tile__dot fleet-reg-tile__dot--repair"
+                ></span>
+                <span v-if="regSegments(reg).inRepair > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).inRepair - REG_DOT_MAX }}</span>
+              </template>
+              <!-- Broken / не на ходу: red -->
+              <template v-if="regSegments(reg).broken > 0">
+                <span
+                  v-for="n in Math.min(regSegments(reg).broken, REG_DOT_MAX)"
+                  :key="'b' + n"
+                  class="fleet-reg-tile__dot fleet-reg-tile__dot--broken"
+                ></span>
+                <span v-if="regSegments(reg).broken > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).broken - REG_DOT_MAX }}</span>
+              </template>
+              <!-- Other statuses: grey -->
+              <template v-if="regSegments(reg).other > 0">
+                <span
+                  v-for="n in Math.min(regSegments(reg).other, REG_DOT_MAX)"
+                  :key="'o' + n"
+                  class="fleet-reg-tile__dot fleet-reg-tile__dot--other"
+                ></span>
+                <span v-if="regSegments(reg).other > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).other - REG_DOT_MAX }}</span>
+              </template>
             </div>
-            <div
-              class="fleet-reg__bar"
-              :style="{ width: (regSegments(reg).total_w) + '%' }"
-              :title="`${reg.region} — всего ${reg.count}\nРабочих: ${regSegments(reg).working}\nВ ремонте: ${regSegments(reg).inRepair}${regSegments(reg).broken ? '\nНе на ходу: ' + regSegments(reg).broken : ''}`"
-            >
-              <div
-                v-if="regSegments(reg).working_w > 0"
-                class="fleet-reg__seg fleet-reg__seg--working"
-                :style="{ width: regSegments(reg).working_pct + '%' }"
-                :title="`${reg.region} — рабочие (${regSegments(reg).working})`"
-                @click.stop="applyRegionAndState(reg.region, 'working')"
-              >
-                <span v-if="regSegments(reg).working_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).working }} раб.</span>
-              </div>
-              <div
-                v-if="regSegments(reg).in_repair_w > 0"
-                class="fleet-reg__seg fleet-reg__seg--repair"
-                :style="{ width: regSegments(reg).in_repair_pct + '%' }"
-                :title="`${reg.region} — в ремонте (${regSegments(reg).inRepair})`"
-                @click.stop="applyRegionAndState(reg.region, 'in_repair')"
-              >
-                <span v-if="regSegments(reg).in_repair_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).inRepair }} рем.</span>
-              </div>
-              <div
-                v-if="regSegments(reg).broken_w > 0"
-                class="fleet-reg__seg fleet-reg__seg--broken"
-                :style="{ width: regSegments(reg).broken_pct + '%' }"
-                :title="`${reg.region} — не на ходу (${regSegments(reg).broken})`"
-                @click.stop="applyRegionAndState(reg.region, 'not_running')"
-              >
-                <span v-if="regSegments(reg).broken_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).broken }}</span>
-              </div>
-            </div>
-            <div class="fleet-reg__cnt" @click="applyRegionFilter(reg.region)">{{ reg.count }}</div>
           </div>
         </div>
-        <div class="fleet-empty" v-else>
+        <!-- Show more / collapse -->
+        <div v-if="regionItems.length > REG_TILES_LIMIT" class="fleet-reg-tiles__more">
+          <button class="fleet-chip" @click="showAllRegions = !showAllRegions">
+            {{ showAllRegions ? 'Свернуть' : `Показать ещё ${regionItems.length - REG_TILES_LIMIT}` }}
+          </button>
+        </div>
+        <div class="fleet-empty" v-if="!regionItems.length">
           <v-progress-circular v-if="loadingRegions" indeterminate color="#6aa6ff" size="24" />
           <span v-else>Нет данных о регионах</span>
         </div>
@@ -535,11 +554,24 @@ const availableRegions = computed(() => regionItems.value.map(r => r.region).fil
 
 const MAX_REG_COUNT = computed(() => Math.max(...regionItems.value.map(r => r.count), 1))
 
+// Tiles constants
+const REG_TILES_LIMIT = 12   // show first N tiles before "show more"
+const REG_DOT_MAX = 4        // max dots per status before "+N" overflow label
+
+const showAllRegions = ref(false)
+
+// Sorted by count desc, capped if not showAll
+const visibleRegionItems = computed(() => {
+  const sorted = [...regionItems.value].sort((a, b) => b.count - a.count)
+  return showAllRegions.value ? sorted : sorted.slice(0, REG_TILES_LIMIT)
+})
+
 function regSegments(reg: RegionItem) {
   const bs = reg.by_state || {}
   const working = bs['working'] || 0
-  const inRepair = (bs['in_repair'] || 0) + (bs['broken'] || 0) + (bs['needs_repair'] || 0)
-  const broken = (bs['destroyed'] || 0) + (bs['utilized'] || 0)
+  const inRepair = (bs['in_repair'] || 0) + (bs['needs_repair'] || 0)
+  const broken = (bs['broken'] || 0) + (bs['destroyed'] || 0) + (bs['not_running'] || 0)
+  const other = (bs['utilized'] || 0) + (bs['transferred'] || 0) + (bs['decommissioned'] || 0)
   const max = MAX_REG_COUNT.value
   const total = reg.count
   const total_w = Math.round((total / max) * 96)
@@ -550,7 +582,7 @@ function regSegments(reg: RegionItem) {
   const working_pct = total > 0 ? Math.round((working / total) * 100) : 0
   const in_repair_pct = total > 0 ? Math.round((inRepair / total) * 100) : 0
   const broken_pct = total > 0 ? 100 - working_pct - in_repair_pct : 0
-  return { working, inRepair, broken, total_w, working_w, in_repair_w, broken_w, working_pct, in_repair_pct, broken_pct }
+  return { working, inRepair, broken, other, total_w, working_w, in_repair_w, broken_w, working_pct, in_repair_pct, broken_pct }
 }
 
 async function fetchRegions() {
@@ -1086,88 +1118,98 @@ onMounted(() => {
   margin-left: auto;
 }
 
-/* Regions */
-/* Geography — 2-column grid, 3-column on wide screens */
-.fleet-regions-grid {
+/* ─── Geography — tile grid ─────────────────────────────────────────────── */
+.fleet-reg-tiles {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 24px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
 }
-@media (min-width: 1400px) {
-  .fleet-regions-grid { grid-template-columns: 1fr 1fr 1fr; }
+@media (min-width: 768px) {
+  .fleet-reg-tiles { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 1100px) {
+  .fleet-reg-tiles { grid-template-columns: repeat(4, 1fr); }
 }
 
-.fleet-reg {
-  display: grid;
-  grid-template-columns: minmax(100px, 1fr) minmax(80px, 2fr) 32px;
+.fleet-reg-tile {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 12px 10px 10px;
+  border-radius: 10px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.10);
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.12s;
+  min-height: 90px;
+  user-select: none;
+}
+.fleet-reg-tile:hover {
+  border-color: rgba(var(--v-theme-primary, 106 166 255), 0.55);
+  box-shadow: 0 4px 14px rgba(var(--v-theme-primary, 106 166 255), 0.18);
+  transform: translateY(-2px);
+}
+.fleet-reg-tile--active {
+  border-color: rgb(var(--v-theme-primary, 106 166 255));
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-primary, 106 166 255), 0.35);
 }
 
-.fleet-reg__nm {
-  font-size: 12px;
+.fleet-reg-tile__nm {
+  font-size: 11px;
   font-weight: 500;
   line-height: 1.2;
-  color: var(--text);
-  cursor: pointer;
+  color: rgba(var(--v-theme-on-surface), 0.75);
+  text-align: center;
+  width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fleet-reg__nm:hover { color: var(--accent); }
 
-.fleet-reg__nm small {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  font-weight: 400;
-  margin-top: 1px;
+.fleet-reg-tile__cnt {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgb(var(--v-theme-on-surface));
+  letter-spacing: -1px;
 }
 
-.fleet-reg__bar {
+.fleet-reg-tile__dots {
   display: flex;
-  align-items: stretch;
-  gap: 0;
-  height: 18px;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--bg-2, rgba(255,255,255,.04));
-  position: relative;
-  border: 1px solid var(--line);
-  transition: width 0.3s ease;
-}
-
-.fleet-reg__seg {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  gap: 3px;
+  min-height: 14px;
+  width: 100%;
+}
+
+.fleet-reg-tile__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.fleet-reg-tile__dot--working { background: #4caf50; }
+.fleet-reg-tile__dot--repair  { background: #ff9800; }
+.fleet-reg-tile__dot--broken  { background: #f44336; }
+.fleet-reg-tile__dot--other   { background: #9e9e9e; }
+
+.fleet-reg-tile__dot-more {
+  font-size: 10px;
   font-weight: 600;
-  color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  transition: width 0.3s ease;
-  min-width: 0;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  line-height: 1;
 }
 
-.fleet-reg__seg--working { background: linear-gradient(90deg, #22c997, #5dd0ff); }
-.fleet-reg__seg--repair  { background: linear-gradient(90deg, #f6b34a, #ff8a4a); }
-.fleet-reg__seg--broken  { background: linear-gradient(90deg, #ff5b6a, #ff3b8b); }
-
-.fleet-reg__seg { cursor: pointer; }
-.fleet-reg__seg:hover { filter: brightness(1.1); }
-
-.fleet-reg__seg-lbl { padding: 0 8px; }
-
-.fleet-reg__cnt {
-  font-size: 13px;
-  text-align: right;
-  font-weight: 700;
-  color: var(--text);
-  cursor: pointer;
+.fleet-reg-tiles__more {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
 }
-.fleet-reg__cnt:hover { color: var(--accent); }
 
 /* Feed */
 .fleet-feed {
@@ -1462,9 +1504,6 @@ onMounted(() => {
 /* ─── Clickable KPI & region ─── */
 .fleet-kpi--clickable { cursor: pointer; transition: border-color .14s, transform .14s; }
 .fleet-kpi--clickable:hover { border-color: rgba(106,166,255,.4); transform: translateY(-1px); }
-
-.fleet-reg--clickable { cursor: pointer; border-radius: 8px; transition: background .12s; padding: 4px 2px; }
-.fleet-reg--clickable:hover { background: rgba(106,166,255,.06); }
 
 /* ─── Fine Leaders section ─── */
 .fleet-fine-leaders-section {

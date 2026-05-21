@@ -23,7 +23,7 @@
         <span class="nav-icon-label">{{ nav.label }}</span>
       </v-btn>
 
-      <!-- Имущество submenu (Phase 29) -->
+      <!-- Имущество submenu (Phase 30 — /fleet/* routes) -->
       <v-menu v-if="authStore.hasTab('vehicles')" open-on-hover :open-delay="100" :close-delay="150">
         <template v-slot:activator="{ props: menuProps }">
           <v-btn
@@ -31,22 +31,42 @@
             variant="text"
             size="small"
             class="nav-icon-btn"
-            :class="{ 'nav-icon-btn--active': $route.path.startsWith('/property') }"
+            :class="{ 'nav-icon-btn--active': $route.path.startsWith('/fleet') }"
           >
             <v-icon icon="mdi-warehouse" size="18" />
             <span class="nav-icon-label">Имущество</span>
           </v-btn>
         </template>
-        <v-list density="compact" min-width="180">
+        <v-list density="compact" min-width="200">
           <v-list-item
-            :to="'/property/vehicles'"
-            prepend-icon="mdi-car"
-            title="Автотранспорт"
+            :to="'/fleet'"
+            prepend-icon="mdi-view-dashboard"
+            title="Дашборд автопарка"
           />
           <v-list-item
-            :to="'/property/vehicles/dashboard'"
-            prepend-icon="mdi-view-dashboard-outline"
-            title="Дашборд"
+            :to="'/fleet/vehicles'"
+            prepend-icon="mdi-car-multiple"
+            title="Реестр ТС"
+          />
+          <v-list-item
+            :to="'/fleet/documents'"
+            prepend-icon="mdi-file-document-multiple"
+            title="Документы"
+          />
+          <v-list-item
+            :to="'/fleet/regions'"
+            prepend-icon="mdi-map"
+            title="Регионы и штабы"
+          />
+          <v-list-item
+            :to="'/fleet/fines'"
+            prepend-icon="mdi-alert-octagon"
+            title="Штрафы"
+          />
+          <v-list-item
+            :to="'/fleet/waybills'"
+            prepend-icon="mdi-clipboard-list"
+            title="Путевые листы"
           />
           <v-divider />
           <v-list-item
@@ -519,8 +539,12 @@ const _allMenuItems = [
   { title: 'Реестр авансовых отчётов', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
   { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
-  { title: 'Автотранспорт', icon: 'mdi-car', route: '/property/vehicles', tab_key: 'vehicles' },
-  { title: 'Дашборд автопарка', icon: 'mdi-view-dashboard-outline', route: '/property/vehicles/dashboard', tab_key: 'vehicles' },
+  { title: 'Дашборд автопарка', icon: 'mdi-view-dashboard', route: '/fleet', tab_key: 'vehicles' },
+  { title: 'Реестр ТС', icon: 'mdi-car-multiple', route: '/fleet/vehicles', tab_key: 'vehicles' },
+  { title: 'Документы парка', icon: 'mdi-file-document-multiple', route: '/fleet/documents', tab_key: 'vehicles' },
+  { title: 'Регионы и штабы', icon: 'mdi-map', route: '/fleet/regions', tab_key: 'vehicles' },
+  { title: 'Штрафы', icon: 'mdi-alert-octagon', route: '/fleet/fines', tab_key: 'vehicles' },
+  { title: 'Путевые листы', icon: 'mdi-clipboard-list', route: '/fleet/waybills', tab_key: 'vehicles' },
   { title: 'Оборудование', icon: 'mdi-toolbox-outline', route: '/property/equipment', tab_key: 'vehicles' },
   { title: 'Прочее имущество', icon: 'mdi-package-variant-closed', route: '/property/misc', tab_key: 'vehicles' },
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },

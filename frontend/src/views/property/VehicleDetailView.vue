@@ -783,6 +783,8 @@ interface TransferHistoryItem {
 
 const TYPE_LABEL: Record<string, string> = {
   car_light:   'Легковой',
+  suv:         'Внедорожник',
+  pickup:      'Пикап',
   minivan:     'Минивэн',
   truck_van:   'Фургон',
   truck_board: 'Грузовой',

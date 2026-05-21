@@ -62,8 +62,9 @@ class Vehicle(Base):
     purchase_info = Column(String(200), nullable=True)         # Где/как куплено ("ФПГ Иркутск")
 
     # Type & state: VARCHAR (not PG ENUM) per RISKS: easier migration
-    # VehicleType values: car_light / minivan / truck_van / truck_board / truck_tank /
-    #   truck_metal / bus / special / quadbike / snowmobile / boat / boat_motor / trailer / other
+    # VehicleType values: car_light / suv / pickup / minivan / truck_van / truck_board /
+    #   truck_tank / truck_metal / bus / special / quadbike / snowmobile / boat / boat_motor /
+    #   trailer / other
     type = Column(String(30), nullable=True, index=True)
 
     # VehicleState values: working / broken / in_repair / needs_repair / destroyed / utilized

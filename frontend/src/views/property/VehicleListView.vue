@@ -603,6 +603,8 @@ const dtHeaders = computed(() => Array.from(cfg.visibleHeaders.value ?? []))
 
 const TYPE_LABEL: Record<string, string> = {
   car_light:   'Легковой',
+  suv:         'Внедорожник',
+  pickup:      'Пикап',
   minivan:     'Минивэн',
   truck_van:   'Фургон',
   truck_board: 'Грузовой',
@@ -637,7 +639,8 @@ const FUEL_TYPE_LABEL: Record<string, string> = {
 }
 
 const TYPE_COLOR: Record<string, string> = {
-  car_light: 'blue', minivan: 'cyan', truck_van: 'indigo',
+  car_light: 'blue', suv: 'green', pickup: 'lime',
+  minivan: 'cyan', truck_van: 'indigo',
   truck_board: 'brown', truck_tank: 'teal', bus: 'purple',
   special: 'orange', other: 'grey',
 }

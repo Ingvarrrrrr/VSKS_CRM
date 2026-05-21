@@ -5,9 +5,14 @@
       <div class="fleet-card__veh-icon">
         <VehicleTypeIcon :type="vehicleType" :size="60" :style="{ color: vehicleColor }" />
       </div>
-      <div class="fleet-status" :class="statusClass">
-        <span class="fleet-status__pulse"></span>
-        {{ statusLabel }}
+      <div class="fleet-card__hero-right">
+        <div class="fleet-status" :class="statusClass">
+          <span class="fleet-status__pulse"></span>
+          {{ statusLabel }}
+        </div>
+        <span class="fleet-category-badge" :data-cat="category">
+          {{ CATEGORY_LABEL[category] }}
+        </span>
       </div>
     </div>
 
@@ -123,6 +128,7 @@
 import { computed } from 'vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
+import { vehicleCategory, CATEGORY_LABEL } from '@/utils/vehicleCategory'
 
 interface VehicleCardData {
   id?: number
@@ -166,6 +172,7 @@ const emit = defineEmits<{
 
 // ── Vehicle type helpers ─────────────────────────────────────────────────────
 const vehicleType = computed(() => props.vehicle.type || '')
+const category = computed(() => vehicleCategory(props.vehicle.type))
 
 const vehicleColor = computed(() => {
   switch (props.vehicle.state) {
@@ -375,6 +382,33 @@ function checkState(val: boolean | null | undefined): string {
   justify-content: space-between;
   gap: 10px;
 }
+
+.fleet-card__hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* Category badge */
+.fleet-category-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+}
+.fleet-category-badge[data-cat="light"]     { background: rgba(106,166,255,.12); border-color: rgba(106,166,255,.3); color: #6aa6ff; }
+.fleet-category-badge[data-cat="truck"]     { background: rgba(146,100,60,.15);  border-color: rgba(146,100,60,.35);  color: #c8956a; }
+.fleet-category-badge[data-cat="passenger"] { background: rgba(93,208,255,.12);  border-color: rgba(93,208,255,.3);  color: #5dd0ff; }
+.fleet-category-badge[data-cat="special"]   { background: rgba(246,179,74,.12);  border-color: rgba(246,179,74,.3);  color: #f6b34a; }
+.fleet-category-badge[data-cat="other"]     { background: rgba(255,255,255,.04); border-color: var(--line);          color: var(--muted-2); }
 
 .fleet-card__veh-icon {
   width: 96px;

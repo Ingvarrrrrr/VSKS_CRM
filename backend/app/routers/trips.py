@@ -39,6 +39,7 @@ from app.models.trip import Trip
 from app.models.vehicle import Vehicle
 from app.models.user import User
 from app.models.external_driver import ExternalDriver
+from app.services.waybill_numbering import generate_waybill_number
 from app.models.organization import Organization
 
 logger = logging.getLogger(__name__)
@@ -370,6 +371,11 @@ async def create_trip(
     if odo_start is None:
         odo_start = vehicle.current_odometer_km
 
+    # Phase 30: auto-assign waybill number if not provided
+    waybill_number = body.get("number")
+    if not waybill_number:
+        waybill_number = await generate_waybill_number(db)
+
     trip = Trip(
         vehicle_id=vehicle_id,
         date=trip_date,
@@ -387,6 +393,7 @@ async def create_trip(
         cargo_weight_t=body.get("cargo_weight_t"),
         status="draft",
         created_by_id=current_user.id,
+        number=waybill_number,
     )
     db.add(trip)
     await db.commit()

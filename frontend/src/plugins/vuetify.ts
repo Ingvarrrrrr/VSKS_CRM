@@ -12,6 +12,19 @@ import * as directives from 'vuetify/directives'
 export default createVuetify({
   components,
   directives,
+  defaults: {
+    VCard: { rounded: 'lg' },
+    VBtn: { rounded: 'lg' },
+    VTextField: { rounded: 'lg' },
+    VSelect: { rounded: 'lg' },
+    VAutocomplete: { rounded: 'lg' },
+    VCombobox: { rounded: 'lg' },
+    VDialog: { rounded: 'lg' },
+    VSheet: { rounded: 'lg' },
+    VAlert: { rounded: 'lg' },
+    VChip: { rounded: 'lg' },
+    VBtnToggle: { rounded: 'lg' },
+  },
   icons: {
     defaultSet: 'mdi',
     aliases,

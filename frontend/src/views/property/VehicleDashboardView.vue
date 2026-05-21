@@ -1,5 +1,5 @@
 <template>
-  <div class="fleet-dash" :class="{ 'fleet-dash--light': !isDark }">
+  <div class="fleet-dash" :class="{ 'fleet-dash--light': !isDark }" :style="dashboardAccentStyle">
     <!-- ── Topbar ── -->
     <div class="fleet-topbar">
       <div class="fleet-crumbs">
@@ -536,6 +536,8 @@ interface AllVehicleRow {
   brand_model: string
   state: string
   owner_org_name: string
+  owner_org_color?: string | null
+  assigned_org_color?: string | null
   fuel_cost: number
   repair_cost: number
   mileage_km: number
@@ -656,6 +658,8 @@ function toCardData(v: AllVehicleRow) {
     state: v.state,
     vin: v.vin,
     owner_org_name: v.owner_org_name,
+    owner_org_color: v.owner_org_color,
+    assigned_org_color: v.assigned_org_color,
     assigned_text: v.assigned_text,
     responsible_name: v.responsible_name,
     last_report_at: v.last_report_at,
@@ -696,6 +700,33 @@ function onCardAction(payload: { type: string; vehicle: ReturnType<typeof toCard
   }
 }
 
+// ── Orgs list (for accent color) ─────────────────────────────────────────────
+interface OrgItem { id: number; name: string; is_active: boolean; color?: string | null }
+const orgsList = ref<OrgItem[]>([])
+const selectedOwners = ref<number[]>([])
+
+async function fetchOrgs() {
+  try {
+    const data = await apiFetch<OrgItem[]>('/auth/my-orgs')
+    orgsList.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('[VehicleDash] my-orgs', e)
+  }
+}
+
+const activeOrgColor = computed<string | null>(() => {
+  if (selectedOwners.value?.length === 1) {
+    const o = orgsList.value.find(x => x.id === selectedOwners.value[0])
+    if (o?.color) return o.color
+  }
+  return orgsList.value[0]?.color || null
+})
+
+const dashboardAccentStyle = computed(() => activeOrgColor.value ? {
+  '--org-accent': activeOrgColor.value,
+  '--org-accent-soft': activeOrgColor.value + '22',
+} : {})
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 onMounted(() => {
   fetchKpi()
@@ -704,6 +735,7 @@ onMounted(() => {
   fetchRegions()
   fetchDriverReports()
   fetchAllVehicles()
+  fetchOrgs()
 })
 </script>
 
@@ -784,6 +816,8 @@ onMounted(() => {
   justify-content: space-between;
   margin-bottom: 22px;
   flex-wrap: wrap;
+  border-bottom: 2px solid var(--org-accent, var(--line));
+  padding-bottom: 18px;
 }
 
 .fleet-crumbs {
@@ -865,6 +899,7 @@ onMounted(() => {
 .fleet-kpi {
   background: linear-gradient(180deg, var(--panel), var(--bg-2));
   border: 1px solid var(--line);
+  border-left: 4px solid var(--org-accent, transparent);
   border-radius: 14px;
   padding: 16px 16px 14px;
   position: relative;

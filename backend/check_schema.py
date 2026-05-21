@@ -927,6 +927,15 @@ async def _ensure_tasks_system_tag(conn) -> None:
         print(f"  \u26a0\ufe0f   tasks.system_tag ensure failed: {e}")
 
 
+async def _ensure_organizations_color(conn) -> None:
+    """Phase 29.3: ALTER organizations — add color column (idempotent)."""
+    try:
+        await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS color VARCHAR(20)"))
+        print("  \u2705  organizations.color ensured (Phase 29.3)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)

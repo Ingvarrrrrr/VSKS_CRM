@@ -119,13 +119,13 @@ async def my_orgs(
         if search:
             q = q.where(Organization.name.ilike(f"%{search}%") | Organization.inn.ilike(f"%{search}%"))
         result = await db.execute(q)
-        return [{"id": o.id, "name": o.name, "is_active": o.is_active} for o in result.scalars().all()]
+        return [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
 
     if user.role == 'account_owner':
         # All orgs in contour (where owner_user_id = me)
         q = select(Organization).where(Organization.owner_user_id == user.id).order_by(Organization.name)
         result = await db.execute(q)
-        return [{"id": o.id, "name": o.name, "is_active": o.is_active} for o in result.scalars().all()]
+        return [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
 
     result = await db.execute(
         select(Organization)
@@ -133,12 +133,12 @@ async def my_orgs(
         .where(UserOrgAccess.user_id == user.id)
         .order_by(Organization.name)
     )
-    orgs = [{"id": o.id, "name": o.name, "is_active": o.is_active} for o in result.scalars().all()]
+    orgs = [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
     # Ensure current org is included
     if user.org_id and not any(o["id"] == user.org_id for o in orgs):
         org = await db.get(Organization, user.org_id)
         if org:
-            orgs.insert(0, {"id": org.id, "name": org.name, "is_active": org.is_active})
+            orgs.insert(0, {"id": org.id, "name": org.name, "is_active": org.is_active, "color": org.color})
     return orgs
 
 

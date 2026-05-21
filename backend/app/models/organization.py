@@ -22,6 +22,8 @@ class Organization(Base):
     owner_user_id = Column(Integer, ForeignKey("users.id",         ondelete="SET NULL"), nullable=True)
     # Phase 17.1-03 — single-entity link to Contractor (source of truth for legal requisites)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Phase 29.3: HEX цвет организации для UI акцентов (напр. #1976d2)
+    color = Column(String(20), nullable=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")

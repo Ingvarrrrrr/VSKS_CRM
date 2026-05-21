@@ -113,6 +113,7 @@ class OrganizationCreate(BaseModel):
     address: Optional[str] = None
     signatory: Optional[str] = None
     contractor_id: Optional[int] = None
+    color: Optional[str] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -133,6 +134,7 @@ class OrganizationOut(BaseModel):
     # Extra enrichment fields (optional) populated from linked Contractor
     org_phone: Optional[str] = None
     org_email: Optional[str] = None
+    color: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):

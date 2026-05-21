@@ -52,6 +52,7 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         contractor_id=org.contractor_id,
         org_phone=getattr(c, 'org_phone', None) if c else None,
         org_email=getattr(c, 'org_email', None) if c else None,
+        color=org.color,
     )
 
 
@@ -201,6 +202,7 @@ async def create_organization(
             root_org_id=current_user.org_id,
             owner_user_id=current_user.id,
             contractor_id=data.contractor_id,
+            color=data.color,
         )
     else:
         # superadmin — standalone org
@@ -214,6 +216,7 @@ async def create_organization(
             signatory=data.signatory,
             is_active=True,
             contractor_id=data.contractor_id,
+            color=data.color,
         )
     db.add(org)
     await db.flush()  # get org.id so we can link a new Contractor back
@@ -280,7 +283,7 @@ async def update_organization(
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:
         org.contractor_id = data.contractor_id
-    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'signatory'):
+    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'signatory', 'color'):
         val = getattr(data, field, None)
         if val is not None:
             setattr(org, field, val or None)

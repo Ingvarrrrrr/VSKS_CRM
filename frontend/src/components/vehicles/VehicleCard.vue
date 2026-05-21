@@ -1,5 +1,5 @@
 <template>
-  <article class="fleet-card" @click="emit('click', vehicle)">
+  <article class="fleet-card" @click="emit('click', vehicle)" :style="orgAccentStyle">
     <!-- Hero: icon + status -->
     <div class="fleet-card__hero">
       <div class="fleet-card__veh-icon">
@@ -229,7 +229,9 @@ interface VehicleCardData {
   state?: string
   vin?: string
   owner_org_name?: string
+  owner_org_color?: string | null
   assigned_org_name?: string
+  assigned_org_color?: string | null
   assigned_text?: string
   responsible_name?: string
   last_report_at?: string
@@ -273,6 +275,14 @@ const vehicleColor = computed(() => {
     default: return '#6aa6ff'
   }
 })
+
+const orgColor = computed<string | null>(() =>
+  props.vehicle.assigned_org_color || props.vehicle.owner_org_color || null
+)
+
+const orgAccentStyle = computed(() =>
+  orgColor.value ? { '--org-accent': orgColor.value } : {}
+)
 
 // ── Status ───────────────────────────────────────────────────────────────────
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -438,6 +448,7 @@ function checkState(val: boolean | null | undefined): string {
   position: relative;
   background: linear-gradient(180deg, var(--panel), var(--bg-2));
   border: 1px solid var(--line);
+  border-left: 4px solid var(--org-accent, var(--line));
   border-radius: 18px;
   overflow: hidden;
   transition: transform .15s ease, border-color .15s ease;

@@ -96,6 +96,7 @@
         <v-tab value="odometer">Пробег</v-tab>
         <v-tab value="fuel">Заправки</v-tab>
         <v-tab value="trips">Путёвки</v-tab>
+        <v-tab value="fines" prepend-icon="mdi-alert-octagon-outline">Штрафы</v-tab>
         <v-tab value="history">История</v-tab>
         <v-tab value="purchases">Связанные закупки</v-tab>
       </v-tabs>
@@ -528,6 +529,11 @@
           <VehicleTripsTab :vehicle-id="vehicleId" />
         </v-tabs-window-item>
 
+        <!-- ─────────── Tab: Штрафы ─────────── -->
+        <v-tabs-window-item value="fines" :eager="false">
+          <VehicleFinesTab :vehicle-id="vehicleId" />
+        </v-tabs-window-item>
+
         <!-- ─────────── Tab: История ─────────── -->
         <v-tabs-window-item value="history" :eager="false">
           <VehicleHistoryTab :vehicle-id="vehicleId" />
@@ -618,6 +624,7 @@ import VehicleRepairsTab from '@/components/vehicles/VehicleRepairsTab.vue'
 import VehicleOdometerTab from '@/components/vehicles/VehicleOdometerTab.vue'
 import VehicleFuelLogTab from '@/components/vehicles/VehicleFuelLogTab.vue'
 import VehicleTripsTab from '@/components/vehicles/VehicleTripsTab.vue'
+import VehicleFinesTab from '@/components/vehicles/VehicleFinesTab.vue'
 import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
 import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'

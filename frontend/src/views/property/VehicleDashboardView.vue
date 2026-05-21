@@ -316,6 +316,11 @@
       </div>
     </section>
 
+    <!-- ── Fine Leaders Widget ── -->
+    <section class="fleet-fine-leaders-section">
+      <FineLeadersPodiumWidget />
+    </section>
+
     <!-- ── Drill-down dialog ── -->
     <VehicleDrillDialog
       v-if="drillOpen"
@@ -333,6 +338,7 @@ import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
 import VehicleDrillDialog from '@/components/vehicles/VehicleDrillDialog.vue'
 
 const router = useRouter()
@@ -1307,6 +1313,12 @@ onMounted(() => {
 .fleet-reg--clickable { cursor: pointer; border-radius: 8px; transition: background .12s; padding: 4px 2px; }
 .fleet-reg--clickable:hover { background: rgba(106,166,255,.06); }
 
+/* ─── Fine Leaders section ─── */
+.fleet-fine-leaders-section {
+  margin-top: 20px;
+  max-width: 520px;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 1100px) {
   .fleet-kpis { grid-template-columns: repeat(2, 1fr); }
@@ -1317,5 +1329,6 @@ onMounted(() => {
   .fleet-topbar { gap: 10px; }
   .fleet-search { max-width: 100%; }
   .fleet-kpis { grid-template-columns: 1fr 1fr; }
+  .fleet-fine-leaders-section { max-width: 100%; }
 }
 </style>

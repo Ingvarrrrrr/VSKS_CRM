@@ -854,7 +854,7 @@ onMounted(() => {
   --alert: #ff5b6a;
   --info: #5dd0ff;
 
-  padding: 22px 28px 60px;
+  padding: 22px 28px 140px;
   min-height: 100vh;
   background: radial-gradient(1200px 600px at 80% -10%, rgba(106,166,255,.06), transparent 60%),
               radial-gradient(900px 500px at -10% 110%, rgba(139,92,246,.06), transparent 60%),

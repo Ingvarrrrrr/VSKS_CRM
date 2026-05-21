@@ -139,7 +139,7 @@
           География эксплуатации
           <small>распределение по штабам и регионам</small>
         </h3>
-        <div class="fleet-regions" v-if="regionItems.length">
+        <div class="fleet-regions-grid" v-if="regionItems.length">
           <div class="fleet-reg fleet-reg--clickable" v-for="reg in regionItems" :key="reg.region">
             <div class="fleet-reg__nm" @click="applyRegionFilter(reg.region)">
               {{ reg.region }}
@@ -1087,28 +1087,41 @@ onMounted(() => {
 }
 
 /* Regions */
-.fleet-regions { display: grid; gap: 8px; }
+/* Geography — 2-column grid, 3-column on wide screens */
+.fleet-regions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+}
+@media (min-width: 1400px) {
+  .fleet-regions-grid { grid-template-columns: 1fr 1fr 1fr; }
+}
 
 .fleet-reg {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(80px, 2fr) 32px;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  padding: 4px 0;
 }
 
 .fleet-reg__nm {
-  flex: 0 0 130px;
-  font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fleet-reg__nm:hover { color: var(--accent); }
 
 .fleet-reg__nm small {
-  color: var(--muted);
-  font-weight: 500;
   display: block;
-  font-size: 11px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
   margin-top: 1px;
 }
 
@@ -1116,8 +1129,8 @@ onMounted(() => {
   display: flex;
   align-items: stretch;
   gap: 0;
-  height: 28px;
-  border-radius: 8px;
+  height: 18px;
+  border-radius: 6px;
   overflow: hidden;
   background: var(--bg-2, rgba(255,255,255,.04));
   position: relative;
@@ -1148,7 +1161,7 @@ onMounted(() => {
 .fleet-reg__seg-lbl { padding: 0 8px; }
 
 .fleet-reg__cnt {
-  flex: 0 0 50px;
+  font-size: 13px;
   text-align: right;
   font-weight: 700;
   color: var(--text);

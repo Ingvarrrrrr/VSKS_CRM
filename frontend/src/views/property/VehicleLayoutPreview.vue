@@ -282,11 +282,8 @@
 
                 <!-- Chips row -->
                 <div class="d-flex align-center gap-2 flex-wrap">
-                  <!-- Plate -->
-                  <div class="px-3 py-1 rounded font-weight-bold"
-                    style="background:rgba(255,255,255,0.95);color:#1f2937;font-family:monospace;font-size:15px;letter-spacing:2px">
-                    {{ vehicle.plate }}
-                  </div>
+                  <!-- Plate (GOST style component) -->
+                  <LicensePlate :model-value="vehicle.plate" size="lg" />
 
                   <!-- State chip -->
                   <v-chip
@@ -604,6 +601,7 @@
 import { ref, computed, onMounted, defineComponent, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 // ─────────────── Types ───────────────
 

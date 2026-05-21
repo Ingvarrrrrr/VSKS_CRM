@@ -250,7 +250,7 @@
       <!-- plate column: визуальный номерной знак + подсветка истекающей страховки -->
       <template #item.plate="{ item }">
         <div class="d-flex align-center gap-1">
-          <LicensePlate :model-value="item.plate" :readonly="true" />
+          <LicensePlate :model-value="item.plate" :readonly="true" size="sm" />
           <v-icon v-if="isInsuranceExpiring(item)" icon="mdi-alert-circle" size="x-small"
             color="warning" title="ОСАГО истекает менее чем через 30 дней" />
         </div>
@@ -572,7 +572,7 @@ const userId = localStorage.getItem('user_id') || 'anon'
 
 // Column config
 const allColumns: ColumnDef[] = [
-  { key: 'plate',              title: 'Гос. №',         width: 120, group: 'core' },
+  { key: 'plate',              title: 'Гос. №',         width: 170, group: 'core' },
   { key: 'brand_model',        title: 'Марка/Модель',    width: 200, group: 'core' },
   { key: 'vin',                title: 'VIN',             width: 160, group: 'all'  },
   { key: 'type_label',         title: 'Тип',             width: 140, group: 'core' },

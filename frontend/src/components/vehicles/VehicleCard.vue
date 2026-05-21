@@ -7,34 +7,34 @@
         <svg viewBox="0 0 90 50" fill="none" v-if="isTruck">
           <rect x="4" y="14" width="50" height="22" rx="2" :fill="vehicleColor" opacity=".85"/>
           <rect x="54" y="20" width="24" height="16" rx="2" :fill="vehicleColor"/>
-          <rect x="58" y="22" width="16" height="7" rx="1" fill="#0a0d14"/>
-          <circle cx="14" cy="40" r="5" fill="#0a0d14"/><circle cx="14" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="30" cy="40" r="5" fill="#0a0d14"/><circle cx="30" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="46" cy="40" r="5" fill="#0a0d14"/><circle cx="46" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
+          <rect x="58" y="22" width="16" height="7" rx="1" fill="currentColor"/>
+          <circle cx="14" cy="40" r="5" fill="currentColor"/><circle cx="14" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="30" cy="40" r="5" fill="currentColor"/><circle cx="30" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="46" cy="40" r="5" fill="currentColor"/><circle cx="46" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="66" cy="40" r="5" fill="currentColor"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
         </svg>
         <!-- Минивэн -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'minivan'">
           <rect x="8" y="14" width="74" height="24" rx="3" :fill="vehicleColor" opacity=".85"/>
-          <rect x="14" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
-          <rect x="32" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
-          <rect x="50" y="18" width="14" height="9" rx="1" fill="#0a0d14"/>
-          <rect x="66" y="18" width="10" height="9" rx="1" fill="#0a0d14"/>
-          <circle cx="22" cy="40" r="5" fill="#0a0d14"/><circle cx="22" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
+          <rect x="14" y="18" width="14" height="9" rx="1" fill="currentColor"/>
+          <rect x="32" y="18" width="14" height="9" rx="1" fill="currentColor"/>
+          <rect x="50" y="18" width="14" height="9" rx="1" fill="currentColor"/>
+          <rect x="66" y="18" width="10" height="9" rx="1" fill="currentColor"/>
+          <circle cx="22" cy="40" r="5" fill="currentColor"/><circle cx="22" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="66" cy="40" r="5" fill="currentColor"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
           <path d="M8 38 Q8 44 22 44 L66 44 Q82 44 82 38" :fill="vehicleColor" opacity=".3"/>
         </svg>
         <!-- Автобус: bus -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'bus'">
           <rect x="4" y="10" width="82" height="28" rx="3" :fill="vehicleColor" opacity=".9"/>
-          <rect x="8" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="22" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="36" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="50" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="64" y="14" width="10" height="8" rx="1" fill="#0a0d14"/>
-          <rect x="78" y="14" width="6" height="8" rx="1" fill="#0a0d14"/>
-          <circle cx="18" cy="40" r="5" fill="#0a0d14"/><circle cx="18" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="70" cy="40" r="5" fill="#0a0d14"/><circle cx="70" cy="40" r="2" :fill="vehicleColor"/>
+          <rect x="8" y="14" width="10" height="8" rx="1" fill="currentColor"/>
+          <rect x="22" y="14" width="10" height="8" rx="1" fill="currentColor"/>
+          <rect x="36" y="14" width="10" height="8" rx="1" fill="currentColor"/>
+          <rect x="50" y="14" width="10" height="8" rx="1" fill="currentColor"/>
+          <rect x="64" y="14" width="10" height="8" rx="1" fill="currentColor"/>
+          <rect x="78" y="14" width="6" height="8" rx="1" fill="currentColor"/>
+          <circle cx="18" cy="40" r="5" fill="currentColor"/><circle cx="18" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="70" cy="40" r="5" fill="currentColor"/><circle cx="70" cy="40" r="2" :fill="vehicleColor"/>
         </svg>
         <!-- Квадроцикл -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'quadbike'">
@@ -42,25 +42,25 @@
           <path d="M22 24 L28 20 L28 28 Z" :fill="vehicleColor" opacity=".7"/>
           <path d="M62 20 L68 24 L62 28 Z" :fill="vehicleColor" opacity=".7"/>
           <rect x="34" y="12" width="22" height="8" rx="3" :fill="vehicleColor" opacity=".6"/>
-          <circle cx="18" cy="34" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="18" cy="34" r="8" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="18" cy="34" r="3" :fill="vehicleColor"/>
-          <circle cx="72" cy="34" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="72" cy="34" r="8" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="72" cy="34" r="3" :fill="vehicleColor"/>
         </svg>
         <!-- Снегоход -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'snowmobile'">
           <rect x="10" y="20" width="60" height="12" rx="6" :fill="vehicleColor" opacity=".85"/>
           <path d="M16 20 L26 10 L50 10 L60 20" :fill="vehicleColor" opacity=".7"/>
-          <rect x="14" y="12" width="18" height="6" rx="2" fill="#0a0d14"/>
+          <rect x="14" y="12" width="18" height="6" rx="2" fill="currentColor"/>
           <rect x="4" y="34" width="60" height="6" rx="3" :fill="vehicleColor" opacity=".5"/>
-          <circle cx="68" cy="30" r="8" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="68" cy="30" r="8" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="68" cy="30" r="3" :fill="vehicleColor"/>
         </svg>
         <!-- Лодка / моторная лодка -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'boat' || vehicleType === 'boat_motor'">
           <path d="M10 30 Q10 22 20 22 L70 22 Q80 22 80 30 L75 38 Q45 42 15 38 Z" :fill="vehicleColor" opacity=".85"/>
           <path d="M30 22 L35 10 L55 10 L60 22" :fill="vehicleColor" opacity=".5"/>
-          <rect x="34" y="10" width="22" height="5" rx="2" fill="#0a0d14" opacity=".8"/>
+          <rect x="34" y="10" width="22" height="5" rx="2" fill="currentColor" opacity=".8"/>
           <template v-if="vehicleType === 'boat_motor'">
             <rect x="74" y="24" width="6" height="12" rx="2" :fill="vehicleColor" opacity=".9"/>
             <path d="M72 36 Q78 40 84 36" :stroke="vehicleColor" stroke-width="2" fill="none" opacity=".8"/>
@@ -70,34 +70,34 @@
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'trailer'">
           <rect x="12" y="16" width="66" height="22" rx="2" :fill="vehicleColor" opacity=".8"/>
           <line x1="8" y1="27" x2="12" y2="27" :stroke="vehicleColor" stroke-width="3"/>
-          <circle cx="30" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="30" cy="40" r="6" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="30" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="62" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="62" cy="40" r="6" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="62" cy="40" r="2" :fill="vehicleColor"/>
-          <rect x="18" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
-          <rect x="34" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
-          <rect x="50" y="20" width="10" height="6" rx="1" fill="#0a0d14" opacity=".6"/>
+          <rect x="18" y="20" width="10" height="6" rx="1" fill="currentColor" opacity=".6"/>
+          <rect x="34" y="20" width="10" height="6" rx="1" fill="currentColor" opacity=".6"/>
+          <rect x="50" y="20" width="10" height="6" rx="1" fill="currentColor" opacity=".6"/>
         </svg>
         <!-- Спецтехника -->
         <svg viewBox="0 0 90 50" fill="none" v-else-if="vehicleType === 'special'">
           <rect x="4" y="16" width="50" height="22" rx="2" :fill="vehicleColor" opacity=".85"/>
           <rect x="54" y="20" width="24" height="16" rx="2" :fill="vehicleColor"/>
-          <rect x="58" y="22" width="16" height="7" rx="1" fill="#0a0d14"/>
+          <rect x="58" y="22" width="16" height="7" rx="1" fill="currentColor"/>
           <rect x="26" y="10" width="12" height="8" rx="1" :fill="vehicleColor" opacity=".7"/>
           <line x1="32" y1="10" x2="32" y2="6" :stroke="vehicleColor" stroke-width="2"/>
-          <circle cx="14" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="14" cy="40" r="6" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="14" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="40" cy="40" r="6" fill="#0a0d14" stroke-width="2" :stroke="vehicleColor"/>
+          <circle cx="40" cy="40" r="6" fill="currentColor" stroke-width="2" :stroke="vehicleColor"/>
           <circle cx="40" cy="40" r="2" :fill="vehicleColor"/>
-          <circle cx="66" cy="40" r="5" fill="#0a0d14"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
+          <circle cx="66" cy="40" r="5" fill="currentColor"/><circle cx="66" cy="40" r="2" :fill="vehicleColor"/>
         </svg>
         <!-- Легковой car_light (SUV-style) и default -->
         <svg viewBox="0 0 90 50" fill="none" v-else>
           <path d="M8 36 L14 28 Q22 20 38 20 L52 20 Q64 20 72 28 L82 32 L82 36 Z" :fill="vehicleColor" opacity=".9"/>
-          <path d="M20 28 Q26 22 38 22 L41 22 L41 28 Z" fill="#0a0d14"/>
-          <path d="M43 22 L52 22 Q62 22 68 28 L43 28 Z" fill="#0a0d14"/>
-          <circle cx="24" cy="38" r="5" fill="#0a0d14"/><circle cx="24" cy="38" r="2" :fill="vehicleColor"/>
-          <circle cx="64" cy="38" r="5" fill="#0a0d14"/><circle cx="64" cy="38" r="2" :fill="vehicleColor"/>
+          <path d="M20 28 Q26 22 38 22 L41 22 L41 28 Z" fill="currentColor"/>
+          <path d="M43 22 L52 22 Q62 22 68 28 L43 28 Z" fill="currentColor"/>
+          <circle cx="24" cy="38" r="5" fill="currentColor"/><circle cx="24" cy="38" r="2" :fill="vehicleColor"/>
+          <circle cx="64" cy="38" r="5" fill="currentColor"/><circle cx="64" cy="38" r="2" :fill="vehicleColor"/>
         </svg>
       </div>
       <div class="fleet-status" :class="statusClass">
@@ -108,7 +108,7 @@
 
     <!-- Title block -->
     <div class="fleet-card__title">
-      <span class="fleet-plate">{{ vehicle.plate }}</span>
+      <LicensePlate :model-value="vehicle.plate" size="sm" />
       <div class="fleet-card__model">{{ modelYear }}</div>
       <div class="fleet-card__meta">{{ metaLine }}</div>
     </div>
@@ -216,6 +216,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 interface VehicleCardData {
   id?: number
@@ -357,7 +358,59 @@ function checkState(val: boolean | null | undefined): string {
 </script>
 
 <style scoped>
-/* Design tokens (fleet dark theme) */
+/* Design tokens — dark theme */
+.v-theme--dark .fleet-card {
+  --bg: #0a0d14;
+  --bg-2: #0f131c;
+  --panel: #141823;
+  --panel-2: #1a1f2c;
+  --line: #222838;
+  --line-2: #2b3245;
+  --text: #e9edf5;
+  --muted: #8a93a8;
+  --muted-2: #5d6478;
+  --accent: #6aa6ff;
+  --ok: #22c997;
+  --warn: #f6b34a;
+  --alert: #ff5b6a;
+  --info: #5dd0ff;
+  --icon-bg-top: #1a2030;
+  --icon-bg-bot: #11151f;
+  --card-icon-detail: #0a0d14;
+  --avatar-text: #0a0d14;
+  --avatar-bg: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --success-bg: rgba(34,201,151,.08); --success-fg: #a8efd2;
+  --warning-bg: rgba(246,179,74,.08); --warning-fg: #fcd998;
+  --error-bg: rgba(255,91,106,.08); --error-fg: #ffaab2;
+}
+
+/* Design tokens — light theme */
+.v-theme--light .fleet-card {
+  --bg: #ffffff;
+  --bg-2: #f5f7fa;
+  --panel: #ffffff;
+  --panel-2: #f1f4fa;
+  --line: #e0e3e8;
+  --line-2: #cdd3e1;
+  --text: #1a1d23;
+  --muted: #6b7280;
+  --muted-2: #94a3b8;
+  --accent: #2563eb;
+  --ok: #059669;
+  --warn: #d97706;
+  --alert: #dc2626;
+  --info: #0284c7;
+  --icon-bg-top: #e8eaf0;
+  --icon-bg-bot: #d8dce4;
+  --card-icon-detail: #1a1d23;
+  --avatar-text: #ffffff;
+  --avatar-bg: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --success-bg: #d1fae5; --success-fg: #047857;
+  --warning-bg: #fef3c7; --warning-fg: #92400e;
+  --error-bg: #fee2e2; --error-fg: #b91c1c;
+}
+
+/* Fallback tokens for when no theme class is present (dark default) */
 .fleet-card {
   --bg: #0a0d14;
   --bg-2: #0f131c;
@@ -373,6 +426,14 @@ function checkState(val: boolean | null | undefined): string {
   --warn: #f6b34a;
   --alert: #ff5b6a;
   --info: #5dd0ff;
+  --icon-bg-top: #1a2030;
+  --icon-bg-bot: #11151f;
+  --card-icon-detail: #0a0d14;
+  --avatar-text: #0a0d14;
+  --avatar-bg: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --success-bg: rgba(34,201,151,.08); --success-fg: #a8efd2;
+  --warning-bg: rgba(246,179,74,.08); --warning-fg: #fcd998;
+  --error-bg: rgba(255,91,106,.08); --error-fg: #ffaab2;
 
   position: relative;
   background: linear-gradient(180deg, var(--panel), var(--bg-2));
@@ -406,11 +467,12 @@ function checkState(val: boolean | null | undefined): string {
   height: 60px;
   border-radius: 12px;
   background: radial-gradient(120px 60px at 30% 30%, rgba(106,166,255,.25), transparent 70%),
-              linear-gradient(180deg, #1a2030, #11151f);
+              linear-gradient(180deg, var(--icon-bg-top), var(--icon-bg-bot));
   border: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--card-icon-detail);
 }
 
 .fleet-card__veh-icon svg {
@@ -460,30 +522,17 @@ function checkState(val: boolean | null | undefined): string {
 .fleet-status--alert .fleet-status__pulse { background: var(--alert); }
 
 .fleet-status--muted {
-  color: #9aa3b8;
+  color: var(--muted);
   background: rgba(255,255,255,.04);
   border: 1px solid var(--line-2);
 }
-.fleet-status--muted .fleet-status__pulse { background: #9aa3b8; }
+.fleet-status--muted .fleet-status__pulse { background: var(--muted); }
 
 /* Title */
 .fleet-card__title {
   padding: 14px 16px 6px;
 }
 
-.fleet-plate {
-  display: inline-flex;
-  align-items: center;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  background: #111521;
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  padding: 4px 10px;
-  font-weight: 600;
-  font-size: 13px;
-  letter-spacing: .5px;
-  color: var(--text);
-}
 
 .fleet-card__model {
   margin-top: 10px;
@@ -518,7 +567,7 @@ function checkState(val: boolean | null | undefined): string {
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  color: #0a0d14;
+  color: var(--avatar-text);
   font-size: 12px;
   flex-shrink: 0;
 }
@@ -572,23 +621,23 @@ function checkState(val: boolean | null | undefined): string {
 .fleet-doc-pill b { color: var(--text); font-weight: 700; }
 
 .fleet-doc-pill--ok {
-  background: rgba(34,201,151,.08);
+  background: var(--success-bg);
   border-color: rgba(34,201,151,.25);
-  color: #a8efd2;
+  color: var(--success-fg);
 }
 .fleet-doc-pill--ok b { color: var(--ok); }
 
 .fleet-doc-pill--warn {
-  background: rgba(246,179,74,.08);
+  background: var(--warning-bg);
   border-color: rgba(246,179,74,.25);
-  color: #fcd998;
+  color: var(--warning-fg);
 }
 .fleet-doc-pill--warn b { color: var(--warn); }
 
 .fleet-doc-pill--alert {
-  background: rgba(255,91,106,.08);
+  background: var(--error-bg);
   border-color: rgba(255,91,106,.25);
-  color: #ffaab2;
+  color: var(--error-fg);
 }
 .fleet-doc-pill--alert b { color: var(--alert); }
 

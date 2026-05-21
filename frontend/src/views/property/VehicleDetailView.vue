@@ -232,19 +232,55 @@
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Марка" field-key="brand" :vehicle-id="vehicle.id" />
-                      <v-text-field v-model="form.brand" variant="outlined" density="compact" hide-details />
+                      <v-combobox
+                        v-model="form.brand"
+                        :items="brandSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Модель" field-key="model" :vehicle-id="vehicle.id" />
-                      <v-text-field v-model="form.model" variant="outlined" density="compact" hide-details />
+                      <v-combobox
+                        v-model="form.model"
+                        :items="filteredModelSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Год выпуска" field-key="year_of_manufacture" :vehicle-id="vehicle.id" />
-                      <v-text-field v-model.number="form.year_of_manufacture" type="number" variant="outlined" density="compact" hide-details />
+                      <v-combobox
+                        v-model="form.year_of_manufacture"
+                        :items="yearOptions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Цвет" field-key="color" :vehicle-id="vehicle.id" />
-                      <v-text-field v-model="form.color" variant="outlined" density="compact" hide-details />
+                      <v-combobox
+                        v-model="form.color"
+                        :items="colorSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="12">
                       <FieldLabel label="VIN" field-key="vin" :vehicle-id="vehicle.id" />
@@ -286,11 +322,30 @@
                     </v-col>
                     <v-col v-if="!form.assigned_org_id" cols="12">
                       <div class="text-caption text-medium-emphasis mb-1">Эксплуатант (текст)</div>
-                      <v-text-field v-model="form.assigned_text" variant="outlined" density="compact" hide-details />
+                      <v-combobox
+                        v-model="form.assigned_text"
+                        :items="assignedTextSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="12">
                       <FieldLabel label="Основание для использования" field-key="assignment_basis" :vehicle-id="vehicle.id" />
-                      <v-text-field v-model="form.assignment_basis" variant="outlined" density="compact" hide-details placeholder="Договор аренды, акт п/п..." />
+                      <v-combobox
+                        v-model="form.assignment_basis"
+                        :items="basisSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                        placeholder="Договор аренды, акт п/п..."
+                      />
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Номер документа" field-key="assignment_doc_number" :vehicle-id="vehicle.id" />
@@ -332,7 +387,7 @@
                     </v-col>
                     <v-col cols="6">
                       <FieldLabel label="Тип топлива" field-key="fuel_type" :vehicle-id="vehicle.id" />
-                      <v-select v-model="form.fuel_type" :items="fuelTypeOptions" item-title="label" item-value="value" variant="outlined" density="compact" hide-details clearable />
+                      <v-select v-model="form.fuel_type" :items="fuelTypeSelectItems" item-title="title" item-value="value" variant="outlined" density="compact" hide-details clearable />
                     </v-col>
                     <v-col cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Текущий пробег, км</div>
@@ -412,15 +467,40 @@
                   <v-row dense>
                     <v-col cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Авторезина</div>
-                      <v-text-field v-model="form.props_tires_type" variant="outlined" density="compact" hide-details clearable />
+                      <v-combobox
+                        v-model="form.props_tires_type"
+                        :items="tiresTypeOptions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Брендирование</div>
-                      <v-text-field v-model="form.props_branding" variant="outlined" density="compact" hide-details clearable />
+                      <v-combobox
+                        v-model="form.props_branding"
+                        :items="brandSuggestions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        auto-select-first
+                        :return-object="false"
+                      />
                     </v-col>
                     <v-col cols="6">
-                      <div class="text-caption text-medium-emphasis mb-1">ЛКП</div>
-                      <v-textarea v-model="form.props_paint_condition" variant="outlined" density="compact" hide-details rows="2" auto-grow />
+                      <div class="text-caption text-medium-emphasis mb-1">ЛКП (состояние)</div>
+                      <v-select
+                        v-model="form.props_paint_condition"
+                        :items="paintConditionOptions"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                      />
                     </v-col>
                     <v-col cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Неисправности</div>
@@ -760,6 +840,36 @@ const typeOptions = Object.entries(TYPE_LABEL).map(([value, label]) => ({ value,
 const stateOptions = Object.entries(STATE_LABEL).map(([value, label]) => ({ value, label }))
 const fuelTypeOptions = Object.entries(FUEL_TYPE_LABEL).map(([value, label]) => ({ value, label }))
 
+// Полный список типов топлива для select в карточке ТС (Phase 29.3)
+const fuelTypeSelectItems = [
+  { value: 'AI-92',  title: 'АИ-92' },
+  { value: 'AI-95',  title: 'АИ-95' },
+  { value: 'AI-98',  title: 'АИ-98' },
+  { value: 'AI-100', title: 'АИ-100' },
+  { value: 'DT',     title: 'Дизель' },
+  { value: 'GAS',    title: 'Газ' },
+  { value: 'other',  title: 'Другое' },
+]
+
+// Опции состояния ЛКП для v-select
+const paintConditionOptions = [
+  'Отличное',
+  'Хорошее',
+  'Удовлетворительное',
+  'Незначительные повреждения',
+  'Значительные повреждения',
+  'Среднее',
+  'Требует покраски',
+]
+
+// Опции авторезины для v-combobox
+const tiresTypeOptions = [
+  'Летняя',
+  'Зимняя',
+  'Всесезонная',
+  'Смешанная (зима/лето)',
+]
+
 // ─────────────── Inline component: FieldLabel ───────────────
 
 // Renders "<label text> + FieldHistoryPopover icon" as a compact label row
@@ -796,6 +906,25 @@ const deleting = ref(false)
 const activeTab = ref('general')
 const orgsList = ref<OrgItem[]>([])
 const historyComment = ref('')
+
+// ─────────────── Autocomplete suggestions ───────────────
+
+const brandSuggestions = ref<string[]>([])
+const modelSuggestions = ref<string[]>([])
+const colorSuggestions = ref<string[]>([])
+const assignedTextSuggestions = ref<string[]>([])
+const basisSuggestions = ref<string[]>([])
+
+// Модели фильтруются по выбранной марке если марка задана
+const filteredModelSuggestions = computed(() => {
+  if (!form.brand || modelSuggestions.value.length === 0) return modelSuggestions.value
+  // Простая фильтрация: показываем все (модели не привязаны к марке в distinct)
+  return modelSuggestions.value
+})
+
+// Годы от текущего до 1980 (reversed — новые сверху)
+const currentYear = new Date().getFullYear()
+const yearOptions = Array.from({ length: currentYear - 1980 + 1 }, (_, i) => currentYear - i)
 
 // ─────────────── Form model ───────────────
 
@@ -1111,6 +1240,34 @@ async function loadOrgs() {
   } catch {}
 }
 
+async function loadSuggestions() {
+  try {
+    const [brands, models, colors, assignedTexts, bases] = await Promise.all([
+      apiFetch<string[]>('/vehicles/distinct/brand'),
+      apiFetch<string[]>('/vehicles/distinct/model'),
+      apiFetch<string[]>('/vehicles/distinct/color'),
+      apiFetch<string[]>('/vehicles/distinct/assigned_text'),
+      apiFetch<string[]>('/vehicles/distinct/assignment_basis'),
+    ])
+    brandSuggestions.value = Array.isArray(brands) ? brands : []
+    modelSuggestions.value = Array.isArray(models) ? models : []
+    const defaultColors = ['Белый', 'Чёрный', 'Серый', 'Серебристый', 'Синий', 'Красный', 'Зелёный', 'Жёлтый', 'Коричневый', 'Бежевый']
+    colorSuggestions.value = Array.from(new Set([...defaultColors, ...(Array.isArray(colors) ? colors : [])]))
+    assignedTextSuggestions.value = Array.isArray(assignedTexts) ? assignedTexts : []
+    const defaultBases = [
+      'Договор аренды',
+      'Акт приёма-передачи',
+      'Договор пожертвования',
+      'Договор безвозмездного пользования',
+      'Закупка',
+      'Передача из другой организации',
+    ]
+    basisSuggestions.value = Array.from(new Set([...defaultBases, ...(Array.isArray(bases) ? bases : [])]))
+  } catch (e) {
+    console.warn('[VehicleDetailView] loadSuggestions failed (silent):', e)
+  }
+}
+
 async function save() {
   if (!vehicle.value) return
   const delta = buildDelta()
@@ -1201,6 +1358,7 @@ onMounted(() => {
     loadVehicle(id)
     loadOrgs()
     loadTransferHistory(id)
+    loadSuggestions()
   }
 })
 

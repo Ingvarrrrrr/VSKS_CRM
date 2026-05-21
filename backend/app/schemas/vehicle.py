@@ -282,6 +282,26 @@ class TripOut(BaseModel):
 
 # ─────────────────────── Vehicle ───────────────────────
 
+class VehicleTransferHistoryOut(BaseModel):
+    """История передач ТС — Phase 29.3."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_id: int
+    from_owner_org_id: Optional[int] = None
+    to_owner_org_id: Optional[int] = None
+    from_assigned_org_id: Optional[int] = None
+    to_assigned_org_id: Optional[int] = None
+    from_assigned_text: Optional[str] = None
+    to_assigned_text: Optional[str] = None
+    basis: Optional[str] = None
+    doc_number: Optional[str] = None
+    doc_date: Optional[date] = None
+    comment: Optional[str] = None
+    changed_at: datetime
+    changed_by_user_id: Optional[int] = None
+
+
 class VehicleCreate(BaseModel):
     owner_org_id: int
     assigned_org_id: Optional[int] = None
@@ -317,6 +337,12 @@ class VehicleCreate(BaseModel):
     sts_number: Optional[str] = None
     tech_inspection_until: Optional[date] = None
     purchase_info: Optional[str] = None
+    # Phase 29.3: assignment + engine
+    assignment_basis: Optional[str] = None
+    assignment_doc_number: Optional[str] = None
+    assignment_doc_date: Optional[date] = None
+    engine_power_hp: Optional[int] = None
+    engine_volume_l: Optional[float] = None
 
 
 class VehiclePatch(BaseModel):
@@ -355,6 +381,12 @@ class VehiclePatch(BaseModel):
     sts_number: Optional[str] = None
     tech_inspection_until: Optional[date] = None
     purchase_info: Optional[str] = None
+    # Phase 29.3: assignment + engine
+    assignment_basis: Optional[str] = None
+    assignment_doc_number: Optional[str] = None
+    assignment_doc_date: Optional[date] = None
+    engine_power_hp: Optional[int] = None
+    engine_volume_l: Optional[float] = None
 
 
 class VehicleOut(BaseModel):
@@ -398,6 +430,12 @@ class VehicleOut(BaseModel):
     sts_number: Optional[str] = None
     tech_inspection_until: Optional[date] = None
     purchase_info: Optional[str] = None
+    # Phase 29.3: assignment + engine
+    assignment_basis: Optional[str] = None
+    assignment_doc_number: Optional[str] = None
+    assignment_doc_date: Optional[date] = None
+    engine_power_hp: Optional[int] = None
+    engine_volume_l: Optional[float] = None
     created_at: datetime
     updated_at: datetime
     attachments: List[VehicleAttachmentOut] = []
@@ -406,6 +444,7 @@ class VehicleOut(BaseModel):
     fuel_logs: List[FuelLogOut] = []
     trips: List[TripOut] = []
     field_history: List[FieldHistoryOut] = []
+    transfer_history: List["VehicleTransferHistoryOut"] = []
 
 
 class VehicleListItem(BaseModel):
@@ -434,5 +473,11 @@ class VehicleListItem(BaseModel):
     pts_number: Optional[str] = None
     sts_number: Optional[str] = None
     purchase_info: Optional[str] = None
+    # Phase 29.3: assignment + engine
+    assignment_basis: Optional[str] = None
+    assignment_doc_number: Optional[str] = None
+    assignment_doc_date: Optional[date] = None
+    engine_power_hp: Optional[int] = None
+    engine_volume_l: Optional[float] = None
     created_at: datetime
     updated_at: datetime

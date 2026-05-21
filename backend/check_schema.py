@@ -823,6 +823,59 @@ async def _ensure_vehicles_new_columns(conn) -> None:
         print(f"  \u26a0\ufe0f   vehicles new columns ensure failed: {e}")
 
 
+async def _ensure_vehicles_assignment_columns(conn) -> None:
+    """Phase 29.3: ALTER vehicles — 5 новых колонок (assignment_basis, doc, engine) — idempotent."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS assignment_basis VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS assignment_doc_number VARCHAR(100)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS assignment_doc_date DATE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS engine_power_hp INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS engine_volume_l DOUBLE PRECISION"
+        ))
+        print("  \u2705  vehicles assignment+engine columns ensured (Phase 29.3)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicles assignment columns ensure failed: {e}")
+
+
+async def _ensure_vehicle_transfer_history_table(conn) -> None:
+    """Phase 29.3: CREATE vehicle_transfer_history table (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vehicle_transfer_history (
+                id SERIAL PRIMARY KEY,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                from_owner_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+                to_owner_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+                from_assigned_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+                to_assigned_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+                from_assigned_text VARCHAR(100),
+                to_assigned_text VARCHAR(100),
+                basis VARCHAR(200),
+                doc_number VARCHAR(100),
+                doc_date DATE,
+                comment TEXT,
+                changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_transfer_history_vehicle_id"
+            " ON vehicle_transfer_history (vehicle_id)"
+        ))
+        print("  \u2705  vehicle_transfer_history table ensured (Phase 29.3)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_transfer_history table ensure failed: {e}")
+
+
 async def _ensure_tasks_system_tag(conn) -> None:
     """Phase 29-02: ALTER tasks — add system_tag column + partial index (D-17, idempotent)."""
     try:

@@ -8,6 +8,7 @@ DATE COLUMNS (needed in _DATE_FIELDS for PATCH routers — plans 29-04+):
   - insurance_until
   - last_to_date
   - tech_inspection_until
+  - assignment_doc_date  (Phase 29.3)
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, Numeric,
@@ -84,6 +85,15 @@ class Vehicle(Base):
     has_spare_wheel = Column(Boolean, nullable=True)
     has_extinguisher = Column(Boolean, nullable=True)
 
+    # Принадлежность — основание передачи (Phase 29.3)
+    assignment_basis = Column(String(200), nullable=True)      # Основание для использования
+    assignment_doc_number = Column(String(100), nullable=True) # Номер документа
+    assignment_doc_date = Column(Date, nullable=True)          # Дата документа
+
+    # Двигатель (Phase 29.3)
+    engine_power_hp = Column(Integer, nullable=True)   # Мощность двигателя, л.с.
+    engine_volume_l = Column(Float, nullable=True)     # Объём двигателя, л
+
     # TO warning (D-17)
     next_to_km = Column(Integer, nullable=True)             # километраж следующего ТО
     current_odometer_km = Column(Integer, nullable=True)    # snapshot из последнего VehicleOdometer
@@ -130,4 +140,9 @@ class Vehicle(Base):
         "Trip", back_populates="vehicle",
         cascade="all, delete-orphan", lazy="selectin",
         order_by="Trip.date.desc()"
+    )
+    transfer_history = relationship(
+        "VehicleTransferHistory", back_populates="vehicle",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="VehicleTransferHistory.changed_at.desc()"
     )

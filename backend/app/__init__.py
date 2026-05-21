@@ -1215,6 +1215,7 @@ async def lifespan(app_: FastAPI):
             _ensure_trips_table, _ensure_purchases_vehicle_id,
             _ensure_users_driver_columns, _ensure_tasks_system_tag,
             _ensure_vehicles_new_columns,
+            _ensure_vehicles_assignment_columns, _ensure_vehicle_transfer_history_table,
         )
         from .database import engine as _engine_p29
         async with _engine_p29.begin() as conn:
@@ -1226,6 +1227,7 @@ async def lifespan(app_: FastAPI):
                 _ensure_vehicle_odometer_table, _ensure_fuel_logs_table,
                 _ensure_trips_table, _ensure_purchases_vehicle_id,
                 _ensure_users_driver_columns, _ensure_tasks_system_tag,
+                _ensure_vehicles_assignment_columns, _ensure_vehicle_transfer_history_table,
             ]:
                 try:
                     await fn(conn)

@@ -26,6 +26,7 @@ from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.vehicle_field_history import VehicleFieldHistory
+from app.models.vehicle_transfer_history import VehicleTransferHistory
 from app.models.organization import Organization
 from app.schemas.vehicle import (
     VehicleOut,
@@ -33,13 +34,17 @@ from app.schemas.vehicle import (
     VehicleCreate,
     VehiclePatch,
     FieldHistoryOut,
+    VehicleTransferHistoryOut,
 )
 
 router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
 
 # ─────────────────────────── Field classification ───────────────────────────
 
-_DATE_FIELDS = {"registered_at", "insurance_until", "last_to_date", "tech_inspection_until"}
+_DATE_FIELDS = {
+    "registered_at", "insurance_until", "last_to_date", "tech_inspection_until",
+    "assignment_doc_date",  # Phase 29.3
+}
 _DATETIME_FIELDS: set = set()
 _BOOL_FIELDS = {
     "has_tracker", "akb_ok", "has_radio", "mirrors_ok",
@@ -71,6 +76,9 @@ _PATCHABLE_FIELDS = {
     # Extended Голичков registry fields (Plan 29-3a2)
     "year_of_manufacture", "last_to_mileage_km", "last_to_date",
     "pts_number", "sts_number", "tech_inspection_until", "purchase_info",
+    # Phase 29.3: assignment + engine
+    "assignment_basis", "assignment_doc_number", "assignment_doc_date",
+    "engine_power_hp", "engine_volume_l",
 }
 
 
@@ -353,6 +361,38 @@ async def patch_vehicle(
     # Write history rows for changed tracked fields (D-10)
     _log_field_changes(db, vehicle, old_snapshot, new_snapshot, current_user.id, history_comment)
 
+    # Auto-history hook (Phase 29.3): record transfer if ownership/assignment changed
+    _transfer_fields = {"owner_org_id", "assigned_org_id", "assigned_text"}
+    if any(k in body for k in _transfer_fields):
+        changed_transfer = any(
+            str(old_snapshot.get(f) or '') != str(new_snapshot.get(f) or '')
+            for f in _transfer_fields
+            if f in _TRACKED_FIELDS_FOR_HISTORY or f in {"assigned_text"}
+        )
+        # Compare explicitly for assigned_text (not in _TRACKED_FIELDS_FOR_HISTORY by default)
+        old_assigned_text = old_snapshot.get("assigned_text") if "assigned_text" in old_snapshot else getattr(vehicle, "assigned_text", None)
+        # Re-check: compare old owner/assigned vs new
+        owner_changed = str(old_snapshot.get("owner_org_id")) != str(new_snapshot.get("owner_org_id"))
+        assigned_org_changed = str(old_snapshot.get("assigned_org_id")) != str(new_snapshot.get("assigned_org_id"))
+        assigned_text_changed = ("assigned_text" in body) and (
+            (body.get("assigned_text") or None) != (getattr(vehicle, "assigned_text", None))
+        )
+        if owner_changed or assigned_org_changed or assigned_text_changed:
+            db.add(VehicleTransferHistory(
+                vehicle_id=vehicle.id,
+                from_owner_org_id=old_snapshot.get("owner_org_id"),
+                to_owner_org_id=new_snapshot.get("owner_org_id"),
+                from_assigned_org_id=old_snapshot.get("assigned_org_id"),
+                to_assigned_org_id=new_snapshot.get("assigned_org_id"),
+                from_assigned_text=vehicle.assigned_text if not assigned_text_changed else None,
+                to_assigned_text=body.get("assigned_text") if "assigned_text" in body else None,
+                basis=body.get("assignment_basis") or getattr(vehicle, "assignment_basis", None),
+                doc_number=body.get("assignment_doc_number") or getattr(vehicle, "assignment_doc_number", None),
+                doc_date=_coerce_patch_value("assignment_doc_date", body.get("assignment_doc_date") or getattr(vehicle, "assignment_doc_date", None)),
+                comment=history_comment,
+                changed_by_user_id=current_user.id,
+            ))
+
     try:
         await db.commit()
         await db.refresh(vehicle)
@@ -401,6 +441,26 @@ async def get_vehicle_field_history(
     q = q.limit(limit).offset(offset)
     rows = (await db.execute(q)).scalars().all()
     return [FieldHistoryOut.model_validate(r) for r in rows]
+
+
+@router.get("/{vehicle_id}/transfer-history", response_model=List[VehicleTransferHistoryOut])
+async def get_vehicle_transfer_history(
+    vehicle_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """GET /api/vehicles/{vehicle_id}/transfer-history — история передач ТС (Phase 29.3)."""
+    vehicle = await db.get(Vehicle, vehicle_id)
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="ТС не найдено")
+    _check_vehicle_visibility(vehicle, current_user)
+
+    rows = (await db.execute(
+        select(VehicleTransferHistory)
+        .where(VehicleTransferHistory.vehicle_id == vehicle_id)
+        .order_by(VehicleTransferHistory.changed_at.desc())
+    )).scalars().all()
+    return [VehicleTransferHistoryOut.model_validate(r) for r in rows]
 
 
 @router.get("/{vehicle_id}", response_model=VehicleOut)

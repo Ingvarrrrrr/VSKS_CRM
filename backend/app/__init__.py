@@ -41,6 +41,7 @@ from .routers import vehicles_import as vehicles_import_router
 from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
+from .routers import incidents as incidents_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1356,6 +1357,7 @@ async def lifespan(app_: FastAPI):
             _ensure_trips_waybill_columns,
             _ensure_waybill_children_tables,
             _ensure_checklists_tables,
+            _ensure_incidents_table,
         )
         from .database import engine as _engine_p30
         async with _engine_p30.begin() as conn:
@@ -1363,6 +1365,7 @@ async def lifespan(app_: FastAPI):
                 _ensure_trips_waybill_columns,
                 _ensure_waybill_children_tables,
                 _ensure_checklists_tables,
+                _ensure_incidents_table,
                 _ensure_fleet_documents_table,
                 _ensure_organizations_geo_fields,
                 _ensure_users_driver_extended,
@@ -1597,6 +1600,7 @@ app.include_router(trips.router)                       # /api/trips
 app.include_router(vehicle_fines.router)               # /api/vehicle-fines
 app.include_router(fleet_documents_router.router)      # /api/fleet-documents
 app.include_router(checklists_router.router)           # /api/checklists
+app.include_router(incidents_router.router)            # /api/incidents
 
 
 @app.get("/api/diag/version")

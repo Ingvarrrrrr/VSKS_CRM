@@ -936,6 +936,41 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_incidents_table(conn) -> None:
+    """Phase 30: CREATE incidents table (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS incidents (
+                id SERIAL PRIMARY KEY,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                driver_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                waybill_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                incident_type VARCHAR(20) NOT NULL,
+                severity VARCHAR(20) NOT NULL DEFAULT 'medium',
+                affected_system VARCHAR(50),
+                is_operational BOOLEAN,
+                location VARCHAR(500),
+                description TEXT NOT NULL,
+                photos JSONB NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at TIMESTAMPTZ,
+                notify_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_incidents_vehicle_id ON incidents (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_incidents_created_at ON incidents (created_at)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_incidents_severity ON incidents (severity)"
+        ))
+        print("  \u2705  incidents table ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   incidents table ensure failed: {e}")
+
+
 async def _ensure_checklists_tables(conn) -> None:
     """Phase 30: CREATE checklists + checklist_items tables (idempotent)."""
     try:

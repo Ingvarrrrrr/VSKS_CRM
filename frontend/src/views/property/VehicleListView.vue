@@ -156,7 +156,7 @@
 
     <!-- Table -->
     <v-data-table-server
-      :headers="cfg.visibleHeaders"
+      :headers="dtHeaders"
       :items="Array.isArray(vehicles) ? vehicles : []"
       :loading="loading"
       :items-length="total"
@@ -574,6 +574,13 @@ const allColumns: ColumnDef[] = [
 // и при следующей загрузке создаётся новый пустой ключ → fallback на allColumns.
 // Per-user изоляция не нужна — localStorage уже per-browser.
 const cfg = useColumnConfig('vehicles_list', allColumns)
+
+// Workaround Vuetify v-data-table dev-mode bug: `:headers="cfg.visibleHeaders"`
+// иногда падает с `_headers.slice is not a function` потому что Vuetify watcher
+// получает Vue reactive Proxy на массив, и `.slice()` теряется через прокси.
+// Plain-array copy через Array.from стабилизирует — prod-build не падает,
+// dev (Vite + Vuetify HMR) — да.
+const dtHeaders = computed(() => Array.from(cfg.visibleHeaders.value ?? []))
 
 // ─────────────── Lookup Maps ───────────────
 

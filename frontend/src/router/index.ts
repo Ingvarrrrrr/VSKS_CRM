@@ -415,8 +415,11 @@ router.beforeEach(async (to, _, next) => {
     return next('/')
   }
 
-  // Superadmin bypass (D-05.3)
-  if (role === 'superadmin') {
+  // Superadmin / admin bypass (D-05.3 + защита от пустого effectiveTabs у admin без org_id —
+  // на проде admin привязан к ВСКС и tabs наполнены, локально/после wipe LS admin может
+  // оказаться без org → пустые tabs → бесконечный redirect на /my-tasks. Админ всё равно
+  // имеет полный доступ по матрице, поэтому пропускаем guard).
+  if (role === 'superadmin' || role === 'admin') {
     return next()
   }
 
@@ -429,6 +432,9 @@ router.beforeEach(async (to, _, next) => {
   // D-01(a): route-level enforcement — if route declares a tab_key, user must have it
   const tabKey = to.meta.tab_key as string | undefined
   if (tabKey && !authStore.hasTab(tabKey)) {
+    // Защита от бесконечного редиректа: если /my-tasks сам требует tab_key, которого нет,
+    // не редиректим обратно на /my-tasks — пропускаем (fail-open для fallback роута).
+    if (to.path === '/my-tasks') return next()
     return next('/my-tasks')
   }
 

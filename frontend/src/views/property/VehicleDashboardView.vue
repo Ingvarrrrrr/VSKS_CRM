@@ -615,9 +615,13 @@ const filteredVehicles = computed(() => {
     list = list.filter(v => v.type && selectedTypes.value.includes(v.type))
   }
 
-  // Region filter (multi)
+  // Region filter (multi) — match against assigned_text with trim,
+  // consistent with backend by_region which uses coalesce(assigned_text, 'Не указан')
   if (selectedRegions.value.length) {
-    list = list.filter(v => v.assigned_text && selectedRegions.value.includes(v.assigned_text))
+    list = list.filter(v => {
+      const vRegion = (v.assigned_text || '').trim() || 'Не указан'
+      return selectedRegions.value.includes(vRegion)
+    })
   }
 
   return list

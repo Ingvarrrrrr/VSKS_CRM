@@ -759,9 +759,30 @@ function fmtTs(ts: string): string {
   }
 }
 
-function onExport() {
-  // placeholder — wire up full export in a future plan
-  console.log('[VehicleDash] export')
+async function onExport() {
+  const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
+  const params = new URLSearchParams()
+  if (activeFilter.value && activeFilter.value !== 'all' && activeFilter.value !== 'docs_expiring') {
+    params.set('state', activeFilter.value)
+  }
+  if (selectedTypes.value.length === 1) params.set('type', selectedTypes.value[0])
+  const url = `/api/vehicles/export/excel${params.toString() ? '?' + params.toString() : ''}`
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const dlUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = dlUrl
+    a.download = `vehicles_${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(dlUrl)
+  } catch (e) {
+    console.error('[VehicleDash] export failed:', e)
+    alert('Ошибка экспорта')
+  }
 }
 
 function goToTripPicker() {

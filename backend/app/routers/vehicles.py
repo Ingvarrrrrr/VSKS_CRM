@@ -16,6 +16,7 @@ Registration in __init__.py done in separate commit after Wave 1 (per plan const
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, date, timezone
 from typing import Any, List, Optional
@@ -280,6 +281,111 @@ async def list_vehicles(
         "items": [_enrich_list_item(v, org_map, org_data) for v in items],
         "total": total,
     }
+
+
+@router.get("/export/excel")
+async def export_excel(
+    state: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Excel-выгрузка списка ТС. Применяет те же фильтры что list endpoint."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from fastapi.responses import StreamingResponse
+
+    q = select(Vehicle).options(
+        selectinload(Vehicle.owner_org),
+        selectinload(Vehicle.assigned_org),
+    )
+    if state:
+        if state == 'in_repair':
+            q = q.where(Vehicle.state.in_(['in_repair', 'broken', 'needs_repair']))
+        elif state in ('not_running', 'disposal'):
+            q = q.where(Vehicle.state.in_(['destroyed', 'utilized']))
+        else:
+            q = q.where(Vehicle.state == state)
+    if type:
+        q = q.where(Vehicle.type == type)
+    org_ids = get_org_filter(user)
+    if org_ids is not None:
+        q = q.where(Vehicle.owner_org_id.in_(org_ids))
+
+    vehicles = (await db.execute(q.order_by(Vehicle.plate))).scalars().all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Автотранспорт"
+    headers = [
+        '№', 'Гос. №', 'Марка', 'Модель', 'Год вып.', 'Цвет', 'VIN',
+        'Тип', 'Состояние', 'Владелец', 'Эксплуатат',
+        'ПТС', 'СТС', 'ОСАГО до', 'Тех.осмотр до',
+        'Топливо', 'Текущий пробег, км', 'Последнее ТО, км', 'Дата ТО',
+        'Следующее ТО, км', 'Мощность, л.с.', 'Объём, л',
+        'Основание', '№ dok', 'Дата dok',
+    ]
+    bold = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(1, c, h)
+        cell.font = bold
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    TYPE_LABEL = {
+        'car_light': 'Легковой', 'suv': 'Внедорожник', 'pickup': 'Пикап',
+        'minivan': 'Минивэн', 'truck_van': 'Фургон', 'truck_board': 'Грузовой',
+        'truck_tank': 'Цистерна', 'truck_metal': 'Металловоз', 'bus': 'Автобус',
+        'special': 'Спецтехника', 'quadbike': 'Квадроцикл', 'snowmobile': 'Снегоход',
+        'boat': 'Лодка', 'boat_motor': 'Лод. мотор', 'trailer': 'Прицеп', 'other': 'Другой',
+    }
+    STATE_LABEL = {
+        'working': 'Рабочее', 'in_repair': 'В ремонте', 'broken': 'Сломан',
+        'needs_repair': 'Требует ремонта', 'destroyed': 'Уничтожен', 'utilized': 'Утилизирован',
+    }
+
+    for r, v in enumerate(vehicles, 2):
+        owner = v.owner_org.name if v.owner_org else ''
+        assigned = (v.assigned_org.name if v.assigned_org else None) or v.assigned_text or ''
+        row = [
+            r - 1,
+            v.plate or '',
+            v.brand or '', v.model or '', v.year_of_manufacture or '',
+            v.color or '', v.vin or '',
+            TYPE_LABEL.get(v.type, v.type or ''),
+            STATE_LABEL.get(v.state, v.state or ''),
+            owner, assigned,
+            v.pts_number or '', v.sts_number or '',
+            v.insurance_until.strftime('%d.%m.%Y') if v.insurance_until else '',
+            v.tech_inspection_until.strftime('%d.%m.%Y') if v.tech_inspection_until else '',
+            v.fuel_type or '',
+            v.current_odometer_km or '',
+            v.last_to_mileage_km or '',
+            v.last_to_date.strftime('%d.%m.%Y') if v.last_to_date else '',
+            v.next_to_km or '',
+            v.engine_power_hp or '',
+            v.engine_volume_l or '',
+            v.assignment_basis or '',
+            v.assignment_doc_number or '',
+            v.assignment_doc_date.strftime('%d.%m.%Y') if v.assignment_doc_date else '',
+        ]
+        for c, val in enumerate(row, 1):
+            ws.cell(r, c, val)
+
+    for col_letter, header in zip('ABCDEFGHIJKLMNOPQRSTUVWXY', headers):
+        ws.column_dimensions[col_letter].width = max(12, min(len(header) + 2, 30))
+    ws.freeze_panes = 'A2'
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': 'attachment; filename="vehicles.xlsx"'},
+    )
 
 
 @router.post("", response_model=VehicleOut, status_code=201)

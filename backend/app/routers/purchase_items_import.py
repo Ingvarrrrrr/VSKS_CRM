@@ -1316,6 +1316,188 @@ def _smart_import_image_ocr(content: bytes, filename: str) -> dict:
     }
 
 
+def _smart_import_xlsx_direct(content: bytes) -> tuple[list[dict], list[str]]:
+    """Direct XLSX parser without markitdown — устойчив к опечаткам в заголовке,
+    разделам-подзаголовкам в середине, multi-line cells, merged headers.
+
+    Returns (preview_rows, columns_found).
+    Каждый dict в preview_rows: item_name, item_type, quantity, unit, unit_price, total_price.
+    """
+    import re as _re
+    if load_workbook is None:
+        return [], []
+    wb = load_workbook(BytesIO(content), read_only=False, data_only=True)
+
+    # Header keywords (substring match, case-insensitive, tolerant к опечаткам через 'in')
+    HEADER_PATTERNS = {
+        'item_name': ['наимен', 'товар', 'позици', 'описан', 'материал', 'предмет'],
+        'item_type': ['тип', 'вид'],
+        'quantity': ['колич', 'кол-во', 'кол.', 'кол ', 'кол.во', 'qty'],  # ловит "Количечество"
+        'unit': ['ед.из', 'ед. изм', 'едизм', 'единиц', 'unit'],
+        'unit_price': ['цена за ед', 'цена ед', 'цена/ед', 'цена', 'unit price', 'стоимость ед'],
+        'total_price': ['сумма', 'итого', 'стоимость', 'total'],
+    }
+
+    all_rows: list[list] = []  # объединяем все sheets
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            all_rows.append(list(row))
+
+    def _classify_header(row: list) -> dict:
+        """Return dict {col_idx -> field_key} для cells матчащихся к HEADER_PATTERNS."""
+        mapping: dict[int, str] = {}
+        for idx, cell in enumerate(row):
+            if cell is None:
+                continue
+            text = str(cell).lower().strip()
+            if not text:
+                continue
+            for field, patterns in HEADER_PATTERNS.items():
+                if any(p in text for p in patterns):
+                    if field not in mapping.values():  # первый match выигрывает
+                        mapping[idx] = field
+                    break
+        return mapping
+
+    header_idx = -1
+    col_map: dict[int, str] = {}
+    for i, row in enumerate(all_rows):
+        mapping = _classify_header(row)
+        # Минимум: item_name + ещё хотя бы одна колонка
+        if 'item_name' in mapping.values() and len(mapping) >= 2:
+            header_idx = i
+            col_map = mapping
+            break
+
+    if header_idx == -1:
+        return [], []
+
+    # Inverse map: field -> col_idx
+    field_to_idx = {v: k for k, v in col_map.items()}
+    columns_found = list(field_to_idx.keys())
+
+    def _to_dec(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return Decimal(str(v))
+        try:
+            s = str(v).strip().replace(',', '.').replace(' ', '').replace('\xa0', '')
+            if not s or s in ('-', '—', '–'):
+                return None
+            return Decimal(s)
+        except Exception:
+            return None
+
+    def _get_cell(row: list, field: str):
+        idx = field_to_idx.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        return v if v not in (None, '') else None
+
+    TYPE_MAP = {
+        'товар': 'товар', 'товары': 'товар',
+        'услуга': 'услуга', 'услуги': 'услуга',
+        'работа': 'работа', 'работы': 'работа',
+    }
+
+    preview: list[dict] = []
+    for row in all_rows[header_idx + 1:]:
+        name_val = _get_cell(row, 'item_name')
+        if name_val is None:
+            continue
+        name = str(name_val).strip().replace('\n', ' ').replace('\r', ' ')
+        name = _re.sub(r'\s+', ' ', name)
+        if not name:
+            continue
+        # Пропускаем разделы-подзаголовки: нет ни qty, ни цены, ни суммы
+        qty = _to_dec(_get_cell(row, 'quantity'))
+        unit_price = _to_dec(_get_cell(row, 'unit_price'))
+        total_price = _to_dec(_get_cell(row, 'total_price'))
+        if qty is None and unit_price is None and total_price is None:
+            continue
+        # Вычисляем недостающее
+        if unit_price is None and total_price is not None and qty:
+            try:
+                unit_price = total_price / qty
+            except Exception:
+                pass
+        if total_price is None and unit_price is not None and qty:
+            total_price = unit_price * qty
+        unit_val = _get_cell(row, 'unit')
+        unit = str(unit_val).strip() if unit_val else 'шт'
+        type_val = _get_cell(row, 'item_type')
+        item_type = TYPE_MAP.get(str(type_val).lower().strip() if type_val else '', 'товар')
+        preview.append({
+            'item_name': name,
+            'item_type': item_type,
+            'quantity': float(qty) if qty else None,
+            'unit': unit,
+            'unit_price': float(unit_price) if unit_price else None,
+            'total_price': float(total_price) if total_price else None,
+        })
+    return preview, columns_found
+
+
+async def _save_smart_preview_to_purchase(
+    pid: int,
+    preview: list[dict],
+    purchase,
+    db: AsyncSession,
+    current_user,
+) -> dict:
+    """Сохраняет preview-строки в БД как PurchaseItem'ы.
+    Переиспользуется как из xlsx-ветки, так и (потенциально) из markitdown-ветки.
+    """
+    org_id = get_single_org_id(current_user)
+    prod_q = select(Product)
+    if org_id:
+        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    products = (await db.execute(prod_q)).scalars().all()
+    product_by_name = {(p.name or "").lower().strip(): p for p in products}
+
+    added = matched_catalog = new_in_catalog = 0
+    for row_data in preview:
+        item_name = (row_data["item_name"] or "")[:500]
+        qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
+        unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
+        total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
+        # 1) exact match (fast path)
+        matched = product_by_name.get(item_name.lower().strip())
+        if not matched:
+            # 2) fuzzy fallback
+            best_score = 0.0
+            best_candidate = None
+            for _key, _p in product_by_name.items():
+                _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
+                if _s > best_score:
+                    best_score = _s
+                    best_candidate = _p
+            if best_score >= _SCORE_AUTO and best_candidate is not None:
+                matched = best_candidate
+        if matched:
+            product_id = matched.id
+            matched_catalog += 1
+            if not unit_price and matched.price:
+                unit_price = matched.price
+                total_price = qty * unit_price
+        else:
+            product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
+            new_in_catalog += 1
+        if total_price is None and unit_price:
+            total_price = qty * unit_price
+        db.add(PurchaseItem(
+            purchase_id=pid, product_id=product_id,
+            item_name=item_name, item_type=row_data["item_type"],
+            quantity=qty, unit=row_data["unit"],
+            unit_price=unit_price, total_price=total_price,
+        ))
+        added += 1
+    await db.commit()
+    return {"ok": True, "added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog}
+
+
 @router.post("/{pid}/items/import-smart")
 async def import_items_smart(
     pid: int,
@@ -1417,6 +1599,25 @@ async def import_items_smart(
     else:
         file_type = "docx"
 
+    # 27.4-26: для XLSX обходим markitdown — direct openpyxl парсинг устойчивее
+    # к опечаткам в header'е (напр. "Количечество"), разделам-подзаголовкам и multi-line cells.
+    if file_type == "excel":
+        try:
+            xlsx_preview, xlsx_columns = _smart_import_xlsx_direct(content)
+        except Exception as _e:
+            logger.warning("Direct XLSX parser failed: %s — fallback to markitdown", _e)
+            xlsx_preview, xlsx_columns = [], []
+        if xlsx_preview:
+            if not confirm:
+                return {
+                    "preview": xlsx_preview[:200],
+                    "total_rows": len(xlsx_preview),
+                    "file_type": file_type,
+                    "columns_found": xlsx_columns,
+                }
+            return await _save_smart_preview_to_purchase(pid, xlsx_preview, purchase, db, current_user)
+        # Если direct-parser не нашёл строк — fallback на markitdown (ниже)
+
     # --- Stage 1: Convert to Markdown via markitdown ---
     from app.utils.document_to_markdown import (
         file_to_markdown, parse_markdown_tables, pick_best_table, detect_columns,
@@ -1502,58 +1703,13 @@ async def import_items_smart(
         }
 
     data_rows = best_table[best_header_row + 1:]
-    preview = [r for r in (_parse_row(row) for row in data_rows[:100]) if r]
+    preview = [r for r in (_parse_row(row) for row in data_rows[:200]) if r]
 
     if not confirm:
         return {"preview": preview, "total_rows": len(preview), "file_type": file_type, "columns_found": list(best_col.keys())}
 
-    # Save items to DB
-    org_id = get_single_org_id(current_user)
-    prod_q = select(Product)
-    if org_id:
-        prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
-    products = (await db.execute(prod_q)).scalars().all()
-    product_by_name = {(p.name or "").lower().strip(): p for p in products}
-
-    added = matched_catalog = new_in_catalog = 0
-    for row_data in preview:
-        item_name = (row_data["item_name"] or "")[:500]
-        qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
-        unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
-        total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
-        # 1) exact match (fast path)
-        matched = product_by_name.get(item_name.lower().strip())
-        if not matched:
-            # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
-            best_score = 0.0
-            best_candidate = None
-            for _key, _p in product_by_name.items():
-                _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
-                if _s > best_score:
-                    best_score = _s
-                    best_candidate = _p
-            if best_score >= _SCORE_AUTO and best_candidate is not None:
-                matched = best_candidate
-        if matched:
-            product_id = matched.id
-            matched_catalog += 1
-            if not unit_price and matched.price:
-                unit_price = matched.price
-                total_price = qty * unit_price
-        else:
-            product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
-            new_in_catalog += 1
-        if total_price is None and unit_price:
-            total_price = qty * unit_price
-        db.add(PurchaseItem(
-            purchase_id=pid, product_id=product_id,
-            item_name=item_name, item_type=row_data["item_type"],
-            quantity=qty, unit=row_data["unit"],
-            unit_price=unit_price, total_price=total_price,
-        ))
-        added += 1
-    await db.commit()
-    return {"added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog}
+    # Save items to DB (markitdown path — xlsx теперь идёт через _save_smart_preview_to_purchase)
+    return await _save_smart_preview_to_purchase(pid, preview, purchase, db, current_user)
 
 
 # ---------------------------------------------------------------------------

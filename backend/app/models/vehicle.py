@@ -146,3 +146,8 @@ class Vehicle(Base):
         cascade="all, delete-orphan", lazy="selectin",
         order_by="VehicleTransferHistory.changed_at.desc()"
     )
+    fines = relationship(
+        "VehicleFine", back_populates="vehicle",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="VehicleFine.issued_at.desc()"
+    )

@@ -38,6 +38,7 @@ from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_a
 from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
+from .routers import vehicle_fines
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1222,6 +1223,7 @@ async def lifespan(app_: FastAPI):
             _ensure_users_driver_columns, _ensure_tasks_system_tag,
             _ensure_vehicles_new_columns,
             _ensure_vehicles_assignment_columns, _ensure_vehicle_transfer_history_table,
+            _ensure_vehicle_fines_table,
         )
         from .database import engine as _engine_p29
         async with _engine_p29.begin() as conn:
@@ -1234,6 +1236,7 @@ async def lifespan(app_: FastAPI):
                 _ensure_trips_table, _ensure_purchases_vehicle_id,
                 _ensure_users_driver_columns, _ensure_tasks_system_tag,
                 _ensure_vehicles_assignment_columns, _ensure_vehicle_transfer_history_table,
+                _ensure_vehicle_fines_table,
             ]:
                 try:
                     await fn(conn)
@@ -1511,6 +1514,7 @@ app.include_router(vehicle_repairs.router)             # /api/vehicle-repairs
 app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
 app.include_router(fuel_logs.router)                   # /api/fuel-logs
 app.include_router(trips.router)                       # /api/trips
+app.include_router(vehicle_fines.router)               # /api/vehicle-fines
 
 
 @app.get("/api/diag/version")

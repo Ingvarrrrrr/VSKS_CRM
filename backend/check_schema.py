@@ -876,6 +876,42 @@ async def _ensure_vehicle_transfer_history_table(conn) -> None:
         print(f"  \u26a0\ufe0f   vehicle_transfer_history table ensure failed: {e}")
 
 
+async def _ensure_vehicle_fines_table(conn) -> None:
+    """Phase 29.3-fines: CREATE vehicle_fines table with indexes (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS vehicle_fines (
+                id SERIAL PRIMARY KEY,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                issued_at TIMESTAMPTZ NOT NULL,
+                amount NUMERIC(12, 2) NOT NULL,
+                doc_number VARCHAR(100),
+                violation_type VARCHAR(200),
+                location VARCHAR(500),
+                status VARCHAR(20) NOT NULL DEFAULT 'unpaid',
+                paid_at TIMESTAMPTZ,
+                comment TEXT,
+                driver_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                driver_external_id INTEGER REFERENCES external_drivers(id) ON DELETE SET NULL,
+                matched_trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_fines_vehicle_id ON vehicle_fines (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_fines_issued_at ON vehicle_fines (issued_at)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_vehicle_fines_status ON vehicle_fines (status)"
+        ))
+        print("  \u2705  vehicle_fines table ensured (Phase 29.3-fines)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   vehicle_fines table ensure failed: {e}")
+
+
 async def _ensure_tasks_system_tag(conn) -> None:
     """Phase 29-02: ALTER tasks — add system_tag column + partial index (D-17, idempotent)."""
     try:

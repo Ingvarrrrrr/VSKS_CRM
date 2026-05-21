@@ -55,3 +55,4 @@ from app.models.fuel_log import FuelLog  # noqa: F401
 from app.models.external_driver import ExternalDriver  # noqa: F401
 from app.models.trip import Trip  # noqa: F401
 from app.models.vehicle_transfer_history import VehicleTransferHistory  # noqa: F401 — Phase 29.3
+from app.models.vehicle_fine import VehicleFine  # noqa: F401 — Phase 29.3 fines

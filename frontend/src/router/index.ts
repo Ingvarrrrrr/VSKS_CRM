@@ -355,7 +355,64 @@ const router = createRouter({
       component: () => import('../views/PaymentRegistryView.vue'),
       meta: { requiresAuth: true, title: 'Реестр платежей', tab_key: 'payment_registry' }
     },
-    // Property / Vehicle fleet (Phase 29)
+    // Phase 30 — redirects: /property/vehicles/* → /fleet/*
+    { path: '/property/vehicles', redirect: '/fleet/vehicles' },
+    { path: '/property/vehicles/dashboard', redirect: '/fleet' },
+    { path: '/property/vehicles/:id(\\d+)', redirect: (to) => `/fleet/vehicles/${to.params.id}` },
+    { path: '/property/vehicles/:id(\\d+)/preview', redirect: (to) => `/fleet/vehicles/${to.params.id}` },
+
+    // Phase 30 — Fleet module routes (/fleet/*)
+    {
+      path: '/fleet',
+      name: 'fleet-dashboard',
+      component: () => import('../views/property/VehicleDashboardView.vue'),
+      meta: { requiresAuth: true, title: 'Автопарк — Дашборд', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/vehicles',
+      name: 'fleet-vehicles-list',
+      component: () => import('../views/property/VehicleListView.vue'),
+      meta: { requiresAuth: true, title: 'Автопарк — Реестр ТС', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/vehicles/:id(\\d+)',
+      name: 'fleet-vehicle-detail',
+      component: () => import('../views/property/VehicleDetailView.vue'),
+      props: true,
+      meta: { requiresAuth: true, title: 'Карточка ТС', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/documents',
+      name: 'fleet-documents',
+      component: () => import('../views/fleet/FleetDocumentsView.vue'),
+      meta: { requiresAuth: true, title: 'Документы парка', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/regions',
+      name: 'fleet-regions',
+      component: () => import('../views/fleet/FleetRegionsView.vue'),
+      meta: { requiresAuth: true, title: 'Регионы и штабы', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/fines',
+      name: 'fleet-fines',
+      component: () => import('../views/fleet/FleetFinesView.vue'),
+      meta: { requiresAuth: true, title: 'Штрафы', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/waybills',
+      name: 'fleet-waybills',
+      component: () => import('../views/fleet/FleetWaybillsListView.vue'),
+      meta: { requiresAuth: true, title: 'Путевые листы', tab_key: 'vehicles' },
+    },
+    {
+      path: '/fleet/waybills/:id(\\d+|new)',
+      name: 'fleet-waybill-form',
+      component: () => import('../views/fleet/FleetWaybillFormView.vue'),
+      meta: { requiresAuth: true, title: 'Путевой лист', tab_key: 'vehicles' },
+    },
+
+    // Property / Vehicle fleet (Phase 29) — kept for backward-compat (redirected above)
     {
       path: '/property/vehicles',
       name: 'vehicles',

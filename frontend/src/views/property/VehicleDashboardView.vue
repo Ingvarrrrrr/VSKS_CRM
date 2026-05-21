@@ -321,13 +321,8 @@
       <FineLeadersPodiumWidget />
     </section>
 
-    <!-- ── Drill-down dialog ── -->
-    <VehicleDrillDialog
-      v-if="drillOpen"
-      v-model="drillOpen"
-      :dimension="drillDimension"
-      :value="drillValue"
-    />
+    <!-- Phase 29.3-drill: VehicleDrillDialog УБРАН — клик по плашке/региону теперь
+         router.push на /property/vehicles с query-фильтром (см. openDrill ниже). -->
   </div>
 </template>
 
@@ -339,7 +334,6 @@ import { apiFetch } from '@/api'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
-import VehicleDrillDialog from '@/components/vehicles/VehicleDrillDialog.vue'
 
 const router = useRouter()
 const theme = useTheme()
@@ -382,14 +376,26 @@ const selectedTypes = ref<string[]>([])
 const selectedRegions = ref<string[]>([])
 
 // ── Drill dialog ─────────────────────────────────────────────────────────────
-const drillOpen = ref(false)
-const drillDimension = ref('')
-const drillValue = ref('')
+// Phase 29.3-drill: drill-down диалог УБРАН по фидбэку (всплывающий список не нужен).
+// Клик по плашке → редирект на /property/vehicles с примененным фильтром через query.
+const STATE_LABEL_TO_CODE: Record<string, string> = {
+  'Работает': 'working',
+  'В ремонте': 'in_repair',
+  'Уничтожен': 'destroyed',
+  'Сломан': 'broken',
+}
 
 function openDrill(dimension: string, value: string) {
-  drillDimension.value = dimension
-  drillValue.value = value
-  drillOpen.value = true
+  if (dimension === 'donut_state') {
+    const code = STATE_LABEL_TO_CODE[value] ?? ''
+    if (code) router.push({ path: '/property/vehicles', query: { state: code } })
+  } else if (dimension === 'region') {
+    router.push({ path: '/property/vehicles', query: { region: value } })
+  } else if (dimension === 'type') {
+    router.push({ path: '/property/vehicles', query: { type: value } })
+  } else {
+    router.push('/property/vehicles')
+  }
 }
 
 // ── KPI ──────────────────────────────────────────────────────────────────────

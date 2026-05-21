@@ -139,12 +139,32 @@
               {{ reg.region }}
               <small v-if="reg.shtab_label">{{ reg.shtab_label }}</small>
             </div>
-            <div class="fleet-reg__bar">
-              <i
-                :style="`width:${regBarWidth(reg)}%`"
-                :class="regBarClass(reg)"
-              ></i>
-              <span class="fleet-reg__bar-lbl">{{ regBarLabel(reg) }}</span>
+            <div
+              class="fleet-reg__bar"
+              :style="{ width: (regSegments(reg).total_w) + '%' }"
+              :title="`${reg.region} — всего ${reg.count}\nРабочих: ${regSegments(reg).working}\nВ ремонте: ${regSegments(reg).inRepair}${regSegments(reg).broken ? '\nНе на ходу: ' + regSegments(reg).broken : ''}`"
+            >
+              <div
+                v-if="regSegments(reg).working_w > 0"
+                class="fleet-reg__seg fleet-reg__seg--working"
+                :style="{ width: regSegments(reg).working_pct + '%' }"
+              >
+                <span v-if="regSegments(reg).working_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).working }} раб.</span>
+              </div>
+              <div
+                v-if="regSegments(reg).in_repair_w > 0"
+                class="fleet-reg__seg fleet-reg__seg--repair"
+                :style="{ width: regSegments(reg).in_repair_pct + '%' }"
+              >
+                <span v-if="regSegments(reg).in_repair_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).inRepair }} рем.</span>
+              </div>
+              <div
+                v-if="regSegments(reg).broken_w > 0"
+                class="fleet-reg__seg fleet-reg__seg--broken"
+                :style="{ width: regSegments(reg).broken_pct + '%' }"
+              >
+                <span v-if="regSegments(reg).broken_w > 5" class="fleet-reg__seg-lbl">{{ regSegments(reg).broken }}</span>
+              </div>
             </div>
             <div class="fleet-reg__cnt">{{ reg.count }}</div>
           </div>
@@ -483,26 +503,24 @@ const loadingRegions = ref(false)
 
 const availableRegions = computed(() => regionItems.value.map(r => r.region).filter(Boolean))
 
-const maxRegionCount = computed(() => Math.max(...regionItems.value.map(r => r.count), 1))
+const MAX_REG_COUNT = computed(() => Math.max(...regionItems.value.map(r => r.count), 1))
 
-function regBarWidth(reg: RegionItem): number {
-  return Math.round((reg.count / maxRegionCount.value) * 96)
-}
-
-function regBarClass(reg: RegionItem): string {
-  const inRepair = (reg.by_state['in_repair'] || 0) + (reg.by_state['broken'] || 0)
-  if (inRepair > reg.count * 0.5) return 'fleet-reg__bar-i--warn'
-  if (reg.by_state['working'] === reg.count) return 'fleet-reg__bar-i--ok'
-  return ''
-}
-
-function regBarLabel(reg: RegionItem): string {
-  const w = reg.by_state['working'] || 0
-  const r = (reg.by_state['in_repair'] || 0) + (reg.by_state['broken'] || 0)
-  const parts = []
-  if (r) parts.push(`${r} в ремонте`)
-  if (w) parts.push(`${w} рабочих`)
-  return parts.join(' · ') || `${reg.count} ТС`
+function regSegments(reg: RegionItem) {
+  const bs = reg.by_state || {}
+  const working = bs['working'] || 0
+  const inRepair = (bs['in_repair'] || 0) + (bs['broken'] || 0) + (bs['needs_repair'] || 0)
+  const broken = (bs['destroyed'] || 0) + (bs['utilized'] || 0)
+  const max = MAX_REG_COUNT.value
+  const total = reg.count
+  const total_w = Math.round((total / max) * 96)
+  const working_w = Math.round((working / max) * 96)
+  const in_repair_w = Math.round((inRepair / max) * 96)
+  const broken_w = Math.round((broken / max) * 96)
+  // pct values are relative to total bar width (100%)
+  const working_pct = total > 0 ? Math.round((working / total) * 100) : 0
+  const in_repair_pct = total > 0 ? Math.round((inRepair / total) * 100) : 0
+  const broken_pct = total > 0 ? 100 - working_pct - in_repair_pct : 0
+  return { working, inRepair, broken, total_w, working_w, in_repair_w, broken_w, working_pct, in_repair_pct, broken_pct }
 }
 
 async function fetchRegions() {
@@ -1037,35 +1055,36 @@ onMounted(() => {
 }
 
 .fleet-reg__bar {
-  flex: 1;
-  height: 24px;
-  background: rgba(255,255,255,.04);
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 28px;
   border-radius: 8px;
   overflow: hidden;
+  background: var(--bg-2, rgba(255,255,255,.04));
   position: relative;
   border: 1px solid var(--line);
+  transition: width 0.3s ease;
 }
 
-.fleet-reg__bar i {
-  display: block;
-  height: 100%;
-  border-radius: 7px;
-  background: linear-gradient(90deg, #6aa6ff, #8b5cf6);
-  transition: width .4s ease;
+.fleet-reg__seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: width 0.3s ease;
+  min-width: 0;
 }
 
-.fleet-reg__bar i.fleet-reg__bar-i--ok { background: linear-gradient(90deg, #22c997, #5dd0ff); }
-.fleet-reg__bar i.fleet-reg__bar-i--warn { background: linear-gradient(90deg, #f6b34a, #ff8a4a); }
+.fleet-reg__seg--working { background: linear-gradient(90deg, #22c997, #5dd0ff); }
+.fleet-reg__seg--repair  { background: linear-gradient(90deg, #f6b34a, #ff8a4a); }
+.fleet-reg__seg--broken  { background: linear-gradient(90deg, #ff5b6a, #ff3b8b); }
 
-.fleet-reg__bar-lbl {
-  position: absolute;
-  top: 0;
-  left: 8px;
-  line-height: 24px;
-  font-weight: 700;
-  font-size: 11.5px;
-  color: #cfe1ff;
-}
+.fleet-reg__seg-lbl { padding: 0 8px; }
 
 .fleet-reg__cnt {
   flex: 0 0 50px;

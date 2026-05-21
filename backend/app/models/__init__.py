@@ -58,3 +58,4 @@ from app.models.vehicle_transfer_history import VehicleTransferHistory  # noqa: 
 from app.models.vehicle_fine import VehicleFine  # noqa: F401 — Phase 29.3 fines
 from app.models.fleet_document import FleetDocument  # noqa: F401 — Phase 30 vehicle documents
 from app.models.waybill_children import RouteStop, OdometerReading, FuelRefill  # noqa: F401 — Phase 30
+from app.models.checklist import Checklist, ChecklistItem  # noqa: F401 — Phase 30

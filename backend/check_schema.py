@@ -936,6 +936,49 @@ async def _ensure_organizations_color(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations.color ensure failed: {e}")
 
 
+async def _ensure_checklists_tables(conn) -> None:
+    """Phase 30: CREATE checklists + checklist_items tables (idempotent)."""
+    try:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS checklists (
+                id SERIAL PRIMARY KEY,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                driver_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                waybill_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                type VARCHAR(20) NOT NULL,
+                overall_state VARCHAR(20),
+                fuel_level VARCHAR(20),
+                paint_condition VARCHAR(50),
+                notes TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                signed_at TIMESTAMPTZ
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_checklists_vehicle_id ON checklists (vehicle_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_checklists_waybill_id ON checklists (waybill_id)"
+        ))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS checklist_items (
+                id SERIAL PRIMARY KEY,
+                checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+                key VARCHAR(50) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                photo_url VARCHAR(500),
+                photo_data BYTEA,
+                note TEXT
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_checklist_items_checklist_id ON checklist_items (checklist_id)"
+        ))
+        print("  \u2705  checklists + checklist_items tables ensured (Phase 30)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   checklists tables ensure failed: {e}")
+
+
 async def _ensure_waybill_children_tables(conn) -> None:
     """Phase 30: CREATE waybill child tables — RouteStop, OdometerReading, FuelRefill (idempotent)."""
     try:

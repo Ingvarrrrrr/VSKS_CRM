@@ -1234,11 +1234,16 @@ async def filter_counts(
     state_map = {r.state: r.cnt for r in state_rows}
 
     working = state_map.get("working", 0)
-    in_repair = state_map.get("in_repair", 0) + state_map.get("broken", 0)
+    # in_repair bucket mirrors frontend filteredVehicles: ['in_repair', 'broken', 'needs_repair']
+    in_repair = (
+        state_map.get("in_repair", 0)
+        + state_map.get("broken", 0)
+        + state_map.get("needs_repair", 0)
+    )
+    # not_running bucket: destroyed + utilized (списаны/утилизированы)
     not_running = (
         state_map.get("destroyed", 0)
         + state_map.get("utilized", 0)
-        + state_map.get("needs_repair", 0)
     )
 
     # No report in 30d: working vehicles with NO odometer record in last 30 days

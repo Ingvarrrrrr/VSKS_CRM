@@ -103,8 +103,102 @@
 
       <v-tabs-window v-model="activeTab">
 
-        <!-- ─────────── Tab: Общее ─────────── -->
+        <!-- ─────────── Tab: Общее (Hero+2-col layout, Phase 29.3) ─────────── -->
         <v-tabs-window-item value="general">
+
+          <!-- ── Hero banner ── -->
+          <v-card class="mb-5" :style="heroBgStyle" rounded="lg">
+            <v-card-text class="pa-5">
+              <div class="d-flex align-start gap-5 flex-wrap">
+                <!-- Photo placeholder -->
+                <div class="rounded d-flex align-center justify-center flex-shrink-0"
+                  style="width:160px;height:100px;background:rgba(255,255,255,0.15)">
+                  <v-icon icon="mdi-camera" color="rgba(255,255,255,0.6)" size="40" />
+                </div>
+
+                <!-- Info -->
+                <div class="flex-1-1" style="min-width:200px">
+                  <div class="text-h5 font-weight-bold text-white mb-1">
+                    {{ [vehicle.brand, vehicle.model].filter(Boolean).join(' ') || 'ТС' }}
+                  </div>
+                  <div class="text-body-2 mb-3" style="color:rgba(255,255,255,0.85)">
+                    {{ [vehicle.year_of_manufacture, vehicle.color].filter(Boolean).join(' · ') }}
+                    <template v-if="vehicle.owner_org_name">· {{ vehicle.owner_org_name }}</template>
+                    <template v-if="vehicle.assigned_org_name || vehicle.assigned_text">
+                      · {{ vehicle.assigned_org_name || vehicle.assigned_text }}
+                    </template>
+                  </div>
+
+                  <!-- Chips row -->
+                  <div class="d-flex align-center gap-2 flex-wrap">
+                    <LicensePlate :model-value="vehicle.plate" size="lg" />
+
+                    <v-chip
+                      v-if="vehicle.state"
+                      style="background:rgba(255,255,255,0.2);color:white"
+                      size="small"
+                      variant="flat"
+                    >
+                      {{ STATE_LABEL[vehicle.state] ?? vehicle.state }}
+                    </v-chip>
+
+                    <v-chip
+                      v-if="vehicle.type"
+                      style="background:rgba(255,255,255,0.15);color:white"
+                      size="small"
+                      variant="flat"
+                      prepend-icon="mdi-car-info"
+                    >
+                      {{ TYPE_LABEL[vehicle.type] ?? vehicle.type }}
+                    </v-chip>
+
+                    <v-chip
+                      v-if="vehicle.insurance_until"
+                      :style="isInsuranceExpiringSoon
+                        ? 'background:rgba(255,193,7,0.35);color:white'
+                        : 'background:rgba(255,255,255,0.2);color:white'"
+                      size="small"
+                      variant="flat"
+                      prepend-icon="mdi-shield-check"
+                    >
+                      ОСАГО до {{ formatDate(vehicle.insurance_until) }}
+                    </v-chip>
+
+                    <v-chip
+                      v-if="vehicle.next_to_km && vehicle.current_odometer_km"
+                      :style="isToSoon
+                        ? 'background:rgba(255,193,7,0.35);color:white'
+                        : 'background:rgba(255,255,255,0.2);color:white'"
+                      size="small"
+                      variant="flat"
+                      prepend-icon="mdi-wrench"
+                    >
+                      ТО через {{ (vehicle.next_to_km - vehicle.current_odometer_km).toLocaleString('ru-RU') }} км
+                    </v-chip>
+
+                    <v-chip
+                      v-if="vehicle.engine_power_hp"
+                      style="background:rgba(255,255,255,0.2);color:white"
+                      size="small"
+                      variant="flat"
+                      prepend-icon="mdi-engine"
+                    >
+                      {{ vehicle.engine_power_hp }} л.с.
+                    </v-chip>
+
+                    <v-chip
+                      v-if="vehicle.engine_volume_l"
+                      style="background:rgba(255,255,255,0.2);color:white"
+                      size="small"
+                      variant="flat"
+                    >
+                      {{ vehicle.engine_volume_l }}л
+                    </v-chip>
+                  </div>
+                </div>
+              </div>
+            </v-card-text>
+          </v-card>
 
           <!-- Комментарий к изменению -->
           <v-text-field
@@ -118,307 +212,272 @@
             style="max-width:600px"
           />
 
-          <!-- Идентификация -->
+          <!-- ── 4 секции в 2 колонки ── -->
+          <v-row>
+            <!-- Идентификация -->
+            <v-col cols="12" md="6">
+              <v-card variant="outlined" class="mb-4 h-100">
+                <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">
+                  <v-icon icon="mdi-car-info" size="small" class="mr-1" />
+                  Идентификация
+                </v-card-title>
+                <v-card-text>
+                  <v-row dense>
+                    <v-col cols="12">
+                      <FieldLabel label="Гос. номер" field-key="plate" :vehicle-id="vehicle.id" />
+                      <div class="mt-1">
+                        <LicensePlate v-model="form.plate" :readonly="false" />
+                      </div>
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Марка" field-key="brand" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.brand" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Модель" field-key="model" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.model" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Год выпуска" field-key="year_of_manufacture" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.year_of_manufacture" type="number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Цвет" field-key="color" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.color" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12">
+                      <FieldLabel label="VIN" field-key="vin" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.vin" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Тип ТС" field-key="type" :vehicle-id="vehicle.id" />
+                      <v-select v-model="form.type" :items="typeOptions" item-title="label" item-value="value" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Состояние" field-key="state" :vehicle-id="vehicle.id" />
+                      <v-select v-model="form.state" :items="stateOptions" item-title="label" item-value="value" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Дата регистрации" field-key="registered_at" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.registered_at" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Принадлежность -->
+            <v-col cols="12" md="6">
+              <v-card variant="outlined" class="mb-4 h-100">
+                <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">
+                  <v-icon icon="mdi-office-building" size="small" class="mr-1" />
+                  Принадлежность
+                </v-card-title>
+                <v-card-text>
+                  <v-row dense>
+                    <v-col cols="12">
+                      <FieldLabel label="Организация-владелец" field-key="owner_org_id" :vehicle-id="vehicle.id" />
+                      <v-autocomplete v-model="form.owner_org_id" :items="orgsList" item-title="name" item-value="id" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="12">
+                      <FieldLabel label="Организация-эксплуатант" field-key="assigned_org_id" :vehicle-id="vehicle.id" />
+                      <v-autocomplete v-model="form.assigned_org_id" :items="orgsList" item-title="name" item-value="id" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col v-if="!form.assigned_org_id" cols="12">
+                      <div class="text-caption text-medium-emphasis mb-1">Эксплуатант (текст)</div>
+                      <v-text-field v-model="form.assigned_text" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12">
+                      <FieldLabel label="Основание для использования" field-key="assignment_basis" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.assignment_basis" variant="outlined" density="compact" hide-details placeholder="Договор аренды, акт п/п..." />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Номер документа" field-key="assignment_doc_number" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.assignment_doc_number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Дата документа" field-key="assignment_doc_date" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.assignment_doc_date" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Документы и топливо -->
+            <v-col cols="12" md="6">
+              <v-card variant="outlined" class="mb-4 h-100">
+                <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">
+                  <v-icon icon="mdi-file-document-outline" size="small" class="mr-1" />
+                  Документы и топливо
+                </v-card-title>
+                <v-card-text>
+                  <v-row dense>
+                    <v-col cols="6">
+                      <FieldLabel label="ПТС" field-key="pts_number" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.pts_number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="СТС" field-key="sts_number" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.sts_number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="ОСАГО до" field-key="insurance_until" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.insurance_until" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Техосмотр до" field-key="tech_inspection_until" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.tech_inspection_until" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Тип топлива" field-key="fuel_type" :vehicle-id="vehicle.id" />
+                      <v-select v-model="form.fuel_type" :items="fuelTypeOptions" item-title="label" item-value="value" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Текущий пробег, км</div>
+                      <v-text-field :model-value="vehicle.current_odometer_km ?? '—'" variant="outlined" density="compact" hide-details readonly class="text-medium-emphasis" />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Последнее ТО, км" field-key="last_to_mileage_km" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.last_to_mileage_km" type="number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Дата последнего ТО" field-key="last_to_date" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.last_to_date" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Следующее ТО, км" field-key="next_to_km" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.next_to_km" type="number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Мощность, л.с." field-key="engine_power_hp" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.engine_power_hp" type="number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Объём двигателя, л" field-key="engine_volume_l" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.engine_volume_l" type="number" step="0.1" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Норма расхода (лето)" field-key="fuel_norm_summer" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.fuel_norm_summer" type="number" step="0.1" suffix="л/100км" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="6">
+                      <FieldLabel label="Норма расхода (зима)" field-key="fuel_norm_winter" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model.number="form.fuel_norm_winter" type="number" step="0.1" suffix="л/100км" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <!-- Чек-лист оборудования -->
+            <v-col cols="12" md="6">
+              <v-card variant="outlined" class="mb-4 h-100">
+                <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">
+                  <v-icon icon="mdi-clipboard-check-outline" size="small" class="mr-1" />
+                  Чек-лист оборудования
+                </v-card-title>
+                <v-card-text>
+                  <v-row dense>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_tracker" label="Трекер" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.akb_ok" label="АКБ исправен" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_radio" label="Радиостанция" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.mirrors_ok" label="Зеркала OK" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_keys" label="Ключи" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_first_aid_kit" label="Аптечка" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_spare_wheel" label="Запасное колесо" density="compact" hide-details />
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-checkbox v-model="form.has_extinguisher" label="Огнетушитель" density="compact" hide-details />
+                    </v-col>
+                  </v-row>
+
+                  <!-- Дополнительные параметры (JSONB) -->
+                  <v-divider class="my-3" />
+                  <div class="text-subtitle-2 font-weight-bold mb-2">Доп. параметры</div>
+                  <v-row dense>
+                    <v-col cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Авторезина</div>
+                      <v-text-field v-model="form.props_tires_type" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Брендирование</div>
+                      <v-text-field v-model="form.props_branding" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">ЛКП</div>
+                      <v-textarea v-model="form.props_paint_condition" variant="outlined" density="compact" hide-details rows="2" auto-grow />
+                    </v-col>
+                    <v-col cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Неисправности</div>
+                      <v-textarea v-model="form.props_defect_description" variant="outlined" density="compact" hide-details rows="2" auto-grow />
+                    </v-col>
+                    <v-col cols="12">
+                      <div class="text-caption text-medium-emphasis mb-1">Примечание</div>
+                      <v-textarea v-model="form.props_note" variant="outlined" density="compact" hide-details rows="2" auto-grow />
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+
+          <!-- ── История передач ── -->
           <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">Идентификация</v-card-title>
+            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">
+              <v-icon icon="mdi-swap-horizontal" size="small" class="mr-1" />
+              История передач
+            </v-card-title>
             <v-card-text>
-              <v-row>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Гос. номер" field-key="plate" :vehicle-id="vehicle.id" />
-                  <div class="mt-1">
-                    <LicensePlate v-model="form.plate" :readonly="false" />
+              <div v-if="loadingTransferHistory" class="text-center py-4">
+                <v-progress-circular indeterminate size="28" color="primary" />
+              </div>
+              <div v-else-if="transferHistory.length === 0" class="text-medium-emphasis text-body-2">
+                История пуста — передачи не фиксировались
+              </div>
+              <v-timeline v-else density="compact" side="end">
+                <v-timeline-item
+                  v-for="item in transferHistory"
+                  :key="item.id"
+                  :dot-color="item.from_owner_org_id !== item.to_owner_org_id ? 'orange' : 'blue'"
+                  size="small"
+                >
+                  <div class="text-body-2 font-weight-medium">
+                    {{ formatDate(item.changed_at) }}
+                    <template v-if="item.from_owner_org_id !== item.to_owner_org_id">
+                      — смена владельца
+                    </template>
+                    <template v-else>
+                      — смена эксплуатанта
+                    </template>
                   </div>
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Марка" field-key="brand" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.brand"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Модель" field-key="model" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.model"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Цвет" field-key="color" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.color"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="VIN" field-key="vin" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.vin"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Дата регистрации" field-key="registered_at" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.registered_at"
-                    type="date"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Тип ТС" field-key="type" :vehicle-id="vehicle.id" />
-                  <v-select
-                    v-model="form.type"
-                    :items="typeOptions"
-                    item-title="label"
-                    item-value="value"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Состояние" field-key="state" :vehicle-id="vehicle.id" />
-                  <v-select
-                    v-model="form.state"
-                    :items="stateOptions"
-                    item-title="label"
-                    item-value="value"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-
-          <!-- Принадлежность -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">Принадлежность</v-card-title>
-            <v-card-text>
-              <v-row>
-                <v-col cols="12" md="6">
-                  <FieldLabel label="Организация-владелец" field-key="owner_org_id" :vehicle-id="vehicle.id" />
-                  <v-autocomplete
-                    v-model="form.owner_org_id"
-                    :items="orgsList"
-                    item-title="name"
-                    item-value="id"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col cols="12" md="6">
-                  <FieldLabel label="Организация-эксплуатант" field-key="assigned_org_id" :vehicle-id="vehicle.id" />
-                  <v-autocomplete
-                    v-model="form.assigned_org_id"
-                    :items="orgsList"
-                    item-title="name"
-                    item-value="id"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col v-if="!form.assigned_org_id" cols="12" md="6">
-                  <div class="text-caption text-medium-emphasis mb-1">Эксплуатант (текст, если орг. не задана)</div>
-                  <v-text-field
-                    v-model="form.assigned_text"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-
-          <!-- Документы / Топливо -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">Документы и топливо</v-card-title>
-            <v-card-text>
-              <v-row>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="ОСАГО до" field-key="insurance_until" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model="form.insurance_until"
-                    type="date"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Следующее ТО, км" field-key="next_to_km" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model.number="form.next_to_km"
-                    type="number"
-                    step="1"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <div class="text-caption text-medium-emphasis mb-1">Текущий пробег, км (авто)</div>
-                  <v-text-field
-                    :model-value="vehicle.current_odometer_km ?? '—'"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    readonly
-                    class="text-medium-emphasis"
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Тип топлива" field-key="fuel_type" :vehicle-id="vehicle.id" />
-                  <v-select
-                    v-model="form.fuel_type"
-                    :items="fuelTypeOptions"
-                    item-title="label"
-                    item-value="value"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Норма расхода (лето)" field-key="fuel_norm_summer" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model.number="form.fuel_norm_summer"
-                    type="number"
-                    step="0.1"
-                    suffix="л/100км"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" md="4">
-                  <FieldLabel label="Норма расхода (зима)" field-key="fuel_norm_winter" :vehicle-id="vehicle.id" />
-                  <v-text-field
-                    v-model.number="form.fuel_norm_winter"
-                    type="number"
-                    step="0.1"
-                    suffix="л/100км"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                  />
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-
-          <!-- Чек-лист оборудования -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">Чек-лист оборудования</v-card-title>
-            <v-card-text>
-              <v-row dense>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_tracker" label="Трекер" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.akb_ok" label="АКБ исправен" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_radio" label="Радиостанция" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.mirrors_ok" label="Зеркала OK" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_keys" label="Ключи" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_first_aid_kit" label="Аптечка" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_spare_wheel" label="Запасное колесо" density="compact" hide-details />
-                </v-col>
-                <v-col cols="12" sm="6" md="3">
-                  <v-checkbox v-model="form.has_extinguisher" label="Огнетушитель" density="compact" hide-details />
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-
-          <!-- Дополнительные параметры (JSONB props) -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 pb-2">Дополнительные параметры</v-card-title>
-            <v-card-text>
-              <v-row>
-                <v-col cols="12" md="6">
-                  <div class="text-caption text-medium-emphasis mb-1">Авторезина</div>
-                  <v-text-field
-                    v-model="form.props_tires_type"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col cols="12" md="6">
-                  <div class="text-caption text-medium-emphasis mb-1">Брендирование</div>
-                  <v-text-field
-                    v-model="form.props_branding"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    clearable
-                  />
-                </v-col>
-                <v-col cols="12" md="6">
-                  <div class="text-caption text-medium-emphasis mb-1">Лакокрасочное покрытие</div>
-                  <v-textarea
-                    v-model="form.props_paint_condition"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    rows="2"
-                    auto-grow
-                  />
-                </v-col>
-                <v-col cols="12" md="6">
-                  <div class="text-caption text-medium-emphasis mb-1">Неисправности</div>
-                  <v-textarea
-                    v-model="form.props_defect_description"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    rows="2"
-                    auto-grow
-                  />
-                </v-col>
-                <v-col cols="12">
-                  <div class="text-caption text-medium-emphasis mb-1">Примечание</div>
-                  <v-textarea
-                    v-model="form.props_note"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    rows="2"
-                    auto-grow
-                  />
-                </v-col>
-              </v-row>
+                  <div class="text-body-2 text-medium-emphasis">
+                    <template v-if="item.from_assigned_org_id || item.to_assigned_org_id">
+                      {{ item.from_assigned_text || '—' }} → {{ item.to_assigned_text || '—' }}
+                    </template>
+                  </div>
+                  <div v-if="item.basis" class="text-caption text-medium-emphasis">
+                    {{ item.basis }}<template v-if="item.doc_number"> № {{ item.doc_number }}</template>
+                    <template v-if="item.doc_date"> от {{ formatDate(item.doc_date) }}</template>
+                  </div>
+                  <div v-if="item.comment" class="text-caption text-medium-emphasis">
+                    {{ item.comment }}
+                  </div>
+                </v-timeline-item>
+              </v-timeline>
             </v-card-text>
           </v-card>
 
@@ -573,7 +632,9 @@ interface OrgItem {
 interface Vehicle {
   id: number
   owner_org_id: number
+  owner_org_name?: string | null
   assigned_org_id: number | null
+  assigned_org_name?: string | null
   assigned_text: string | null
   brand: string | null
   model: string | null
@@ -589,6 +650,18 @@ interface Vehicle {
   fuel_norm_winter: number | null
   current_odometer_km: number | null
   next_to_km: number | null
+  year_of_manufacture: number | null
+  last_to_mileage_km: number | null
+  last_to_date: string | null
+  pts_number: string | null
+  sts_number: string | null
+  tech_inspection_until: string | null
+  purchase_info: string | null
+  assignment_basis: string | null
+  assignment_doc_number: string | null
+  assignment_doc_date: string | null
+  engine_power_hp: number | null
+  engine_volume_l: number | null
   has_tracker: boolean
   akb_ok: boolean
   has_radio: boolean
@@ -600,6 +673,23 @@ interface Vehicle {
   props: Record<string, string> | null
   created_at: string
   updated_at: string
+}
+
+interface TransferHistoryItem {
+  id: number
+  vehicle_id: number
+  from_owner_org_id: number | null
+  to_owner_org_id: number | null
+  from_assigned_org_id: number | null
+  to_assigned_org_id: number | null
+  from_assigned_text: string | null
+  to_assigned_text: string | null
+  basis: string | null
+  doc_number: string | null
+  doc_date: string | null
+  comment: string | null
+  changed_at: string
+  changed_by_user_id: number | null
 }
 
 // ─────────────── Lookup Maps ───────────────
@@ -719,6 +809,18 @@ interface VehicleForm {
   fuel_type: string | null
   fuel_norm_summer: number | null
   fuel_norm_winter: number | null
+  year_of_manufacture: number | null
+  last_to_mileage_km: number | null
+  last_to_date: string
+  pts_number: string
+  sts_number: string
+  tech_inspection_until: string
+  purchase_info: string
+  assignment_basis: string
+  assignment_doc_number: string
+  assignment_doc_date: string
+  engine_power_hp: number | null
+  engine_volume_l: number | null
   has_tracker: boolean
   akb_ok: boolean
   has_radio: boolean
@@ -751,6 +853,18 @@ const form = reactive<VehicleForm>({
   fuel_type: null,
   fuel_norm_summer: null,
   fuel_norm_winter: null,
+  year_of_manufacture: null,
+  last_to_mileage_km: null,
+  last_to_date: '',
+  pts_number: '',
+  sts_number: '',
+  tech_inspection_until: '',
+  purchase_info: '',
+  assignment_basis: '',
+  assignment_doc_number: '',
+  assignment_doc_date: '',
+  engine_power_hp: null,
+  engine_volume_l: null,
   has_tracker: false,
   akb_ok: false,
   has_radio: false,
@@ -787,30 +901,42 @@ function toDateInput(v: string | null): string {
 }
 
 function fillForm(v: Vehicle) {
-  form.plate             = v.plate ?? ''
-  form.brand             = v.brand ?? ''
-  form.model             = v.model ?? ''
-  form.color             = v.color ?? ''
-  form.vin               = v.vin ?? ''
-  form.type              = v.type ?? null
-  form.state             = v.state ?? null
-  form.registered_at     = toDateInput(v.registered_at)
-  form.owner_org_id      = v.owner_org_id ?? null
-  form.assigned_org_id   = v.assigned_org_id ?? null
-  form.assigned_text     = v.assigned_text ?? ''
-  form.insurance_until   = toDateInput(v.insurance_until)
-  form.next_to_km        = v.next_to_km ?? null
-  form.fuel_type         = v.fuel_type ?? null
-  form.fuel_norm_summer  = v.fuel_norm_summer ?? null
-  form.fuel_norm_winter  = v.fuel_norm_winter ?? null
-  form.has_tracker       = !!v.has_tracker
-  form.akb_ok            = !!v.akb_ok
-  form.has_radio         = !!v.has_radio
-  form.mirrors_ok        = !!v.mirrors_ok
-  form.has_keys          = !!v.has_keys
-  form.has_first_aid_kit = !!v.has_first_aid_kit
-  form.has_spare_wheel   = !!v.has_spare_wheel
-  form.has_extinguisher  = !!v.has_extinguisher
+  form.plate                  = v.plate ?? ''
+  form.brand                  = v.brand ?? ''
+  form.model                  = v.model ?? ''
+  form.color                  = v.color ?? ''
+  form.vin                    = v.vin ?? ''
+  form.type                   = v.type ?? null
+  form.state                  = v.state ?? null
+  form.registered_at          = toDateInput(v.registered_at)
+  form.owner_org_id           = v.owner_org_id ?? null
+  form.assigned_org_id        = v.assigned_org_id ?? null
+  form.assigned_text          = v.assigned_text ?? ''
+  form.insurance_until        = toDateInput(v.insurance_until)
+  form.next_to_km             = v.next_to_km ?? null
+  form.fuel_type              = v.fuel_type ?? null
+  form.fuel_norm_summer       = v.fuel_norm_summer ?? null
+  form.fuel_norm_winter       = v.fuel_norm_winter ?? null
+  form.year_of_manufacture    = v.year_of_manufacture ?? null
+  form.last_to_mileage_km     = v.last_to_mileage_km ?? null
+  form.last_to_date           = toDateInput(v.last_to_date)
+  form.pts_number             = v.pts_number ?? ''
+  form.sts_number             = v.sts_number ?? ''
+  form.tech_inspection_until  = toDateInput(v.tech_inspection_until)
+  form.purchase_info          = v.purchase_info ?? ''
+  form.assignment_basis       = v.assignment_basis ?? ''
+  form.assignment_doc_number  = v.assignment_doc_number ?? ''
+  form.assignment_doc_date    = toDateInput(v.assignment_doc_date)
+  form.engine_power_hp        = v.engine_power_hp ?? null
+  form.engine_volume_l        = v.engine_volume_l ?? null
+  form.has_tracker            = !!v.has_tracker
+  form.akb_ok                 = !!v.akb_ok
+  form.has_radio              = !!v.has_radio
+  form.mirrors_ok             = !!v.mirrors_ok
+  form.has_keys               = !!v.has_keys
+  form.has_first_aid_kit      = !!v.has_first_aid_kit
+  form.has_spare_wheel        = !!v.has_spare_wheel
+  form.has_extinguisher       = !!v.has_extinguisher
   form.props_tires_type        = v.props?.tires_type ?? ''
   form.props_branding          = v.props?.branding ?? ''
   form.props_paint_condition   = v.props?.paint_condition ?? ''
@@ -858,13 +984,25 @@ function buildDelta(): Record<string, any> {
   strField('state', v.state)
   strField('assigned_text', v.assigned_text)
   strField('fuel_type', v.fuel_type)
+  strField('pts_number', v.pts_number)
+  strField('sts_number', v.sts_number)
+  strField('purchase_info', v.purchase_info)
+  strField('assignment_basis', v.assignment_basis)
+  strField('assignment_doc_number', v.assignment_doc_number)
   dateField('registered_at', v.registered_at)
   dateField('insurance_until', v.insurance_until)
+  dateField('last_to_date', v.last_to_date)
+  dateField('tech_inspection_until', v.tech_inspection_until)
+  dateField('assignment_doc_date', v.assignment_doc_date)
   numField('next_to_km', v.next_to_km)
   numField('fuel_norm_summer', v.fuel_norm_summer)
   numField('fuel_norm_winter', v.fuel_norm_winter)
   numField('owner_org_id', v.owner_org_id ?? null)
   numField('assigned_org_id', v.assigned_org_id)
+  numField('year_of_manufacture', v.year_of_manufacture)
+  numField('last_to_mileage_km', v.last_to_mileage_km)
+  numField('engine_power_hp', v.engine_power_hp)
+  numField('engine_volume_l', v.engine_volume_l)
   boolField('has_tracker', v.has_tracker)
   boolField('akb_ok', v.akb_ok)
   boolField('has_radio', v.has_radio)
@@ -899,6 +1037,34 @@ function buildDelta(): Record<string, any> {
   }
 
   return delta
+}
+
+// ─────────────── Hero background ───────────────
+
+const heroBgStyle = computed(() => {
+  const color = (vehicle.value as any)?.assigned_org?.color
+    ?? (vehicle.value as any)?.assigned_org_color
+    ?? '#1976d2'
+  return {
+    background: `linear-gradient(135deg, ${color}88 0%, ${color} 100%)`,
+  }
+})
+
+// ─────────────── Transfer history ───────────────
+
+const transferHistory = ref<TransferHistoryItem[]>([])
+const loadingTransferHistory = ref(false)
+
+async function loadTransferHistory(id: number) {
+  loadingTransferHistory.value = true
+  try {
+    const data = await apiFetch<TransferHistoryItem[]>(`/vehicles/${id}/transfer-history`)
+    transferHistory.value = Array.isArray(data) ? data : []
+  } catch {
+    transferHistory.value = []
+  } finally {
+    loadingTransferHistory.value = false
+  }
 }
 
 // ─────────────── Alerts ───────────────
@@ -1027,6 +1193,7 @@ onMounted(() => {
   if (id) {
     loadVehicle(id)
     loadOrgs()
+    loadTransferHistory(id)
   }
 })
 

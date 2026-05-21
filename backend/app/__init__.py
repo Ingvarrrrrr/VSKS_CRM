@@ -410,6 +410,12 @@ async def _vehicle_alerts_task_creator():
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
+    # Локальный import logging САМЫМ ПЕРВЫМ statement: ниже в функции десятки
+    # локальных `import logging` в try-блоках, что делает `logging` локальной
+    # переменной для ВСЕЙ функции (Python scope rule). Любое использование
+    # `logging.getLogger(...)` ДО первого `import logging` → UnboundLocalError.
+    # Импорт в начале функции гарантирует что имя определено везде.
+    import logging
     task = asyncio.create_task(_deadline_reminder_loop())
     # Phase 29 D-17: daily vehicle expiry alerts
     try:
@@ -1243,7 +1249,8 @@ async def lifespan(app_: FastAPI):
     # Phase 29-08: smoke-render trip templates (Lesson 2026-05-18 — catches Jinja TemplateSyntaxError at boot)
     # ZERO {% tr %} in templates (Lesson 2026-05-15). Non-fatal: log error, do NOT crash.
     try:
-        import logging  # FIX: `logging` is treated as local inside lifespan (см. import logging в других try-блоках выше) → нужен явный import здесь, иначе UnboundLocalError
+        # logging уже импортирован глобально — НЕЛЬЗЯ делать local `import logging`,
+        # это делает имя локальным для всей функции lifespan и ломает getLogger() выше.
         from docxtpl import DocxTemplate as _DocxTpl29
         _fake_trip_ctx = {
             # 29-08 base keys

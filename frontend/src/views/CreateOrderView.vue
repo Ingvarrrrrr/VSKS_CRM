@@ -649,12 +649,22 @@
 
       <!-- 2.5 Техническое задание (показывается когда есть позиции) -->
       <v-card v-if="hasProducts" variant="outlined" class="mb-4" style="border-color:#3B82F6">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
-          <span class="d-flex align-center gap-2">
+        <v-card-title
+          class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between"
+          style="cursor:pointer;user-select:none"
+          @click.self="toggleTz"
+        >
+          <span class="d-flex align-center gap-2" style="cursor:pointer" @click="toggleTz">
             <v-icon icon="mdi-clipboard-text-outline" color="primary" size="20" />
             Техническое задание
+            <v-icon
+              :icon="tzCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up'"
+              size="18"
+              color="grey"
+              class="ml-1"
+            />
           </span>
-          <div class="d-flex align-center gap-2">
+          <div class="d-flex align-center gap-2" @click.stop>
             <v-btn-toggle v-model="form.description_mode" mandatory density="compact" color="primary" class="mr-2">
               <v-btn value="exact" size="small" style="text-transform:none;letter-spacing:0">Точное</v-btn>
               <v-btn value="44fz" size="small" style="text-transform:none;letter-spacing:0">44-ФЗ</v-btn>
@@ -685,7 +695,7 @@
             <v-chip v-else size="small" color="grey" variant="tonal">Сохраните закупку для скачивания</v-chip>
           </div>
         </v-card-title>
-        <v-card-text class="pa-0">
+        <v-card-text v-show="!tzCollapsed" class="pa-0">
           <v-table density="comfortable" class="tz-table">
             <thead>
               <tr class="tz-table-header">
@@ -3291,6 +3301,14 @@ const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
 const canPublish = ref(localStorage.getItem('can_publish') === 'true' || isAdminLevel.value)
+
+// ТЗ (Техническое задание) collapse state — persisted in localStorage
+const TZ_COLLAPSE_KEY = 'purchase_tz_collapsed'
+const tzCollapsed = ref(localStorage.getItem(TZ_COLLAPSE_KEY) === '1' ? true : false)
+function toggleTz() {
+  tzCollapsed.value = !tzCollapsed.value
+  try { localStorage.setItem(TZ_COLLAPSE_KEY, tzCollapsed.value ? '1' : '0') } catch {}
+}
 
 // НМЦД mode: auto (from items) or manual (user enters directly)
 const nmckMode = ref<'auto' | 'manual'>('auto')

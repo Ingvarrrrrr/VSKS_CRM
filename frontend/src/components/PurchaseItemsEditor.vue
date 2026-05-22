@@ -1271,6 +1271,14 @@
       @cancel="onMatchCancel"
     />
 
+    <!-- ===== Duplicate Merge Dialog ===== -->
+    <DuplicateMergeDialog
+      v-if="dupMergeShow"
+      v-model="dupMergeShow"
+      :groups="dupMergeGroups"
+      @confirm="onDupMergeConfirm"
+    />
+
     <!-- ===== P1-B: Single Product Repick Dialog ===== -->
     <SingleProductPickerDialog
       v-if="repickDialog.show"
@@ -1295,6 +1303,8 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
+import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
+import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
 import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
@@ -1511,6 +1521,12 @@ const emit = defineEmits<{
 
 const display = useDisplay()
 const localItems = ref<EditorItem[]>([...props.modelValue])
+
+// Duplicate merge dialog state
+const dupMergeShow = ref(false)
+const dupMergeGroups = ref<DupGroup[]>([])
+// Pending items waiting for user decision in DuplicateMergeDialog
+let _pendingMergeItems: EditorItem[] = []
 
 watch(
   () => props.modelValue,
@@ -3189,12 +3205,94 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
     }
     return item
   })
+  // ── Detect duplicates by product_id ──────────────────────────────────────
+  const productGroups = new Map<number, EditorItem[]>()
+  for (const item of newItems) {
+    if (item.product_id != null) {
+      const pid = item.product_id
+      if (!productGroups.has(pid)) productGroups.set(pid, [])
+      productGroups.get(pid)!.push(item)
+    }
+  }
+  const dupGroups: DupGroup[] = []
+  for (const [pid, groupItems] of productGroups.entries()) {
+    if (groupItems.length > 1) {
+      dupGroups.push({
+        product_id: pid,
+        name: groupItems[0].item_name || `ID ${pid}`,
+        items: groupItems.map(it => ({
+          quantity: it.quantity ?? null,
+          unit_price: it.unit_price ?? null,
+          total_price: it.total_price ?? null,
+        })),
+        _choice: 'merge',
+      })
+    }
+  }
+
+  if (dupGroups.length > 0) {
+    // Show dialog — commit will happen in onDupMergeConfirm
+    _pendingMergeItems = newItems
+    dupMergeGroups.value = dupGroups
+    dupMergeShow.value = true
+    // Store resolved count info for later snack
+    ;(window as any).__pendingImportMatchedCount = resolved.filter(r => r.product_id != null).length
+    itemsImportDialog.value = false
+    return
+  }
+
+  // No duplicates — commit immediately
   localItems.value.push(...newItems)
   emitUpdate()
   const matchedCount = resolved.filter(r => r.product_id != null).length
   smartImportResult.value = { added: newItems.length, matched_catalog: matchedCount, unmatched: newItems.length - matchedCount }
   showSnack(`${newItems.length} позиций добавлены в список.`, 'info')
   itemsImportDialog.value = false
+}
+
+/** Handler for DuplicateMergeDialog @confirm */
+function onDupMergeConfirm(resolvedGroups: ResolvedGroup[]) {
+  const mergeMap = new Map<number, ResolvedGroup>()
+  for (const rg of resolvedGroups) {
+    mergeMap.set(rg.product_id, rg)
+  }
+
+  // Build final items: for groups with choice=merge keep only merged item, else keep all
+  const seenMerged = new Set<number>()
+  const finalItems: EditorItem[] = []
+
+  for (const item of _pendingMergeItems) {
+    const pid = item.product_id
+    if (pid == null) {
+      finalItems.push(item)
+      continue
+    }
+    const rg = mergeMap.get(pid)
+    if (!rg || rg.choice === 'keep') {
+      finalItems.push(item)
+      continue
+    }
+    // merge choice — push merged item once
+    if (!seenMerged.has(pid)) {
+      seenMerged.add(pid)
+      const mi = rg.mergedItem!
+      finalItems.push({
+        ...item,
+        quantity: mi.quantity,
+        unit_price: mi.unit_price,
+        total_price: mi.total_price,
+      })
+    }
+    // subsequent items in the same group are dropped
+  }
+
+  localItems.value.push(...finalItems)
+  emitUpdate()
+  const matchedCount = (window as any).__pendingImportMatchedCount ?? 0
+  delete (window as any).__pendingImportMatchedCount
+  smartImportResult.value = { added: finalItems.length, matched_catalog: matchedCount, unmatched: finalItems.length - matchedCount }
+  showSnack(`${finalItems.length} позиций добавлены в список.`, 'info')
+  _pendingMergeItems = []
 }
 
 /** Handler for ProductMatchReviewDialog @confirm event */

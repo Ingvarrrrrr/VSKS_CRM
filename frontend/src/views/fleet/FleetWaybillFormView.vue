@@ -857,8 +857,22 @@ onMounted(async () => {
   await Promise.all([loadVehicles(), loadDrivers(), loadUsers()])
   if (!isNew) {
     await loadWaybill()
-  } else if (queryVehicleId) {
-    await autoPopulateFromVehicle(queryVehicleId)
+  } else {
+    // Phase 30.3: auto-set текущий пользователь как водителя, если can_drive=true
+    try {
+      const me = await apiFetch<any>('/users/me')
+      if (me?.can_drive && me?.id) {
+        if (!drivers.value.find(d => d.id === me.id)) {
+          drivers.value = [{ id: me.id, full_name: me.full_name || me.username || `User #${me.id}` }, ...drivers.value]
+        }
+        if (!form.value.driver_id) form.value.driver_id = me.id
+      }
+    } catch (e) {
+      console.warn('[wbf] me fetch error', e)
+    }
+    if (queryVehicleId) {
+      await autoPopulateFromVehicle(queryVehicleId)
+    }
   }
 })
 

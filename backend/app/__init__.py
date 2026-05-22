@@ -1348,6 +1348,26 @@ async def lifespan(app_: FastAPI):
     except Exception as _e29_seed:
         logging.getLogger(__name__).warning(f"Phase 29 vehicles_seed skipped (non-fatal): {_e29_seed}")
 
+    # Phase 30.1: seed водителей, норм расхода, тестовых штрафов из xlsx ВСКС
+    try:
+        import logging  # FIX: logging локальный внутри lifespan
+        from .services.fleet_seed import (
+            seed_drivers_from_xlsx as _seed_drivers,
+            seed_fuel_norms_from_xlsx as _seed_fuel_norms,
+            seed_test_fines as _seed_test_fines,
+        )
+        async with async_session() as _db301:
+            _r_drivers = await _seed_drivers(_db301)
+            logging.getLogger(__name__).info(f"Phase 30.1 drivers_seed: {_r_drivers}")
+            _r_fuel = await _seed_fuel_norms(_db301)
+            logging.getLogger(__name__).info(f"Phase 30.1 fuel_norms_seed: {_r_fuel}")
+            _r_fines = await _seed_test_fines(_db301)
+            logging.getLogger(__name__).info(f"Phase 30.1 test_fines_seed: {_r_fines}")
+    except Exception as _e301_seed:
+        logging.getLogger(__name__).warning(
+            f"Phase 30.1 fleet seed skipped (non-fatal): {_e301_seed}"
+        )
+
     # Phase 30: новые таблицы и колонки
     try:
         from check_schema import (

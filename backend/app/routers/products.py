@@ -334,7 +334,17 @@ async def match_products(
     'suggest' (0.60<=score<0.95), or 'create' (no match found).
     """
     org_id = get_single_org_id(current_user)
-    q = select(Product.id, Product.name, Product.price, Product.description, Product.photo_url, Product.product_type, Product.category)
+    # 27.4-29: photo_url из БД ИЛИ /api/products/{id}/photo если фото в bytea (photo_data)
+    q = select(
+        Product.id,
+        Product.name,
+        Product.price,
+        Product.description,
+        Product.photo_url,
+        (Product.photo_data.isnot(None)).label('has_bytea_photo'),
+        Product.product_type,
+        Product.category,
+    )
     if org_id:
         q = q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
     rows = (await db.execute(q)).all()
@@ -344,7 +354,7 @@ async def match_products(
             r.name or '',
             float(r.price) if r.price is not None else None,
             r.description,
-            r.photo_url,
+            r.photo_url or (f'/api/products/{r.id}/photo' if r.has_bytea_photo else None),
             r.product_type,
             r.category,
         )

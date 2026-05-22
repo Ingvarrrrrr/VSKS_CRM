@@ -65,6 +65,8 @@
                   variant="outlined"
                   hide-details
                   clearable
+                  no-filter
+                  hide-no-data
                   :loading="r._manualSearchLoading"
                   :items="r._manualSearchItems || []"
                   item-title="name"
@@ -72,7 +74,7 @@
                   return-object
                   placeholder="Найти в каталоге вручную..."
                   prepend-inner-icon="mdi-magnify"
-                  no-data-text="Начните вводить название"
+                  no-data-text="Начните вводить название (минимум 2 символа)"
                   @update:search="(q: string) => onManualSearch(r, q)"
                   @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
                 />
@@ -102,6 +104,8 @@
                   variant="outlined"
                   hide-details
                   clearable
+                  no-filter
+                  hide-no-data
                   :loading="r._manualSearchLoading"
                   :items="r._manualSearchItems || []"
                   item-title="name"
@@ -109,7 +113,7 @@
                   return-object
                   placeholder="Найти в каталоге (если товар уже есть)..."
                   prepend-inner-icon="mdi-magnify"
-                  no-data-text="Начните вводить название"
+                  no-data-text="Начните вводить название (минимум 2 символа)"
                   @update:search="(q: string) => onManualSearch(r, q)"
                   @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
                 />

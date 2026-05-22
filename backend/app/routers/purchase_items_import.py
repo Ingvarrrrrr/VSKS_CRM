@@ -1498,6 +1498,30 @@ async def _save_smart_preview_to_purchase(
     return {"ok": True, "added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog}
 
 
+@router.post("/items/import-smart-nopid")
+async def import_items_smart_nopid(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """27.4-26b: XLSX preview БЕЗ purchaseId — для wish / новой закупки.
+    Возвращает все позиции через direct openpyxl парсер (не sample-only)."""
+    fname = (file.filename or "").lower()
+    if not fname.endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Этот endpoint только для XLSX/XLS. Используйте /import-preview для других форматов.")
+    content = await file.read()
+    try:
+        preview, columns = _smart_import_xlsx_direct(content)
+    except Exception as e:
+        logger.warning("import-smart-nopid failed: %s", e)
+        raise HTTPException(400, f"Не удалось распознать XLSX: {e}")
+    return {
+        "preview": preview[:200],
+        "total_rows": len(preview),
+        "file_type": "excel",
+        "columns_found": columns,
+    }
+
+
 @router.post("/{pid}/items/import-smart")
 async def import_items_smart(
     pid: int,

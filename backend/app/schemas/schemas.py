@@ -92,6 +92,19 @@ class UserOut(BaseModel):
     can_publish: bool = False
     inn: Optional[str] = None
     exclude_from_directory: bool = False
+    # Phase 29 D-04 / 30: driver fields exposed to frontend
+    can_drive: bool = False
+    license_series: Optional[str] = None
+    license_number: Optional[str] = None
+    license_categories: Optional[str] = None
+    license_issued_at: Optional[_Date] = None
+    license_expires_at: Optional[_Date] = None
+    medical_cert_expires_at: Optional[_Date] = None
+    medical_cert_number: Optional[str] = None
+    driver_tab_number: Optional[str] = None
+    experience_years: Optional[int] = None
+    fleet_role: Optional[str] = None
+    has_license_scan: bool = False
     permissions: Optional[PermissionsOut] = None
 
     @classmethod
@@ -99,6 +112,7 @@ class UserOut(BaseModel):
         d = cls.model_validate(user)
         d.has_signature = bool(user.signature_image)
         d.photo_url = user.profile_photo or None
+        d.has_license_scan = bool(getattr(user, 'license_scan', None))
         return d
 
     model_config = {"from_attributes": True}

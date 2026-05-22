@@ -215,6 +215,7 @@ async def get_me(
     нет org_id — иначе фронтенд гейтит все вкладки через authStore.hasTab() = false.
     """
     out = UserOut.model_validate(current_user)
+    out.has_license_scan = bool(current_user.license_scan)
     from app.models.permission import PermissionTab, PermissionAction
 
     if current_user.role == "superadmin":
@@ -646,6 +647,86 @@ async def delete_user_photo(
     if not user:
         raise HTTPException(404, "Пользователь не найден")
     user.profile_photo = None
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Phase 30.3: скан водительского удостоверения ──────────────────────────────
+@router.get("/me/license-scan")
+async def get_my_license_scan(
+    current_user: User = Depends(get_current_user),
+):
+    return {"license_scan": current_user.license_scan}
+
+
+@router.put("/me/license-scan")
+async def save_my_license_scan(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scan = body.get("license_scan", "")
+    if not scan or not scan.startswith("data:image/"):
+        raise HTTPException(422, "Скан должен быть data:image/...;base64,...")
+    if len(scan) > 3_000_000:
+        raise HTTPException(422, "Скан слишком большой (макс 3 МБ)")
+    current_user.license_scan = scan
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/me/license-scan")
+async def delete_my_license_scan(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.license_scan = None
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{user_id}/license-scan")
+async def get_user_license_scan(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return {"license_scan": user.license_scan}
+
+
+@router.put("/{user_id}/license-scan")
+async def set_user_license_scan(
+    user_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    scan = body.get("license_scan")
+    if not scan or not isinstance(scan, str) or not scan.startswith("data:image/"):
+        raise HTTPException(422, "Скан должен быть data:image/...;base64,...")
+    if len(scan) > 3_000_000:
+        raise HTTPException(422, "Скан слишком большой (макс 3 МБ)")
+    user.license_scan = scan
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{user_id}/license-scan")
+async def delete_user_license_scan(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('staff')),
+):
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    user.license_scan = None
     await db.commit()
     return {"ok": True}
 

@@ -43,6 +43,7 @@ class User(Base):
     driver_tab_number = Column(String(20), nullable=True)        # Табельный номер водителя
     experience_years = Column(Integer, nullable=True)            # Стаж вождения (лет)
     fleet_role = Column(String(20), nullable=True)               # driver/mechanic/doctor/dispatcher/head
+    license_scan = Column(Text, nullable=True)                   # Скан прав (data:image/...;base64,...) — Phase 30.3
 
     organization = relationship("Organization", back_populates="users", foreign_keys=[org_id])
 

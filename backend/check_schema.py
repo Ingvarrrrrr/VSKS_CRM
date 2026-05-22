@@ -1198,6 +1198,9 @@ async def _ensure_users_driver_extended(conn) -> None:
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS fleet_role VARCHAR(20)"
         ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS license_scan TEXT"
+        ))
         print("  \u2705  users driver extended columns ensured (Phase 30)")
     except Exception as e:
         print(f"  \u26a0\ufe0f   users driver extended columns ensure failed: {e}")

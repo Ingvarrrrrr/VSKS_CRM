@@ -42,6 +42,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/templates:/app/templates
       - ./backend/check_schema.py:/app/check_schema.py
+      - ./backend/seed_data:/app/seed_data:ro
 
   frontend:
     build: ./frontend

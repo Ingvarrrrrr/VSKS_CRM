@@ -1042,7 +1042,19 @@ watch([() => form.value.odometer_start, () => form.value.odometer_finish,
   padding: 20px 28px 60px;
   align-items: start;
 }
-@media (max-width: 1100px) { .wbf-layout { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) {
+  .wbf-layout {
+    grid-template-columns: 1fr;
+    padding: 12px 16px 60px;
+  }
+  .wbf-aside-sticky {
+    position: static !important;
+    top: auto !important;
+  }
+  .wbf-grid-3 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 
 /* Main column */
 .wbf-main { display: grid; gap: 16px; }

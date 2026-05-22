@@ -413,7 +413,10 @@ async def create_trip(
 ):
     vehicle_id = body.get("vehicle_id")
     if not vehicle_id:
-        raise HTTPException(422, detail={"code": "VEHICLE_REQUIRED", "message": "vehicle_id обязателен"})
+        raise HTTPException(422, detail={
+            "code": "VEHICLE_REQUIRED",
+            "message": "Выберите транспортное средство для путевого листа",
+        })
 
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:

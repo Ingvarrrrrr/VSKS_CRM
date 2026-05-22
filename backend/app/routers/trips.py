@@ -640,6 +640,58 @@ async def download_waybill_docx(
     )
 
 
+# ─────────────────────── GET /{trip_id}/waybill.xlsx (ВСКС форма) ────────────
+
+@router.get("/{trip_id}/waybill.xlsx")
+async def download_waybill_xlsx(
+    trip_id: int,
+    current_user: User = Depends(require_tab("vehicles")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Скачать путевой лист ВСКС в формате .xlsx (Phase 30.1).
+
+    Альтернативный формат — форма ВСКС на основе xlsx-шаблона.
+    Минимальная разметка: номер ПЛ, дата, гос.номер, водитель, марка ТС.
+    TODO: полная coordinates-разметка — все поля медосмотра/одометра/топлива.
+    """
+    from app.services.waybill_xlsx import render_waybill_xlsx_vsks
+
+    result = await db.execute(
+        select(Trip)
+        .options(
+            selectinload(Trip.vehicle),
+            selectinload(Trip.driver_user),
+            selectinload(Trip.route_stops),
+        )
+        .where(Trip.id == trip_id)
+    )
+    waybill = result.scalars().first()
+    if not waybill:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Путевой лист не найден"})
+
+    if not _can_see_vehicle(waybill.vehicle, current_user):
+        raise HTTPException(403, detail={"code": "FORBIDDEN", "message": "Нет доступа к этому ТС"})
+
+    try:
+        bytes_data = await render_waybill_xlsx_vsks(waybill, db)
+    except FileNotFoundError as e:
+        raise HTTPException(500, detail={"code": "TEMPLATE_MISSING", "message": str(e)})
+    except Exception as e:
+        raise HTTPException(500, detail={
+            "code": "WAYBILL_XLSX_RENDER_ERROR",
+            "message": str(e),
+            "error_class": e.__class__.__name__,
+        })
+
+    filename = f"waybill_{waybill.number or waybill.id}_vsks.xlsx"
+    return StreamingResponse(
+        BytesIO(bytes_data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ─────────────────────── Internal helpers ───────────────────────────────────
 
 async def _load_trip_or_404(trip_id: int, db: AsyncSession) -> Trip:

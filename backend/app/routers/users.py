@@ -29,7 +29,13 @@ from typing import List, Optional
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("/", response_model=List[UserOut])
-async def list_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    can_drive: Optional[bool] = Query(None, description="Phase 30.2: фильтр водителей — can_drive=true"),
+    fleet_role: Optional[str] = Query(None, description="Фильтр по fleet_role (driver/mechanic/doctor/...)"),
+    limit: int = Query(500, ge=1, le=1000),
+):
     q = select(User).order_by(User.full_name)
     # D-09: hide superadmin from non-superadmin callers
     if current_user.role != "superadmin":
@@ -37,6 +43,13 @@ async def list_users(db: AsyncSession = Depends(get_db), current_user: User = De
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.where(User.org_id.in_(org_ids))
+    # Phase 30.2: driver-only filter — can_drive=True OR fleet_role='driver'
+    if can_drive is True:
+        from sqlalchemy import or_
+        q = q.where(or_(User.can_drive == True, User.fleet_role == "driver"))
+    elif fleet_role:
+        q = q.where(User.fleet_role == fleet_role)
+    q = q.limit(limit)
     result = await db.execute(q)
     return result.scalars().all()
 

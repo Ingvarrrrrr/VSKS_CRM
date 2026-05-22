@@ -256,8 +256,22 @@ const visibleCards = computed(() => {
 async function loadKpi() {
   kpiLoading.value = true
   try {
-    const data = await apiFetch<KpiData>('/vehicles-dashboard/kpi')
-    kpi.value = { working_delta: 0, ...data }
+    // /kpi возвращает {total_vehicles, fuel_total_cost, repairs_total_cost, total_mileage_km}
+    // /filter-counts возвращает {all, working, in_repair, not_running, ...}
+    // /maintenance-warning возвращает массив с истекающими доками
+    const [kpiData, counts, warnings] = await Promise.all([
+      apiFetch<any>('/vehicles-dashboard/kpi').catch(() => ({})),
+      apiFetch<any>('/vehicles-dashboard/filter-counts').catch(() => ({})),
+      apiFetch<any[]>('/vehicles-dashboard/maintenance-warning').catch(() => []),
+    ])
+    kpi.value = {
+      total: counts.all || kpiData.total_vehicles || 0,
+      working: counts.working || 0,
+      in_repair: counts.in_repair || 0,
+      broken: counts.not_running || 0,
+      docs_expiring: Array.isArray(warnings) ? warnings.length : 0,
+      working_delta: 0,
+    }
   } catch (e) {
     console.error('[FleetDash] KPI', e)
   } finally {
@@ -268,7 +282,9 @@ async function loadKpi() {
 async function loadRegions() {
   regionLoading.value = true
   try {
-    regions.value = await apiFetch<RegionRow[]>('/vehicles-dashboard/by-region')
+    // API возвращает { items: [...] } а не плоский массив
+    const resp = await apiFetch<{ items: RegionRow[] } | RegionRow[]>('/vehicles-dashboard/by-region')
+    regions.value = Array.isArray(resp) ? resp : (resp?.items || [])
   } catch (e) {
     console.error('[FleetDash] Regions', e)
     regions.value = []
@@ -280,9 +296,9 @@ async function loadRegions() {
 async function loadCards() {
   cardsLoading.value = true
   try {
-    // Use filter-counts endpoint for quick list; fall back to vehicles list
-    const data = await apiFetch<any[]>('/vehicles?limit=30&sort=updated_at_desc')
-    cards.value = data
+    // API возвращает { items: [...], total: N } — extract items
+    const resp = await apiFetch<{ items: any[]; total: number } | any[]>('/vehicles?limit=30')
+    cards.value = Array.isArray(resp) ? resp : (resp?.items || [])
   } catch (e) {
     console.error('[FleetDash] Cards', e)
     cards.value = []

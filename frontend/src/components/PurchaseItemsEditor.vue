@@ -131,6 +131,14 @@
                           @click.stop="confirmMatch(idx)" />
                       </template>
                     </v-tooltip>
+                    <!-- P1-B: кнопка перепривязки к каталогу -->
+                    <v-tooltip text="Изменить привязку к каталогу" location="top">
+                      <template #activator="{ props: tip }">
+                        <v-btn v-bind="tip" icon="mdi-link-variant-plus" size="x-small" variant="text"
+                          color="teal" :disabled="props.readonly"
+                          @click.stop="openRepickDialog(idx)" />
+                      </template>
+                    </v-tooltip>
                     <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                       :disabled="props.readonly"
                       @click.stop="removeItem(idx)" />
@@ -1263,6 +1271,14 @@
       @cancel="onMatchCancel"
     />
 
+    <!-- ===== P1-B: Single Product Repick Dialog ===== -->
+    <SingleProductPickerDialog
+      v-if="repickDialog.show"
+      v-model="repickDialog.show"
+      :item-name="repickDialog.itemName"
+      @pick="onRepickPick"
+    />
+
     <!-- ===== Snackbar ===== -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
@@ -1279,6 +1295,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
+import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
@@ -2905,10 +2922,56 @@ const smartImportColumns = ref<string[] | null>(null)
 const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
 
 // ── Product match review dialog ───────────────────────────────────────────────
-interface MatchCandidate { product_id: number; name: string; price: number | null; score: number }
+interface MatchCandidate {
+  product_id: number
+  name: string
+  price: number | null
+  score: number
+  description?: string | null
+  photo_url?: string | null
+  item_type?: string | null
+  category?: string | null
+}
+interface ResolvedRow {
+  query: string
+  product_id: number | null
+  create_new: boolean
+  chosen_candidate?: MatchCandidate | null
+}
 interface MatchRow { query: string; status: 'auto' | 'suggest' | 'create'; candidates: MatchCandidate[]; _choice?: number | '__create__' | null }
 const matchReviewShow = ref(false)
 const matchReviewRows = ref<MatchRow[]>([])
+
+// ── P1-B: Single product repick dialog ───────────────────────────────────────
+const repickDialog = ref<{ show: boolean; itemIdx: number; itemName: string }>({
+  show: false,
+  itemIdx: -1,
+  itemName: '',
+})
+
+function openRepickDialog(idx: number) {
+  repickDialog.value = {
+    show: true,
+    itemIdx: idx,
+    itemName: localItems.value[idx]?.item_name || '',
+  }
+}
+
+function onRepickPick(candidate: MatchCandidate) {
+  const idx = repickDialog.value.itemIdx
+  if (idx < 0) return
+  const item = localItems.value[idx]
+  if (!item) return
+  item.product_id = candidate.product_id
+  item.item_name = candidate.name
+  item._description = candidate.description ?? undefined
+  item._photo_url = candidate.photo_url ?? undefined
+  if (candidate.item_type) item.item_type = candidate.item_type
+  ;(item as any).match_confirmed = true
+  repickDialog.value.show = false
+  emitUpdate()
+  showSnack(`Товар перепривязан: ${candidate.name}`, 'success')
+}
 
 const CRM_MAPPING_FIELDS: Record<string, string> = {
   item_name: 'Наименование',
@@ -2964,7 +3027,10 @@ async function doSmartPreview() {
   if (!smartImportFile.value) return
 
   if (!props.purchaseId) {
-    // Wish / no-pid context: use preview-only endpoint + autoDetect
+    // 27.4-26b: Wish / no-pid context — XLSX через нативный smart парсер (без sample-обрезки).
+    // PDF/DOCX/HTML остаются на старом preview-flow (sample 5 строк → требует UI mapping).
+    const fileName = (smartImportFile.value?.name || '').toLowerCase()
+    const isXlsx = fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
     smartImportLoading.value = true
     smartImportPreview.value = null
     smartImportResult.value = null
@@ -2972,7 +3038,10 @@ async function doSmartPreview() {
       const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
-      const resp = await fetch('/api/purchases/items/import-preview', {
+      const endpoint = isXlsx
+        ? '/api/purchases/items/import-smart-nopid'
+        : '/api/purchases/items/import-preview'
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` } as HeadersInit,
         body: fd,
@@ -2982,27 +3051,34 @@ async function doSmartPreview() {
         throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
       }
       const data = await resp.json()
-      // Auto-detect mapping from first sheet and build preview rows
-      const firstSheet = data.sheets?.[0]
-      if (!firstSheet) { showSnack('Позиции не распознаны', 'warning'); return }
-      const detectedMapping = autoDetectMapping(firstSheet.headers || [])
-      const headerOffset = firstSheet.header_row_offset ?? 0
-      const dataRows = (firstSheet.sample as any[][]).slice(headerOffset + 1)
-      const preview = dataRows
-        .filter(row => {
-          const nameIdx = detectedMapping['item_name']
-          return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
-        })
-        .map(row => {
-          const item: Record<string, any> = {}
-          for (const [field, idx] of Object.entries(detectedMapping)) {
-            if (idx !== null && idx !== undefined) item[field] = row[idx]
-          }
-          return item
-        })
-      smartImportPreview.value = preview
-      smartImportColumns.value = Object.keys(detectedMapping).filter(k => detectedMapping[k] !== null)
-      if (!preview.length) showSnack('Позиции не распознаны', 'warning')
+      if (isXlsx) {
+        // /import-smart-nopid возвращает уже распарсенные позиции — без sample-slice
+        smartImportPreview.value = data.preview || []
+        smartImportColumns.value = ['item_name', 'quantity', 'unit', 'unit_price', 'total_price']
+        if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
+      } else {
+        // legacy path для PDF/DOCX/HTML — sample 5 строк
+        const firstSheet = data.sheets?.[0]
+        if (!firstSheet) { showSnack('Позиции не распознаны', 'warning'); return }
+        const detectedMapping = autoDetectMapping(firstSheet.headers || [])
+        const headerOffset = firstSheet.header_row_offset ?? 0
+        const dataRows = (firstSheet.sample as any[][]).slice(headerOffset + 1)
+        const preview = dataRows
+          .filter(row => {
+            const nameIdx = detectedMapping['item_name']
+            return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
+          })
+          .map(row => {
+            const item: Record<string, any> = {}
+            for (const [field, idx] of Object.entries(detectedMapping)) {
+              if (idx !== null && idx !== undefined) item[field] = row[idx]
+            }
+            return item
+          })
+        smartImportPreview.value = preview
+        smartImportColumns.value = Object.keys(detectedMapping).filter(k => detectedMapping[k] !== null)
+        if (!preview.length) showSnack('Позиции не распознаны', 'warning')
+      }
     } catch (e: any) {
       showSnack(e.message || 'Ошибка распознавания', 'error')
     } finally {
@@ -3055,7 +3131,7 @@ async function doSmartPreview() {
  *  Lines 3042–3098 of the original doSmartImport are refactored into this helper
  *  so that both "confirmed via dialog" and "bypass" paths share the same commit logic.
  */
-function commitPreviewItems(resolved: Array<{ query: string; product_id: number | null; create_new: boolean }>) {
+function commitPreviewItems(resolved: ResolvedRow[]) {
   if (!smartImportPreview.value?.length) return
   const previewRows = smartImportPreview.value
 
@@ -3085,18 +3161,25 @@ function commitPreviewItems(resolved: Array<{ query: string; product_id: number 
 
   // Normal items branch
   const newItems: EditorItem[] = previewRows.map((row, i) => {
+    const res = resolved[i]
+    const cand = res?.chosen_candidate ?? null
+    // P0-B: если привязан к каталогу — берём имя/описание/фото из кандидата
+    const hasCatalog = res?.product_id != null && cand != null
     const item: EditorItem = {
-      product_id: resolved[i]?.product_id ?? null,
-      item_name: row.item_name || '',
-      item_type: row.item_type || props.defaultItemType,
+      product_id: res?.product_id ?? null,
+      // item_name: из каталога если привязан, иначе из xlsx
+      item_name: hasCatalog ? (cand!.name || row.item_name || '') : (row.item_name || ''),
+      // item_type: из каталога если есть, иначе из xlsx или дефолт
+      item_type: hasCatalog && cand!.item_type ? cand!.item_type : (row.item_type || props.defaultItemType),
+      // qty/unit_price/total_price ВСЕГДА из xlsx
       quantity: row.quantity ?? null,
       unit: row.unit || props.defaultUnit,
       unit_price: row.unit_price ?? null,
       total_price: row.total_price ?? null,
       country_origin: props.defaultCountry,
       _selectedProduct: null,
-      _photo_url: undefined,
-      _description: undefined,
+      _photo_url: hasCatalog ? (cand!.photo_url ?? undefined) : undefined,
+      _description: hasCatalog ? (cand!.description ?? undefined) : undefined,
       _description_44fz: undefined,
     }
     if (props.itemShape === 'purchase') {
@@ -3115,7 +3198,7 @@ function commitPreviewItems(resolved: Array<{ query: string; product_id: number 
 }
 
 /** Handler for ProductMatchReviewDialog @confirm event */
-function onMatchConfirm(resolved: Array<{ query: string; product_id: number | null; create_new: boolean }>) {
+function onMatchConfirm(resolved: ResolvedRow[]) {
   matchReviewShow.value = false
   commitPreviewItems(resolved)
 }

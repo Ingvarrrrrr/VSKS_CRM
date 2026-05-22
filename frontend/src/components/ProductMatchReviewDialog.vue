@@ -58,6 +58,24 @@
                     </template>
                   </v-radio>
                 </v-radio-group>
+                <!-- P1-A: Ручной поиск по каталогу -->
+                <v-autocomplete
+                  class="mt-2 ml-2"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  :loading="r._manualSearchLoading"
+                  :items="r._manualSearchItems || []"
+                  item-title="name"
+                  item-value="product_id"
+                  return-object
+                  placeholder="Найти в каталоге вручную..."
+                  prepend-inner-icon="mdi-magnify"
+                  no-data-text="Начните вводить название"
+                  @update:search="(q: string) => onManualSearch(r, q)"
+                  @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
+                />
               </div>
             </v-expansion-panel-text>
           </v-expansion-panel>
@@ -70,18 +88,32 @@
               <v-chip size="x-small" color="primary" variant="tonal" class="ml-2">не найдены</v-chip>
             </v-expansion-panel-title>
             <v-expansion-panel-text>
-              <v-table density="compact">
-                <thead><tr><th>Имя</th><th class="text-right">Действие</th></tr></thead>
-                <tbody>
-                  <tr v-for="(r, i) in createRows" :key="i">
-                    <td class="text-caption">{{ r.query }}</td>
-                    <td class="text-right">
-                      <v-btn size="x-small" variant="tonal" color="primary" prepend-icon="mdi-magnify"
-                             @click="searchManual(r)">Найти в каталоге</v-btn>
-                    </td>
-                  </tr>
-                </tbody>
-              </v-table>
+              <div v-for="(r, i) in createRows" :key="i" class="mb-3 pa-2 rounded" style="border:1px solid rgba(0,0,0,0.08)">
+                <div class="text-body-2 font-weight-medium mb-1">
+                  <v-icon size="14" color="primary">mdi-plus-circle-outline</v-icon>
+                  {{ r.query }}
+                  <v-chip v-if="r._choice != null && r._choice !== '__create__'" size="x-small" color="success" variant="tonal" class="ml-2">
+                    привязан вручную
+                  </v-chip>
+                </div>
+                <!-- P1-A: Ручной поиск в секции Create -->
+                <v-autocomplete
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  :loading="r._manualSearchLoading"
+                  :items="r._manualSearchItems || []"
+                  item-title="name"
+                  item-value="product_id"
+                  return-object
+                  placeholder="Найти в каталоге (если товар уже есть)..."
+                  prepend-inner-icon="mdi-magnify"
+                  no-data-text="Начните вводить название"
+                  @update:search="(q: string) => onManualSearch(r, q)"
+                  @update:model-value="(c: Candidate | null) => { if (c) applyManualChoice(r, c) }"
+                />
+              </div>
             </v-expansion-panel-text>
           </v-expansion-panel>
         </v-expansion-panels>
@@ -99,14 +131,41 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { apiFetch } from '@/api'
 
-interface Candidate { product_id: number; name: string; price: number | null; score: number }
-interface MatchRow { query: string; status: 'auto' | 'suggest' | 'create'; candidates: Candidate[]; _choice?: number | '__create__' | null }
+export interface Candidate {
+  product_id: number
+  name: string
+  price: number | null
+  score: number
+  description?: string | null
+  photo_url?: string | null
+  item_type?: string | null
+  category?: string | null
+}
+
+export interface ResolvedRow {
+  query: string
+  product_id: number | null
+  create_new: boolean
+  chosen_candidate?: Candidate | null
+}
+
+interface MatchRow {
+  query: string
+  status: 'auto' | 'suggest' | 'create'
+  candidates: Candidate[]
+  _choice?: number | '__create__' | null
+  // manual search state per-row
+  _manualSearchLoading?: boolean
+  _manualSearchItems?: Candidate[]
+  _manualSearchQuery?: string
+}
 
 const props = defineProps<{ modelValue: boolean; rows: MatchRow[] }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'confirm', resolved: Array<{query: string; product_id: number | null; create_new: boolean}>): void
+  (e: 'confirm', resolved: ResolvedRow[]): void
   (e: 'cancel'): void
 }>()
 
@@ -127,22 +186,88 @@ watch(() => props.rows, (rows) => {
     if (r.status === 'suggest' && r._choice === undefined) {
       r._choice = r.candidates[0]?.product_id ?? '__create__'
     }
+    if (r._manualSearchItems === undefined) r._manualSearchItems = []
+    if (r._manualSearchQuery === undefined) r._manualSearchQuery = ''
   }
 }, { immediate: true, deep: true })
 
 const canConfirm = computed(() => suggestRows.value.every(r => r._choice != null))
 const totalReady = computed(() => autoCount.value + suggestCount.value + createCount.value)
 
-function searchManual(_r: MatchRow) { /* TODO: open product picker — пока no-op */ }
+// ── Manual catalog search (server-side) ──────────────────────────────────────
+
+async function onManualSearch(r: MatchRow, query: string) {
+  r._manualSearchQuery = query
+  if (!query || query.length < 2) {
+    r._manualSearchItems = []
+    return
+  }
+  r._manualSearchLoading = true
+  try {
+    const data = await apiFetch<{ results?: Array<{ id: number; name: string; price: number | null; description?: string; photo_url?: string; product_type?: string; category?: string }> }>(
+      `/products/?search=${encodeURIComponent(query)}&limit=20`
+    )
+    // GET /api/products/ returns list of ProductOut directly
+    const items = Array.isArray(data) ? data as any[] : (data.results ?? [])
+    r._manualSearchItems = items.map((p: any) => ({
+      product_id: p.id,
+      name: p.name,
+      price: p.price ?? p.contract_price ?? null,
+      score: 1.0,
+      description: p.description ?? null,
+      photo_url: p.photo_url ?? p.photo_link ?? null,
+      item_type: p.product_type ?? null,
+      category: p.category ?? null,
+    }))
+  } catch {
+    r._manualSearchItems = []
+  } finally {
+    r._manualSearchLoading = false
+  }
+}
+
+function applyManualChoice(r: MatchRow, candidate: Candidate) {
+  // Inject chosen as pseudo-candidate if not already in list
+  const existing = r.candidates.find(c => c.product_id === candidate.product_id)
+  if (!existing) {
+    r.candidates.push({ ...candidate, score: 1.0 })
+  }
+  r._choice = candidate.product_id
+  r._manualSearchItems = []
+  r._manualSearchQuery = ''
+}
+
+// ── Confirm ──────────────────────────────────────────────────────────────────
 
 function confirm() {
-  const resolved = props.rows.map(r => ({
-    query: r.query,
-    product_id: r.status === 'auto' ? r.candidates[0].product_id
-              : r.status === 'suggest' && r._choice !== '__create__' ? r._choice as number
-              : null,
-    create_new: r.status === 'create' || r._choice === '__create__',
-  }))
+  const resolved: ResolvedRow[] = props.rows.map(r => {
+    let product_id: number | null = null
+    let create_new = false
+    let chosen_candidate: Candidate | null = null
+
+    if (r.status === 'auto') {
+      product_id = r.candidates[0]?.product_id ?? null
+      chosen_candidate = r.candidates[0] ?? null
+    } else if (r.status === 'suggest') {
+      if (r._choice === '__create__' || r._choice == null) {
+        create_new = true
+      } else {
+        product_id = r._choice as number
+        // Find matching candidate (including manually injected ones)
+        chosen_candidate = r.candidates.find(c => c.product_id === product_id) ?? null
+      }
+    } else {
+      // status === 'create' — may have been overridden via manual search
+      if (r._choice != null && r._choice !== '__create__') {
+        product_id = r._choice as number
+        chosen_candidate = r.candidates.find(c => c.product_id === product_id) ?? null
+      } else {
+        create_new = true
+      }
+    }
+
+    return { query: r.query, product_id, create_new, chosen_candidate }
+  })
   emit('confirm', resolved)
   show.value = false
 }

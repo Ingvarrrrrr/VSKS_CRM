@@ -65,6 +65,8 @@ async def list_products(
     feo_category_id: Optional[int] = Query(None),
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None, description="Полнотекстовый поиск по имени/описанию/типу"),
+    limit: Optional[int] = Query(None, ge=1, le=500, description="Ограничить кол-во результатов"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -79,7 +81,19 @@ async def list_products(
         q = q.where(Product.category == category)
     if is_active is not None:
         q = q.where(Product.is_active == is_active)
-    result = await db.execute(q.order_by(Product.name))
+    if search:
+        from sqlalchemy import or_
+        pattern = f"%{search}%"
+        q = q.where(or_(
+            Product.name.ilike(pattern),
+            Product.description.ilike(pattern),
+            Product.product_type.ilike(pattern),
+            Product.category.ilike(pattern),
+        ))
+    q = q.order_by(Product.name)
+    if limit is not None:
+        q = q.limit(limit)
+    result = await db.execute(q)
     products = result.scalars().all()
 
     # Скрыть контрактные цены для чужих организаций (если не shared)
@@ -287,6 +301,10 @@ class _MatchCandidate(BaseModel):
     name: str
     price: Optional[float]
     score: float
+    description: Optional[str] = None
+    photo_url: Optional[str] = None
+    item_type: Optional[str] = None
+    category: Optional[str] = None
 
 
 class _MatchResultItem(BaseModel):
@@ -316,11 +334,22 @@ async def match_products(
     'suggest' (0.60<=score<0.95), or 'create' (no match found).
     """
     org_id = get_single_org_id(current_user)
-    q = select(Product.id, Product.name, Product.price)
+    q = select(Product.id, Product.name, Product.price, Product.description, Product.photo_url, Product.product_type, Product.category)
     if org_id:
         q = q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
     rows = (await db.execute(q)).all()
-    catalog = [(r.id, r.name or '', float(r.price) if r.price is not None else None) for r in rows]
+    catalog = [
+        (
+            r.id,
+            r.name or '',
+            float(r.price) if r.price is not None else None,
+            r.description,
+            r.photo_url,
+            r.product_type,
+            r.category,
+        )
+        for r in rows
+    ]
 
     top_k = max(1, min(body.limit, 10))
     results = bulk_match(body.queries, catalog, top_k=top_k)
@@ -345,6 +374,10 @@ async def match_products(
                     name=c.name,
                     price=c.price,
                     score=c.score,
+                    description=c.description,
+                    photo_url=c.photo_url,
+                    item_type=c.item_type,
+                    category=c.category,
                 )
                 for c in r.candidates
             ],

@@ -62,17 +62,35 @@
         </div>
       </div>
 
-      <!-- Step 2: Fuel level -->
+      <!-- Step 2: Fuel level — цифры + прогноз пробега -->
       <div v-if="step === 2">
-        <div class="checklist__field-label">Уровень топлива</div>
-        <div class="checklist__seg mt-2">
-          <button
-            v-for="opt in fuelOptions"
-            :key="opt.value"
-            class="checklist__seg__opt"
-            :class="{ 'checklist__seg__opt--active': form.fuelLevel === opt.value }"
-            @click="form.fuelLevel = opt.value"
-          >{{ opt.label }}</button>
+        <div class="checklist__field-label">Топливо в баке</div>
+        <v-text-field
+          v-model.number="form.fuelLiters"
+          type="number"
+          label="Литров в баке"
+          suffix="л"
+          inputmode="decimal"
+          step="0.5"
+          min="0"
+          :max="vehicle?.props?.tank_capacity_l || vehicle?.tank_capacity_l || 200"
+          variant="outlined"
+          density="comfortable"
+          rounded="lg"
+          hide-details="auto"
+          placeholder="Введите количество литров"
+          class="mt-2"
+        />
+        <!-- Прогноз пробега -->
+        <div v-if="rangeKm > 0" class="fuel-estimate mt-3 rounded-xl pa-3">
+          <div class="d-flex align-center ga-2">
+            <v-icon icon="mdi-gauge" color="info" size="20" />
+            <span class="fuel-estimate__main">≈ <b>{{ rangeKm }} км</b></span>
+            <span class="fuel-estimate__sub text-caption text-medium-emphasis">по норме {{ currentNorm }} л/100км</span>
+          </div>
+        </div>
+        <div v-else-if="!currentNorm" class="text-caption text-medium-emphasis mt-2">
+          Норма расхода не указана для данного ТС
         </div>
       </div>
 
@@ -218,7 +236,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
@@ -238,12 +256,39 @@ const photoPreviews = ref<string[]>([])
 
 const form = reactive({
   odometer: null as number | null,
+  fuelLiters: null as number | null,
   fuelLevel: '' as string,
   overallState: '' as string,
   paintCondition: '' as string,
   notes: '',
   items: {} as Record<string, string>,
 })
+
+// ---- Fuel norm + range computed ----
+const currentNorm = computed<number>(() => {
+  if (!vehicle.value) return 0
+  const month = new Date().getMonth() + 1
+  const isWinter = month >= 11 || month <= 3
+  return isWinter
+    ? (vehicle.value.fuel_norm_winter || vehicle.value.fuel_norm_summer || 0)
+    : (vehicle.value.fuel_norm_summer || 0)
+})
+
+const rangeKm = computed<number>(() => {
+  if (!form.fuelLiters || !currentNorm.value) return 0
+  return Math.round(form.fuelLiters * 100 / currentNorm.value)
+})
+
+// Map литры → fuel_level enum
+function litersToFuelLevel(liters: number | null): string {
+  if (liters === null || liters <= 0) return '1/2'
+  const tank = vehicle.value?.props?.tank_capacity_l || vehicle.value?.tank_capacity_l || 60
+  const pct = liters / tank
+  if (pct < 0.25) return '1/4'
+  if (pct < 0.5)  return '1/2'
+  if (pct < 0.75) return '3/4'
+  return 'full'
+}
 
 // ---- Options ----
 const fuelOptions = [
@@ -356,13 +401,20 @@ async function submitChecklist() {
       status: form.items[ci.key] || 'unknown',
     }))
 
+    // Вычисляем fuel_level из литров (или используем устаревший enum если литры не введены)
+    const computedFuelLevel = form.fuelLiters !== null
+      ? litersToFuelLevel(form.fuelLiters)
+      : (form.fuelLevel || '1/2')
+
     const body = {
       vehicle_id: vehicleId,
       type: 'pre_trip',
       overall_state: form.overallState || 'operational',
-      fuel_level: form.fuelLevel || '1/2',
+      fuel_level: computedFuelLevel,
       paint_condition: form.paintCondition || 'good',
-      notes: form.notes || '',
+      notes: form.fuelLiters !== null
+        ? `Топливо: ${form.fuelLiters} л${rangeKm.value > 0 ? ` (≈ ${rangeKm.value} км)` : ''}${form.notes ? '\n' + form.notes : ''}`
+        : (form.notes || ''),
       odometer_km: form.odometer,
       items: itemsArr,
     }
@@ -580,4 +632,21 @@ onMounted(loadVehicle)
 .gap-1 { gap: 4px; }
 .gap-2 { gap: 8px; }
 .gap-3 { gap: 12px; }
+
+/* Fuel estimate block */
+.fuel-estimate {
+  background: rgba(var(--v-theme-info), 0.08);
+  border: 1px solid rgba(var(--v-theme-info), 0.25);
+  display: flex;
+  align-items: center;
+}
+
+.fuel-estimate__main {
+  font-size: 15px;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.fuel-estimate__sub {
+  opacity: 0.7;
+}
 </style>

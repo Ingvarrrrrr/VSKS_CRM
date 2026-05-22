@@ -658,6 +658,26 @@
               >
                 Медсправка истекает через {{ driverMedicalExpiryDays(editDialog.medical_cert_expires_at)! }} дн.
               </v-chip>
+
+              <!-- Phase 30.3: скан водительского удостоверения -->
+              <div class="text-caption text-medium-emphasis mt-3 mb-1">Скан водительского удостоверения</div>
+              <div class="license-scan-wrap" @click="onLicenseScanClick">
+                <img v-if="editDialog.license_scan" :src="editDialog.license_scan" alt="скан ВУ" class="license-scan-preview" />
+                <div v-else class="license-scan-empty">
+                  <v-icon icon="mdi-card-account-details-outline" size="36" color="grey-lighten-1" />
+                  <span class="text-caption text-medium-emphasis">Загрузить скан (JPG/PNG, до 3 МБ)</span>
+                </div>
+              </div>
+              <input ref="licenseScanInput" type="file" accept="image/*" style="display:none" @change="onLicenseScanFile" />
+              <v-btn
+                v-if="editDialog.license_scan"
+                size="x-small"
+                variant="text"
+                color="error"
+                prepend-icon="mdi-delete-outline"
+                class="mt-1"
+                @click="editDialog.license_scan = ''"
+              >Удалить скан</v-btn>
             </v-card>
           </v-expand-transition>
 
@@ -1314,6 +1334,8 @@ const editDialog = reactive({
   license_issued_at: null as string | null,
   license_expires_at: null as string | null,
   medical_cert_expires_at: null as string | null,
+  // 30.3: скан ВУ
+  license_scan: '',
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
@@ -1322,6 +1344,33 @@ const staffPhotoUploadRef = ref<InstanceType<typeof ProfilePhotoUpload> | null>(
 function openStaffPhotoUpload() { staffPhotoUploadRef.value?.open() }
 function onStaffPhotoSaved(url: string | null) {
   editDialog.profile_photo = url || ''
+}
+
+// Phase 30.3: license scan upload
+const licenseScanInput = ref<HTMLInputElement | null>(null)
+function onLicenseScanClick() {
+  licenseScanInput.value?.click()
+}
+async function onLicenseScanFile(ev: Event) {
+  const target = ev.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    alert('Только изображения (JPG/PNG)')
+    target.value = ''
+    return
+  }
+  if (file.size > 3_000_000) {
+    alert('Файл слишком большой (макс 3 МБ)')
+    target.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    editDialog.license_scan = String(reader.result || '')
+  }
+  reader.readAsDataURL(file)
+  target.value = ''
 }
 
 const userImportDialog = reactive({
@@ -1776,6 +1825,15 @@ async function openEditUser(item: UserItem) {
     editDialog.profile_photo = photoRes.photo_url || ''
   } catch { /* ignore */ }
 
+  // Phase 30.3: Load license scan best-effort (if driver)
+  editDialog.license_scan = ''
+  if (editDialog.can_drive) {
+    try {
+      const lic = await apiFetch<{ license_scan: string | null }>(`/users/${item.id}/license-scan`)
+      editDialog.license_scan = lic.license_scan || ''
+    } catch { /* ignore */ }
+  }
+
   // Diagnostic: departments this user heads (head_user_id), for visibility audit.
   // Also loads managed-orgs from hierarchy endpoint if available.
   editDialog.headedDepts = []
@@ -1874,6 +1932,19 @@ async function saveEditUser() {
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {
       method: 'PATCH', body: JSON.stringify(body),
     })
+
+    // Phase 30.3: separate save/delete for license_scan (Text blob, не в основном PATCH)
+    if (editDialog.can_drive && editDialog.license_scan && editDialog.license_scan.startsWith('data:image/')) {
+      try {
+        await apiFetch(`/users/${editDialog.userId}/license-scan`, {
+          method: 'PUT', body: JSON.stringify({ license_scan: editDialog.license_scan }),
+        })
+      } catch (e) { console.warn('[staff] license-scan save failed', e) }
+    } else if (!editDialog.license_scan || !editDialog.can_drive) {
+      try {
+        await apiFetch(`/users/${editDialog.userId}/license-scan`, { method: 'DELETE' })
+      } catch { /* ignore */ }
+    }
 
     // Sync department membership (single source of truth — DepartmentMember table)
     const deptChanged = editDialog.deptId !== editDialog.origDeptId
@@ -2412,5 +2483,22 @@ onMounted(async () => {
 .staff-photo-overlay {
   position: absolute; bottom: 0; left: 0; right: 0; height: 32px;
   background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+}
+
+/* Phase 30.3: license scan upload preview */
+.license-scan-wrap {
+  width: 100%; min-height: 120px; border-radius: 10px;
+  border: 2px dashed rgba(0,0,0,0.15);
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.03); cursor: pointer; overflow: hidden;
+  transition: border-color .12s, background .12s;
+}
+.license-scan-wrap:hover {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.05);
+}
+.license-scan-preview { width: 100%; max-height: 220px; object-fit: contain; }
+.license-scan-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px;
 }
 </style>

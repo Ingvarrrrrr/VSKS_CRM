@@ -289,37 +289,61 @@
 
   <v-navigation-drawer v-model="drawerOpen" :permanent="mdAndUp" width="280" color="surface">
     <v-list nav density="compact" class="mt-4">
-      <v-list-item
-        v-for="(item, idx) in orderedMenuItems"
-        :key="item.route"
-        :to="item.route"
-        :prepend-icon="item.icon"
-        :title="item.title"
-        active-class="bg-primary text-white"
-        draggable="true"
-        :class="{ 'sidebar-drag-over': dragOverIdx === idx, 'sidebar-dragging': dragIdx === idx }"
-        @dragstart="onSidebarDragStart($event, idx)"
-        @dragover.prevent="onSidebarDragOver(idx)"
-        @dragleave="onSidebarDragLeave"
-        @drop.prevent="onSidebarDrop(idx)"
-        @dragend="onSidebarDragEnd"
+      <template v-for="(item, idx) in orderedMenuItems" :key="item.route">
+        <v-list-item
+          :to="item.route"
+          :prepend-icon="item.icon"
+          :title="item.title"
+          active-class="bg-primary text-white"
+          draggable="true"
+          :class="{ 'sidebar-drag-over': dragOverIdx === idx, 'sidebar-dragging': dragIdx === idx }"
+          @dragstart="onSidebarDragStart($event, idx)"
+          @dragover.prevent="onSidebarDragOver(idx)"
+          @dragleave="onSidebarDragLeave"
+          @drop.prevent="onSidebarDrop(idx)"
+          @dragend="onSidebarDragEnd"
+        >
+          <template v-slot:append>
+            <div class="d-flex align-center ga-1">
+              <span v-if="item.route === '/my-tasks' && badgeNewTasks > 0"
+                class="sidebar-badge sidebar-badge--new" :title="`${badgeNewTasks} новых задач`">{{ badgeNewTasks }}</span>
+              <span v-if="item.route === '/my-tasks' && badgeTaskChanges > 0"
+                class="sidebar-badge sidebar-badge--changes" :title="`${badgeTaskChanges} изменений`">{{ badgeTaskChanges }}</span>
+              <span v-if="item.route === '/orders' && badgeNewPurchases > 0"
+                class="sidebar-badge sidebar-badge--new" :title="`${badgeNewPurchases} новых закупок`">{{ badgeNewPurchases }}</span>
+              <span v-if="item.route === '/orders' && badgePurchaseChanges > 0"
+                class="sidebar-badge sidebar-badge--changes" :title="`${badgePurchaseChanges} изменений`">{{ badgePurchaseChanges }}</span>
+              <span v-if="item.route === '/chat' && badgeChatUnread > 0"
+                class="sidebar-badge sidebar-badge--new" :title="`${badgeChatUnread} непрочитанных`">{{ badgeChatUnread }}</span>
+              <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
+            </div>
+          </template>
+        </v-list-item>
+      </template>
+
+      <!-- Phase 30.2: Автопарк — collapsible group (vehicles tab) -->
+      <v-list-group
+        v-if="authStore.hasTab('vehicles')"
+        value="fleet"
+        :model-value="isFleetGroupOpen ? 'fleet' : undefined"
       >
-        <template v-slot:append>
-          <div class="d-flex align-center ga-1">
-            <span v-if="item.route === '/my-tasks' && badgeNewTasks > 0"
-              class="sidebar-badge sidebar-badge--new" :title="`${badgeNewTasks} новых задач`">{{ badgeNewTasks }}</span>
-            <span v-if="item.route === '/my-tasks' && badgeTaskChanges > 0"
-              class="sidebar-badge sidebar-badge--changes" :title="`${badgeTaskChanges} изменений`">{{ badgeTaskChanges }}</span>
-            <span v-if="item.route === '/orders' && badgeNewPurchases > 0"
-              class="sidebar-badge sidebar-badge--new" :title="`${badgeNewPurchases} новых закупок`">{{ badgeNewPurchases }}</span>
-            <span v-if="item.route === '/orders' && badgePurchaseChanges > 0"
-              class="sidebar-badge sidebar-badge--changes" :title="`${badgePurchaseChanges} изменений`">{{ badgePurchaseChanges }}</span>
-            <span v-if="item.route === '/chat' && badgeChatUnread > 0"
-              class="sidebar-badge sidebar-badge--new" :title="`${badgeChatUnread} непрочитанных`">{{ badgeChatUnread }}</span>
-            <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
-          </div>
+        <template #activator="{ props: gProps }">
+          <v-list-item
+            v-bind="gProps"
+            prepend-icon="mdi-car-multiple"
+            title="Автопарк"
+            :active="isFleetGroupOpen"
+            active-class="bg-primary text-white"
+          />
         </template>
-      </v-list-item>
+        <v-list-item to="/fleet"              prepend-icon="mdi-view-dashboard"          title="Дашборд"                    active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/vehicles"     prepend-icon="mdi-car"                     title="Реестр ТС"                  active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/documents"    prepend-icon="mdi-file-document-multiple"  title="Документы"                  active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/regions"      prepend-icon="mdi-map"                     title="Регионы и штабы"            active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/fines"        prepend-icon="mdi-alert-octagon"           title="Штрафы"                     active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/waybills"     prepend-icon="mdi-clipboard-list"          title="Путевые листы"              active-class="bg-primary text-white" />
+        <v-list-item to="/m/driver"           prepend-icon="mdi-cellphone"               title="Мобильный кабинет водителя" active-class="bg-primary text-white" />
+      </v-list-group>
     </v-list>
 
     <v-divider v-if="!isEmployee" class="my-4" />
@@ -501,6 +525,11 @@ const userRole = computed(() => {
 })
 const isSuperadmin = computed(() => userRoleRaw.value === 'superadmin')
 
+// Phase 30.2: fleet group auto-expand when on /fleet/* or /m/driver
+const isFleetGroupOpen = computed(() =>
+  $route.path.startsWith('/fleet') || $route.path.startsWith('/m/')
+)
+
 const STORAGE_KEY = 'quick_access_ids'
 const allSubsidies = ref<any[]>([])
 const manageMenu = ref(false)
@@ -544,15 +573,7 @@ const _allMenuItems = [
   { title: 'Реестр авансовых отчётов', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
   { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
-  { title: 'Дашборд автопарка', icon: 'mdi-view-dashboard', route: '/fleet', tab_key: 'vehicles' },
-  { title: 'Реестр ТС', icon: 'mdi-car-multiple', route: '/fleet/vehicles', tab_key: 'vehicles' },
-  { title: 'Документы парка', icon: 'mdi-file-document-multiple', route: '/fleet/documents', tab_key: 'vehicles' },
-  { title: 'Регионы и штабы', icon: 'mdi-map', route: '/fleet/regions', tab_key: 'vehicles' },
-  { title: 'Штрафы', icon: 'mdi-alert-octagon', route: '/fleet/fines', tab_key: 'vehicles' },
-  { title: 'Путевые листы', icon: 'mdi-clipboard-list', route: '/fleet/waybills', tab_key: 'vehicles' },
-  { title: 'Оборудование', icon: 'mdi-toolbox-outline', route: '/property/equipment', tab_key: 'vehicles' },
-  { title: 'Прочее имущество', icon: 'mdi-package-variant-closed', route: '/property/misc', tab_key: 'vehicles' },
-  { title: 'Мобильный кабинет водителя', icon: 'mdi-cellphone', route: '/m/driver', tab_key: 'vehicles' },
+  // Phase 30.2: fleet routes moved to dedicated v-list-group «Автопарк» — removed from flat list to avoid duplication
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },
 ]

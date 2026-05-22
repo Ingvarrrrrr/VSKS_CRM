@@ -365,7 +365,7 @@ const router = createRouter({
     {
       path: '/fleet',
       name: 'fleet-dashboard',
-      component: () => import('../views/property/VehicleDashboardView.vue'),
+      component: () => import('../views/fleet/FleetDashboardView.vue'),
       meta: { requiresAuth: true, title: 'Автопарк — Дашборд', tab_key: 'vehicles' },
     },
     {

@@ -133,6 +133,39 @@
             </div>
           </v-card>
         </v-col>
+        <v-col cols="12">
+          <v-card
+            class="driver-home__quick-btn driver-home__quick-btn--waybill rounded-xl pa-3"
+            variant="outlined"
+            @click="openWaybill"
+            :loading="loadingWaybill"
+          >
+            <div class="d-flex align-center ga-3">
+              <div class="driver-home__quick-btn__icon driver-home__quick-btn__icon--waybill">
+                <v-icon icon="mdi-clipboard-list-outline" size="20" />
+              </div>
+              <div>
+                <div class="text-body-2 font-weight-bold">Путевой лист</div>
+                <div class="text-caption mt-0_5" style="opacity: 0.5">
+                  {{ activeWaybillId ? `Активный № ${activeWaybillId}` : 'нет активных' }}
+                </div>
+              </div>
+              <v-spacer />
+              <v-chip
+                v-if="activeWaybillId"
+                size="x-small"
+                color="success"
+                variant="tonal"
+              >В работе</v-chip>
+              <v-chip
+                v-else
+                size="x-small"
+                color="default"
+                variant="tonal"
+              >Нет</v-chip>
+            </div>
+          </v-card>
+        </v-col>
       </v-row>
     </div>
 
@@ -233,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
@@ -260,6 +293,11 @@ const newOdometer = ref<number | null>(null)
 const savingOdometer = ref(false)
 
 const snack = ref({ show: false, text: '', color: 'success' })
+
+// ---- Active waybill ----
+const activeWaybillId = ref<number | null>(null)
+const loadingWaybill = ref(false)
+const ACTIVE_WB_STATUSES = ['created', 'tech_inspect', 'med_inspect', 'in_progress', 'closing', 'on_review']
 
 // ---- Computed ----
 const userName = computed(() => {
@@ -524,6 +562,33 @@ function onVehicleSelect(id: number) {
   loadVehicle(id)
 }
 
+async function loadActiveWaybill() {
+  loadingWaybill.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/trips/?limit=10&ordering=-id', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    const list: any[] = data.items ?? data.results ?? data ?? []
+    const active = list.find((w: any) => ACTIVE_WB_STATUSES.includes(w.status))
+    activeWaybillId.value = active?.id ?? null
+  } catch {
+    activeWaybillId.value = null
+  } finally {
+    loadingWaybill.value = false
+  }
+}
+
+function openWaybill() {
+  if (activeWaybillId.value) {
+    router.push({ name: 'm-driver-waybill', params: { id: String(activeWaybillId.value) } })
+  } else {
+    snack.value = { show: true, text: 'Активных путевых листов нет. Обратитесь к диспетчеру.', color: 'info' }
+  }
+}
+
 async function saveOdometer() {
   if (!vehicle.value || newOdometer.value == null) return
   if (newOdometer.value < (vehicle.value.current_odometer_km || 0)) {
@@ -561,6 +626,7 @@ onMounted(async () => {
   if (selectedVehicleId.value) {
     await loadVehicle(selectedVehicleId.value)
   }
+  loadActiveWaybill()
 })
 
 watch(selectedVehicleId, (id) => {
@@ -682,6 +748,18 @@ watch(selectedVehicleId, (id) => {
 .driver-home__feed-icon--info {
   background: rgba(93, 208, 255, 0.15);
   color: #5dd0ff;
+}
+
+.driver-home__quick-btn--waybill {
+  border-color: rgba(var(--v-theme-primary), 0.25);
+}
+.driver-home__quick-btn--waybill:hover {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+.driver-home__quick-btn__icon--waybill {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
 }
 
 .gap-2 {

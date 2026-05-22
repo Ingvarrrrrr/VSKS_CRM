@@ -358,6 +358,37 @@ async def waybill_stats(
     }
 
 
+# ─────────────────────── GET /api/trips/last-fuel ───────────────────────────
+# Phase 30.2: must be declared BEFORE /{trip_id} to avoid matching "last-fuel" as int
+
+@router.get("/last-fuel")
+async def last_fuel_for_vehicle(
+    vehicle_id: int = Query(..., description="ID ТС"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_tab("vehicles")),
+):
+    """Phase 30.2: последний остаток топлива при заезде для этой машины
+    (для авто-заполнения fuel_remaining_start формы нового ПЛ)."""
+    res = await db.execute(
+        select(Trip.fuel_remaining_finish, Trip.date, Trip.number)
+        .where(
+            Trip.vehicle_id == vehicle_id,
+            Trip.fuel_remaining_finish.isnot(None),
+            Trip.status.in_(["closed", "on_review"]),
+        )
+        .order_by(Trip.date.desc())
+        .limit(1)
+    )
+    row = res.first()
+    if not row:
+        return {"fuel_remaining_l": None, "from_waybill_number": None, "from_date": None}
+    return {
+        "fuel_remaining_l": float(row[0]) if row[0] is not None else None,
+        "from_waybill_number": row[2],
+        "from_date": row[1].isoformat() if row[1] else None,
+    }
+
+
 # ─────────────────────── GET /api/trips/{trip_id} ───────────────────────────
 
 @router.get("/{trip_id}")

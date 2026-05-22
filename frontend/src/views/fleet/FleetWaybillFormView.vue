@@ -1,7 +1,10 @@
 <template>
-  <div class="wbf-page">
+  <div
+    class="wbf-page"
+    :class="{ 'print-a5': isLightVehicle, 'print-a4': !isLightVehicle }"
+  >
     <!-- ═══ STICKY TOPBAR ═══ -->
-    <div class="wbf-topbar">
+    <div class="wbf-topbar no-print">
       <div class="wbf-crumbs">
         <router-link to="/fleet">Автопарк</router-link>
         <span class="sep">/</span>
@@ -19,7 +22,7 @@
         <v-btn variant="outlined" size="small" prepend-icon="mdi-arrow-left" @click="$router.back()">
           Назад
         </v-btn>
-        <v-btn variant="outlined" size="small" prepend-icon="mdi-content-save-outline" :loading="saving" @click="saveDraft">
+        <v-btn variant="outlined" size="small" prepend-icon="mdi-content-save-outline" :loading="saving" :disabled="isNew && !form.vehicle_id" @click="saveDraft">
           Сохранить черновик
         </v-btn>
         <v-btn
@@ -32,10 +35,21 @@
         >
           Скачать .docx
         </v-btn>
+        <!-- Phase 30.2: печать A5 (легковой) / A4 (грузовой), двусторонняя по длинной стороне -->
+        <v-btn
+          v-if="form.id"
+          variant="outlined"
+          size="small"
+          prepend-icon="mdi-printer"
+          @click="onPrint"
+        >
+          Распечатать
+        </v-btn>
         <v-btn
           color="primary"
           size="small"
           :loading="saving"
+          :disabled="isNew && !form.vehicle_id"
           @click="handlePrimaryAction"
         >
           {{ primaryActionLabel }}
@@ -44,17 +58,17 @@
     </div>
 
     <!-- Stage stepper -->
-    <div class="wbf-stepper-wrap">
+    <div class="wbf-stepper-wrap no-print">
       <StageStepper :current-stage="(form.status as any) || 'created'" />
     </div>
 
     <!-- Loading state -->
-    <div v-if="loading" class="wbf-loading">
+    <div v-if="loading" class="wbf-loading no-print">
       <v-progress-circular indeterminate color="primary" />
     </div>
 
     <!-- ═══ FORM ═══ -->
-    <div v-else class="wbf-layout">
+    <div v-else class="wbf-layout wbf-print-area">
 
       <!-- ── MAIN column ── -->
       <div class="wbf-main">
@@ -130,6 +144,17 @@
             clearable
             @update:model-value="onVehicleSelect"
           />
+          <!-- Phase 30.2: "Не выбран ТС" chip if no vehicle selected on new form -->
+          <v-chip
+            v-if="isNew && !form.vehicle_id"
+            color="warning"
+            variant="tonal"
+            size="small"
+            prepend-icon="mdi-alert-outline"
+            class="mt-2"
+          >
+            Не выбран ТС — сохранение недоступно
+          </v-chip>
           <div v-if="selectedVehicle" class="wbf-veh-preview">
             <div class="wbf-veh-preview-icon">
               <v-icon color="primary">mdi-car-side</v-icon>
@@ -141,6 +166,10 @@
               </div>
               <div class="wbf-veh-sub">
                 VIN: {{ selectedVehicle.vin || '—' }} · Пробег: {{ (selectedVehicle.current_mileage_km || 0).toLocaleString('ru-RU') }} км
+              </div>
+              <!-- Phase 30.2: fuel norms display -->
+              <div v-if="selectedVehicle.fuel_norm_summer || selectedVehicle.fuel_norm_winter" class="wbf-veh-sub">
+                Норма расхода: {{ selectedVehicle.fuel_norm_summer ?? '—' }} л/100км (лето) · {{ selectedVehicle.fuel_norm_winter ?? '—' }} л/100км (зима)
               </div>
             </div>
           </div>
@@ -441,13 +470,26 @@
       </div>
 
       <!-- ── ASIDE column ── -->
-      <div class="wbf-aside">
+      <div class="wbf-aside no-print">
         <div class="wbf-aside-sticky">
           <WaybillSummaryAside :waybill="asideWaybill" />
         </div>
       </div>
 
     </div><!-- /wbf-layout -->
+
+    <!-- Snackbar for errors/success -->
+    <v-snackbar
+      v-model="snackbar.show"
+      :color="snackbar.color"
+      :timeout="snackbar.color === 'error' ? -1 : 4000"
+      location="bottom right"
+    >
+      {{ snackbar.text }}
+      <template #actions>
+        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
@@ -473,10 +515,14 @@ interface Vehicle {
   id: number
   plate: string
   brand_model: string
+  brand?: string
+  model?: string
   year?: number
   vin?: string
   current_mileage_km?: number
   fuel_norm_summer?: number
+  fuel_norm_winter?: number
+  type?: string
 }
 
 interface Driver {
@@ -546,6 +592,7 @@ const route = useRoute()
 const router = useRouter()
 const idParam = route.params.id as string
 const isNew = idParam === 'new'
+const queryVehicleId = isNew ? (Number(route.query.vehicle_id) || null) : null
 
 // ─── State ────────────────────────────────────────────────────────────────────
 const loading = ref(!isNew)
@@ -553,6 +600,15 @@ const saving = ref(false)
 const actionLoading = ref(false)
 const signingLoading = ref(false)
 const downloadingDocx = ref(false)
+const snackbar = ref<{ show: boolean; text: string; color: string }>({
+  show: false, text: '', color: 'success',
+})
+function showError(msg: string) {
+  snackbar.value = { show: true, text: msg, color: 'error' }
+}
+function showSuccess(msg: string) {
+  snackbar.value = { show: true, text: msg, color: 'success' }
+}
 
 const form = ref<WaybillForm>({
   number: '',
@@ -731,7 +787,7 @@ async function loadVehicles() {
 
 async function loadDrivers() {
   try {
-    const data = await apiFetch<Driver[]>('/users/?fleet_role=driver')
+    const data = await apiFetch<Driver[]>('/users/?can_drive=true&limit=200')
     drivers.value = data
   } catch (e) {
     console.warn('[wbf] drivers error', e)
@@ -751,10 +807,58 @@ async function loadUsers() {
   }
 }
 
+// ─── Auto-populate for new waybill from vehicle ───────────────────────────────
+async function autoPopulateFromVehicle(vehicleId: number) {
+  try {
+    const veh = await apiFetch<Vehicle>(`/vehicles/${vehicleId}`)
+    // ensure vehicle is in the autocomplete list
+    if (!vehicles.value.find(v => v.id === veh.id)) {
+      vehicles.value = [veh, ...vehicles.value]
+    }
+    form.value.vehicle_id = veh.id
+
+    // date_start = now in datetime-local format
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    form.value.date_start = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
+
+    // waybill_type by vehicle.type
+    const lightTypes = ['car_light', 'suv', 'minivan']
+    if (lightTypes.includes(veh.type || '')) {
+      form.value.waybill_type = 'passenger'
+    } else if ((veh.type || '').startsWith('truck')) {
+      form.value.waybill_type = 'truck'
+    }
+
+    // odometer_start from vehicle
+    if (veh.current_mileage_km != null && !form.value.odometer_start) {
+      form.value.odometer_start = veh.current_mileage_km
+    }
+
+    // fuel_remaining_start from last closed trip
+    try {
+      const fuelData = await apiFetch<{
+        fuel_remaining_l: number | null
+        from_waybill_number: string | null
+        from_date: string | null
+      }>(`/trips/last-fuel?vehicle_id=${vehicleId}`)
+      if (fuelData.fuel_remaining_l != null) {
+        form.value.fuel_remaining_start = fuelData.fuel_remaining_l
+      }
+    } catch (e) {
+      console.warn('[wbf] last-fuel fetch error', e)
+    }
+  } catch (e) {
+    console.warn('[wbf] auto-populate vehicle error', e)
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadVehicles(), loadDrivers(), loadUsers()])
   if (!isNew) {
     await loadWaybill()
+  } else if (queryVehicleId) {
+    await autoPopulateFromVehicle(queryVehicleId)
   }
 })
 
@@ -821,6 +925,10 @@ function buildPayload(): Record<string, unknown> {
 
 // ─── Save draft ───────────────────────────────────────────────────────────────
 async function saveDraft() {
+  if (!form.value.vehicle_id) {
+    showError('Выберите транспортное средство для путевого листа')
+    return
+  }
   saving.value = true
   try {
     if (!form.value.id) {
@@ -838,8 +946,19 @@ async function saveDraft() {
         body: buildPayload() as any,
       })
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error('[wbf] save error', e)
+    const code = e?.payload?.code || e?.detail?.code
+    const msg = e?.payload?.message || e?.detail?.message
+    if (code === 'VEHICLE_REQUIRED') {
+      showError('Выберите транспортное средство для путевого листа')
+    } else if (code === 'DRIVER_REQUIRED' || code === 'DRIVER_NOT_ELIGIBLE') {
+      showError(msg || 'Укажите водителя с правом управления ТС')
+    } else if (msg) {
+      showError(msg)
+    } else {
+      showError('Ошибка сохранения путевого листа')
+    }
   } finally {
     saving.value = false
   }

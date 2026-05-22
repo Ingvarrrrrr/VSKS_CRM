@@ -1083,6 +1083,18 @@ async function downloadDocx() {
 watch([() => form.value.odometer_start, () => form.value.odometer_finish,
        () => form.value.fuel_remaining_start, () => form.value.fuel_issued_l,
        () => form.value.fuel_remaining_finish], scheduleAutosave)
+
+// ─── Phase 30.2: Print ────────────────────────────────────────────────────────
+// Легковой/автобус → A5 landscape; грузовой (truck) → A4 landscape
+const isLightVehicle = computed(() => {
+  const t = form.value.waybill_type || ''
+  return t !== 'truck' // passenger, bus → A5; truck → A4
+})
+
+function onPrint() {
+  document.documentElement.dataset.printFormat = isLightVehicle.value ? 'a5' : 'a4'
+  window.print()
+}
 </script>
 
 <style scoped>
@@ -1276,7 +1288,98 @@ watch([() => form.value.odometer_start, () => form.value.odometer_finish,
   top: 80px;
 }
 
+/* ─── Phase 30.2: Print styles ────────────────────────────────────────────── */
+/* Скрыть всё UI-«обёрточное», показать только форму */
+.no-print { display: none !important; }
+
+/* Wrapper */
+.wbf-print-area {
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%;
+}
+
+/* Убрать тени, оставить рамки */
+.wbf-print-area .v-card {
+  box-shadow: none !important;
+  border: 1px solid #000 !important;
+  page-break-inside: avoid;
+}
+
+/* Сжать отступы */
+.wbf-print-area .v-card { margin-bottom: 6mm; padding: 4mm; }
+.wbf-print-area .v-text-field { margin-bottom: 3px; }
+.wbf-print-area .v-input__details { display: none; }
+
+/* Послерейсовые осмотры начинаются с новой страницы (оборотная сторона) */
+.wbf-section-posttrip { page-break-before: always; }
+
 /* Light theme */
 .v-theme--light .wbf-topbar { background: rgba(255,255,255,0.95); }
 .v-theme--light .wbf-stepper-wrap { background: #fff; }
+</style>
+
+<!-- Phase 30.2: global @page rules (non-scoped — @page cannot be scoped) -->
+<style>
+/* ── A5 landscape — легковой/автобус (по умолчанию) ── */
+@media print {
+  @page {
+    size: A5 landscape;
+    margin: 8mm;
+  }
+
+  /* Скрыть navigation drawer, app-bar и всё вне формы */
+  .v-navigation-drawer,
+  .v-app-bar,
+  .v-overlay,
+  .wbf-topbar,
+  .wbf-stepper-wrap,
+  .wbf-aside,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .wbf-print-area {
+    position: static !important;
+    width: 100%;
+    font-size: 10pt;
+    color: #000;
+    background: #fff;
+  }
+
+  /* Двусторонняя с разворотом по длинному краю */
+  @page :left  { margin: 8mm 10mm 8mm 8mm; }
+  @page :right { margin: 8mm 8mm 8mm 10mm; }
+
+  .wbf-layout {
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* ── A4 landscape — грузовой ── */
+html[data-print-format=a4] {
+  @media print {
+    @page {
+      size: A4 landscape;
+      margin: 10mm;
+    }
+    @page :left  { margin: 10mm 12mm 10mm 10mm; }
+    @page :right { margin: 10mm 10mm 10mm 12mm; }
+  }
+}
+.print-a4 {
+  @media print {
+    @page {
+      size: A4 landscape;
+      margin: 10mm;
+    }
+  }
+}
 </style>

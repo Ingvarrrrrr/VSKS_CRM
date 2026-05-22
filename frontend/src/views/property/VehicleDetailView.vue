@@ -65,6 +65,15 @@
           </v-btn>
           <v-btn
             color="primary"
+            variant="tonal"
+            prepend-icon="mdi-clipboard-edit-outline"
+            size="small"
+            @click="$router.push(`/fleet/waybills/new?vehicle_id=${vehicleId}`)"
+          >
+            Создать путевой лист
+          </v-btn>
+          <v-btn
+            color="primary"
             variant="flat"
             prepend-icon="mdi-content-save"
             size="small"

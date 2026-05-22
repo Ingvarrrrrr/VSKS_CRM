@@ -6,10 +6,10 @@
       <div class="text-subtitle-1 font-weight-medium">Путёвки</div>
       <v-btn
         color="primary"
-        prepend-icon="mdi-plus"
-        @click="openAddDialog()"
+        prepend-icon="mdi-clipboard-edit-outline"
+        @click="openNewWaybillForm()"
       >
-        Новая путёвка
+        Новый путевой лист
       </v-btn>
     </div>
 
@@ -341,6 +341,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
 // ─── Props ───────────────────────────────────────────────────────────────────
@@ -348,6 +349,12 @@ import { apiFetch } from '@/api'
 const props = defineProps<{
   vehicleId: number
 }>()
+
+const router = useRouter()
+
+function openNewWaybillForm() {
+  router.push(`/fleet/waybills/new?vehicle_id=${props.vehicleId}`)
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

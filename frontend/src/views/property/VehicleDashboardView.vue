@@ -31,6 +31,12 @@
           </svg>
           Путевой лист
         </button>
+        <button class="fleet-btn" @click="router.push('/m/driver')" title="Мобильный кабинет водителя">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/>
+          </svg>
+          Кабинет водителя
+        </button>
         <button class="fleet-btn fleet-btn--primary" @click="router.push('/property/vehicles/new')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>

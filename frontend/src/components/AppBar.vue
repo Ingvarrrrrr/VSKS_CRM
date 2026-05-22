@@ -68,6 +68,11 @@
             prepend-icon="mdi-clipboard-list"
             title="Путевые листы"
           />
+          <v-list-item
+            :to="'/m/driver'"
+            prepend-icon="mdi-cellphone"
+            title="Мобильный кабинет водителя"
+          />
           <v-divider />
           <v-list-item
             :to="'/property/equipment'"
@@ -547,6 +552,7 @@ const _allMenuItems = [
   { title: 'Путевые листы', icon: 'mdi-clipboard-list', route: '/fleet/waybills', tab_key: 'vehicles' },
   { title: 'Оборудование', icon: 'mdi-toolbox-outline', route: '/property/equipment', tab_key: 'vehicles' },
   { title: 'Прочее имущество', icon: 'mdi-package-variant-closed', route: '/property/misc', tab_key: 'vehicles' },
+  { title: 'Мобильный кабинет водителя', icon: 'mdi-cellphone', route: '/m/driver', tab_key: 'vehicles' },
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },
 ]

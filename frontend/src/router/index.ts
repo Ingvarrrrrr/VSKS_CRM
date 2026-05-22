@@ -514,6 +514,12 @@ router.beforeEach(async (to, _, next) => {
     return next(role === 'employee' ? '/my-tasks' : '/dashboard')
   }
 
+  // Водитель (fleet_role='driver') → всегда в мобильный кабинет, если не /m/
+  const fleetRole = localStorage.getItem('user_fleet_role') || localStorage.getItem('fleet_role') || ''
+  if (isAuthenticated && fleetRole === 'driver' && !to.path.startsWith('/m/')) {
+    return next('/m/driver')
+  }
+
   // Публичные маршруты доступны без токена
   if (PUBLIC_PATHS.includes(to.path) || to.meta.public) {
     return next()

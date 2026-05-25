@@ -144,6 +144,27 @@
       </div>
     </div>
 
+    <!-- Active filter badge (from podium navigation) -->
+    <v-alert
+      v-if="filterDriverUserId || filterDriverExternalId || filterVehicleId || filterOrgId"
+      type="info"
+      variant="tonal"
+      density="compact"
+      class="mb-3"
+    >
+      <div class="d-flex align-center gap-2">
+        <span>
+          Фильтр:
+          <span v-if="filterDriverUserId">водитель #{{ filterDriverUserId }}</span>
+          <span v-if="filterDriverExternalId">внешний водитель #{{ filterDriverExternalId }}</span>
+          <span v-if="filterVehicleId">ТС #{{ filterVehicleId }}</span>
+          <span v-if="filterOrgId">филиал #{{ filterOrgId }}</span>
+        </span>
+        <v-spacer />
+        <v-btn size="x-small" variant="text" @click="clearFilters">Сбросить</v-btn>
+      </div>
+    </v-alert>
+
     <!-- Detailed table -->
     <div class="fines-table-wrap">
       <!-- Table header / filters -->
@@ -312,8 +333,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import KpiCard from '@/components/fleet/KpiCard.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
@@ -322,6 +343,7 @@ import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -382,6 +404,12 @@ const TYPE_ICONS: Record<string, { icon: string; variant: string }> = {
 const summaryLoading = ref(false)
 const finesLoading = ref(false)
 const paying = ref<number | null>(null)
+
+// ── Query-driven filters (from podium navigation) ─────────────────────────
+const filterDriverUserId = ref<number | null>(null)
+const filterDriverExternalId = ref<number | null>(null)
+const filterVehicleId = ref<number | null>(null)
+const filterOrgId = ref<number | null>(null)
 
 const summary = ref<FinesSummary>({
   total_count: 0,
@@ -498,7 +526,13 @@ async function fetchSummary(): Promise<void> {
 async function fetchFines(): Promise<void> {
   finesLoading.value = true
   try {
-    allFines.value = await apiFetch<VehicleFine[]>('/vehicle-fines/')
+    const params = new URLSearchParams()
+    if (filterDriverUserId.value) params.set('driver_user_id', String(filterDriverUserId.value))
+    if (filterDriverExternalId.value) params.set('driver_external_id', String(filterDriverExternalId.value))
+    if (filterVehicleId.value) params.set('vehicle_id', String(filterVehicleId.value))
+    if (filterOrgId.value) params.set('org_id', String(filterOrgId.value))
+    const url = `/vehicle-fines/${params.toString() ? '?' + params.toString() : ''}`
+    allFines.value = await apiFetch<VehicleFine[]>(url)
   } catch (e) {
     console.error('[FleetFines] fetchFines', e)
     showSnack('Ошибка загрузки штрафов', 'error')
@@ -546,24 +580,35 @@ function formatTime(val: string): string {
 
 // ── Leader click handler ──────────────────────────────────────────────────
 
-function onLeaderClick(payload: { key: string; name: string | null; kind: string; id: number | null }): void {
-  const { kind, id } = payload
-  if (kind === 'user' && id) {
-    router.push(`/staff/${id}`)
-  } else if (kind === 'external' && id) {
-    router.push(`/staff?external=${id}`)
-  } else if (kind === 'vehicle' && id) {
-    router.push(`/fleet/vehicles/${id}`)
-  } else if (kind === 'filial' && id) {
-    router.push(`/fleet/regions?org_id=${id}`)
-  }
+// onLeaderClick is now handled inside FineLeadersPodiumWidget (navigates to /fleet/fines?...)
+// This handler is kept as a no-op to satisfy the @leader-click emit binding
+function onLeaderClick(_payload: { key: string; name: string | null; kind: string; id: number | null }): void {
+  // Navigation is handled inside the widget; nothing extra needed here
+}
+
+// ── Query filter helpers ──────────────────────────────────────────────────
+
+function clearFilters(): void {
+  router.push({ path: '/fleet/fines' })
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
+watch(
+  () => route.query,
+  (q) => {
+    filterDriverUserId.value = q.driver_user_id ? Number(q.driver_user_id) : null
+    filterDriverExternalId.value = q.driver_external_id ? Number(q.driver_external_id) : null
+    filterVehicleId.value = q.vehicle_id ? Number(q.vehicle_id) : null
+    filterOrgId.value = q.org_id ? Number(q.org_id) : null
+    fetchFines()
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   fetchSummary()
-  fetchFines()
+  // fetchFines is triggered by the watch above with immediate:true
 })
 </script>
 

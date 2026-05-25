@@ -262,11 +262,10 @@ function onLeaderClick(item: FineLeaderItem): void {
     const key = d.driver_key
     const id = d.driver_id
     emit('leader-click', { key, name: d.driver_name, kind: d.driver_kind, id })
-    // Navigate to staff page
     if (d.driver_kind === 'user' && id) {
-      router.push(`/staff/${id}`)
+      router.push({ path: '/fleet/fines', query: { driver_user_id: id } })
     } else if (d.driver_kind === 'external' && id) {
-      router.push(`/staff?external=${id}`)
+      router.push({ path: '/fleet/fines', query: { driver_external_id: id } })
     }
     return
   }
@@ -275,7 +274,7 @@ function onLeaderClick(item: FineLeaderItem): void {
     const v = item as FineLeaderEntity
     emit('leader-click', { key: v.entity_key, name: v.entity_name, kind: 'vehicle', id: v.entity_id })
     if (v.entity_id) {
-      router.push(`/fleet/vehicles/${v.entity_id}`)
+      router.push({ path: '/fleet/fines', query: { vehicle_id: v.entity_id } })
     }
     return
   }
@@ -283,9 +282,8 @@ function onLeaderClick(item: FineLeaderItem): void {
   if (props.kind === 'filials') {
     const f = item as FineLeaderEntity
     emit('leader-click', { key: f.entity_key, name: f.entity_name, kind: 'filial', id: f.entity_id })
-    // Navigate to regions page with org filter
     if (f.entity_id) {
-      router.push(`/fleet/regions?org_id=${f.entity_id}`)
+      router.push({ path: '/fleet/fines', query: { org_id: f.entity_id } })
     }
     return
   }

@@ -130,6 +130,7 @@ async def list_fines(
     vehicle_id: Optional[int] = Query(None, description="Фильтр по ТС (опционально)"),
     driver_user_id: Optional[int] = Query(None, description="Фильтр по водителю User.id"),
     driver_external_id: Optional[int] = Query(None, description="Фильтр по внешнему водителю"),
+    org_id: Optional[int] = Query(None, description="Фильтр по филиалу (Vehicle.owner_org_id)"),
     status: Optional[str] = Query(None, description="Фильтр по статусу: unpaid/paid/disputed"),
     limit: int = Query(500, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
@@ -137,6 +138,7 @@ async def list_fines(
 ):
     """Список штрафов. Без фильтров — все штрафы (для /fleet/fines страницы)."""
     from sqlalchemy.orm import selectinload
+    from app.models.vehicle import Vehicle
     q = select(VehicleFine).options(selectinload(VehicleFine.vehicle))
     if vehicle_id is not None:
         q = q.where(VehicleFine.vehicle_id == vehicle_id)
@@ -144,6 +146,8 @@ async def list_fines(
         q = q.where(VehicleFine.driver_user_id == driver_user_id)
     if driver_external_id is not None:
         q = q.where(VehicleFine.driver_external_id == driver_external_id)
+    if org_id is not None:
+        q = q.join(Vehicle, Vehicle.id == VehicleFine.vehicle_id).where(Vehicle.owner_org_id == org_id)
     if status:
         q = q.where(VehicleFine.status == status)
     q = q.order_by(VehicleFine.issued_at.desc()).limit(limit)

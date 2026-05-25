@@ -32,6 +32,9 @@
         :sub="kpiLoading ? '' : 'авто, спецтехника, прицепы'"
         :bar-pct="100"
         variant="default"
+        :clickable="true"
+        :active="selectedFilter === 'all'"
+        @click="filterAndScroll('all')"
       />
       <KpiCard
         label="В рабочем"
@@ -42,6 +45,7 @@
         :bar-pct="workingPct"
         variant="ok"
         :clickable="true"
+        :active="selectedFilter === 'working'"
         @click="filterAndScroll('working')"
       />
       <KpiCard
@@ -51,6 +55,7 @@
         :bar-pct="repairPct"
         variant="warn"
         :clickable="true"
+        :active="selectedFilter === 'in_repair'"
         @click="filterAndScroll('in_repair')"
       />
       <KpiCard
@@ -60,6 +65,7 @@
         :bar-pct="brokenPct"
         variant="alert"
         :clickable="true"
+        :active="selectedFilter === 'broken'"
         @click="filterAndScroll('broken')"
       />
       <KpiCard
@@ -69,7 +75,8 @@
         :bar-pct="null"
         variant="warn"
         :clickable="true"
-        @click="$router.push('/fleet/documents')"
+        :active="selectedFilter === 'docs_expiring'"
+        @click="filterAndScroll('docs_expiring')"
       />
     </div>
 
@@ -92,21 +99,92 @@
           Нет данных
         </div>
         <div v-else class="fd-panel__regions">
-          <StackedRegionBar
+          <!-- Phase 29.3-R3: верхняя строка «ВСЕГО» — сумма всех регионов -->
+          <div class="fd-row-total">
+            <StackedRegionBar
+              region="ВСЕГО"
+              shtab=""
+              :count="allRegionsTotalCount"
+              :max-count="allRegionsTotalCount"
+              :working="allRegionsBy.working"
+              :in-repair="allRegionsBy.in_repair"
+              :broken="allRegionsBy.broken"
+              :needs-repair="allRegionsBy.needs_repair"
+              :destroyed="allRegionsBy.destroyed"
+              :utilized="allRegionsBy.utilized"
+            />
+          </div>
+
+          <!-- Top-5 регионов -->
+          <div
             v-for="row in regionRows"
             :key="row.region"
-            :region="row.region"
-            :shtab="row.shtab_label"
-            :count="row.count"
-            :max-count="regionMax"
-            :working="row.by_state.working || 0"
-            :in-repair="row.by_state.in_repair || 0"
-            :broken="row.by_state.broken || 0"
-            :needs-repair="row.by_state.needs_repair || 0"
-            :destroyed="row.by_state.destroyed || 0"
-            :utilized="row.by_state.utilized || 0"
-            @segment-click="onRegionSegmentClick"
-          />
+            class="fd-region-row"
+            :class="{ 'fd-region-row--active': selectedRegion === row.region }"
+            @click="selectedRegion = (selectedRegion === row.region ? '' : row.region); selectedFilter = ''"
+          >
+            <StackedRegionBar
+              :region="row.region"
+              :shtab="row.shtab_label"
+              :count="row.count"
+              :max-count="regionMax"
+              :working="row.by_state.working || 0"
+              :in-repair="row.by_state.in_repair || 0"
+              :broken="row.by_state.broken || 0"
+              :needs-repair="row.by_state.needs_repair || 0"
+              :destroyed="row.by_state.destroyed || 0"
+              :utilized="row.by_state.utilized || 0"
+              @segment-click="onRegionSegmentClick"
+            />
+          </div>
+
+          <!-- 6-я строка «Прочее» — collapsible, persistent -->
+          <template v-if="otherRegions.length">
+            <div
+              class="fd-other-header"
+              :class="{ 'fd-other-header--expanded': showOtherRegions }"
+              @click="showOtherRegions = !showOtherRegions"
+            >
+              <span class="fd-other-caret">{{ showOtherRegions ? '▼' : '▶' }}</span>
+              <StackedRegionBar
+                :region="`Прочее (${otherRegions.length})`"
+                :shtab="''"
+                :count="otherRegionsTotalCount"
+                :max-count="regionMax"
+                :working="otherRegionsBy.working"
+                :in-repair="otherRegionsBy.in_repair"
+                :broken="otherRegionsBy.broken"
+                :needs-repair="otherRegionsBy.needs_repair"
+                :destroyed="otherRegionsBy.destroyed"
+                :utilized="otherRegionsBy.utilized"
+                style="flex:1"
+              />
+            </div>
+
+            <div v-show="showOtherRegions" class="fd-other-nested">
+              <div
+                v-for="row in otherRegions"
+                :key="row.region"
+                class="fd-region-row"
+                :class="{ 'fd-region-row--active': selectedRegion === row.region }"
+                @click="selectedRegion = (selectedRegion === row.region ? '' : row.region); selectedFilter = ''"
+              >
+                <StackedRegionBar
+                  :region="row.region"
+                  :shtab="row.shtab_label"
+                  :count="row.count"
+                  :max-count="regionMax"
+                  :working="row.by_state.working || 0"
+                  :in-repair="row.by_state.in_repair || 0"
+                  :broken="row.by_state.broken || 0"
+                  :needs-repair="row.by_state.needs_repair || 0"
+                  :destroyed="row.by_state.destroyed || 0"
+                  :utilized="row.by_state.utilized || 0"
+                  @segment-click="onRegionSegmentClick"
+                />
+              </div>
+            </div>
+          </template>
         </div>
         <div class="fd-panel__legend">
           <span class="fleg fleg--working">Рабочих</span>
@@ -117,9 +195,16 @@
 
       <!-- RIGHT: Fine leaders podium -->
       <div class="fd-panel fd-panel--fines">
-        <FineLeadersPodiumWidget />
+        <FineLeadersPodiumWidget @leader-click="onLeaderClick" />
       </div>
     </div>
+
+    <!-- Phase 29.3-R3 (pt9): drill-секция штрафов выбранного водителя -->
+    <DriverFinesDrill
+      v-if="selectedDriver"
+      :driver="selectedDriver"
+      @close="selectedDriver = null"
+    />
 
     <!-- Bottom: Vehicle cards grid -->
     <div ref="cardsSection" class="fd-panel fd-panel--cards">
@@ -129,6 +214,9 @@
           Карточки ТС
           <span v-if="selectedFilter" class="fd-filter-badge" @click="selectedFilter = ''">
             {{ filterLabel }} &times;
+          </span>
+          <span v-if="selectedRegion" class="fd-filter-badge fd-filter-badge--region" @click="selectedRegion = ''">
+            {{ selectedRegion }} &times;
           </span>
         </span>
         <router-link to="/fleet/vehicles" class="fd-panel__link">
@@ -172,6 +260,7 @@ import { apiFetch } from '@/api'
 import KpiCard from '@/components/fleet/KpiCard.vue'
 import StackedRegionBar from '@/components/fleet/StackedRegionBar.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
+import DriverFinesDrill from '@/components/fleet/DriverFinesDrill.vue'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -214,6 +303,19 @@ const regions = ref<RegionRow[]>([])
 const cards   = ref<any[]>([])
 
 const selectedFilter = ref('')
+// Phase 29.3-R3 (pt8): region drill on-page
+const selectedRegion = ref('')
+// Phase 29.3-R3 (pt9): drill штрафов конкретного водителя
+const selectedDriver = ref<{ driver_key: string; driver_name: string | null; driver_kind: string } | null>(null)
+
+function onLeaderClick(payload: { key: string; name: string | null; kind: string; id: number | null }) {
+  // Dashboard only shows drivers podium (default kind), map to old shape for DriverFinesDrill
+  selectedDriver.value = {
+    driver_key: payload.key,
+    driver_name: payload.name,
+    driver_kind: payload.kind,
+  }
+}
 const cardsSection   = ref<HTMLElement | null>(null)
 const nowStr = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -229,26 +331,82 @@ const brokenPct = computed(() =>
   kpi.value.total > 0 ? Math.round((kpi.value.broken / kpi.value.total) * 100) : 0
 )
 
-const regionRows = computed(() =>
-  [...regions.value].sort((a, b) => b.count - a.count)
+// Phase 29.3-R3: фильтрация регионов с пустым именем (assigned_text=null/empty) —
+// они идут в строку «ВСЕГО» / агрегат, но не как отдельная анонимная строка
+const regionRowsSorted = computed(() =>
+  [...regions.value]
+    .filter(r => r.region && r.region.trim().length > 0)
+    .sort((a, b) => b.count - a.count)
 )
 
+// Phase 29.3-R3: top-5 + 6-я строка «Прочее» (collapsible, persistent — не сворачивается auto)
+const REG_TOP_LIMIT = 5
+const showOtherRegions = ref(false)
+
+const regionRows = computed(() => regionRowsSorted.value.slice(0, REG_TOP_LIMIT))
+const otherRegions = computed(() => regionRowsSorted.value.slice(REG_TOP_LIMIT))
+const otherRegionsTotalCount = computed(() => otherRegions.value.reduce((sum, r) => sum + r.count, 0))
+
+// Phase 29.3-R3: первая строка «ВСЕГО» — сумма всех регионов (включая безымянные, для total)
+const allRegionsTotalCount = computed(() => regions.value.reduce((sum, r) => sum + r.count, 0))
+const allRegionsBy = computed(() => {
+  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0 }
+  for (const r of regions.value) {
+    for (const k of Object.keys(acc)) acc[k] += (r.by_state as any)[k] || 0
+  }
+  return acc
+})
+const otherRegionsBy = computed(() => {
+  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0 }
+  for (const r of otherRegions.value) {
+    for (const k of Object.keys(acc)) acc[k] += (r.by_state as any)[k] || 0
+  }
+  return acc
+})
+
 const regionMax = computed(() =>
-  regionRows.value.length > 0 ? regionRows.value[0].count : 1
+  regionRowsSorted.value.length > 0 ? regionRowsSorted.value[0].count : 1
 )
 
 const filterLabel = computed(() => {
   const map: Record<string, string> = {
+    all: 'Все ТС',
     working: 'В рабочем',
     in_repair: 'В ремонте',
     broken: 'Не на ходу',
+    docs_expiring: 'Документы истекают',
   }
   return map[selectedFilter.value] ?? selectedFilter.value
 })
 
+// Phase 29.3-R3: фильтр «В ремонте» включает state IN (in_repair, broken, needs_repair)
+const STATE_FILTER_MAP: Record<string, string[]> = {
+  in_repair: ['in_repair', 'broken', 'needs_repair'],
+  broken: ['broken', 'destroyed', 'utilized', 'not_running'],
+  working: ['working'],
+}
+
+// Phase 29.3-R3 (pt7): «Документы истекают» — id'ы ТС с просрочкой ОСАГО/СТС/ПТС в течение 30 дней
+const docsExpiringIds = ref<Set<number>>(new Set())
+
 const visibleCards = computed(() => {
-  if (!selectedFilter.value) return cards.value.slice(0, 9)
-  return cards.value.filter((v: any) => v.state === selectedFilter.value).slice(0, 9)
+  let list = cards.value as any[]
+
+  // Region filter (drill from geography)
+  if (selectedRegion.value) {
+    const reg = selectedRegion.value.trim()
+    list = list.filter((v: any) => (v.assigned_text || '').trim() === reg)
+  }
+
+  // State / docs_expiring filter
+  if (!selectedFilter.value || selectedFilter.value === 'all') {
+    return list.slice(0, 9)
+  }
+  if (selectedFilter.value === 'docs_expiring') {
+    return list.filter((v: any) => docsExpiringIds.value.has(v.vehicle_id)).slice(0, 9)
+  }
+  const allowed = STATE_FILTER_MAP[selectedFilter.value] || [selectedFilter.value]
+  return list.filter((v: any) => allowed.includes(v.state)).slice(0, 9)
 })
 
 // ─── Methods ──────────────────────────────────────────────────────────────────
@@ -271,6 +429,10 @@ async function loadKpi() {
       broken: counts.not_running || 0,
       docs_expiring: Array.isArray(warnings) ? warnings.length : 0,
       working_delta: 0,
+    }
+    // Phase 29.3-R3 (pt7): сохраняем id'ы ТС с истекающими доками для drill on-page
+    if (Array.isArray(warnings)) {
+      docsExpiringIds.value = new Set(warnings.map((w: any) => w.vehicle_id).filter(Boolean))
     }
   } catch (e) {
     console.error('[FleetDash] KPI', e)
@@ -308,14 +470,14 @@ async function loadCards() {
 }
 
 function filterAndScroll(state: string) {
+  // Phase 29.3-R3: убран scroll-zoom на виджеты — пользователь сам решает куда смотреть.
   selectedFilter.value = state
-  nextTick(() => {
-    cardsSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  })
 }
 
+// Phase 29.3-R3 (pt8): клик по сегменту региона = drill on-page, не navigate
 function onRegionSegmentClick({ region, state }: { region: string; state: string }) {
-  router.push({ path: '/fleet/vehicles', query: { state, region } })
+  selectedRegion.value = region
+  selectedFilter.value = state
 }
 
 function exportXlsx() {
@@ -585,4 +747,67 @@ onMounted(() => {
   padding: 10px 0;
 }
 .fleet-dash__footer b { color: var(--text); font-weight: 700; }
+
+/* Phase 29.3-R3 (pt8): clickable region rows */
+.fd-region-row {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.fd-region-row:hover {
+  background: rgba(106, 166, 255, 0.08);
+}
+.fd-region-row--active {
+  background: rgba(106, 166, 255, 0.18);
+  box-shadow: inset 3px 0 0 var(--accent, #6aa6ff);
+}
+
+.fd-filter-badge--region {
+  background: rgba(34, 201, 151, 0.18);
+  color: #22c997;
+  border: 1px solid rgba(34, 201, 151, 0.3);
+}
+
+/* Phase 29.3-R3: верхняя строка «ВСЕГО» */
+.fd-row-total {
+  padding: 4px 0 8px 0;
+  border-bottom: 1px solid rgba(106, 166, 255, 0.18);
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+.fd-row-total :deep(.srb-region) {
+  font-weight: 700;
+  color: var(--text, #e9edf5);
+  letter-spacing: 0.4px;
+}
+
+/* Phase 29.3-R3: «Прочее» header + nested */
+.fd-other-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.fd-other-caret {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent, #6aa6ff);
+  flex-shrink: 0;
+}
+.fd-other-header:hover .fd-other-caret { color: #8ab8ff; }
+.fd-other-nested {
+  margin-left: 22px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(106, 166, 255, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 </style>

@@ -2,8 +2,8 @@
   <v-card class="fine-leaders-widget h-100 d-flex flex-column" elevation="0" rounded="0" style="background:transparent;border:none">
     <!-- Header -->
     <v-card-title class="d-flex align-center ga-2 pb-1 flex-wrap px-5 pt-5">
-      <span class="pod-trophy">🏆</span>
-      <span class="text-subtitle-1 font-weight-bold">Рекордсмены по штрафам</span>
+      <span class="pod-trophy">{{ kindIcon }}</span>
+      <span class="text-subtitle-1 font-weight-bold">{{ title || kindDefaultTitle }}</span>
       <v-spacer />
       <!-- Period selector -->
       <v-select
@@ -40,10 +40,11 @@
       <div v-if="top3.length > 0" class="podium-row">
 
         <!-- 2nd place (left) -->
-        <div class="podium-card podium-card--second" style="min-height:80px">
+        <div class="podium-card podium-card--second podium-card--clickable" style="min-height:80px" @click="top3[1] && onLeaderClick(top3[1])">
           <div class="podium-rank podium-rank--second">2</div>
           <div v-if="top3[1]" class="podium-body">
-            <div class="podium-name">{{ top3[1].driver_name || '— Не определён —' }}</div>
+            <div class="podium-name">{{ displayName(top3[1]) }}</div>
+            <div v-if="displaySub(top3[1])" class="podium-sub">{{ displaySub(top3[1]) }}</div>
             <div class="podium-fines">{{ top3[1].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--second">{{ fmtRub(top3[1].fines_total) }}</div>
             <span v-if="top3[1].unpaid_count > 0" class="pod-badge pod-badge--unpaid">
@@ -55,10 +56,11 @@
         </div>
 
         <!-- 1st place (center, tallest) -->
-        <div class="podium-card podium-card--first" style="min-height:108px">
+        <div class="podium-card podium-card--first podium-card--clickable" style="min-height:108px" @click="top3[0] && onLeaderClick(top3[0])">
           <div class="podium-rank podium-rank--first">1</div>
           <div class="podium-body">
-            <div class="podium-name podium-name--first">{{ top3[0].driver_name || '— Не определён —' }}</div>
+            <div class="podium-name podium-name--first">{{ displayName(top3[0]) }}</div>
+            <div v-if="displaySub(top3[0])" class="podium-sub">{{ displaySub(top3[0]) }}</div>
             <div class="podium-fines">{{ top3[0].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--first">{{ fmtRub(top3[0].fines_total) }}</div>
             <span v-if="top3[0].unpaid_count > 0" class="pod-badge pod-badge--unpaid">
@@ -69,10 +71,11 @@
         </div>
 
         <!-- 3rd place (right) -->
-        <div class="podium-card podium-card--third" style="min-height:64px">
+        <div class="podium-card podium-card--third podium-card--clickable" style="min-height:64px" @click="top3[2] && onLeaderClick(top3[2])">
           <div class="podium-rank podium-rank--third">3</div>
           <div v-if="top3[2]" class="podium-body">
-            <div class="podium-name">{{ top3[2].driver_name || '— Не определён —' }}</div>
+            <div class="podium-name">{{ displayName(top3[2]) }}</div>
+            <div v-if="displaySub(top3[2])" class="podium-sub">{{ displaySub(top3[2]) }}</div>
             <div class="podium-fines">{{ top3[2].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--third">{{ fmtRub(top3[2].fines_total) }}</div>
             <span v-if="top3[2].unpaid_count > 0" class="pod-badge pod-badge--unpaid">
@@ -97,15 +100,17 @@
         <div class="others-title">Остальные</div>
         <div
           v-for="(leader, idx) in rest"
-          :key="leader.driver_key"
-          class="other-row"
+          :key="leaderKey(leader)"
+          class="other-row other-row--clickable"
+          @click="onLeaderClick(leader)"
         >
           <span class="other-row__num">{{ idx + 4 }}.</span>
-          <div class="other-row__av" :style="{ background: avatarGradient(leader.driver_name || '') }">
-            {{ initials(leader.driver_name || '') }}
+          <div class="other-row__av" :style="{ background: avatarGradient(displayName(leader)) }">
+            {{ initials(displayName(leader)) }}
           </div>
           <div class="other-row__info">
-            <div class="other-row__nm">{{ leader.driver_name || '— Не определён —' }}</div>
+            <div class="other-row__nm">{{ displayName(leader) }}</div>
+            <div v-if="displaySub(leader)" class="other-row__sb">{{ displaySub(leader) }}</div>
           </div>
           <span class="other-row__cnt">{{ leader.fines_count }} шт.</span>
           <span class="other-row__sum">{{ fmtRub(leader.fines_total) }}</span>
@@ -126,17 +131,47 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 
-interface FineLeader {
+// ── Props ─────────────────────────────────────────────────────────────────
+const props = withDefaults(defineProps<{
+  kind?: 'drivers' | 'vehicles' | 'filials'
+  title?: string
+}>(), {
+  kind: 'drivers',
+  title: '',
+})
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+// drivers kind
+interface FineLeaderDriver {
   driver_key: string
   driver_name: string | null
   driver_kind: 'user' | 'external' | 'unmatched'
+  driver_id: number | null
   fines_count: number
   fines_total: number
   unpaid_count: number
   unpaid_total: number
 }
+
+// vehicles / filials kind
+interface FineLeaderEntity {
+  entity_key: string
+  entity_name: string | null
+  entity_sub: string | null
+  entity_id: number | null
+  fines_count: number
+  fines_total: number
+  unpaid_count: number
+  unpaid_total: number
+}
+
+type FineLeaderItem = FineLeaderDriver | FineLeaderEntity
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const PERIODS = [
   { label: 'Всё время', days: null },
@@ -153,12 +188,54 @@ const AVATAR_PALETTES: [string, string][] = [
   ['#8b5cf6', '#5dd0ff'],
 ]
 
+// ── State ──────────────────────────────────────────────────────────────────
+
+const router = useRouter()
 const selectedPeriod = ref<number | null>(null)
-const leaders = ref<FineLeader[]>([])
+const leaders = ref<FineLeaderItem[]>([])
 const loading = ref(false)
+
+const emit = defineEmits<{
+  (e: 'leader-click', payload: { key: string; name: string | null; kind: string; id: number | null }): void
+}>()
+
+// ── Computed ───────────────────────────────────────────────────────────────
+
+const kindIcon = computed(() => {
+  if (props.kind === 'vehicles') return '🚗'
+  if (props.kind === 'filials') return '🏢'
+  return '🏆'
+})
+
+const kindDefaultTitle = computed(() => {
+  if (props.kind === 'vehicles') return 'Топ ТС по штрафам'
+  if (props.kind === 'filials') return 'Топ филиалов по штрафам'
+  return 'Рекордсмены по штрафам'
+})
 
 const top3 = computed(() => leaders.value.slice(0, 3))
 const rest = computed(() => leaders.value.slice(3))
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function isDriver(item: FineLeaderItem): item is FineLeaderDriver {
+  return 'driver_key' in item
+}
+
+function displayName(item: FineLeaderItem): string {
+  if (isDriver(item)) return item.driver_name || '— Не определён —'
+  return (item as FineLeaderEntity).entity_name || '—'
+}
+
+function displaySub(item: FineLeaderItem): string | null {
+  if (isDriver(item)) return null
+  return (item as FineLeaderEntity).entity_sub || null
+}
+
+function leaderKey(item: FineLeaderItem): string {
+  if (isDriver(item)) return item.driver_key
+  return (item as FineLeaderEntity).entity_key
+}
 
 function fmtRub(val: number): string {
   return val.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })
@@ -177,14 +254,53 @@ function avatarGradient(name: string): string {
   return `linear-gradient(135deg, ${c1}, ${c2})`
 }
 
+// ── Navigation ─────────────────────────────────────────────────────────────
+
+function onLeaderClick(item: FineLeaderItem): void {
+  if (props.kind === 'drivers') {
+    const d = item as FineLeaderDriver
+    const key = d.driver_key
+    const id = d.driver_id
+    emit('leader-click', { key, name: d.driver_name, kind: d.driver_kind, id })
+    // Navigate to staff page
+    if (d.driver_kind === 'user' && id) {
+      router.push(`/staff/${id}`)
+    } else if (d.driver_kind === 'external' && id) {
+      router.push(`/staff?external=${id}`)
+    }
+    return
+  }
+
+  if (props.kind === 'vehicles') {
+    const v = item as FineLeaderEntity
+    emit('leader-click', { key: v.entity_key, name: v.entity_name, kind: 'vehicle', id: v.entity_id })
+    if (v.entity_id) {
+      router.push(`/fleet/vehicles/${v.entity_id}`)
+    }
+    return
+  }
+
+  if (props.kind === 'filials') {
+    const f = item as FineLeaderEntity
+    emit('leader-click', { key: f.entity_key, name: f.entity_name, kind: 'filial', id: f.entity_id })
+    // Navigate to regions page with org filter
+    if (f.entity_id) {
+      router.push(`/fleet/regions?org_id=${f.entity_id}`)
+    }
+    return
+  }
+}
+
+// ── API ────────────────────────────────────────────────────────────────────
+
 async function fetchLeaders(): Promise<void> {
   loading.value = true
   try {
-    const params = new URLSearchParams({ limit: '10' })
+    const params = new URLSearchParams({ kind: props.kind, limit: '10' })
     if (selectedPeriod.value != null) {
       params.set('period_days', String(selectedPeriod.value))
     }
-    leaders.value = await apiFetch<FineLeader[]>(`/vehicles-dashboard/fine-leaders?${params}`)
+    leaders.value = await apiFetch<FineLeaderItem[]>(`/vehicles-dashboard/fine-leaders?${params}`)
   } catch (e) {
     console.error('[FineLeaders]', e)
     leaders.value = []
@@ -308,6 +424,16 @@ onMounted(fetchLeaders)
 }
 .podium-name--first { font-size: 13px; }
 
+.podium-sub {
+  font-size: 10px;
+  color: var(--muted, #8a93a8);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+
 .podium-fines {
   font-size: 11px;
   color: var(--muted, #8a93a8);
@@ -408,6 +534,7 @@ onMounted(fetchLeaders)
   font-size: 11px;
 }
 .other-row__nm { font-weight: 600; font-size: 13px; }
+.other-row__sb { font-size: 11px; color: var(--muted, #8a93a8); }
 .other-row__cnt { color: var(--muted, #8a93a8); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .other-row__sum { font-weight: 800; font-size: 13px; white-space: nowrap; }
 
@@ -432,6 +559,17 @@ onMounted(fetchLeaders)
 /* Light theme */
 .v-theme--light .podium-name { color: #1a1d23; }
 .v-theme--light .podium-fines { color: #6b7280; }
+.v-theme--light .podium-sub { color: #6b7280; }
 .v-theme--light .others-section { border-color: #e2e6f0; }
 .v-theme--light .other-row { border-color: #e2e6f0; background: rgba(0,0,0,.02); }
+
+/* Clickable leaders */
+.podium-card--clickable { cursor: pointer; transition: transform 0.15s, filter 0.15s, box-shadow 0.15s; }
+.podium-card--clickable:hover { filter: brightness(1.12); box-shadow: 0 4px 20px rgba(106,166,255,.18); }
+.podium-card--first.podium-card--clickable:hover { transform: translateY(-16px); }
+.podium-card--second.podium-card--clickable:hover { transform: translateY(-6px); }
+.podium-card--third.podium-card--clickable:hover  { transform: translateY(-6px); }
+.podium-card--clickable:active { filter: brightness(0.95); }
+.other-row--clickable { cursor: pointer; transition: background 0.15s, box-shadow 0.15s; }
+.other-row--clickable:hover { background: rgba(106, 166, 255, 0.12) !important; box-shadow: 0 2px 8px rgba(106,166,255,.1); }
 </style>

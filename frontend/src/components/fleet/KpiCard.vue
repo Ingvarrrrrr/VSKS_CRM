@@ -1,7 +1,7 @@
 <template>
   <div
     class="kpi-card"
-    :class="[`kpi-card--${variant}`, { 'kpi-card--clickable': clickable }]"
+    :class="[`kpi-card--${variant}`, { 'kpi-card--clickable': clickable, 'kpi-card--active': active }]"
     @click="clickable && $emit('click')"
   >
     <div class="kpi-card__label">{{ label }}</div>
@@ -28,11 +28,13 @@ const props = withDefaults(defineProps<{
   variant?: 'default' | 'ok' | 'warn' | 'alert' | 'info'
   barPct?: number | null
   clickable?: boolean
+  active?: boolean
 }>(), {
   trendType: 'ok',
   variant: 'default',
   barPct: null,
   clickable: false,
+  active: false,
 })
 
 defineEmits<{
@@ -61,11 +63,71 @@ const barGradient = computed(() => {
   transition: border-color 0.15s, transform 0.15s;
 }
 
-.kpi-card--clickable { cursor: pointer; }
+.kpi-card--clickable { cursor: pointer; user-select: none; }
 .kpi-card--clickable:hover {
   border-color: var(--accent, #6aa6ff);
   transform: translateY(-2px);
 }
+.kpi-card--clickable:active {
+  transform: translateY(0);
+  filter: brightness(0.95);
+}
+
+/* Active state — выбран как активный фильтр */
+.kpi-card--active {
+  border-color: var(--accent, #6aa6ff);
+  border-width: 2px;
+  padding: 17px 19px;  /* компенсация +1px бордера */
+  background:
+    linear-gradient(180deg, rgba(106, 166, 255, 0.18), rgba(106, 166, 255, 0.06)),
+    var(--panel, #141823);
+  box-shadow:
+    0 0 0 3px rgba(106, 166, 255, 0.15),
+    0 8px 24px -10px rgba(106, 166, 255, 0.4);
+  transform: translateY(-1px);
+}
+.kpi-card--active.kpi-card--ok {
+  border-color: #22c997;
+  background:
+    linear-gradient(180deg, rgba(34, 201, 151, 0.18), rgba(34, 201, 151, 0.05)),
+    var(--panel, #141823);
+  box-shadow: 0 0 0 3px rgba(34, 201, 151, 0.15), 0 8px 24px -10px rgba(34, 201, 151, 0.4);
+}
+.kpi-card--active.kpi-card--warn {
+  border-color: #f6b34a;
+  background:
+    linear-gradient(180deg, rgba(246, 179, 74, 0.18), rgba(246, 179, 74, 0.05)),
+    var(--panel, #141823);
+  box-shadow: 0 0 0 3px rgba(246, 179, 74, 0.15), 0 8px 24px -10px rgba(246, 179, 74, 0.4);
+}
+.kpi-card--active.kpi-card--alert {
+  border-color: #ff5b6a;
+  background:
+    linear-gradient(180deg, rgba(255, 91, 106, 0.18), rgba(255, 91, 106, 0.05)),
+    var(--panel, #141823);
+  box-shadow: 0 0 0 3px rgba(255, 91, 106, 0.15), 0 8px 24px -10px rgba(255, 91, 106, 0.4);
+}
+/* Active checkmark indicator в правом верхнем углу */
+.kpi-card--active::after {
+  content: '✓';
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  background: var(--accent, #6aa6ff);
+  color: #0a0d14;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.kpi-card--active.kpi-card--ok::after { background: #22c997; }
+.kpi-card--active.kpi-card--warn::after { background: #f6b34a; }
+.kpi-card--active.kpi-card--alert::after { background: #ff5b6a; }
 
 .kpi-card__label {
   font-size: 11px;

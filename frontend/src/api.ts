@@ -107,5 +107,21 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     err.payload = payload
     throw err
   }
-  return res.json()
+  // 204 No Content (DELETE endpoints) или пустое тело — нечего парсить.
+  // Раньше падало с "Failed to execute 'json' on 'Response': Unexpected end of JSON input"
+  // при успешном DELETE /api/organizations/{id} → status_code=204.
+  if (res.status === 204) return undefined as unknown as T
+  const ct = res.headers.get('content-type') || ''
+  if (!ct.includes('application/json')) {
+    const txt = await res.text()
+    return (txt ? txt : undefined) as unknown as T
+  }
+  // Защита от пустого JSON-ответа (Content-Length: 0)
+  const text = await res.text()
+  if (!text) return undefined as unknown as T
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return undefined as unknown as T
+  }
 }

@@ -67,9 +67,17 @@
       />
     </div>
 
-    <!-- Podium -->
-    <div class="fines-podium-wrap mb-5">
-      <FineLeadersPodiumWidget />
+    <!-- Podiums row: Топ водителей / ТС / Филиалов -->
+    <div class="fines-podiums-row mb-5">
+      <div class="fines-podium-cell">
+        <FineLeadersPodiumWidget kind="drivers" title="Топ водителей" @leader-click="onLeaderClick" />
+      </div>
+      <div class="fines-podium-cell">
+        <FineLeadersPodiumWidget kind="vehicles" title="Топ ТС" @leader-click="onLeaderClick" />
+      </div>
+      <div class="fines-podium-cell">
+        <FineLeadersPodiumWidget kind="filials" title="Топ филиалов" @leader-click="onLeaderClick" />
+      </div>
     </div>
 
     <!-- Two-column analytics -->
@@ -111,7 +119,7 @@
       <div class="fines-panel">
         <div class="fines-panel__head">
           <span class="fines-panel__icon">🏢</span>
-          <span class="fines-panel__title">По штабам</span>
+          <span class="fines-panel__title">По филиалам</span>
           <span class="fines-panel__small ml-auto">сумма штрафов в ₽</span>
         </div>
         <div v-if="finesLoading" class="d-flex justify-center py-6">
@@ -305,12 +313,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import KpiCard from '@/components/fleet/KpiCard.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
 import GradientAvatar from '@/components/fleet/GradientAvatar.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
+
+const router = useRouter()
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -533,6 +544,21 @@ function formatTime(val: string): string {
   return new Date(val).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
+// ── Leader click handler ──────────────────────────────────────────────────
+
+function onLeaderClick(payload: { key: string; name: string | null; kind: string; id: number | null }): void {
+  const { kind, id } = payload
+  if (kind === 'user' && id) {
+    router.push(`/staff/${id}`)
+  } else if (kind === 'external' && id) {
+    router.push(`/staff?external=${id}`)
+  } else if (kind === 'vehicle' && id) {
+    router.push(`/fleet/vehicles/${id}`)
+  } else if (kind === 'filial' && id) {
+    router.push(`/fleet/regions?org_id=${id}`)
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 onMounted(() => {
@@ -581,8 +607,16 @@ onMounted(() => {
   .kpi-strip { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ── Podium wrap ── */
-.fines-podium-wrap {
+/* ── Podiums row (3 columns) ── */
+.fines-podiums-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .fines-podiums-row { grid-template-columns: 1fr; }
+}
+.fines-podium-cell {
   background: linear-gradient(180deg, var(--panel, #141823), var(--bg-2, #0f131c));
   border: 1px solid var(--line, #222838);
   border-radius: 18px;
@@ -790,7 +824,7 @@ onMounted(() => {
 /* Light theme */
 .v-theme--light .fines-panel,
 .v-theme--light .fines-table-wrap,
-.v-theme--light .fines-podium-wrap {
+.v-theme--light .fines-podium-cell {
   background: #ffffff;
   border-color: #e2e6f0;
   color: #1a1d23;

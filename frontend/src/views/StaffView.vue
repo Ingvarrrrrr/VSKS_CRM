@@ -659,6 +659,35 @@
                 Медсправка истекает через {{ driverMedicalExpiryDays(editDialog.medical_cert_expires_at)! }} дн.
               </v-chip>
 
+              <!-- Phase 29.3: тахограф / психиатрия / периодический медосмотр -->
+              <v-text-field
+                v-model="editDialog.tachograph_card_expires_at"
+                type="date"
+                label="Карточка тахографа действует до"
+                hint="Срок действия карты водителя для тахографа"
+                persistent-hint
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="editDialog.periodic_medical_expires_at"
+                type="date"
+                label="Периодический медосмотр до"
+                hint="Согласно приказу 302н — для категорий C/D/E и проф. водителей"
+                persistent-hint
+                density="compact"
+                class="mt-2"
+              />
+              <v-text-field
+                v-model="editDialog.psych_cert_expires_at"
+                type="date"
+                label="Психиатрическое освидетельствование до"
+                hint="Согласно приказу 302н — раз в 5 лет"
+                persistent-hint
+                density="compact"
+                class="mt-2"
+              />
+
               <!-- Phase 30.3: скан водительского удостоверения -->
               <div class="text-caption text-medium-emphasis mt-3 mb-1">Скан водительского удостоверения</div>
               <div class="license-scan-wrap" @click="onLicenseScanClick">
@@ -1334,6 +1363,10 @@ const editDialog = reactive({
   license_issued_at: null as string | null,
   license_expires_at: null as string | null,
   medical_cert_expires_at: null as string | null,
+  // 29.3: доп. документы водителя
+  tachograph_card_expires_at: null as string | null,
+  periodic_medical_expires_at: null as string | null,
+  psych_cert_expires_at: null as string | null,
   // 30.3: скан ВУ
   license_scan: '',
 })
@@ -1765,6 +1798,9 @@ async function openEditUser(item: UserItem) {
   editDialog.license_issued_at = (item as any).license_issued_at || null
   editDialog.license_expires_at = (item as any).license_expires_at || null
   editDialog.medical_cert_expires_at = (item as any).medical_cert_expires_at || null
+  editDialog.tachograph_card_expires_at = (item as any).tachograph_card_expires_at || null
+  editDialog.periodic_medical_expires_at = (item as any).periodic_medical_expires_at || null
+  editDialog.psych_cert_expires_at = (item as any).psych_cert_expires_at || null
   editDialog.extraOrgIds = []
   // Resolve dept ID from deptTree by matching name
   const allDepts = flatDepts(deptTree.value)
@@ -1927,6 +1963,9 @@ async function saveEditUser() {
       license_issued_at: editDialog.can_drive ? (editDialog.license_issued_at || null) : null,
       license_expires_at: editDialog.can_drive ? (editDialog.license_expires_at || null) : null,
       medical_cert_expires_at: editDialog.can_drive ? (editDialog.medical_cert_expires_at || null) : null,
+      tachograph_card_expires_at: editDialog.can_drive ? (editDialog.tachograph_card_expires_at || null) : null,
+      periodic_medical_expires_at: editDialog.can_drive ? (editDialog.periodic_medical_expires_at || null) : null,
+      psych_cert_expires_at: editDialog.can_drive ? (editDialog.psych_cert_expires_at || null) : null,
     }
     if (editDialog.password) body.password = editDialog.password
     const updated = await apiFetch<UserItem>(`/users/${editDialog.userId}`, {

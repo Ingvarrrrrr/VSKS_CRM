@@ -397,6 +397,41 @@
             @click="resetCreateDialog" />
         </v-card-title>
         <v-card-text class="pa-5 pt-2">
+          <v-text-field
+            v-model="createDialog.vin"
+            label="VIN"
+            hint="17 символов. Проверим дубликат при потере фокуса"
+            persistent-hint
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            maxlength="17"
+            :loading="createDialog.vinChecking"
+            @blur="checkVinDuplicate"
+            @update:model-value="onVinChange"
+          />
+          <v-alert
+            v-if="createDialog.vinDuplicate"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            <div class="text-body-2 font-weight-medium mb-1">
+              Дубликат VIN! Уже есть ТС:
+              <router-link :to="`/property/vehicles/${createDialog.vinDuplicate.id}`" class="text-decoration-underline">
+                {{ createDialog.vinDuplicate.plate }} ({{ createDialog.vinDuplicate.brand }} {{ createDialog.vinDuplicate.model }})
+              </router-link>
+            </div>
+            <div class="d-flex gap-2 mt-2">
+              <v-btn size="x-small" color="primary" :to="`/property/vehicles/${createDialog.vinDuplicate.id}`">
+                Открыть существующее
+              </v-btn>
+              <v-btn size="x-small" variant="outlined" @click="createDialog.forceCreate = true; createDialog.vinDuplicate = null">
+                Это другое ТС — продолжить
+              </v-btn>
+            </div>
+          </v-alert>
           <v-text-field v-model="createDialog.plate" label="Гос. номер *" variant="outlined"
             density="compact" class="mb-3" :rules="[v => !!v || 'Обязательное поле']" />
           <div class="d-flex gap-3 mb-3">
@@ -845,23 +880,32 @@ function onRowClick(_event: Event, row: { item: VehicleListItem }) {
 const createDialog = reactive({
   show: false,
   loading: false,
+  vin: '',
   plate: '',
   brand: '',
   model: '',
   owner_org_id: null as number | null,
   type: null as string | null,
   state: 'working' as string,
+  // VIN duplicate check state
+  vinChecking: false,
+  vinDuplicate: null as null | { id: number; plate: string; brand: string; model: string; message: string },
+  forceCreate: false,
 })
 
 function resetCreateDialog() {
   createDialog.show = false
   createDialog.loading = false
+  createDialog.vin = ''
   createDialog.plate = ''
   createDialog.brand = ''
   createDialog.model = ''
   createDialog.owner_org_id = null
   createDialog.type = null
   createDialog.state = 'working'
+  createDialog.vinChecking = false
+  createDialog.vinDuplicate = null
+  createDialog.forceCreate = false
 }
 
 async function doCreate() {
@@ -872,20 +916,68 @@ async function doCreate() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        vin: createDialog.vin?.replace(/\s+/g, '').toUpperCase() || null,
         plate: createDialog.plate,
         brand: createDialog.brand || null,
         model: createDialog.model || null,
         owner_org_id: createDialog.owner_org_id,
         type: createDialog.type || null,
         state: createDialog.state,
+        force: createDialog.forceCreate,
       }),
     })
     resetCreateDialog()
     router.push(`/property/vehicles/${created.id}`)
   } catch (err: any) {
     createDialog.loading = false
-    showError(err)
+    const payload = err?.payload ?? err?.detail ?? err
+    if (payload?.code === 'DUPLICATE_VIN' && payload?.vehicle_id) {
+      createDialog.vinDuplicate = {
+        id: payload.vehicle_id,
+        plate: payload.plate || '',
+        brand: payload.brand || '',
+        model: payload.model || '',
+        message: payload.message || 'Дубликат VIN',
+      }
+      showError(err)
+    } else {
+      showError(err)
+    }
   }
+}
+
+let vinDebounce: ReturnType<typeof setTimeout> | null = null
+
+function onVinChange() {
+  createDialog.vinDuplicate = null
+  createDialog.forceCreate = false
+  if (vinDebounce) clearTimeout(vinDebounce)
+}
+
+async function checkVinDuplicate() {
+  const vin = (createDialog.vin || '').replace(/\s+/g, '').toUpperCase()
+  if (!vin || vin.length < 5) {
+    createDialog.vinDuplicate = null
+    return
+  }
+  createDialog.vinChecking = true
+  try {
+    const res = await apiFetch<{ items: any[]; total: number }>(`/vehicles?vin=${encodeURIComponent(vin)}&limit=1`)
+    const items = res?.items ?? []
+    if (items.length) {
+      const v = items[0]
+      createDialog.vinDuplicate = {
+        id: v.id,
+        plate: v.plate || '',
+        brand: v.brand || '',
+        model: v.model || '',
+        message: `ТС с VIN ${vin} уже есть`,
+      }
+    } else {
+      createDialog.vinDuplicate = null
+    }
+  } catch { /* ignore */ }
+  finally { createDialog.vinChecking = false }
 }
 
 // ─────────────── Import reload ───────────────

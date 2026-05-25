@@ -7,7 +7,7 @@ Matching logic:
   If not found → all driver_* are NULL (unmatched).
 """
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Text, ForeignKey, DateTime
+    Column, Integer, String, Numeric, Text, ForeignKey, DateTime, LargeBinary
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -49,6 +49,11 @@ class VehicleFine(Base):
     matched_trip_id = Column(
         Integer, ForeignKey("trips.id", ondelete="SET NULL"), nullable=True
     )
+
+    # Phase 29.3-R3 (pt9): фото штрафа (приходит из API ГИБДД при импорте)
+    photo_data = Column(LargeBinary, nullable=True)            # binary image bytes
+    photo_mime = Column(String(50), nullable=True)             # 'image/jpeg', 'image/png'
+    photo_source_url = Column(Text, nullable=True)             # оригинальный URL от ГИБДД
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     created_by_id = Column(

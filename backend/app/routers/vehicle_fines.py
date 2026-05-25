@@ -41,6 +41,7 @@ def _resolve_driver(fine: VehicleFine) -> tuple[Optional[str], str]:
 
 def _fine_to_out(fine: VehicleFine) -> VehicleFineOut:
     driver_name, driver_kind = _resolve_driver(fine)
+    veh = getattr(fine, "vehicle", None)
     return VehicleFineOut(
         id=fine.id,
         vehicle_id=fine.vehicle_id,
@@ -59,6 +60,9 @@ def _fine_to_out(fine: VehicleFine) -> VehicleFineOut:
         created_by_id=fine.created_by_id,
         driver_name=driver_name,
         driver_kind=driver_kind,
+        has_photo=bool(fine.photo_data),
+        vehicle_plate=veh.plate if veh else None,
+        vehicle_brand_model=(f"{veh.brand or ''} {veh.model or ''}".strip() if veh else None),
     )
 
 
@@ -124,21 +128,45 @@ async def create_fine(
 @router.get("/", response_model=List[VehicleFineOut])
 async def list_fines(
     vehicle_id: Optional[int] = Query(None, description="Фильтр по ТС (опционально)"),
+    driver_user_id: Optional[int] = Query(None, description="Фильтр по водителю User.id"),
+    driver_external_id: Optional[int] = Query(None, description="Фильтр по внешнему водителю"),
     status: Optional[str] = Query(None, description="Фильтр по статусу: unpaid/paid/disputed"),
     limit: int = Query(500, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("vehicles")),
 ):
     """Список штрафов. Без фильтров — все штрафы (для /fleet/fines страницы)."""
-    q = select(VehicleFine)
+    from sqlalchemy.orm import selectinload
+    q = select(VehicleFine).options(selectinload(VehicleFine.vehicle))
     if vehicle_id is not None:
         q = q.where(VehicleFine.vehicle_id == vehicle_id)
+    if driver_user_id is not None:
+        q = q.where(VehicleFine.driver_user_id == driver_user_id)
+    if driver_external_id is not None:
+        q = q.where(VehicleFine.driver_external_id == driver_external_id)
     if status:
         q = q.where(VehicleFine.status == status)
     q = q.order_by(VehicleFine.issued_at.desc()).limit(limit)
     result = await db.execute(q)
     fines = result.scalars().all()
     return [_fine_to_out(f) for f in fines]
+
+
+@router.get("/{fine_id}/photo")
+async def get_fine_photo(
+    fine_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """Phase 29.3-R3 (pt9): отдать фото штрафа (из ГИБДД API импорта)."""
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+    fine = (await db.execute(
+        select(VehicleFine).where(VehicleFine.id == fine_id)
+    )).scalar_one_or_none()
+    if not fine or not fine.photo_data:
+        raise HTTPException(status_code=404, detail="Фото не найдено")
+    return Response(content=bytes(fine.photo_data), media_type=fine.photo_mime or "image/jpeg")
 
 
 @router.get("/{fine_id}", response_model=VehicleFineOut)

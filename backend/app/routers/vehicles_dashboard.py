@@ -1463,23 +1463,91 @@ async def filter_counts(
 
 @router.get("/fine-leaders")
 async def fine_leaders(
+    kind: str = Query("drivers", description="Тип рейтинга: drivers | vehicles | filials"),
     limit: int = Query(10, ge=1, le=50),
     period_days: Optional[int] = Query(None, description="Окно за последние N дней; None = все"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("vehicles")),
 ):
     """
-    Топ водителей по штрафам — пьедестал.
+    Топ по штрафам — пьедестал. kind=drivers|vehicles|filials.
 
-    Матчинг: используем snapshot driver_user_id / driver_external_id из vehicle_fines,
-    а при отсутствии снимка — JOIN trips по DATE(issued_at AT TIME ZONE 'UTC').
-    Группировка по driver_key (user-{id} / ext-{id} / unmatched).
-    Сортировка по fines_total DESC.
+    drivers: группировка по водителю (snapshot + fallback JOIN trips).
+    vehicles: группировка по ТС (plate / brand+model).
+    filials: группировка по организации-владельцу ТС (owner_org_id).
     """
     period_filter = ""
     if period_days is not None:
         period_filter = f"AND f.issued_at >= NOW() - INTERVAL '{int(period_days)} days'"
 
+    if kind == "vehicles":
+        sql = text(f"""
+            SELECT
+                v.id::text                                             AS entity_key,
+                COALESCE(v.plate, '—')                                AS entity_name,
+                TRIM(CONCAT(COALESCE(v.brand,''), ' ', COALESCE(v.model,''))) AS entity_sub,
+                v.id                                                  AS entity_id,
+                COUNT(f.id)::int                                      AS fines_count,
+                SUM(f.amount)                                         AS fines_total,
+                COUNT(f.id) FILTER (WHERE f.status = 'unpaid')::int   AS unpaid_count,
+                COALESCE(SUM(f.amount) FILTER (WHERE f.status = 'unpaid'), 0) AS unpaid_total
+            FROM vehicle_fines f
+            JOIN vehicles v ON v.id = f.vehicle_id
+            WHERE 1=1 {period_filter}
+            GROUP BY v.id, v.plate, v.brand, v.model
+            ORDER BY fines_total DESC NULLS LAST
+            LIMIT :lim
+        """)
+        rows = (await db.execute(sql, {"lim": limit})).mappings().all()
+        return [
+            {
+                "entity_key": r["entity_key"],
+                "entity_name": r["entity_name"],
+                "entity_sub": r["entity_sub"],
+                "entity_id": r["entity_id"],
+                "fines_count": r["fines_count"],
+                "fines_total": float(r["fines_total"] or 0),
+                "unpaid_count": r["unpaid_count"],
+                "unpaid_total": float(r["unpaid_total"] or 0),
+            }
+            for r in rows
+        ]
+
+    if kind == "filials":
+        sql = text(f"""
+            SELECT
+                o.id::text                                             AS entity_key,
+                COALESCE(o.name, '— Без филиала —')                   AS entity_name,
+                NULL                                                   AS entity_sub,
+                o.id                                                   AS entity_id,
+                COUNT(f.id)::int                                       AS fines_count,
+                SUM(f.amount)                                          AS fines_total,
+                COUNT(f.id) FILTER (WHERE f.status = 'unpaid')::int    AS unpaid_count,
+                COALESCE(SUM(f.amount) FILTER (WHERE f.status = 'unpaid'), 0) AS unpaid_total
+            FROM vehicle_fines f
+            JOIN vehicles v ON v.id = f.vehicle_id
+            LEFT JOIN organizations o ON o.id = v.owner_org_id
+            WHERE 1=1 {period_filter}
+            GROUP BY o.id, o.name
+            ORDER BY fines_total DESC NULLS LAST
+            LIMIT :lim
+        """)
+        rows = (await db.execute(sql, {"lim": limit})).mappings().all()
+        return [
+            {
+                "entity_key": r["entity_key"],
+                "entity_name": r["entity_name"],
+                "entity_sub": r["entity_sub"],
+                "entity_id": r["entity_id"],
+                "fines_count": r["fines_count"],
+                "fines_total": float(r["fines_total"] or 0),
+                "unpaid_count": r["unpaid_count"],
+                "unpaid_total": float(r["unpaid_total"] or 0),
+            }
+            for r in rows
+        ]
+
+    # kind == "drivers" (default)
     sql = text(f"""
         WITH matched AS (
             SELECT
@@ -1506,6 +1574,11 @@ async def fine_leaders(
                 WHEN ext_id  IS NOT NULL THEN 'external'
                 ELSE 'unmatched'
             END                                                    AS driver_kind,
+            CASE
+                WHEN user_id IS NOT NULL THEN user_id
+                WHEN ext_id  IS NOT NULL THEN ext_id
+                ELSE NULL
+            END                                                    AS driver_id,
             COUNT(*)::int                                          AS fines_count,
             SUM(amount)                                            AS fines_total,
             COUNT(*) FILTER (WHERE status = 'unpaid')::int         AS unpaid_count,
@@ -1513,7 +1586,7 @@ async def fine_leaders(
         FROM matched
         LEFT JOIN users u   ON u.id   = user_id
         LEFT JOIN external_drivers ext ON ext.id = ext_id
-        GROUP BY driver_key, driver_name, driver_kind
+        GROUP BY driver_key, driver_name, driver_kind, driver_id
         ORDER BY fines_total DESC NULLS LAST
         LIMIT :lim
     """)
@@ -1524,6 +1597,7 @@ async def fine_leaders(
             "driver_key": r["driver_key"],
             "driver_name": r["driver_name"],
             "driver_kind": r["driver_kind"],
+            "driver_id": r["driver_id"],
             "fines_count": r["fines_count"],
             "fines_total": float(r["fines_total"] or 0),
             "unpaid_count": r["unpaid_count"],

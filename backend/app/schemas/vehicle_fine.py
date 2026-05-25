@@ -51,5 +51,9 @@ class VehicleFineOut(BaseModel):
     # Computed: resolved driver info
     driver_name: Optional[str] = None    # ФИО водителя или None
     driver_kind: str = "unmatched"       # 'user' / 'external' / 'unmatched'
+    # Phase 29.3-R3 (pt9): фото штрафа + plate ТС
+    has_photo: bool = False
+    vehicle_plate: Optional[str] = None
+    vehicle_brand_model: Optional[str] = None
 
     model_config = {"from_attributes": True}

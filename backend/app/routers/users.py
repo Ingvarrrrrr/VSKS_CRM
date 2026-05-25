@@ -11,6 +11,9 @@ _DATE_FIELDS = {
     "license_issued_at",
     "license_expires_at",
     "medical_cert_expires_at",
+    "tachograph_card_expires_at",
+    "psych_cert_expires_at",
+    "periodic_medical_expires_at",
 }
 from app.database import get_db
 from app.models.user import User

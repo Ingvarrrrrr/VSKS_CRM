@@ -63,6 +63,9 @@ class UserUpdate(BaseModel):
     license_issued_at: Optional[_Date] = None
     license_expires_at: Optional[_Date] = None
     medical_cert_expires_at: Optional[_Date] = None
+    tachograph_card_expires_at: Optional[_Date] = None
+    psych_cert_expires_at: Optional[_Date] = None
+    periodic_medical_expires_at: Optional[_Date] = None
 
 class PermissionsOut(BaseModel):
     tabs: List[str] = []
@@ -100,6 +103,9 @@ class UserOut(BaseModel):
     license_issued_at: Optional[_Date] = None
     license_expires_at: Optional[_Date] = None
     medical_cert_expires_at: Optional[_Date] = None
+    tachograph_card_expires_at: Optional[_Date] = None
+    psych_cert_expires_at: Optional[_Date] = None
+    periodic_medical_expires_at: Optional[_Date] = None
     medical_cert_number: Optional[str] = None
     driver_tab_number: Optional[str] = None
     experience_years: Optional[int] = None

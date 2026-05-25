@@ -327,6 +327,9 @@ async def in_repair(
         .group_by(VehicleAttachment.vehicle_id)
     ).subquery("photo_attach")
 
+    # Phase 29.3R-2: показывать ТС либо с open repair, либо со state IN (in_repair, broken, needs_repair)
+    # без VehicleRepair записи (state может быть выставлен напрямую без создания repair-записи).
+    repair_states = ("in_repair", "broken", "needs_repair")
     q = (
         select(
             Vehicle.id,
@@ -340,8 +343,14 @@ async def in_repair(
             open_repair_sq.c.repair_date,
             photo_sq.c.photo_attachment_id,
         )
-        .join(open_repair_sq, open_repair_sq.c.vehicle_id == Vehicle.id)
+        .outerjoin(open_repair_sq, open_repair_sq.c.vehicle_id == Vehicle.id)
         .outerjoin(photo_sq, photo_sq.c.vehicle_id == Vehicle.id)
+        .where(
+            or_(
+                open_repair_sq.c.vehicle_id.is_not(None),
+                func.lower(func.coalesce(Vehicle.state, "")).in_(repair_states),
+            )
+        )
     )
     q = _apply_visibility(q, current_user)
 
@@ -988,6 +997,116 @@ async def drill_vehicles(
     return {"items": items, "total": len(items), "dimension": dimension, "value": value}
 
 
+# ─────────────────────────── 10. Expiring docs drill ─────────────────────────
+
+@router.get("/expiring-docs-drill")
+async def expiring_docs_drill(
+    days: int = Query(30, ge=1, le=365, description="Горизонт в днях"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+) -> dict:
+    """Drill для KPI «Документы истекают»: ТС + водители с истекающими документами."""
+    today = date.today()
+    horizon = today + timedelta(days=days)
+
+    # === ТС с истекающими документами ===
+    vehicles_q = select(Vehicle).where(
+        or_(
+            and_(Vehicle.insurance_until.isnot(None), Vehicle.insurance_until <= horizon),
+            and_(Vehicle.tech_inspection_until.isnot(None), Vehicle.tech_inspection_until <= horizon),
+        )
+    )
+    vis_clause = _visibility_filter(current_user)
+    if vis_clause is not None:
+        vehicles_q = vehicles_q.where(vis_clause)
+
+    v_rows = (await db.execute(vehicles_q)).scalars().unique().all()
+
+    vehicles_out = []
+    for v in v_rows:
+        expiring = []
+        if v.insurance_until and v.insurance_until <= horizon:
+            expiring.append({
+                "type": "osago",
+                "label": "ОСАГО",
+                "expires_at": v.insurance_until.isoformat(),
+                "days_left": (v.insurance_until - today).days,
+            })
+        if v.tech_inspection_until and v.tech_inspection_until <= horizon:
+            expiring.append({
+                "type": "tech_inspection",
+                "label": "Технический осмотр",
+                "expires_at": v.tech_inspection_until.isoformat(),
+                "days_left": (v.tech_inspection_until - today).days,
+            })
+        if not expiring:
+            continue
+        vehicles_out.append({
+            "id": v.id,
+            "plate": v.plate,
+            "brand": v.brand,
+            "model": v.model,
+            "state": v.state,
+            "expiring_docs": expiring,
+        })
+
+    # === Водители с истекающими документами ===
+    drivers_q = select(User).where(
+        User.can_drive == True,
+        or_(
+            and_(User.license_expires_at.isnot(None), User.license_expires_at <= horizon),
+            and_(User.medical_cert_expires_at.isnot(None), User.medical_cert_expires_at <= horizon),
+            and_(User.tachograph_card_expires_at.isnot(None), User.tachograph_card_expires_at <= horizon),
+            and_(User.psych_cert_expires_at.isnot(None), User.psych_cert_expires_at <= horizon),
+            and_(User.periodic_medical_expires_at.isnot(None), User.periodic_medical_expires_at <= horizon),
+        )
+    )
+    # Org visibility for drivers: filter by org_ids the current user can see
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None:
+        drivers_q = drivers_q.where(User.org_id.in_(org_ids))
+
+    d_rows = (await db.execute(drivers_q)).scalars().unique().all()
+
+    drivers_out = []
+    for u in d_rows:
+        expiring = []
+        for field, type_key, label in [
+            ("license_expires_at", "license", "Водительское удостоверение"),
+            ("medical_cert_expires_at", "medical", "Медсправка водителя"),
+            ("periodic_medical_expires_at", "periodic_medical", "Периодический медосмотр (302-пр.)"),
+            ("psych_cert_expires_at", "psych", "Психиатрия (302-пр.)"),
+            ("tachograph_card_expires_at", "tachograph", "Карточка тахографа"),
+        ]:
+            val = getattr(u, field, None)
+            if val and val <= horizon:
+                expiring.append({
+                    "type": type_key,
+                    "label": label,
+                    "expires_at": val.isoformat(),
+                    "days_left": (val - today).days,
+                })
+        if not expiring:
+            continue
+        drivers_out.append({
+            "id": u.id,
+            "full_name": u.full_name or u.username,
+            "fleet_role": u.fleet_role,
+            "expiring_docs": expiring,
+        })
+
+    # Сортировка по min days_left (самые срочные сверху)
+    vehicles_out.sort(key=lambda x: min(d["days_left"] for d in x["expiring_docs"]))
+    drivers_out.sort(key=lambda x: min(d["days_left"] for d in x["expiring_docs"]))
+
+    return {
+        "vehicles": vehicles_out,
+        "drivers": drivers_out,
+        "horizon_days": days,
+        "horizon_date": horizon.isoformat(),
+    }
+
+
 # ─────────────────────────── 10. All vehicles summary table ──────────────────
 
 @router.get("/all-vehicles-summary")
@@ -1077,8 +1196,22 @@ async def all_vehicles_summary(
         q = q.where(Vehicle.owner_org_id.in_(extra_org_ids))
 
     rows = (await db.execute(q)).all()
-    return [
-        {
+
+    # Phase 29.3-R3: дедубликация по нормализованному plate (убираем пробелы + UPPER).
+    # При коллизии — приоритет non-working state (in_repair/broken/needs_repair > working > пустой).
+    _STATE_PRIORITY = {
+        "broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
+        "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0,
+    }
+    def _state_rank(s):
+        return _STATE_PRIORITY.get(s, 2)
+
+    seen: dict[str, dict] = {}
+    for r in rows:
+        norm = (r.plate or "").upper().replace(" ", "").strip()
+        if not norm:
+            norm = f"__id_{r.id}"  # fallback — машины без plate тоже сохраняем
+        item = {
             "vehicle_id": r.id,
             "plate": r.plate or "",
             "brand_model": f"{r.brand or ''} {r.model or ''}".strip() or (r.plate or ""),
@@ -1093,8 +1226,10 @@ async def all_vehicles_summary(
             ),
             "insurance_until": r.insurance_until.isoformat() if r.insurance_until else None,
         }
-        for r in rows
-    ]
+        prev = seen.get(norm)
+        if not prev or _state_rank(item["state"]) > _state_rank(prev["state"]):
+            seen[norm] = item
+    return list(seen.values())
 
 
 # ─────────────────────────── 11. By-region (Phase 29.1) ──────────────────────
@@ -1109,30 +1244,35 @@ async def by_region(
     Returns list sorted by count desc.
     If fewer than 5 vehicles visible, adds mock_demo flag.
     """
-    from sqlalchemy import bindparam as _bindparam
-    _unspec = _bindparam('unspec_region', "Не указан", literal_execute=True)
-    _region_expr = func.coalesce(Vehicle.assigned_text, _unspec)
+    # Phase 29.3-R3: дедубликация по нормализованному plate перед группировкой
     q = (
-        select(
-            _region_expr.label("region"),
-            Vehicle.state,
-            func.count(Vehicle.id).label("cnt"),
-        )
-        .group_by(_region_expr, Vehicle.state)
-        .order_by(func.count(Vehicle.id).desc())
+        select(Vehicle.id, Vehicle.plate, Vehicle.state, Vehicle.assigned_text)
     )
     q = _apply_visibility(q, current_user)
-    rows = (await db.execute(q)).all()
+    raw_rows = (await db.execute(q)).all()
 
-    # Aggregate by region
+    _STATE_PRIORITY = {
+        "broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
+        "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0,
+    }
+    def _rank(s): return _STATE_PRIORITY.get(s, 2)
+
+    seen_v: dict[str, dict] = {}
+    for r in raw_rows:
+        norm = (r.plate or "").upper().replace(" ", "").strip() or f"__id_{r.id}"
+        cur = {"region": r.assigned_text or "Не указан", "state": r.state or "unknown"}
+        prev = seen_v.get(norm)
+        if not prev or _rank(cur["state"]) > _rank(prev["state"]):
+            seen_v[norm] = cur
+
     region_map: dict = {}
-    for r in rows:
-        rg = r.region
+    for v in seen_v.values():
+        rg = v["region"]
         if rg not in region_map:
             region_map[rg] = {"region": rg, "count": 0, "by_state": {}}
-        region_map[rg]["count"] += r.cnt
-        state_key = r.state or "unknown"
-        region_map[rg]["by_state"][state_key] = region_map[rg]["by_state"].get(state_key, 0) + r.cnt
+        region_map[rg]["count"] += 1
+        sk = v["state"]
+        region_map[rg]["by_state"][sk] = region_map[rg]["by_state"].get(sk, 0) + 1
 
     result = sorted(region_map.values(), key=lambda x: x["count"], reverse=True)
 
@@ -1253,19 +1393,26 @@ async def filter_counts(
     today = date.today()
     cutoff_30d = today - timedelta(days=30)
 
-    # All vehicles count
-    all_q = select(func.count(Vehicle.id))
-    all_q = _apply_visibility(all_q, current_user)
-    total_all = int((await db.execute(all_q)).scalar() or 0)
+    # Phase 29.3-R3: дедубликация по нормализованному plate перед подсчётом
+    raw_q = select(Vehicle.id, Vehicle.plate, Vehicle.state)
+    raw_q = _apply_visibility(raw_q, current_user)
+    raw_rows = (await db.execute(raw_q)).all()
 
-    # By state counts
-    state_q = (
-        select(Vehicle.state, func.count(Vehicle.id).label("cnt"))
-        .group_by(Vehicle.state)
-    )
-    state_q = _apply_visibility(state_q, current_user)
-    state_rows = (await db.execute(state_q)).all()
-    state_map = {r.state: r.cnt for r in state_rows}
+    _PR = {"broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
+           "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0}
+
+    seen_v: dict[str, tuple[int, str]] = {}  # norm_plate -> (id, state)
+    for r in raw_rows:
+        norm = (r.plate or "").upper().replace(" ", "").strip() or f"__id_{r.id}"
+        prev = seen_v.get(norm)
+        if not prev or _PR.get(r.state or "", 0) > _PR.get(prev[1] or "", 0):
+            seen_v[norm] = (r.id, r.state or "unknown")
+
+    unique_ids = {v[0] for v in seen_v.values()}
+    total_all = len(unique_ids)
+    state_map: dict = {}
+    for _id, st in seen_v.values():
+        state_map[st] = state_map.get(st, 0) + 1
 
     working = state_map.get("working", 0)
     # in_repair bucket mirrors frontend filteredVehicles: ['in_repair', 'broken', 'needs_repair']
@@ -1288,13 +1435,14 @@ async def filter_counts(
     ).subquery("recent_odo")
 
     no_report_q = (
-        select(func.count(Vehicle.id))
+        select(Vehicle.id)
         .outerjoin(recent_odo_sq, recent_odo_sq.c.vehicle_id == Vehicle.id)
         .where(recent_odo_sq.c.vehicle_id.is_(None))
         .where(Vehicle.state == "working")
     )
     no_report_q = _apply_visibility(no_report_q, current_user)
-    no_report_30d = int((await db.execute(no_report_q)).scalar() or 0)
+    no_report_ids = {r.id for r in (await db.execute(no_report_q)).all()}
+    no_report_30d = len(no_report_ids & unique_ids)
 
     # For disposal: destroyed + utilized
     for_disposal = state_map.get("destroyed", 0) + state_map.get("utilized", 0)

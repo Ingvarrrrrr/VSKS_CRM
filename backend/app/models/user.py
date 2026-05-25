@@ -38,6 +38,9 @@ class User(Base):
     license_issued_at = Column(Date, nullable=True)              # Дата выдачи ВУ — _DATE_FIELDS plan 29-09
     license_expires_at = Column(Date, nullable=True)             # Срок действия ВУ — _DATE_FIELDS plan 29-09
     medical_cert_expires_at = Column(Date, nullable=True)        # Срок медсправки — _DATE_FIELDS plan 29-09
+    tachograph_card_expires_at = Column(Date, nullable=True)     # карточка водителя для тахографа
+    psych_cert_expires_at = Column(Date, nullable=True)          # психиатрическое освидетельствование (302 приказ)
+    periodic_medical_expires_at = Column(Date, nullable=True)    # периодический медосмотр (302 приказ)
     # Phase 30: расширенные водительские данные
     medical_cert_number = Column(String(50), nullable=True)      # Номер медицинской справки
     driver_tab_number = Column(String(20), nullable=True)        # Табельный номер водителя

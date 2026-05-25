@@ -239,6 +239,7 @@ async def list_vehicles(
     assigned_org_id: Optional[List[int]] = Query(None),
     brand: Optional[str] = Query(None),
     plate: Optional[str] = Query(None),
+    vin: Optional[str] = Query(None, description="Точный поиск по VIN (case-insensitive)"),
     q: Optional[str] = Query(None, description="Search brand/model/plate/vin"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -260,6 +261,8 @@ async def list_vehicles(
         base_q = base_q.where(Vehicle.brand.ilike(f"%{brand}%"))
     if plate:
         base_q = base_q.where(Vehicle.plate.ilike(f"%{plate}%"))
+    if vin:
+        base_q = base_q.where(func.upper(Vehicle.vin) == vin.upper())
     if q:
         pattern = f"%{q}%"
         base_q = base_q.where(
@@ -416,7 +419,28 @@ async def create_vehicle(
                 detail="Нет прав создавать ТС для указанной организации-владельца",
             )
 
-    vehicle = Vehicle(**body.model_dump())
+    # VIN duplicate check (before insert)
+    if body.vin:
+        existing_q = await db.execute(
+            select(Vehicle.id, Vehicle.plate, Vehicle.brand, Vehicle.model)
+            .where(func.upper(Vehicle.vin) == body.vin.upper())
+            .limit(1)
+        )
+        dup = existing_q.first()
+        if dup and not body.force:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DUPLICATE_VIN",
+                    "vehicle_id": dup[0],
+                    "plate": dup[1],
+                    "brand": dup[2],
+                    "model": dup[3],
+                    "message": f"ТС с таким VIN уже существует: {dup[1]} ({dup[2]} {dup[3] or ''})".strip()
+                }
+            )
+
+    vehicle = Vehicle(**body.model_dump(exclude={"force"}))
     db.add(vehicle)
     try:
         await db.commit()

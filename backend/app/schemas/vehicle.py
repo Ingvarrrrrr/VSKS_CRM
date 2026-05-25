@@ -14,7 +14,8 @@ Schema hierarchy:
   FieldHistoryOut
 """
 from __future__ import annotations
-from pydantic import BaseModel, ConfigDict, model_validator, Field
+from pydantic import BaseModel, ConfigDict, model_validator, Field, field_validator
+import re
 from typing import Optional, List, Any, Dict
 from datetime import date, datetime
 from decimal import Decimal
@@ -364,6 +365,7 @@ class VehicleCreate(BaseModel):
     color: Optional[str] = None
     vin: Optional[str] = None
     plate: str
+    force: bool = False  # позволяет создать ТС с дублирующим VIN после подтверждения
     registered_at: Optional[date] = None
     insurance_until: Optional[date] = None
     type: Optional[str] = None
@@ -396,6 +398,24 @@ class VehicleCreate(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+
+    @field_validator('plate', mode='before')
+    @classmethod
+    def _normalize_plate(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            return v
+        return re.sub(r'\s+', '', v).upper()
+
+    @field_validator('vin', mode='before')
+    @classmethod
+    def _normalize_vin(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str) or not v.strip():
+            return None
+        return re.sub(r'\s+', '', v).upper()
 
 
 class VehiclePatch(BaseModel):
@@ -440,6 +460,24 @@ class VehiclePatch(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+
+    @field_validator('plate', mode='before')
+    @classmethod
+    def _normalize_plate(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            return v
+        return re.sub(r'\s+', '', v).upper()
+
+    @field_validator('vin', mode='before')
+    @classmethod
+    def _normalize_vin(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str) or not v.strip():
+            return None
+        return re.sub(r'\s+', '', v).upper()
 
 
 class VehicleOut(BaseModel):

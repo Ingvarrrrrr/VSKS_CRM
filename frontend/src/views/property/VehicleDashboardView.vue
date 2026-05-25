@@ -151,7 +151,7 @@
       <div class="fleet-panel">
         <h3 class="fleet-panel__title">
           География эксплуатации
-          <small>распределение по штабам и регионам</small>
+          <small>распределение по филиалам и регионам</small>
         </h3>
         <!-- Phase 29.3-R3: top-5 строк + 6-я "Прочее" (collapsible, persistent state) -->
         <div class="fleet-reg-rows" v-if="regionItems.length">
@@ -1473,12 +1473,30 @@ onMounted(() => {
 /* ─── Cards grid ─── */
 .fleet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  /* 320px min: карточки никогда не сжимаются меньше 320px → chip'ы не обрезаются */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
   position: relative;
 }
 
 .fleet-grid--compact { margin-top: 12px; }
+
+/* Responsive grid: tablet */
+@media (max-width: 768px) {
+  .fleet-grid {
+    /* на планшете одна колонка на всю ширину если меньше 640px */
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+}
+
+/* Responsive grid: mobile */
+@media (max-width: 480px) {
+  .fleet-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
 
 /* ─── Table ─── */
 .fleet-table-card {

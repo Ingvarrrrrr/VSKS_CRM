@@ -507,7 +507,7 @@
                 <div class="text-caption font-weight-medium mb-1 px-1" style="color:#7b1fa2">
                   <v-icon size="12" class="mr-1">mdi-domain</v-icon>{{ group.org_name }}
                 </div>
-                <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" :style="{ background: 'rgba(0,0,0,0.04)', position: 'relative', borderLeft: '4px solid rgb(var(--v-theme-' + orgColor(group.org_id) + '))' }">
+                <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" :style="{ background: 'rgba(0,0,0,0.04)', position: 'relative', borderLeft: '4px solid ' + orgCssColor(group.org_id) }">
                   <div class="d-flex align-center mb-2">
                     <v-chip size="small" color="purple" variant="tonal">{{ entry.dept_name || 'Без отдела' }}</v-chip>
                     <v-spacer />
@@ -1598,10 +1598,36 @@ function flatDepts(nodes: any[]): any[] {
 
 // ── Org color map for dept nodes ──
 const ORG_COLORS = ['primary', 'purple', 'orange', 'teal', 'indigo', 'pink', 'brown']
-function orgColor(orgId: number | null | undefined) {
+function orgColor(orgId: number | null | undefined): string {
+  // Unify color logic: prefer Organization.color from DB (как в HierarchyView).
+  // Если color задан админом через color-picker — возвращаем hex.
+  // Иначе fallback на named Vuetify color по индексу.
   if (!orgId) return 'primary'
+  const org = organizations.value.find((o: any) => o.id === orgId) as any
+  if (org?.color && typeof org.color === 'string' && org.color.startsWith('#')) {
+    return org.color
+  }
   const idx = organizations.value.findIndex((o: any) => o.id === orgId)
   return ORG_COLORS[idx >= 0 ? idx % ORG_COLORS.length : 0]
+}
+
+// Helper: преобразует org color (hex или named) в CSS-color-value
+// для inline border-color / background стилей.
+function orgCssColor(orgId: number | null | undefined, alpha = 1): string {
+  const c = orgColor(orgId)
+  if (c.startsWith('#')) {
+    // hex → используем как есть; для alpha добавляем суффикс
+    if (alpha >= 1) return c
+    // hex + alpha как rgba не получится напрямую — конвертируем
+    const r = parseInt(c.slice(1, 3), 16)
+    const g = parseInt(c.slice(3, 5), 16)
+    const b = parseInt(c.slice(5, 7), 16)
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  }
+  // Vuetify named theme color
+  return alpha >= 1
+    ? `rgb(var(--v-theme-${c}))`
+    : `rgba(var(--v-theme-${c}), ${alpha})`
 }
 
 // ── Recursive dept-node component ──
@@ -1619,10 +1645,12 @@ const DeptNode = defineComponent({
       const VChip = resolveComponent('v-chip') as any
       const VSpacer = resolveComponent('v-spacer') as any
       const color = orgColor(n.org_id)
+      const borderL = orgCssColor(n.org_id)
+      const borderEdge = orgCssColor(n.org_id, 0.25)
 
       const items = [
         h('div', {
-          class: 'dept-tree-row', style: { paddingLeft: indent + 'px', borderLeftColor: `rgb(var(--v-theme-${color}))`, borderColor: `rgba(var(--v-theme-${color}), 0.25)` },
+          class: 'dept-tree-row', style: { paddingLeft: indent + 'px', borderLeftColor: borderL, borderColor: borderEdge },
           onClick: () => emit('select', n),
         }, [
           n.children?.length

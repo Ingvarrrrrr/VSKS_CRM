@@ -617,7 +617,8 @@ function checkState(val: boolean | null | undefined): string {
 /* Checklist */
 .fleet-card__check {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* auto-fill: при узкой карточке (<~280px) items перенесутся в 2+ строк вместо обрезания */
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
   gap: 8px;
   padding: 12px 16px 0;
 }
@@ -630,13 +631,21 @@ function checkState(val: boolean | null | undefined): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 4px;
+  /* не позволяем flex/grid растягивать или обрезать item */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .fleet-check-item__l {
   font-size: 11px;
   color: var(--muted);
   font-weight: 600;
+  /* обрезаем только текст label, но не весь chip */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .fleet-check-item__v {

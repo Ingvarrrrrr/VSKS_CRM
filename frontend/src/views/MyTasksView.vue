@@ -182,6 +182,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
 import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'
 import TasksTable from '@/components/my-tasks/TasksTable.vue'
@@ -403,6 +404,14 @@ async function selectOrg(orgId: number | null) {
   archiveTasks.value = []
   if (orgId !== null) localStorage.setItem('active_org_id', String(orgId))
   else localStorage.removeItem('active_org_id')
+  // Phase 30 fix: при смене активной организации обновить permissions →
+  // sidebar (AppBar) подхватит новые tabs/actions для этой org
+  try {
+    const authStore = useAuthStore()
+    await authStore.loadPermissions(orgId)
+  } catch (e) {
+    console.warn('loadPermissions on org switch failed', e)
+  }
   await loadOrgData()
 }
 

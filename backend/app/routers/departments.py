@@ -482,16 +482,28 @@ async def remove_member(
     if not dm_row and not uo_rows:
         raise HTTPException(404, "Сотрудник не найден в отделе")
 
-    # Check for active purchases assigned to this user
+    # Phase 30 fix: учитываем закупки ТОЛЬКО в той же организации, что и отдел.
+    # Раньше считались закупки глобально → удаление из АНО блокировалось задачами из ВСКС.
     from app.models.purchase import Purchase
-    active_count = (await db.execute(
-        select(func.count()).select_from(Purchase).where(
+    from app.models.subsidy import Subsidy
+    dept = await db.get(Department, dept_id)
+    dept_org_id = dept.org_id if dept else None
+    active_count_q = (
+        select(func.count()).select_from(Purchase)
+        .join(Subsidy, Subsidy.id == Purchase.subsidy_id, isouter=True)
+        .where(
             Purchase.assigned_user_id == user_id,
             Purchase.status.notin_(['paid', 'cancelled']),
         )
-    )).scalar() or 0
+    )
+    if dept_org_id is not None:
+        active_count_q = active_count_q.where(Subsidy.org_id == dept_org_id)
+    active_count = (await db.execute(active_count_q)).scalar() or 0
     if active_count > 0:
-        raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок). Сначала перераспределите задачи.")
+        org_name = (await db.execute(
+            select(Organization.name).where(Organization.id == dept_org_id)
+        )).scalar() if dept_org_id else 'этой организации'
+        raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок) в «{org_name}». Сначала перераспределите задачи.")
 
     if dm_row:
         await db.delete(dm_row)

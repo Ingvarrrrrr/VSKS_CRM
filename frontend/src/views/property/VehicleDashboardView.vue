@@ -87,7 +87,11 @@
     <!-- ── KPI Cards ── -->
     <section class="fleet-kpis">
       <!-- Total -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="resetAllFilters">
+      <div
+        class="fleet-kpi fleet-kpi--clickable"
+        :class="{ 'fleet-kpi--active': activeFilter === 'all' && !selectedTypes.length && !selectedRegions.length && !searchQuery && !drillDocsOpen }"
+        @click="resetAllFilters"
+      >
         <div class="fleet-kpi__label">Всего в реестре</div>
         <div class="fleet-kpi__value">{{ kpi.total_vehicles }}</div>
         <div class="fleet-kpi__sub">авто, спецтехника, квадроциклы, прицепы</div>
@@ -126,7 +130,11 @@
         </div>
       </div>
       <!-- Docs -->
-      <div class="fleet-kpi fleet-kpi--clickable" @click="applyKpiFilter('docs_expiring')">
+      <div
+        class="fleet-kpi fleet-kpi--clickable"
+        :class="{ 'fleet-kpi--active': drillDocsOpen }"
+        @click="openDocsDrill()"
+      >
         <div class="fleet-kpi__label">Документы — истекли/истекают</div>
         <div class="fleet-kpi__value">{{ maintenanceWarnings.length }}</div>
         <div class="fleet-kpi__trend fleet-kpi__trend--alert">+2</div>
@@ -145,66 +153,55 @@
           География эксплуатации
           <small>распределение по штабам и регионам</small>
         </h3>
-        <!-- Geography tiles grid -->
-        <div class="fleet-reg-tiles" v-if="regionItems.length">
+        <!-- Phase 29.3-R3: top-5 строк + 6-я "Прочее" (collapsible, persistent state) -->
+        <div class="fleet-reg-rows" v-if="regionItems.length">
+          <!-- Top-5 regions as rows -->
           <div
-            class="fleet-reg-tile"
-            v-for="reg in visibleRegionItems"
+            v-for="reg in topRegions"
             :key="reg.region"
-            :class="{ 'fleet-reg-tile--active': selectedRegions.includes(reg.region) }"
-            :title="`${reg.region} — всего ${reg.count}\nРабочих: ${regSegments(reg).working}\nВ ремонте: ${regSegments(reg).inRepair}${regSegments(reg).broken ? '\nНе на ходу: ' + regSegments(reg).broken : ''}`"
+            class="fleet-reg-row"
+            :class="{ 'fleet-reg-row--active': selectedRegions.includes(reg.region) }"
             @click="applyRegionFilter(reg.region)"
           >
-            <!-- Header: region name -->
-            <div class="fleet-reg-tile__nm">{{ reg.region }}</div>
-            <!-- Center: total count -->
-            <div class="fleet-reg-tile__cnt">{{ reg.count }}</div>
-            <!-- Footer: status dots -->
-            <div class="fleet-reg-tile__dots">
-              <!-- Working: green -->
-              <template v-if="regSegments(reg).working > 0">
-                <span
-                  v-for="n in Math.min(regSegments(reg).working, REG_DOT_MAX)"
-                  :key="'w' + n"
-                  class="fleet-reg-tile__dot fleet-reg-tile__dot--working"
-                ></span>
-                <span v-if="regSegments(reg).working > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).working - REG_DOT_MAX }}</span>
-              </template>
-              <!-- In repair: yellow -->
-              <template v-if="regSegments(reg).inRepair > 0">
-                <span
-                  v-for="n in Math.min(regSegments(reg).inRepair, REG_DOT_MAX)"
-                  :key="'r' + n"
-                  class="fleet-reg-tile__dot fleet-reg-tile__dot--repair"
-                ></span>
-                <span v-if="regSegments(reg).inRepair > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).inRepair - REG_DOT_MAX }}</span>
-              </template>
-              <!-- Broken / не на ходу: red -->
-              <template v-if="regSegments(reg).broken > 0">
-                <span
-                  v-for="n in Math.min(regSegments(reg).broken, REG_DOT_MAX)"
-                  :key="'b' + n"
-                  class="fleet-reg-tile__dot fleet-reg-tile__dot--broken"
-                ></span>
-                <span v-if="regSegments(reg).broken > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).broken - REG_DOT_MAX }}</span>
-              </template>
-              <!-- Other statuses: grey -->
-              <template v-if="regSegments(reg).other > 0">
-                <span
-                  v-for="n in Math.min(regSegments(reg).other, REG_DOT_MAX)"
-                  :key="'o' + n"
-                  class="fleet-reg-tile__dot fleet-reg-tile__dot--other"
-                ></span>
-                <span v-if="regSegments(reg).other > REG_DOT_MAX" class="fleet-reg-tile__dot-more">+{{ regSegments(reg).other - REG_DOT_MAX }}</span>
-              </template>
+            <div class="fleet-reg-row__nm">{{ reg.region }}</div>
+            <div class="fleet-reg-row__bar">
+              <div class="fleet-reg-row__bar-fill" :style="`width: ${Math.round((reg.count / MAX_REG_COUNT) * 100)}%`"></div>
             </div>
+            <div class="fleet-reg-row__cnt">{{ reg.count }}</div>
           </div>
-        </div>
-        <!-- Show more / collapse -->
-        <div v-if="regionItems.length > REG_TILES_LIMIT" class="fleet-reg-tiles__more">
-          <button class="fleet-chip" @click="showAllRegions = !showAllRegions">
-            {{ showAllRegions ? 'Свернуть' : `Показать ещё ${regionItems.length - REG_TILES_LIMIT}` }}
-          </button>
+
+          <!-- 6-я строка: «Прочее» (только если есть остальные) -->
+          <template v-if="otherRegions.length">
+            <div
+              class="fleet-reg-row fleet-reg-row--other"
+              :class="{ 'fleet-reg-row--expanded': showOtherRegions }"
+              @click="showOtherRegions = !showOtherRegions"
+            >
+              <div class="fleet-reg-row__nm">
+                <span class="fleet-reg-row__caret">{{ showOtherRegions ? '▼' : '▶' }}</span>
+                Прочее ({{ otherRegions.length }})
+              </div>
+              <div class="fleet-reg-row__bar">
+                <div class="fleet-reg-row__bar-fill fleet-reg-row__bar-fill--other" :style="`width: ${Math.round((otherRegionsTotalCount / MAX_REG_COUNT) * 100)}%`"></div>
+              </div>
+              <div class="fleet-reg-row__cnt">{{ otherRegionsTotalCount }}</div>
+            </div>
+            <!-- Раскрытое содержимое «Прочее» — остаётся открытым пока пользователь сам не свернёт -->
+            <div
+              v-for="reg in otherRegions"
+              v-show="showOtherRegions"
+              :key="reg.region"
+              class="fleet-reg-row fleet-reg-row--nested"
+              :class="{ 'fleet-reg-row--active': selectedRegions.includes(reg.region) }"
+              @click="applyRegionFilter(reg.region)"
+            >
+              <div class="fleet-reg-row__nm">{{ reg.region }}</div>
+              <div class="fleet-reg-row__bar">
+                <div class="fleet-reg-row__bar-fill" :style="`width: ${Math.round((reg.count / MAX_REG_COUNT) * 100)}%`"></div>
+              </div>
+              <div class="fleet-reg-row__cnt">{{ reg.count }}</div>
+            </div>
+          </template>
         </div>
         <div class="fleet-empty" v-if="!regionItems.length">
           <v-progress-circular v-if="loadingRegions" indeterminate color="#6aa6ff" size="24" />
@@ -234,6 +231,93 @@
         </div>
         <div class="fleet-empty" v-else>
           <v-progress-circular indeterminate color="#6aa6ff" size="24" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Docs Drill Section ── -->
+    <section v-if="drillDocsOpen" class="docs-drill-section">
+      <div class="docs-drill-header">
+        <h3 class="text-h6">Истекают документы (горизонт {{ drillDocsHorizon }} дней)</h3>
+        <v-spacer />
+        <v-select
+          v-model="drillDocsHorizon"
+          :items="[7, 14, 30, 60, 90]"
+          label="Дней"
+          density="compact"
+          style="max-width: 120px"
+          hide-details
+          @update:model-value="openDocsDrill"
+        />
+        <v-btn variant="text" size="small" @click="closeDocsDrill">Закрыть</v-btn>
+      </div>
+
+      <v-progress-linear v-if="drillDocsLoading" indeterminate />
+
+      <div v-if="!drillDocsLoading" class="docs-drill-content">
+        <!-- ТС секция -->
+        <div class="docs-drill-block">
+          <div class="docs-drill-block__title">
+            <v-icon size="small">mdi-car</v-icon>
+            Машины ({{ drillDocsVehicles.length }})
+          </div>
+          <div v-if="!drillDocsVehicles.length" class="text-grey">Нет ТС с истекающими документами</div>
+          <div v-else class="docs-drill-rows">
+            <router-link
+              v-for="v in drillDocsVehicles"
+              :key="v.id"
+              :to="`/property/vehicles/${v.id}`"
+              class="docs-drill-row"
+            >
+              <div class="docs-drill-row__main">
+                <div class="docs-drill-row__plate">{{ v.plate }}</div>
+                <div class="docs-drill-row__name">{{ v.brand }} {{ v.model }}</div>
+              </div>
+              <div class="docs-drill-row__docs">
+                <v-chip
+                  v-for="d in v.expiring_docs"
+                  :key="d.type"
+                  size="x-small"
+                  :color="d.days_left < 0 ? 'error' : d.days_left <= 7 ? 'warning' : 'default'"
+                  variant="tonal"
+                >
+                  {{ d.label }}: {{ d.days_left < 0 ? `просрочен ${-d.days_left}д` : `${d.days_left}д` }}
+                </v-chip>
+              </div>
+            </router-link>
+          </div>
+        </div>
+
+        <!-- Водители секция -->
+        <div class="docs-drill-block">
+          <div class="docs-drill-block__title">
+            <v-icon size="small">mdi-account</v-icon>
+            Водители ({{ drillDocsDrivers.length }})
+          </div>
+          <div v-if="!drillDocsDrivers.length" class="text-grey">Нет водителей с истекающими документами</div>
+          <div v-else class="docs-drill-rows">
+            <div
+              v-for="u in drillDocsDrivers"
+              :key="u.id"
+              class="docs-drill-row docs-drill-row--user"
+            >
+              <div class="docs-drill-row__main">
+                <div class="docs-drill-row__plate">{{ u.full_name }}</div>
+                <div class="docs-drill-row__name">{{ u.fleet_role || '—' }}</div>
+              </div>
+              <div class="docs-drill-row__docs">
+                <v-chip
+                  v-for="d in u.expiring_docs"
+                  :key="d.type"
+                  size="x-small"
+                  :color="d.days_left < 0 ? 'error' : d.days_left <= 7 ? 'warning' : 'default'"
+                  variant="tonal"
+                >
+                  {{ d.label }}: {{ d.days_left < 0 ? `просрочен ${-d.days_left}д` : `${d.days_left}д` }}
+                </v-chip>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -471,9 +555,41 @@ function resetAllFilters() {
   selectedTypes.value = []
   selectedRegions.value = []
   searchQuery.value = ''
+  drillDocsOpen.value = false
   nextTick(() => {
-    document.querySelector('.fleet-card-grid, .fleet-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    document.querySelector('.fleet-grid, .fleet-filters, .fleet-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
+}
+
+// ── Docs drill ───────────────────────────────────────────────────────────────
+const drillDocsOpen = ref(false)
+const drillDocsLoading = ref(false)
+const drillDocsVehicles = ref<any[]>([])
+const drillDocsDrivers = ref<any[]>([])
+const drillDocsHorizon = ref(30)
+
+async function openDocsDrill() {
+  drillDocsOpen.value = true
+  drillDocsLoading.value = true
+  try {
+    const res = await apiFetch<any>(`/vehicles-dashboard/expiring-docs-drill?days=${drillDocsHorizon.value}`)
+    drillDocsVehicles.value = res.vehicles || []
+    drillDocsDrivers.value = res.drivers || []
+  } catch (e) {
+    drillDocsVehicles.value = []
+    drillDocsDrivers.value = []
+  } finally {
+    drillDocsLoading.value = false
+  }
+  nextTick(() => {
+    document.querySelector('.docs-drill-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
+function closeDocsDrill() {
+  drillDocsOpen.value = false
+  drillDocsVehicles.value = []
+  drillDocsDrivers.value = []
 }
 
 // ── KPI ──────────────────────────────────────────────────────────────────────
@@ -566,10 +682,18 @@ const REG_DOT_MAX = 4        // max dots per status before "+N" overflow label
 
 const showAllRegions = ref(false)
 
-// Sorted by count desc, capped if not showAll
+// Phase 29.3-R3: топ-5 регионов + 6-я строка «Прочее» (collapsible, persistent state — не сворачивается auto)
+const REG_TOP_LIMIT = 5
+const showOtherRegions = ref(false)
+
+const sortedRegions = computed(() => [...regionItems.value].sort((a, b) => b.count - a.count))
+const topRegions = computed(() => sortedRegions.value.slice(0, REG_TOP_LIMIT))
+const otherRegions = computed(() => sortedRegions.value.slice(REG_TOP_LIMIT))
+const otherRegionsTotalCount = computed(() => otherRegions.value.reduce((sum, r) => sum + r.count, 0))
+
+// Sorted by count desc, capped if not showAll (kept for legacy tiles)
 const visibleRegionItems = computed(() => {
-  const sorted = [...regionItems.value].sort((a, b) => b.count - a.count)
-  return showAllRegions.value ? sorted : sorted.slice(0, REG_TILES_LIMIT)
+  return showAllRegions.value ? sortedRegions.value : sortedRegions.value.slice(0, REG_TILES_LIMIT)
 })
 
 function regSegments(reg: RegionItem) {
@@ -1528,5 +1652,161 @@ onMounted(() => {
   .fleet-search { max-width: 100%; }
   .fleet-kpis { grid-template-columns: 1fr 1fr; }
   .fleet-fine-leaders-section { max-width: 100%; }
+}
+
+/* Phase 29.3-R3: Geography rows (top-5 + collapsible "Прочее") */
+.fleet-reg-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.fleet-reg-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 40px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid transparent;
+}
+.fleet-reg-row:hover {
+  background: rgba(106, 166, 255, 0.08);
+}
+.fleet-reg-row--active {
+  background: rgba(106, 166, 255, 0.15);
+  border-color: #6aa6ff;
+}
+.fleet-reg-row__nm {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e9edf5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fleet-reg-row__bar {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.fleet-reg-row__bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6aa6ff, #8b5cf6);
+  border-radius: 6px;
+  transition: width 0.3s ease;
+}
+.fleet-reg-row__bar-fill--other {
+  background: linear-gradient(90deg, #8a93a8, #5d6478);
+}
+.fleet-reg-row__cnt {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #e9edf5;
+  font-size: 14px;
+}
+.fleet-reg-row--other {
+  background: rgba(106, 166, 255, 0.04);
+  border-color: rgba(106, 166, 255, 0.15);
+  margin-top: 4px;
+}
+.fleet-reg-row--other.fleet-reg-row--expanded {
+  background: rgba(106, 166, 255, 0.10);
+}
+.fleet-reg-row__caret {
+  display: inline-block;
+  width: 12px;
+  margin-right: 4px;
+  color: #6aa6ff;
+  font-size: 10px;
+  user-select: none;
+}
+.fleet-reg-row--nested {
+  margin-left: 24px;
+  background: rgba(255, 255, 255, 0.015);
+  border-color: rgba(255, 255, 255, 0.04);
+}
+.fleet-reg-row--nested .fleet-reg-row__nm {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #c8d0e0;
+}
+.fleet-reg-row--nested .fleet-reg-row__bar-fill {
+  background: linear-gradient(90deg, #5dd0ff, #6aa6ff);
+}
+
+/* ─── KPI active state ─── */
+.fleet-kpi--active {
+  border-color: rgba(106, 166, 255, 0.6) !important;
+  background: linear-gradient(180deg, rgba(106, 166, 255, 0.08), rgba(106, 166, 255, 0.04)) !important;
+  box-shadow: 0 0 0 1px rgba(106, 166, 255, 0.25);
+}
+
+/* ─── Docs drill section ─── */
+.docs-drill-section {
+  background: rgb(var(--v-theme-surface));
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+.docs-drill-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.docs-drill-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media (max-width: 768px) {
+  .docs-drill-content { grid-template-columns: 1fr; }
+}
+.docs-drill-block__title {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.docs-drill-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.docs-drill-row {
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.15s;
+}
+.docs-drill-row:hover { background: rgba(var(--v-theme-on-surface), 0.04); }
+.docs-drill-row__main { flex: 1; min-width: 0; }
+.docs-drill-row__plate { font-weight: 600; font-size: 13px; }
+.docs-drill-row__name {
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.docs-drill-row__docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
 }
 </style>

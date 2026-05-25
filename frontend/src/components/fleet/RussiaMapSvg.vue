@@ -87,7 +87,7 @@
 
       <!-- SVG inline legend (visible inside SVG canvas) -->
       <g transform="translate(20,330)">
-        <circle cx="6" cy="0" r="5" fill="#6aa6ff"/><text x="16" y="3" font-size="10" :fill="mutedColor" font-family="Inter, sans-serif">штаб</text>
+        <circle cx="6" cy="0" r="5" fill="#6aa6ff"/><text x="16" y="3" font-size="10" :fill="mutedColor" font-family="Inter, sans-serif">филиал</text>
         <circle cx="64" cy="0" r="5" fill="#f6b34a"/><text x="74" y="3" font-size="10" :fill="mutedColor" font-family="Inter, sans-serif">СТО/ремонт</text>
         <circle cx="158" cy="0" r="5" fill="#22c997"/><text x="168" y="3" font-size="10" :fill="mutedColor" font-family="Inter, sans-serif">регион эксп.</text>
         <circle cx="248" cy="0" r="5" fill="#8b5cf6"/><text x="258" y="3" font-size="10" :fill="mutedColor" font-family="Inter, sans-serif">ФПГ-источник</text>
@@ -96,7 +96,7 @@
 
     <!-- HTML legend below map -->
     <div class="russia-map__legend">
-      <span class="leg-item"><i class="leg-dot" style="background:#6aa6ff"></i>Штаб</span>
+      <span class="leg-item"><i class="leg-dot" style="background:#6aa6ff"></i>Филиал</span>
       <span class="leg-item"><i class="leg-dot" style="background:#f6b34a"></i>СТО</span>
       <span class="leg-item"><i class="leg-dot" style="background:#22c997"></i>Регион эксплуатации</span>
       <span class="leg-item"><i class="leg-dot" style="background:#8b5cf6"></i>ФПГ-источник</span>

@@ -391,7 +391,7 @@ const router = createRouter({
       path: '/fleet/regions',
       name: 'fleet-regions',
       component: () => import('../views/fleet/FleetRegionsView.vue'),
-      meta: { requiresAuth: true, title: 'Регионы и штабы', tab_key: 'vehicles' },
+      meta: { requiresAuth: true, title: 'Регионы и филиалы', tab_key: 'vehicles' },
     },
     {
       path: '/fleet/fines',

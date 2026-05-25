@@ -56,7 +56,7 @@
           <v-list-item
             :to="'/fleet/regions'"
             prepend-icon="mdi-map"
-            title="Регионы и штабы"
+            title="Регионы и филиалы"
           />
           <v-list-item
             :to="'/fleet/fines'"
@@ -339,7 +339,7 @@
         <v-list-item to="/fleet"              prepend-icon="mdi-view-dashboard"          title="Дашборд"                    active-class="bg-primary text-white" />
         <v-list-item to="/fleet/vehicles"     prepend-icon="mdi-car"                     title="Реестр ТС"                  active-class="bg-primary text-white" />
         <v-list-item to="/fleet/documents"    prepend-icon="mdi-file-document-multiple"  title="Документы"                  active-class="bg-primary text-white" />
-        <v-list-item to="/fleet/regions"      prepend-icon="mdi-map"                     title="Регионы и штабы"            active-class="bg-primary text-white" />
+        <v-list-item to="/fleet/regions"      prepend-icon="mdi-map"                     title="Регионы и филиалы"            active-class="bg-primary text-white" />
         <v-list-item to="/fleet/fines"        prepend-icon="mdi-alert-octagon"           title="Штрафы"                     active-class="bg-primary text-white" />
         <v-list-item to="/fleet/waybills"     prepend-icon="mdi-clipboard-list"          title="Путевые листы"              active-class="bg-primary text-white" />
         <v-list-item to="/m/driver"           prepend-icon="mdi-cellphone"               title="Мобильный кабинет водителя" active-class="bg-primary text-white" />

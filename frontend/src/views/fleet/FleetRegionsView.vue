@@ -7,13 +7,13 @@
         <div class="rv-crumbs">
           <router-link to="/fleet">Автопарк</router-link>
           <span class="rv-crumbs__sep">/</span>
-          <b>Регионы и штабы</b>
+          <b>Регионы и филиалы</b>
         </div>
         <h1 class="rv-h1">География парка</h1>
         <p class="rv-lead">
           Распределение
           <b>{{ totalVehicles }}</b> единиц техники по
-          <b>{{ orgs.length }}</b> штабам и регионам · клик по штабу — его машины и ответственные
+          <b>{{ orgs.length }}</b> филиалам и регионам · клик по филиалу — его машины и ответственные
         </p>
       </div>
     </div>
@@ -21,7 +21,7 @@
     <!-- ── KPI strip ── -->
     <div class="rv-kpi-row">
       <KpiCard label="Всего ТС" :value="totalVehicles" variant="default" />
-      <KpiCard label="Штабов" :value="orgs.length" variant="info" />
+      <KpiCard label="Филиалов" :value="orgs.length" variant="info" />
       <KpiCard label="В работе" :value="totalWorking" variant="ok" />
       <KpiCard label="В ремонте" :value="totalRepair" variant="warn" />
       <KpiCard label="Сломано" :value="totalBroken" variant="alert" />
@@ -32,7 +32,7 @@
       <!-- Map -->
       <div class="rv-panel rv-map-box">
         <div class="rv-panel__head">
-          <span>Карта штабов</span>
+          <span>Карта филиалов</span>
           <small>размер кружка ∝ количеству ТС</small>
         </div>
         <div v-if="loadingOrgs" class="rv-loading">
@@ -49,7 +49,7 @@
       <!-- Top-8 orgs list -->
       <div class="rv-panel rv-top-list">
         <div class="rv-panel__head">
-          <span>Топ штабов</span>
+          <span>Топ филиалов</span>
           <small>по количеству ТС</small>
         </div>
         <div v-if="loadingOrgs" class="rv-loading">
@@ -81,7 +81,7 @@
 
     <!-- ── Region cards grid ── -->
     <h2 class="rv-section-title">
-      Карточки штабов
+      Карточки филиалов
       <span class="rv-section-title__sub">— основные данные, ответственные, состояние парка</span>
     </h2>
     <section class="rv-cards-grid">
@@ -143,7 +143,7 @@
     <!-- ── Transfer log ── -->
     <section class="rv-panel rv-transfers" style="margin-top:22px">
       <div class="rv-panel__head">
-        <span>Журнал передач между штабами</span>
+        <span>Журнал передач между филиалами</span>
         <small>последние перемещения</small>
       </div>
       <div v-if="loadingTransfers" class="rv-loading">
@@ -162,12 +162,12 @@
           <LicensePlate :modelValue="tx.plate" size="sm" />
           <div class="rv-tx__from">
             <div class="rv-tx__nm">{{ tx.from_org_name || tx.from_assigned_text || '—' }}</div>
-            <div class="rv-tx__ds">{{ tx.from_type || 'штаб' }}</div>
+            <div class="rv-tx__ds">{{ tx.from_type || 'филиал' }}</div>
           </div>
           <div class="rv-tx__arr">→</div>
           <div class="rv-tx__to">
             <div class="rv-tx__nm">{{ tx.to_org_name || tx.to_assigned_text || '—' }}</div>
-            <div class="rv-tx__ds">{{ tx.to_type || 'штаб' }}</div>
+            <div class="rv-tx__ds">{{ tx.to_type || 'филиал' }}</div>
           </div>
           <div class="rv-tx__detail">
             <span>{{ tx.brand_model || '' }}</span>
@@ -209,7 +209,7 @@
             </div>
             <div class="rv-popup__footer">
               <button class="rv-btn rv-btn--primary" @click="goToOrg(selectedPinOrgId)">
-                Перейти к штабу →
+                Перейти к филиалу →
               </button>
             </div>
           </div>

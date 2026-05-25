@@ -8,7 +8,7 @@ export interface MapPin {
   y: number
   radius: number
   count: number
-  color: string  // '#6aa6ff' (blue/штаб) | '#f6b34a' (warn/СТО) | '#22c997' (ok/регион) | '#8b5cf6' (purple/ФПГ)
+  color: string  // '#6aa6ff' (blue/филиал) | '#f6b34a' (warn/СТО) | '#22c997' (ok/регион) | '#8b5cf6' (purple/ФПГ)
   textColor?: string
 }
 
@@ -18,7 +18,7 @@ export interface MapConnection {
 }
 
 export const DEFAULT_PINS: MapPin[] = [
-  { id: 'msk',     name: 'ЦУ Москва',       sub: '9 ТС · штаб',  x: 180, y: 200, radius: 16, count: 9,  color: '#6aa6ff' },
+  { id: 'msk',     name: 'ЦУ Москва',       sub: '9 ТС · филиал',  x: 180, y: 200, radius: 16, count: 9,  color: '#6aa6ff' },
   { id: 'rnd',     name: 'Ростов-на-Дону',  sub: '18 ТС · СТО',  x: 155, y: 250, radius: 22, count: 18, color: '#f6b34a' },
   { id: 'lnr',     name: 'Луганск (ЛНР)',   sub: '',              x: 190, y: 275, radius: 12, count: 6,  color: '#22c997' },
   { id: 'dnr',     name: 'Донецк (ДНР)',    sub: '',              x: 170, y: 290, radius: 11, count: 5,  color: '#22c997' },

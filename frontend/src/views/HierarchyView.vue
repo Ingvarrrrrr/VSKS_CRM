@@ -374,6 +374,50 @@
       </v-card>
     </v-dialog>
 
+    <!-- Phase 30 restore: Delete org confirm dialog -->
+    <v-dialog v-model="deleteOrgConfirm.show" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-domain-remove" color="error" class="mr-2" />
+          Удалить организацию
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          Удалить организацию <strong>«{{ deleteOrgConfirm.name }}»</strong>?
+          <div class="text-caption text-medium-emphasis mt-2">
+            Все отделы, сотрудники и связи будут удалены (CASCADE).
+            Действие необратимо. Доступно только для superadmin / admin / account_owner.
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteOrgConfirm.show = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" :loading="deleteOrgConfirm.loading" @click="confirmDeleteOrg">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Phase 30 restore: Delete user confirm dialog -->
+    <v-dialog v-model="deleteUserConfirm.show" max-width="420">
+      <v-card>
+        <v-card-title class="pa-4">
+          <v-icon icon="mdi-account-remove" color="error" class="mr-2" />
+          Удалить сотрудника
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          Удалить сотрудника <strong>«{{ deleteUserConfirm.name }}»</strong>?
+          <div class="text-caption text-medium-emphasis mt-2">
+            Будет удалена учётная запись и все связи. Действие необратимо.
+            Доступно только при наличии права <code>user.manage</code>.
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="deleteUserConfirm.show = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" :loading="deleteUserConfirm.loading" @click="confirmDeleteUser">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- New org dialog (superadmin only) -->
     <v-dialog v-model="newOrgDialog.show" max-width="640" scrollable>
       <v-card>
@@ -574,6 +618,13 @@ const OrgNode = markRaw({
           title: 'Выбрать цвет организации',
           onClick: (e: Event) => { e.stopPropagation(); e.preventDefault(); document.dispatchEvent(new CustomEvent('hv-pick-color', { detail: p.data.orgId })) },
         }),
+        // Phase 30 restore: удаление организации (superadmin/admin/owner)
+        p.data.canDeleteOrg ? h('span', {
+          class: 'mdi mdi-close-circle-outline',
+          style: 'font-size:14px;cursor:pointer;opacity:0.7;margin-left:6px;color:#ffcdd2',
+          title: 'Удалить организацию',
+          onClick: (e: Event) => { e.stopPropagation(); e.preventDefault(); document.dispatchEvent(new CustomEvent('hv-delete-org', { detail: { id: p.data.orgId, name: p.data.label } })) },
+        }) : null,
       ]),
     ])
   },
@@ -686,6 +737,13 @@ const UserNode = markRaw({
         title: 'Копировать в другой отдел',
         onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-copy-user', { detail: p.data.userId })) },
       }),
+      // Phase 30 restore: удаление пользователя (требует user.manage)
+      p.data.canDeleteUser ? h('span', {
+        class: 'mdi mdi-trash-can-outline',
+        style: 'position:absolute;top:4px;right:22px;font-size:12px;cursor:pointer;opacity:0.6;color:#f44336',
+        title: 'Удалить сотрудника',
+        onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-delete-user', { detail: { id: p.data.userId, name: p.data.label } })) },
+      }) : null,
     ])
   },
 })
@@ -879,7 +937,56 @@ onMounted(() => {
   document.addEventListener('hv-copy-user', ((e: CustomEvent) => {
     startCopyUser(e.detail)
   }) as EventListener)
+  // Phase 30 restore: delete org / delete user из иерархии
+  document.addEventListener('hv-delete-org', ((e: CustomEvent) => {
+    deleteOrgNode(e.detail.id, e.detail.name)
+  }) as EventListener)
+  document.addEventListener('hv-delete-user', ((e: CustomEvent) => {
+    deleteUserNode(e.detail.id, e.detail.name)
+  }) as EventListener)
 })
+
+// Phase 30 restore: delete org/user state + handlers
+const deleteOrgConfirm = ref<{ show: boolean; orgId: number | null; name: string; loading: boolean }>({ show: false, orgId: null, name: '', loading: false })
+const deleteUserConfirm = ref<{ show: boolean; userId: number | null; name: string; loading: boolean }>({ show: false, userId: null, name: '', loading: false })
+
+function deleteOrgNode(orgId: number, name: string) {
+  deleteOrgConfirm.value = { show: true, orgId, name, loading: false }
+}
+async function confirmDeleteOrg() {
+  const { orgId } = deleteOrgConfirm.value
+  if (!orgId) return
+  deleteOrgConfirm.value.loading = true
+  try {
+    await apiFetch(`/organizations/${orgId}`, { method: 'DELETE' })
+    showSnack('Организация удалена')
+    deleteOrgConfirm.value.show = false
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка удаления организации', 'error')
+  } finally {
+    deleteOrgConfirm.value.loading = false
+  }
+}
+
+function deleteUserNode(userId: number, name: string) {
+  deleteUserConfirm.value = { show: true, userId, name, loading: false }
+}
+async function confirmDeleteUser() {
+  const { userId } = deleteUserConfirm.value
+  if (!userId) return
+  deleteUserConfirm.value.loading = true
+  try {
+    await apiFetch(`/users/${userId}`, { method: 'DELETE' })
+    showSnack('Сотрудник удалён')
+    deleteUserConfirm.value.show = false
+    await loadGraph()
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка удаления сотрудника', 'error')
+  } finally {
+    deleteUserConfirm.value.loading = false
+  }
+}
 function applyOrgColor(color: string) {
   if (colorPickerOrgId.value != null) {
     saveOrgColor(colorPickerOrgId.value, color)
@@ -946,13 +1053,16 @@ function buildGraph(data: GraphData) {
   }
 
   // Org nodes
+  const userRole = localStorage.getItem('user_role') || ''
+  const canDeleteOrg = ['superadmin', 'admin', 'account_owner'].includes(userRole)
+  const canDeleteUser = ['superadmin', 'admin', 'account_owner', 'manager'].includes(userRole)
   data.orgs.forEach((org, oi) => {
     const id = `org-${org.id}`
     const oColor = getOrgColor(org.id, oi)
     newNodes.push({
       id, type: 'org',
       position: savedPos[id] || { x: 80 + oi * 320, y: 60 },
-      data: { label: org.name, orgColor: oColor, orgId: org.id, onColorPick: pickOrgColor },
+      data: { label: org.name, orgColor: oColor, orgId: org.id, onColorPick: pickOrgColor, canDeleteOrg },
       draggable: true,
     })
   })
@@ -1009,7 +1119,7 @@ function buildGraph(data: GraphData) {
           id: nodeId, type: 'user',
           parentNode: `dept-${di.deptId}`,
           position: savedPos[nodeId] || defaultRelPos,
-          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [] },
+          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser },
           draggable: true,
           zIndex: 1000,
         })
@@ -1023,7 +1133,7 @@ function buildGraph(data: GraphData) {
       newNodes.push({
         id: freeId, type: 'user',
         position: savedPos[freeId] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [] },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [], canDeleteUser },
         draggable: true,
       })
       freeIdx++

@@ -907,10 +907,15 @@ async def list_plan_graph_versions(
 async def get_plan_graph_version(
     subsidy_id: int,
     version_id: int,
+    with_reconciliation: bool = Query(False, description="Добавить факт по текущим закупкам"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return full snapshot for a specific plan-graph version."""
+    """Return full snapshot for a specific plan-graph version.
+
+    Optional ?with_reconciliation=true adds current actual PurchaseItem totals
+    matched to snapshot tree nodes via composite-key matcher.
+    """
     from app.models.plan_graph_version import PlanGraphVersion as _PGV
 
     sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
@@ -931,7 +936,7 @@ async def get_plan_graph_version(
     if not ver:
         raise HTTPException(404, "Версия план-графика не найдена")
 
-    return {
+    resp = {
         "id": ver.id,
         "subsidy_id": ver.subsidy_id,
         "version_number": ver.version_number,
@@ -942,6 +947,96 @@ async def get_plan_graph_version(
         "effective_date": ver.effective_date.isoformat() if ver.effective_date else None,
         "snapshot": ver.snapshot,
     }
+
+    if with_reconciliation:
+        snap = ver.snapshot or {}
+        snap_tree = snap.get("tree")
+        reconciliation: dict = {}
+
+        if snap_tree:
+            from app.models.feo_planned_item import FeoPlannedItem as _FPI
+            from app.models.purchase_item import PurchaseItem as _PI
+
+            # Load current live FeoCategory tree for this subsidy
+            live_cats = (await db.execute(
+                select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.id)
+            )).scalars().all()
+
+            def _build_live_tree_simple(cats, parent_id=None):
+                nodes = []
+                for c in cats:
+                    if c.parent_id == parent_id:
+                        nodes.append({
+                            "id": c.id,
+                            "name": c.name,
+                            "level": c.level,
+                            "code": c.code,
+                            "children": _build_live_tree_simple(cats, parent_id=c.id),
+                        })
+                return nodes
+
+            live_tree = _build_live_tree_simple(list(live_cats))
+            live_cats_by_id = {c.id: c for c in live_cats}
+
+            # Match snapshot tree → live tree
+            match_result = _match_feo_nodes(snap_tree, live_tree)
+            # match_result["matches"] = [(snap_node, live_node, match_type), ...]
+
+            # For each live category, get PurchaseItem totals via FeoPlannedItem
+            live_cat_ids = [c.id for c in live_cats]
+            # Sum PurchaseItem.total_price grouped by feo_category_id (via FeoPlannedItem join)
+            cat_actual_map: dict[int, float] = {}
+            if live_cat_ids:
+                actual_rows = (await db.execute(
+                    select(
+                        _FPI.feo_category_id,
+                        func.coalesce(func.sum(_PI.total_price), 0).label("actual"),
+                    )
+                    .join(_PI, _PI.feo_planned_item_id == _FPI.id)
+                    .where(_FPI.feo_category_id.in_(live_cat_ids))
+                    .group_by(_FPI.feo_category_id)
+                )).all()
+                cat_actual_map = {r.feo_category_id: float(r.actual) for r in actual_rows}
+
+            def _subtree_actual(cat_id: int) -> float:
+                """Recursively sum actual from cat and all its descendants."""
+                total = cat_actual_map.get(cat_id, 0.0)
+                cat = live_cats_by_id.get(cat_id)
+                if cat:
+                    for child in live_cats:
+                        if child.parent_id == cat_id:
+                            total += _subtree_actual(child.id)
+                return total
+
+            # Build reconciliation map keyed by snapshot node id
+            for snap_node, live_node, match_type in match_result["matches"]:
+                snap_id = snap_node.get("id")
+                if snap_id is None:
+                    continue
+                live_id = live_node.get("id")
+                budget_snap = float(snap_node.get("budget") or 0)
+                actual = _subtree_actual(live_id) if live_id else 0.0
+                reconciliation[str(snap_id)] = {
+                    "matched_current_id": live_id,
+                    "actual_used": round(actual, 2),
+                    "actual_residual": round(budget_snap - actual, 2),
+                    "match_type": match_type,
+                }
+
+            # Unmatched snapshot nodes → null
+            for snap_node in match_result["only_a"]:
+                snap_id = snap_node.get("id")
+                if snap_id is not None:
+                    reconciliation[str(snap_id)] = {
+                        "matched_current_id": None,
+                        "actual_used": 0.0,
+                        "actual_residual": float(snap_node.get("budget") or 0),
+                        "match_type": None,
+                    }
+
+        resp["reconciliation"] = reconciliation
+
+    return resp
 
 
 class PlanGraphVersionCreate(BaseModel):

@@ -292,8 +292,21 @@
             <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
                 label="Категория ФЭО (ур.3) *" variant="outlined" density="compact" clearable
-                :error-messages="feoSaveAttempted && !selectedFeo3 ? 'Выберите уточняющую категорию' : ''"
+                :disabled="form.feo_per_item"
+                :error-messages="feoSaveAttempted && !selectedFeo3 && !form.feo_per_item ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
+            </v-col>
+            <!-- F-PIF1: тогл «Разные ФЭО позиции для каждого товара» -->
+            <v-col v-if="selectedFeo2" cols="12">
+              <v-switch
+                v-model="form.feo_per_item"
+                label="Разные ФЭО позиции для каждого товара"
+                density="compact"
+                color="primary"
+                hide-details
+                class="mb-2"
+                @update:model-value="onFeoPerItemChange"
+              />
             </v-col>
             <v-col v-if="formMode === 'advance_report'" cols="12" md="4">
               <v-text-field
@@ -621,6 +634,10 @@
             :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
             :form-mode="formMode"
             :contractors="contractors"
+            :feo-per-item="form.feo_per_item"
+            :level2-id="selectedFeo2"
+            :subsidy-id="form.subsidy_id"
+            :purchase-id-feo="purchaseId"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
@@ -3552,6 +3569,8 @@ const form = reactive({
   is_retroactive: false as boolean,
   // Phase 29: связь с ТС
   vehicle_id: null as number | null,
+  // B-PIF1/F-PIF1: per-item FEO (UI-only, not persisted)
+  feo_per_item: false as boolean,
 })
 
 // Phase 29: Vehicle selector — ключевые слова для автопоказа селекта ТС
@@ -5251,7 +5270,8 @@ const feoValidationError = computed((): string | null => {
   if (!form.subsidy_id || !feoLevel1Options.value.length) return null
   if (!selectedFeo1.value) return 'Выберите категорию ФЭО'
   if (feoLevel2Options.value.length > 0 && !selectedFeo2.value) return 'Выберите категорию ФЭО уровня 2'
-  if (feoLevel3Options.value.length > 0 && !selectedFeo3.value) return 'Выберите категорию ФЭО уровня 3'
+  // В режиме per-item level-3 выбирается per-row — не требуем общий
+  if (!form.feo_per_item && feoLevel3Options.value.length > 0 && !selectedFeo3.value) return 'Выберите категорию ФЭО уровня 3'
   return null
 })
 
@@ -5278,6 +5298,7 @@ const updateFeoId = () => {
 const onFeo1Change = () => { selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId() }
 const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
 const onFeo3Change = () => { updateFeoId() }
+const onFeoPerItemChange = () => { /* режим переключён — selectedFeo3 остаётся для режима single */ }
 
 // Resolve feo_category_id → path of ancestors for cascade
 const resolveFeeLevels = (id: number) => {
@@ -5777,12 +5798,21 @@ const loadPurchase = async () => {
         contractor_inn: i.contractor_inn || null,
         contractor_name: i.contractor_name || null,
         vat_rate: i.vat_rate ?? null,  // Phase 27.1.15: НДС % per-item из чека ФФД 1.2 (Phase 26-AAA парсил → не подтягивался во фронт)
+        feo_planned_item_id: i.feo_planned_item_id ?? null,  // F-PIF1: per-item FEO
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }
     })
+    // F-PIF1: auto-detect per-item mode — если >=2 items с разными ненулевыми feo_planned_item_id
+    {
+      const feoIds = data.items
+        .map((i: any) => i.feo_planned_item_id)
+        .filter((id: any) => id != null)
+      const unique = new Set(feoIds)
+      if (unique.size >= 2) form.feo_per_item = true
+    }
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -6351,9 +6381,13 @@ const doSave = async (adminOverride: boolean) => {
         ...rest,
         unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
         quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
+        // F-PIF1: в режиме single — очищаем per-item feo_planned_item_id (нет глобально выбранного PlannedItem)
+        feo_planned_item_id: form.feo_per_item ? (rest.feo_planned_item_id ?? null) : null,
       }))
+    // F-PIF1: feo_per_item — UI-only поле, не отправляем на бэкенд
+    const { feo_per_item: _feoPerItem, ...formWithoutFeoPerItem } = form
     const payload = {
-      ...form,
+      ...formWithoutFeoPerItem,
       planned_total_price: displayNmck.value || null,
       total_nmck: displayNmck.value || null,
       framework_seq: form.framework_seq || null,

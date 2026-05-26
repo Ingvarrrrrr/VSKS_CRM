@@ -48,6 +48,50 @@
             hide-details
             style="min-width:200px"
           />
+          <v-autocomplete
+            v-model="filterCreatorId"
+            :items="users"
+            item-title="full_name"
+            item-value="id"
+            label="От кого"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:240px"
+          />
+          <v-autocomplete
+            v-model="filterAssignedUserId"
+            :items="users"
+            item-title="full_name"
+            item-value="id"
+            label="Кому"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:240px"
+          />
+          <v-text-field
+            v-model="filterServiceNoteFrom"
+            type="date"
+            label="Дата СЗ с"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
+          <v-text-field
+            v-model="filterServiceNoteTo"
+            type="date"
+            label="Дата СЗ по"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
         </div>
       </v-card-text>
     </v-card>
@@ -88,6 +132,22 @@
 
         <template #item.delivery_date="{ item }">
           {{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}
+        </template>
+
+        <template #item.creator_name="{ item }">
+          {{ resolveUserName(item.service_note_by) }}
+        </template>
+
+        <template #item.assigned_user_name="{ item }">
+          {{ resolveUserName(item.assigned_user_id) }}
+        </template>
+
+        <template #item.subject="{ item }">
+          <span :title="item.subject || ''">{{ truncate(item.subject, 40) }}</span>
+        </template>
+
+        <template #item.service_note_at="{ item }">
+          {{ item.service_note_at ? new Date(item.service_note_at).toLocaleDateString('ru-RU') : '—' }}
         </template>
 
         <template #item.actions="{ item }">
@@ -140,17 +200,44 @@ interface Purchase {
   registry_number?: string
   purchase_basis?: string
   purchase_contract_type?: string
+  assigned_user_id?: number | null
+  service_note_by?: number | null
+  service_note_at?: string | null
+  service_note_text?: string | null
 }
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 
 interface Subsidy { id: number; name: string }
+interface User { id: number; full_name: string }
 
 const items = ref<Purchase[]>([])
 const subsidies = ref<Subsidy[]>([])
+const users = ref<User[]>([])
 const loading = ref(false)
 const filterStatus = ref<string>('')
 const filterSubsidyId = ref<number | null>(null)
+const filterCreatorId = ref<number | null>(null)
+const filterAssignedUserId = ref<number | null>(null)
+const filterServiceNoteFrom = ref('')
+const filterServiceNoteTo = ref('')
 const search = ref('')
+
+// Build user lookup map for O(1) name resolution
+const userMap = computed<Map<number, string>>(() => {
+  const m = new Map<number, string>()
+  for (const u of users.value) m.set(u.id, u.full_name)
+  return m
+})
+
+function resolveUserName(id?: number | null): string {
+  if (!id) return '—'
+  return userMap.value.get(id) || `#${id}`
+}
+
+function truncate(str: string | undefined | null, len: number): string {
+  if (!str) return '—'
+  return str.length > len ? str.slice(0, len) + '…' : str
+}
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 
@@ -178,9 +265,13 @@ const formatMoney = (v?: number | null) => v ? Number(v).toLocaleString('ru-RU')
 const allColumns: ColumnDef[] = [
   { title: '#', key: 'purchase_number', width: 70 },
   { title: 'Наименование', key: 'item_name' },
+  { title: 'Предмет', key: 'subject', width: 200 },
   { title: 'Статус', key: 'status', width: 130 },
   { title: 'НМЦД', key: 'nmck', width: 130, align: 'end' },
   { title: 'Срок поставки', key: 'delivery_date', width: 140 },
+  { title: 'От кого', key: 'creator_name', width: 180 },
+  { title: 'Кому', key: 'assigned_user_name', width: 180 },
+  { title: 'Дата СЗ', key: 'service_note_at', width: 120 },
   { title: 'Действия', key: 'actions', width: 80, sortable: false },
 ]
 
@@ -191,14 +282,27 @@ const filteredItems = computed(() => {
   let r = items.value
   if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
   if (filterSubsidyId.value) r = r.filter(p => p.subsidy_id === filterSubsidyId.value)
+  if (filterCreatorId.value) r = r.filter(p => p.service_note_by === filterCreatorId.value)
+  if (filterAssignedUserId.value) r = r.filter(p => p.assigned_user_id === filterAssignedUserId.value)
+  if (filterServiceNoteFrom.value) {
+    const from = new Date(filterServiceNoteFrom.value).getTime()
+    r = r.filter(p => p.service_note_at ? new Date(p.service_note_at).getTime() >= from : false)
+  }
+  if (filterServiceNoteTo.value) {
+    const to = new Date(filterServiceNoteTo.value).getTime() + 86400000 // inclusive
+    r = r.filter(p => p.service_note_at ? new Date(p.service_note_at).getTime() <= to : false)
+  }
   return r
 })
 
 async function load() {
   loading.value = true
   try {
-    items.value = await apiFetch<Purchase[]>('/purchases/?purchase_basis=service_note')
-    subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
+    ;[items.value, subsidies.value, users.value] = await Promise.all([
+      apiFetch<Purchase[]>('/purchases/?purchase_basis=service_note'),
+      apiFetch<Subsidy[]>('/subsidies/'),
+      apiFetch<User[]>('/users/'),
+    ])
   } catch {
     snack.text = 'Ошибка загрузки'; snack.color = 'error'; snack.show = true
   } finally {

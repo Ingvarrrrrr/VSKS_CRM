@@ -975,13 +975,183 @@ async def create_plan_graph_version_manual(
 TEMPLATE_DIR = "media/plan_graph_templates"
 
 
+def _render_plan_graph_workbook(tree: list, items: list, meta: dict):
+    """
+    Common renderer for plan-graph Excel workbook.
+
+    Args:
+        tree: recursive list of FeoCategory nodes
+              [{id, name, level, code, appendix, budget, planned_amount,
+                planned_quantity, unit, children:[...]}]
+              If empty — fallback to flat `items` (v1 backward-compat).
+        items: flat list of snapshot items (v1 backward-compat)
+               [{name, planned_amount, used_amount, residual}]
+        meta: dict with keys:
+              subsidy_name, subsidy_year (optional), effective_date (str|None),
+              version_number (int|None), note (str|None), generated_at (str|None)
+
+    Returns:
+        openpyxl.Workbook
+    """
+    if openpyxl is None:
+        raise RuntimeError("openpyxl не установлен")
+
+    HEADER_FILL  = PatternFill("solid", fgColor="1E3A5F")
+    HEADER_FONT  = Font(color="FFFFFF", bold=True, size=9)
+    L1_FILL      = PatternFill("solid", fgColor="DBEAFE")
+    L1_FONT      = Font(bold=True, size=9)
+    L2_FILL      = PatternFill("solid", fgColor="F0F9FF")
+    L2_FONT      = Font(bold=True, size=9, color="0C4A6E")
+    L3_FILL      = PatternFill("solid", fgColor="F0FDF4")
+    L3_FONT      = Font(size=9, color="166534")
+    ITEM_FONT    = Font(size=9)
+    RED_FONT     = Font(size=9, color="EF4444", bold=True)
+    META_FONT    = Font(size=9, italic=True, color="374151")
+    CENTER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT_ALIGN   = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    RIGHT_ALIGN  = Alignment(horizontal="right", vertical="center")
+    THIN_BORDER  = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    HEADERS = [
+        "№", "Направление расходов", "Тип расходов", "Наименование",
+        "Ед.", "Кол-во план", "Плановая сумма, ₽",
+        "Фактическая сумма, ₽", "Остаток, ₽",
+        "% исполнения", "Исполнитель", "Статус",
+    ]
+    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 12, 30, 15]
+    n_cols = len(HEADERS)
+    last_col_letter = chr(64 + n_cols)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "План-график"
+
+    # ── Title row ─────────────────────────────────────────────────────────────
+    subsidy_name = meta.get("subsidy_name", "")
+    subsidy_year = meta.get("subsidy_year", "")
+    title_text = f"ПЛАН-ГРАФИК — {subsidy_name}"
+    if subsidy_year:
+        title_text += f" ({subsidy_year})"
+    ws.append([title_text] + [""] * (n_cols - 1))
+    title_cell = ws.cell(row=1, column=1)
+    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    ws.merge_cells(f"A1:{last_col_letter}1")
+    title_cell.alignment = CENTER_ALIGN
+    ws.row_dimensions[1].height = 28
+
+    # ── Meta info rows (version, effective_date, note, generated_at) ──────────
+    meta_start_row = 2
+    meta_rows = []
+    if meta.get("version_number") is not None:
+        meta_rows.append(f"Версия: {meta['version_number']}")
+    if meta.get("effective_date"):
+        meta_rows.append(f"Дата редакции: {meta['effective_date']}")
+    if meta.get("note"):
+        meta_rows.append(f"Примечание: {meta['note']}")
+    if meta.get("generated_at"):
+        meta_rows.append(f"Сформировано: {meta['generated_at']}")
+
+    for i, mtext in enumerate(meta_rows):
+        r = meta_start_row + i
+        ws.append([mtext] + [""] * (n_cols - 1))
+        cell = ws.cell(row=r, column=1)
+        cell.font = META_FONT
+        cell.alignment = LEFT_ALIGN
+        ws.merge_cells(f"A{r}:{last_col_letter}{r}")
+        ws.row_dimensions[r].height = 16
+
+    # ── Column headers ────────────────────────────────────────────────────────
+    header_row = meta_start_row + len(meta_rows)
+    ws.append(HEADERS)
+    for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+        cell = ws.cell(row=header_row, column=col_idx)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER_ALIGN
+        cell.border = THIN_BORDER
+        ws.column_dimensions[cell.column_letter].width = width
+    ws.row_dimensions[header_row].height = 32
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    row_num = header_row + 1
+    seq = 0
+
+    def _write_row(values, fill, font, height=20):
+        nonlocal row_num
+        for col_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell.fill = fill
+            cell.font = font
+            cell.border = THIN_BORDER
+            cell.alignment = RIGHT_ALIGN if col_idx >= 6 else LEFT_ALIGN
+        ws.row_dimensions[row_num].height = height
+        row_num += 1
+
+    if tree:
+        # ── Tree mode (schema_version=2) ──────────────────────────────────────
+        def _traverse_node(node, direction_name="", type_name=""):
+            nonlocal seq
+            level = node.get("level", 1)
+            name = node.get("name", "")
+            code = node.get("code") or ""
+            budget = node.get("budget")
+
+            if level == 1:
+                direction_name = name
+                _write_row(
+                    [code, name, "", "", "", "", budget or "", "", "", "", "", ""],
+                    L1_FILL, L1_FONT, height=22,
+                )
+            elif level == 2:
+                type_name = name
+                _write_row(
+                    ["", direction_name, name, "", "", "", budget or "", "", "", "", "", ""],
+                    L2_FILL, L2_FONT,
+                )
+            elif level == 3:
+                _write_row(
+                    ["", direction_name, type_name, name, "", "", budget or "", "", "", "", "", ""],
+                    L3_FILL, L3_FONT,
+                )
+
+            for child in node.get("children", []):
+                _traverse_node(child, direction_name, type_name)
+
+        for root in tree:
+            _traverse_node(root)
+    else:
+        # ── Flat mode (v1 backward-compat) ─────────────────────────────────────
+        for item in items:
+            seq += 1
+            planned = float(item.get("planned_amount") or 0)
+            used = float(item.get("used_amount") or 0)
+            residual = float(item.get("residual") or (planned - used))
+            pct = round(used / planned * 100) if planned > 0 else 0
+            status = "Выполнено" if pct >= 100 else ("В работе" if used > 0 else "Не начато")
+            font = RED_FONT if used > planned else ITEM_FONT
+            _write_row(
+                [
+                    seq, "", "", item.get("name", ""),
+                    "", "",
+                    round(planned, 2), round(used, 2), round(residual, 2),
+                    f"{pct}%", "", status,
+                ],
+                PatternFill(), font,
+            )
+
+    return wb
+
+
 @router.get("/{subsidy_id}/plan-graph/export")
 async def export_plan_graph_excel(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Export plan-graph as Excel file with full FEO hierarchy."""
+    """Export plan-graph as Excel file with full FEO hierarchy (live data)."""
     if openpyxl is None:
         raise HTTPException(500, "openpyxl не установлен")
 
@@ -1003,7 +1173,7 @@ async def export_plan_graph_excel(
         .order_by(FeoCategory.level, FeoCategory.id)
     )).scalars().all()
 
-    items = (await db.execute(
+    feo_items = (await db.execute(
         select(_FPI)
         .join(FeoCategory, _FPI.feo_category_id == FeoCategory.id)
         .where(FeoCategory.subsidy_id == subsidy_id)
@@ -1011,7 +1181,7 @@ async def export_plan_graph_excel(
         .order_by(_FPI.id)
     )).scalars().all()
 
-    item_ids = [i.id for i in items]
+    item_ids = [i.id for i in feo_items]
     used_map: dict[int, float] = {}
     if item_ids:
         used_rows = (await db.execute(
@@ -1038,16 +1208,48 @@ async def export_plan_graph_excel(
                 contractor_map[r.feo_planned_item_id] = r.cname
 
     items_by_cat: dict[int, list] = {}
-    for item in items:
+    for item in feo_items:
         items_by_cat.setdefault(item.feo_category_id, []).append(item)
 
-    cats_by_parent: dict = {}
-    for c in cats:
-        cats_by_parent.setdefault(c.parent_id, []).append(c)
+    # Build live tree for _render_plan_graph_workbook
+    def _build_live_tree(all_cats, parent_id=None):
+        nodes = []
+        for c in all_cats:
+            if c.parent_id == parent_id:
+                cat_items = items_by_cat.get(c.id, [])
+                children = _build_live_tree(all_cats, parent_id=c.id)
+                node = {
+                    "id": c.id,
+                    "name": c.name,
+                    "level": c.level,
+                    "code": c.code,
+                    "appendix": c.appendix,
+                    "budget": float(c.budget) if c.budget is not None else None,
+                    "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
+                    "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
+                    "unit": c.unit,
+                    "children": children,
+                    # live items embedded for leaf rendering
+                    "_live_items": cat_items,
+                    "_used_map": used_map,
+                    "_contractor_map": contractor_map,
+                }
+                nodes.append(node)
+        return nodes
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "План-график"
+    live_tree = _build_live_tree(list(cats))
+
+    # Use dedicated live-render path (keeps contractor/used columns populated)
+    from datetime import datetime as _dt
+    meta = {
+        "subsidy_name": sub.name,
+        "subsidy_year": str(sub.year) if sub.year else "",
+        "generated_at": _dt.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+    }
+
+    # Build workbook manually using existing logic (live tree with items)
+    if openpyxl is None:
+        raise HTTPException(500, "openpyxl не установлен")
 
     HEADER_FILL  = PatternFill("solid", fgColor="1E3A5F")
     HEADER_FONT  = Font(color="FFFFFF", bold=True, size=9)
@@ -1074,6 +1276,14 @@ async def export_plan_graph_excel(
         "% исполнения", "Исполнитель", "Статус",
     ]
     COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 12, 30, 15]
+
+    cats_by_parent: dict = {}
+    for c in cats:
+        cats_by_parent.setdefault(c.parent_id, []).append(c)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "План-график"
 
     ws.append(HEADERS)
     for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
@@ -1157,6 +1367,72 @@ async def export_plan_graph_excel(
 
     safe_name = sub.name.replace(" ", "_").replace("/", "_")[:40]
     filename = f"plan_graph_{safe_name}_{sub.year}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{subsidy_id}/plan-graph/versions/{version_id}/export")
+async def export_plan_graph_version_excel(
+    subsidy_id: int,
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export a specific plan-graph version snapshot as Excel."""
+    if openpyxl is None:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+    from datetime import datetime as _dt
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа")
+
+    ver = (await db.execute(
+        select(_PGV).where(
+            _PGV.id == version_id,
+            _PGV.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if not ver:
+        raise HTTPException(404, "Версия план-графика не найдена")
+
+    snap = ver.snapshot or {}
+    tree = snap.get("tree", [])
+    flat_items = snap.get("items", [])
+
+    eff_date = ver.effective_date.isoformat() if ver.effective_date else (
+        snap.get("effective_date") or None
+    )
+    created_at_str = ver.created_at.strftime("%Y-%m-%d %H:%M UTC") if ver.created_at else None
+
+    meta = {
+        "subsidy_name": sub.name,
+        "subsidy_year": str(sub.year) if sub.year else "",
+        "version_number": ver.version_number,
+        "effective_date": eff_date,
+        "note": ver.note,
+        "generated_at": created_at_str,
+    }
+
+    wb = _render_plan_graph_workbook(tree, flat_items, meta)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    date_part = (eff_date or (ver.created_at.strftime("%Y-%m-%d") if ver.created_at else "nodate"))
+    safe_name = sub.name.replace(" ", "_").replace("/", "_")[:30]
+    filename = f"subsidy-{subsidy_id}_v{ver.version_number}_{date_part}.xlsx"
 
     return StreamingResponse(
         buf,

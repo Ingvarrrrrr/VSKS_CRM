@@ -151,7 +151,7 @@ async def _create_plan_graph_version(
     if not rows:
         return  # nothing to version
 
-    item_ids = [r._FPI.id for r in rows]
+    item_ids = [r[0].id for r in rows]
 
     # Aggregate used amounts
     used_q = (
@@ -182,7 +182,7 @@ async def _create_plan_graph_version(
     total_planned = 0.0
     total_used = 0.0
     for r in rows:
-        item = r._FPI
+        item = r[0]
         planned = float(item.amount or 0)
         used = used_map.get(item.id, 0.0)
         total_planned += planned

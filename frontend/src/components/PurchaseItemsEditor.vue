@@ -223,6 +223,37 @@
                               :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                               item-title="title" item-value="value" density="compact" variant="outlined"
                               hide-details style="min-width:100px" class="my-1" :disabled="props.readonly" />
+                            <!-- F-PIF2: ФЭО позиция per-item (показывается только в режиме feoPerItem) -->
+                            <template v-if="props.feoPerItem">
+                              <v-autocomplete
+                                v-model="item.feo_planned_item_id"
+                                :items="feoResiduals"
+                                item-title="name"
+                                item-value="feo_item_id"
+                                label="ФЭО позиция"
+                                variant="outlined"
+                                density="compact"
+                                clearable
+                                hide-details
+                                class="my-1"
+                                style="min-width:200px"
+                                :class="{ 'feo-over-budget': isOverBudget(item) }"
+                                :disabled="props.readonly"
+                                @update:model-value="emit('items-changed')"
+                              >
+                                <template #item="{ props: itemProps, item: feoItem }">
+                                  <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
+                                    <template #subtitle>
+                                      План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
+                                    </template>
+                                  </v-list-item>
+                                </template>
+                              </v-autocomplete>
+                              <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
+                                <v-icon icon="mdi-alert-outline" size="14" />
+                                Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+                              </div>
+                            </template>
                             <!-- Страна -->
                             <v-text-field v-model="item.country_origin" density="compact"
                               variant="outlined" hide-details class="my-1" placeholder="Россия"
@@ -1483,6 +1514,11 @@ const props = withDefaults(defineProps<{
   uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
   formMode?: string                          // Phase 26-X: 'advance_report' → показывать колонку Контрагент
   contractors?: Contractor[]                 // Phase 26-JJ: shared contractors state from parent
+  // F-PIF1/F-PIF2: per-item FEO selector props
+  feoPerItem?: boolean
+  level2Id?: number | null
+  subsidyId?: number | null
+  purchaseIdFeo?: number | null
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1501,10 +1537,59 @@ const props = withDefaults(defineProps<{
   vatMode: 'uniform',
   uniformVatRate: null,
   formMode: 'default',
+  feoPerItem: false,
+  level2Id: null,
+  subsidyId: null,
+  purchaseIdFeo: null,
 })
 
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
 const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)
+
+// ── F-PIF2: per-item FEO residuals ───────────────────────────────────────────
+interface FeoResidual {
+  feo_item_id: number
+  name: string
+  category_id: number
+  planned_amount: number
+  used_amount: number
+  residual: number
+}
+const feoResiduals = ref<FeoResidual[]>([])
+
+watch(
+  () => [props.subsidyId, props.purchaseIdFeo, props.level2Id] as const,
+  async ([subsidyId, purchaseIdFeo, level2Id]) => {
+    if (!subsidyId) { feoResiduals.value = []; return }
+    try {
+      const qs = purchaseIdFeo != null ? `&exclude_purchase_id=${purchaseIdFeo}` : ''
+      const all = await apiFetch<FeoResidual[]>(`/feo-planned-items/residuals?subsidy_id=${subsidyId}${qs}`)
+      feoResiduals.value = level2Id != null ? all.filter(x => x.category_id === level2Id) : all
+    } catch {
+      feoResiduals.value = []
+    }
+  },
+  { immediate: true },
+)
+
+function getFeoResidual(itemId: number | undefined | null): FeoResidual | null {
+  if (!itemId) return null
+  return feoResiduals.value.find(r => r.feo_item_id === itemId) ?? null
+}
+
+function isOverBudget(row: EditorItem): boolean {
+  if (!row.feo_planned_item_id) return false
+  const r = getFeoResidual(row.feo_planned_item_id)
+  if (!r) return false
+  return (r.used_amount + Number(row.total_price || 0)) > r.planned_amount
+}
+
+function overBudgetDelta(row: EditorItem): number {
+  const r = getFeoResidual(row.feo_planned_item_id)
+  if (!r) return 0
+  return (r.used_amount + Number(row.total_price || 0)) - r.planned_amount
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
@@ -3547,5 +3632,10 @@ th { position: relative; }
 }
 .stage-delivery-empty td {
   opacity: 0.6;
+}
+/* F-PIF2: soft-warning при превышении FEO плана */
+.feo-over-budget :deep(.v-field) {
+  background: rgba(255, 193, 7, 0.08);
+  border-color: rgba(255, 193, 7, 0.5);
 }
 </style>

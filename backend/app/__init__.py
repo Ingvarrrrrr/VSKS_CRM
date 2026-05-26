@@ -1401,6 +1401,17 @@ async def lifespan(app_: FastAPI):
             f"Phase 30 schema bootstrap failed (non-fatal): {e}"
         )
 
+    # Phase 12-05: plan_graph_versions.effective_date column
+    try:
+        from check_schema import _ensure_plan_graph_versions_effective_date_column
+        from .database import engine as _engine_p1205
+        async with _engine_p1205.begin() as conn:
+            await _ensure_plan_graph_versions_effective_date_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"Phase 12-05 effective_date column setup skipped (non-fatal): {e}"
+        )
+
     yield
     task.cancel()
     try:

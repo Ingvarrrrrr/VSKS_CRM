@@ -1221,6 +1221,22 @@ async def _ensure_organizations_geo_fields(conn) -> None:
         print(f"  \u26a0\ufe0f   organizations geo fields ensure failed: {e}")
 
 
+async def _ensure_plan_graph_versions_effective_date_column(conn) -> None:
+    """Phase 12-05: ADD effective_date DATE column + index to plan_graph_versions (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE plan_graph_versions "
+            "ADD COLUMN IF NOT EXISTS effective_date DATE"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_plan_graph_versions_effective_date "
+            "ON plan_graph_versions (effective_date)"
+        ))
+        print("  \u2705  plan_graph_versions.effective_date column ensured (Phase 12-05)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   plan_graph_versions.effective_date ensure failed: {e}")
+
+
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
         # Phase 23.5: ensure critical FK cascades (idempotent)

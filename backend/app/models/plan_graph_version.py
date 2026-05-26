@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Date
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from app.database import Base
@@ -39,3 +39,4 @@ class PlanGraphVersion(Base):
     #   ]
     # }
     note = Column(Text, nullable=True)
+    effective_date = Column(Date, nullable=True, index=True)

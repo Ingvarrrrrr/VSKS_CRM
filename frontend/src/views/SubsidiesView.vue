@@ -202,6 +202,17 @@
                 <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
                   История
                 </v-btn>
+                <!-- 12-05: Save version -->
+                <v-btn
+                  v-if="canSaveVersion"
+                  size="small"
+                  variant="text"
+                  color="success"
+                  prepend-icon="mdi-content-save"
+                  @click="openSaveVersionDialog"
+                >
+                  Сохранить редакцию
+                </v-btn>
                 <!-- 12-04: Export dropdown -->
                 <v-menu>
                   <template #activator="{ props: menuProps }">
@@ -2081,6 +2092,50 @@
       </v-card>
     </v-dialog>
 
+    <!-- 12-05: Save version dialog -->
+    <v-dialog v-model="showSaveVersionDialog" max-width="540">
+      <v-card>
+        <v-card-title class="d-flex justify-space-between align-center">
+          Сохранить редакцию ФЭО
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="showSaveVersionDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-text-field
+            v-model="saveVersionEffectiveDate"
+            type="date"
+            label="Дата редакции"
+            density="comfortable"
+            variant="outlined"
+            hide-details="auto"
+            class="mb-3"
+          />
+          <v-textarea
+            v-model="saveVersionNote"
+            label="Примечание (необязательно)"
+            rows="2"
+            density="comfortable"
+            variant="outlined"
+            hide-details="auto"
+          />
+        </v-card-text>
+        <v-divider />
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showSaveVersionDialog = false">Отмена</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="saveVersionLoading"
+            :disabled="!saveVersionEffectiveDate"
+            @click="saveVersion"
+          >
+            Сохранить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -2199,6 +2254,12 @@ const versionHistoryList = ref<Array<{
 const versionHistoryLoading = ref(false)
 const selectedVersionSnapshot = ref<any>(null)
 const showVersionSnapshotDialog = ref(false)
+
+// 12-05: Save version state
+const showSaveVersionDialog = ref(false)
+const saveVersionEffectiveDate = ref('') // YYYY-MM-DD
+const saveVersionNote = ref('')
+const saveVersionLoading = ref(false)
 
 const showAddDialog      = ref(false)
 const showEditDialog     = ref(false)
@@ -2736,6 +2797,8 @@ const editEventForm = ref<EventItem>({
 })
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
+// 12-05: admin or account_owner can save a version
+const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
@@ -3476,6 +3539,39 @@ async function openVersionHistory() {
 async function viewVersionSnapshot(verId: number) {
   selectedVersionSnapshot.value = await apiFetch<any>(`/subsidies/${selectedId.value}/plan-graph/versions/${verId}`)
   showVersionSnapshotDialog.value = true
+}
+
+// 12-05: Save version
+function openSaveVersionDialog() {
+  if (!selectedId.value) return
+  const today = new Date().toISOString().slice(0, 10)
+  saveVersionEffectiveDate.value = today
+  saveVersionNote.value = ''
+  showSaveVersionDialog.value = true
+}
+
+async function saveVersion() {
+  if (!selectedId.value || !saveVersionEffectiveDate.value) return
+  saveVersionLoading.value = true
+  try {
+    await apiFetch(`/subsidies/${selectedId.value}/plan-graph/versions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        effective_date: saveVersionEffectiveDate.value,
+        note: saveVersionNote.value || null,
+      }),
+    })
+    showSaveVersionDialog.value = false
+    // re-load history if dialog open
+    if (showVersionHistoryDialog.value) {
+      await loadVersionHistory()
+    }
+    snack.value = { show: true, text: 'Редакция ФЭО сохранена', color: 'success' }
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.payload?.message || e?.message || 'Ошибка сохранения редакции', color: 'error' }
+  } finally {
+    saveVersionLoading.value = false
+  }
 }
 
 function exportPlanGraphExcel() {

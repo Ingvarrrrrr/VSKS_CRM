@@ -183,6 +183,7 @@ async def get_comparison(
 @router.get("/residuals")
 async def get_feo_residuals(
     subsidy_id: int = Query(...),
+    exclude_purchase_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -190,6 +191,10 @@ async def get_feo_residuals(
     Returns per-FeoPlannedItem residual for a given subsidy.
     Response: list of {feo_item_id, name, category_id, planned_amount,
                         used_amount, residual, linked_purchase_ids}
+
+    Optional ?exclude_purchase_id=X — excludes items of that purchase from
+    used_amount and linked_purchase_ids. Use when editing an existing purchase
+    to avoid double-counting its own rows.
     """
     # All active planned items for this subsidy
     items_q = (
@@ -213,8 +218,10 @@ async def get_feo_residuals(
             sqlfunc.coalesce(sqlfunc.sum(PurchaseItem.total_price), 0).label("used"),
         )
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
-        .group_by(PurchaseItem.feo_planned_item_id)
     )
+    if exclude_purchase_id is not None:
+        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    used_q = used_q.group_by(PurchaseItem.feo_planned_item_id)
     used_rows = (await db.execute(used_q)).all()
     used_map: dict[int, float] = {r.feo_planned_item_id: float(r.used) for r in used_rows}
 
@@ -223,6 +230,8 @@ async def get_feo_residuals(
         select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
     )
+    if exclude_purchase_id is not None:
+        links_q = links_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
     links_rows = (await db.execute(links_q)).all()
     links_map: dict[int, list] = {}
     for lr in links_rows:

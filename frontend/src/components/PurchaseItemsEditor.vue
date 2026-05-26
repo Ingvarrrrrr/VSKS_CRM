@@ -159,6 +159,7 @@
                         <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС %</th>
                         <th v-if="showVatColumnsInExpandRow" style="min-width:110px">НДС сумма, ₽</th>
                         <th style="min-width:120px">{{ showVatColumnsInExpandRow ? 'Сумма с НДС, ₽' : 'Сумма, ₽' }}</th>
+                        <th v-if="props.feoPerItem" style="min-width:240px">ФЭО позиция *</th>
                         <th style="min-width:200px">Действия</th>
                       </tr>
                     </thead>
@@ -216,6 +217,39 @@
                         <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
                         <!-- Fix 4/5: Сумма с НДС column -->
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
+                        <!-- F-PIF2: ФЭО позиция — отдельная колонка в expand-row table -->
+                        <td v-if="props.feoPerItem">
+                          <v-autocomplete
+                            v-model="item.feo_planned_item_id"
+                            :items="feoResiduals"
+                            item-title="name"
+                            item-value="feo_item_id"
+                            label="ФЭО позиция"
+                            variant="outlined"
+                            density="compact"
+                            clearable
+                            hide-details
+                            class="my-1"
+                            style="min-width:200px"
+                            :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
+                            :error="isFeoMissing(item)"
+                            :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
+                            :disabled="props.readonly"
+                            @update:model-value="emit('items-changed')"
+                          >
+                            <template #item="{ props: itemProps, item: feoItem }">
+                              <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
+                                <template #subtitle>
+                                  План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
+                                </template>
+                              </v-list-item>
+                            </template>
+                          </v-autocomplete>
+                          <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
+                            <v-icon icon="mdi-alert-outline" size="14" />
+                            Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+                          </div>
+                        </td>
                         <td>
                           <div class="d-flex align-center ga-1 flex-wrap">
                             <!-- Тип -->
@@ -223,37 +257,6 @@
                               :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                               item-title="title" item-value="value" density="compact" variant="outlined"
                               hide-details style="min-width:100px" class="my-1" :disabled="props.readonly" />
-                            <!-- F-PIF2: ФЭО позиция per-item (показывается только в режиме feoPerItem) -->
-                            <template v-if="props.feoPerItem">
-                              <v-autocomplete
-                                v-model="item.feo_planned_item_id"
-                                :items="feoResiduals"
-                                item-title="name"
-                                item-value="feo_item_id"
-                                label="ФЭО позиция"
-                                variant="outlined"
-                                density="compact"
-                                clearable
-                                hide-details
-                                class="my-1"
-                                style="min-width:200px"
-                                :class="{ 'feo-over-budget': isOverBudget(item) }"
-                                :disabled="props.readonly"
-                                @update:model-value="emit('items-changed')"
-                              >
-                                <template #item="{ props: itemProps, item: feoItem }">
-                                  <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                                    <template #subtitle>
-                                      План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
-                                    </template>
-                                  </v-list-item>
-                                </template>
-                              </v-autocomplete>
-                              <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
-                                <v-icon icon="mdi-alert-outline" size="14" />
-                                Превышение: {{ fmtRub(overBudgetDelta(item)) }}
-                              </div>
-                            </template>
                             <!-- Страна -->
                             <v-text-field v-model="item.country_origin" density="compact"
                               variant="outlined" hide-details class="my-1" placeholder="Россия"
@@ -480,6 +483,7 @@
                 <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
                 <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
                 <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
+                <th v-if="props.feoPerItem" style="min-width:240px">ФЭО позиция *</th>
                 <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
                 <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
                 <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
@@ -541,6 +545,39 @@
                     :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                     item-title="title" item-value="value" density="compact" variant="outlined"
                     hide-details class="my-1" :disabled="props.readonly" />
+                </td>
+                <!-- F-PIF2: ФЭО позиция — отдельная колонка в flat-table -->
+                <td v-if="props.feoPerItem">
+                  <v-autocomplete
+                    v-model="item.feo_planned_item_id"
+                    :items="feoResiduals"
+                    item-title="name"
+                    item-value="feo_item_id"
+                    label="ФЭО позиция"
+                    variant="outlined"
+                    density="compact"
+                    clearable
+                    hide-details
+                    class="my-1"
+                    style="min-width:200px"
+                    :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
+                    :error="isFeoMissing(item)"
+                    :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
+                    :disabled="props.readonly"
+                    @update:model-value="emit('items-changed')"
+                  >
+                    <template #item="{ props: itemProps, item: feoItem }">
+                      <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
+                        <template #subtitle>
+                          План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                  <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
+                    <v-icon icon="mdi-alert-outline" size="14" />
+                    Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+                  </div>
                 </td>
                 <td>
                   <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -1588,6 +1625,10 @@ function overBudgetDelta(row: EditorItem): number {
   const r = getFeoResidual(row.feo_planned_item_id)
   if (!r) return 0
   return (r.used_amount + Number(row.total_price || 0)) - r.planned_amount
+}
+
+function isFeoMissing(row: EditorItem): boolean {
+  return props.feoPerItem && !row.feo_planned_item_id
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3459,6 +3500,18 @@ async function doSmartImport() {
     smartImportLoading.value = false
   }
 }
+
+// F-PIF2: expose helpers for parent (CreateOrderView hard validation)
+defineExpose({
+  hasMissingFeoLinks() {
+    if (!props.feoPerItem) return false
+    return localItems.value.some(it => !it.feo_planned_item_id)
+  },
+  missingFeoRowsCount() {
+    if (!props.feoPerItem) return 0
+    return localItems.value.filter(it => !it.feo_planned_item_id).length
+  },
+})
 </script>
 
 <style scoped>
@@ -3637,5 +3690,10 @@ th { position: relative; }
 .feo-over-budget :deep(.v-field) {
   background: rgba(255, 193, 7, 0.08);
   border-color: rgba(255, 193, 7, 0.5);
+}
+/* F-PIF2: hard-error при отсутствии FEO позиции в режиме feoPerItem */
+.feo-missing :deep(.v-field) {
+  background: rgba(244, 67, 54, 0.06);
+  border-color: rgba(244, 67, 54, 0.5);
 }
 </style>

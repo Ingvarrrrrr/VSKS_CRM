@@ -616,6 +616,7 @@
         </v-card-title>
         <v-card-text>
           <PurchaseItemsEditor
+            ref="itemsEditorRef"
             v-model="items"
             v-model:contract-items="contractItemsState"
             :show-contract-columns="canShowContractColumns"
@@ -4255,6 +4256,7 @@ async function confirmDocDownload() {
   }
 }
 const snack = reactive({ show: false, text: '', color: 'success', actionText: '' as string, onAction: null as (() => void) | null })
+const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
 const budgetOverrideDialog = ref(false)
 const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
@@ -6373,6 +6375,17 @@ const save = async () => {
 
 const doSave = async (adminOverride: boolean) => {
   budgetOverrideDialog.value = false
+  // F-PIF2: Hard validation — в режиме feo_per_item каждая позиция должна иметь feo_planned_item_id
+  if (form.feo_per_item) {
+    const missingCount = itemsEditorRef.value?.missingFeoRowsCount?.() ?? 0
+    if (missingCount > 0) {
+      showSnack(
+        `Не сохранено: у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция. Включите режим «Одинаковый на всю закупку» или укажите ФЭО для каждой.`,
+        'error',
+      )
+      return
+    }
+  }
   saving.value = true
   try {
     const validItems = items.value

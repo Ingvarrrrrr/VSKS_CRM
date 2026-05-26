@@ -2021,10 +2021,13 @@
               <tr>
                 <th>Версия</th>
                 <th>Дата</th>
+                <th>Дата редакции</th>
                 <th>Автор</th>
                 <th class="text-right">Всего план, ₽</th>
                 <th class="text-right">Факт, ₽</th>
                 <th>Примечание</th>
+                <th>Сравнить</th>
+                <th>Excel</th>
                 <th></th>
               </tr>
             </thead>
@@ -2032,10 +2035,23 @@
               <tr v-for="v in versionHistoryList" :key="v.id">
                 <td><v-chip size="x-small" color="blue-grey" variant="tonal">v{{ v.version_number }}</v-chip></td>
                 <td style="font-size:12px">{{ v.created_at ? new Date(v.created_at).toLocaleString('ru') : '—' }}</td>
+                <td style="font-size:12px">{{ (v as any).effective_date ? new Date((v as any).effective_date).toLocaleDateString('ru-RU') : '—' }}</td>
                 <td style="font-size:12px">{{ v.created_by_name || '—' }}</td>
                 <td class="text-right" style="font-size:12px">{{ formatCurrency(v.total_planned) }}</td>
                 <td class="text-right" style="font-size:12px">{{ formatCurrency(v.total_used) }}</td>
                 <td style="font-size:12px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ v.note || '—' }}</td>
+                <td>
+                  <v-checkbox
+                    v-model="compareSelected"
+                    :value="v.id"
+                    :disabled="compareSelected.length >= 2 && !compareSelected.includes(v.id)"
+                    density="compact"
+                    hide-details
+                  />
+                </td>
+                <td>
+                  <v-btn icon="mdi-file-excel" size="x-small" variant="text" color="green" @click="downloadVersionExcel(v.id)" />
+                </td>
                 <td>
                   <v-btn size="x-small" variant="text" color="blue" icon="mdi-eye-outline"
                     title="Просмотр снимка"
@@ -2044,6 +2060,26 @@
               </tr>
             </tbody>
           </v-table>
+          <div class="d-flex align-center justify-end mt-3 ga-2">
+            <span v-if="compareSelected.length > 0" class="text-caption text-medium-emphasis mr-auto">
+              Выбрано: {{ compareSelected.length }}/2
+            </span>
+            <v-btn
+              v-if="compareSelected.length > 0"
+              size="small"
+              variant="text"
+              @click="compareSelected = []"
+            >Очистить</v-btn>
+            <v-btn
+              :disabled="compareSelected.length !== 2"
+              color="primary"
+              variant="flat"
+              size="small"
+              prepend-icon="mdi-compare"
+              :loading="compareLoading"
+              @click="downloadCompareExcel"
+            >Скачать сравнение (Excel)</v-btn>
+          </div>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -2254,6 +2290,9 @@ const versionHistoryList = ref<Array<{
 const versionHistoryLoading = ref(false)
 const selectedVersionSnapshot = ref<any>(null)
 const showVersionSnapshotDialog = ref(false)
+// 12-05 F2: compare state
+const compareSelected = ref<number[]>([])
+const compareLoading = ref(false)
 
 // 12-05: Save version state
 const showSaveVersionDialog = ref(false)
@@ -3532,13 +3571,67 @@ async function loadVersionHistory() {
 }
 
 async function openVersionHistory() {
+  compareSelected.value = []
   await loadVersionHistory()
   showVersionHistoryDialog.value = true
 }
 
 async function viewVersionSnapshot(verId: number) {
-  selectedVersionSnapshot.value = await apiFetch<any>(`/subsidies/${selectedId.value}/plan-graph/versions/${verId}`)
+  selectedVersionSnapshot.value = await apiFetch<any>(`/subsidies/${selectedId.value}/plan-graph/versions/${verId}?with_reconciliation=true`)
   showVersionSnapshotDialog.value = true
+}
+
+async function downloadVersionExcel(vid: number) {
+  if (!selectedId.value) return
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/subsidies/${selectedId.value}/plan-graph/versions/${vid}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error('Ошибка экспорта')
+    const blob = await res.blob()
+    const cd = res.headers.get('content-disposition') || ''
+    const m = cd.match(/filename="?([^"]+)"?/)
+    const filename = m ? m[1] : `version-${vid}.xlsx`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
+  }
+}
+
+async function downloadCompareExcel() {
+  if (!selectedId.value || compareSelected.value.length !== 2) return
+  compareLoading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const [v1, v2] = [...compareSelected.value].sort((a, b) => a - b)
+    const res = await fetch(`/api/subsidies/${selectedId.value}/plan-graph/versions/compare.xlsx?v1=${v1}&v2=${v2}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      let errMsg = 'Ошибка сравнения'
+      try {
+        const err = await res.json()
+        errMsg = err?.message || err?.detail?.message || err?.detail || errMsg
+      } catch {}
+      throw new Error(errMsg)
+    }
+    const blob = await res.blob()
+    const cd = res.headers.get('content-disposition') || ''
+    const m = cd.match(/filename="?([^"]+)"?/)
+    const filename = m ? m[1] : `compare-v${v1}-v${v2}.xlsx`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.message || 'Ошибка сравнения', color: 'error' }
+  } finally {
+    compareLoading.value = false
+  }
 }
 
 // 12-05: Save version

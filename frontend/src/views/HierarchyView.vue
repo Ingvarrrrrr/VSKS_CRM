@@ -523,18 +523,29 @@ import { apiFetch } from '@/api'
 const DEPT_W = 268     // dept container width in px
 const USER_W = 240     // user node width in px
 const USER_H = 88      // user node height in px (name + position + role + counts)
-const DEPT_HEADER_H = 60
+const DEPT_HEADER_H = 60   // base header height (1-line dept name)
 const USER_GAP = 8
 const DEPT_PAD_Y = 12  // bottom padding
 
-function calcDeptHeight(memberCount: number) {
-  return DEPT_HEADER_H + Math.max(memberCount, 0) * (USER_H + USER_GAP) + DEPT_PAD_Y
+// Phase 30: динамическая высота шапки отдела — растёт если название многострочное.
+// При DEPT_W=268 и шрифте ~14px помещается ~24 символа в строке (с учётом padding/icons).
+// Каждая дополнительная строка +18px.
+const DEPT_NAME_CHARS_PER_LINE = 22
+const DEPT_HEADER_LINE_H = 18
+function deptHeaderHeight(name: string | undefined | null): number {
+  const len = (name || '').length
+  const lines = Math.max(1, Math.ceil(len / DEPT_NAME_CHARS_PER_LINE))
+  return DEPT_HEADER_H + (lines - 1) * DEPT_HEADER_LINE_H
 }
 
-function mkDeptStyle(memberCount: number): Record<string, string> {
+function calcDeptHeight(memberCount: number, name?: string) {
+  return deptHeaderHeight(name) + Math.max(memberCount, 0) * (USER_H + USER_GAP) + DEPT_PAD_Y
+}
+
+function mkDeptStyle(memberCount: number, name?: string): Record<string, string> {
   return {
     width: `${DEPT_W}px`,
-    height: `${Math.max(calcDeptHeight(memberCount), 80)}px`,
+    height: `${Math.max(calcDeptHeight(memberCount, name), 80)}px`,
     background: 'rgba(0, 105, 92, 0.05)',
     border: '2px dashed #00897b',
     borderRadius: '10px',
@@ -700,9 +711,23 @@ const UserNode = markRaw({
         style: 'background:#2196f3;width:14px;height:14px;border:2px solid white',
       }),
       h('div', { class: 'hnode-user-row' }, [
-        h('div', { class: 'hnode-avatar', style: p.data.orgColor ? `background:linear-gradient(135deg,${p.data.orgColor},${p.data.orgColor}cc)` : '' },
-          p.data.initials || '?',
-        ),
+        // Phase 30: если у пользователя загружено profile_photo — рендерим <img>, иначе инициалы
+        p.data.photoUrl
+          ? h('div', {
+              class: 'hnode-avatar hnode-avatar--photo',
+              style: p.data.orgColor ? `border:2px solid ${p.data.orgColor}` : '',
+            }, [
+              h('img', {
+                src: p.data.photoUrl,
+                alt: p.data.label,
+                style: 'width:100%;height:100%;object-fit:cover;border-radius:inherit',
+                onError: (e: any) => { e.target.style.display = 'none' },
+              }),
+            ])
+          : h('div', {
+              class: 'hnode-avatar',
+              style: p.data.orgColor ? `background:linear-gradient(135deg,${p.data.orgColor},${p.data.orgColor}cc)` : '',
+            }, p.data.initials || '?'),
         h('div', { class: 'hnode-user-info' }, [
           h('div', { class: 'hnode-user-name' }, [
             p.data.isHead
@@ -889,12 +914,56 @@ const ORG_COLOR_KEY = 'hierarchy_org_colors'
 function loadOrgColors(): Record<number, string> {
   try { return JSON.parse(localStorage.getItem(ORG_COLOR_KEY) || '{}') } catch { return {} }
 }
-function saveOrgColor(orgId: number, color: string) {
+// Phase 30.6: saveOrgColor → backend (синхронно с БД, видно везде)
+// + кэш в data.value.orgs[].color + localStorage как оптимистичный fallback
+// Phase 30.6b: проверка уникальности цвета (409 COLOR_TAKEN от бэка)
+async function saveOrgColor(orgId: number, color: string): Promise<boolean> {
+  // Запомним прежнее значение для отката при конфликте
+  const prev = (_lastGraphData.value?.orgs.find((x: any) => x.id === orgId) as any)?.color || null
+  // Optimistic update — кэш в данных графа
+  if (_lastGraphData.value) {
+    const o = _lastGraphData.value.orgs.find((x: any) => x.id === orgId) as any
+    if (o) o.color = color
+  }
+  // localStorage — оптимистичный кэш (для других вкладок до перезагрузки графа)
   const colors = loadOrgColors()
   colors[orgId] = color
   localStorage.setItem(ORG_COLOR_KEY, JSON.stringify(colors))
+  // Backend — реальное сохранение для всех клиентов / StaffView / других браузеров
+  try {
+    await apiFetch(`/organizations/${orgId}/color`, {
+      method: 'PATCH',
+      body: JSON.stringify({ color }),
+    })
+    return true
+  } catch (e: any) {
+    // Откат optimistic update
+    if (_lastGraphData.value) {
+      const o = _lastGraphData.value.orgs.find((x: any) => x.id === orgId) as any
+      if (o) o.color = prev
+    }
+    if (prev) colors[orgId] = prev
+    else delete colors[orgId]
+    localStorage.setItem(ORG_COLOR_KEY, JSON.stringify(colors))
+    rebuildGraph()
+
+    // 409 COLOR_TAKEN — детальное сообщение с указанием орг-владельца
+    const payload = e?.payload || {}
+    const details = (payload.details && typeof payload.details === 'object') ? payload.details : null
+    if (e?.status === 409 && (details?.code === 'COLOR_TAKEN' || payload.code === 'COLOR_TAKEN')) {
+      const conflictName = details?.conflict_org_name || 'другой организации'
+      showSnack(`Цвет ${color} уже назначен организации «${conflictName}». Выберите другой.`, 'warning')
+      return false
+    }
+    console.warn('[saveOrgColor] API failed', e)
+    showSnack(e?.message || 'Не удалось сохранить цвет', 'error')
+    return false
+  }
 }
 function getOrgColor(orgId: number, fallbackIdx: number): string {
+  // Phase 30.6 source of truth: 1) backend data, 2) localStorage cache, 3) named palette
+  const dbColor = (_lastGraphData.value?.orgs.find((o: any) => o.id === orgId) as any)?.color
+  if (dbColor) return dbColor
   const saved = loadOrgColors()[orgId]
   return saved || ORG_COLORS_HV[fallbackIdx % ORG_COLORS_HV.length]
 }
@@ -987,12 +1056,13 @@ async function confirmDeleteUser() {
     deleteUserConfirm.value.loading = false
   }
 }
-function applyOrgColor(color: string) {
+async function applyOrgColor(color: string) {
   if (colorPickerOrgId.value != null) {
-    saveOrgColor(colorPickerOrgId.value, color)
+    const id = colorPickerOrgId.value
     colorPickerVisible.value = false
     colorPickerOrgId.value = null
-    rebuildGraph() // instant rebuild with new color, no API call
+    rebuildGraph() // instant optimistic rebuild
+    await saveOrgColor(id, color) // sync to DB in background
   }
 }
 
@@ -1078,7 +1148,7 @@ function buildGraph(data: GraphData) {
     newNodes.push({
       id, type: 'dept',
       position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
-      style: { ...mkDeptStyle(mc), background: `${orgColor}0D`, border: `2px dashed ${orgColor}` },
+      style: { ...mkDeptStyle(mc, dept.name), background: `${orgColor}0D`, border: `2px dashed ${orgColor}` },
       data: {
         label: dept.name,
         memberCount: mc,
@@ -1114,12 +1184,13 @@ function buildGraph(data: GraphData) {
         const uOrgColor = getOrgColor(uOrgId, uOrgIdx >= 0 ? uOrgIdx : 0)
         // Unique id per dept placement (first keeps original id for edge compatibility)
         const nodeId = ci === 0 ? `user-${user.id}` : `user-${user.id}-d${di.deptId}`
-        const defaultRelPos = { x: 10, y: DEPT_HEADER_H + 4 + di.idx * (USER_H + USER_GAP) }
+        const headerH = deptHeaderHeight(dept?.name)
+        const defaultRelPos = { x: 10, y: headerH + 4 + di.idx * (USER_H + USER_GAP) }
         newNodes.push({
           id: nodeId, type: 'user',
           parentNode: `dept-${di.deptId}`,
           position: savedPos[nodeId] || defaultRelPos,
-          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser },
+          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
           draggable: true,
           zIndex: 1000,
         })
@@ -1130,10 +1201,11 @@ function buildGraph(data: GraphData) {
       const freeOrgIdx = orgList.findIndex((o: any) => o.id === user.org_id)
       const freeOrgColor = getOrgColor(user.org_id, freeOrgIdx >= 0 ? freeOrgIdx : 0)
       const freeId = `user-${user.id}`
+      ;(user as any)._photoUrl = (user as any).photo_url || null
       newNodes.push({
         id: freeId, type: 'user',
         position: savedPos[freeId] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [], canDeleteUser },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
         draggable: true,
       })
       freeIdx++
@@ -1246,8 +1318,9 @@ function autoLayout() {
       const rb = getPositionRank((b.data as any).position || null)
       return ra - rb
     })
+    const dHeadH = deptHeaderHeight((dept.data as any)?.label)
     sorted.forEach((u, i) => {
-      u.position = { x: 10, y: DEPT_HEADER_H + 4 + i * (USER_H + USER_GAP) }
+      u.position = { x: 10, y: dHeadH + 4 + i * (USER_H + USER_GAP) }
     })
     // Save sorted order
     const deptId = parseInt(dept.id.replace('dept-', ''))
@@ -1278,6 +1351,9 @@ function snapToSlot(draggedNode: Node) {
   if (!draggedNode.parentNode) return
   const deptId = parseInt(draggedNode.parentNode.replace('dept-', ''))
   const siblings = nodes.value.filter(n => n.type === 'user' && n.parentNode === draggedNode.parentNode)
+  // Phase 30: учитываем динамическую высоту шапки отдела
+  const dNode = nodes.value.find(n => n.id === draggedNode.parentNode)
+  const dHeadH = deptHeaderHeight((dNode?.data as any)?.label)
 
   // Sort all users in dept by current y position to determine new order
   const sorted = [...siblings].sort((a, b) => a.position.y - b.position.y)
@@ -1287,7 +1363,7 @@ function snapToSlot(draggedNode: Node) {
   nodes.value = nodes.value.map(n => {
     const idx = sorted.findIndex(u => u.id === n.id)
     if (idx >= 0 && n.parentNode === draggedNode.parentNode) {
-      return { ...n, position: { x: 10, y: DEPT_HEADER_H + 4 + idx * (USER_H + USER_GAP) } }
+      return { ...n, position: { x: 10, y: dHeadH + 4 + idx * (USER_H + USER_GAP) } }
     }
     return n
   })
@@ -1436,7 +1512,8 @@ onNodeDragStop(async ({ node }) => {
 
         // Count existing children in target dept (excluding this user)
         const existingCount = nodes.value.filter(n => n.parentNode === targetDept.id && n.id !== node.id).length
-        const relPos = { x: 10, y: DEPT_HEADER_H + 4 + existingCount * (USER_H + USER_GAP) }
+        const tDeptHeadH = deptHeaderHeight((targetDept.data as any)?.label)
+        const relPos = { x: 10, y: tDeptHeadH + 4 + existingCount * (USER_H + USER_GAP) }
         const newCount = existingCount + 1
 
         // Determine new org color for the target dept
@@ -1857,6 +1934,16 @@ defineExpose({ refresh: loadGraph })
   background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #1e88e5);
   color: white; display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: bold; flex-shrink: 0; margin-top: 2px;
+  overflow: hidden;
+}
+/* Phase 30: фото профиля вместо инициалов */
+:deep(.hnode-avatar--photo) {
+  background: transparent !important;
+  padding: 0;
+}
+:deep(.hnode-avatar--photo img) {
+  width: 100%; height: 100%; object-fit: cover; border-radius: inherit;
+  display: block;
 }
 :deep(.hnode-user-info) { flex: 1; min-width: 0; }
 :deep(.hnode-user-name) { font-weight: 600; font-size: 13px; white-space: normal; word-break: break-word; overflow: visible; display: flex; align-items: flex-start; flex-wrap: wrap; line-height: 1.3; }

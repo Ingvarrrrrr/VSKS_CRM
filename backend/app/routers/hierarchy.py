@@ -10,7 +10,7 @@ Endpoints:
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select, update as sa_update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
@@ -47,6 +47,7 @@ class OkOut(BaseModel):
 class OrgOut(BaseModel):
     id: int
     name: str
+    color: Optional[str] = None  # Phase 30: hex цвет орг для иерархии
 
 
 class DeptGraphOut(BaseModel):
@@ -66,6 +67,8 @@ class UserGraphOut(BaseModel):
     extra_org_ids: List[int] = []
     avatar: Optional[str]
     position: Optional[str] = None
+    photo_url: Optional[str] = None  # Phase 30: фото профиля для аватара
+    user_orgs: List[dict] = []  # массив с детализацией по орг (org/dept/pos/salary/pct)
 
 
 class UserUserEdgeOut(BaseModel):
@@ -161,9 +164,22 @@ async def get_hierarchy_graph(
             members_map[d.id].append(d.head_user_id)
 
     # Load users
+    # Phase 30.6 fix: cross-org membership — пользователь может числиться primary
+    # в одной орг (User.org_id), но быть членом отдела в другой (через
+    # DepartmentMember или user_organizations.dept_id). Без этого fix'а counter
+    # «1 чел.» в отделе показывал, а карточка не рендерилась.
+    extra_user_ids: set[int] = set()
+    for ids in members_map.values():
+        extra_user_ids.update(ids)
     q_users = select(User)
     if org_ids is not None:
-        q_users = q_users.where(User.org_id.in_(org_ids))
+        if extra_user_ids:
+            q_users = q_users.where(or_(
+                User.org_id.in_(org_ids),
+                User.id.in_(extra_user_ids),
+            ))
+        else:
+            q_users = q_users.where(User.org_id.in_(org_ids))
     # D-09: hide superadmin from non-superadmin callers
     if current_user.role != "superadmin":
         q_users = q_users.where(User.role != "superadmin")
@@ -223,7 +239,7 @@ async def get_hierarchy_graph(
         uo_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "org_id": r.org_id} for r in mo_rows]
 
     return {
-        "orgs": [{"id": o.id, "name": o.name} for o in orgs],
+        "orgs": [{"id": o.id, "name": o.name, "color": getattr(o, "color", None)} for o in orgs],
         "departments": [
             {
                 "id": d.id, "name": d.name, "org_id": d.org_id,
@@ -241,6 +257,8 @@ async def get_hierarchy_graph(
                 "org_id": u.org_id,
                 "extra_org_ids": extra_orgs_map.get(u.id, []),
                 "avatar": getattr(u, "avatar", None),
+                # Phase 30: фото профиля для аватара в иерархии (если загружено)
+                "photo_url": getattr(u, "profile_photo", None),
                 "position": user_position_map.get(u.id) or getattr(u, "position", None),
                 "user_orgs": (
                     [{"org": org_name_map.get(u.org_id, ""), "dept": "", "pos": u.position or "", "salary": None, "pct": None}]

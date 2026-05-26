@@ -45,7 +45,7 @@
           </v-list-item>
           <v-list-item>
             <template #prepend><v-icon size="20">mdi-numeric-3-circle</v-icon></template>
-            Готово — на главном экране появится иконка <strong>VSKS CRM</strong>
+            Готово — на главном экране появится иконка <strong>GALA</strong>
           </v-list-item>
         </v-list>
         <v-alert v-if="iosStep === 1" type="warning" variant="tonal" density="compact" class="mt-3 text-caption">

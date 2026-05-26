@@ -17,10 +17,24 @@
           <div class="qr-overlay" />
         </div>
 
+        <!-- Phase 30.6: предупреждение если getUserMedia недоступен (http без https на Android) -->
+        <v-alert v-if="!hasCamera && !error" type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Realtime-камера недоступна (требуется HTTPS). Используйте «Снять камерой» — откроет приложение камеры, или «Загрузить» из галереи.
+        </v-alert>
+
         <div class="d-flex flex-wrap ga-2 mt-3">
+          <!-- Phase 30.6: capture=environment — на Android открывает приложение камеры
+               напрямую (съёмка), а не галерею. Работает без https. -->
+          <v-btn variant="flat" color="primary" prepend-icon="mdi-camera"
+            @click="$refs.cameraInput.click()">
+            Снять камерой
+          </v-btn>
+          <input ref="cameraInput" type="file" accept="image/*" capture="environment" style="display:none"
+            @change="onFilePick" />
+
           <v-btn variant="tonal" color="primary" prepend-icon="mdi-image-multiple"
             @click="$refs.fileInput.click()">
-            Загрузить QR
+            Загрузить из галереи
           </v-btn>
           <input ref="fileInput" type="file" accept="image/*" style="display:none"
             @change="onFilePick" />

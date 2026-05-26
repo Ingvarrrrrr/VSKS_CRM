@@ -1,12 +1,17 @@
 <template>
-  <v-app-bar color="primary" density="compact">
+  <v-app-bar color="surface" density="compact" elevation="1">
     <!-- Hamburger — только на мобильных -->
     <v-app-bar-nav-icon class="d-md-none" @click="drawerOpen = !drawerOpen" />
 
-    <v-app-bar-title class="text-h6 font-weight-bold">
-      <v-icon icon="mdi-account-cash" class="mr-2" />
-      VSKS CRM
-      <span class="text-caption ml-2 d-none d-sm-inline">Патриотика 2025</span>
+    <v-app-bar-title>
+      <router-link to="/" class="gala-logo d-flex align-center text-decoration-none">
+        <svg viewBox="0 0 44 44" width="28" height="28" fill="none" class="gala-mark">
+          <path d="M30 8 L10 8 L10 36 L30 36 L30 24 L21 24"
+                stroke="currentColor" stroke-width="3.5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="gala-wordmark ml-2">GA<span class="gala-l">L</span>A</span>
+      </router-link>
     </v-app-bar-title>
 
     <div class="nav-icons d-none d-md-flex">
@@ -1038,8 +1043,38 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
 /* ── Logo title hover ── */
 :deep(.v-app-bar-title) {
   transition: opacity 0.2s ease;
+  min-width: 140px;
+  flex: 0 0 auto;
+  margin-inline-end: 16px;
 }
 :deep(.v-app-bar-title:hover) {
   opacity: 0.85;
+}
+:deep(.v-app-bar-title__placeholder) {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap;
+}
+
+/* ── GALA brand mark ── */
+.gala-logo {
+  color: var(--gala-orange);
+}
+.v-theme--light .gala-logo {
+  color: var(--gala-orange-dark);
+}
+.gala-wordmark {
+  font-family: var(--font-brand);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-size: 20px;
+  color: rgb(var(--v-theme-on-surface));
+  line-height: 1;
+}
+.gala-l {
+  color: var(--gala-orange);
+}
+.v-theme--light .gala-l {
+  color: var(--gala-orange-dark);
 }
 </style>

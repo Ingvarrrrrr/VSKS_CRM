@@ -4,10 +4,10 @@
     <!-- ── Header ── -->
     <div class="dash-header">
       <div class="dash-header-left">
-        <v-icon icon="mdi-view-dashboard-outline" size="34" color="#3B82F6" class="mr-3" />
+        <v-icon icon="mdi-view-dashboard-outline" size="34" color="#fb923c" class="mr-3" />
         <div>
           <div class="dash-title gradient-text">Дашборд</div>
-          <div class="dash-subtitle">ВСКС · Управление субсидиями · {{ selectedYear }}</div>
+          <div class="dash-subtitle">GALA · Управление закупками · {{ selectedYear }}</div>
         </div>
       </div>
       <div class="dash-header-right">

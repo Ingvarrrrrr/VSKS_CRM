@@ -582,3 +582,18 @@ Features delivered after Phase 8 completion, outside GSD tracking:
 | Tasks BFF endpoint (/api/tasks/my) | — |
 | Dark mode fixes across multiple components | — |
 | Draggable columns (order persisted to localStorage) | — |
+
+### Phase 30: GALA Rebrand — переименование VSKS_CRM → GALA + бренд-стиль + бесплатный домен
+
+**Goal:** Применить брендбук GALA (логотип «Скоба-G», оранжевый #fb923c, шрифты Syne/Inter Tight/JetBrains Mono) во фронтенде; добавить виджет BudgetBar; подключить бесплатный поддомен (DuckDNS) с Let's Encrypt.
+
+**Plans:**
+- 30-01 Vuetify theme (light/dark) + CSS-переменные GALA
+- 30-02 index.html — fonts, favicon, title, manifest theme_color, PWA name
+- 30-03 AppBar.vue — логотип Скоба-G + wordmark Syne
+- 30-04 BudgetBar.vue — новый компонент (4 слоя + лимит-маркер + штриховка OVR)
+- 30-05 Воткнуть BudgetBar в DashboardView и SubsidiesView
+- 30-06 Backend — переименование email/docx footer/app title VSKS → GALA (опц.)
+- 30-07 DuckDNS поддомен gala-crm.duckdns.org + nginx server_name + certbot LE
+
+**Status:** PLANNED 2026-05-26

@@ -6,7 +6,7 @@
       <div class="land-nav-inner">
         <div class="land-logo">
           <v-icon icon="mdi-account-cash" color="primary" size="26" />
-          <span>VSKS CRM</span>
+          <span>GALA</span>
         </div>
         <div class="land-nav-actions">
           <button class="theme-toggle" @click="toggleTheme" :title="isDark ? 'Светлая тема' : 'Тёмная тема'">
@@ -223,7 +223,7 @@
         <div class="footer-inner">
           <div class="land-logo">
             <v-icon icon="mdi-account-cash" color="primary" size="20" />
-            <span style="font-size:14px">VSKS CRM</span>
+            <span style="font-size:14px">GALA</span>
           </div>
           <span class="footer-copy">© {{ year }} Патриотика — Управление государственными субсидиями</span>
         </div>

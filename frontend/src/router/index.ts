@@ -30,7 +30,7 @@ const router = createRouter({
       path: '/',
       name: 'landing',
       component: LandingView,
-      meta: { requiresAuth: false, public: true, title: 'VSKS CRM' }
+      meta: { requiresAuth: false, public: true, title: 'GALA' }
     },
     {
       path: '/login',

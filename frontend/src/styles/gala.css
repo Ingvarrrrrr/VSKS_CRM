@@ -1,0 +1,23 @@
+:root {
+  --gala-orange: #fb923c;
+  --gala-orange-dark: #c2620a;
+  --gala-error: #ef4444;
+  --gala-sand-100: #f0ece4;
+  --gala-sand-500: #9a9080;
+  --gala-sand-800: #3d3830;
+  --gala-dark-bg: #0f0e0c;
+  --gala-dark-surface: #1c1916;
+  --gala-light-bg: #f5f3ef;
+  --font-brand: 'Syne', sans-serif;
+  --font-ui: 'Inter Tight', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-ui);
+}
+
+.gala-mono,
+.mono-num {
+  font-family: var(--font-mono);
+}

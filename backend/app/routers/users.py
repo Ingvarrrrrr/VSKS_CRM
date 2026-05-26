@@ -232,16 +232,69 @@ async def get_me(
 
     # D-08: resolve permissions for the given org_id (or active org from JWT)
     effective_org_id = org_id or getattr(current_user, "_active_org_id", None) or current_user.org_id
+
+    tabs_rows = await db.execute(select(PermissionTab.tab_key))
+    all_tab_keys = {r for r, in tabs_rows}
+    actions_rows = await db.execute(select(PermissionAction.action_key))
+    all_action_keys = {r for r, in actions_rows}
+
+    async def _resolve_for_org(target_org_id: int) -> tuple[list[str], list[str]]:
+        eff = await get_effective_tabs(current_user, db, target_org_id)
+        return sorted(eff & all_tab_keys), sorted(eff & all_action_keys)
+
+    chosen_tabs: list[str] = []
+    chosen_actions: list[str] = []
+    chosen_org_id = effective_org_id
+
     if effective_org_id is not None:
-        effective = await get_effective_tabs(current_user, db, effective_org_id)
-        # Split effective keys back into tabs vs actions using dictionary tables
-        tabs_rows = await db.execute(select(PermissionTab.tab_key))
-        all_tab_keys = {r for r, in tabs_rows}
-        actions_rows = await db.execute(select(PermissionAction.action_key))
-        all_action_keys = {r for r, in actions_rows}
-        tabs = sorted(effective & all_tab_keys)
-        actions = sorted(effective & all_action_keys)
-        out.permissions = PermissionsOut(tabs=tabs, actions=actions)
+        chosen_tabs, chosen_actions = await _resolve_for_org(effective_org_id)
+
+    # Phase 30.6 fix: если для запрошенной org tabs пуст — попробовать другие
+    # доступные пользователю орг и выбрать ту где tabs больше всего.
+    # Это решает кейс Филиппова: primary_org=ВСКС (0 прав), но в АНО 27 листов.
+    if not chosen_tabs:
+        from app.models.user_organization import UserOrganization
+        candidate_org_ids: set[int] = set()
+        try:
+            res = await db.execute(
+                select(UserOrganization.org_id).where(
+                    UserOrganization.user_id == current_user.id
+                )
+            )
+            candidate_org_ids.update(r[0] for r in res.all() if r[0])
+        except Exception:
+            pass
+        try:
+            from app.models.user_org_access import UserOrgAccess
+            res = await db.execute(
+                select(UserOrgAccess.org_id).where(
+                    UserOrgAccess.user_id == current_user.id
+                )
+            )
+            candidate_org_ids.update(r[0] for r in res.all() if r[0])
+        except Exception:
+            pass
+        if current_user.org_id:
+            candidate_org_ids.add(current_user.org_id)
+        candidate_org_ids.discard(effective_org_id)  # уже пробовали
+
+        best_tabs: list[str] = []
+        best_actions: list[str] = []
+        best_org_id: Optional[int] = None
+        for cand in candidate_org_ids:
+            t, a = await _resolve_for_org(cand)
+            if len(t) > len(best_tabs):
+                best_tabs, best_actions, best_org_id = t, a, cand
+        if best_tabs:
+            chosen_tabs = best_tabs
+            chosen_actions = best_actions
+            chosen_org_id = best_org_id
+
+    out.permissions = PermissionsOut(tabs=chosen_tabs, actions=chosen_actions)
+    # Подсказка фронту: какой org_id реально использовали (для записи в active_org_id)
+    if chosen_org_id is not None and chosen_org_id != effective_org_id:
+        # Дополнительное поле в response — фронт может его прочитать после json()
+        out.__dict__['effective_org_id'] = chosen_org_id
     return out
 
 

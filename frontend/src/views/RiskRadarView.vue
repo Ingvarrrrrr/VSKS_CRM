@@ -7,7 +7,7 @@
         <v-icon icon="mdi-radar" size="34" color="primary" class="mr-3" />
         <div>
           <div class="rr-title gradient-text">Risk Radar</div>
-          <div class="rr-subtitle">ВСКС · Мониторинг рисков · {{ selectedYear }}</div>
+          <div class="rr-subtitle">GALA · Мониторинг рисков · {{ selectedYear }}</div>
         </div>
       </div>
       <div class="rr-header-right">

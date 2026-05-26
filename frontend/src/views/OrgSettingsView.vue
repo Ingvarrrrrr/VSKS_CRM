@@ -95,7 +95,7 @@
           </v-col>
           <v-col cols="6">
             <v-text-field v-model="smtpForm.smtp_from_name" label="Имя отправителя"
-              placeholder="VSKS CRM" variant="outlined" density="compact" />
+              placeholder="GALA" variant="outlined" density="compact" />
           </v-col>
           <v-col cols="12">
             <v-switch v-model="smtpForm.smtp_ssl" label="SSL (вместо STARTTLS)" color="primary"

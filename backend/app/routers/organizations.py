@@ -301,6 +301,57 @@ async def update_organization(
     return _merge_org_with_contractor(org, user_count=count_q.scalar() or 0)
 
 
+@router.patch("/api/organizations/{org_id}/color")
+async def update_organization_color(
+    org_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role('superadmin', 'admin', 'account_owner')),
+):
+    """Phase 30.6: лёгкий endpoint только для смены цвета орг.
+    Body: {"color": "#1976d2" | null, "force": false}
+    Используется color-picker'ом в HierarchyView чтобы цвет сохранялся в БД
+    и был консистентен между Hierarchy / StaffView / другими браузерами.
+
+    Phase 30.6b: каждый цвет должен быть уникален между орг. Если запрошенный
+    цвет уже занят другой орг — 409 COLOR_TAKEN с указанием какая орг владелец.
+    Передать `force: true` чтобы всё равно сохранить (override).
+    """
+    color = body.get('color')
+    force = bool(body.get('force'))
+    if color is not None and not isinstance(color, str):
+        raise HTTPException(422, "color должен быть строкой hex или null")
+    if color and (not color.startswith('#') or len(color) not in (4, 7)):
+        raise HTTPException(422, "color должен быть hex #RGB или #RRGGBB")
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "Организация не найдена")
+
+    # Phase 30.6b: проверка уникальности цвета (case-insensitive)
+    if color and not force:
+        normalized = color.lower()
+        conflict = (await db.execute(
+            select(Organization).where(
+                Organization.id != org_id,
+                func.lower(Organization.color) == normalized,
+            )
+        )).scalars().first()
+        if conflict:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "COLOR_TAKEN",
+                    "message": f"Цвет {color} уже используется организацией «{conflict.name}». Выберите другой цвет или передайте force=true чтобы заменить.",
+                    "conflict_org_id": conflict.id,
+                    "conflict_org_name": conflict.name,
+                },
+            )
+
+    org.color = color or None
+    await db.commit()
+    return {"id": org.id, "color": org.color}
+
+
 @router.patch("/api/organizations/{org_id}/toggle-active")
 async def toggle_org_active(
     org_id: int,

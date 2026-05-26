@@ -171,7 +171,7 @@ function connect() {
 
         // Browser notification if permitted
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && event.message) {
-          new Notification('VSKS CRM', { body: event.message })
+          new Notification('GALA', { body: event.message })
         }
 
         // Play notification sound

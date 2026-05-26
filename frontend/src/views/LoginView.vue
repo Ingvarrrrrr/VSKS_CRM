@@ -2,7 +2,7 @@
   <v-container class="fill-height">
     <v-responsive class="align-center text-center fill-height">
       <v-card class="mx-auto pa-8" max-width="500" elevation="8">
-        <v-card-title class="text-h4 mb-4">VSKS CRM</v-card-title>
+        <v-card-title class="text-h4 mb-4">GALA</v-card-title>
 
         <!-- Forgot password mode -->
         <template v-if="forgotMode">

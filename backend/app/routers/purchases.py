@@ -127,10 +127,12 @@ async def _create_plan_graph_version(
     db: AsyncSession,
     user,
     note: Optional[str] = None,
+    effective_date: Optional[date] = None,
 ) -> None:
     """
     Build a snapshot of all active FeoPlannedItems for the subsidy with residuals
     and save as a new PlanGraphVersion row. Increments version_number.
+    schema_version=2: includes recursive FeoCategory tree with budget.
     Caller must commit after this call.
     """
     from app.models.feo_planned_item import FeoPlannedItem as _FPI
@@ -195,11 +197,38 @@ async def _create_plan_graph_version(
             "linked_purchase_ids": links_map.get(item.id, []),
         })
 
+    # Build FeoCategory tree for schema_version=2
+    cats_q = select(_FC).where(_FC.subsidy_id == subsidy_id).order_by(_FC.id)
+    all_cats = (await db.execute(cats_q)).scalars().all()
+
+    def _build_tree(cats, parent_id=None):
+        nodes = []
+        for c in cats:
+            if c.parent_id == parent_id:
+                nodes.append({
+                    "id": c.id,
+                    "name": c.name,
+                    "level": c.level,
+                    "code": c.code,
+                    "appendix": c.appendix,
+                    "budget": float(c.budget) if c.budget is not None else None,
+                    "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
+                    "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
+                    "unit": c.unit,
+                    "children": _build_tree(cats, parent_id=c.id),
+                })
+        return nodes
+
+    feo_tree = _build_tree(all_cats)
+
     snapshot = {
+        "schema_version": 2,
         "subsidy_id": subsidy_id,
+        "effective_date": effective_date.isoformat() if effective_date else None,
         "total_planned": total_planned,
         "total_used": total_used,
-        "items": snapshot_items,
+        "items": snapshot_items,  # backward-compat
+        "tree": feo_tree,
     }
 
     # Get next version_number
@@ -215,6 +244,7 @@ async def _create_plan_graph_version(
         created_by_name=getattr(user, "full_name", None) or getattr(user, "username", None),
         snapshot=snapshot,
         note=note,
+        effective_date=effective_date,
     )
     db.add(pgv)
 

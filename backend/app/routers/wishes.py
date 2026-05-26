@@ -64,6 +64,12 @@ async def list_wishes(
     mine_only: bool = False,
     assigned_to_me: bool = False,
     subordinates_only: bool = False,
+    creator_id: Optional[int] = None,
+    assigned_to_id: Optional[int] = None,
+    created_from: Optional[date] = None,
+    created_to: Optional[date] = None,
+    deadline_from: Optional[date] = None,
+    deadline_to: Optional[date] = None,
     skip: int = 0,
     limit: int = Query(50, le=200),
     db: AsyncSession = Depends(get_db),
@@ -110,6 +116,20 @@ async def list_wishes(
         clause = await build_visibility_clause(current_user, db, 'wish')
         if clause is not None:
             q = q.where(clause)
+
+    # Дополнительные фильтры (применяются после visibility — только сужают)
+    if creator_id is not None:
+        q = q.where(Wish.created_by == creator_id)
+    if assigned_to_id is not None:
+        q = q.where(Wish.assigned_to == assigned_to_id)
+    if created_from is not None:
+        q = q.where(func.date(Wish.created_at) >= created_from)
+    if created_to is not None:
+        q = q.where(func.date(Wish.created_at) <= created_to)
+    if deadline_from is not None:
+        q = q.where(Wish.desired_date >= deadline_from)
+    if deadline_to is not None:
+        q = q.where(Wish.desired_date <= deadline_to)
 
     if status and status != 'all':
         q = q.where(Wish.status == status)

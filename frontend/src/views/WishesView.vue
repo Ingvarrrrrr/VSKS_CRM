@@ -9,7 +9,7 @@
         </span>
       </div>
       <v-spacer />
-      <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="loadWishes">
+      <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="reloadActiveTab">
         Обновить
       </v-btn>
     </div>
@@ -21,102 +21,158 @@
       <v-tab v-if="isManagerOrAdmin" value="all">Заявки сотрудников</v-tab>
     </v-tabs>
 
+    <!-- ── FILTER PANEL (общий для всех табов) ── -->
+    <v-card variant="outlined" class="mb-4">
+      <v-card-text class="py-3">
+        <div class="d-flex flex-wrap align-center" style="gap:12px">
+          <v-autocomplete
+            v-model="filterCreatorId"
+            :items="users"
+            item-title="full_name"
+            item-value="id"
+            label="От кого"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:240px"
+          />
+          <v-autocomplete
+            v-model="filterAssignedToId"
+            :items="users"
+            item-title="full_name"
+            item-value="id"
+            label="Кому"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:240px"
+          />
+          <v-text-field
+            v-model="filterCreatedFrom"
+            type="date"
+            label="Создано с"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
+          <v-text-field
+            v-model="filterCreatedTo"
+            type="date"
+            label="Создано по"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
+          <v-text-field
+            v-model="filterDeadlineFrom"
+            type="date"
+            label="Срок с"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
+          <v-text-field
+            v-model="filterDeadlineTo"
+            type="date"
+            label="Срок по"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:150px;max-width:180px"
+          />
+          <v-btn variant="tonal" size="small" prepend-icon="mdi-filter-off" @click="resetFilters">
+            Очистить фильтры
+          </v-btn>
+        </div>
+      </v-card-text>
+    </v-card>
+
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
-      <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
-
-      <div v-if="!loading && myWishes.length === 0" class="text-center py-12">
-        <v-icon icon="mdi-hand-heart-outline" size="64" color="grey-lighten-1" class="mb-3" />
-        <div class="text-h6 text-medium-emphasis">Нет заявок</div>
-        <div class="text-body-2 text-medium-emphasis mt-1">Создайте первую заявку с помощью кнопки +</div>
-      </div>
-
-      <v-row v-else dense>
-        <v-col v-for="wish in myWishes" :key="wish.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
-            <div class="d-flex align-start justify-space-between mb-2">
-              <div class="flex-grow-1 mr-2">
-                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
-                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
-                    {{ priorityLabel[wish.priority] }}
-                  </v-chip>
-                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
-                    {{ wish.subsidy_name }}
-                  </v-chip>
-                </div>
-                <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
-                  <span v-if="wish.items_count && wish.total_amount"> · </span>
-                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
-                </div>
-                <div v-if="wish.assigned_to_name" class="text-caption text-medium-emphasis mt-0.5">
-                  <v-icon icon="mdi-account-arrow-right" size="12" class="mr-1" />{{ wish.assigned_to_name }}
-                </div>
-              </div>
-              <div class="d-flex flex-column align-end ga-1">
-                <v-chip :color="statusColor[wish.status]" size="small" variant="tonal">
-                  {{ statusLabel[wish.status] }}
-                </v-chip>
-                <v-btn
-                  v-if="wish.status === 'draft'"
-                  icon="mdi-delete-outline"
-                  size="x-small"
-                  variant="text"
-                  color="error"
-                  :loading="deletingId === wish.id"
-                  @click.stop="deleteWish(wish)"
-                />
-              </div>
-            </div>
-
-            <!-- Metadata -->
-            <div class="d-flex flex-wrap ga-2 text-caption text-medium-emphasis mb-2">
-              <span v-if="wish.desired_date">
-                <v-icon icon="mdi-calendar" size="12" class="mr-0.5" />
-                <b>{{ formatDate(wish.desired_date) }}</b>
-              </span>
-            </div>
-
-            <!-- Rejection reason -->
-            <div v-if="wish.status === 'rejected' && wish.rejection_reason" class="text-caption text-error mt-1 mb-2">
-              <v-icon icon="mdi-close-circle" size="14" class="mr-1" />
-              Причина отказа: {{ wish.rejection_reason }}
-            </div>
-
-            <!-- Link to purchase for converted wishes -->
-            <div v-if="wish.status === 'converted' && wish.purchase_id" class="mb-2">
+      <v-data-table
+        :headers="wishHeaders"
+        :items="myWishes"
+        :loading="loading"
+        density="compact"
+        hover
+        items-per-page="25"
+        :items-per-page-options="[25, 50, 100, -1]"
+        @click:row="(_, { item }) => openEditDialog(item)"
+      >
+        <template #item.status="{ item }">
+          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+            {{ statusLabel[item.status] }}
+          </v-chip>
+        </template>
+        <template #item.title_col="{ item }">
+          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="text-caption text-medium-emphasis">
+            <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
+            <span v-if="item.items_count && item.total_amount"> · </span>
+            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
+          </div>
+        </template>
+        <template #item.creator_name="{ item }">
+          {{ item.creator_name || '—' }}
+        </template>
+        <template #item.assigned_to_name="{ item }">
+          {{ item.assigned_to_name || '—' }}
+        </template>
+        <template #item.created_at="{ item }">
+          {{ formatDate(item.created_at) }}
+        </template>
+        <template #item.desired_date="{ item }">
+          {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.actions="{ item }">
+          <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <template v-if="item.status === 'draft'">
+              <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditDialog(item)" />
               <v-btn
-                size="small"
-                variant="tonal"
-                color="purple"
-                prepend-icon="mdi-cart-arrow-right"
-                :href="`/orders/${wish.purchase_id}/edit`"
-                @click.stop.prevent="$router.push(`/orders/${wish.purchase_id}/edit`)"
-              >
-                Перейти к закупке
-              </v-btn>
-            </div>
-
-            <!-- Actions for draft wishes -->
-            <div v-if="wish.status === 'draft'" class="d-flex ga-2 mt-2">
-              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-pencil" @click.stop="openEditDialog(wish)">
-                Изменить
-              </v-btn>
-              <v-btn
-                size="small"
-                variant="flat"
+                icon="mdi-send"
+                size="x-small"
+                variant="text"
                 color="success"
-                prepend-icon="mdi-send"
-                :loading="submittingId === wish.id"
-                @click.stop="submitWish(wish)"
-              >
-                Отправить
-              </v-btn>
-            </div>
-          </v-card>
-        </v-col>
-      </v-row>
+                :loading="submittingId === item.id"
+                @click="submitWish(item)"
+              />
+              <v-btn
+                icon="mdi-delete-outline"
+                size="x-small"
+                variant="text"
+                color="error"
+                :loading="deletingId === item.id"
+                @click="deleteWish(item)"
+              />
+            </template>
+            <v-btn
+              v-else-if="item.status === 'converted' && item.purchase_id"
+              size="x-small"
+              variant="tonal"
+              color="purple"
+              prepend-icon="mdi-cart-arrow-right"
+              @click="$router.push(`/orders/${item.purchase_id}/edit`)"
+            >
+              Закупка
+            </v-btn>
+          </div>
+        </template>
+        <template #no-data>
+          <div class="text-center py-10">
+            <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+            <div class="text-medium-emphasis">Нет заявок</div>
+          </div>
+        </template>
+      </v-data-table>
 
       <!-- FAB to create new wish -->
       <v-btn
@@ -131,68 +187,63 @@
 
     <!-- ── INCOMING FOR APPROVAL TAB ── -->
     <div v-if="activeTab === 'incoming'">
-      <v-progress-linear v-if="loadingIncoming" indeterminate color="primary" class="mb-2" />
-
-      <div v-if="!loadingIncoming && incomingWishes.length === 0" class="text-center py-12">
-        <v-icon icon="mdi-hand-heart-outline" size="64" color="grey-lighten-1" class="mb-3" />
-        <div class="text-h6 text-medium-emphasis">Нет заявок на согласование</div>
-        <div class="text-body-2 text-medium-emphasis mt-1">Здесь появятся заявки, где вы указаны как согласующий</div>
-      </div>
-
-      <v-row v-else dense>
-        <v-col v-for="wish in incomingWishes" :key="wish.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
-            <div class="d-flex align-start justify-space-between mb-2">
-              <div class="flex-grow-1 mr-2">
-                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
-                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
-                    {{ priorityLabel[wish.priority] }}
-                  </v-chip>
-                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
-                    {{ wish.subsidy_name }}
-                  </v-chip>
-                </div>
-                <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
-                <div class="text-caption text-medium-emphasis mt-0.5">
-                  <v-icon icon="mdi-account" size="12" class="mr-1" />{{ wish.creator_name || 'Неизвестно' }}
-                </div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
-                  <span v-if="wish.items_count && wish.total_amount"> · </span>
-                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
-                </div>
-              </div>
-              <v-chip :color="statusColor[wish.status]" size="small" variant="tonal">
-                {{ statusLabel[wish.status] }}
-              </v-chip>
-            </div>
-
-            <div v-if="wish.justification" class="text-caption text-medium-emphasis mb-2">
-              <b>Обоснование:</b> {{ wish.justification }}
-            </div>
-
-            <!-- Actions for submitted wishes assigned to me -->
-            <div v-if="wish.status === 'submitted'" class="d-flex ga-2 mt-2 flex-wrap">
-              <v-btn size="small" variant="flat" color="primary" prepend-icon="mdi-view-column-outline"
-                     @click.stop="openKanbanDialog(wish)">
-                Распределить и одобрить
+      <v-data-table
+        :headers="wishHeaders"
+        :items="incomingWishes"
+        :loading="loadingIncoming"
+        density="compact"
+        hover
+        items-per-page="25"
+        :items-per-page-options="[25, 50, 100, -1]"
+        @click:row="(_, { item }) => openEditDialog(item)"
+      >
+        <template #item.status="{ item }">
+          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+            {{ statusLabel[item.status] }}
+          </v-chip>
+        </template>
+        <template #item.title_col="{ item }">
+          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="text-caption text-medium-emphasis">
+            <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
+            <span v-if="item.items_count && item.total_amount"> · </span>
+            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
+          </div>
+        </template>
+        <template #item.creator_name="{ item }">
+          {{ item.creator_name || '—' }}
+        </template>
+        <template #item.assigned_to_name="{ item }">
+          {{ item.assigned_to_name || '—' }}
+        </template>
+        <template #item.created_at="{ item }">
+          {{ formatDate(item.created_at) }}
+        </template>
+        <template #item.desired_date="{ item }">
+          {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.actions="{ item }">
+          <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <template v-if="item.status === 'submitted'">
+              <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
+                Распределить
               </v-btn>
-              <v-btn size="small" variant="tonal" color="success" prepend-icon="mdi-check"
-                     :loading="approvingId === wish.id" @click.stop="approveWish(wish)">
-                Быстрое одобрение
+              <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="approveWish(item)">
+                Одобрить
               </v-btn>
-              <v-btn size="small" variant="tonal" color="error" prepend-icon="mdi-close"
-                     @click.stop="openRejectDialog(wish)">
+              <v-btn size="x-small" variant="tonal" color="error" @click="openRejectDialog(item)">
                 Отклонить
               </v-btn>
-              <v-btn size="small" variant="text" prepend-icon="mdi-file-document-edit-outline"
-                     :loading="downloadingServiceNoteId === wish.id" @click.stop="downloadServiceNote(wish)">
-                Служебная записка
-              </v-btn>
-            </div>
-          </v-card>
-        </v-col>
-      </v-row>
+            </template>
+          </div>
+        </template>
+        <template #no-data>
+          <div class="text-center py-10">
+            <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+            <div class="text-medium-emphasis">Нет заявок на согласование</div>
+          </div>
+        </template>
+      </v-data-table>
     </div>
 
     <!-- ── ALL WISHES TAB (manager/admin) ── -->
@@ -211,123 +262,81 @@
         </v-chip>
       </div>
 
-      <v-progress-linear v-if="loadingAll" indeterminate color="primary" class="mb-2" />
-
-      <div v-if="!loadingAll && allWishes.length === 0" class="text-center py-12">
-        <v-icon icon="mdi-hand-heart-outline" size="64" color="grey-lighten-1" class="mb-3" />
-        <div class="text-h6 text-medium-emphasis">Нет заявок от подчинённых</div>
-      </div>
-
-      <v-row v-else dense>
-        <v-col v-for="wish in allWishes" :key="wish.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="pa-3 h-100 wish-card-clickable" @click="openEditDialog(wish)">
-            <div class="d-flex align-start justify-space-between mb-2">
-              <div class="flex-grow-1 mr-2">
-                <div class="d-flex align-center ga-1 mb-1 flex-wrap">
-                  <v-chip v-if="wish.priority" size="x-small" variant="tonal" :color="priorityColor[wish.priority]">
-                    {{ priorityLabel[wish.priority] }}
-                  </v-chip>
-                  <v-chip v-if="wish.subsidy_name" size="x-small" variant="tonal" color="blue-grey">
-                    {{ wish.subsidy_name }}
-                  </v-chip>
-                </div>
-                <div class="text-subtitle-1 font-weight-medium">{{ wish.title }}</div>
-                <div class="text-caption text-medium-emphasis mt-0.5">
-                  <v-icon icon="mdi-account" size="12" class="mr-1" />{{ wish.creator_name || 'Неизвестно' }}
-                </div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  <span v-if="wish.items_count">Позиций: <b>{{ wish.items_count }}</b></span>
-                  <span v-if="wish.items_count && wish.total_amount"> · </span>
-                  <span v-if="wish.total_amount">НМЦК: <b>{{ formatPrice(wish.total_amount) }}</b></span>
-                </div>
-                <div v-if="wish.assigned_to_name" class="text-caption text-medium-emphasis mt-0.5">
-                  <v-icon icon="mdi-account-arrow-right" size="12" class="mr-1" />{{ wish.assigned_to_name }}
-                </div>
-              </div>
-              <v-chip :color="statusColor[wish.status]" size="small" variant="tonal">
-                {{ statusLabel[wish.status] }}
-              </v-chip>
-            </div>
-
-            <!-- Justification -->
-            <div v-if="wish.justification" class="text-caption text-medium-emphasis mb-2">
-              <b>Обоснование:</b> {{ wish.justification }}
-            </div>
-
-            <!-- Rejection reason -->
-            <div v-if="wish.status === 'rejected' && wish.rejection_reason" class="text-caption text-error mt-1 mb-2">
-              <v-icon icon="mdi-close-circle" size="14" class="mr-1" />
-              Причина отказа: {{ wish.rejection_reason }}
-            </div>
-
-            <!-- Actions for submitted wishes -->
-            <div v-if="wish.status === 'submitted'" class="d-flex ga-2 mt-2 flex-wrap">
-              <v-btn
-                size="small"
-                variant="flat"
-                color="primary"
-                prepend-icon="mdi-view-column-outline"
-                @click.stop="openKanbanDialog(wish)"
-              >
-                Распределить и одобрить
+      <v-data-table
+        :headers="wishHeadersAll"
+        :items="allWishes"
+        :loading="loadingAll"
+        density="compact"
+        hover
+        items-per-page="25"
+        :items-per-page-options="[25, 50, 100, -1]"
+        @click:row="(_, { item }) => openEditDialog(item)"
+      >
+        <template #item.status="{ item }">
+          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+            {{ statusLabel[item.status] }}
+          </v-chip>
+        </template>
+        <template #item.title_col="{ item }">
+          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="text-caption text-medium-emphasis">
+            <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
+            <span v-if="item.items_count && item.total_amount"> · </span>
+            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
+          </div>
+        </template>
+        <template #item.creator_name="{ item }">
+          {{ item.creator_name || '—' }}
+        </template>
+        <template #item.assigned_to_name="{ item }">
+          {{ item.assigned_to_name || '—' }}
+        </template>
+        <template #item.created_at="{ item }">
+          {{ formatDate(item.created_at) }}
+        </template>
+        <template #item.desired_date="{ item }">
+          {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.actions="{ item }">
+          <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <template v-if="item.status === 'submitted'">
+              <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
+                Распределить
               </v-btn>
-              <v-btn
-                size="small"
-                variant="tonal"
-                color="success"
-                prepend-icon="mdi-check"
-                :loading="approvingId === wish.id"
-                @click.stop="approveWish(wish)"
-              >
-                Быстрое одобрение
+              <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="approveWish(item)">
+                Одобрить
               </v-btn>
-              <v-btn
-                size="small"
-                variant="tonal"
-                color="error"
-                prepend-icon="mdi-close"
-                @click.stop="openRejectDialog(wish)"
-              >
+              <v-btn size="x-small" variant="tonal" color="error" @click="openRejectDialog(item)">
                 Отклонить
               </v-btn>
-              <v-btn
-                size="small"
-                variant="text"
-                prepend-icon="mdi-file-document-edit-outline"
-                :loading="downloadingServiceNoteId === wish.id"
-                @click.stop="downloadServiceNote(wish)"
-              >
-                Служебная записка
-              </v-btn>
-            </div>
-            <!-- Service note available for any wish (draft/approved/etc) -->
-            <div v-else-if="wish.status !== 'rejected'" class="mt-2">
-              <v-btn
-                size="small"
-                variant="text"
-                prepend-icon="mdi-file-document-edit-outline"
-                :loading="downloadingServiceNoteId === wish.id"
-                @click.stop="downloadServiceNote(wish)"
-              >
-                Скачать служебную записку
-              </v-btn>
-            </div>
-
-            <!-- Convert to purchase (admin+) -->
-            <div v-if="wish.status === 'approved' && isAdmin" class="mt-2">
-              <v-btn
-                size="small"
-                variant="flat"
-                color="primary"
-                prepend-icon="mdi-cart-plus"
-                @click.stop="openConvertDialog(wish)"
-              >
-                Создать закупку
-              </v-btn>
-            </div>
-          </v-card>
-        </v-col>
-      </v-row>
+            </template>
+            <v-btn
+              v-if="item.status === 'approved' && isAdmin"
+              size="x-small"
+              variant="flat"
+              color="primary"
+              @click="openConvertDialog(item)"
+            >
+              Закупку
+            </v-btn>
+            <v-btn
+              v-if="item.status === 'converted' && item.purchase_id"
+              size="x-small"
+              variant="tonal"
+              color="purple"
+              @click="$router.push(`/orders/${item.purchase_id}/edit`)"
+            >
+              Перейти
+            </v-btn>
+          </div>
+        </template>
+        <template #no-data>
+          <div class="text-center py-10">
+            <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+            <div class="text-medium-emphasis">Нет заявок от подчинённых</div>
+          </div>
+        </template>
+      </v-data-table>
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
@@ -769,6 +778,61 @@ const priorityOptions = [
   { title: 'Срочный', value: 'urgent' },
 ]
 
+// Table headers
+const wishHeaders = [
+  { title: 'Статус', key: 'status', width: 110, sortable: true },
+  { title: 'Заявка', key: 'title_col', sortable: false },
+  { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
+  { title: 'Кому', key: 'assigned_to_name', width: 180, sortable: true },
+  { title: 'Создано', key: 'created_at', width: 110, sortable: true },
+  { title: 'Срок', key: 'desired_date', width: 110, sortable: true },
+  { title: 'Действия', key: 'actions', width: 160, sortable: false },
+]
+
+const wishHeadersAll = wishHeaders
+
+// Filter state
+const filterCreatorId = ref<number | null>(null)
+const filterAssignedToId = ref<number | null>(null)
+const filterCreatedFrom = ref('')
+const filterCreatedTo = ref('')
+const filterDeadlineFrom = ref('')
+const filterDeadlineTo = ref('')
+
+function buildFilterParams(extra: Record<string, any> = {}) {
+  const params = new URLSearchParams()
+  if (filterCreatorId.value) params.set('creator_id', String(filterCreatorId.value))
+  if (filterAssignedToId.value) params.set('assigned_to_id', String(filterAssignedToId.value))
+  if (filterCreatedFrom.value) params.set('created_from', filterCreatedFrom.value)
+  if (filterCreatedTo.value) params.set('created_to', filterCreatedTo.value)
+  if (filterDeadlineFrom.value) params.set('deadline_from', filterDeadlineFrom.value)
+  if (filterDeadlineTo.value) params.set('deadline_to', filterDeadlineTo.value)
+  for (const [k, v] of Object.entries(extra)) {
+    if (v !== undefined && v !== null && v !== '') params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
+function resetFilters() {
+  filterCreatorId.value = null
+  filterAssignedToId.value = null
+  filterCreatedFrom.value = ''
+  filterCreatedTo.value = ''
+  filterDeadlineFrom.value = ''
+  filterDeadlineTo.value = ''
+}
+
+// Debounced filter watcher
+let filterTimer: any = null
+watch(
+  [filterCreatorId, filterAssignedToId, filterCreatedFrom, filterCreatedTo, filterDeadlineFrom, filterDeadlineTo],
+  () => {
+    clearTimeout(filterTimer)
+    filterTimer = setTimeout(() => reloadActiveTab(), 300)
+  }
+)
+
 // Tabs
 const activeTab = ref('my')
 
@@ -937,7 +1001,7 @@ function formatDate(dateStr: string) {
 async function loadWishes() {
   loading.value = true
   try {
-    myWishes.value = await apiFetch<Wish[]>('/wishes?mine_only=true')
+    myWishes.value = await apiFetch<Wish[]>('/wishes' + buildFilterParams({ mine_only: true }))
   } catch {
     showSnack('Ошибка загрузки заявок', 'error')
   } finally {
@@ -948,8 +1012,8 @@ async function loadWishes() {
 async function loadAllWishes() {
   loadingAll.value = true
   try {
-    const statusParam = allFilter.value && allFilter.value !== 'all' ? `&status=${allFilter.value}` : ''
-    allWishes.value = await apiFetch<Wish[]>(`/wishes/?subordinates_only=true${statusParam}`)
+    const statusParam = allFilter.value && allFilter.value !== 'all' ? { status: allFilter.value } : {}
+    allWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, ...statusParam }))
   } catch {
     showSnack('Ошибка загрузки заявок', 'error')
   } finally {
@@ -960,7 +1024,7 @@ async function loadAllWishes() {
 async function loadIncoming() {
   loadingIncoming.value = true
   try {
-    const data = await apiFetch<Wish[]>('/wishes/?assigned_to_me=true')
+    const data = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ assigned_to_me: true }))
     incomingWishes.value = data || []
   } catch {
     incomingWishes.value = []
@@ -1273,12 +1337,4 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.wish-card-clickable {
-  cursor: pointer;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
-}
-.wish-card-clickable:hover {
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-  transform: translateY(-1px);
-}
 </style>

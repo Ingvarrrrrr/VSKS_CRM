@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
+from datetime import date
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -10,7 +11,7 @@ from app.auth.jwt import (
     ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES,
 )
 from app.auth.permissions import require_tab
-from app.auth.visibility import build_visibility_clause
+from app.auth.visibility import build_visibility_clause, get_visible_user_ids
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -73,8 +74,6 @@ async def list_wishes(
     subordinates_only=true: wishes created by direct subordinates (not current user).
     mine_only=true / role==employee: show only own wishes (shortcut filters).
     """
-    from app.models.user_hierarchy import UserHierarchy
-
     org_ids = get_org_filter(current_user)
     q = select(Wish).options(
         selectinload(Wish.creator),
@@ -93,17 +92,19 @@ async def list_wishes(
         # Employee always sees only own; or explicit mine_only flag
         q = q.where(Wish.created_by == current_user.id)
     elif subordinates_only:
-        # Wishes created by direct subordinates (manager sees their team)
-        hier_res = await db.execute(
-            select(UserHierarchy.subordinate_id).where(UserHierarchy.manager_id == current_user.id)
-        )
-        subordinate_ids = [r[0] for r in hier_res.all()]
-        if not subordinate_ids:
-            return []
-        q = q.where(
-            Wish.created_by.in_(subordinate_ids),
-            Wish.created_by != current_user.id,
-        )
+        # Phase 28: use unified visibility helper (covers SaaS bypass + hierarchy +
+        # dept heads + managed orgs + UOA org_admin/manager)
+        visible_uids = await get_visible_user_ids(current_user, db)
+        if visible_uids is None:
+            # SaaS role (superadmin/account_owner) → видят всё
+            # (org filter уже применён выше). Дополнительных фильтров не нужно.
+            pass
+        else:
+            # Subordinates only — exclude self
+            sub_ids = visible_uids - {current_user.id}
+            if not sub_ids:
+                return []
+            q = q.where(Wish.created_by.in_(sub_ids))
     else:
         # Phase 28: unified visibility helper
         clause = await build_visibility_clause(current_user, db, 'wish')

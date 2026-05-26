@@ -549,28 +549,14 @@ async def import_items_excel(
 
     content = await file.read()
     try:
-        if fname.endswith('.xls'):
-            try:
-                import xlrd as _xlrd_mod
-            except ImportError:
-                raise HTTPException(500, "xlrd не установлен")
-            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
-            ws_xls = wb_xls.sheet_by_index(0)
-            all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
-            header_row = all_rows[0] if all_rows else None
-            data_iter = all_rows[1:] if len(all_rows) > 1 else []
-        else:
-            if not load_workbook:
-                raise HTTPException(500, "openpyxl не установлен")
-            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-            ws = wb.active
-            all_rows_gen = list(ws.iter_rows(values_only=True))
-            header_row = all_rows_gen[0] if all_rows_gen else None
-            data_iter = all_rows_gen[1:] if len(all_rows_gen) > 1 else []
-    except HTTPException:
-        raise
+        sheets = _read_excel_rows(content, fname)
     except Exception as e:
         raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+    if not sheets or not sheets[0]:
+        raise HTTPException(400, "Файл пустой")
+    all_rows = sheets[0]  # первый лист
+    header_row = all_rows[0] if all_rows else None
+    data_iter = all_rows[1:] if len(all_rows) > 1 else []
     if not header_row:
         raise HTTPException(400, "Файл пустой")
 
@@ -849,45 +835,21 @@ async def import_items_preview(
             return {"sheets": sheets_html}
 
         # ── Excel ──
-        if fname.endswith('.xls'):
-            try:
-                import xlrd as _xlrd_mod
-            except ImportError:
-                raise HTTPException(500, "xlrd не установлен")
-            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
-            sheets = []
-            for sheet_name in wb_xls.sheet_names():
-                ws_xls = wb_xls.sheet_by_name(sheet_name)
-                all_rows = [list(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
-                if not all_rows:
-                    continue
-                hdr_idx = _detect_hdr(all_rows)
-                hdr_rows = all_rows[hdr_idx:]
-                if not hdr_rows:
-                    continue
-                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
-                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
-                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
-                               "total_rows": ws_xls.nrows - hdr_idx - 1, "header_row_offset": hdr_idx})
-        else:
-            if not load_workbook:
-                raise HTTPException(500, "openpyxl не установлен")
-            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-            sheets = []
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                all_rows = list(ws.iter_rows(values_only=True))
-                if not all_rows:
-                    continue
-                hdr_idx = _detect_hdr(all_rows)
-                hdr_rows = all_rows[hdr_idx:]
-                if not hdr_rows:
-                    continue
-                headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
-                sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
-                sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
-                               "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx})
-            wb.close()
+        raw_sheets = _read_excel_rows(content, fname)
+        sheets = []
+        for si, sheet_rows in enumerate(raw_sheets):
+            sheet_name = f"Лист{si+1}"
+            all_rows = sheet_rows
+            if not all_rows:
+                continue
+            hdr_idx = _detect_hdr(all_rows)
+            hdr_rows = all_rows[hdr_idx:]
+            if not hdr_rows:
+                continue
+            headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
+            sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
+            sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
+                           "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx})
     except HTTPException:
         raise
     except Exception as e:
@@ -980,24 +942,25 @@ async def import_items_mapped(
             all_rows_html = [tuple(row) for row in chosen_rows]
             skip = header_row_offset + 1
             data_iter = all_rows_html[skip:] if len(all_rows_html) > skip else []
-        elif fname.endswith('.xls'):
+        else:
             try:
-                import xlrd as _xlrd_mod
-            except ImportError:
-                raise HTTPException(500, "xlrd не установлен")
-            wb_xls = _xlrd_mod.open_workbook(file_contents=content)
-            ws_xls = wb_xls.sheet_by_name(sheet_name) if sheet_name else wb_xls.sheet_by_index(0)
-            all_rows = [tuple(ws_xls.row_values(i)) for i in range(ws_xls.nrows)]
+                sheets = _read_excel_rows(content, fname)
+            except Exception as e:
+                raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+            if not sheets or not sheets[0]:
+                raise HTTPException(400, "Файл пустой")
+            # sheet_name здесь — числовой индекс в виде "ЛистN" или первый лист
+            sheet_idx = 0
+            if sheet_name and sheet_name.lower().startswith('лист'):
+                try:
+                    sheet_idx = int(sheet_name[len('лист'):]) - 1
+                except ValueError:
+                    pass
+            if sheet_idx < 0 or sheet_idx >= len(sheets):
+                sheet_idx = 0
+            all_rows = sheets[sheet_idx]
             skip = header_row_offset + 1
             data_iter = all_rows[skip:] if len(all_rows) > skip else []
-        else:
-            if not load_workbook:
-                raise HTTPException(500, "openpyxl не установлен")
-            wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-            ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
-            all_rows_gen = list(ws.iter_rows(values_only=True))
-            skip = header_row_offset + 1
-            data_iter = all_rows_gen[skip:] if len(all_rows_gen) > skip else []
     except HTTPException:
         raise
     except Exception as e:
@@ -1316,17 +1279,60 @@ def _smart_import_image_ocr(content: bytes, filename: str) -> dict:
     }
 
 
-def _smart_import_xlsx_direct(content: bytes) -> tuple[list[dict], list[str]]:
-    """Direct XLSX parser without markitdown — устойчив к опечаткам в заголовке,
+def _looks_mojibake(wb) -> bool:
+    """Эвристика: если в первом листе ≥50% строковых ячеек состоят целиком из latin-1 акцент-символов
+    (U+00C0..U+00FF) либо содержат U+FFFD — считаем что cp1251 декодировалась как latin-1."""
+    try:
+        ws = wb.sheet_by_index(0)
+    except Exception:
+        return False
+    total = 0
+    bad = 0
+    for r in range(min(ws.nrows, 20)):
+        for v in ws.row_values(r):
+            if not isinstance(v, str) or len(v.strip()) < 2:
+                continue
+            total += 1
+            s = v.strip()
+            if '\ufffd' in s:
+                bad += 1
+                continue
+            # доля символов в диапазоне latin-1 supplement (0xC0..0xFF) — типичный признак cp1251→latin1
+            latin_supp = sum(1 for ch in s if 0x00C0 <= ord(ch) <= 0x00FF)
+            if latin_supp >= max(2, len(s) // 2):
+                bad += 1
+    return total > 0 and bad / total >= 0.5
+
+
+def _read_excel_rows(content: bytes, fname: str) -> list[list[list]]:
+    """Универсальное чтение Excel: возвращает list[sheets], каждый sheet = list[rows], row = list[cells].
+    Поддерживает .xlsx (openpyxl) и .xls BIFF8 (xlrd с авто-cp1251-override при mojibake)."""
+    is_xls = (fname or '').lower().endswith('.xls') or content[:4] == b'\xd0\xcf\x11\xe0'
+    if is_xls:
+        import xlrd as _xlrd
+        wb = _xlrd.open_workbook(file_contents=content, formatting_info=False)
+        if _looks_mojibake(wb):
+            wb = _xlrd.open_workbook(file_contents=content, encoding_override='cp1251')
+        sheets = []
+        for si in range(wb.nsheets):
+            ws = wb.sheet_by_index(si)
+            sheets.append([list(ws.row_values(r)) for r in range(ws.nrows)])
+        return sheets
+    if load_workbook is None:
+        raise RuntimeError("openpyxl не установлен")
+    wb = load_workbook(BytesIO(content), read_only=False, data_only=True)
+    return [[list(r) for r in ws.iter_rows(values_only=True)] for ws in wb.worksheets]
+
+
+def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dict], list[str]]:
+    """Direct XLSX/XLS parser without markitdown — устойчив к опечаткам в заголовке,
     разделам-подзаголовкам в середине, multi-line cells, merged headers.
+    Поддерживает .xls BIFF8 с авто-cp1251-override при mojibake.
 
     Returns (preview_rows, columns_found).
     Каждый dict в preview_rows: item_name, item_type, quantity, unit, unit_price, total_price.
     """
     import re as _re
-    if load_workbook is None:
-        return [], []
-    wb = load_workbook(BytesIO(content), read_only=False, data_only=True)
 
     # Header keywords (substring match, case-insensitive, tolerant к опечаткам через 'in')
     HEADER_PATTERNS = {
@@ -1338,10 +1344,11 @@ def _smart_import_xlsx_direct(content: bytes) -> tuple[list[dict], list[str]]:
         'total_price': ['сумма', 'итого', 'стоимость', 'total'],
     }
 
-    all_rows: list[list] = []  # объединяем все sheets
-    for ws in wb.worksheets:
-        for row in ws.iter_rows(values_only=True):
-            all_rows.append(list(row))
+    try:
+        sheets = _read_excel_rows(content, fname)
+    except Exception:
+        return [], []
+    all_rows: list[list] = [r for sh in sheets for r in sh]
 
     def _classify_header(row: list) -> dict:
         """Return dict {col_idx -> field_key} для cells матчащихся к HEADER_PATTERNS."""
@@ -1359,15 +1366,22 @@ def _smart_import_xlsx_direct(content: bytes) -> tuple[list[dict], list[str]]:
                     break
         return mapping
 
-    header_idx = -1
-    col_map: dict[int, str] = {}
+    # Выбираем строку с наибольшим числом распознанных колонок (≥3 полей лучше 2)
+    # — защита от ложного срабатывания на строки-итоги типа «Товар по листу…»
+    best_idx = -1
+    best_map: dict[int, str] = {}
+    best_score = 0
     for i, row in enumerate(all_rows):
         mapping = _classify_header(row)
-        # Минимум: item_name + ещё хотя бы одна колонка
-        if 'item_name' in mapping.values() and len(mapping) >= 2:
-            header_idx = i
-            col_map = mapping
-            break
+        if 'item_name' not in mapping.values() or len(mapping) < 2:
+            continue
+        score = len(mapping)
+        if score > best_score:
+            best_score = score
+            best_idx = i
+            best_map = mapping
+    header_idx = best_idx
+    col_map = best_map
 
     if header_idx == -1:
         return [], []
@@ -1510,10 +1524,11 @@ async def import_items_smart_nopid(
         raise HTTPException(400, "Этот endpoint только для XLSX/XLS. Используйте /import-preview для других форматов.")
     content = await file.read()
     try:
-        preview, columns = _smart_import_xlsx_direct(content)
+        preview, columns = _smart_import_xlsx_direct(content, fname=fname)
     except Exception as e:
         logger.warning("import-smart-nopid failed: %s", e)
-        raise HTTPException(400, f"Не удалось распознать XLSX: {e}")
+        ext = '.xls' if fname.endswith('.xls') else '.xlsx'
+        raise HTTPException(400, f"Не удалось распознать файл ({ext}): {e}. Если файл .xls — попробуйте сохранить его как .xlsx (Excel: Файл → Сохранить как → Книга Excel) и повторите.")
     return {
         "preview": preview[:200],
         "total_rows": len(preview),
@@ -1627,7 +1642,7 @@ async def import_items_smart(
     # к опечаткам в header'е (напр. "Количечество"), разделам-подзаголовкам и multi-line cells.
     if file_type == "excel":
         try:
-            xlsx_preview, xlsx_columns = _smart_import_xlsx_direct(content)
+            xlsx_preview, xlsx_columns = _smart_import_xlsx_direct(content, fname=filename)
         except Exception as _e:
             logger.warning("Direct XLSX parser failed: %s — fallback to markitdown", _e)
             xlsx_preview, xlsx_columns = [], []

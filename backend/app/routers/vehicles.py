@@ -679,10 +679,17 @@ async def delete_vehicle(
 ):
     """DELETE /api/vehicles/{vehicle_id} — hard delete, CASCADE via FK constraints.
 
-    D-decisions: no soft-delete required.
+    Phase 29.3-R3 (Д-3): only admin+ can delete vehicles.
     FK cascades: vehicle_attachments, vehicle_repairs, vehicle_odometer,
                  fuel_logs, trips, vehicle_field_history.
     """
+    # Phase 29.3-R3 (Д-3): explicit role check — только admin / superadmin
+    if current_user.role not in ("admin", "superadmin", "account_owner"):
+        raise HTTPException(
+            status_code=403,
+            detail="Удалять ТС может только администратор."
+        )
+
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:
         raise HTTPException(status_code=404, detail="ТС не найдено")

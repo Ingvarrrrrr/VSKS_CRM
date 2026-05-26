@@ -117,6 +117,25 @@ def _apply_visibility(q, user: User):
     return q
 
 
+def _dedup_key(vin: Optional[str], plate: Optional[str], fallback_id: int) -> str:
+    """Phase 29.3-R3 (pt-dedup): нормализованный ключ дедубликации.
+    Приоритет: VIN (если есть) → plate (нормализованный) → __id_<n>.
+    """
+    if vin and vin.strip():
+        return ("vin:" + vin.upper().replace(" ", "").strip())
+    if plate and plate.strip():
+        return ("plate:" + plate.upper().replace(" ", "").strip())
+    return f"__id_{fallback_id}"
+
+
+_STATE_PRIORITY = {
+    "broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
+    "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0,
+}
+def _state_rank(s):
+    return _STATE_PRIORITY.get(s, 2)
+
+
 # ─────────────────────────── 1. KPI cards ────────────────────────────────────
 
 @router.get("/kpi")
@@ -1175,6 +1194,7 @@ async def all_vehicles_summary(
         select(
             Vehicle.id,
             Vehicle.plate,
+            Vehicle.vin,
             Vehicle.brand,
             Vehicle.model,
             Vehicle.state,
@@ -1197,20 +1217,10 @@ async def all_vehicles_summary(
 
     rows = (await db.execute(q)).all()
 
-    # Phase 29.3-R3: дедубликация по нормализованному plate (убираем пробелы + UPPER).
-    # При коллизии — приоритет non-working state (in_repair/broken/needs_repair > working > пустой).
-    _STATE_PRIORITY = {
-        "broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
-        "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0,
-    }
-    def _state_rank(s):
-        return _STATE_PRIORITY.get(s, 2)
-
+    # Phase 29.3-R3: дедубликация по VIN→plate→id (см. _dedup_key)
     seen: dict[str, dict] = {}
     for r in rows:
-        norm = (r.plate or "").upper().replace(" ", "").strip()
-        if not norm:
-            norm = f"__id_{r.id}"  # fallback — машины без plate тоже сохраняем
+        norm = _dedup_key(getattr(r, "vin", None), r.plate, r.id)
         item = {
             "vehicle_id": r.id,
             "plate": r.plate or "",
@@ -1227,8 +1237,17 @@ async def all_vehicles_summary(
             "insurance_until": r.insurance_until.isoformat() if r.insurance_until else None,
         }
         prev = seen.get(norm)
-        if not prev or _state_rank(item["state"]) > _state_rank(prev["state"]):
+        # Phase 29.3-R3 (pt-tie): при равном state_rank — выигрывает запись с non-empty assigned_text
+        # (это устраняет mismatch между /by-region (по assigned_text) и /all-vehicles-summary).
+        if not prev:
             seen[norm] = item
+        else:
+            cur_rank = _state_rank(item["state"])
+            prev_rank = _state_rank(prev["state"])
+            cur_has_region = bool(item.get("assigned_text"))
+            prev_has_region = bool(prev.get("assigned_text"))
+            if cur_rank > prev_rank or (cur_rank == prev_rank and cur_has_region and not prev_has_region):
+                seen[norm] = item
     return list(seen.values())
 
 
@@ -1244,25 +1263,19 @@ async def by_region(
     Returns list sorted by count desc.
     If fewer than 5 vehicles visible, adds mock_demo flag.
     """
-    # Phase 29.3-R3: дедубликация по нормализованному plate перед группировкой
+    # Phase 29.3-R3: дедубликация по VIN→plate→id
     q = (
-        select(Vehicle.id, Vehicle.plate, Vehicle.state, Vehicle.assigned_text)
+        select(Vehicle.id, Vehicle.vin, Vehicle.plate, Vehicle.state, Vehicle.assigned_text)
     )
     q = _apply_visibility(q, current_user)
     raw_rows = (await db.execute(q)).all()
 
-    _STATE_PRIORITY = {
-        "broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
-        "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0,
-    }
-    def _rank(s): return _STATE_PRIORITY.get(s, 2)
-
     seen_v: dict[str, dict] = {}
     for r in raw_rows:
-        norm = (r.plate or "").upper().replace(" ", "").strip() or f"__id_{r.id}"
-        cur = {"region": r.assigned_text or "Не указан", "state": r.state or "unknown"}
+        norm = _dedup_key(r.vin, r.plate, r.id)
+        cur = {"region": (r.assigned_text or "Не указан").strip(), "state": r.state or "unknown"}
         prev = seen_v.get(norm)
-        if not prev or _rank(cur["state"]) > _rank(prev["state"]):
+        if not prev or _state_rank(cur["state"]) > _state_rank(prev["state"]):
             seen_v[norm] = cur
 
     region_map: dict = {}
@@ -1278,8 +1291,8 @@ async def by_region(
 
     # штаб_label heuristic — map common region strings
     _SHTAB = {
-        "Ростов-на-Дону": "штаб РНД, СТО",
-        "ЦУ Москва": "штаб ЦУ",
+        "Ростов-на-Дону": "филиал РНД, СТО",
+        "ЦУ Москва": "филиал ЦУ",
         "Луганск": "ФПГ ЛНР",
         "Донецк": "ФПГ ДНР",
         "Запорожье": "ФПГ Запорожье",
@@ -1393,19 +1406,16 @@ async def filter_counts(
     today = date.today()
     cutoff_30d = today - timedelta(days=30)
 
-    # Phase 29.3-R3: дедубликация по нормализованному plate перед подсчётом
-    raw_q = select(Vehicle.id, Vehicle.plate, Vehicle.state)
+    # Phase 29.3-R3: дедубликация по VIN→plate→id
+    raw_q = select(Vehicle.id, Vehicle.vin, Vehicle.plate, Vehicle.state)
     raw_q = _apply_visibility(raw_q, current_user)
     raw_rows = (await db.execute(raw_q)).all()
 
-    _PR = {"broken": 4, "destroyed": 4, "utilized": 4, "needs_repair": 3,
-           "in_repair": 3, "working": 1, "unknown": 0, "": 0, None: 0}
-
-    seen_v: dict[str, tuple[int, str]] = {}  # norm_plate -> (id, state)
+    seen_v: dict[str, tuple[int, str]] = {}  # norm_key -> (id, state)
     for r in raw_rows:
-        norm = (r.plate or "").upper().replace(" ", "").strip() or f"__id_{r.id}"
+        norm = _dedup_key(r.vin, r.plate, r.id)
         prev = seen_v.get(norm)
-        if not prev or _PR.get(r.state or "", 0) > _PR.get(prev[1] or "", 0):
+        if not prev or _state_rank(r.state) > _state_rank(prev[1]):
             seen_v[norm] = (r.id, r.state or "unknown")
 
     unique_ids = {v[0] for v in seen_v.values()}
@@ -1641,3 +1651,51 @@ async def fines_summary(
         "unpaid_count": row.unpaid_count if row else 0,
         "unpaid_amount": float(row.unpaid_amount) if row else 0.0,
     }
+
+
+@router.get("/fines-by-filial")
+async def fines_by_filial(
+    period_days: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("vehicles")),
+):
+    """Phase 29.3-R3 (pt11): штрафы по филиалам (Vehicle.owner_org_id → Organization.name).
+    Возвращает: [{org_id, org_name, total_count, total_amount, unpaid_count, unpaid_amount, overdue_count}]
+    """
+    from app.models.vehicle_fine import VehicleFine
+    import datetime as dt_mod
+    from datetime import timezone as tz
+
+    now_utc = dt_mod.datetime.now(tz.utc)
+    overdue_cutoff = now_utc + dt_mod.timedelta(days=7)  # «скоро срок» <7 дней — пока используем как proxy «overdue»
+
+    q = (
+        select(
+            Organization.id.label("org_id"),
+            Organization.name.label("org_name"),
+            func.count(VehicleFine.id).label("total_count"),
+            func.coalesce(func.sum(VehicleFine.amount), 0).label("total_amount"),
+            func.count(VehicleFine.id).filter(VehicleFine.status == "unpaid").label("unpaid_count"),
+            func.coalesce(
+                func.sum(VehicleFine.amount).filter(VehicleFine.status == "unpaid"), 0
+            ).label("unpaid_amount"),
+        )
+        .select_from(VehicleFine)
+        .join(Vehicle, Vehicle.id == VehicleFine.vehicle_id)
+        .join(Organization, Organization.id == Vehicle.owner_org_id)
+        .group_by(Organization.id, Organization.name)
+        .order_by(func.sum(VehicleFine.amount).desc())
+    )
+    if period_days is not None:
+        cutoff = now_utc - dt_mod.timedelta(days=period_days)
+        q = q.where(VehicleFine.issued_at >= cutoff)
+
+    rows = (await db.execute(q)).all()
+    return [{
+        "org_id": r.org_id,
+        "org_name": r.org_name,
+        "total_count": int(r.total_count or 0),
+        "total_amount": float(r.total_amount or 0),
+        "unpaid_count": int(r.unpaid_count or 0),
+        "unpaid_amount": float(r.unpaid_amount or 0),
+    } for r in rows]

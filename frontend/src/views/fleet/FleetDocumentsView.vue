@@ -206,11 +206,11 @@
         <thead>
           <tr>
             <th>ТС</th>
+            <th>Эксплуатант</th>
             <th>Тип документа</th>
             <th>Номер</th>
             <th>Действует до</th>
             <th>Статус</th>
-            <th>Контрагент / Сумма</th>
             <th></th>
           </tr>
         </thead>
@@ -228,6 +228,11 @@
                   <div class="fdocs-veh__model">{{ doc.vehicle_model || '' }}</div>
                 </div>
               </div>
+            </td>
+            <!-- Эксплуатант -->
+            <td>
+              <span v-if="doc.operator_org_name" class="fdocs-operator">{{ doc.operator_org_name }}</span>
+              <span v-else style="opacity:0.4">—</span>
             </td>
             <!-- Тип -->
             <td>
@@ -259,21 +264,6 @@
               <StatusPill :variant="docStatusVariant(doc)" :dot="docStatus(doc) !== 'muted'">
                 {{ docStatusLabel(doc) }}
               </StatusPill>
-            </td>
-            <!-- Контрагент / Сумма -->
-            <td>
-              <template v-if="doc.type === 'purchase_contract'">
-                <div class="fdocs-contract">
-                  <span v-if="doc.counterparty" class="fdocs-contract__cp">{{ doc.counterparty }}</span>
-                  <span v-if="doc.amount_rub" class="fdocs-contract__amount">
-                    {{ formatRub(doc.amount_rub) }}
-                  </span>
-                  <span v-if="!doc.counterparty && !doc.amount_rub" style="opacity:0.4">—</span>
-                </div>
-              </template>
-              <template v-else>
-                <span style="opacity:0.3">—</span>
-              </template>
             </td>
             <!-- Actions -->
             <td>
@@ -492,6 +482,7 @@ interface FleetDocument {
   vehicle_plate?: string
   vehicle_model?: string
   vehicle_type?: string
+  operator_org_name?: string   // Phase 29.3-R3 (Д-2) — Эксплуатант
   type: string
   number?: string
   issued_at?: string
@@ -608,12 +599,14 @@ async function fetchVehicles() {
 // ── Computed ──────────────────────────────────────────────────────────────────
 const filteredDocs = computed(() => {
   let list = docs.value
+  // Phase 29.3-R3 (Д-4): client-side фильтр расширен на brand/model/vin (паттерн из /api/vehicles)
+  // Backend уже делает аналогичный ILIKE через ?q= — client-side это дублирование для отзывчивости
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     list = list.filter(d =>
       (d.vehicle_plate || '').toLowerCase().includes(q) ||
-      (d.number || '').toLowerCase().includes(q) ||
-      (d.counterparty || '').toLowerCase().includes(q)
+      (d.vehicle_model || '').toLowerCase().includes(q) ||
+      (d.number || '').toLowerCase().includes(q)
     )
   }
   return list

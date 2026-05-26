@@ -99,7 +99,7 @@
           Нет данных
         </div>
         <div v-else class="fd-panel__regions">
-          <!-- Phase 29.3-R3: верхняя строка «ВСЕГО» — сумма всех регионов -->
+          <!-- Phase 29.3-R3: верхняя строка «ВСЕГО» — сумма всех регионов (clickable segments, без региона) -->
           <div class="fd-row-total">
             <StackedRegionBar
               region="ВСЕГО"
@@ -112,6 +112,7 @@
               :needs-repair="allRegionsBy.needs_repair"
               :destroyed="allRegionsBy.destroyed"
               :utilized="allRegionsBy.utilized"
+              @segment-click="onTotalSegmentClick"
             />
           </div>
 
@@ -392,21 +393,25 @@ const docsExpiringIds = ref<Set<number>>(new Set())
 const visibleCards = computed(() => {
   let list = cards.value as any[]
 
-  // Region filter (drill from geography)
+  // Region filter (drill from geography) — нормализованное сравнение (trim+lower)
   if (selectedRegion.value) {
-    const reg = selectedRegion.value.trim()
-    list = list.filter((v: any) => (v.assigned_text || '').trim() === reg)
+    const reg = selectedRegion.value.trim().toLowerCase()
+    list = list.filter((v: any) => (v.assigned_text || '').trim().toLowerCase() === reg)
   }
 
   // State / docs_expiring filter
+  // Phase 29.3-R3 (Д-1): без drill показываем превью 9 карточек, при drill — все подходящие
+  const isDrillActive = !!selectedRegion.value || !!selectedFilter.value
+  const previewLimit = isDrillActive ? Infinity : 9
+
   if (!selectedFilter.value || selectedFilter.value === 'all') {
-    return list.slice(0, 9)
+    return previewLimit === Infinity ? list : list.slice(0, previewLimit as number)
   }
   if (selectedFilter.value === 'docs_expiring') {
-    return list.filter((v: any) => docsExpiringIds.value.has(v.vehicle_id)).slice(0, 9)
+    return list.filter((v: any) => docsExpiringIds.value.has(v.vehicle_id))
   }
   const allowed = STATE_FILTER_MAP[selectedFilter.value] || [selectedFilter.value]
-  return list.filter((v: any) => allowed.includes(v.state)).slice(0, 9)
+  return list.filter((v: any) => allowed.includes(v.state))
 })
 
 // ─── Methods ──────────────────────────────────────────────────────────────────
@@ -458,9 +463,37 @@ async function loadRegions() {
 async function loadCards() {
   cardsLoading.value = true
   try {
-    // API возвращает { items: [...], total: N } — extract items
-    const resp = await apiFetch<{ items: any[]; total: number } | any[]>('/vehicles?limit=30')
-    cards.value = Array.isArray(resp) ? resp : (resp?.items || [])
+    // Phase 29.3-R3 (Д-1/Д-5): источник cards = /api/vehicles?limit=500 (полная модель)
+    // + frontend dedup по VIN→plate (та же логика что в backend /all-vehicles-summary).
+    // Раньше limit=30 терял ТС с id>30; /all-vehicles-summary терял поля
+    // (vin/year/color/insurance_until/responsible_name/sts_number и др.).
+    const resp = await apiFetch<{ items: any[]; total: number } | any[]>('/vehicles?limit=500')
+    const allVehicles: any[] = Array.isArray(resp) ? resp : ((resp as any)?.items || [])
+
+    // Dedup keys: vin (нормализованный) → plate (нормализованный) → id.
+    // Приоритет non-working state (in_repair/broken/needs_repair > working > unknown).
+    const STATE_RANK: Record<string, number> = {
+      broken: 4, destroyed: 4, utilized: 4, needs_repair: 3, in_repair: 3,
+      working: 1, unknown: 0, '': 0,
+    }
+    const rank = (s: any) => STATE_RANK[s || ''] ?? 2
+    const norm = (s?: string | null) => (s || '').toString().toUpperCase().replace(/\s+/g, '').trim()
+    const dedup = new Map<string, any>()
+    for (const v of allVehicles) {
+      let k = ''
+      if (v.vin && String(v.vin).trim()) k = 'vin:' + norm(v.vin)
+      else if (v.plate && String(v.plate).trim()) k = 'plate:' + norm(v.plate)
+      else k = `__id_${v.id}`
+      const prev = dedup.get(k)
+      if (!prev) dedup.set(k, v)
+      else {
+        const curR = rank(v.state), prevR = rank(prev.state)
+        const curHasRegion = !!(v.assigned_text && String(v.assigned_text).trim())
+        const prevHasRegion = !!(prev.assigned_text && String(prev.assigned_text).trim())
+        if (curR > prevR || (curR === prevR && curHasRegion && !prevHasRegion)) dedup.set(k, v)
+      }
+    }
+    cards.value = Array.from(dedup.values())
   } catch (e) {
     console.error('[FleetDash] Cards', e)
     cards.value = []
@@ -476,7 +509,13 @@ function filterAndScroll(state: string) {
 
 // Phase 29.3-R3 (pt8): клик по сегменту региона = drill on-page, не navigate
 function onRegionSegmentClick({ region, state }: { region: string; state: string }) {
-  selectedRegion.value = region
+  selectedRegion.value = (region || '').trim()
+  selectedFilter.value = state
+}
+
+// Phase 29.3-R3 (pt10): клик по сегменту строки «ВСЕГО» — фильтр по state без региона
+function onTotalSegmentClick({ state }: { region: string; state: string }) {
+  selectedRegion.value = ''
   selectedFilter.value = state
 }
 

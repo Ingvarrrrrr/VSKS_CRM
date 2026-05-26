@@ -51,6 +51,13 @@ class FleetDocumentOut(BaseModel):
     created_at: datetime
     created_by_user_id: Optional[int] = None
 
+    # Phase 29.3-R3 (Д-2): denormalized vehicle info (plate, model, type, operator)
+    vehicle_plate: Optional[str] = None
+    vehicle_model: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    operator_org_name: Optional[str] = None  # Эксплуатант = Vehicle.assigned_org.name
+    has_file: bool = False
+
     @computed_field
     @property
     def status(self) -> str:

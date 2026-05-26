@@ -97,23 +97,54 @@ async def list_fleet_documents(
     type: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="valid/expiring_soon/expired/no_expiry"),
     expires_before: Optional[date] = Query(None),
+    search: Optional[str] = Query(None, alias="q", description="Phase 29.3-R3 (Д-4): поиск по brand/model/plate/vin (тот же паттерн что в /api/vehicles)"),
     current_user: User = Depends(require_tab("vehicles")),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(FleetDocument)
+    # Phase 29.3-R3 (Д-2): JOIN с Vehicle + assigned_org для plate/model/type/operator
+    from app.models.vehicle import Vehicle
+    from app.models.organization import Organization
+    from sqlalchemy.orm import aliased
+
+    AssignedOrg = aliased(Organization)
+    q = (
+        select(FleetDocument, Vehicle.plate, Vehicle.brand, Vehicle.model, Vehicle.type, AssignedOrg.name.label("op_name"))
+        .outerjoin(Vehicle, Vehicle.id == FleetDocument.vehicle_id)
+        .outerjoin(AssignedOrg, AssignedOrg.id == Vehicle.assigned_org_id)
+    )
     if vehicle_id:
         q = q.where(FleetDocument.vehicle_id == vehicle_id)
     if type:
         q = q.where(FleetDocument.type == type)
     if expires_before:
         q = q.where(FleetDocument.expires_at <= expires_before)
-    docs = (await db.execute(q)).scalars().all()
+    # Phase 29.3-R3 (Д-4): поиск по brand/model/plate/vin — паттерн из /api/vehicles (строки 266-275)
+    if search and search.strip():
+        from sqlalchemy import or_
+        pattern = f"%{search.strip()}%"
+        q = q.where(or_(
+            Vehicle.brand.ilike(pattern),
+            Vehicle.model.ilike(pattern),
+            Vehicle.plate.ilike(pattern),
+            Vehicle.vin.ilike(pattern),
+        ))
+    rows = (await db.execute(q)).all()
 
-    # post-filter by status
-    if status:
-        docs = [d for d in docs if _compute_status(d) == status]
-
-    return [FleetDocumentOut.model_validate(d) for d in docs]
+    # Build response with denormalized vehicle info
+    result = []
+    for row in rows:
+        doc = row[0]
+        if status:
+            if _compute_status(doc) != status:
+                continue
+        out = FleetDocumentOut.model_validate(doc)
+        out.vehicle_plate = row[1]
+        out.vehicle_model = f"{row[2] or ''} {row[3] or ''}".strip() or None
+        out.vehicle_type = row[4]
+        out.operator_org_name = row[5]
+        out.has_file = bool(doc.file_url or doc.file_name)
+        result.append(out)
+    return result
 
 
 @router.post("/", response_model=FleetDocumentOut, status_code=201)

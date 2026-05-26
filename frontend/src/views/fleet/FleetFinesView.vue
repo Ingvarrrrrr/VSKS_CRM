@@ -129,16 +129,28 @@
           Нет данных
         </div>
         <div v-else class="byorg-list">
+          <!-- Phase 29.3-R3 (pt11): реальные филиалы из owner_org_id + stacked bar (всего/неоплачено/просрочено) -->
           <div
-            v-for="item in byOrg"
-            :key="item.name"
-            class="byorg-bar"
+            v-for="item in byFilial"
+            :key="item.org_id"
+            class="byorg-bar byorg-bar--clickable"
+            :class="{ 'byorg-bar--active': filterOrgId === item.org_id }"
+            @click="filterOrgId === item.org_id ? clearFilters() : (filterOrgId = item.org_id)"
+            :title="`Всего: ${item.total_count} шт. · Не оплачено: ${item.unpaid_count} шт.`"
           >
-            <div class="byorg-bar__nm">{{ item.name }}</div>
+            <div class="byorg-bar__nm">{{ item.org_name || '— филиал —' }}</div>
             <div class="byorg-bar__track">
-              <i :style="{ width: `${item.pct}%` }"></i>
+              <!-- зелёный слой = оплачено (всего - неоплачено) -->
+              <i class="byorg-seg byorg-seg--paid" :style="{ width: `${segPct(item, 'paid')}%` }"></i>
+              <!-- жёлтый слой = неоплачено -->
+              <i class="byorg-seg byorg-seg--unpaid" :style="{ width: `${segPct(item, 'unpaid')}%` }"></i>
             </div>
-            <div class="byorg-bar__sum">{{ fmtRub(item.total) }}</div>
+            <div class="byorg-bar__cnt">
+              <span class="byorg-cnt__total">{{ item.total_count }}</span>
+              <span class="byorg-cnt__sep">/</span>
+              <span class="byorg-cnt__unpaid">{{ item.unpaid_count }}</span>
+            </div>
+            <div class="byorg-bar__sum">{{ fmtRub(item.total_amount) }}</div>
           </div>
         </div>
       </div>
@@ -482,6 +494,36 @@ const byType = computed(() => {
 })
 
 // Client-side aggregation: GROUP BY owner_org_name (using driver_kind/name as fallback)
+// Phase 29.3-R3 (pt11): «По филиалам» — real org names + stacked progress (paid+unpaid)
+interface FilialFinesRow {
+  org_id: number
+  org_name: string
+  total_count: number
+  total_amount: number
+  unpaid_count: number
+  unpaid_amount: number
+}
+const byFilial = ref<FilialFinesRow[]>([])
+const byFilialMaxCount = computed(() => byFilial.value.reduce((m, r) => Math.max(m, r.total_count), 1))
+function segPct(item: FilialFinesRow, seg: 'paid' | 'unpaid'): number {
+  const max = byFilialMaxCount.value || 1
+  if (seg === 'paid') {
+    const paid = Math.max(0, item.total_count - item.unpaid_count)
+    return Math.round((paid / max) * 100)
+  }
+  return Math.round((item.unpaid_count / max) * 100)
+}
+
+async function fetchByFilial(): Promise<void> {
+  try {
+    const data = await apiFetch<FilialFinesRow[]>('/vehicles-dashboard/fines-by-filial')
+    byFilial.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('[FleetFines] by-filial', e)
+    byFilial.value = []
+  }
+}
+
 const byOrg = computed(() => {
   const map = new Map<string, number>()
   for (const f of allFines.value) {
@@ -608,6 +650,7 @@ watch(
 
 onMounted(() => {
   fetchSummary()
+  fetchByFilial()
   // fetchFines is triggered by the watch above with immediate:true
 })
 </script>
@@ -724,29 +767,65 @@ onMounted(() => {
 .bytype-row__cnt b { display: block; font-weight: 800; font-size: 14px; }
 .bytype-row__cnt small { color: var(--muted, #8a93a8); font-size: 11px; }
 
-/* By org bars */
+/* By org bars (Phase 29.3-R3 pt11) */
 .byorg-list { display: grid; gap: 10px; }
 .byorg-bar {
   display: grid;
-  grid-template-columns: 110px 1fr auto;
+  grid-template-columns: 140px 1fr 70px 110px;
   align-items: center;
   gap: 12px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  transition: background 0.15s, box-shadow 0.15s;
 }
-.byorg-bar__nm { font-size: 13px; font-weight: 600; }
+.byorg-bar--clickable { cursor: pointer; }
+.byorg-bar--clickable:hover { background: rgba(106, 166, 255, 0.08); }
+.byorg-bar--active {
+  background: rgba(106, 166, 255, 0.18);
+  box-shadow: inset 3px 0 0 #6aa6ff;
+}
+.byorg-bar__nm {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .byorg-bar__track {
-  height: 22px;
+  height: 18px;
   background: rgba(255,255,255,.04);
-  border-radius: 6px;
+  border-radius: 5px;
   overflow: hidden;
   border: 1px solid var(--line, #222838);
+  display: flex;
+  position: relative;
 }
-.byorg-bar__track i {
+.byorg-seg {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #ff5b6a, #ff8a4a);
-  border-radius: 6px;
+  transition: width 0.3s ease;
 }
-.byorg-bar__sum { font-weight: 800; font-size: 13px; color: #ff5b6a; }
+.byorg-seg--paid {
+  background: linear-gradient(90deg, #22c997, #5dd0ff);
+}
+.byorg-seg--unpaid {
+  background: linear-gradient(90deg, #ff8a4a, #ff5b6a);
+}
+.byorg-bar__cnt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  text-align: center;
+}
+.byorg-cnt__total { color: var(--text, #e9edf5); font-weight: 700; }
+.byorg-cnt__sep { color: var(--muted, #8a93a8); margin: 0 2px; }
+.byorg-cnt__unpaid { color: #ff5b6a; font-weight: 700; }
+.byorg-bar__sum {
+  font-weight: 800;
+  font-size: 13px;
+  color: #ff5b6a;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+}
 
 /* ── Table ── */
 .fines-table-wrap {

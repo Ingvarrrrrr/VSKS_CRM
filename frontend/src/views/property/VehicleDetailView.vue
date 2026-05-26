@@ -84,7 +84,7 @@
             Сохранить
           </v-btn>
           <v-btn
-            v-if="authStore.hasAction('vehicle.delete')"
+            v-if="isAdminOrAbove"
             color="error"
             variant="outlined"
             prepend-icon="mdi-delete"
@@ -917,6 +917,12 @@ const FieldLabel = defineComponent({
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+
+// Phase 29.3-R3 (Д-3): удалять ТС может только admin+
+const isAdminOrAbove = computed(() => {
+  const r = (authStore as any).user?.role || (authStore as any).role
+  return ['admin', 'superadmin', 'account_owner'].includes(r)
+})
 
 const vehicle = ref<Vehicle | null>(null)
 const vehicleOriginal = ref<Vehicle | null>(null)

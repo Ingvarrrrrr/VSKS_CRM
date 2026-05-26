@@ -2084,18 +2084,68 @@
       </v-card>
     </v-dialog>
 
-    <!-- 12-04: Version Snapshot Dialog -->
-    <v-dialog v-model="showVersionSnapshotDialog" max-width="900" scrollable>
+    <!-- 12-04/12-05: Version Snapshot Dialog -->
+    <v-dialog v-model="showVersionSnapshotDialog" max-width="960" scrollable>
       <v-card v-if="selectedVersionSnapshot">
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-database-eye" size="20" color="blue" class="mr-2" />
-          Снимок версии v{{ selectedVersionSnapshot.version_number }}
+          <div>
+            Снимок версии v{{ selectedVersionSnapshot.version_number }}
+            <span v-if="selectedVersionSnapshot.effective_date" class="text-body-2 text-medium-emphasis ml-2">
+              (дата редакции: {{ new Date(selectedVersionSnapshot.effective_date).toLocaleDateString('ru-RU') }})
+            </span>
+            <div v-if="selectedVersionSnapshot.note" class="text-caption text-medium-emphasis mt-1">
+              {{ selectedVersionSnapshot.note }}
+            </div>
+          </div>
           <v-spacer />
           <v-btn icon="mdi-close" size="x-small" variant="text" @click="showVersionSnapshotDialog = false" />
         </v-card-title>
         <v-divider />
         <v-card-text>
-          <v-table density="compact" style="font-size:12px">
+          <!-- v2 snapshot с tree -->
+          <table v-if="selectedVersionSnapshot.snapshot?.tree?.length" class="snapshot-tree-table">
+            <thead>
+              <tr>
+                <th>Наименование</th>
+                <th class="text-right">План (snapshot) ₽</th>
+                <th class="text-right">Факт (текущий) ₽</th>
+                <th class="text-right">Остаток ₽</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="node in flattenedSnapshotTree" :key="node._key">
+                <tr :class="`level-${node.level} status-${getReconStatus(node)}`">
+                  <td :style="`padding-left:${(node.level - 1) * 20 + 8}px`">
+                    <v-icon v-if="node.children?.length" icon="mdi-folder-outline" size="14" class="mr-1" />
+                    {{ node.name }}
+                  </td>
+                  <td class="text-right">{{ formatCurrency(node.budget || 0) }}</td>
+                  <td class="text-right">{{ formatCurrency(getActualUsed(node.id)) }}</td>
+                  <td class="text-right" :class="getActualResidual(node) < 0 ? 'text-error' : ''">
+                    {{ formatCurrency(getActualResidual(node)) }}
+                  </td>
+                  <td>
+                    <v-chip v-if="getReconStatus(node) === 'moved'" size="x-small" color="info" variant="tonal">переименован</v-chip>
+                    <v-chip v-else-if="getReconStatus(node) === 'orphan'" size="x-small" color="warning" variant="tonal">не сматчился</v-chip>
+                    <v-chip v-else-if="getReconStatus(node) === 'matched'" size="x-small" color="success" variant="tonal">✓</v-chip>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><b>Итого</b></td>
+                <td class="text-right"><b>{{ formatCurrency(selectedVersionSnapshot.snapshot?.total_planned || 0) }}</b></td>
+                <td class="text-right"><b>{{ formatCurrency(snapshotTotalActual) }}</b></td>
+                <td class="text-right"><b>{{ formatCurrency((selectedVersionSnapshot.snapshot?.total_planned || 0) - snapshotTotalActual) }}</b></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+          <!-- v1 snapshot — fallback на flat items -->
+          <v-table v-else density="compact" style="font-size:12px">
             <thead>
               <tr style="background:#EFF6FF">
                 <th>Наименование</th>
@@ -3634,6 +3684,41 @@ async function downloadCompareExcel() {
   }
 }
 
+// 12-05 F3: reconciliation helpers for snapshot tree view
+const flattenedSnapshotTree = computed(() => {
+  const tree = selectedVersionSnapshot.value?.snapshot?.tree || []
+  const out: any[] = []
+  function walk(nodes: any[], depth = 1) {
+    for (const n of nodes) {
+      out.push({ ...n, level: depth, _key: `${n.id}_${depth}` })
+      if (n.children?.length) walk(n.children, depth + 1)
+    }
+  }
+  walk(tree)
+  return out
+})
+
+function getReconStatus(node: any): 'matched' | 'moved' | 'orphan' {
+  const rec = selectedVersionSnapshot.value?.reconciliation?.[node.id]
+  if (!rec || !rec.matched_current_id) return 'orphan'
+  if (rec.match_type === 'fallback') return 'moved'
+  return 'matched'
+}
+function getActualUsed(nodeId: number): number {
+  return selectedVersionSnapshot.value?.reconciliation?.[nodeId]?.actual_used || 0
+}
+function getActualResidual(node: any): number {
+  const used = getActualUsed(node.id)
+  return (node.budget || 0) - used
+}
+const snapshotTotalActual = computed(() => {
+  const tree = selectedVersionSnapshot.value?.snapshot?.tree || []
+  let total = 0
+  // только level-1 чтобы не дублировать (children агрегированы)
+  for (const n of tree) total += getActualUsed(n.id)
+  return total
+})
+
 // 12-05: Save version
 function openSaveVersionDialog() {
   if (!selectedId.value) return
@@ -4833,4 +4918,11 @@ onMounted(() => {
   color: #aaa;
   letter-spacing: 0.3px;
 }
+/* 12-05 F3: snapshot tree table */
+.snapshot-tree-table { width: 100%; border-collapse: collapse; }
+.snapshot-tree-table th, .snapshot-tree-table td { padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,0.08); font-size: 13px; }
+.snapshot-tree-table .level-1 td { font-weight: 600; background: rgba(33,150,243,0.06); }
+.snapshot-tree-table .level-2 td { background: rgba(33,150,243,0.03); }
+.snapshot-tree-table tfoot td { background: rgba(0,0,0,0.05); padding: 8px; border-top: 2px solid rgba(0,0,0,0.15); }
+.snapshot-tree-table .status-orphan td:first-child { color: rgb(180,120,0); }
 </style>

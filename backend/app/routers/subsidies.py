@@ -34,6 +34,8 @@ from app.auth.jwt import get_current_user, require_role, get_org_filter, get_sin
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from typing import List, Optional
+from datetime import date
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 
@@ -893,6 +895,7 @@ async def list_plan_graph_versions(
             "created_at": v.created_at.isoformat() if v.created_at else None,
             "created_by_name": v.created_by_name,
             "note": v.note,
+            "effective_date": v.effective_date.isoformat() if v.effective_date else None,
             "total_planned": snap.get("total_planned", 0),
             "total_used": snap.get("total_used", 0),
             "item_count": len(snap.get("items", [])),
@@ -936,20 +939,33 @@ async def get_plan_graph_version(
         "created_by_id": ver.created_by_id,
         "created_by_name": ver.created_by_name,
         "note": ver.note,
+        "effective_date": ver.effective_date.isoformat() if ver.effective_date else None,
         "snapshot": ver.snapshot,
     }
+
+
+class PlanGraphVersionCreate(BaseModel):
+    note: Optional[str] = None
+    effective_date: Optional[date] = None
 
 
 @router.post("/{subsidy_id}/plan-graph/versions")
 async def create_plan_graph_version_manual(
     subsidy_id: int,
-    note: Optional[str] = None,
+    body: PlanGraphVersionCreate = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(*ADMIN_ROLES)),
 ):
     """Manually publish a plan-graph version (admin only)."""
     from app.routers.purchases import _create_plan_graph_version
-    await _create_plan_graph_version(subsidy_id, db, current_user, note=note or "Ручная публикация")
+    body = body or PlanGraphVersionCreate()
+    await _create_plan_graph_version(
+        subsidy_id,
+        db,
+        current_user,
+        note=body.note or "Ручная публикация",
+        effective_date=body.effective_date,
+    )
     await db.commit()
     return {"ok": True, "message": "Версия план-графика сохранена"}
 

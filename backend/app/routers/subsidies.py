@@ -1441,6 +1441,452 @@ async def export_plan_graph_version_excel(
     )
 
 
+# ── Plan-Graph Compare (Phase 12-05) ─────────────────────────────────────────
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize FeoCategory name for matching: lowercase, strip, collapse spaces."""
+    return re.sub(r"\s+", " ", (name or "").lower().strip())
+
+
+def _match_feo_nodes(tree_a: list, tree_b: list) -> dict:
+    """
+    Match nodes from two FeoCategory trees using composite key priority:
+      1. code (if both non-empty)
+      2. (level, parent_path, normalized_name) — parent_path = tuple of normalized ancestor names
+      3. (level, normalized_name) — fallback if parent renamed → marked as 'moved'
+
+    Returns:
+      {
+        "matches": [(node_a, node_b, match_type)],  # match_type: 'code'|'path'|'fallback'
+        "only_a": [node_a, ...],
+        "only_b": [node_b, ...],
+      }
+    """
+    def _flatten(tree, parent_path=()):
+        nodes = []
+        for node in tree:
+            path = parent_path + (_normalize_name(node.get("name", "")),)
+            nodes.append((node, path))
+            nodes.extend(_flatten(node.get("children", []), path))
+        return nodes
+
+    flat_a = _flatten(tree_a)
+    flat_b = _flatten(tree_b)
+
+    matched_b = set()
+    matched_a = set()
+    matches = []
+
+    # Pass 1: match by code
+    code_map_b: dict[str, tuple] = {}
+    for nb, pb in flat_b:
+        code = (nb.get("code") or "").strip()
+        if code:
+            code_map_b[code] = (nb, pb)
+
+    for na, pa in flat_a:
+        code = (na.get("code") or "").strip()
+        if code and code in code_map_b:
+            nb, pb = code_map_b[code]
+            id_b = id(nb)
+            id_a = id(na)
+            if id_b not in matched_b and id_a not in matched_a:
+                matches.append((na, nb, "code"))
+                matched_a.add(id_a)
+                matched_b.add(id_b)
+
+    # Pass 2: match by (level, parent_path, normalized_name)
+    path_map_b: dict[tuple, tuple] = {}
+    for nb, pb in flat_b:
+        if id(nb) not in matched_b:
+            key = (nb.get("level", 0), pb[:-1], _normalize_name(nb.get("name", "")))
+            if key not in path_map_b:
+                path_map_b[key] = (nb, pb)
+
+    for na, pa in flat_a:
+        if id(na) in matched_a:
+            continue
+        key = (na.get("level", 0), pa[:-1], _normalize_name(na.get("name", "")))
+        if key in path_map_b:
+            nb, pb = path_map_b[key]
+            if id(nb) not in matched_b:
+                matches.append((na, nb, "path"))
+                matched_a.add(id(na))
+                matched_b.add(id(nb))
+
+    # Pass 3: fallback (level, normalized_name) — marks as 'fallback' → UI shows 'moved'
+    name_level_map_b: dict[tuple, tuple] = {}
+    for nb, pb in flat_b:
+        if id(nb) not in matched_b:
+            key = (nb.get("level", 0), _normalize_name(nb.get("name", "")))
+            if key not in name_level_map_b:
+                name_level_map_b[key] = (nb, pb)
+
+    for na, pa in flat_a:
+        if id(na) in matched_a:
+            continue
+        key = (na.get("level", 0), _normalize_name(na.get("name", "")))
+        if key in name_level_map_b:
+            nb, pb = name_level_map_b[key]
+            if id(nb) not in matched_b:
+                matches.append((na, nb, "fallback"))
+                matched_a.add(id(na))
+                matched_b.add(id(nb))
+
+    only_a = [na for na, pa in flat_a if id(na) not in matched_a]
+    only_b = [nb for nb, pb in flat_b if id(nb) not in matched_b]
+
+    return {"matches": matches, "only_a": only_a, "only_b": only_b}
+
+
+def _build_compare_rows(tree_a: list, tree_b: list) -> list:
+    """
+    Build flat list of comparison rows for JSON/Excel output.
+    Each row: {path, level, name_v1, name_v2, code, budget_v1, budget_v2,
+               delta, delta_pct, status}
+    status: unchanged | changed | new | removed | moved
+    """
+    match_result = _match_feo_nodes(tree_a, tree_b)
+    match_by_a_id = {id(na): (nb, mtype) for na, nb, mtype in match_result["matches"]}
+    matched_b_ids = {id(nb) for _, nb, _ in match_result["matches"]}
+
+    rows = []
+
+    def _walk_a(nodes, parent_path=()):
+        for node in nodes:
+            path = parent_path + (node.get("name", ""),)
+            v1 = float(node.get("budget") or 0)
+            mid = id(node)
+            if mid in match_by_a_id:
+                nb, mtype = match_by_a_id[mid]
+                v2 = float(nb.get("budget") or 0)
+                delta = v2 - v1
+                delta_pct = round(delta / v1 * 100, 2) if v1 != 0 else None
+                if mtype == "fallback":
+                    status = "moved"
+                elif abs(delta) < 0.01:
+                    status = "unchanged"
+                else:
+                    status = "changed"
+                rows.append({
+                    "path": list(path),
+                    "level": node.get("level", 0),
+                    "name_v1": node.get("name"),
+                    "name_v2": nb.get("name"),
+                    "code": node.get("code") or nb.get("code"),
+                    "budget_v1": round(v1, 2),
+                    "budget_v2": round(v2, 2),
+                    "delta": round(delta, 2),
+                    "delta_pct": delta_pct,
+                    "status": status,
+                })
+            else:
+                rows.append({
+                    "path": list(path),
+                    "level": node.get("level", 0),
+                    "name_v1": node.get("name"),
+                    "name_v2": None,
+                    "code": node.get("code"),
+                    "budget_v1": round(v1, 2),
+                    "budget_v2": 0.0,
+                    "delta": round(-v1, 2),
+                    "delta_pct": -100.0 if v1 != 0 else None,
+                    "status": "removed",
+                })
+            _walk_a(node.get("children", []), path)
+
+    def _walk_only_b(nodes):
+        for node in nodes:
+            if id(node) not in matched_b_ids:
+                v2 = float(node.get("budget") or 0)
+                rows.append({
+                    "path": [node.get("name", "")],
+                    "level": node.get("level", 0),
+                    "name_v1": None,
+                    "name_v2": node.get("name"),
+                    "code": node.get("code"),
+                    "budget_v1": 0.0,
+                    "budget_v2": round(v2, 2),
+                    "delta": round(v2, 2),
+                    "delta_pct": None,
+                    "status": "new",
+                })
+
+    _walk_a(tree_a)
+
+    def _collect_b_nodes(nodes):
+        result = []
+        for n in nodes:
+            result.append(n)
+            result.extend(_collect_b_nodes(n.get("children", [])))
+        return result
+
+    all_b = _collect_b_nodes(tree_b)
+    for nb in all_b:
+        if id(nb) not in matched_b_ids:
+            v2 = float(nb.get("budget") or 0)
+            rows.append({
+                "path": [nb.get("name", "")],
+                "level": nb.get("level", 0),
+                "name_v1": None,
+                "name_v2": nb.get("name"),
+                "code": nb.get("code"),
+                "budget_v1": 0.0,
+                "budget_v2": round(v2, 2),
+                "delta": round(v2, 2),
+                "delta_pct": None,
+                "status": "new",
+            })
+
+    return rows
+
+
+@router.get("/{subsidy_id}/plan-graph/versions/compare")
+async def compare_plan_graph_versions(
+    subsidy_id: int,
+    v1: int = Query(..., description="ID первой версии"),
+    v2: int = Query(..., description="ID второй версии"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Compare two plan-graph versions and return JSON diff."""
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа к субсидии")
+
+    ver1 = (await db.execute(
+        select(_PGV).where(_PGV.id == v1, _PGV.subsidy_id == subsidy_id)
+    )).scalar_one_or_none()
+    ver2 = (await db.execute(
+        select(_PGV).where(_PGV.id == v2, _PGV.subsidy_id == subsidy_id)
+    )).scalar_one_or_none()
+
+    if not ver1:
+        raise HTTPException(404, f"Версия {v1} не найдена")
+    if not ver2:
+        raise HTTPException(404, f"Версия {v2} не найдена")
+
+    snap1 = ver1.snapshot or {}
+    snap2 = ver2.snapshot or {}
+    tree1 = snap1.get("tree")
+    tree2 = snap2.get("tree")
+
+    if not tree1:
+        raise HTTPException(
+            422,
+            f"Старая версия v{ver1.version_number} не содержит дерева ФЭО "
+            f"(создана до Phase 12-05). Сравнение недоступно.",
+        )
+    if not tree2:
+        raise HTTPException(
+            422,
+            f"Старая версия v{ver2.version_number} не содержит дерева ФЭО "
+            f"(создана до Phase 12-05). Сравнение недоступно.",
+        )
+
+    rows = _build_compare_rows(tree1, tree2)
+
+    def _ver_meta(ver, snap):
+        return {
+            "id": ver.id,
+            "version_number": ver.version_number,
+            "effective_date": ver.effective_date.isoformat() if ver.effective_date else snap.get("effective_date"),
+            "note": ver.note,
+            "created_at": ver.created_at.isoformat() if ver.created_at else None,
+            "total_planned": snap.get("total_planned", 0),
+        }
+
+    return {
+        "v1_meta": _ver_meta(ver1, snap1),
+        "v2_meta": _ver_meta(ver2, snap2),
+        "rows": rows,
+    }
+
+
+@router.get("/{subsidy_id}/plan-graph/versions/compare.xlsx")
+async def compare_plan_graph_versions_excel(
+    subsidy_id: int,
+    v1: int = Query(..., description="ID первой версии"),
+    v2: int = Query(..., description="ID второй версии"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Compare two plan-graph versions and return Excel diff."""
+    if openpyxl is None:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа к субсидии")
+
+    ver1 = (await db.execute(
+        select(_PGV).where(_PGV.id == v1, _PGV.subsidy_id == subsidy_id)
+    )).scalar_one_or_none()
+    ver2 = (await db.execute(
+        select(_PGV).where(_PGV.id == v2, _PGV.subsidy_id == subsidy_id)
+    )).scalar_one_or_none()
+
+    if not ver1:
+        raise HTTPException(404, f"Версия {v1} не найдена")
+    if not ver2:
+        raise HTTPException(404, f"Версия {v2} не найдена")
+
+    snap1 = ver1.snapshot or {}
+    snap2 = ver2.snapshot or {}
+    tree1 = snap1.get("tree")
+    tree2 = snap2.get("tree")
+
+    if not tree1:
+        raise HTTPException(
+            422,
+            f"Старая версия v{ver1.version_number} не содержит дерева ФЭО "
+            f"(создана до Phase 12-05). Сравнение недоступно.",
+        )
+    if not tree2:
+        raise HTTPException(
+            422,
+            f"Старая версия v{ver2.version_number} не содержит дерева ФЭО "
+            f"(создана до Phase 12-05). Сравнение недоступно.",
+        )
+
+    rows = _build_compare_rows(tree1, tree2)
+
+    # ── Build Excel ──────────────────────────────────────────────────────────
+    HEADER_FILL   = PatternFill("solid", fgColor="1E3A5F")
+    HEADER_FONT   = Font(color="FFFFFF", bold=True, size=9)
+    META_FONT     = Font(size=9, italic=True, color="374151")
+    ITEM_FONT     = Font(size=9)
+    CENTER_ALIGN  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT_ALIGN    = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    RIGHT_ALIGN   = Alignment(horizontal="right", vertical="center")
+    THIN_BORDER   = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    STATUS_FILLS = {
+        "changed":   PatternFill("solid", fgColor="FFF3CD"),
+        "new":       PatternFill("solid", fgColor="D4EDDA"),
+        "removed":   PatternFill("solid", fgColor="F8D7DA"),
+        "moved":     PatternFill("solid", fgColor="D1ECF1"),
+        "unchanged": PatternFill(),
+    }
+    STATUS_LABELS = {
+        "changed": "Изменено",
+        "new": "Новое",
+        "removed": "Удалено",
+        "moved": "Перемещено",
+        "unchanged": "Без изменений",
+    }
+
+    HEADERS = [
+        "№", "Уровень", "Наименование", "Код",
+        f"План v{ver1.version_number} (₽)", f"План v{ver2.version_number} (₽)",
+        "Дельта (₽)", "Дельта (%)", "Статус",
+    ]
+    COL_WIDTHS = [5, 8, 50, 15, 18, 18, 18, 12, 15]
+    n_cols = len(HEADERS)
+    last_col = chr(64 + n_cols)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Сравнение версий"
+
+    # Title
+    title_v1_date = ver1.effective_date.isoformat() if ver1.effective_date else (snap1.get("effective_date") or ver1.created_at.strftime("%Y-%m-%d") if ver1.created_at else "—")
+    title_v2_date = ver2.effective_date.isoformat() if ver2.effective_date else (snap2.get("effective_date") or ver2.created_at.strftime("%Y-%m-%d") if ver2.created_at else "—")
+    ws.append([f"СРАВНЕНИЕ ВЕРСИЙ — {sub.name}"] + [""] * (n_cols - 1))
+    title_cell = ws.cell(row=1, column=1)
+    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    ws.merge_cells(f"A1:{last_col}1")
+    title_cell.alignment = CENTER_ALIGN
+    ws.row_dimensions[1].height = 28
+
+    # Meta rows
+    meta_texts = [
+        f"v{ver1.version_number}: {title_v1_date}" + (f" — {ver1.note}" if ver1.note else ""),
+        f"v{ver2.version_number}: {title_v2_date}" + (f" — {ver2.note}" if ver2.note else ""),
+        f"Итого v{ver1.version_number}: {snap1.get('total_planned', 0):,.2f} ₽  |  "
+        f"Итого v{ver2.version_number}: {snap2.get('total_planned', 0):,.2f} ₽  |  "
+        f"Дельта: {(snap2.get('total_planned', 0) - snap1.get('total_planned', 0)):+,.2f} ₽",
+    ]
+    for i, mtext in enumerate(meta_texts):
+        r = 2 + i
+        ws.append([mtext] + [""] * (n_cols - 1))
+        cell = ws.cell(row=r, column=1)
+        cell.font = META_FONT
+        cell.alignment = LEFT_ALIGN
+        ws.merge_cells(f"A{r}:{last_col}{r}")
+        ws.row_dimensions[r].height = 16
+
+    # Column headers
+    header_row = 2 + len(meta_texts)
+    ws.append(HEADERS)
+    for col_idx, (h, w) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
+        cell = ws.cell(row=header_row, column=col_idx)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER_ALIGN
+        cell.border = THIN_BORDER
+        ws.column_dimensions[cell.column_letter].width = w
+    ws.row_dimensions[header_row].height = 32
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    # Data rows
+    for seq_i, row in enumerate(rows, 1):
+        level = row["level"]
+        indent = "    " * (level - 1) if level > 0 else ""
+        name = row["name_v2"] or row["name_v1"] or ""
+        status = row["status"]
+        fill = STATUS_FILLS.get(status, PatternFill())
+        delta_pct_str = f"{row['delta_pct']:+.1f}%" if row["delta_pct"] is not None else "—"
+
+        data_row_num = header_row + seq_i
+        values = [
+            seq_i, level, indent + name, row.get("code") or "",
+            row["budget_v1"], row["budget_v2"],
+            row["delta"], delta_pct_str,
+            STATUS_LABELS.get(status, status),
+        ]
+        ws.append(values)
+        for col_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=data_row_num, column=col_idx)
+            cell.fill = fill
+            cell.font = ITEM_FONT
+            cell.border = THIN_BORDER
+            if col_idx == 3:
+                cell.alignment = LEFT_ALIGN
+            elif col_idx >= 5:
+                cell.alignment = RIGHT_ALIGN
+            else:
+                cell.alignment = CENTER_ALIGN
+        ws.row_dimensions[data_row_num].height = 18
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"subsidy-{subsidy_id}_compare_v{ver1.version_number}_vs_v{ver2.version_number}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{subsidy_id}/plan-graph/template")
 async def upload_plan_graph_template(
     subsidy_id: int,

@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
 
@@ -12,5 +12,8 @@ class UserOrgAccess(Base):
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(20), default="account_owner")
 
-    user = relationship("User", backref="org_access_list")
-    organization = relationship("Organization")
+    user = relationship(
+        "User",
+        backref=backref("org_access_list", cascade="all, delete-orphan", passive_deletes=True),
+    )
+    organization = relationship("Organization", passive_deletes=True)

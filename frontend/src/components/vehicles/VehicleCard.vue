@@ -108,21 +108,121 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11h6M9 15h6M9 7h6M5 4h14a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
         Сформировать путевой лист
       </button>
-      <button class="fleet-action" @click.stop="goToHistory">
+      <button class="fleet-action" @click.stop="openHistoryDialog">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>
         История
       </button>
-      <button class="fleet-action" @click.stop="goToMaintenance">
+      <button class="fleet-action" @click.stop="openMaintenanceDialog">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M6 7v13h12V7"/></svg>
         ТО
       </button>
     </div>
+
+    <!-- ─── Диалог: История перемещений ─── -->
+    <v-dialog v-model="historyDialog" max-width="900" scrollable @click.stop>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-history</v-icon>
+          История перемещений · {{ vehicle.plate }}
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="historyDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text style="max-height: 70vh">
+          <div v-if="historyLoading" class="d-flex justify-center pa-6">
+            <v-progress-circular indeterminate color="primary" />
+          </div>
+          <v-alert v-else-if="historyError" type="error" variant="tonal" :text="historyError" />
+          <v-alert v-else-if="historyItems.length === 0" type="info" variant="tonal" text="История перемещений пуста" />
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Что менялось</th>
+                <th>Откуда → Куда</th>
+                <th>Основание</th>
+                <th>Документ</th>
+                <th>Комментарий</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in historyItems" :key="row.id">
+                <td class="text-no-wrap">{{ fmtDateTime(row.changed_at) }}</td>
+                <td>
+                  <v-chip v-if="row.from_owner_org_id !== row.to_owner_org_id" size="x-small" color="warning" variant="tonal">
+                    Собственник
+                  </v-chip>
+                  <v-chip v-else size="x-small" color="info" variant="tonal">
+                    Эксплуатант
+                  </v-chip>
+                </td>
+                <td>{{ row.from_assigned_text || '—' }} → {{ row.to_assigned_text || '—' }}</td>
+                <td>{{ row.basis || '—' }}</td>
+                <td>
+                  <template v-if="row.doc_number">№ {{ row.doc_number }}</template>
+                  <template v-if="row.doc_date"> от {{ fmtDate(row.doc_date) }}</template>
+                  <template v-if="!row.doc_number && !row.doc_date">—</template>
+                </td>
+                <td>{{ row.comment || '—' }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- ─── Диалог: История ТО ─── -->
+    <v-dialog v-model="maintenanceDialog" max-width="900" scrollable @click.stop>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-wrench</v-icon>
+          История ТО · {{ vehicle.plate }}
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="maintenanceDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text style="max-height: 70vh">
+          <div v-if="maintenanceLoading" class="d-flex justify-center pa-6">
+            <v-progress-circular indeterminate color="primary" />
+          </div>
+          <v-alert v-else-if="maintenanceError" type="error" variant="tonal" :text="maintenanceError" />
+          <v-alert v-else-if="maintenanceItems.length === 0" type="info" variant="tonal" text="Записи о ТО/ремонтах отсутствуют" />
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Статус</th>
+                <th>Описание</th>
+                <th class="text-right">Пробег, км</th>
+                <th class="text-right">Стоимость, ₽</th>
+                <th>Исполнитель</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in maintenanceItems" :key="row.id">
+                <td class="text-no-wrap">{{ fmtDate(row.date) }}</td>
+                <td>
+                  <v-chip size="x-small" :color="repairStatusColor(row.status)" variant="tonal">
+                    {{ repairStatusLabel(row.status) }}
+                  </v-chip>
+                </td>
+                <td style="min-width: 220px">{{ row.description || '—' }}</td>
+                <td class="text-right">{{ row.mileage_at_repair?.toLocaleString('ru-RU') || '—' }}</td>
+                <td class="text-right">{{ row.cost_amount ? Number(row.cost_amount).toLocaleString('ru-RU') : '—' }}</td>
+                <td>{{ row.performed_by_name || '—' }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { apiFetch } from '@/api'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import { vehicleCategory, CATEGORY_LABEL } from '@/utils/vehicleCategory'
@@ -172,14 +272,108 @@ const router = useRouter()
 function goToCard() {
   if (props.vehicle.id) router.push(`/fleet/vehicles/${props.vehicle.id}`)
 }
-function goToHistory() {
-  if (props.vehicle.id) router.push(`/fleet/vehicles/${props.vehicle.id}?tab=history`)
-}
-function goToMaintenance() {
-  if (props.vehicle.id) router.push(`/fleet/vehicles/${props.vehicle.id}?tab=todo`)
-}
 function createWaybill() {
   if (props.vehicle.id) router.push(`/fleet/waybills/new?vehicle_id=${props.vehicle.id}`)
+}
+
+// ── Диалог «История перемещений» ─────────────────────────────────────────────
+interface TransferHistoryRow {
+  id: number
+  changed_at: string
+  from_owner_org_id?: number | null
+  to_owner_org_id?: number | null
+  from_owner_org_name?: string | null
+  to_owner_org_name?: string | null
+  from_assigned_org_id?: number | null
+  to_assigned_org_id?: number | null
+  from_assigned_org_name?: string | null
+  to_assigned_org_name?: string | null
+  from_assigned_text?: string | null
+  to_assigned_text?: string | null
+  basis?: string | null
+  doc_number?: string | null
+  doc_date?: string | null
+  comment?: string | null
+}
+const historyDialog = ref(false)
+const historyLoading = ref(false)
+const historyError = ref<string | null>(null)
+const historyItems = ref<TransferHistoryRow[]>([])
+
+async function openHistoryDialog() {
+  if (!props.vehicle.id) return
+  historyDialog.value = true
+  historyLoading.value = true
+  historyError.value = null
+  historyItems.value = []
+  try {
+    const data = await apiFetch<TransferHistoryRow[]>(`/vehicles/${props.vehicle.id}/transfer-history`)
+    historyItems.value = data || []
+  } catch (e: any) {
+    historyError.value = e?.payload?.message || e?.message || 'Не удалось загрузить историю перемещений'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+// ── Диалог «История ТО» ──────────────────────────────────────────────────────
+interface RepairRow {
+  id: number
+  date: string
+  description?: string | null
+  status: string
+  mileage_at_repair?: number | null
+  cost_amount?: number | string | null
+  performed_by_name?: string | null
+}
+const maintenanceDialog = ref(false)
+const maintenanceLoading = ref(false)
+const maintenanceError = ref<string | null>(null)
+const maintenanceItems = ref<RepairRow[]>([])
+
+async function openMaintenanceDialog() {
+  if (!props.vehicle.id) return
+  maintenanceDialog.value = true
+  maintenanceLoading.value = true
+  maintenanceError.value = null
+  maintenanceItems.value = []
+  try {
+    const data = await apiFetch<RepairRow[]>(`/vehicle-repairs?vehicle_id=${props.vehicle.id}`)
+    maintenanceItems.value = data || []
+  } catch (e: any) {
+    maintenanceError.value = e?.payload?.message || e?.message || 'Не удалось загрузить историю ТО'
+  } finally {
+    maintenanceLoading.value = false
+  }
+}
+
+const REPAIR_STATUS_LABEL: Record<string, string> = {
+  planned: 'Запланирован',
+  in_progress: 'В работе',
+  done: 'Выполнен',
+  cancelled: 'Отменён',
+}
+const REPAIR_STATUS_COLOR: Record<string, string> = {
+  planned: 'info',
+  in_progress: 'warning',
+  done: 'success',
+  cancelled: 'grey',
+}
+function repairStatusLabel(s: string): string {
+  return REPAIR_STATUS_LABEL[s] || s
+}
+function repairStatusColor(s: string): string {
+  return REPAIR_STATUS_COLOR[s] || 'grey'
+}
+
+function fmtDateTime(value: string): string {
+  if (!value) return '—'
+  try {
+    const d = new Date(value)
+    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return value
+  }
 }
 
 // ── Vehicle type helpers ─────────────────────────────────────────────────────

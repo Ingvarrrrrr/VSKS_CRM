@@ -2279,6 +2279,9 @@ async function saveDept() {
     }
     deptDialog.value = false
     showSnack(editingDept.value ? 'Отдел обновлен' : 'Отдел создан')
+    dictsCache.value = {}
+    knownDepartments.value = []
+    await loadDicts()
     await loadDeptTree()
     hierarchyRef.value?.refresh()
   } catch (e: any) { showSnack(e?.detail || 'Ошибка', 'error') }
@@ -2290,6 +2293,9 @@ async function deleteDept(node: any) {
     await apiFetch(`/departments/${node.id}`, { method: 'DELETE' })
     if (selectedDept.value?.id === node.id) selectedDept.value = null
     showSnack('Отдел удален')
+    dictsCache.value = {}
+    knownDepartments.value = []
+    await loadDicts()
     await loadDeptTree()
   } catch (e: any) { showSnack(e?.detail || 'Ошибка', 'error') }
 }

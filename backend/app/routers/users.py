@@ -833,6 +833,7 @@ async def get_department_names(
 ):
     """Default + custom departments used in this org (optionally filtered by ?org_id=N)."""
     from app.models.user_org_access import UserOrgAccess
+    from app.models.department import Department
     if org_id is not None:
         # Users whose primary org is org_id OR who have access via user_org_access
         q = (
@@ -845,14 +846,18 @@ async def get_department_names(
             )
             .distinct()
         )
+        dq = select(Department.name).where(Department.org_id == org_id, Department.name.isnot(None))
     else:
         org_ids = get_org_filter(current_user)
         q = select(User.department).where(User.department.isnot(None), User.department != "").distinct()
+        dq = select(Department.name).where(Department.name.isnot(None))
         if org_ids is not None:
             q = q.where(User.org_id.in_(org_ids))
+            dq = dq.where(Department.org_id.in_(org_ids))
     result = await db.execute(q)
-    custom = {r[0] for r in result.all()}
-    all_depts = sorted(set(DEFAULT_DEPARTMENTS) | custom)
+    custom = {r[0] for r in result.all() if r[0]}
+    dept_table = {r[0] for r in (await db.execute(dq)).all() if r[0]}
+    all_depts = sorted(set(DEFAULT_DEPARTMENTS) | custom | dept_table)
     return all_depts
 
 

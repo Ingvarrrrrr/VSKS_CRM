@@ -982,12 +982,13 @@ async def get_plan_graph_version(
             match_result = _match_feo_nodes(snap_tree, live_tree)
             # match_result["matches"] = [(snap_node, live_node, match_type), ...]
 
-            # For each live category, get PurchaseItem totals via FeoPlannedItem
+            # For each live category, get PurchaseItem totals via FeoPlannedItem OR feo_category_id
             live_cat_ids = [c.id for c in live_cats]
-            # Sum PurchaseItem.total_price grouped by feo_category_id (via FeoPlannedItem join)
+            # FCAT-B3: SUM via feo_planned_item_id (legacy) + feo_category_id (new)
             cat_actual_map: dict[int, float] = {}
             if live_cat_ids:
-                actual_rows = (await db.execute(
+                # Source 1: via FeoPlannedItem join (legacy ФАДМ_2026)
+                actual_rows_via_fpi = (await db.execute(
                     select(
                         _FPI.feo_category_id,
                         func.coalesce(func.sum(_PI.total_price), 0).label("actual"),
@@ -996,7 +997,21 @@ async def get_plan_graph_version(
                     .where(_FPI.feo_category_id.in_(live_cat_ids))
                     .group_by(_FPI.feo_category_id)
                 )).all()
-                cat_actual_map = {r.feo_category_id: float(r.actual) for r in actual_rows}
+                for r in actual_rows_via_fpi:
+                    cat_actual_map[r.feo_category_id] = float(r.actual)
+
+                # Source 2: via PurchaseItem.feo_category_id (FCAT-B1 new column)
+                actual_rows_via_cat = (await db.execute(
+                    select(
+                        _PI.feo_category_id,
+                        func.coalesce(func.sum(_PI.total_price), 0).label("actual"),
+                    )
+                    .where(_PI.feo_category_id.in_(live_cat_ids))
+                    .group_by(_PI.feo_category_id)
+                )).all()
+                for r in actual_rows_via_cat:
+                    cat_id = r.feo_category_id
+                    cat_actual_map[cat_id] = cat_actual_map.get(cat_id, 0.0) + float(r.actual)
 
             def _subtree_actual(cat_id: int) -> float:
                 """Recursively sum actual from cat and all its descendants."""

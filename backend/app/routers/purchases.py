@@ -201,6 +201,21 @@ async def _create_plan_graph_version(
     cats_q = select(_FC).where(_FC.subsidy_id == subsidy_id).order_by(_FC.id)
     all_cats = (await db.execute(cats_q)).scalars().all()
 
+    # FCAT-B3: aggregate used_amount via PurchaseItem.feo_category_id for leaf nodes
+    all_cat_ids = [c.id for c in all_cats]
+    cat_used_q = (
+        select(
+            PurchaseItem.feo_category_id,
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+        )
+        .where(PurchaseItem.feo_category_id.in_(all_cat_ids))
+        .group_by(PurchaseItem.feo_category_id)
+    )
+    cat_used_map: dict[int, float] = {
+        r.feo_category_id: float(r.used)
+        for r in (await db.execute(cat_used_q)).all()
+    }
+
     def _build_tree(cats, parent_id=None):
         nodes = []
         for c in cats:
@@ -215,6 +230,7 @@ async def _create_plan_graph_version(
                     "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
                     "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
                     "unit": c.unit,
+                    "used_amount": cat_used_map.get(c.id, 0.0),  # FCAT-B3: агрегат через feo_category_id
                     "children": _build_tree(cats, parent_id=c.id),
                 })
         return nodes

@@ -217,13 +217,13 @@
                         <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
                         <!-- Fix 4/5: Сумма с НДС column -->
                         <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
-                        <!-- F-PIF2: ФЭО позиция — отдельная колонка в expand-row table -->
+                        <!-- F-PIF2/FCAT-F1: ФЭО позиция — отдельная колонка в expand-row table -->
                         <td v-if="props.feoPerItem">
                           <v-autocomplete
-                            v-model="item.feo_planned_item_id"
-                            :items="feoResiduals"
-                            item-title="name"
-                            item-value="feo_item_id"
+                            v-model="item.feo_category_id"
+                            :items="feoLeaves"
+                            item-title="path"
+                            item-value="id"
                             label="ФЭО позиция"
                             variant="outlined"
                             density="compact"
@@ -240,9 +240,13 @@
                             <template #item="{ props: itemProps, item: feoItem }">
                               <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
                                 <template #subtitle>
-                                  План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
+                                  <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
+                                  <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
                                 </template>
                               </v-list-item>
+                            </template>
+                            <template #selection="{ item: feoItem }">
+                              <span style="font-size:12px">{{ feoItem.raw.name }}</span>
                             </template>
                           </v-autocomplete>
                           <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
@@ -544,13 +548,13 @@
                     :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                     item-title="title" item-value="value" density="compact" variant="outlined"
                     hide-details class="my-1" :disabled="props.readonly" />
-                  <!-- F-PIF2: ФЭО позиция — ПОД Тип (компактная вертикальная компоновка) -->
+                  <!-- F-PIF2/FCAT-F1: ФЭО позиция — ПОД Тип (компактная вертикальная компоновка) -->
                   <template v-if="props.feoPerItem">
                     <v-autocomplete
-                      v-model="item.feo_planned_item_id"
-                      :items="feoResiduals"
-                      item-title="name"
-                      item-value="feo_item_id"
+                      v-model="item.feo_category_id"
+                      :items="feoLeaves"
+                      item-title="path"
+                      item-value="id"
                       label="ФЭО позиция"
                       variant="outlined"
                       density="compact"
@@ -566,9 +570,13 @@
                       <template #item="{ props: itemProps, item: feoItem }">
                         <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
                           <template #subtitle>
-                            План: {{ fmtRub(feoItem.raw.planned_amount) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}
+                            <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
+                            <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
                           </template>
                         </v-list-item>
+                      </template>
+                      <template #selection="{ item: feoItem }">
+                        <span style="font-size:12px">{{ feoItem.raw.name }}</span>
                       </template>
                     </v-autocomplete>
                     <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1">
@@ -1399,6 +1407,7 @@ interface EditorItem {
   final_unit_price?: number | null
   final_total?: number | null
   feo_planned_item_id?: number | null
+  feo_category_id?: number | null  // FCAT-F1: per-item привязка к leaf FeoCategory
   // UI-local state (stripped by parent before save):
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -1576,54 +1585,53 @@ const props = withDefaults(defineProps<{
 const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)
 
 // ── F-PIF2: per-item FEO residuals ───────────────────────────────────────────
-interface FeoResidual {
-  feo_item_id: number
+// FCAT-F1: leaf FeoCategory (level=3 без детей) с агрегатами
+interface FeoLeaf {
+  id: number
   name: string
-  category_id: number
-  planned_amount: number
+  parent_id: number | null
+  level: number
+  budget: number
   used_amount: number
   residual: number
+  path: string  // "Экипировка › Комплекты › Костюм-двойка"
 }
-const feoResiduals = ref<FeoResidual[]>([])
+const feoLeaves = ref<FeoLeaf[]>([])
 
 watch(
-  () => [props.subsidyId, props.purchaseIdFeo, props.level2Id] as const,
-  async ([subsidyId, purchaseIdFeo, level2Id]) => {
-    if (!subsidyId) { feoResiduals.value = []; return }
+  () => [props.subsidyId, props.purchaseIdFeo] as const,
+  async ([subsidyId, purchaseIdFeo]) => {
+    if (!subsidyId) { feoLeaves.value = []; return }
     try {
       const qs = purchaseIdFeo != null ? `&exclude_purchase_id=${purchaseIdFeo}` : ''
-      const all = await apiFetch<FeoResidual[]>(`/feo-planned-items/residuals?subsidy_id=${subsidyId}${qs}`)
-      // level2Id игнорируется как фильтр: residuals.category_id — это родитель FeoPlannedItem (level-3),
-      // а level2Id — id level-2 категории. Прямого равенства не будет. Показываем все позиции subsidy,
-      // autocomplete ищет по name.
-      feoResiduals.value = all
+      feoLeaves.value = await apiFetch<FeoLeaf[]>(`/feo-categories/leaves?subsidy_id=${subsidyId}${qs}`)
     } catch {
-      feoResiduals.value = []
+      feoLeaves.value = []
     }
   },
   { immediate: true },
 )
 
-function getFeoResidual(itemId: number | undefined | null): FeoResidual | null {
-  if (!itemId) return null
-  return feoResiduals.value.find(r => r.feo_item_id === itemId) ?? null
+function getFeoLeaf(id: number | undefined | null): FeoLeaf | null {
+  if (!id) return null
+  return feoLeaves.value.find(r => r.id === id) ?? null
 }
 
 function isOverBudget(row: EditorItem): boolean {
-  if (!row.feo_planned_item_id) return false
-  const r = getFeoResidual(row.feo_planned_item_id)
+  if (!row.feo_category_id) return false
+  const r = getFeoLeaf(row.feo_category_id)
   if (!r) return false
-  return (r.used_amount + Number(row.total_price || 0)) > r.planned_amount
+  return (r.used_amount + Number(row.total_price || 0)) > r.budget
 }
 
 function overBudgetDelta(row: EditorItem): number {
-  const r = getFeoResidual(row.feo_planned_item_id)
+  const r = getFeoLeaf(row.feo_category_id)
   if (!r) return 0
-  return (r.used_amount + Number(row.total_price || 0)) - r.planned_amount
+  return (r.used_amount + Number(row.total_price || 0)) - r.budget
 }
 
 function isFeoMissing(row: EditorItem): boolean {
-  return props.feoPerItem && !row.feo_planned_item_id
+  return props.feoPerItem && !row.feo_category_id
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3532,15 +3540,15 @@ async function doSmartImport() {
   }
 }
 
-// F-PIF2: expose helpers for parent (CreateOrderView hard validation)
+// F-PIF2/FCAT-F1: expose helpers for parent (CreateOrderView hard validation)
 defineExpose({
   hasMissingFeoLinks() {
     if (!props.feoPerItem) return false
-    return localItems.value.some(it => !it.feo_planned_item_id)
+    return localItems.value.some(it => !it.feo_category_id)
   },
   missingFeoRowsCount() {
     if (!props.feoPerItem) return 0
-    return localItems.value.filter(it => !it.feo_planned_item_id).length
+    return localItems.value.filter(it => !it.feo_category_id).length
   },
 })
 </script>

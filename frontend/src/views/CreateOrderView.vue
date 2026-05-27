@@ -5800,17 +5800,18 @@ const loadPurchase = async () => {
         contractor_inn: i.contractor_inn || null,
         contractor_name: i.contractor_name || null,
         vat_rate: i.vat_rate ?? null,  // Phase 27.1.15: НДС % per-item из чека ФФД 1.2 (Phase 26-AAA парсил → не подтягивался во фронт)
-        feo_planned_item_id: i.feo_planned_item_id ?? null,  // F-PIF1: per-item FEO
+        feo_planned_item_id: i.feo_planned_item_id ?? null,  // F-PIF1: per-item FEO (legacy)
+        feo_category_id: i.feo_category_id ?? null,  // FCAT-F1: per-item leaf FeoCategory
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }
     })
-    // F-PIF1: auto-detect per-item mode — если >=2 items с разными ненулевыми feo_planned_item_id
+    // F-PIF1/FCAT-F1: auto-detect per-item mode — если >=2 items с разными ненулевыми feo_category_id или feo_planned_item_id
     {
       const feoIds = data.items
-        .map((i: any) => i.feo_planned_item_id)
+        .map((i: any) => i.feo_category_id ?? i.feo_planned_item_id)
         .filter((id: any) => id != null)
       const unique = new Set(feoIds)
       if (unique.size >= 2) form.feo_per_item = true
@@ -6396,6 +6397,8 @@ const doSave = async (adminOverride: boolean) => {
         quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
         // F-PIF1: в режиме single — очищаем per-item feo_planned_item_id (нет глобально выбранного PlannedItem)
         feo_planned_item_id: form.feo_per_item ? (rest.feo_planned_item_id ?? null) : null,
+        // FCAT-F1: per-item leaf FeoCategory
+        feo_category_id: form.feo_per_item ? (rest.feo_category_id ?? null) : null,
       }))
     // F-PIF1: feo_per_item — UI-only поле, не отправляем на бэкенд
     const { feo_per_item: _feoPerItem, ...formWithoutFeoPerItem } = form

@@ -1423,6 +1423,17 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"FCAT-B1 feo_category_id column setup skipped (non-fatal): {e}"
         )
+
+    # SN-UX: purchases.service_note_to_user_id column
+    try:
+        from check_schema import _ensure_purchases_service_note_to_user_id_column
+        from .database import engine as _engine_snux
+        async with _engine_snux.begin() as conn:
+            await _ensure_purchases_service_note_to_user_id_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"SN-UX service_note_to_user_id column setup skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:

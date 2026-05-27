@@ -597,6 +597,7 @@ class PurchaseCreate(BaseModel):
     service_deadline_date: Optional[date] = None    # mode='deadline'
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4: ответственный исполнитель
+    service_note_to_user_id: Optional[int] = None  # SN-UX: адресат служебной записки
     vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
     # Phase 26-K: доп. соглашение и дата заказа
     agreement_number: Optional[str] = None

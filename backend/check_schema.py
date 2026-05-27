@@ -303,6 +303,22 @@ async def _ensure_purchase_items_feo_category_id_column(conn) -> None:
         print(f"  ⚠️   purchase_items.feo_category_id ensure failed: {e}")
 
 
+async def _ensure_purchases_service_note_to_user_id_column(conn) -> None:
+    """SN-UX: ADD service_note_to_user_id FK column to purchases (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE purchases "
+            "ADD COLUMN IF NOT EXISTS service_note_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_purchases_service_note_to_user_id "
+            "ON purchases(service_note_to_user_id)"
+        ))
+        print("  ✅  purchases.service_note_to_user_id column ensured (SN-UX)")
+    except Exception as e:
+        print(f"  ⚠️   purchases.service_note_to_user_id ensure failed: {e}")
+
+
 async def _backfill_contract_items_from_purchase_items(conn) -> int:
     """Phase 27.1 D-06: idempotent backfill 1\u21941 \u0434\u043b\u044f legacy \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted+.
 

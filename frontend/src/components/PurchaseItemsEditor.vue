@@ -3,7 +3,7 @@
     <!-- Header row -->
     <div class="d-flex align-center justify-space-between mb-2 flex-wrap ga-2">
       <span class="text-subtitle-1 font-weight-bold">
-        {{ itemShape === 'purchase' ? 'Позиции закупки' : 'Позиции' }}
+        {{ props.itemsTitle ?? (itemShape === 'purchase' ? 'Позиции закупки' : 'Позиции') }}
       </span>
       <div class="d-flex align-center ga-2 flex-wrap">
         <v-btn v-if="selectedItemIdxs.length > 0 && !props.readonly"
@@ -198,9 +198,12 @@
                             hide-details class="my-1" :disabled="props.readonly" />
                         </td>
                         <td>
-                          <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                            variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                            @update:model-value="calcItemTotal(idx)" />
+                          <v-text-field
+                            :model-value="formatNumber(item.unit_price)"
+                            density="compact" variant="outlined" hide-details class="my-1"
+                            :disabled="props.readonly"
+                            @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
+                          />
                         </td>
                         <!-- Fix 4/5: НДС % column -->
                         <td v-if="showVatColumnsInExpandRow">
@@ -476,7 +479,7 @@
       <!-- Legacy flat table (when stagesEnabled is false, i.e. pre-Phase 27.1.1) -->
       <template v-else>
         <div class="overflow-x-auto">
-          <v-table density="compact">
+          <v-table density="compact" class="items-flat-table">
             <thead>
               <tr>
                 <th style="width:36px;padding:0 4px;text-align:center">
@@ -595,12 +598,15 @@
                     hide-details class="my-1" :disabled="props.readonly" />
                 </td>
                 <td>
-                  <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                    variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                    @update:model-value="calcItemTotal(idx)" />
+                  <v-text-field
+                    :model-value="formatNumber(item.unit_price)"
+                    density="compact" variant="outlined" hide-details class="my-1"
+                    :disabled="props.readonly"
+                    @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
+                  />
                 </td>
                 <td>
-                  <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                  <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
                     variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
                 </td>
                 <td>
@@ -795,12 +801,15 @@
                   hide-details class="my-1" :disabled="props.readonly" />
               </td>
               <td>
-                <v-text-field v-model.number="item.unit_price" type="number" density="compact"
-                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                  @update:model-value="calcItemTotal(idx)" />
+                <v-text-field
+                  :model-value="formatNumber(item.unit_price)"
+                  density="compact" variant="outlined" hide-details class="my-1"
+                  :disabled="props.readonly"
+                  @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
+                />
               </td>
               <td>
-                <v-text-field :model-value="item.total_price ?? ''" readonly density="compact"
+                <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
                   variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
               </td>
               <td>
@@ -1557,6 +1566,8 @@ const props = withDefaults(defineProps<{
   level2Id?: number | null
   subsidyId?: number | null
   purchaseIdFeo?: number | null
+  // SN-UX: кастомный заголовок секции позиций
+  itemsTitle?: string
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1579,6 +1590,7 @@ const props = withDefaults(defineProps<{
   level2Id: null,
   subsidyId: null,
   purchaseIdFeo: null,
+  itemsTitle: undefined,
 })
 
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
@@ -3540,6 +3552,21 @@ async function doSmartImport() {
   }
 }
 
+// SN-UX: форматирование чисел с разделителями тысяч (unit_price / total_price)
+function formatNumber(v: number | null | undefined): string {
+  if (v == null || v === ('' as any)) return ''
+  const n = Number(v)
+  if (isNaN(n)) return String(v)
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: 2, useGrouping: true })
+}
+function parseNumber(s: string | number | null | undefined): number | null {
+  if (s == null || s === '' as any) return null
+  if (typeof s === 'number') return s
+  const cleaned = String(s).replace(/[\s\u00A0]/g, '').replace(',', '.')
+  const n = parseFloat(cleaned)
+  return isNaN(n) ? null : n
+}
+
 // F-PIF2/FCAT-F1: expose helpers for parent (CreateOrderView hard validation)
 defineExpose({
   hasMissingFeoLinks() {
@@ -3735,4 +3762,11 @@ th { position: relative; }
   background: rgba(244, 67, 54, 0.06);
   border-color: rgba(244, 67, 54, 0.5);
 }
+
+/* SN-UX: шрифт 12px во всех inline-полях flat-таблицы позиций */
+.items-flat-table :deep(.v-field__input) { font-size: 12px !important; }
+.items-flat-table :deep(.v-field__field) { font-size: 12px; }
+.items-flat-table :deep(.v-select__selection) { font-size: 12px; }
+.items-flat-table :deep(.v-autocomplete .v-field__input) { font-size: 12px !important; }
+.items-flat-table :deep(.v-textarea .v-field__input) { font-size: 12px !important; }
 </style>

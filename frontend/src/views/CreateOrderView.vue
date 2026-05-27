@@ -249,6 +249,31 @@
                 </template>
               </v-autocomplete>
             </v-col>
+            <!-- SN-UX: Кому служебная записка (адресат) — только для service_note_delivery -->
+            <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="4">
+              <v-autocomplete
+                v-model="form.service_note_to_user_id"
+                :items="orgUsersList"
+                item-title="full_name"
+                item-value="id"
+                label="Кому служебная записка"
+                variant="outlined"
+                density="compact"
+                clearable
+                hide-no-data
+                hint="Адресат служебной записки"
+                persistent-hint
+                autocomplete="off"
+                @update:model-value="onServiceNoteToUserChange"
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps">
+                    <template #title>{{ item.raw.full_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
             <!-- Phase 28 B4: Ответственный исполнитель (user FK, обязательное) -->
             <v-col cols="12" md="4">
               <v-autocomplete
@@ -256,12 +281,12 @@
                 :items="orgUsersList"
                 item-title="full_name"
                 item-value="id"
-                label="Ответственный исполнитель *"
+                :label="formMode === 'service_note_delivery' ? 'Ответственный исполнитель' : 'Ответственный исполнитель *'"
                 variant="outlined"
                 density="compact"
                 hide-no-data
-                :rules="[v => !!v || 'Обязательное поле']"
-                hint="Кто ведёт закупку в системе"
+                :rules="formMode === 'service_note_delivery' ? [] : [v => !!v || 'Обязательное поле']"
+                :hint="formMode === 'service_note_delivery' ? 'На кого расписана СЗ (автоматически = адресат)' : 'Кто ведёт закупку в системе'"
                 persistent-hint
                 autocomplete="off"
               >
@@ -276,24 +301,27 @@
             <!-- FEO level 1 — появляется после выбора субсидии -->
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo1" :items="feoLevel1Options" item-title="name" item-value="id"
-                label="Категория ФЭО (ур.1) *" variant="outlined" density="compact" clearable
+                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.1)' : 'Категория ФЭО (ур.1) *'"
+                variant="outlined" density="compact" clearable
                 hint="Направление расходования средств" persistent-hint
-                :error-messages="feoSaveAttempted && !selectedFeo1 ? 'Обязательное поле' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo1 && formMode !== 'service_note_delivery' ? 'Обязательное поле' : ''"
                 @update:model-value="onFeo1Change" />
             </v-col>
             <!-- FEO level 2 — появляется после выбора ур.1 -->
             <v-col v-if="selectedFeo1 && feoLevel2Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo2" :items="feoLevel2Options" item-title="name" item-value="id"
-                label="Категория ФЭО (ур.2) *" variant="outlined" density="compact" clearable
-                :error-messages="feoSaveAttempted && !selectedFeo2 ? 'Выберите уточняющую категорию' : ''"
+                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
+                variant="outlined" density="compact" clearable
+                :error-messages="feoSaveAttempted && !selectedFeo2 && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo2Change" />
             </v-col>
             <!-- FEO level 3 — появляется после выбора ур.2 -->
             <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
-                label="Категория ФЭО (ур.3) *" variant="outlined" density="compact" clearable
+                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
+                variant="outlined" density="compact" clearable
                 :disabled="form.feo_per_item"
-                :error-messages="feoSaveAttempted && !selectedFeo3 && !form.feo_per_item ? 'Выберите уточняющую категорию' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo3 && !form.feo_per_item && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
             </v-col>
             <!-- F-PIF1: тогл «Разные ФЭО позиции для каждого товара» -->
@@ -594,7 +622,7 @@
       <!-- 2. Позиции закупки -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
-          <span>{{ formMode === 'service_note_delivery' ? 'Оборудование для выдачи' : 'Позиции закупки' }}</span>
+          <span>{{ formMode === 'service_note_delivery' ? 'Что надо выдать' : 'Позиции закупки' }}</span>
           <div class="d-flex align-center ga-2">
             <v-btn
               v-if="canSplitPurchase"
@@ -619,6 +647,7 @@
             ref="itemsEditorRef"
             v-model="items"
             v-model:contract-items="contractItemsState"
+            :items-title="formMode === 'service_note_delivery' ? 'Что надо выдать' : undefined"
             :show-contract-columns="canShowContractColumns"
             :unified-stages-view="canShowContractColumns"
             :purchase-status="form.status"
@@ -2211,7 +2240,7 @@
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap align-center">
         <v-btn type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
-          {{ isEdit ? 'Сохранить' : formMode === 'advance_report' ? 'Сформировать авансовый' : 'Создать закупку' }}
+          {{ isEdit ? 'Сохранить' : formMode === 'advance_report' ? 'Сформировать авансовый' : formMode === 'service_note_delivery' ? 'Создать служебную записку' : 'Создать закупку' }}
         </v-btn>
         <!-- Phase 26: индикатор автосохранения -->
         <v-chip
@@ -3553,6 +3582,8 @@ const form = reactive({
   reimbursement_user_id: null as number | null,
   // Phase 28 B4: ответственный исполнитель (user FK)
   assigned_user_id: null as number | null,
+  // SN-UX: адресат служебной записки
+  service_note_to_user_id: null as number | null,
   // Phase 26-U-3: режим НДС
   vat_mode: 'uniform' as string,
   // Phase 28: форма договора (определяет шаблон при скачивании)
@@ -5269,6 +5300,8 @@ const feoSaveAttempted = ref(false)
 
 // Ошибка выбора ФЭО: нужно выбрать самый глубокий доступный уровень
 const feoValidationError = computed((): string | null => {
+  // SN-UX: в режиме служебной записки ФЭО необязательны
+  if (formMode.value === 'service_note_delivery') return null
   if (!form.subsidy_id || !feoLevel1Options.value.length) return null
   if (!selectedFeo1.value) return 'Выберите категорию ФЭО'
   if (feoLevel2Options.value.length > 0 && !selectedFeo2.value) return 'Выберите категорию ФЭО уровня 2'
@@ -5301,6 +5334,13 @@ const onFeo1Change = () => { selectedFeo2.value = null; selectedFeo3.value = nul
 const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
 const onFeo3Change = () => { updateFeoId() }
 const onFeoPerItemChange = () => { /* режим переключён — selectedFeo3 остаётся для режима single */ }
+
+// SN-UX: при выборе адресата СЗ — автоматически ставим его как ответственного, если пуст
+const onServiceNoteToUserChange = (userId: number | null) => {
+  if (userId && !form.assigned_user_id) {
+    form.assigned_user_id = userId
+  }
+}
 
 // Resolve feo_category_id → path of ancestors for cascade
 const resolveFeeLevels = (id: number) => {
@@ -5730,6 +5770,8 @@ const loadPurchase = async () => {
     })),
     // Phase 28 B4: ответственный исполнитель
     assigned_user_id: data.assigned_user_id ?? null,
+    // SN-UX: адресат служебной записки
+    service_note_to_user_id: data.service_note_to_user_id ?? null,
     // Phase 26-U-3: НДС режим
     vat_mode: data.vat_mode || 'uniform',
     // Phase 28: форма договора
@@ -6322,7 +6364,8 @@ onMounted(async () => {
       form.reimbursement_user_id = currentUserId
     }
     // Phase 28 B4: default ответственный исполнитель = текущий пользователь
-    if (!form.assigned_user_id && currentUserId) {
+    // SN-UX: для режима СЗ не подставляем текущего пользователя — ответственный = адресат СЗ
+    if (!form.assigned_user_id && currentUserId && formMode.value !== 'service_note_delivery') {
       form.assigned_user_id = currentUserId
     }
     // 26-F4a: пустой плейсхолдер для закрывающего документа при создании

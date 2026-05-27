@@ -1148,6 +1148,8 @@ PATCHABLE_FIELDS = {
     'warranty_period_days', 'is_retroactive',
     # Phase 29: связь закупки с ТС
     'vehicle_id',
+    # SN-UX: адресат служебной записки
+    'service_note_to_user_id',
 }
 
 

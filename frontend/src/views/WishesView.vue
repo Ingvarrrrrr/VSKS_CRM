@@ -472,7 +472,7 @@
                   item-shape="purchase"
                   :purchase-id="null"
                   :default-unit="'шт.'"
-                  :default-country="'Российская Федерация'"
+                  :default-country="'РФ'"
                   :allowed-item-types="['товар','услуга','работа']"
                   :supports-excel-import="true"
                   :supports-smart-import="true"
@@ -1110,7 +1110,7 @@ async function openEditDialog(wish: Wish) {
     unit: i.unit || 'шт.',
     unit_price: i.unit_price != null ? Number(i.unit_price) : null,
     total_price: i.total_price != null ? Number(i.total_price) : null,
-    country_origin: i.country_origin || 'Российская Федерация',
+    country_origin: i.country_origin || 'РФ',
   })) as any
   wishDialog.value = true
 }

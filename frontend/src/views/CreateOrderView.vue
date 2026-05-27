@@ -625,7 +625,7 @@
             item-shape="purchase"
             :purchase-id="purchaseId"
             :default-unit="'шт.'"
-            :default-country="'Российская Федерация'"
+            :default-country="'РФ'"
             :allowed-item-types="['товар','услуга','работа']"
             :supports-excel-import="true"
             :supports-smart-import="true"

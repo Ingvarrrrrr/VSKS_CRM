@@ -259,7 +259,7 @@
                               hide-details style="min-width:100px" class="my-1" :disabled="props.readonly" />
                             <!-- Страна -->
                             <v-text-field v-model="item.country_origin" density="compact"
-                              variant="outlined" hide-details class="my-1" placeholder="Россия"
+                              variant="outlined" hide-details class="my-1" placeholder="РФ"
                               style="min-width:120px" :disabled="props.readonly" />
                             <!-- Контрагент (advance_report column mode) -->
                             <template v-if="showContractorColumn">
@@ -482,8 +482,7 @@
                 </th>
                 <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
                 <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
-                <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
-                <th v-if="props.feoPerItem" style="min-width:240px">ФЭО позиция *</th>
+                <th :style="resizeStyle('type')">Тип{{ props.feoPerItem ? ' / ФЭО *' : '' }}<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
                 <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
                 <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
                 <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
@@ -545,39 +544,38 @@
                     :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                     item-title="title" item-value="value" density="compact" variant="outlined"
                     hide-details class="my-1" :disabled="props.readonly" />
-                </td>
-                <!-- F-PIF2: ФЭО позиция — отдельная колонка в flat-table -->
-                <td v-if="props.feoPerItem">
-                  <v-autocomplete
-                    v-model="item.feo_planned_item_id"
-                    :items="feoResiduals"
-                    item-title="name"
-                    item-value="feo_item_id"
-                    label="ФЭО позиция"
-                    variant="outlined"
-                    density="compact"
-                    clearable
-                    hide-details
-                    class="my-1"
-                    style="min-width:200px"
-                    :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
-                    :error="isFeoMissing(item)"
-                    :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
-                    :disabled="props.readonly"
-                    @update:model-value="emit('items-changed')"
-                  >
-                    <template #item="{ props: itemProps, item: feoItem }">
-                      <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                        <template #subtitle>
-                          План: {{ fmtRub(feoItem.raw.planned_amount) }} • Использовано: {{ fmtRub(feoItem.raw.used_amount) }} • Остаток: {{ fmtRub(feoItem.raw.residual) }}
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                  <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
-                    <v-icon icon="mdi-alert-outline" size="14" />
-                    Превышение: {{ fmtRub(overBudgetDelta(item)) }}
-                  </div>
+                  <!-- F-PIF2: ФЭО позиция — ПОД Тип (компактная вертикальная компоновка) -->
+                  <template v-if="props.feoPerItem">
+                    <v-autocomplete
+                      v-model="item.feo_planned_item_id"
+                      :items="feoResiduals"
+                      item-title="name"
+                      item-value="feo_item_id"
+                      label="ФЭО позиция"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      hide-details="auto"
+                      class="my-1"
+                      :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
+                      :error="isFeoMissing(item)"
+                      :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
+                      :disabled="props.readonly"
+                      @update:model-value="emit('items-changed')"
+                    >
+                      <template #item="{ props: itemProps, item: feoItem }">
+                        <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
+                          <template #subtitle>
+                            План: {{ fmtRub(feoItem.raw.planned_amount) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}
+                          </template>
+                        </v-list-item>
+                      </template>
+                    </v-autocomplete>
+                    <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1">
+                      <v-icon icon="mdi-alert-outline" size="12" />
+                      <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
+                    </div>
+                  </template>
                 </td>
                 <td>
                   <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -599,7 +597,7 @@
                 </td>
                 <td>
                   <v-text-field v-model="item.country_origin" density="compact"
-                    variant="outlined" hide-details class="my-1" placeholder="Россия" :disabled="props.readonly" />
+                    variant="outlined" hide-details class="my-1" placeholder="РФ" :disabled="props.readonly" />
                 </td>
                 <td v-if="props.vatMode === 'per_item'">
                   <v-combobox v-model="item.vat_rate"
@@ -1152,16 +1150,10 @@
                 <span class="text-medium-emphasis">Для фото чека: лучший результат даёт QR-код ФНС (приложение «Проверка чека»). OCR-распознавание текста менее точно.</span>
               </div>
             </v-alert>
-            <div class="mb-4">
-              <v-file-input
-                v-model="smartImportFileList"
-                label="Выберите файл для умного импорта"
-                accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
-                variant="outlined" density="compact" prepend-icon="mdi-file-document-outline"
-                show-size clearable
-                @update:model-value="onSmartFileChange"
-              />
-            </div>
+            <FileDropZone v-model="smartImportFile"
+              accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
+              hint="Excel, PDF, Word, HTML, фото чека — перетащите или нажмите"
+              class="mb-4" />
 
             <!-- Preview table -->
             <template v-if="smartImportPreview && smartImportPreview.length">
@@ -1445,7 +1437,7 @@ interface PriceLink {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
-const COUNTRIES = ['Российская Федерация', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
+const COUNTRIES = ['РФ', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
 
 // Fix 3 + Fix 4/5: VAT options (5/10/22/Без НДС/custom)
 const VAT_RATE_OPTIONS = [
@@ -1564,7 +1556,7 @@ const props = withDefaults(defineProps<{
   allowedItemTypes: () => ['товар', 'услуга', 'работа'],
   defaultItemType: 'товар',
   defaultUnit: 'шт.',
-  defaultCountry: 'Россия',
+  defaultCountry: 'РФ',
   supportsExcelImport: true,
   supportsSmartImport: true,
   supportsFullProductDialog: true,
@@ -1601,7 +1593,10 @@ watch(
     try {
       const qs = purchaseIdFeo != null ? `&exclude_purchase_id=${purchaseIdFeo}` : ''
       const all = await apiFetch<FeoResidual[]>(`/feo-planned-items/residuals?subsidy_id=${subsidyId}${qs}`)
-      feoResiduals.value = level2Id != null ? all.filter(x => x.category_id === level2Id) : all
+      // level2Id игнорируется как фильтр: residuals.category_id — это родитель FeoPlannedItem (level-3),
+      // а level2Id — id level-2 категории. Прямого равенства не будет. Показываем все позиции subsidy,
+      // autocomplete ищет по name.
+      feoResiduals.value = all
     } catch {
       feoResiduals.value = []
     }
@@ -2967,18 +2962,54 @@ async function doMappedImport() {
         }
       }
     } else {
-      // Wish / no-pid context — build rows client-side
+      // Wish / no-pid context — вызов backend import-mapped-nopid
       const sheet = importPreviewData.value?.sheets?.find((s: any) => s.name === importSelectedSheet.value)
         ?? importPreviewData.value?.sheets?.[0]
       if (!sheet) { showSnack('Нет данных превью', 'error'); return }
+      const fdNoPid = new FormData()
+      fdNoPid.append('file', itemsImportFile.value as File)
+      const paramsNoPid = new URLSearchParams()
+      if (importSelectedSheet.value) paramsNoPid.set('sheet_name', importSelectedSheet.value)
       const headerOffset = sheet.header_row_offset ?? 0
-      const dataRows = (sheet.sample as any[][]).slice(headerOffset + 1)
-      const newItems: EditorItem[] = dataRows
-        .filter(row => {
-          const nameIdx = dragMapping.value['item_name']
-          return nameIdx !== null && nameIdx !== undefined && String(row[nameIdx] ?? '').trim()
-        })
-        .map(row => buildEditorItemFromRow(row, dragMapping.value))
+      if (headerOffset > 0) paramsNoPid.set('header_row_offset', String(headerOffset))
+      const paramMapNoPid: Record<string, string> = {
+        item_name: 'col_item_name',
+        description: 'col_description',
+        quantity: 'col_quantity',
+        unit_price: 'col_unit_price',
+        total_price: 'col_total_price',
+        unit: 'col_unit',
+      }
+      for (const [field, colIdx] of Object.entries(dragMapping.value)) {
+        if (colIdx !== null && colIdx !== undefined && paramMapNoPid[field]) {
+          paramsNoPid.set(paramMapNoPid[field], String(colIdx))
+        }
+      }
+      const token = localStorage.getItem('auth_token') || ''
+      const respNoPid = await fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+        body: fdNoPid,
+      })
+      if (!respNoPid.ok) {
+        const errText = await respNoPid.text().catch(() => '')
+        let detail = `Ошибка ${respNoPid.status}`
+        try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
+        throw new Error(detail)
+      }
+      const dataNoPid = await respNoPid.json()
+      const backendItems: any[] = dataNoPid.items || []
+      const newItems: EditorItem[] = backendItems.map((bi) => ({
+        product_id: null,
+        item_name: bi.item_name || '',
+        item_type: bi.item_type || 'товар',
+        quantity: bi.quantity ?? 1,
+        unit: bi.unit || 'шт',
+        unit_price: bi.unit_price ?? 0,
+        total_price: bi.total_price ?? 0,
+        country_origin: 'РФ',
+        _description: bi.description || '',
+      } as EditorItem))
       localItems.value = [...localItems.value, ...newItems]
       emitUpdate()
       itemsImportResult.value = { imported: newItems.length, added: newItems.length }

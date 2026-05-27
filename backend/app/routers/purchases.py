@@ -792,6 +792,13 @@ async def create_purchase(
     # автора (list_purchases фильтрует по visible_user_ids; NULL IN (...) = false).
     if not dump.get("assigned_user_id"):
         dump["assigned_user_id"] = current_user.id
+    # SN-UX: для СЗ авто-заполнить автора (текущий) и дату (сейчас) если фронт не прислал
+    if dump.get("purchase_basis") == "service_note":
+        if not dump.get("service_note_by"):
+            dump["service_note_by"] = current_user.id
+        if not dump.get("service_note_at"):
+            from datetime import datetime, timezone
+            dump["service_note_at"] = datetime.now(timezone.utc)
     p = Purchase(**dump)
     db.add(p)
     await db.flush()  # get p.id before commit

@@ -101,10 +101,13 @@
                         class="d-flex align-center pa-1 rounded unassigned-user-row"
                         @click="openEditUser(u)">
                         <UserAvatar :photo-url="u.photo_url" :avatar="u.avatar" :size="26" square class="mr-2 flex-shrink-0" />
-                        <div class="flex-1 min-width-0">
-                          <span class="text-body-2">{{ u.full_name || u.username }}</span>
-                          <span class="text-caption text-medium-emphasis ml-2">{{ u.position || '' }}</span>
-                        </div>
+                        <span class="text-body-2">{{ u.full_name || u.username }}</span>
+                        <span class="text-caption text-medium-emphasis ml-2">{{ u.position || '' }}</span>
+                        <v-spacer />
+                        <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" class="dept-member-action"
+                          title="Редактировать сотрудника" @click.stop="openEditUser(u)" />
+                        <v-btn v-if="isAdmin" icon="mdi-close" size="x-small" variant="text" color="error" class="dept-member-action"
+                          title="Удалить пользователя" @click.stop="confirmDelete(u)" />
                       </div>
                     </div>
                   </v-expand-transition>

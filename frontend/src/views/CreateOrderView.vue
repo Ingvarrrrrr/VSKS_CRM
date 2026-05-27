@@ -274,6 +274,56 @@
                 </template>
               </v-autocomplete>
             </v-col>
+            <!-- SN-UX: От кого (автор СЗ, авто = текущий пользователь, редактируемо) -->
+            <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="4">
+              <v-autocomplete
+                v-model="form.service_note_by"
+                :items="orgUsersList"
+                item-title="full_name"
+                item-value="id"
+                label="От кого"
+                variant="outlined"
+                density="compact"
+                clearable
+                hide-no-data
+                hint="Автор служебной записки (по умолчанию — вы)"
+                persistent-hint
+                autocomplete="off"
+              >
+                <template #item="{ item, props: itemProps }">
+                  <v-list-item v-bind="itemProps">
+                    <template #title>{{ item.raw.full_name }}</template>
+                    <template #subtitle>{{ item.raw.position || '' }}</template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+            <!-- SN-UX: Дата СЗ (авто = сегодня, редактируемо) -->
+            <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="2">
+              <v-text-field
+                v-model="form.service_note_at"
+                type="date"
+                label="Дата СЗ"
+                variant="outlined"
+                density="compact"
+                hint="По умолчанию — сегодня"
+                persistent-hint
+              />
+            </v-col>
+            <!-- SN-UX: Обоснование (для каких целей требуется) -->
+            <v-col v-if="formMode === 'service_note_delivery'" cols="12">
+              <v-textarea
+                v-model="form.service_note_text"
+                label="Обоснование *"
+                variant="outlined"
+                density="compact"
+                rows="3"
+                auto-grow
+                hint="Для каких целей необходимо это оборудование / материалы"
+                persistent-hint
+                :rules="[v => !!(v && String(v).trim()) || 'Обязательное поле']"
+              />
+            </v-col>
             <!-- Phase 28 B4: Ответственный исполнитель (user FK, обязательное) -->
             <v-col cols="12" md="4">
               <v-autocomplete
@@ -621,8 +671,7 @@
 
       <!-- 2. Позиции закупки -->
       <v-card variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-space-between">
-          <span>{{ formMode === 'service_note_delivery' ? 'Что надо выдать' : 'Позиции закупки' }}</span>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-end">
           <div class="d-flex align-center ga-2">
             <v-btn
               v-if="canSplitPurchase"
@@ -2239,7 +2288,7 @@
 
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap align-center">
-        <v-btn type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
+        <v-btn ref="saveBtnRef" type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
           {{ isEdit ? 'Сохранить' : formMode === 'advance_report' ? 'Сформировать авансовый' : formMode === 'service_note_delivery' ? 'Создать служебную записку' : 'Создать закупку' }}
         </v-btn>
         <!-- Phase 26: индикатор автосохранения -->
@@ -3271,6 +3320,12 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    <ValidationArrows
+      :active="validationArrowsActive"
+      :from-el="validationArrowFrom"
+      :to-els="validationArrowTargets"
+      @dismiss="dismissValidationArrows"
+    />
   </v-container>
 </template>
 
@@ -3289,6 +3344,7 @@ import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
+import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
@@ -3584,6 +3640,11 @@ const form = reactive({
   assigned_user_id: null as number | null,
   // SN-UX: адресат служебной записки
   service_note_to_user_id: null as number | null,
+  // SN-UX: автор СЗ + дата СЗ (auto-fill при создании, редактируемы)
+  service_note_by: null as number | null,
+  service_note_at: null as string | null,
+  // SN-UX: текст обоснования служебной записки
+  service_note_text: '' as string,
   // Phase 26-U-3: режим НДС
   vat_mode: 'uniform' as string,
   // Phase 28: форма договора (определяет шаблон при скачивании)
@@ -4010,6 +4071,35 @@ const products = ref<Product[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
 const formRef = ref()
 const saving = ref(false)
+// Validation arrows: подсветка обязательных полей при провальной валидации
+const saveBtnRef = ref<any>(null)
+const validationArrowsActive = ref(false)
+const validationArrowFrom = ref<HTMLElement | null>(null)
+const validationArrowTargets = ref<HTMLElement[]>([])
+let validationArrowsTimer: number | null = null
+function dismissValidationArrows() {
+  validationArrowsActive.value = false
+  validationArrowFrom.value = null
+  validationArrowTargets.value = []
+  if (validationArrowsTimer) { window.clearTimeout(validationArrowsTimer); validationArrowsTimer = null }
+}
+function showValidationArrows() {
+  // querySelector внутри формы — все ошибочные v-input
+  const formEl = formRef.value?.$el as HTMLElement | undefined
+  if (!formEl) return
+  const errors = Array.from(formEl.querySelectorAll('.v-input.v-input--error')) as HTMLElement[]
+  if (!errors.length) return
+  // Кнопка-источник
+  const btn = (saveBtnRef.value?.$el ?? saveBtnRef.value) as HTMLElement | null
+  if (!btn) return
+  // Скроллим к первому ошибочному, чтобы он был в области видимости
+  errors[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  validationArrowFrom.value = btn
+  validationArrowTargets.value = errors.slice(0, 8) // не больше 8 чтобы не засорять экран
+  validationArrowsActive.value = true
+  if (validationArrowsTimer) window.clearTimeout(validationArrowsTimer)
+  validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
+}
 
 // ── Конец месяца quick-fill ───────────────────────────────────────────────
 const endOfMonthMenu = ref(false)
@@ -5772,6 +5862,10 @@ const loadPurchase = async () => {
     assigned_user_id: data.assigned_user_id ?? null,
     // SN-UX: адресат служебной записки
     service_note_to_user_id: data.service_note_to_user_id ?? null,
+    // SN-UX: автор СЗ + дата СЗ
+    service_note_by: data.service_note_by ?? null,
+    service_note_at: data.service_note_at ? String(data.service_note_at).slice(0, 10) : null,
+    service_note_text: data.service_note_text ?? '',
     // Phase 26-U-3: НДС режим
     vat_mode: data.vat_mode || 'uniform',
     // Phase 28: форма договора
@@ -6368,6 +6462,11 @@ onMounted(async () => {
     if (!form.assigned_user_id && currentUserId && formMode.value !== 'service_note_delivery') {
       form.assigned_user_id = currentUserId
     }
+    // SN-UX: для новой СЗ — автор = текущий пользователь, дата = сегодня (оба редактируемы)
+    if (formMode.value === 'service_note_delivery') {
+      if (!form.service_note_by && currentUserId) form.service_note_by = currentUserId
+      if (!form.service_note_at) form.service_note_at = new Date().toISOString().slice(0, 10)
+    }
     // 26-F4a: пустой плейсхолдер для закрывающего документа при создании
     ensurePlaceholderDoc()
   }
@@ -6378,9 +6477,12 @@ const save = async () => {
   feoSaveAttempted.value = true
   const feoErr = feoValidationError.value
   if (!valid || feoErr) {
-    if (feoErr) showSnack(feoErr, 'error')
+    showSnack(feoErr || 'Необходимо заполнить выделенные поля', 'error')
+    await nextTick()
+    showValidationArrows()
     return
   }
+  dismissValidationArrows()
   if (form.item_type === 'mixed') {
     const missingType = items.value.filter(i => i.item_name?.trim() && !i.item_type)
     if (missingType.length) {
@@ -6478,6 +6580,8 @@ const doSave = async (adminOverride: boolean) => {
       acceptance_doc_date: form.acceptance_doc_date || null,
       acceptance_docs: acceptanceDocs.value.filter(d => d.name?.trim() || d.number?.trim() || d.date?.trim() || (d.amount !== null && d.amount !== undefined)),
       payment_doc_date: form.payment_doc_date || null,
+      // SN-UX: бэкенд ждёт datetime (YYYY-MM-DDTHH:MM:SS), фронт хранит YYYY-MM-DD → дополним
+      service_note_at: form.service_note_at ? (String(form.service_note_at).length === 10 ? `${form.service_note_at}T00:00:00` : form.service_note_at) : null,
       items: validItems,
       subsidy_allocations: form.subsidy_allocations.filter(a => a.subsidy_id > 0),
     }

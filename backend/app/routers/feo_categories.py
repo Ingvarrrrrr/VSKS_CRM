@@ -41,6 +41,82 @@ async def get_purchase_totals(
     return {r.feo_category_id: float(r.total_planned) for r in rows}
 
 
+@router.get("/leaves")
+async def get_feo_leaves(
+    subsidy_id: int = Query(...),
+    exclude_purchase_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Returns leaf FeoCategory nodes (без детей) with aggregated used_amount via feo_category_id.
+
+    Response: [{id, name, parent_id, level, budget, used_amount, residual, path}]
+    where path = "Direction › Subcategory › LeafName".
+    """
+    from sqlalchemy import select, func as sqlfunc
+    from app.models.purchase_item import PurchaseItem
+
+    # Все FeoCategory для subsidy
+    cats_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.id)
+    all_cats = (await db.execute(cats_q)).scalars().all()
+    if not all_cats:
+        return []
+
+    cat_by_id = {c.id: c for c in all_cats}
+    children_count: dict[int, int] = {}
+    for c in all_cats:
+        if c.parent_id is not None:
+            children_count[c.parent_id] = children_count.get(c.parent_id, 0) + 1
+
+    # Leaves = категории у которых нет детей в feo_categories
+    leaves = [c for c in all_cats if children_count.get(c.id, 0) == 0]
+    if not leaves:
+        return []
+
+    leaf_ids = [c.id for c in leaves]
+
+    # Aggregate used per feo_category_id
+    used_q = (
+        select(
+            PurchaseItem.feo_category_id,
+            sqlfunc.coalesce(sqlfunc.sum(PurchaseItem.total_price), 0).label("used"),
+        )
+        .where(PurchaseItem.feo_category_id.in_(leaf_ids))
+    )
+    if exclude_purchase_id is not None:
+        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    used_q = used_q.group_by(PurchaseItem.feo_category_id)
+    used_map = {r.feo_category_id: float(r.used) for r in (await db.execute(used_q)).all()}
+
+    # Build path "Direction › Subcategory › Leaf"
+    def build_path(cat) -> str:
+        names = [cat.name]
+        cur = cat
+        while cur.parent_id is not None and cur.parent_id in cat_by_id:
+            cur = cat_by_id[cur.parent_id]
+            names.append(cur.name)
+        return " \u203a ".join(reversed(names))
+
+    result = []
+    for c in leaves:
+        budget = float(c.budget or 0)
+        used = used_map.get(c.id, 0.0)
+        result.append({
+            "id": c.id,
+            "name": c.name,
+            "parent_id": c.parent_id,
+            "level": c.level,
+            "budget": budget,
+            "used_amount": used,
+            "residual": budget - used,
+            "path": build_path(c),
+        })
+
+    # Сортировка по path для удобства autocomplete
+    result.sort(key=lambda x: x["path"])
+    return result
+
+
 @router.get("/", response_model=List[FeoCategoryOut])
 async def list_categories(
     parent_id: Optional[int] = Query(None),

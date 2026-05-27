@@ -287,6 +287,22 @@ async def _ensure_purchase_items_receipt_id(conn) -> None:
         print(f"  \u26a0\ufe0f   purchase_items.receipt_id ensure failed: {e}")
 
 
+async def _ensure_purchase_items_feo_category_id_column(conn) -> None:
+    """FCAT-B1: ADD feo_category_id FK column to purchase_items (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE purchase_items "
+            "ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_purchase_items_feo_category_id "
+            "ON purchase_items(feo_category_id)"
+        ))
+        print("  ✅  purchase_items.feo_category_id column ensured (FCAT-B1)")
+    except Exception as e:
+        print(f"  ⚠️   purchase_items.feo_category_id ensure failed: {e}")
+
+
 async def _backfill_contract_items_from_purchase_items(conn) -> int:
     """Phase 27.1 D-06: idempotent backfill 1\u21941 \u0434\u043b\u044f legacy \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted+.
 

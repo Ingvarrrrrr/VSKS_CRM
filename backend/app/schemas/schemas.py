@@ -459,6 +459,7 @@ class PurchaseItemCreate(BaseModel):
     contractor_name: Optional[str] = None
     vat_rate: Optional[str] = None  # Phase 26-U-3: per-item НДС ставка
     feo_planned_item_id: Optional[int] = None  # 27.4-15: FEO link для plan-graph version
+    feo_category_id: Optional[int] = None  # FCAT-B1: per-item привязка к leaf FeoCategory
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

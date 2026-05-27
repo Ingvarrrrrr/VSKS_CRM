@@ -19,6 +19,7 @@ class PurchaseItem(Base):
     final_total = Column(Numeric(15, 2))
     country_origin = Column(String(100), nullable=True)
     feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True)
+    feo_category_id = Column(Integer, ForeignKey('feo_categories.id', ondelete='SET NULL'), nullable=True, index=True)
     match_confirmed = Column(Boolean, nullable=False, default=True, server_default=text("TRUE"))
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor_inn = Column(String(20), nullable=True)
@@ -29,4 +30,5 @@ class PurchaseItem(Base):
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")
     feo_planned_item = relationship("FeoPlannedItem")
+    feo_category = relationship("FeoCategory")
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

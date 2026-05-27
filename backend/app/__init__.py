@@ -1412,6 +1412,17 @@ async def lifespan(app_: FastAPI):
             f"Phase 12-05 effective_date column setup skipped (non-fatal): {e}"
         )
 
+
+    # FCAT-B1: purchase_items.feo_category_id column
+    try:
+        from check_schema import _ensure_purchase_items_feo_category_id_column
+        from .database import engine as _engine_fcatb1
+        async with _engine_fcatb1.begin() as conn:
+            await _ensure_purchase_items_feo_category_id_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"FCAT-B1 feo_category_id column setup skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:

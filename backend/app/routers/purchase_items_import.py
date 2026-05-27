@@ -861,6 +861,191 @@ async def import_items_preview(
     return {"sheets": sheets}
 
 
+@router.post("/items/import-mapped-nopid")
+async def import_items_mapped_nopid(
+    file: UploadFile = File(...),
+    sheet_name: str = Query(""),
+    col_item_name: int = Query(-1),
+    col_description: int = Query(-1),
+    col_quantity: int = Query(-1),
+    col_unit_price: int = Query(-1),
+    col_total_price: int = Query(-1),
+    col_vat: int = Query(-1),
+    col_unit: int = Query(-1),
+    header_row_offset: int = Query(0),
+    current_user: User = Depends(get_current_user),
+):
+    """Like import-mapped but for new-purchase/wish context. Returns parsed items without saving to DB."""
+    if col_item_name < 0:
+        raise HTTPException(400, "Не указан столбец Наименование")
+
+    fname = (file.filename or '').lower()
+    content = await file.read()
+
+    try:
+        if fname.endswith(('.docx', '.doc')):
+            try:
+                from docx import Document as _DDoc
+            except ImportError:
+                raise HTTPException(500, "python-docx не установлен")
+            doc = _DDoc(BytesIO(content))
+            all_rows_doc = []
+            for table in doc.tables:
+                for row in table.rows:
+                    all_rows_doc.append(tuple(cell.text.strip() for cell in row.cells))
+            if not all_rows_doc:
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        all_rows_doc.append((text,))
+            skip = header_row_offset + 1
+            data_iter = all_rows_doc[skip:] if len(all_rows_doc) > skip else []
+        elif fname.endswith('.pdf'):
+            try:
+                import pdfplumber
+            except ImportError:
+                raise HTTPException(500, "pdfplumber не установлен")
+            pdf = pdfplumber.open(BytesIO(content))
+            all_rows_pdf = []
+            for page in pdf.pages:
+                for t in (page.extract_tables() or []):
+                    if t:
+                        all_rows_pdf.extend([tuple(str(c).strip() if c else "" for c in row) for row in t])
+            pdf.close()
+            skip = header_row_offset + 1
+            data_iter = all_rows_pdf[skip:] if len(all_rows_pdf) > skip else []
+        elif fname.endswith(('.html', '.htm')):
+            raw_tables = _extract_html_tables(content, file.filename or fname)
+            if not raw_tables:
+                raise HTTPException(400, "В HTML не найдено таблиц")
+            chosen_rows: list = []
+            if sheet_name and sheet_name.lower().startswith('таблица'):
+                try:
+                    idx = int(sheet_name.split()[-1]) - 1
+                    if 0 <= idx < len(raw_tables):
+                        chosen_rows = raw_tables[idx]
+                except (ValueError, IndexError):
+                    pass
+            if not chosen_rows:
+                chosen_rows = max(raw_tables, key=len)
+            all_rows_html = [tuple(row) for row in chosen_rows]
+            skip = header_row_offset + 1
+            data_iter = all_rows_html[skip:] if len(all_rows_html) > skip else []
+        else:
+            try:
+                sheets = _read_excel_rows(content, fname)
+            except Exception as e:
+                raise HTTPException(400, f"Не удалось прочитать файл: {e}")
+            if not sheets or not sheets[0]:
+                raise HTTPException(400, "Файл пустой")
+            sheet_idx = 0
+            if sheet_name and sheet_name.lower().startswith('лист'):
+                try:
+                    sheet_idx = int(sheet_name[len('лист'):]) - 1
+                except ValueError:
+                    pass
+            if sheet_idx < 0 or sheet_idx >= len(sheets):
+                sheet_idx = 0
+            all_rows = sheets[sheet_idx]
+            skip = header_row_offset + 1
+            data_iter = all_rows[skip:] if len(all_rows) > skip else []
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл ({file.filename}): {e}")
+
+    def _cell(row, idx):
+        if idx < 0 or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ('none', 'null', '-', '—', '0'):
+            return None
+        return s
+
+    def _to_dec(v):
+        if v is None:
+            return None
+        try:
+            s = str(v).replace(',', '.').replace(' ', '').replace('\xa0', '')
+            import re
+            m = re.match(r'^([0-9]+\.?[0-9]*)', s)
+            if not m:
+                return None
+            return Decimal(m.group(1))
+        except Exception:
+            return None
+
+    _SKIP_KEYWORDS_NP = {
+        'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
+        'поставщик', 'покупатель', 'заказчик', 'исполнитель',
+        'генеральный директор', 'директор', 'бухгалтер', 'подпись',
+        'м.п.', 'м.п', 'печать', 'ооо', 'оао', 'зао', 'ип ',
+        'инн', 'кпп', 'огрн', 'р/с', 'к/с', 'бик',
+        'адрес', 'телефон', 'email', 'банк',
+        'примечание', 'основание', 'договор №', 'счёт №', 'счет №',
+    }
+
+    def _is_junk_row_np(name_val: str) -> bool:
+        low = name_val.lower().strip()
+        for kw in _SKIP_KEYWORDS_NP:
+            if low.startswith(kw) or low == kw:
+                return True
+        if low.startswith('итого'):
+            return True
+        return False
+
+    items_out = []
+    skipped_empty = 0
+    skipped_junk = 0
+
+    for row in data_iter:
+        item_name = _cell(row, col_item_name)
+        if not item_name:
+            skipped_empty += 1
+            continue
+        if _is_junk_row_np(item_name):
+            skipped_junk += 1
+            continue
+        description = _cell(row, col_description) if col_description >= 0 else None
+        quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else None
+        if not quantity:
+            quantity = Decimal('1')
+        unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
+        total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+        unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+        if not total_price and unit_price:
+            total_price = quantity * unit_price
+        elif not unit_price and total_price and quantity:
+            unit_price = total_price / quantity
+        vat_str = _cell(row, col_vat) if col_vat >= 0 else None
+        if vat_str and description:
+            description = f"{description} (НДС: {vat_str})"
+        elif vat_str:
+            description = f"НДС: {vat_str}"
+        items_out.append({
+            'item_name': item_name[:500],
+            'item_type': 'товар',
+            'description': description,
+            'quantity': float(quantity) if quantity else None,
+            'unit': unit,
+            'unit_price': float(unit_price) if unit_price else None,
+            'total_price': float(total_price) if total_price else None,
+        })
+
+    return {
+        "items": items_out,
+        "added": len(items_out),
+        "debug": {
+            "total_rows_after_header": len(data_iter),
+            "skipped_empty_name": skipped_empty,
+            "skipped_junk_row": skipped_junk,
+        },
+    }
+
+
 @router.post("/{pid}/items/import-mapped")
 async def import_items_mapped(
     pid: int,

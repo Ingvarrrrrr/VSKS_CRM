@@ -1668,9 +1668,11 @@ async def _save_smart_preview_to_purchase(
     purchase,
     db: AsyncSession,
     current_user,
+    skip_catalog: bool = False,
 ) -> dict:
     """Сохраняет preview-строки в БД как PurchaseItem'ы.
     Переиспользуется как из xlsx-ветки, так и (потенциально) из markitdown-ветки.
+    skip_catalog=True: не вызывать _upsert для несматченных → product_id=None.
     """
     org_id = get_single_org_id(current_user)
     prod_q = select(Product)
@@ -1705,8 +1707,11 @@ async def _save_smart_preview_to_purchase(
                 unit_price = matched.price
                 total_price = qty * unit_price
         else:
-            product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
-            new_in_catalog += 1
+            if skip_catalog:
+                product_id = None  # анти-засорение: не добавлять в каталог
+            else:
+                product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
+                new_in_catalog += 1
         if total_price is None and unit_price:
             total_price = qty * unit_price
         db.add(PurchaseItem(
@@ -1750,6 +1755,7 @@ async def import_items_smart(
     pid: int,
     file: UploadFile = File(...),
     confirm: bool = Query(default=False),
+    skip_catalog: bool = Query(default=False, description="Не добавлять несматченные позиции в каталог"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1862,7 +1868,7 @@ async def import_items_smart(
                     "file_type": file_type,
                     "columns_found": xlsx_columns,
                 }
-            return await _save_smart_preview_to_purchase(pid, xlsx_preview, purchase, db, current_user)
+            return await _save_smart_preview_to_purchase(pid, xlsx_preview, purchase, db, current_user, skip_catalog=skip_catalog)
         # Если direct-parser не нашёл строк — fallback на markitdown (ниже)
 
     # --- Stage 1: Convert to Markdown via markitdown ---
@@ -1956,7 +1962,7 @@ async def import_items_smart(
         return {"preview": preview, "total_rows": len(preview), "file_type": file_type, "columns_found": list(best_col.keys())}
 
     # Save items to DB (markitdown path — xlsx теперь идёт через _save_smart_preview_to_purchase)
-    return await _save_smart_preview_to_purchase(pid, preview, purchase, db, current_user)
+    return await _save_smart_preview_to_purchase(pid, preview, purchase, db, current_user, skip_catalog=skip_catalog)
 
 
 # ---------------------------------------------------------------------------

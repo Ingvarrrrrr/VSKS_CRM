@@ -1176,3 +1176,54 @@ async def upload_product_photo(
     await db.commit()
     await db.refresh(product)
     return product
+
+
+# import-no-clutter: bulk-add purchase items to catalog
+class _BulkFromItemsRequest(BaseModel):
+    purchase_item_ids: List[int]
+
+
+@router.post("/bulk-from-purchase-items")
+async def bulk_create_from_items(
+    body: _BulkFromItemsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Массовое создание Product из несвязанных PurchaseItem'ов.
+
+    Для каждого PurchaseItem с product_id=None создаёт или находит Product
+    через _upsert_product_to_catalog (идемпотентно).
+    Обновляет item.product_id, match_confirmed=True.
+    Returns: {created: int, linked: int, errors: list}
+    """
+    from app.models.purchase_item import PurchaseItem
+    from app.routers.purchase_items_import import _upsert_product_to_catalog
+
+    created = 0
+    linked = 0
+    errors: list[str] = []
+
+    for item_id in body.purchase_item_ids:
+        try:
+            item = await db.get(PurchaseItem, item_id)
+            if not item:
+                errors.append(f"PurchaseItem {item_id} не найден")
+                continue
+            if item.product_id is not None:
+                linked += 1
+                continue
+            product_id = await _upsert_product_to_catalog(
+                db, item.item_name, item.item_type or "товар", item.unit_price
+            )
+            item.product_id = product_id
+            item.match_confirmed = True
+            created += 1
+        except Exception as e:
+            errors.append(f"item {item_id}: {e}")
+
+    try:
+        await db.commit()
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка сохранения: {e}")
+
+    return {"created": created, "linked": linked, "errors": errors}

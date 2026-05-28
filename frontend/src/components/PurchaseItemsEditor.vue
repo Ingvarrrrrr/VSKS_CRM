@@ -11,6 +11,14 @@
           @click="removeSelectedItems">
           Удалить ({{ selectedItemIdxs.length }})
         </v-btn>
+        <v-btn
+          v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
+          size="small" variant="tonal" color="teal"
+          prepend-icon="mdi-database-plus"
+          :loading="bulkAddCatalogLoading"
+          @click="bulkAddToCatalog">
+          Добавить в каталог ({{ uncatalogedSelectedCount }})
+        </v-btn>
         <slot name="toolbar-actions" />
         <v-btn v-if="(props.supportsExcelImport || props.supportsSmartImport) && !props.readonly"
           variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
@@ -1171,6 +1179,18 @@
               accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
               hint="Excel, PDF, Word, HTML, фото чека — перетащите или нажмите"
               class="mb-4" />
+
+            <!-- import-no-clutter: тогл «не добавлять в каталог» -->
+            <v-switch
+              v-model="smartImportSkipCatalog"
+              label="Не добавлять в каталог при импорте"
+              hint="Позиции попадут только в эту закупку. Полезно для уникальных позиций (билеты, акты)."
+              persistent-hint
+              density="compact"
+              color="primary"
+              hide-details="auto"
+              class="mb-3"
+            />
 
             <!-- Preview table -->
             <template v-if="smartImportPreview && smartImportPreview.length">
@@ -2360,6 +2380,37 @@ function removeSelectedItems() {
   emitUpdate()
 }
 
+// import-no-clutter: bulk-add несвязанных позиций в каталог
+const hasUncatalogedSelected = computed(() =>
+  selectedItemIdxs.value.some(idx => !localItems.value[idx]?.product_id)
+)
+const uncatalogedSelectedCount = computed(() =>
+  selectedItemIdxs.value.filter(idx => !localItems.value[idx]?.product_id).length
+)
+
+async function bulkAddToCatalog() {
+  const uncatItems = selectedItemIdxs.value
+    .map(idx => localItems.value[idx])
+    .filter(it => it && !it.product_id && it.id)  // только сохранённые в БД (имеют id)
+  if (!uncatItems.length) {
+    showSnack('Выберите сохранённые позиции без привязки к каталогу', 'warning')
+    return
+  }
+  bulkAddCatalogLoading.value = true
+  try {
+    const res = await apiFetch<{ created: number; linked: number; errors: string[] }>(
+      '/products/bulk-from-purchase-items',
+      { method: 'POST', body: JSON.stringify({ purchase_item_ids: uncatItems.map(it => it.id) }) }
+    )
+    showSnack(`Добавлено в каталог: ${res.created + res.linked}`, 'success')
+    emit('reload-requested')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка добавления в каталог', 'error')
+  } finally {
+    bulkAddCatalogLoading.value = false
+  }
+}
+
 // ── Product selection ────────────────────────────────────────────────────────
 
 const productFilter = (_value: string, query: string, item?: any): boolean => {
@@ -3126,6 +3177,8 @@ async function doImportAllTables() {
 const smartImportFile = ref<File | null>(null)
 const smartImportFileList = ref<File[]>([])
 const smartImportLoading = ref(false)
+const smartImportSkipCatalog = ref(false)   // import-no-clutter: тогл «не добавлять в каталог»
+const bulkAddCatalogLoading = ref(false)    // import-no-clutter: loading для bulk-add кнопки
 const smartImportPreview = ref<any[] | null>(null)
 const smartImportColumns = ref<string[] | null>(null)
 const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
@@ -3547,7 +3600,7 @@ async function doSmartImport() {
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
     fd.append('file', smartImportFile.value)
-    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true`, {
+    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true&skip_catalog=${smartImportSkipCatalog.value}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` } as HeadersInit,
       body: fd,

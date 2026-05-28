@@ -1255,6 +1255,21 @@
               </div>
             </template>
 
+            <!-- import-pdf-debug C3: alert при пустом результате -->
+            <v-alert
+              v-if="smartImportFile && smartImportPreview !== null && smartImportPreview.length === 0 && !smartImportLoading"
+              type="warning" variant="tonal" class="mb-3">
+              <div>Не удалось автоматически распознать таблицу в этом файле.</div>
+              <div class="mt-2 d-flex ga-2 flex-wrap">
+                <v-btn size="small" variant="tonal" @click="switchImportMode(false)">
+                  Переключиться на Ручной режим
+                </v-btn>
+                <v-btn size="small" variant="tonal" color="info" @click="downloadDebugReport">
+                  Скачать debug-отчёт
+                </v-btn>
+              </div>
+            </v-alert>
+
             <v-alert v-if="smartImportResult" type="success" density="compact" class="mb-2">
               Добавлено позиций: <strong>{{ smartImportResult.added }}</strong>
             </v-alert>
@@ -3618,6 +3633,31 @@ async function doSmartImport() {
     showSnack(e.message || 'Ошибка импорта', 'error')
   } finally {
     smartImportLoading.value = false
+  }
+}
+
+// import-pdf-debug C3: скачать debug-отчёт для несработавшего файла
+async function downloadDebugReport() {
+  if (!smartImportFile.value) return
+  const fd = new FormData()
+  fd.append('file', smartImportFile.value)
+  try {
+    const token = localStorage.getItem('auth_token') || ''
+    const res = await fetch('/api/purchases/items/import-pdf-debug', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      body: fd,
+    })
+    const data = await res.json()
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `import-debug-${smartImportFile.value.name}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    showSnack('Не удалось получить debug-отчёт', 'error')
   }
 }
 

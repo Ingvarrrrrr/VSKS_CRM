@@ -421,7 +421,12 @@ def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
             # УПД precise headers (priority)
             if 'наименование товара' in h_s or 'описание выполненных' in h_s or 'описание оказанных' in h_s:
                 col.setdefault("item_name", i)
-            elif any(x in h_s for x in ("наименован", "назван", "name", "товар", "предмет", "описан", "услуг", "работ")):
+            elif any(x in h_s for x in (
+                "наименован", "назван", "name", "товар", "предмет", "описан",
+                "услуг", "работ",
+                # import-pdf-debug C2: билетный формат
+                "маршрут", "направлен", "рейс", "билет",
+            )):
                 col.setdefault("item_name", i)
             elif any(x in h_s for x in ("тип", "type", "вид")):
                 col.setdefault("item_type", i)
@@ -429,11 +434,22 @@ def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
                 col.setdefault("quantity", i)
             elif "ед. изм" in h_s or "единиц" in h_s or "ед.изм" in h_s or h_s == "ед." or h_s == "unit":
                 col.setdefault("unit", i)
-            elif "цена" in h_s or "тариф" in h_s or "price" in h_s:
+            elif any(x in h_s for x in (
+                "цена", "тариф", "price",
+                # import-pdf-debug C2: стоимость единицы / тариф билета
+                "стоимость", "сумма билет", "цена билет",
+            )):
                 col.setdefault("unit_price", i)
+            # VAT columns (import-vat-cols C2)
+            elif any(x in h_s for x in ("ставка ндс", "налоговая ставка", "% ндс", "ндс %", "vat rate")):
+                col.setdefault("vat_rate", i)
+            elif any(x in h_s for x in ("сумма ндс", "vat amount")):
+                col.setdefault("vat_amount", i)
             # Total: prefer "с налогом", else "без налога"/"стоимость"/"сумма"
             elif "с налогом" in h_s and "всего" in h_s:
                 col["total_price"] = i  # always overwrite — highest priority
+            elif any(x in h_s for x in ("к оплате", "сумма с налогом", "итого с ндс")):
+                col["total_price"] = i  # import-pdf-debug C2: билетные итоги
             elif "total_price" not in col and any(x in h_s for x in ("сумма", "итог", "total", "amount", "всего", "стоимость")):
                 col["total_price"] = i
         return col
@@ -1963,6 +1979,67 @@ async def import_items_smart(
 
     # Save items to DB (markitdown path — xlsx теперь идёт через _save_smart_preview_to_purchase)
     return await _save_smart_preview_to_purchase(pid, preview, purchase, db, current_user, skip_catalog=skip_catalog)
+
+
+# ---------------------------------------------------------------------------
+# PDF Debug endpoint (import-pdf-debug)
+# ---------------------------------------------------------------------------
+
+@router.post("/items/import-pdf-debug")
+async def import_pdf_debug(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+):
+    """Возвращает диагностику парсера для PDF/файла без импорта.
+
+    Полезно для отладки когда Smart Import возвращает 0 строк.
+    """
+    import io as _io
+    content = await file.read()
+    result = {
+        "filename": file.filename,
+        "size_bytes": len(content),
+        "pdfplumber_tables": 0,
+        "pdfplumber_text_length": 0,
+        "ocrmypdf_applied": False,
+        "ocrmypdf_available": False,
+        "raw_text_preview": "",
+        "detected_headers": [],
+        "rows_found": 0,
+        "errors": [],
+    }
+    try:
+        import pdfplumber
+        with pdfplumber.open(_io.BytesIO(content)) as pdf:
+            all_tables = []
+            all_text = []
+            for page in pdf.pages:
+                tables = page.extract_tables() or []
+                all_tables.extend(tables)
+                txt = page.extract_text() or ""
+                all_text.append(txt)
+            result["pdfplumber_tables"] = len(all_tables)
+            full_text = "\n".join(all_text)
+            result["pdfplumber_text_length"] = len(full_text)
+            result["raw_text_preview"] = full_text[:2000]
+            if all_tables and all_tables[0]:
+                result["detected_headers"] = [str(c) for c in (all_tables[0][0] or [])]
+                result["rows_found"] = sum(max(0, len(t) - 1) for t in all_tables)
+    except ImportError:
+        result["errors"].append("pdfplumber не установлен")
+    except Exception as e:
+        result["errors"].append(f"pdfplumber: {type(e).__name__}: {str(e)[:200]}")
+
+    # Если таблиц нет — проверить наличие ocrmypdf
+    if result["pdfplumber_tables"] == 0 and result["pdfplumber_text_length"] < 100:
+        try:
+            import ocrmypdf  # noqa: F401
+            result["ocrmypdf_available"] = True
+        except ImportError:
+            result["ocrmypdf_available"] = False
+            result["errors"].append("ocrmypdf не установлен — сканированные PDF не распознаются")
+
+    return result
 
 
 # ---------------------------------------------------------------------------

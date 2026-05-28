@@ -100,7 +100,7 @@
     <div v-if="activeTab === 'my'">
       <v-data-table
         :headers="wishHeaders"
-        :items="myWishes"
+        :items="myWishesFiltered"
         :loading="loading"
         density="compact"
         hover
@@ -108,6 +108,65 @@
         :items-per-page-options="[25, 50, 100, -1]"
         @click:row="(_, { item }) => openEditDialog(item)"
       >
+        <!-- B7: column header menus -->
+        <template #header.status="{ column }">
+          <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
+            :items="Object.keys(statusLabel)"
+            :item-labels="statusLabel"
+            :model-value="colFilters.status"
+            :sort-by="colSort.status"
+            @update:model-value="v => colFilters.status = v"
+            @sort="dir => colSort.status = dir" />
+        </template>
+        <template #header.title_col="{ column }">
+          <ColumnHeaderMenu col-key="title_col" :title="column.title" col-type="text"
+            :model-value="colFilters.title_col"
+            :sort-by="colSort.title_col"
+            @update:model-value="v => colFilters.title_col = v"
+            @sort="dir => colSort.title_col = dir" />
+        </template>
+        <template #header.creator_name="{ column }">
+          <ColumnHeaderMenu col-key="creator_name" :title="column.title" col-type="text"
+            :model-value="colFilters.creator_name"
+            :sort-by="colSort.creator_name"
+            @update:model-value="v => colFilters.creator_name = v"
+            @sort="dir => colSort.creator_name = dir" />
+        </template>
+        <template #header.assigned_to_name="{ column }">
+          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
+            :model-value="colFilters.assigned_to_name"
+            :sort-by="colSort.assigned_to_name"
+            @update:model-value="v => colFilters.assigned_to_name = v"
+            @sort="dir => colSort.assigned_to_name = dir" />
+        </template>
+        <template #header.created_at="{ column }">
+          <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
+            :model-value="colFilters.created_at"
+            :sort-by="colSort.created_at"
+            @update:model-value="v => colFilters.created_at = v"
+            @sort="dir => colSort.created_at = dir" />
+        </template>
+        <template #header.desired_date="{ column }">
+          <ColumnHeaderMenu col-key="desired_date" :title="column.title" col-type="date"
+            :model-value="colFilters.desired_date"
+            :sort-by="colSort.desired_date"
+            @update:model-value="v => colFilters.desired_date = v"
+            @sort="dir => colSort.desired_date = dir" />
+        </template>
+        <template #header.executor_name="{ column }">
+          <ColumnHeaderMenu col-key="executor_name" :title="column.title" col-type="text"
+            :model-value="colFilters.executor_name"
+            :sort-by="colSort.executor_name"
+            @update:model-value="v => colFilters.executor_name = v"
+            @sort="dir => colSort.executor_name = dir" />
+        </template>
+        <template #header.execution_deadline="{ column }">
+          <ColumnHeaderMenu col-key="execution_deadline" :title="column.title" col-type="date"
+            :model-value="colFilters.execution_deadline"
+            :sort-by="colSort.execution_deadline"
+            @update:model-value="v => colFilters.execution_deadline = v"
+            @sort="dir => colSort.execution_deadline = dir" />
+        </template>
         <template #item.status="{ item }">
           <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
             {{ statusLabel[item.status] }}
@@ -127,11 +186,27 @@
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
         </template>
+        <template #item.event_name="{ item }">
+          {{ item.event_name || '—' }}
+        </template>
+        <template #header.event_name="{ column }">
+          <ColumnHeaderMenu col-key="event_name" :title="column.title" col-type="text"
+            :model-value="colFilters.event_name"
+            :sort-by="colSort.event_name"
+            @update:model-value="v => colFilters.event_name = v"
+            @sort="dir => colSort.event_name = dir" />
+        </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
         </template>
         <template #item.desired_date="{ item }">
           {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.executor_name="{ item }">
+          {{ item.executor_name || '—' }}
+        </template>
+        <template #item.execution_deadline="{ item }">
+          {{ item.execution_deadline ? formatDate(item.execution_deadline) : '—' }}
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
@@ -189,7 +264,7 @@
     <div v-if="activeTab === 'incoming'">
       <v-data-table
         :headers="wishHeaders"
-        :items="incomingWishes"
+        :items="incomingWishesFiltered"
         :loading="loadingIncoming"
         density="compact"
         hover
@@ -197,6 +272,65 @@
         :items-per-page-options="[25, 50, 100, -1]"
         @click:row="(_, { item }) => openEditDialog(item)"
       >
+        <!-- B7: column header menus -->
+        <template #header.status="{ column }">
+          <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
+            :items="Object.keys(statusLabel)"
+            :item-labels="statusLabel"
+            :model-value="colFilters.status"
+            :sort-by="colSort.status"
+            @update:model-value="v => colFilters.status = v"
+            @sort="dir => colSort.status = dir" />
+        </template>
+        <template #header.title_col="{ column }">
+          <ColumnHeaderMenu col-key="title_col" :title="column.title" col-type="text"
+            :model-value="colFilters.title_col"
+            :sort-by="colSort.title_col"
+            @update:model-value="v => colFilters.title_col = v"
+            @sort="dir => colSort.title_col = dir" />
+        </template>
+        <template #header.creator_name="{ column }">
+          <ColumnHeaderMenu col-key="creator_name" :title="column.title" col-type="text"
+            :model-value="colFilters.creator_name"
+            :sort-by="colSort.creator_name"
+            @update:model-value="v => colFilters.creator_name = v"
+            @sort="dir => colSort.creator_name = dir" />
+        </template>
+        <template #header.assigned_to_name="{ column }">
+          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
+            :model-value="colFilters.assigned_to_name"
+            :sort-by="colSort.assigned_to_name"
+            @update:model-value="v => colFilters.assigned_to_name = v"
+            @sort="dir => colSort.assigned_to_name = dir" />
+        </template>
+        <template #header.created_at="{ column }">
+          <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
+            :model-value="colFilters.created_at"
+            :sort-by="colSort.created_at"
+            @update:model-value="v => colFilters.created_at = v"
+            @sort="dir => colSort.created_at = dir" />
+        </template>
+        <template #header.desired_date="{ column }">
+          <ColumnHeaderMenu col-key="desired_date" :title="column.title" col-type="date"
+            :model-value="colFilters.desired_date"
+            :sort-by="colSort.desired_date"
+            @update:model-value="v => colFilters.desired_date = v"
+            @sort="dir => colSort.desired_date = dir" />
+        </template>
+        <template #header.executor_name="{ column }">
+          <ColumnHeaderMenu col-key="executor_name" :title="column.title" col-type="text"
+            :model-value="colFilters.executor_name"
+            :sort-by="colSort.executor_name"
+            @update:model-value="v => colFilters.executor_name = v"
+            @sort="dir => colSort.executor_name = dir" />
+        </template>
+        <template #header.execution_deadline="{ column }">
+          <ColumnHeaderMenu col-key="execution_deadline" :title="column.title" col-type="date"
+            :model-value="colFilters.execution_deadline"
+            :sort-by="colSort.execution_deadline"
+            @update:model-value="v => colFilters.execution_deadline = v"
+            @sort="dir => colSort.execution_deadline = dir" />
+        </template>
         <template #item.status="{ item }">
           <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
             {{ statusLabel[item.status] }}
@@ -216,11 +350,27 @@
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
         </template>
+        <template #item.event_name="{ item }">
+          {{ item.event_name || '—' }}
+        </template>
+        <template #header.event_name="{ column }">
+          <ColumnHeaderMenu col-key="event_name" :title="column.title" col-type="text"
+            :model-value="colFilters.event_name"
+            :sort-by="colSort.event_name"
+            @update:model-value="v => colFilters.event_name = v"
+            @sort="dir => colSort.event_name = dir" />
+        </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
         </template>
         <template #item.desired_date="{ item }">
           {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.executor_name="{ item }">
+          {{ item.executor_name || '—' }}
+        </template>
+        <template #item.execution_deadline="{ item }">
+          {{ item.execution_deadline ? formatDate(item.execution_deadline) : '—' }}
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
@@ -264,7 +414,7 @@
 
       <v-data-table
         :headers="wishHeadersAll"
-        :items="allWishes"
+        :items="allWishesFiltered"
         :loading="loadingAll"
         density="compact"
         hover
@@ -272,6 +422,65 @@
         :items-per-page-options="[25, 50, 100, -1]"
         @click:row="(_, { item }) => openEditDialog(item)"
       >
+        <!-- B7: column header menus -->
+        <template #header.status="{ column }">
+          <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
+            :items="Object.keys(statusLabel)"
+            :item-labels="statusLabel"
+            :model-value="colFilters.status"
+            :sort-by="colSort.status"
+            @update:model-value="v => colFilters.status = v"
+            @sort="dir => colSort.status = dir" />
+        </template>
+        <template #header.title_col="{ column }">
+          <ColumnHeaderMenu col-key="title_col" :title="column.title" col-type="text"
+            :model-value="colFilters.title_col"
+            :sort-by="colSort.title_col"
+            @update:model-value="v => colFilters.title_col = v"
+            @sort="dir => colSort.title_col = dir" />
+        </template>
+        <template #header.creator_name="{ column }">
+          <ColumnHeaderMenu col-key="creator_name" :title="column.title" col-type="text"
+            :model-value="colFilters.creator_name"
+            :sort-by="colSort.creator_name"
+            @update:model-value="v => colFilters.creator_name = v"
+            @sort="dir => colSort.creator_name = dir" />
+        </template>
+        <template #header.assigned_to_name="{ column }">
+          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
+            :model-value="colFilters.assigned_to_name"
+            :sort-by="colSort.assigned_to_name"
+            @update:model-value="v => colFilters.assigned_to_name = v"
+            @sort="dir => colSort.assigned_to_name = dir" />
+        </template>
+        <template #header.created_at="{ column }">
+          <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
+            :model-value="colFilters.created_at"
+            :sort-by="colSort.created_at"
+            @update:model-value="v => colFilters.created_at = v"
+            @sort="dir => colSort.created_at = dir" />
+        </template>
+        <template #header.desired_date="{ column }">
+          <ColumnHeaderMenu col-key="desired_date" :title="column.title" col-type="date"
+            :model-value="colFilters.desired_date"
+            :sort-by="colSort.desired_date"
+            @update:model-value="v => colFilters.desired_date = v"
+            @sort="dir => colSort.desired_date = dir" />
+        </template>
+        <template #header.executor_name="{ column }">
+          <ColumnHeaderMenu col-key="executor_name" :title="column.title" col-type="text"
+            :model-value="colFilters.executor_name"
+            :sort-by="colSort.executor_name"
+            @update:model-value="v => colFilters.executor_name = v"
+            @sort="dir => colSort.executor_name = dir" />
+        </template>
+        <template #header.execution_deadline="{ column }">
+          <ColumnHeaderMenu col-key="execution_deadline" :title="column.title" col-type="date"
+            :model-value="colFilters.execution_deadline"
+            :sort-by="colSort.execution_deadline"
+            @update:model-value="v => colFilters.execution_deadline = v"
+            @sort="dir => colSort.execution_deadline = dir" />
+        </template>
         <template #item.status="{ item }">
           <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
             {{ statusLabel[item.status] }}
@@ -291,11 +500,27 @@
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
         </template>
+        <template #item.event_name="{ item }">
+          {{ item.event_name || '—' }}
+        </template>
+        <template #header.event_name="{ column }">
+          <ColumnHeaderMenu col-key="event_name" :title="column.title" col-type="text"
+            :model-value="colFilters.event_name"
+            :sort-by="colSort.event_name"
+            @update:model-value="v => colFilters.event_name = v"
+            @sort="dir => colSort.event_name = dir" />
+        </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
         </template>
         <template #item.desired_date="{ item }">
           {{ item.desired_date ? formatDate(item.desired_date) : '—' }}
+        </template>
+        <template #item.executor_name="{ item }">
+          {{ item.executor_name || '—' }}
+        </template>
+        <template #item.execution_deadline="{ item }">
+          {{ item.execution_deadline ? formatDate(item.execution_deadline) : '—' }}
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
@@ -345,6 +570,15 @@
         <v-card-title class="pa-4 pb-2">
           {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
         </v-card-title>
+        <!-- B6 — от кого/кому/дата/статус -->
+        <v-card-subtitle v-if="editingWish" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
+          <div><b>От кого:</b> {{ editingWish.creator_name || '—' }}</div>
+          <div><b>Кому:</b> {{ editingWish.assigned_to_name || '—' }}</div>
+          <div><b>Создано:</b> {{ formatDate(editingWish.created_at) }}</div>
+          <div v-if="editingWish.status"><b>Статус:</b> {{ statusLabel[editingWish.status] || editingWish.status }}</div>
+          <div v-if="editingWish.executor_name"><b>Исполнитель:</b> {{ editingWish.executor_name }}</div>
+          <div v-if="editingWish.execution_deadline"><b>Срок исполнения:</b> {{ formatDate(editingWish.execution_deadline) }}</div>
+        </v-card-subtitle>
         <v-card-text class="pa-4">
           <v-alert
             v-if="!isWishEditable && canAssigneeAct"
@@ -408,7 +642,7 @@
                       density="compact"
                       clearable
                       :disabled="!wishForm.subsidy_id"
-                      :readonly="!isWishEditable"
+                      :readonly="!isWishEditable && !canAssigneeAct"
                       @update:model-value="onFeo1Change"
                     />
                   </v-col>
@@ -423,7 +657,7 @@
                       density="compact"
                       clearable
                       :disabled="!selectedFeo1"
-                      :readonly="!isWishEditable"
+                      :readonly="!isWishEditable && !canAssigneeAct"
                       @update:model-value="onFeo2Change"
                     />
                   </v-col>
@@ -438,7 +672,23 @@
                       density="compact"
                       clearable
                       :disabled="!selectedFeo2"
-                      :readonly="!isWishEditable"
+                      :readonly="!isWishEditable && !canAssigneeAct"
+                    />
+                  </v-col>
+                  <v-col cols="12">
+                    <v-autocomplete
+                      v-model="wishForm.event_id"
+                      :items="eventsForSubsidy"
+                      item-title="name"
+                      item-value="id"
+                      label="Мероприятие"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :disabled="!wishForm.subsidy_id"
+                      :readonly="!isWishEditable && !canAssigneeAct"
+                      hint="Связать заявку с конкретным мероприятием субсидии"
+                      persistent-hint
                     />
                   </v-col>
                   <v-col cols="12">
@@ -447,15 +697,126 @@
                       :items="orgUsers"
                       item-title="full_name"
                       item-value="id"
-                      label="Кому направить"
+                      label="На чьё имя заявка"
                       variant="outlined"
                       density="compact"
                       clearable
                       :disabled="!wishForm.subsidy_id"
                       :readonly="!isWishEditable"
-                      hint="Сотрудник, которому адресована заявка"
+                      hint="Сотрудник, на имя которого составляется заявка"
+                      persistent-hint
+                    >
+                      <template #item="{ item, props: itemProps }">
+                        <v-list-item v-bind="itemProps">
+                          <template #title>{{ item.raw.full_name }}</template>
+                          <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                        </v-list-item>
+                      </template>
+                      <template #selection="{ item }">
+                        {{ item.raw.full_name }}<span v-if="resolveUserPosition(item.raw)" class="text-caption text-medium-emphasis ml-2">— {{ resolveUserPosition(item.raw) }}</span>
+                      </template>
+                    </v-autocomplete>
+                  </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
+
+            <!-- Section: Принудительная смена статуса (только superadmin/account_owner) -->
+            <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4" color="red-lighten-5">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2" color="red-darken-2">mdi-shield-crown</v-icon>Принудительная смена статуса (SaaS-admin)
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-row dense align="center">
+                  <v-col cols="12" md="8">
+                    <v-select
+                      v-model="forceStatusValue"
+                      :items="[
+                        { value: 'draft', title: 'Черновик' },
+                        { value: 'submitted', title: 'Отправлена' },
+                        { value: 'approved', title: 'Одобрена' },
+                        { value: 'rejected', title: 'Отклонена' },
+                        { value: 'converted', title: 'Конвертирована' },
+                      ]"
+                      label="Новый статус"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                    />
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-btn color="red-darken-2" variant="flat" block prepend-icon="mdi-flash" :loading="forcingStatus" @click="forceStatus">
+                      Применить
+                    </v-btn>
+                  </v-col>
+                </v-row>
+                <div class="text-caption text-medium-emphasis mt-2">
+                  Минуя все workflow-проверки. Доступно только SaaS-роли.
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- Section: На исполнение (видна согласующему) -->
+            <v-card v-if="canAssigneeAct || (editingWish && editingWish.status === 'approved' && (isDialogAssignee || isAdmin))" variant="outlined" class="mb-4" color="amber-lighten-5">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2" color="amber-darken-3">mdi-account-clock</v-icon>На исполнение
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-row dense>
+                  <v-col cols="12" md="6">
+                    <v-autocomplete
+                      v-model="wishForm.executor_id"
+                      :items="orgUsers"
+                      item-title="full_name"
+                      item-value="id"
+                      label="Исполнитель"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      hint="Кому назначено фактическое исполнение"
+                      persistent-hint
+                    >
+                      <template #item="{ item, props: itemProps }">
+                        <v-list-item v-bind="itemProps">
+                          <template #title>{{ item.raw.full_name }}</template>
+                          <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                        </v-list-item>
+                      </template>
+                      <template #selection="{ item }">
+                        {{ item.raw.full_name }}<span v-if="resolveUserPosition(item.raw)" class="text-caption text-medium-emphasis ml-2">— {{ resolveUserPosition(item.raw) }}</span>
+                      </template>
+                    </v-autocomplete>
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field
+                      v-model="wishForm.execution_deadline"
+                      label="Срок исполнения"
+                      type="date"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      hint="К какому числу должно быть исполнено"
                       persistent-hint
                     />
+                  </v-col>
+                  <v-col cols="12">
+                    <v-autocomplete
+                      v-model="wishForm.event_id"
+                      :items="eventsForSubsidy"
+                      item-title="name"
+                      item-value="id"
+                      label="Мероприятие"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      hint="Связать с конкретным мероприятием (можно изменить тут даже после одобрения)"
+                      persistent-hint
+                    />
+                  </v-col>
+                  <v-col cols="12">
+                    <v-btn color="amber-darken-3" variant="flat" prepend-icon="mdi-content-save" :loading="savingExecution" @click="saveExecution">
+                      Сохранить исполнителя / срок / мероприятие
+                    </v-btn>
                   </v-col>
                 </v-row>
               </v-card-text>
@@ -662,8 +1023,11 @@
     </v-dialog>
 
     <!-- Snackbar -->
-    <v-snackbar v-model="snackbar" :color="snackbarColor" timeout="3000" location="bottom right">
+    <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="snackbarColor === 'error' ? -1 : 4000" location="bottom right">
       {{ snackbarText }}
+      <template #actions>
+        <v-btn variant="text" @click="snackbar = false">Закрыть</v-btn>
+      </template>
     </v-snackbar>
   </v-container>
 </template>
@@ -674,6 +1038,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
+import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 
 const router = useRouter()
 
@@ -710,6 +1075,12 @@ interface Wish {
   total_amount?: number
   created_at: string
   updated_at: string
+  event_id?: number | null
+  event_name?: string | null
+  assignee_name?: string
+  executor_id?: number | null
+  executor_name?: string | null
+  execution_deadline?: string | null
 }
 
 interface Subsidy {
@@ -724,6 +1095,8 @@ interface FeoCategory {
   subsidy_id?: number
   parent_id?: number | null
 }
+
+interface EventItem { id: number; name: string; subsidy_id: number; is_active?: boolean }
 
 interface User {
   id: number
@@ -740,6 +1113,7 @@ const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'man
 
 const isAdmin = computed(() => ADMIN_ROLES.includes(userRole))
 const isManagerOrAdmin = computed(() => MANAGER_ROLES.includes(userRole))
+const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRole))
 
 // Status display
 const statusColor: Record<string, string> = {
@@ -754,7 +1128,7 @@ const statusLabel: Record<string, string> = {
   submitted: 'Отправлена',
   approved: 'Одобрена',
   rejected: 'Отклонена',
-  converted: 'Конвертирована',
+  converted: 'Передано в исполнение',
 }
 
 // Priority
@@ -783,9 +1157,12 @@ const wishHeaders = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
   { title: 'Заявка', key: 'title_col', sortable: false },
   { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
-  { title: 'Кому', key: 'assigned_to_name', width: 180, sortable: true },
+  { title: 'На чьё имя', key: 'assigned_to_name', width: 180, sortable: true },
+  { title: 'Мероприятие', key: 'event_name', width: 180, sortable: true },
   { title: 'Создано', key: 'created_at', width: 110, sortable: true },
   { title: 'Срок', key: 'desired_date', width: 110, sortable: true },
+  { title: 'Исполнитель', key: 'executor_name', width: 160, sortable: true },
+  { title: 'Срок исп.', key: 'execution_deadline', width: 110, sortable: true },
   { title: 'Действия', key: 'actions', width: 160, sortable: false },
 ]
 
@@ -860,6 +1237,29 @@ const allFilters = [
 const subsidies = ref<Subsidy[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
 const users = ref<User[]>([])
+const events = ref<EventItem[]>([])
+const eventsForSubsidy = computed(() => {
+  const filtered = wishForm.value.subsidy_id
+    ? events.value.filter(e => e.subsidy_id === wishForm.value.subsidy_id && (e.is_active !== false))
+    : []
+  // Всегда включать текущий выбранный event (даже если deactivated или events.value ещё не загружен),
+  // чтобы select показывал label, а не пустое поле, и при PUT event_id не «слетал».
+  const selId = wishForm.value.event_id
+  if (selId && !filtered.find(e => e.id === selId)) {
+    const fromAll = events.value.find(e => e.id === selId)
+    if (fromAll) {
+      filtered.unshift(fromAll)
+    } else if ((editingWish.value as any)?.event_name) {
+      filtered.unshift({
+        id: selId,
+        name: (editingWish.value as any).event_name,
+        subsidy_id: wishForm.value.subsidy_id || 0,
+        is_active: true,
+      })
+    }
+  }
+  return filtered
+})
 
 // FEO cascading selects
 const selectedFeo1 = ref<number | null>(null)
@@ -889,6 +1289,17 @@ const orgUsers = computed(() => {
   return users.value.filter(u => u.org_id === sub.org_id)
 })
 
+// Должность сотрудника: per-org → fallback на legacy User.position/department
+function resolveUserPosition(u: any): string {
+  if (!u) return ''
+  const targetOrgId = subsidies.value.find(s => s.id === wishForm.value.subsidy_id)?.org_id
+  if (targetOrgId && Array.isArray(u.organizations)) {
+    const match = u.organizations.find((o: any) => o.org_id === targetOrgId || o.id === targetOrgId)
+    if (match?.position) return match.position
+  }
+  return u.position || u.department || ''
+}
+
 // Create/edit dialog
 const wishDialog = ref(false)
 const editingWishId = ref<number | null>(null)
@@ -916,11 +1327,14 @@ const wishForm = ref({
   subsidy_id: null as number | null,
   feo_category_id: null as number | null,
   assigned_to: null as number | null,
+  event_id: null as number | null,
   justification: '',
   priority: 'medium' as string,
   desired_date: '',
   items: [] as any[],
   status: 'draft' as string,
+  executor_id: null as number | null,
+  execution_deadline: '' as string,
 })
 
 // Items computed total
@@ -933,6 +1347,7 @@ function onSubsidyChange() {
   selectedFeo2.value = null
   selectedFeo3.value = null
   wishForm.value.assigned_to = null
+  wishForm.value.event_id = null
 }
 
 function onFeo1Change() {
@@ -1002,8 +1417,8 @@ async function loadWishes() {
   loading.value = true
   try {
     myWishes.value = await apiFetch<Wish[]>('/wishes' + buildFilterParams({ mine_only: true }))
-  } catch {
-    showSnack('Ошибка загрузки заявок', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     loading.value = false
   }
@@ -1014,8 +1429,8 @@ async function loadAllWishes() {
   try {
     const statusParam = allFilter.value && allFilter.value !== 'all' ? { status: allFilter.value } : {}
     allWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, ...statusParam }))
-  } catch {
-    showSnack('Ошибка загрузки заявок', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     loadingAll.value = false
   }
@@ -1026,7 +1441,8 @@ async function loadIncoming() {
   try {
     const data = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ assigned_to_me: true }))
     incomingWishes.value = data || []
-  } catch {
+  } catch (e: any) {
+    showSnack(`Ошибка загрузки входящих заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
     incomingWishes.value = []
   } finally {
     loadingIncoming.value = false
@@ -1044,11 +1460,14 @@ function resetForm() {
     subsidy_id: null,
     feo_category_id: null,
     assigned_to: null,
+    event_id: null,
     justification: '',
     priority: 'medium',
     desired_date: '',
     items: [],
     status: 'draft',
+    executor_id: null,
+    execution_deadline: '',
   }
   selectedFeo1.value = null
   selectedFeo2.value = null
@@ -1069,10 +1488,29 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.subsidy_id = wish.subsidy_id ?? null
   wishForm.value.feo_category_id = wish.feo_category_id ?? null
   wishForm.value.assigned_to = wish.assigned_to ?? null
+  wishForm.value.event_id = (wish as any).event_id ?? null
+  wishForm.value.executor_id = (wish as any).executor_id ?? null
+  wishForm.value.execution_deadline = (wish as any).execution_deadline ? String((wish as any).execution_deadline).slice(0, 10) : ''
   wishForm.value.justification = wish.justification || ''
   wishForm.value.priority = wish.priority || 'medium'
   wishForm.value.desired_date = wish.desired_date || ''
   wishForm.value.status = wish.status || 'draft'
+  forceStatusValue.value = wish.status || 'draft'
+
+  // B5 — Seed cascade selects from wish.feo_category_id by walking up parent_id
+  if (wish.feo_category_id) {
+    const chain: number[] = []
+    let curId: number | null = wish.feo_category_id
+    while (curId) {
+      const node = allFeoCategories.value.find(c => c.id === curId)
+      if (!node) break
+      chain.unshift(node.id)
+      curId = node.parent_id || null
+    }
+    selectedFeo1.value = chain[0] ?? null
+    selectedFeo2.value = chain[1] ?? null
+    selectedFeo3.value = chain[2] ?? null
+  }
 
   let rawItems: any[] = []
   if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
@@ -1115,6 +1553,53 @@ async function openEditDialog(wish: Wish) {
   wishDialog.value = true
 }
 
+// Superadmin: force-смена статуса
+const forceStatusValue = ref<string>('draft')
+const forcingStatus = ref(false)
+async function forceStatus() {
+  if (!editingWishId.value) { showSnack('Сначала откройте заявку', 'warning'); return }
+  if (!confirm(`Принудительно установить статус «${forceStatusValue.value}»? Workflow-проверки будут пропущены.`)) return
+  forcingStatus.value = true
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: forceStatusValue.value }),
+    })
+    showSnack(`Статус принудительно изменён на «${forceStatusValue.value}»`)
+    wishDialog.value = false
+    await reloadActiveTab()
+  } catch (e: any) {
+    showSnack(`Ошибка force-status: ${e?.message || e?.payload?.message || 'не удалось'}`, 'error')
+  } finally {
+    forcingStatus.value = false
+  }
+}
+
+const savingExecution = ref(false)
+async function saveExecution() {
+  if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
+  savingExecution.value = true
+  try {
+    const body: any = {
+      executor_id: wishForm.value.executor_id,
+      execution_deadline: wishForm.value.execution_deadline || null,
+      event_id: wishForm.value.event_id,
+      feo_category_id: selectedFeo3.value || selectedFeo2.value || selectedFeo1.value || wishForm.value.feo_category_id,
+    }
+    await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО')
+    await reloadActiveTab()
+  } catch (e: any) {
+    showSnack(`Ошибка: ${e?.message || e?.payload?.message || 'не удалось сохранить'}`, 'error')
+  } finally {
+    savingExecution.value = false
+  }
+}
+
+// TODO: B8 — нужен отдельный endpoint PATCH /wishes/{id}/feo для approver на submitted-заявке
 async function saveWish(andSubmit = false) {
   const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
   if (!valid) return
@@ -1144,9 +1629,9 @@ async function saveWish(andSubmit = false) {
     }
 
     wishDialog.value = false
-    await loadWishes()
-  } catch {
-    showSnack('Ошибка при сохранении', 'error')
+    await reloadActiveTab()
+  } catch (e: any) {
+    showSnack(`Ошибка при сохранении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     saving.value = false
   }
@@ -1158,8 +1643,8 @@ async function submitWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}/submit`, { method: 'POST' })
     showSnack('Заявка отправлена')
     await loadWishes()
-  } catch {
-    showSnack('Ошибка при отправке', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка при отправке: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     submittingId.value = null
   }
@@ -1171,8 +1656,8 @@ async function deleteWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}`, { method: 'DELETE' })
     showSnack('Заявка удалена')
     await loadWishes()
-  } catch {
-    showSnack('Ошибка при удалении', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка при удалении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     deletingId.value = null
   }
@@ -1184,8 +1669,8 @@ async function approveWish(wish: Wish) {
     await apiFetch(`/wishes/${wish.id}/approve`, { method: 'POST' })
     showSnack('Заявка одобрена')
     await reloadActiveTab()
-  } catch {
-    showSnack('Ошибка при одобрении', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     approvingId.value = null
   }
@@ -1276,18 +1761,28 @@ async function rejectWish() {
     showSnack('Заявка отклонена')
     rejectDialog.value = false
     await reloadActiveTab()
-  } catch {
-    showSnack('Ошибка при отклонении', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка при отклонении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     rejectingWish.value = false
   }
 }
 
-function openConvertDialog(wish: Wish) {
+async function openConvertDialog(wish: Wish) {
   convertingWish.value = wish
+  // Pre-fill from items: sum quantities and total_prices
+  let items: any[] = Array.isArray((wish as any).items) ? (wish as any).items : []
+  if (items.length === 0) {
+    try {
+      const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
+      if (Array.isArray(fresh?.items)) items = fresh.items
+    } catch {}
+  }
+  const sumQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0)
+  const sumPrice = items.reduce((s, i) => s + Number(i.total_price || 0), 0)
   convertForm.value = {
-    approved_quantity: null,
-    approved_price: wish.total_amount ?? null,
+    approved_quantity: sumQty > 0 ? sumQty : (wish.quantity != null ? Number(wish.quantity) : null),
+    approved_price: sumPrice > 0 ? sumPrice : (wish.total_amount ?? (wish.estimated_price != null ? Number(wish.estimated_price) : null)),
     subsidy_id: wish.subsidy_id ?? null,
   }
   convertDialog.value = true
@@ -1309,12 +1804,70 @@ async function convertWish() {
     convertDialog.value = false
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)
-  } catch {
-    showSnack('Ошибка при создании закупки', 'error')
+  } catch (e: any) {
+    showSnack(`Ошибка при создании закупки: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     convertingWishLoading.value = false
   }
 }
+
+// ── B7: ColumnHeaderMenu — per-column filter + sort ────────────────────
+const colFilters = ref<Record<string, any>>({
+  status: null,
+  title_col: null,
+  creator_name: null,
+  assigned_to_name: null,
+  event_name: null,
+  created_at: null,
+  desired_date: null,
+  executor_name: null,
+  execution_deadline: null,
+})
+const colSort = ref<Record<string, 'asc' | 'desc' | null>>({
+  status: null,
+  title_col: null,
+  creator_name: null,
+  assigned_to_name: null,
+  event_name: null,
+  created_at: null,
+  desired_date: null,
+  executor_name: null,
+  execution_deadline: null,
+})
+
+function applyColFilters(rows: Wish[]): Wish[] {
+  let result = [...rows]
+  // text filters
+  if (colFilters.value.title_col?.type === 'text' && colFilters.value.title_col.q)
+    result = result.filter(r => (r.title || '').toLowerCase().includes(colFilters.value.title_col.q.toLowerCase()))
+  if (colFilters.value.creator_name?.type === 'text' && colFilters.value.creator_name.q)
+    result = result.filter(r => (r.creator_name || '').toLowerCase().includes(colFilters.value.creator_name.q.toLowerCase()))
+  if (colFilters.value.assigned_to_name?.type === 'text' && colFilters.value.assigned_to_name.q)
+    result = result.filter(r => (r.assigned_to_name || '').toLowerCase().includes(colFilters.value.assigned_to_name.q.toLowerCase()))
+  if (colFilters.value.event_name?.type === 'text' && colFilters.value.event_name.q)
+    result = result.filter(r => ((r as any).event_name || '').toLowerCase().includes(colFilters.value.event_name.q.toLowerCase()))
+  if (colFilters.value.executor_name?.type === 'text' && colFilters.value.executor_name.q)
+    result = result.filter(r => ((r as any).executor_name || '').toLowerCase().includes(colFilters.value.executor_name.q.toLowerCase()))
+  // enum filter for status
+  if (colFilters.value.status?.type === 'enum' && Array.isArray(colFilters.value.status.values) && colFilters.value.status.values.length)
+    result = result.filter(r => colFilters.value.status.values.includes(r.status))
+  // sort: pick first active sort
+  const activeSort = Object.entries(colSort.value).find(([_, v]) => v)
+  if (activeSort) {
+    const [k, dir] = activeSort
+    result.sort((a: any, b: any) => {
+      const va = a[k === 'title_col' ? 'title' : k] ?? ''
+      const vb = b[k === 'title_col' ? 'title' : k] ?? ''
+      const cmp = String(va).localeCompare(String(vb), 'ru', { numeric: true })
+      return dir === 'asc' ? cmp : -cmp
+    })
+  }
+  return result
+}
+
+const myWishesFiltered = computed(() => applyColFilters(myWishes.value))
+const incomingWishesFiltered = computed(() => applyColFilters(incomingWishes.value))
+const allWishesFiltered = computed(() => applyColFilters(allWishes.value))
 
 watch(activeTab, (v) => {
   if (v === 'my') loadWishes()
@@ -1327,6 +1880,7 @@ onMounted(async () => {
     apiFetch<Subsidy[]>('/subsidies/').then(r => { subsidies.value = r }).catch(() => {}),
     apiFetch<FeoCategory[]>('/feo-categories/').then(r => { allFeoCategories.value = r }).catch(() => {}),
     apiFetch<User[]>('/users/').then(r => { users.value = r }).catch(() => {}),
+    apiFetch<EventItem[]>('/events/').then(r => { events.value = r || [] }).catch(() => {}),
   ])
   await loadWishes()
   await loadIncoming()

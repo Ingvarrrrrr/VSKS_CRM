@@ -21,7 +21,7 @@ from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.user import User
-from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_ROLES
+from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_ROLES, OWNER_ROLES
 from app.auth.permissions import require_action
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
@@ -92,6 +92,13 @@ async def transition_status(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+
+    # SaaS-bypass: superadmin/account_owner — force-set статус минуя любые guard'ы.
+    if current_user.role in OWNER_ROLES:
+        p.status = target_status
+        await db.commit()
+        await db.refresh(p)
+        return p
 
     current_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else 0
     target_idx = STATUS_ORDER.index(target_status)

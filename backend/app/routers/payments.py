@@ -16,7 +16,7 @@ async def list_payments(
     contract_id: Optional[int] = Query(None),
     purchase_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('contracts')),
+    _=Depends(get_current_user),  # read-only — любой авторизованный (employee видит свои закупки)
 ):
     q = select(Payment)
     if contract_id:

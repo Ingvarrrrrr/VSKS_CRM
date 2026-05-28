@@ -1150,6 +1150,8 @@ class FeoActualItemOut(BaseModel):
     total_price: Optional[Decimal] = None
     feo_planned_item_id: Optional[int] = None  # если сопоставлено
     purchase_id: int
+    purchase_number: Optional[int] = None
+    registry_number: Optional[str] = None
     purchase_status: Optional[str] = None
     contract_number: Optional[str] = None
     contractor_name: Optional[str] = None

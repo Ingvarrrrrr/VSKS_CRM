@@ -169,6 +169,8 @@ async def get_comparison(
             total_price=pi.total_price,
             feo_planned_item_id=pi.feo_planned_item_id,
             purchase_id=p.id,
+            purchase_number=p.purchase_number,
+            registry_number=p.registry_number,
             purchase_status=p.status,
             contract_number=p.contract_number,
             contractor_name=contractors.get(p.contractor_id) if p.contractor_id else p.item_name,

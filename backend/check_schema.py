@@ -319,6 +319,46 @@ async def _ensure_purchases_service_note_to_user_id_column(conn) -> None:
         print(f"  ⚠️   purchases.service_note_to_user_id ensure failed: {e}")
 
 
+async def _ensure_wish_items_feo_category_column(conn) -> None:
+    """B9: ADD feo_category_id FK column to wish_items (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE wish_items "
+            "ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL"
+        ))
+        print("  ✅  wish_items.feo_category_id column ensured (B9)")
+    except Exception as e:
+        print(f"  ⚠️   wish_items.feo_category_id ensure failed: {e}")
+
+
+async def _ensure_wishes_event_id_column(conn) -> None:
+    """B-event: ADD event_id FK column to wishes (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE wishes "
+            "ADD COLUMN IF NOT EXISTS event_id INTEGER REFERENCES events(id) ON DELETE SET NULL"
+        ))
+        print("  ✅  wishes.event_id column ensured (B-event)")
+    except Exception as e:
+        print(f"  ⚠️   wishes.event_id ensure failed: {e}")
+
+
+async def _ensure_wishes_execution_columns(conn) -> None:
+    """B-exec: ADD executor_id + execution_deadline to wishes (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE wishes "
+            "ADD COLUMN IF NOT EXISTS executor_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE wishes "
+            "ADD COLUMN IF NOT EXISTS execution_deadline DATE"
+        ))
+        print("  ✅  wishes.executor_id + execution_deadline ensured (B-exec)")
+    except Exception as e:
+        print(f"  ⚠️   wishes.execution columns ensure failed: {e}")
+
+
 async def _backfill_contract_items_from_purchase_items(conn) -> int:
     """Phase 27.1 D-06: idempotent backfill 1\u21941 \u0434\u043b\u044f legacy \u0437\u0430\u043a\u0443\u043f\u043e\u043a \u0432 contracted+.
 

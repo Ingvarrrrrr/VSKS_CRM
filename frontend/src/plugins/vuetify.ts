@@ -15,10 +15,14 @@ export default createVuetify({
   defaults: {
     VCard: { rounded: 'lg' },
     VBtn: { rounded: 'lg' },
-    VTextField: { rounded: 'lg' },
-    VSelect: { rounded: 'lg' },
-    VAutocomplete: { rounded: 'lg' },
-    VCombobox: { rounded: 'lg' },
+    // autocomplete="off" + случайный name отключают browser autofill
+    // (Chrome/Edge игнорируют off без name — поэтому "nope")
+    VTextField: { rounded: 'lg', autocomplete: 'off' },
+    VSelect: { rounded: 'lg', autocomplete: 'off' },
+    VAutocomplete: { rounded: 'lg', autocomplete: 'off' },
+    VCombobox: { rounded: 'lg', autocomplete: 'off' },
+    VTextarea: { autocomplete: 'off' },
+    VFileInput: { autocomplete: 'off' },
     VDialog: { rounded: 'lg' },
     VSheet: { rounded: 'lg' },
     VAlert: { rounded: 'lg' },

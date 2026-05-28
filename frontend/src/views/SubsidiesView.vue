@@ -386,7 +386,7 @@
 
                       <!-- 12-04: Остаток (residual) -->
                       <td class="feo-td feo-td-num">
-                        <template v-if="node.level === 3">
+                        <template v-if="!node.hasChildren">
                           <div v-for="item in Object.values(feoResiduals).filter((r: any) => r.category_id === node.id)" :key="(item as any).feo_item_id">
                             <span
                               :style="(item as any).residual < 0 ? 'color:#EF4444;font-weight:700;font-size:11px' : (item as any).residual === 0 ? 'color:#22C55E;font-size:11px' : 'font-size:11px'"
@@ -403,7 +403,7 @@
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
                         <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
-                        <span class="feo-action-slot"><v-btn v-if="node.level === 3"
+                        <span class="feo-action-slot"><v-btn v-if="!node.hasChildren"
                           :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
                           variant="text" size="x-small"
                           :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
@@ -423,7 +423,7 @@
                     </tr>
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
-                    <tr v-if="node.level === 3 && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
+                    <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
                       <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
@@ -475,7 +475,18 @@
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">
                                       <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                     </td>
-                                    <td style="padding:4px 8px;color:#166534">{{ actual.item_name }}</td>
+                                    <td style="padding:4px 8px;color:#166534">
+                                      <div>{{ actual.item_name }}</div>
+                                      <a
+                                        href="javascript:void(0)"
+                                        class="feo-purchase-link"
+                                        :title="`Перейти в закупку #${actual.purchase_id}`"
+                                        @click.stop="router.push(`/orders/${actual.purchase_id}`)"
+                                      >
+                                        <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                        {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                      </a>
+                                    </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
@@ -539,7 +550,18 @@
                                 <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px" class="text-orange-darken-2">{{ actual.item_name }}</td>
+                                <td style="padding:4px 8px" class="text-orange-darken-2">
+                                  <div>{{ actual.item_name }}</div>
+                                  <a
+                                    href="javascript:void(0)"
+                                    class="feo-purchase-link"
+                                    :title="`Перейти в закупку #${actual.purchase_id}`"
+                                    @click.stop="router.push(`/orders/${actual.purchase_id}`)"
+                                  >
+                                    <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                    {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                  </a>
+                                </td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;font-weight:500" class="text-orange-darken-2">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
@@ -2692,6 +2714,8 @@ interface FeoActualItem {
   total_price: number | null
   feo_planned_item_id: number | null
   purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
   purchase_status: string | null
   contract_number: string | null
   contractor_name: string | null
@@ -4670,6 +4694,13 @@ onMounted(() => {
   display: flex; flex-direction: column; align-items: center;
   padding: 32px 0; color: var(--crm-text-faint);
 }
+.feo-purchase-link {
+  display: inline-flex; align-items: center;
+  font-size: 11px; color: #0d9488;
+  text-decoration: none; margin-top: 2px;
+  cursor: pointer;
+}
+.feo-purchase-link:hover { text-decoration: underline; color: #0f766e; }
 
 /* FEO table */
 .feo-table-wrap {

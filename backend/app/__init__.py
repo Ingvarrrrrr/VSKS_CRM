@@ -1434,6 +1434,37 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"SN-UX service_note_to_user_id column setup skipped (non-fatal): {e}"
         )
+
+    # B9: wish_items.feo_category_id column
+    try:
+        from check_schema import _ensure_wish_items_feo_category_column
+        from .database import engine as _engine_b9
+        async with _engine_b9.begin() as conn:
+            await _ensure_wish_items_feo_category_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"B9 wish_items.feo_category_id column setup skipped (non-fatal): {e}"
+        )
+    # B-event: wishes.event_id column
+    try:
+        from check_schema import _ensure_wishes_event_id_column
+        from .database import engine as _engine_bev
+        async with _engine_bev.begin() as conn:
+            await _ensure_wishes_event_id_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"B-event wishes.event_id column setup skipped (non-fatal): {e}"
+        )
+    # B-exec: wishes.executor_id + execution_deadline columns
+    try:
+        from check_schema import _ensure_wishes_execution_columns
+        from .database import engine as _engine_bexec
+        async with _engine_bexec.begin() as conn:
+            await _ensure_wishes_execution_columns(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"B-exec wishes execution columns setup skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:

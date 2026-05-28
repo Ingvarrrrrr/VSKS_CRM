@@ -833,6 +833,7 @@ async def generate_document(
             selectinload(Purchase.contractor),
             selectinload(Purchase.feo_category),
             selectinload(Purchase.contract_items),  # Phase 27.1 CD-5: eager-load for docxtpl context
+            selectinload(Purchase.assigned_user),  # B-dedup: для авто-инициалов responsible_person
         )
         .where(Purchase.id == pid)
     )
@@ -989,8 +990,28 @@ async def generate_document(
         if len(path_nodes) >= 2: feo_level_2 = path_nodes[1].name.strip()
         if len(path_nodes) >= 3: feo_level_3 = path_nodes[2].name.strip()
 
-    # Resolved responsible person name
-    resolved_responsible = responsible_name or p.responsible_person or ""
+    # B-dedup: формат ФИО → инициалы.
+    # "Иванова Ирина Владиславовна"   → "Иванова И.В."
+    # "Кулиев Гасан Валех оглы"        → "Кулиев Г.В." (4-я часть отбрасывается)
+    # "Иванова-Петрова Анна Сергеевна" → "Иванова-Петрова А.С." (дефис = одна фамилия)
+    def _format_initials(full: str) -> str:
+        if not full:
+            return ""
+        parts = (full or "").strip().split()
+        if not parts:
+            return ""
+        surname = parts[0]
+        initials = []
+        for p_word in parts[1:3]:  # только имя + отчество (3-я часть «оглы»/«кызы» отбрасывается)
+            if p_word and p_word[0].isalpha():
+                initials.append(p_word[0].upper() + ".")
+        return f"{surname} {''.join(initials)}".strip()
+
+    # Resolved responsible person: priority = ?responsible_name → assigned_user.full_name → p.responsible_person
+    assigned_full = (getattr(p.assigned_user, "full_name", None) or "") if getattr(p, "assigned_user", None) else ""
+    raw_responsible = responsible_name or assigned_full or p.responsible_person or ""
+    resolved_responsible = _format_initials(raw_responsible) if raw_responsible else ""
+    resolved_responsible_full = raw_responsible  # для шаблонов которым нужно полное ФИО
 
     # Build docxtpl template object early (needed for InlineImage)
     try:
@@ -1337,7 +1358,8 @@ async def generate_document(
         "subject": p.subject or "",
         "status": p.status or "",
         "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),
-        "responsible_person": resolved_responsible,
+        "responsible_person": resolved_responsible,  # инициалы (по умолчанию)
+        "responsible_person_full": resolved_responsible_full,  # полное ФИО (для шаблонов где надо)
         # Субсидия
         "subsidy_name": subsidy.name if subsidy else "",
         "subsidy_year": subsidy.year if subsidy else "",

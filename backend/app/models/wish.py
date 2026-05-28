@@ -29,11 +29,16 @@ class Wish(Base):
 
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)
+    execution_deadline = Column(Date, nullable=True)  # Срок исполнения (ставит approver)
 
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
     assignee = relationship("User", foreign_keys=[assigned_to], lazy="selectin")
+    executor = relationship("User", foreign_keys=[executor_id], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
     subsidy = relationship("Subsidy", lazy="selectin")
+    event = relationship("Event", foreign_keys=[event_id], lazy="selectin")
     items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin")

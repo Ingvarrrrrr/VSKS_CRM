@@ -226,29 +226,9 @@
                 />
               </v-expand-transition>
             </v-col>
-            <v-col cols="12" md="4">
-              <v-autocomplete
-                v-model="form.responsible_person"
-                :items="orgUsersList"
-                item-title="short_name"
-                item-value="full_name"
-                label="Исполнитель (для документов)"
-                variant="outlined"
-                density="compact"
-                clearable
-                hide-no-data
-                hint="Имя для шаблонов документов"
-                persistent-hint
-                autocomplete="off"
-              >
-                <template #item="{ item, props: itemProps }">
-                  <v-list-item v-bind="itemProps">
-                    <template #title>{{ item.raw.short_name }}</template>
-                    <template #subtitle>{{ item.raw.position || '' }}</template>
-                  </v-list-item>
-                </template>
-              </v-autocomplete>
-            </v-col>
+            <!-- B-dedup: «Исполнитель (для документов)» удалён как дубль «Ответственного исполнителя».
+                 В шаблоне СЗ {{responsible_person}} = ФИО → инициалы автоматически (форматирование на backend). -->
+
             <!-- SN-UX: Кому служебная записка (адресат) — только для service_note_delivery -->
             <v-col v-if="formMode === 'service_note_delivery'" cols="12" md="4">
               <v-autocomplete

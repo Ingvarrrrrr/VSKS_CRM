@@ -15,6 +15,7 @@ class WishItemOut(BaseModel):
     total_price: Optional[float] = 0
     country_origin: Optional[str] = "Россия"
     target_column_key: Optional[str] = None  # Phase 13 D-04: kanban column override
+    feo_category_id: Optional[int] = None  # B9: per-item FEO category
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -36,6 +37,7 @@ class WishCreate(BaseModel):
     justification: Optional[str] = None
     subsidy_id: Optional[int] = None
     feo_category_id: Optional[int] = None
+    event_id: Optional[int] = None
     assigned_to: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
@@ -53,12 +55,26 @@ class WishUpdate(BaseModel):
     justification: Optional[str] = None
     subsidy_id: Optional[int] = None
     feo_category_id: Optional[int] = None
+    event_id: Optional[int] = None
     assigned_to: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
 
 class WishReject(BaseModel):
     rejection_reason: str
+
+
+class WishExecutionPatch(BaseModel):
+    """B-exec: approver sets executor + execution deadline + event."""
+    executor_id: Optional[int] = None
+    execution_deadline: Optional[date] = None
+    event_id: Optional[int] = None
+    feo_category_id: Optional[int] = None
+
+
+class WishStatusForce(BaseModel):
+    """Superadmin: force-set wish status (bypass workflow guards)."""
+    status: str  # draft / submitted / approved / rejected / converted
 
 
 class WishConvert(BaseModel):
@@ -92,8 +108,14 @@ class WishOut(BaseModel):
     subsidy_id: Optional[int] = None
     subsidy_name: Optional[str] = None
     feo_category_id: Optional[int] = None
+    event_id: Optional[int] = None
+    event_name: Optional[str] = None
     assigned_to: Optional[int] = None
     assignee_name: Optional[str] = None
+    assigned_to_name: Optional[str] = None  # alias for legacy frontend
+    executor_id: Optional[int] = None
+    executor_name: Optional[str] = None
+    execution_deadline: Optional[date] = None
     items: List[WishItemOut] = []
 
     class Config:

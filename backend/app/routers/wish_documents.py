@@ -70,6 +70,7 @@ async def generate_wish_service_note(
         select(Wish)
         .options(
             selectinload(Wish.creator),
+            selectinload(Wish.executor),
             selectinload(Wish.subsidy),
             selectinload(Wish.items).selectinload(WishItem.product),
         )
@@ -230,6 +231,24 @@ async def generate_wish_service_note(
         or ""
     )
 
+    # B-dedup: ФИО → инициалы для responsible_person в шаблоне
+    def _format_initials(full: str) -> str:
+        if not full:
+            return ""
+        parts = (full or "").strip().split()
+        if not parts:
+            return ""
+        surname = parts[0]
+        initials = []
+        for p_word in parts[1:3]:
+            if p_word and p_word[0].isalpha():
+                initials.append(p_word[0].upper() + ".")
+        return f"{surname} {''.join(initials)}".strip()
+
+    executor_full = (w.executor.full_name if getattr(w, 'executor', None) else "") or ""
+    responsible_raw = responsible_name or executor_full or creator_full
+    responsible_initials = _format_initials(responsible_raw)
+
     # ── Build context dict ───────────────────────────────────────────────────
     # All keys from documents.py template context are present.
     # Purchase-only keys default to empty string/list so the template never errors.
@@ -242,7 +261,12 @@ async def generate_wish_service_note(
         "status": w.status or "",
         "purchase_basis": "",
         "contract_type": "",
-        "responsible_person": responsible_name or creator_full,
+        "responsible_person": responsible_initials,  # инициалы (default)
+        "responsible_person_full": responsible_raw,   # полное ФИО
+        # B-exec: Срок исполнения и Исполнитель (ставит согласующий)
+        "execution_deadline": _fmt_date(w.execution_deadline) if getattr(w, 'execution_deadline', None) else "",
+        "executor_name": _format_initials(executor_full),
+        "executor_name_full": executor_full,
         # Subsidy
         "subsidy_name": w.subsidy.name if w.subsidy else "",
         "subsidy_year": w.subsidy.year if w.subsidy else "",

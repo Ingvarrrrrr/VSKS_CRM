@@ -8,19 +8,25 @@ from typing import Optional
 from app.database import get_db
 from app.auth.jwt import (
     get_current_user, get_org_filter, require_role,
-    ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES,
+    ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES, OWNER_ROLES,
 )
 from app.auth.permissions import require_tab
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
-from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch
+from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
+
+
+def _is_saas(user: User) -> bool:
+    """SaaS-роли (superadmin/account_owner) — обходят любые status-guard'ы."""
+    return user.role in OWNER_ROLES
+
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
@@ -36,6 +42,11 @@ def _enrich(w: Wish) -> WishOut:
         d.subsidy_name = w.subsidy.name
     if w.assignee:
         d.assignee_name = w.assignee.full_name or w.assignee.username
+        d.assigned_to_name = d.assignee_name  # alias for legacy frontend
+    if getattr(w, 'event', None):
+        d.event_name = w.event.name
+    if getattr(w, 'executor', None):
+        d.executor_name = w.executor.full_name or w.executor.username
     return d
 
 
@@ -48,6 +59,8 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.approver),
             selectinload(Wish.assignee),
             selectinload(Wish.subsidy),
+            selectinload(Wish.event),
+            selectinload(Wish.executor),
             selectinload(Wish.items),
         )
         .where(Wish.id == wish_id)
@@ -86,6 +99,8 @@ async def list_wishes(
         selectinload(Wish.approver),
         selectinload(Wish.assignee),
         selectinload(Wish.subsidy),
+        selectinload(Wish.event),
+        selectinload(Wish.executor),
         selectinload(Wish.items),
     )
     if org_ids is not None:
@@ -179,6 +194,7 @@ async def create_wish(
         justification=body.justification,
         subsidy_id=body.subsidy_id,
         feo_category_id=body.feo_category_id,
+        event_id=body.event_id,
         assigned_to=body.assigned_to,
         status="draft",
         created_by=current_user.id,
@@ -198,6 +214,7 @@ async def create_wish(
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
+                feo_category_id=item_data.get('feo_category_id'),  # B9
             )
             db.add(wi)
         await db.flush()
@@ -214,12 +231,14 @@ async def update_wish(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a draft wish (creator only)."""
+    """Update a draft wish (creator only).
+    # B3: approved wishes are read-only — enforced by status checks in update/patch/approve/reject endpoints
+    """
     wish = await _load_wish(wish_id, db)
 
-    if wish.created_by != current_user.id:
+    if not _is_saas(current_user) and wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
-    if wish.status not in ("draft", "rejected"):
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Можно редактировать только черновик или отклонённую заявку")
 
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
@@ -239,6 +258,7 @@ async def update_wish(
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
+                feo_category_id=item_data.get('feo_category_id'),  # B9
             )
             db.add(wi)
         await db.flush()
@@ -257,9 +277,9 @@ async def submit_wish(
     """Submit a draft wish for approval (creator only, draft/rejected -> submitted)."""
     wish = await _load_wish(wish_id, db)
 
-    if wish.created_by != current_user.id:
+    if not _is_saas(current_user) and wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Только автор может подать заявку")
-    if wish.status not in ("draft", "rejected"):
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft' или 'rejected'")
 
     wish.status = "submitted"
@@ -294,7 +314,7 @@ async def approve_wish(
     """Approve a submitted wish (manager+ roles OR assigned approver, submitted -> approved)."""
     wish = await _load_wish(wish_id, db)
 
-    if wish.status != "submitted":
+    if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'submitted'")
 
     # Org isolation
@@ -302,7 +322,7 @@ async def approve_wish(
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
-    if current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+    if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
     wish.status = "approved"
@@ -323,7 +343,7 @@ async def reject_wish(
     """Reject a submitted wish with reason (manager+ roles OR assigned approver, submitted -> rejected)."""
     wish = await _load_wish(wish_id, db)
 
-    if wish.status != "submitted":
+    if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'submitted'")
 
     # Org isolation
@@ -331,13 +351,64 @@ async def reject_wish(
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
-    if current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+    if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Отклонить заявку может менеджер+ или назначенный согласующий")
 
     wish.status = "rejected"
     wish.rejection_reason = body.rejection_reason
     await db.commit()
     await db.refresh(wish)
+    wish = await _load_wish(wish_id, db)
+    return _enrich(wish)
+
+
+@router.patch("/{wish_id}/execution", response_model=WishOut)
+async def patch_wish_execution(
+    wish_id: int,
+    body: WishExecutionPatch,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """B-exec: согласующий ставит исполнителя и срок исполнения.
+
+    Разрешено: assignee (согласующий), admin/manager. Только на submitted/approved.
+    """
+    wish = await _load_wish(wish_id, db)
+    if not _is_saas(current_user) and wish.status not in ("submitted", "approved"):
+        raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только на статусах submitted/approved")
+    if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Только согласующий или менеджер+ может задать исполнителя/срок")
+    if body.executor_id is not None:
+        wish.executor_id = body.executor_id
+    if body.execution_deadline is not None:
+        wish.execution_deadline = body.execution_deadline
+    if body.event_id is not None:
+        wish.event_id = body.event_id
+    if body.feo_category_id is not None:
+        wish.feo_category_id = body.feo_category_id
+    await db.commit()
+    wish = await _load_wish(wish_id, db)
+    return _enrich(wish)
+
+
+@router.post("/{wish_id}/status", response_model=WishOut)
+async def force_wish_status(
+    wish_id: int,
+    body: WishStatusForce,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Superadmin/account_owner: force-переключение статуса заявки (минуя workflow-guard'ы)."""
+    if not _is_saas(current_user):
+        raise HTTPException(status_code=403, detail="Только superadmin/account_owner может переключать статусы напрямую")
+    allowed = {"draft", "submitted", "approved", "rejected", "converted"}
+    if body.status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
+    wish = await _load_wish(wish_id, db)
+    wish.status = body.status
+    if body.status == "approved" and not wish.approved_by:
+        wish.approved_by = current_user.id
+    await db.commit()
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
 
@@ -349,12 +420,18 @@ async def convert_wish(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('wishes')),
 ):
-    """Convert an approved wish to a purchase (org_admin+, approved -> converted)."""
+    """Convert an approved wish to a purchase (org_admin+, approved -> converted).
+    B4: copies all WishItems to PurchaseItems with quantity/price from wish items.
+    B9: carries feo_category_id from wish and per-item feo_category_id.
+    B10: backfills product_id by item_name for legacy wish_items.
+    """
     from app.models.purchase import Purchase
+    from app.models.product import Product
+    from sqlalchemy.orm import selectinload as sil
 
     wish = await _load_wish(wish_id, db)
 
-    if wish.status != "approved":
+    if not _is_saas(current_user) and wish.status != "approved":
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'approved'")
 
     # Org isolation
@@ -362,19 +439,67 @@ async def convert_wish(
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
-    # Create Purchase inline (D-23)
+    # Preload items with products (B4/B10)
+    res = await db.execute(
+        select(WishItem).options(sil(WishItem.product)).where(WishItem.wish_id == wish.id)
+    )
+    items_full = res.scalars().all()
+
+    # B10: Backfill product_id for legacy items lacking it
+    missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
+    if missing:
+        names = list({(it.item_name or "").strip() for it in missing})
+        pres = await db.execute(select(Product).where(Product.name.in_(names)))
+        name_to_product = {(p.name or "").strip().lower(): p for p in pres.scalars().all()}
+        for it in missing:
+            hit = name_to_product.get((it.item_name or "").strip().lower())
+            if hit:
+                it.product_id = hit.id
+
+    # B4: planned_total_price = SUM(items.total_price), fallback to body/wish
+    total_nmck = sum(float(i.total_price or 0) for i in items_full)
+
+    # B9: pass feo_category_id from wish-level
+    # Backend pre-fill: если в body не пришло approved_quantity/price (= 0/None) — считаем из items
+    total_qty = sum(float(i.quantity or 0) for i in items_full)
+    eff_qty = body.approved_quantity if (body.approved_quantity and float(body.approved_quantity) > 0) else (total_qty or wish.quantity)
+    eff_price = body.approved_price if (body.approved_price and float(body.approved_price) > 0) else (total_nmck or wish.estimated_price)
+
     p = Purchase(
-        subsidy_id=body.subsidy_id,  # nullable OK — can be assigned later
+        subsidy_id=body.subsidy_id or wish.subsidy_id,
+        feo_category_id=wish.feo_category_id,  # B9
+        event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
         item_name=wish.title,
         subject=wish.title,
-        planned_quantity=body.approved_quantity or wish.quantity,
-        planned_total_price=body.approved_price or wish.estimated_price,
-        status="wishes",  # default purchase status for wish-origin purchases
+        planned_quantity=eff_qty,
+        planned_total_price=eff_price,
+        total_nmck=total_nmck or float(wish.estimated_price or 0),
+        nmck=total_nmck or float(wish.estimated_price or 0),
+        status="wishes",
         service_note_text=wish.justification,
         service_note_by=wish.created_by,
+        assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec: исполнитель из заявки
+        execution_term=getattr(wish, 'execution_deadline', None),  # B-exec: срок исполнения
     )
     db.add(p)
-    await db.flush()  # get p.id before writing back to wish
+    await db.flush()  # get p.id
+
+    # B4/B9/B10: copy all WishItems to PurchaseItems
+    for wi in items_full:
+        pi = PurchaseItem(
+            purchase_id=p.id,
+            product_id=wi.product_id,
+            item_name=wi.item_name,
+            item_type=wi.item_type,
+            quantity=wi.quantity,           # B4: «утверждённое кол-во» = из WishItem
+            unit=wi.unit,
+            unit_price=wi.unit_price,       # B4: «утверждённая цена» = из WishItem
+            total_price=wi.total_price,
+            country_origin=wi.country_origin,
+            feo_category_id=wi.feo_category_id,  # B9: per-item feo
+        )
+        db.add(pi)
+    await db.flush()
 
     wish.purchase_id = p.id
     wish.status = "converted"
@@ -393,9 +518,9 @@ async def delete_wish(
     """Delete a draft wish (creator only)."""
     wish = await _load_wish(wish_id, db)
 
-    if wish.created_by != current_user.id:
+    if not _is_saas(current_user) and wish.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Только автор может удалить заявку")
-    if wish.status != "draft":
+    if not _is_saas(current_user) and wish.status != "draft":
         raise HTTPException(status_code=400, detail="Можно удалить только черновик")
 
     await db.delete(wish)
@@ -416,7 +541,7 @@ async def patch_wish_item(
     Returns 404 if item does not belong to wish_id.
     """
     wish = await _load_wish(wish_id, db)
-    if wish.status not in ("draft", "submitted"):
+    if not _is_saas(current_user) and wish.status not in ("draft", "submitted"):
         raise HTTPException(status_code=409, detail="Заявка уже одобрена — редактирование запрещено")
     # Find item BELONGING TO THIS WISH
     item = next((i for i in wish.items if i.id == item_id), None)
@@ -445,9 +570,9 @@ async def approve_distribution(
     from sqlalchemy.orm import selectinload as sil
 
     wish = await _load_wish(wish_id, db)
-    if wish.status == "approved":
+    if not _is_saas(current_user) and wish.status == "approved":
         raise HTTPException(status_code=400, detail="Заявка уже одобрена")
-    if wish.status not in ("draft", "submitted"):
+    if not _is_saas(current_user) and wish.status not in ("draft", "submitted"):
         raise HTTPException(status_code=400, detail=f"Нельзя одобрить заявку в статусе {wish.status}")
     if current_user.role not in ADMIN_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Распределять заявку может админ или назначенный согласующий")
@@ -500,16 +625,20 @@ async def approve_distribution(
         for column_key, items_in_col in groups.items():
             total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
             display_key = "Не определено" if column_key == "__uncategorized__" else column_key
+            total_qty_grp = sum(float(i.quantity or 0) for i in items_in_col)
             p = Purchase(
                 subsidy_id=wish.subsidy_id,
                 feo_category_id=wish.feo_category_id,
+                event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
                 item_name=(wish.title or "").strip() or f"Заявка #{wish.id}",
                 subject=f"{(wish.title or '').strip() or f'Заявка #{wish.id}'} — {display_key}",
+                planned_quantity=total_qty_grp or wish.quantity,
                 planned_total_price=total_nmck,
                 total_nmck=total_nmck,
                 nmck=total_nmck,
                 status="wishes",
-                assigned_user_id=wish.assigned_to,
+                assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec
+                execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
                 service_note_text=wish.justification,
                 service_note_by=wish.created_by,
             )
@@ -528,6 +657,7 @@ async def approve_distribution(
                     unit_price=wi.unit_price,
                     total_price=wi.total_price,
                     country_origin=wi.country_origin,
+                    feo_category_id=wi.feo_category_id,  # B9: per-item feo
                 )
                 db.add(pi)
             await db.flush()

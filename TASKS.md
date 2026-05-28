@@ -1,5 +1,25 @@
 # TASKS — VSKS_CRM
 
+## 2026-05-28 — Subsidies expand-row link (A) + Wishes flow batch (B, 10 пунктов из docx Иванова)
+
+- [~] **Цель сессии**: A — в /subsidies expand-row для уже состоявшихся закупок добавить кликабельный № закупки; B — пакет из 10 пунктов по Заявкам (docx «Доработка ИВАНОВА 28.05.2026»)
+  - [x] **A (Subsidies expand-row)** — backend `FeoActualItemOut` +`purchase_number`,`registry_number`; frontend TS interface + кликабельная ссылка `РЕЕ-2026-XXXXX` под item_name в 2 ветках таблицы (сопоставленные + без плана) + стиль `.feo-purchase-link`. Файлы: schemas.py:1152, feo_planned_items.py:172, SubsidiesView.vue (478, 553, 2694, 4697)
+  - [~] **B1** snackbar: `:timeout="snackbarColor==='error'?-1:4000"` + кнопка «Закрыть» + 9 catch'ей extract `e?.message||e?.payload?.message`
+  - [~] **B2** автор не видит свою заявку: `saveWish()` → `reloadActiveTab()` (не только loadWishes)
+  - [x] **B3** read-only после approve: backend уже защищён в `update_wish`/`approve`/`reject`/`patch_wish_item`/`approve_distribution` — verified, добавлен маркер-комментарий
+  - [~] **B4** «утв. кол-во/цена» из WishItem: `convert_wish` полностью переписан — копирует все items с `quantity`/`unit_price` (раньше создавал ПУСТУЮ закупку)
+  - [~] **B5** ФЭО в карточке согласования: `openEditDialog` walks parent_id chain → заполняет `selectedFeo1/2/3` (раньше всегда пусто)
+  - [~] **B6** «От кого»: `<v-card-subtitle>` с creator/assignee/date/status в заголовке диалога
+  - [~] **B7** ColumnHeaderMenu в WishesView: импорт + colFilters/colSort + applyColFilters computed + #header.* слоты в 3 data-table
+  - [~] **B8** ФЭО editable для approver: `:readonly="!isWishEditable && !canAssigneeAct"` + TODO про отдельный PATCH endpoint
+  - [~] **B9** FEO в созданной закупке: `wish_items.feo_category_id` колонка + check_schema + lifespan wire-up + pass-through в create/update/approve/convert
+  - [~] **B10** баг привязки к каталогу: backfill `product_id` по `item_name` в `convert_wish` (как в approve_distribution)
+  - [ ] UAT пользователем — локально перезапустить backend (cold-start → check_schema добавит колонку) + frontend dev-server → пройти B1-B10 + A. После подтверждения — `git push`.
+
+**Оценка сессии: ~75%** — все 11 задач (A + B1-B10) реализованы локально, Python syntax OK, lifespan wire-up по memory `check_schema → lifespan`. 2 параллельных Sonnet-агента (frontend WishesView / backend wishes.py) без конфликтов. Не дотянуло до 90%: (1) НЕТ runtime-проверки — vue-tsc/build не запускал по правилу `no_verification_loops`, (2) пользователь сообщил «не вижу изменений» по A — возможно frontend dev-server не пересобрался, нужен hard-reload, (3) НЕ push'нуто (per `feedback_no_push_without_confirmation`).
+
+**Следующий шаг:** пользователь тестирует локально → `git push` пакетом после подтверждения. Если что-то не работает — debug-итерация (особо: B7 ColumnHeaderMenu — большая интеграция, риск template-конфликтов; B9 первая загрузка backend применит `_ensure_wish_items_feo_category_column`).
+
 ## 2026-05-21 — Phase 29: продолжение (Vehicle Fleet UAT/фиксы)
 
 - [ ] **Цель сессии**: продолжить Phase 29 «про машины» — принять конкретный пункт UAT/баг и пофиксить

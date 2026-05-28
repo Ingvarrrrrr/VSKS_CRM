@@ -872,6 +872,10 @@ async def import_items_mapped_nopid(
     col_total_price: int = Query(-1),
     col_vat: int = Query(-1),
     col_unit: int = Query(-1),
+    col_row_num: Optional[int] = Query(default=None),        # import-vat-cols: № строки (info only)
+    col_vat_rate: Optional[int] = Query(default=None),       # import-vat-cols: ставка НДС
+    col_vat_amount: Optional[int] = Query(default=None),     # import-vat-cols: сумма НДС
+    col_total_with_vat: Optional[int] = Query(default=None), # import-vat-cols: стоимость с НДС
     header_row_offset: int = Query(0),
     current_user: User = Depends(get_current_user),
 ):
@@ -1025,6 +1029,10 @@ async def import_items_mapped_nopid(
             description = f"{description} (НДС: {vat_str})"
         elif vat_str:
             description = f"НДС: {vat_str}"
+        # import-vat-cols: новые НДС-поля
+        vat_rate_str = _cell(row, col_vat_rate) if (col_vat_rate is not None and col_vat_rate >= 0) else None
+        vat_amount_dec = _to_dec(_cell(row, col_vat_amount)) if (col_vat_amount is not None and col_vat_amount >= 0) else None
+        total_with_vat_dec = _to_dec(_cell(row, col_total_with_vat)) if (col_total_with_vat is not None and col_total_with_vat >= 0) else None
         items_out.append({
             'item_name': item_name[:500],
             'item_type': 'товар',
@@ -1033,6 +1041,9 @@ async def import_items_mapped_nopid(
             'unit': unit,
             'unit_price': float(unit_price) if unit_price else None,
             'total_price': float(total_price) if total_price else None,
+            'vat_rate': vat_rate_str or (vat_str if not description else None),
+            'vat_amount': float(vat_amount_dec) if vat_amount_dec else None,
+            'total_with_vat': float(total_with_vat_dec) if total_with_vat_dec else None,
         })
 
     return {
@@ -1058,6 +1069,10 @@ async def import_items_mapped(
     col_total_price: int = Query(-1, description="Индекс столбца Сумма"),
     col_vat: int = Query(-1, description="Индекс столбца НДС"),
     col_unit: int = Query(-1, description="Индекс столбца Ед. изм."),
+    col_row_num: Optional[int] = Query(default=None, description="Индекс столбца № строки (info only)"),
+    col_vat_rate: Optional[int] = Query(default=None, description="Индекс столбца Ставка НДС"),
+    col_vat_amount: Optional[int] = Query(default=None, description="Индекс столбца Сумма НДС"),
+    col_total_with_vat: Optional[int] = Query(default=None, description="Индекс столбца Стоимость с НДС"),
     header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (авто-определено при preview)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1253,6 +1268,11 @@ async def import_items_mapped(
             elif vat_str:
                 description = f"НДС: {vat_str}"
 
+            # import-vat-cols: новые НДС-поля
+            vat_rate_val = _cell(row, col_vat_rate) if (col_vat_rate is not None and col_vat_rate >= 0) else None
+            vat_amount_val = _to_dec(_cell(row, col_vat_amount)) if (col_vat_amount is not None and col_vat_amount >= 0) else None
+            total_with_vat_val = _to_dec(_cell(row, col_total_with_vat)) if (col_total_with_vat is not None and col_total_with_vat >= 0) else None
+
             # Auto-match or create in catalog
             # 1) exact match (fast path)
             matched_product = product_by_name.get(item_name.lower().strip())
@@ -1287,6 +1307,9 @@ async def import_items_mapped(
                 unit=unit,
                 unit_price=unit_price,
                 total_price=total_price,
+                vat_rate=vat_rate_val or vat_str,
+                vat_amount=vat_amount_val,
+                total_with_vat=total_with_vat_val,
             )
             db.add(item)
             added += 1

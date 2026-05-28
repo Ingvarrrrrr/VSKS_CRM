@@ -2675,12 +2675,16 @@ const dragOverTarget = ref<string | null>(null)
 const importError = ref('')
 
 const TARGET_FIELDS = [
-  { value: 'item_name',   title: 'Наименование', required: true },
-  { value: 'unit_price',  title: 'Цена за ед.',  required: false },
-  { value: 'quantity',    title: 'Количество',    required: false },
-  { value: 'unit',        title: 'Ед. изм.',      required: false },
-  { value: 'total_price', title: 'Сумма',         required: false },
-  { value: 'description', title: 'Описание',      required: false },
+  { value: 'item_name',     title: 'Наименование',    required: true },
+  { value: 'unit_price',    title: 'Цена за ед.',     required: false },
+  { value: 'quantity',      title: 'Количество',      required: false },
+  { value: 'unit',          title: 'Ед. изм.',        required: false },
+  { value: 'total_price',   title: 'Сумма',           required: false },
+  { value: 'description',   title: 'Описание',        required: false },
+  { value: 'row_num',       title: '№',               required: false, hint: 'Номер строки в исходном документе' },
+  { value: 'vat_rate',      title: 'Ставка НДС',      required: false },
+  { value: 'vat_amount',    title: 'Сумма НДС',       required: false },
+  { value: 'total_with_vat', title: 'Стоимость с НДС', required: false },
 ]
 
 const currentSheetData = computed(() => {
@@ -2790,12 +2794,16 @@ function autoDetectMapping(headers: string[]): Record<string, number | null> {
   }
 
   const keywords: Record<string, string[]> = {
-    item_name:   ['наименован', 'назван', 'описание выполн', 'описание оказ', 'товара', 'товар', 'предмет', 'name', 'продукц', 'описан'],
-    description: ['характерист', 'тз', 'спецификац', 'specification'],
-    quantity:    ['кол-во', 'количеств', 'объем', 'qty', 'кол.', 'кол '],
-    unit_price:  ['цена (тариф)', 'цена', 'price', 'за единиц', 'за ед', 'тариф'],
-    total_price: ['всего', 'сумм', 'итого', 'total', 'стоимость'],
-    unit:        ['ед. изм', 'единиц', 'ед.изм', 'изм', 'unit', 'ед.'],
+    item_name:      ['наименован', 'назван', 'описание выполн', 'описание оказ', 'товара', 'товар', 'предмет', 'name', 'продукц', 'описан', 'маршрут', 'направлени', 'рейс', 'билет', 'услуга', 'работа'],
+    description:    ['характерист', 'тз', 'спецификац', 'specification'],
+    quantity:       ['кол-во', 'количеств', 'объем', 'qty', 'кол.', 'кол '],
+    unit_price:     ['цена (тариф)', 'цена', 'price', 'за единиц', 'за ед', 'тариф', 'стоимость', 'сумма билет', 'цена билет'],
+    total_price:    ['всего', 'сумм', 'итого', 'total', 'стоимость'],
+    unit:           ['ед. изм', 'единиц', 'ед.изм', 'изм', 'unit', 'ед.'],
+    row_num:        ['№', 'n', 'no', '#', 'пп', 'п/п'],
+    vat_rate:       ['ставка ндс', 'налоговая ставка', '% ндс', 'ндс %', 'vat rate'],
+    vat_amount:     ['сумма ндс', 'налог', 'vat amount'],
+    total_with_vat: ['с ндс', 'с учётом ндс', 'с налогом всего', 'итого с ндс', 'total with vat', 'к оплате', 'сумма с налогом'],
   }
   for (const [field, kws] of Object.entries(keywords)) {
     if (mapping[field] !== null) continue  // already set (e.g. total_price by с налогом)
@@ -2939,12 +2947,16 @@ async function doMappedImport() {
       const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
       if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
       const paramMap: Record<string, string> = {
-        item_name: 'col_item_name',
-        description: 'col_description',
-        quantity: 'col_quantity',
-        unit_price: 'col_unit_price',
-        total_price: 'col_total_price',
-        unit: 'col_unit',
+        item_name:     'col_item_name',
+        description:   'col_description',
+        quantity:      'col_quantity',
+        unit_price:    'col_unit_price',
+        total_price:   'col_total_price',
+        unit:          'col_unit',
+        row_num:       'col_row_num',
+        vat_rate:      'col_vat_rate',
+        vat_amount:    'col_vat_amount',
+        total_with_vat: 'col_total_with_vat',
       }
       for (const [field, colIdx] of Object.entries(dragMapping.value)) {
         if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
@@ -2993,12 +3005,16 @@ async function doMappedImport() {
       const headerOffset = sheet.header_row_offset ?? 0
       if (headerOffset > 0) paramsNoPid.set('header_row_offset', String(headerOffset))
       const paramMapNoPid: Record<string, string> = {
-        item_name: 'col_item_name',
-        description: 'col_description',
-        quantity: 'col_quantity',
-        unit_price: 'col_unit_price',
-        total_price: 'col_total_price',
-        unit: 'col_unit',
+        item_name:     'col_item_name',
+        description:   'col_description',
+        quantity:      'col_quantity',
+        unit_price:    'col_unit_price',
+        total_price:   'col_total_price',
+        unit:          'col_unit',
+        row_num:       'col_row_num',
+        vat_rate:      'col_vat_rate',
+        vat_amount:    'col_vat_amount',
+        total_with_vat: 'col_total_with_vat',
       }
       for (const [field, colIdx] of Object.entries(dragMapping.value)) {
         if (colIdx !== null && colIdx !== undefined && paramMapNoPid[field]) {

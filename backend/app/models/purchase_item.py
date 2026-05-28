@@ -25,6 +25,8 @@ class PurchaseItem(Base):
     contractor_inn = Column(String(20), nullable=True)
     contractor_name = Column(String(500), nullable=True)
     vat_rate = Column(String(20), nullable=True)  # Phase 26-U-3: per-item НДС ставка
+    vat_amount = Column(Numeric(15, 2), nullable=True)      # import-vat-cols: сумма НДС по позиции
+    total_with_vat = Column(Numeric(15, 2), nullable=True)  # import-vat-cols: стоимость с НДС
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
 
     purchase = relationship("Purchase", back_populates="items")

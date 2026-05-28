@@ -303,6 +303,28 @@ async def _ensure_purchase_items_feo_category_id_column(conn) -> None:
         print(f"  ⚠️   purchase_items.feo_category_id ensure failed: {e}")
 
 
+async def _ensure_purchase_items_vat_amount_column(conn) -> None:
+    """import-vat-cols: ADD vat_amount NUMERIC(15,2) to purchase_items (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE purchase_items ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(15, 2)"
+        ))
+        print("  \u2705  purchase_items.vat_amount column ensured (import-vat-cols)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   purchase_items.vat_amount ensure failed: {e}")
+
+
+async def _ensure_purchase_items_total_with_vat_column(conn) -> None:
+    """import-vat-cols: ADD total_with_vat NUMERIC(15,2) to purchase_items (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE purchase_items ADD COLUMN IF NOT EXISTS total_with_vat NUMERIC(15, 2)"
+        ))
+        print("  \u2705  purchase_items.total_with_vat column ensured (import-vat-cols)")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   purchase_items.total_with_vat ensure failed: {e}")
+
+
 async def _ensure_purchases_service_note_to_user_id_column(conn) -> None:
     """SN-UX: ADD service_note_to_user_id FK column to purchases (idempotent)."""
     try:

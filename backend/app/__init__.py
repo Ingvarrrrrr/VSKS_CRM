@@ -1424,6 +1424,28 @@ async def lifespan(app_: FastAPI):
             f"FCAT-B1 feo_category_id column setup skipped (non-fatal): {e}"
         )
 
+    # import-vat-cols: purchase_items.vat_amount column
+    try:
+        from check_schema import _ensure_purchase_items_vat_amount_column
+        from .database import engine as _engine_vat_amount
+        async with _engine_vat_amount.begin() as conn:
+            await _ensure_purchase_items_vat_amount_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"import-vat-cols vat_amount column setup skipped (non-fatal): {e}"
+        )
+
+    # import-vat-cols: purchase_items.total_with_vat column
+    try:
+        from check_schema import _ensure_purchase_items_total_with_vat_column
+        from .database import engine as _engine_total_with_vat
+        async with _engine_total_with_vat.begin() as conn:
+            await _ensure_purchase_items_total_with_vat_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"import-vat-cols total_with_vat column setup skipped (non-fatal): {e}"
+        )
+
     # SN-UX: purchases.service_note_to_user_id column
     try:
         from check_schema import _ensure_purchases_service_note_to_user_id_column

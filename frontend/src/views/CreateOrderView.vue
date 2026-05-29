@@ -4305,8 +4305,14 @@ async function openDocPicker(type: 'service_note_procurement' | 'service_note_de
   docPickerType.value = type
   docPickerDialog.value = true
   loadingDocApprovers.value = true
-  // Pre-fill responsible person from the purchase form
-  pickerResponsibleName.value = form.responsible_person || ''
+  // Pre-fill responsible person from the purchase form.
+  // Приоритет: form.responsible_person (legacy строковое поле) → ФИО юзера из form.assigned_user_id.
+  let prefillName = (form.responsible_person || '').trim()
+  if (!prefillName && form.assigned_user_id) {
+    const u = orgUsersList.value.find((x: any) => x.id === form.assigned_user_id)
+    prefillName = (u?.full_name || u?.name || '').trim()
+  }
+  pickerResponsibleName.value = prefillName
   try {
     const [list] = await Promise.all([
       apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),

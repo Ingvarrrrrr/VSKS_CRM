@@ -629,9 +629,10 @@
                 label="Товары / Услуги" variant="outlined" density="compact" clearable />
             </v-col>
             <v-col cols="12" md="4">
-              <v-autocomplete v-model="dialog.form.contractor_id"
-                :items="contractors" item-title="name" item-value="id"
-                label="Контрагент" variant="outlined" density="compact" clearable />
+              <ContractorPicker
+                v-model="dialog.form.contractor_id"
+                :initial-contractor="dialogInitialContractor"
+                @select="onContractorPicked" />
             </v-col>
             <v-col cols="12" md="6">
               <v-select v-model="dialog.form.subsidy_id"
@@ -865,6 +866,8 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney as formatMoneyUtil } from '@/utils/formatMoney'
+import { useContractorsStore } from '@/stores/contractors'
+import ContractorPicker from '@/components/ContractorPicker.vue'
 
 const router = useRouter()
 
@@ -929,6 +932,7 @@ interface Purchase { id: number; registry_number?: string; purchase_number?: num
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
+const contractorsStore = useContractorsStore()
 const loading = ref(false)
 const expanded = ref<number[]>([])
 
@@ -1552,12 +1556,27 @@ watch(fProduct, (val) => {
 // ── Dialog ─────────────────────────────────────────────────────────────────
 const emptyForm = () => ({
   number: '', date: '', contract_type: 'single', purchase_method: null as string | null, item_type: null as string | null,
-  contractor_id: null as number | null, subsidy_id: null as number | null,
+  contractor_id: null as number | null, contractor_name: '' as string, contractor_inn: '' as string,
+  subsidy_id: null as number | null,
   extra_subsidy_ids: [] as number[],
   subject: '', max_amount: null as number | null, planned_monthly: null as number | null,
   start_date: '', end_date: '', status: 'active', notes: '',
 })
 const dialog = reactive({ show: false, saving: false, id: 0, form: emptyForm() })
+
+const dialogInitialContractor = computed(() => {
+  if (!dialog.form.contractor_id) return null
+  return {
+    id: dialog.form.contractor_id,
+    name: dialog.form.contractor_name || `Контрагент #${dialog.form.contractor_id}`,
+    inn: dialog.form.contractor_inn || undefined,
+  }
+})
+
+function onContractorPicked(c: { id: number; name: string; inn?: string } | null) {
+  dialog.form.contractor_name = c?.name || ''
+  dialog.form.contractor_inn = c?.inn || ''
+}
 
 const openCreate = () => { dialog.id = 0; Object.assign(dialog.form, emptyForm()); dialog.show = true }
 
@@ -1576,7 +1595,8 @@ const openEdit = async (c: Contract) => {
   }
   Object.assign(dialog.form, {
     number: c.number || '', date: c.date || '', contract_type: c.contract_type || 'single',
-    purchase_method: c.purchase_method || null, item_type: (c as any).item_type || null, contractor_id: c.contractor_id || null,
+    purchase_method: c.purchase_method || null, item_type: (c as any).item_type || null,
+    contractor_id: c.contractor_id || null, contractor_name: c.contractor_name || '', contractor_inn: c.contractor_inn || '',
     subsidy_id: c.subsidy_id || null,
     extra_subsidy_ids: (c.extra_subsidies || []).map(es => es.subsidy_id),
     subject: c.subject || '',
@@ -1847,13 +1867,13 @@ onMounted(async () => {
     // 403 для не-admin — игнорируем, не критично
   }
   loadContracts(); loadSubsidies()
-  // #4a Филиппов 01.06: autocomplete контрагентов в диалоге создания договора
-  // был пуст — массив contractors никогда не наполнялся. Грузим список один раз
-  // при mount (как и subsidies).
+  // База контрагентов ~51k — bulk-load первых 5000 не покрывал всю базу
+  // (поиск промахивался по 46k). Грузим только первые 50 для начального
+  // показа; полноценный поиск — server-side через onContractorSearch (вся база).
   try {
-    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=5000')
+    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=50')
   } catch (_) {
-    // тихо игнорируем — список останется пустым, можно ввести вручную
+    // тихо игнорируем — список наполнится по мере поиска
   }
 })
 </script>

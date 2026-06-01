@@ -461,11 +461,14 @@ async def _do_feo_import(
     c_amt_lvl2: int | None = None,
     c_amt_lvl3: int | None = None,
     c_amt_lvl4: int | None = None,
+    default_subsidy_id: int | None = None,
 ) -> dict:
     """Core import logic shared by /import and /import-mapped endpoints."""
 
-    if c_subsidy is None or c_lvl2 is None:
-        raise HTTPException(400, "Не найдены обязательные столбцы: 'Субсидия' и 'Уровень 2 (Направление расходов)'")
+    if c_lvl2 is None:
+        raise HTTPException(400, "Не найден обязательный столбец: 'Уровень 2 (Направление расходов)'")
+    if c_subsidy is None and default_subsidy_id is None:
+        raise HTTPException(400, "Укажите столбец 'Субсидия' или выберите субсидию назначения")
 
     def get_cell(row, col: int | None) -> str | None:
         if col is None or col < 0: return None
@@ -526,20 +529,22 @@ async def _do_feo_import(
         return cat
 
     for row_num, row in enumerate(rows, start=2):
-        sub_name = get_cell(row, c_subsidy)
-        if not sub_name or sub_name.startswith("←"):
-            skipped += 1
-            continue
-
         lvl2_name = get_cell(row, c_lvl2)
         if not lvl2_name or lvl2_name.startswith("←"):
             skipped += 1
             continue
 
-        subsidy_id = sub_by_name.get(sub_name.lower().strip())
-        if not subsidy_id:
-            errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
-            continue
+        sub_name = get_cell(row, c_subsidy) if c_subsidy is not None else None
+        if sub_name and not sub_name.startswith("←"):
+            subsidy_id = sub_by_name.get(sub_name.lower().strip()) or default_subsidy_id
+            if not subsidy_id:
+                errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
+                continue
+        else:
+            subsidy_id = default_subsidy_id
+            if not subsidy_id:
+                skipped += 1
+                continue
 
         lvl3_name = get_cell(row, c_lvl3)
         lvl4_name = get_cell(row, c_lvl4)
@@ -750,12 +755,15 @@ async def import_feo_mapped(
     col_amt_lvl2: int = Query(-1),
     col_amt_lvl3: int = Query(-1),
     col_amt_lvl4: int = Query(-1),
+    default_subsidy_id: int = Query(-1),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('feo_categories')),
 ):
     """Импорт категорий ФЭО с пользовательским маппингом столбцов."""
-    if col_subsidy < 0 or col_lvl2 < 0:
-        raise HTTPException(400, "Не указаны обязательные столбцы: Субсидия и Уровень 2")
+    if col_lvl2 < 0:
+        raise HTTPException(400, "Не указан обязательный столбец: Уровень 2")
+    if col_subsidy < 0 and default_subsidy_id <= 0:
+        raise HTTPException(400, "Укажите столбец Субсидия или выберите субсидию назначения")
 
     fname = (file.filename or "").lower()
     content = await file.read()
@@ -814,7 +822,7 @@ async def import_feo_mapped(
 
     return await _do_feo_import(
         rows=data_rows,
-        c_subsidy=col_subsidy,
+        c_subsidy=col_subsidy if col_subsidy >= 0 else None,
         c_lvl2=col_lvl2,
         c_lvl3=col_lvl3 if col_lvl3 >= 0 else None,
         c_lvl4=col_lvl4 if col_lvl4 >= 0 else None,
@@ -835,6 +843,7 @@ async def import_feo_mapped(
         c_amt_lvl2=col_amt_lvl2 if col_amt_lvl2 >= 0 else None,
         c_amt_lvl3=col_amt_lvl3 if col_amt_lvl3 >= 0 else None,
         c_amt_lvl4=col_amt_lvl4 if col_amt_lvl4 >= 0 else None,
+        default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db,
     )
 

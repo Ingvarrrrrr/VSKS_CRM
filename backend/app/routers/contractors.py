@@ -1102,8 +1102,15 @@ async def list_contractors(
     # любого контрагента в autocomplete (фидбек Филиппов 01.06).
     # Раньше: org_id IN user_orgs OR org_id IS NULL → не-админы не видели
     # контрагентов привязанных к другим орг (КРАФТВЭЙ, ЛИНИЯ ГРАФИК и т.п.).
+    from sqlalchemy import case
+    # Приоритет: фирмы с российским ИНН (ровно 10 или 12 цифр) — выше остальных.
+    # Фидбек пользователя: искать приоритетно по российским ИНН, а не все подряд.
+    ru_inn_priority = case(
+        (Contractor.inn.op('~')(r'^[0-9]{10}$'), 0),
+        (Contractor.inn.op('~')(r'^[0-9]{12}$'), 0),
+        else_=1,
+    )
     if search:
-        from sqlalchemy import case
         term = f"%{search}%"
         prefix = f"{search}%"
         relevance = case(
@@ -1113,9 +1120,9 @@ async def list_contractors(
             else_=3,
         )
         q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
-        q = q.order_by(relevance, Contractor.name)
+        q = q.order_by(ru_inn_priority, relevance, Contractor.name)
     else:
-        q = q.order_by(Contractor.name)
+        q = q.order_by(ru_inn_priority, Contractor.name)
     result = await db.execute(q.limit(limit))
     return result.scalars().all()
 

@@ -781,24 +781,7 @@
               <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
-          <div class="d-flex align-center ga-2 mt-3">
-            <v-autocomplete
-              v-model="form.contractor_id"
-              :items="contractors"
-              item-title="name" item-value="id"
-              label="Контрагент"
-              variant="outlined" density="compact" clearable hide-details
-              no-data-text="Нет контрагентов"
-              style="flex:1"
-              @update:search="onContractorSearch"
-            >
-              <template v-slot:item="{ item, props }">
-                <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
-              </template>
-            </v-autocomplete>
-            <v-btn icon="mdi-plus" size="small" variant="tonal" color="primary"
-              title="Создать нового контрагента" @click="quickContractorDialog = true" />
-          </div>
+          <ContractorPicker v-model="form.contractor_id" class="mt-3" />
           <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
           <v-row dense class="mt-3">
             <v-col cols="12" md="6">
@@ -849,24 +832,7 @@
               <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
             </v-col>
           </v-row>
-          <div class="d-flex align-center ga-2 mt-3">
-            <v-autocomplete
-              v-model="editForm.contractor_id"
-              :items="contractors"
-              item-title="name" item-value="id"
-              label="Контрагент"
-              variant="outlined" density="compact" clearable hide-details
-              no-data-text="Нет контрагентов"
-              style="flex:1"
-              @update:search="onContractorSearch"
-            >
-              <template v-slot:item="{ item, props }">
-                <v-list-item v-bind="props" :subtitle="item.raw.inn ? `ИНН ${item.raw.inn}` : ''" />
-              </template>
-            </v-autocomplete>
-            <v-btn icon="mdi-plus" size="small" variant="tonal" color="primary"
-              title="Создать нового контрагента" @click="quickContractorDialog = true" />
-          </div>
+          <ContractorPicker v-model="editForm.contractor_id" :initial-contractor="editInitialContractor" class="mt-3" />
           <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
           <v-textarea
             v-model="editForm.agreement_text"
@@ -1712,6 +1678,14 @@
               label="Сменить лист" variant="outlined" density="compact" class="mb-3"
               @update:model-value="feoAutoMap(feoCurrentSheet?.headers || [])"
             />
+            <v-select
+              v-model="feoImportTargetSubsidy"
+              :items="allSubsidies"
+              item-title="name" item-value="id"
+              label="Субсидия назначения (для строк без столбца «Субсидия»)"
+              variant="outlined" density="compact" clearable class="mb-3"
+              hint="Если в файле колонка «Субсидия» пустая — все строки будут отнесены к выбранной субсидии"
+              persistent-hint />
 
             <div class="feo-imap-grid">
               <div v-for="target in FEO_TARGET_FIELDS" :key="target.value"
@@ -1930,91 +1904,6 @@
             @click="savePlannedItem">
             Добавить
           </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Quick contractor create dialog -->
-    <v-dialog v-model="quickContractorDialog" max-width="560" persistent scrollable>
-      <v-card>
-        <v-card-title class="d-flex align-center justify-space-between pt-4 px-4">
-          <span class="text-subtitle-1">
-            <v-icon class="mr-1" size="20" color="primary">mdi-account-plus</v-icon>
-            Новый контрагент
-          </span>
-          <v-btn-toggle v-model="qcMode" mandatory density="compact" color="primary" size="small">
-            <v-btn value="manual" prepend-icon="mdi-pencil" size="small">Вручную</v-btn>
-            <v-btn value="file" prepend-icon="mdi-file-upload-outline" size="small">Из файла</v-btn>
-          </v-btn-toggle>
-        </v-card-title>
-        <v-card-text style="max-height:75vh">
-          <div v-if="qcMode === 'manual'">
-            <div class="section-label">Основные данные</div>
-            <v-text-field v-model="qcForm.name" label="Наименование *" variant="outlined" density="compact" class="mb-3" hide-details />
-            <v-select
-              v-model="qcForm.org_type"
-              :items="['Юр.лицо', 'ИП', 'Самозанятый', 'Физ.лицо']"
-              label="Тип организации" variant="outlined" density="compact" class="mb-3" hide-details clearable
-            />
-            <v-row dense class="mb-1">
-              <v-col cols="4">
-                <v-text-field v-model="qcForm.inn" label="ИНН" variant="outlined" density="compact" hide-details
-                  :loading="qcInnLoading"
-                  @update:model-value="onQcInnChange" />
-              </v-col>
-              <v-col cols="4"><v-text-field v-model="qcForm.kpp" label="КПП" variant="outlined" density="compact" hide-details /></v-col>
-              <v-col cols="4"><v-text-field v-model="qcForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details /></v-col>
-            </v-row>
-            <v-alert v-if="qcInnMessage" :type="qcInnMessageType" density="compact" variant="tonal" class="mb-2 text-caption" closable @click:close="qcInnMessage = ''">{{ qcInnMessage }}</v-alert>
-            <v-textarea v-model="qcForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
-            <v-textarea v-model="qcForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mb-3" hide-details />
-
-            <div class="section-label mt-4">Подписант</div>
-            <v-text-field v-model="qcForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
-            <v-text-field v-model="qcForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" class="mb-3" hide-details placeholder="Устава, доверенности №..." />
-
-            <div class="section-label mt-4">Контакты</div>
-            <v-row dense class="mb-3">
-              <v-col cols="6"><v-text-field v-model="qcForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details /></v-col>
-              <v-col cols="6"><v-text-field v-model="qcForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details /></v-col>
-            </v-row>
-            <v-text-field v-model="qcForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
-            <v-row dense class="mb-3">
-              <v-col cols="6"><v-text-field v-model="qcForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details /></v-col>
-              <v-col cols="6"><v-text-field v-model="qcForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details /></v-col>
-            </v-row>
-
-            <div class="section-label mt-4">Банковские реквизиты</div>
-            <v-text-field v-model="qcForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
-            <v-text-field v-model="qcForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details placeholder="в ПАО «Сбербанк»..." />
-            <v-row dense class="mb-3">
-              <v-col cols="6"><v-text-field v-model="qcForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" /></v-col>
-              <v-col cols="6"><v-text-field v-model="qcForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" /></v-col>
-            </v-row>
-            <v-textarea v-model="qcForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" hide-details />
-          </div>
-          <div v-else>
-            <p class="text-body-2 text-medium-emphasis mb-3">Загрузите Excel файл с контрагентами. Формат: ИНН, Наименование, КПП, Адрес.</p>
-            <v-file-input
-              v-model="qcImportFile"
-              label="Выберите файл Excel (.xlsx)"
-              accept=".xlsx,.xls"
-              variant="outlined"
-              density="compact"
-              prepend-icon="mdi-microsoft-excel"
-              hide-details
-            />
-            <v-alert v-if="qcImportError" type="error" density="compact" class="mt-2">{{ qcImportError }}</v-alert>
-            <v-alert v-if="qcImportSuccess" type="success" density="compact" class="mt-2">{{ qcImportSuccess }}</v-alert>
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="quickContractorDialog = false; qcMode = 'manual'; qcImportFile = null; qcImportError = ''">Отмена</v-btn>
-          <v-btn v-if="qcMode === 'manual'" color="primary" variant="tonal" :loading="qcSaving" :disabled="!qcForm.name.trim()"
-            @click="saveQuickContractor">Создать</v-btn>
-          <v-btn v-else color="success" variant="tonal" :loading="qcImportLoading" :disabled="!qcImportFile"
-            @click="importContractorsFromFile">Загрузить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2254,6 +2143,7 @@ import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
+import ContractorPicker from '@/components/ContractorPicker.vue'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -2568,6 +2458,8 @@ const feoImport = reactive({
   selectedSheet: '',
 })
 
+const feoImportTargetSubsidy = ref<number | null>(null)
+
 // FEO column mapping
 const FEO_TARGET_FIELDS = [
   { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
@@ -2603,7 +2495,8 @@ const feoCurrentSheet = computed(() => {
 })
 const feoCurrentHeaders = computed(() => feoCurrentSheet.value?.headers || [])
 const feoMappingValid = computed(() =>
-  feoDragMapping.value['subsidy'] != null && feoDragMapping.value['lvl2'] != null
+  feoDragMapping.value['lvl2'] != null &&
+  (feoDragMapping.value['subsidy'] != null || feoImportTargetSubsidy.value != null)
 )
 const feoUnmappedCount = computed(() =>
   feoCurrentHeaders.value.filter((_: any, i: number) => !feoIsMapped(i) && !feoIsIgnored(i)).length
@@ -2917,131 +2810,6 @@ const snack = ref({ show: false, text: '', color: 'success' })
 
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
-// Quick contractor creation
-const quickContractorDialog = ref(false)
-const qcSaving = ref(false)
-const qcMode = ref<'manual' | 'file'>('manual')
-const qcInnLoading = ref(false)
-const qcInnMessage = ref('')
-const qcInnMessageType = ref<'success' | 'info' | 'error'>('info')
-
-let _qcInnTimeout: any = null
-function onQcInnChange(val: string) {
-  clearTimeout(_qcInnTimeout)
-  const inn = (val || '').replace(/\D/g, '')
-  if (inn.length === 10 || inn.length === 12) {
-    _qcInnTimeout = setTimeout(() => lookupQcInn(inn), 400)
-  }
-}
-
-async function lookupQcInn(inn: string) {
-  qcInnLoading.value = true
-  qcInnMessage.value = ''
-  try {
-    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}`)
-    const source = data._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
-    const filled: string[] = []
-    const fill = (key: string, label: string) => {
-      if (data[key] && !(qcForm.value as any)[key]) {
-        ;(qcForm.value as any)[key] = data[key]
-        filled.push(label)
-      }
-    }
-    fill('name', 'Наименование')
-    fill('kpp', 'КПП')
-    fill('ogrn', 'ОГРН')
-    fill('address', 'Адрес')
-    fill('postal_address', 'Почт. адрес')
-    fill('org_type', 'Тип')
-    fill('signatory', 'Подписант')
-    fill('signatory_basis', 'Основание')
-    fill('contact_person', 'Контакт')
-    fill('phone', 'Телефон')
-    fill('email', 'Email')
-    fill('org_phone', 'Тел. орг.')
-    fill('org_email', 'Email орг.')
-    fill('settlement_account', 'Р/С')
-    fill('bank_name', 'Банк')
-    fill('bik', 'БИК')
-    fill('correspondent_account', 'К/С')
-    qcInnMessage.value = filled.length
-      ? `Заполнено из ${source}: ${filled.join(', ')}`
-      : `Найден: ${data.name || inn} (${source}). Поля уже заполнены.`
-    qcInnMessageType.value = filled.length ? 'success' : 'info'
-  } catch (e: any) {
-    if (e?.payload?.code === 'INN_NOT_FOUND') {
-      qcInnMessage.value = e.payload.message
-      qcInnMessageType.value = 'warning'
-    } else {
-      qcInnMessage.value = e?.message || 'Ошибка запроса к ФНС'
-      qcInnMessageType.value = 'error'
-    }
-  } finally {
-    qcInnLoading.value = false
-  }
-}
-const qcImportFile = ref<File | null>(null)
-const qcImportError = ref('')
-const qcImportSuccess = ref('')
-const qcImportLoading = ref(false)
-const qcFormDefault = () => ({
-  name: '', org_type: '', inn: '', kpp: '', ogrn: '',
-  address: '', postal_address: '',
-  signatory: '', signatory_basis: '',
-  contact_person: '', phone: '', email: '', org_phone: '', org_email: '',
-  settlement_account: '', bank_name: '', bik: '', correspondent_account: '', bank_details: ''
-})
-const qcForm = ref(qcFormDefault())
-
-async function saveQuickContractor() {
-  if (!qcForm.value.name.trim()) return
-  qcSaving.value = true
-  try {
-    const body: any = { name: qcForm.value.name.trim() }
-    const fields = ['org_type','inn','kpp','ogrn','address','postal_address','signatory','signatory_basis','contact_person','phone','email','org_phone','org_email','settlement_account','bank_name','bik','correspondent_account','bank_details'] as const
-    for (const f of fields) { if (qcForm.value[f]) body[f] = (qcForm.value[f] as string).trim() }
-    const created = await apiFetch<any>('/contractors/', { method: 'POST', body })
-    contractors.value.push({ id: created.id, name: created.name, inn: created.inn })
-    // Phase 26-ZZ: добавляем созданного в кэш — selected chip покажет name
-    form.value.contractor_id = created.id
-    editForm.value.contractor_id = created.id
-    quickContractorDialog.value = false
-    qcForm.value = qcFormDefault()
-    qcMode.value = 'manual'
-    qcImportFile.value = null
-    qcImportError.value = ''
-    snack.value = { show: true, text: `Контрагент "${created.name}" создан`, color: 'success' }
-  } catch (e: any) {
-    snack.value = { show: true, text: e?.detail || 'Ошибка создания', color: 'error' }
-  } finally { qcSaving.value = false }
-}
-
-async function importContractorsFromFile() {
-  if (!qcImportFile.value) return
-  qcImportLoading.value = true
-  qcImportError.value = ''
-  qcImportSuccess.value = ''
-  try {
-    const formData = new FormData()
-    formData.append('file', qcImportFile.value)
-    const res = await apiFetch<any>('/contractors/import/excel', {
-      method: 'POST',
-      body: formData,
-    })
-    qcImportSuccess.value = `Добавлено: ${res.created}, обновлено: ${res.updated || 0}`
-    qcImportFile.value = null
-    setTimeout(() => {
-      quickContractorDialog.value = false
-      qcImportSuccess.value = ''
-      qcMode.value = 'manual'
-    }, 2000)
-  } catch (e: any) {
-    qcImportError.value = e?.detail || 'Ошибка импорта'
-  } finally {
-    qcImportLoading.value = false
-  }
-}
-
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
@@ -3051,6 +2819,12 @@ const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as numb
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
+
+const editInitialContractor = computed(() => {
+  if (!editForm.value.contractor_id) return null
+  const c = contractors.value.find((x: any) => x.id === editForm.value.contractor_id)
+  return c ? { id: c.id, name: c.name, inn: c.inn } : { id: editForm.value.contractor_id, name: `Контрагент #${editForm.value.contractor_id}`, inn: undefined }
+})
 
 const CARD_ORDER_KEY = 'subsidies_card_order'
 const cardDragIdx = ref(-1)
@@ -3417,25 +3191,9 @@ async function onDropToRoot(e: DragEvent) {
 
 function onDragEnd() { dragNodeId.value = null; dragOverId.value = null }
 
-// ── Contractor server-side search ─────────────────
-let _contractorSearchTimeout: any = null
-function onContractorSearch(query: string) {
-  clearTimeout(_contractorSearchTimeout)
-  if (!query || query.length < 2) return
-  _contractorSearchTimeout = setTimeout(async () => {
-    try {
-      const list = await apiFetch<any[]>(`/contractors/?search=${encodeURIComponent(query)}&limit=50`)
-      const existing = new Set(contractors.value.map((c: any) => c.id))
-      for (const c of list) {
-        if (!existing.has(c.id)) contractors.value.push(c)
-      }
-    } catch {}
-  }, 400)
-}
-
 // ── Data load ─────────────────────────────────────
 // Phase 26-ZZ: bulk-load контрагентов убран. Локальный contractors массив
-// наполняется через server-search (onContractorSearch) и ad-hoc fetch при edit.
+// наполняется через ContractorPicker и ad-hoc fetch при edit.
 async function loadAll() {
   loading.value = true
   try {
@@ -3522,6 +3280,7 @@ async function doFeoImport() {
     feoImport.selectedSheet = data.sheets[0]?.name || ''
     feoIgnoredCols.value = []
     feoAutoMap(data.sheets[0]?.headers || [])
+    feoImportTargetSubsidy.value = selectedId.value
     feoImport.step = 2
   } catch {
     showSnack('Ошибка чтения файла', 'error')
@@ -3540,6 +3299,7 @@ async function doFeoMappedImport() {
       sheet_name: feoImport.selectedSheet,
       header_row_offset: String(sheet?.header_row_offset ?? 0),
       col_subsidy:  String(m['subsidy']  ?? -1),
+      default_subsidy_id: String(feoImportTargetSubsidy.value ?? -1),
       col_lvl2:     String(m['lvl2']     ?? -1),
       col_lvl3:     String(m['lvl3']     ?? -1),
       col_lvl4:     String(m['lvl4']     ?? -1),

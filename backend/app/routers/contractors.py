@@ -118,6 +118,16 @@ def _map_kv_key(key: str) -> str | None:
         return 'подписант'
     if 'должност' in k:
         return 'должность'
+    if 'сайт' in k or 'website' in k:
+        return 'сайт'
+    if 'окпо' in k:
+        return 'окпо'
+    if 'оквэд' in k:
+        return 'оквэд'
+    if 'единый' in k and 'казначейск' in k:
+        return 'единый казначейский счёт'
+    if 'казначейск' in k:
+        return 'казначейский счёт'
     return None
 
 
@@ -136,7 +146,12 @@ _KV_LABEL_TO_FIELD: dict[str, str] = {
     'телефон': 'phone',
     'email': 'email',
     'подписант': 'signatory',
-    'должность': '_signatory_position',  # internal: prepend to signatory
+    'должность': 'signatory_position',
+    'сайт': 'website',
+    'окпо': 'okpo',
+    'оквэд': 'okved',
+    'казначейский счёт': 'treasury_account',
+    'единый казначейский счёт': 'single_treasury_account',
 }
 
 # Human-readable column header for each field used in preview response
@@ -154,6 +169,13 @@ _FIELD_TO_HEADER: dict[str, str] = {
     'phone': 'Телефон',
     'email': 'Email',
     'signatory': 'Подписант',
+    'website': 'Сайт',
+    'registration_date': 'Дата регистрации',
+    'okpo': 'ОКПО',
+    'okved': 'ОКВЭД',
+    'treasury_account': 'Казначейский счёт',
+    'single_treasury_account': 'Единый казначейский счёт',
+    'signatory_position': 'Должность',
 }
 
 
@@ -208,7 +230,6 @@ def _try_parse_kv_docx(doc) -> tuple[list, int] | None:
     headers: list[str] = []
     values: list[str] = []
     seen_fields: set[str] = set()
-    signatory_pos: str | None = None
 
     for raw_key, raw_val in kv_pairs:
         label = _map_kv_key(raw_key)
@@ -217,23 +238,30 @@ def _try_parse_kv_docx(doc) -> tuple[list, int] | None:
         field = _KV_LABEL_TO_FIELD.get(label)
         if field is None:
             continue
-        if field == '_signatory_position':
-            signatory_pos = raw_val
-            continue
         if field in seen_fields:
             continue  # Take first match only
         seen_fields.add(field)
         headers.append(_FIELD_TO_HEADER.get(field, field))
         values.append(raw_val)
 
-    # Enrich signatory with position if both present
-    if signatory_pos and 'signatory' in seen_fields:
-        idx = next((i for i, h in enumerate(headers) if h == _FIELD_TO_HEADER.get('signatory', 'Подписант')), None)
-        if idx is not None and values[idx]:
-            values[idx] = f"{signatory_pos} {values[idx]}"
-    elif signatory_pos and 'signatory' not in seen_fields:
-        headers.append(_FIELD_TO_HEADER.get('signatory', 'Подписант'))
-        values.append(signatory_pos)
+    # Post-process: if ОГРН value contains a dd.mm.yyyy date (e.g. "1239500010639, 11.12.2023"),
+    # split it — keep digits as ОГРН and extract registration_date if not already captured.
+    try:
+        import re as _re_kv
+        ogrn_header = _FIELD_TO_HEADER.get('ogrn', 'ОГРН')
+        if ogrn_header in headers:
+            idx = headers.index(ogrn_header)
+            ogrn_val = values[idx]
+            dm = _re_kv.search(r'(\d{2}\.\d{2}\.\d{4})', ogrn_val)
+            if dm:
+                # Keep only digits for ОГРН
+                values[idx] = _re_kv.sub(r'\D', '', ogrn_val.split(',')[0])
+                if 'registration_date' not in seen_fields:
+                    headers.append(_FIELD_TO_HEADER.get('registration_date', 'Дата регистрации'))
+                    values.append(dm.group(1))
+                    seen_fields.add('registration_date')
+    except Exception:
+        pass  # defensive — don't break existing parsing
 
     # Fallback: if name not found, scan paragraphs
     if 'name' not in seen_fields:
@@ -359,7 +387,9 @@ def _try_parse_paragraphs_docx(doc) -> tuple[list, int] | None:
 
     # Build header/value rows in stable order
     order = ['name', 'inn', 'kpp', 'ogrn', 'address', 'phone', 'email',
-             'settlement_account', 'correspondent_account', 'bik', 'bank_name', 'signatory']
+             'settlement_account', 'correspondent_account', 'bik', 'bank_name', 'signatory',
+             'okpo', 'okved', 'treasury_account', 'single_treasury_account',
+             'signatory_position', 'website', 'registration_date']
     headers = [_FIELD_TO_HEADER.get(f, f) for f in order if f in fields]
     values = [fields[f] for f in order if f in fields]
     return [headers, values], 0

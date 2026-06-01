@@ -325,6 +325,25 @@ async def _ensure_purchase_items_total_with_vat_column(conn) -> None:
         print(f"  \u26a0\ufe0f   purchase_items.total_with_vat ensure failed: {e}")
 
 
+async def _ensure_contractors_card_columns(conn) -> None:
+    """Contractor card: website/registration_date/okpo/okved/treasury accounts/signatory_position (idempotent)."""
+    stmts = [
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS website VARCHAR(255)",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS registration_date DATE",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS okpo VARCHAR(20)",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS okved VARCHAR(50)",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS treasury_account VARCHAR(50)",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS single_treasury_account VARCHAR(50)",
+        "ALTER TABLE contractors ADD COLUMN IF NOT EXISTS signatory_position VARCHAR(255)",
+    ]
+    try:
+        for s in stmts:
+            await conn.execute(text(s))
+        print("  \u2705  contractors card columns ensured")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f   contractors card columns ensure failed: {e}")
+
+
 async def _ensure_purchases_service_note_to_user_id_column(conn) -> None:
     """SN-UX: ADD service_note_to_user_id FK column to purchases (idempotent)."""
     try:

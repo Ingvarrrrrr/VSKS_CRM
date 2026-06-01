@@ -266,6 +266,17 @@
                 <v-text-field v-model="form.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
               </v-col>
             </v-row>
+            <v-row dense class="mb-0 mt-2">
+              <v-col cols="3">
+                <v-text-field v-model="form.okpo" label="ОКПО" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="form.okved" label="ОКВЭД (осн.)" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="form.registration_date" label="Дата регистрации" type="date" variant="outlined" density="compact" hide-details />
+              </v-col>
+            </v-row>
             <v-btn
               variant="tonal" color="primary" size="small" class="mt-2 mb-2"
               prepend-icon="mdi-database-search-outline"
@@ -309,7 +320,14 @@
             <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
             <div class="section-label mt-4">Подписант</div>
-            <v-text-field v-model="form.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+            <v-row dense class="mb-3">
+              <v-col cols="7">
+                <v-text-field v-model="form.signatory" label="Подписант (ФИО)" variant="outlined" density="compact" hide-details />
+              </v-col>
+              <v-col cols="5">
+                <v-text-field v-model="form.signatory_position" label="Должность подписанта" variant="outlined" density="compact" hide-details />
+              </v-col>
+            </v-row>
             <v-text-field v-model="form.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
               placeholder="Устава, доверенности №..." />
 
@@ -327,6 +345,7 @@
                 <v-text-field v-model="form.org_email" label="Email организации" variant="outlined" density="compact" hide-details />
               </v-col>
             </v-row>
+            <v-text-field v-model="form.website" label="Сайт организации" variant="outlined" density="compact" class="mt-2 mb-2" hide-details placeholder="https://..." />
             <v-text-field v-model="form.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
             <v-row dense>
               <v-col cols="6">
@@ -352,6 +371,14 @@
               </v-col>
               <v-col cols="6">
                 <v-text-field v-model="form.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" />
+              </v-col>
+            </v-row>
+            <v-row dense class="mt-2">
+              <v-col cols="6">
+                <v-text-field v-model="form.treasury_account" label="Казначейский счёт" variant="outlined" density="compact" hide-details maxlength="30" />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="form.single_treasury_account" label="Единый казначейский счёт" variant="outlined" density="compact" hide-details maxlength="30" />
               </v-col>
             </v-row>
             <v-textarea v-model="form.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
@@ -796,6 +823,13 @@ interface ContractorWithStats {
   snils?: string
   registration_address?: string
   birth_date?: string
+  website?: string
+  registration_date?: string
+  okpo?: string
+  okved?: string
+  treasury_account?: string
+  single_treasury_account?: string
+  signatory_position?: string
 }
 
 const CONTRACTOR_TARGET_FIELDS = [
@@ -818,6 +852,13 @@ const CONTRACTOR_TARGET_FIELDS = [
   { value: 'bik',                        title: 'БИК',                required: false },
   { value: 'correspondent_account',      title: 'Корр. счёт',         required: false },
   { value: 'manual_product_categories',  title: 'Категории товаров',  required: false },
+  { value: 'website',                    title: 'Сайт организации',   required: false },
+  { value: 'registration_date',          title: 'Дата регистрации',   required: false },
+  { value: 'okpo',                       title: 'ОКПО',               required: false },
+  { value: 'okved',                      title: 'ОКВЭД',              required: false },
+  { value: 'treasury_account',           title: 'Казначейский счёт',  required: false },
+  { value: 'single_treasury_account',    title: 'Единый казн. счёт',  required: false },
+  { value: 'signatory_position',         title: 'Должность подписанта', required: false },
 ]
 
 const contractors = ref<ContractorWithStats[]>([])
@@ -919,6 +960,8 @@ const emptyForm = () => ({
   manual_product_categories: [] as string[],
   passport_series: '', passport_number: '', passport_issuer: '',
   passport_issued_date: '', snils: '', registration_address: '', birth_date: '',
+  website: '', registration_date: '', okpo: '', okved: '',
+  treasury_account: '', single_treasury_account: '', signatory_position: '',
 })
 const form = ref(emptyForm())
 
@@ -1195,6 +1238,13 @@ function openEdit(c: ContractorWithStats) {
     snils:                c.snils                || '',
     registration_address: c.registration_address || '',
     birth_date:           c.birth_date           || '',
+    website:              c.website              || '',
+    registration_date:    c.registration_date    || '',
+    okpo:                 c.okpo                 || '',
+    okved:                c.okved                || '',
+    treasury_account:     c.treasury_account     || '',
+    single_treasury_account: c.single_treasury_account || '',
+    signatory_position:   c.signatory_position   || '',
   }
   dialog.value = true
 }
@@ -1327,6 +1377,13 @@ const _FIELD_KEYWORDS: Record<string, string[]> = {
   bik:                        ['бик', 'bik'],
   correspondent_account:      ['корр', 'к/с', 'correspondent'],
   manual_product_categories:  ['категор', 'товар', 'product', 'categ'],
+  website:                    ['сайт', 'website'],
+  registration_date:          ['дата регистрац', 'зарегистр'],
+  okpo:                       ['окпо'],
+  okved:                      ['оквэд', 'оквед'],
+  treasury_account:           ['казначейск'],
+  single_treasury_account:    ['единый казн'],
+  signatory_position:         ['должност'],
 }
 
 function contractorAutoDetect(headers: string[]): Record<string, number | null> {
@@ -1467,6 +1524,8 @@ async function doContractorImportMapped() {
       'org_phone', 'org_email',
       'settlement_account', 'bank_name', 'bik', 'correspondent_account', 'bank_details',
       'manual_product_categories',
+      'website', 'registration_date', 'okpo', 'okved',
+      'treasury_account', 'single_treasury_account', 'signatory_position',
     ]
     for (const f of colFields) {
       if (m[f] != null) params.set(`col_${f}`, String(m[f]))

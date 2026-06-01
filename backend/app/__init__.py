@@ -1487,6 +1487,16 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"B-exec wishes execution columns setup skipped (non-fatal): {e}"
         )
+    # contractor-card: contractors new card columns
+    try:
+        from check_schema import _ensure_contractors_card_columns
+        from .database import engine as _engine_ctr_card
+        async with _engine_ctr_card.begin() as conn:
+            await _ensure_contractors_card_columns(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"contractor-card columns setup skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:

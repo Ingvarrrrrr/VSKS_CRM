@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing import Optional, List, Any, Dict, Literal
 from datetime import date, datetime
@@ -357,6 +358,19 @@ class FeoCategoryTree(FeoCategoryOut):
 
 # Contractor
 class ContractorCreate(BaseModel):
+    @model_validator(mode='before')
+    @classmethod
+    def empty_strings_to_none(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key, value in list(data.items()):
+                if value == '':
+                    data[key] = None
+                elif isinstance(value, str) and key.endswith('_date'):
+                    m = re.fullmatch(r'(\d{2})\.(\d{2})\.(\d{4})', value.strip())
+                    if m:
+                        data[key] = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+        return data
+
     name: str
     full_name: Optional[str] = None
     inn: Optional[str] = None
@@ -387,6 +401,13 @@ class ContractorCreate(BaseModel):
     snils: Optional[str] = None
     registration_address: Optional[str] = None
     birth_date: Optional[_Date] = None
+    website: Optional[str] = None
+    registration_date: Optional[_Date] = None
+    okpo: Optional[str] = None
+    okved: Optional[str] = None
+    treasury_account: Optional[str] = None
+    single_treasury_account: Optional[str] = None
+    signatory_position: Optional[str] = None
 
 class ContractorOut(ContractorCreate):
     id: int

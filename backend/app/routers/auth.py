@@ -31,9 +31,32 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_email_confirmed:
         raise HTTPException(status_code=403, detail="Подтвердите email перед входом")
     org_name = None
-    jwt_payload: dict = {"sub": user.username, "role": user.role, "org_id": user.org_id}
-    if user.org_id:
-        org = await db.get(Organization, user.org_id)
+    # Filippov fix (02.06): пользователь с user.org_id=NULL, но членством в орг
+    # через user_organizations (employee) + org_admin в других орг через
+    # user_org_access. Раньше login отдавал org_id=null → фронт оставлял stale
+    # active_org_id (часто орг где org_admin) → видел админ-меню. Теперь дефолтная
+    # активная орг резолвится из РАБОЧЕГО членства (user_organizations), иначе из
+    # первого user_org_access. Переключиться в другую орг можно вручную (switch-org).
+    effective_org_id = user.org_id
+    if effective_org_id is None:
+        from app.models.user_organization import UserOrganization
+        from app.models.user_org_access import UserOrgAccess
+        effective_org_id = (await db.execute(
+            select(UserOrganization.org_id)
+            .where(UserOrganization.user_id == user.id)
+            .order_by(UserOrganization.id)
+            .limit(1)
+        )).scalar_one_or_none()
+        if effective_org_id is None:
+            effective_org_id = (await db.execute(
+                select(UserOrgAccess.org_id)
+                .where(UserOrgAccess.user_id == user.id)
+                .order_by(UserOrgAccess.id)
+                .limit(1)
+            )).scalar_one_or_none()
+    jwt_payload: dict = {"sub": user.username, "role": user.role, "org_id": effective_org_id}
+    if effective_org_id:
+        org = await db.get(Organization, effective_org_id)
         if org:
             if not org.is_active and user.role not in ('superadmin', 'account_owner'):
                 raise HTTPException(status_code=403, detail="Подписка организации неактивна")
@@ -57,7 +80,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             jwt_payload["org_ids"] = contour_ids
     token = create_access_token(jwt_payload)
     return Token(access_token=token, role=user.role, full_name=user.full_name,
-                 org_id=user.org_id, org_name=org_name, user_id=user.id,
+                 org_id=effective_org_id, org_name=org_name, user_id=user.id,
                  can_publish=user.can_publish or False)
 
 

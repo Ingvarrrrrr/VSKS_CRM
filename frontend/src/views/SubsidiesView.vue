@@ -1750,6 +1750,32 @@
               Обновлено: <strong>{{ feoImport.result.updated ?? 0 }}</strong> &nbsp;
               Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
             </v-alert>
+            <v-expansion-panels v-if="feoImport.result" multiple class="mb-3">
+              <v-expansion-panel v-if="feoImport.result.updated_details?.length">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-pencil" size="18" color="warning" class="mr-2" />
+                  Обновлённые позиции ({{ feoImport.result.updated_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.result.updated_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+              <v-expansion-panel v-if="feoImport.result.skipped_details?.length">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-debug-step-over" size="18" color="grey" class="mr-2" />
+                  Пропущенные позиции ({{ feoImport.result.skipped_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.result.skipped_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
             <div v-if="feoImport.result?.errors?.length" class="mt-2">
               <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
               <v-list density="compact" class="bg-error-lighten-5 rounded">
@@ -2453,7 +2479,7 @@ const dragOverId = ref<number | null>(null)
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
   loading: false,
-  result: null as { created: number; updated?: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  result: null as { created: number; updated?: number; skipped: number; errors: { row: number; name: string; message: string }[]; updated_details?: { row: number; name: string; reason: string }[]; skipped_details?: { row: number; name: string; reason: string }[] } | null,
   previewData: null as any,
   selectedSheet: '',
 })
@@ -4082,7 +4108,7 @@ function progressColor(p: number) {
 }
 
 function formatCurrency(v: number) {
-  return (v || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
+  return (v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 }
 
 function formatCurrencyShort(v: number) {
@@ -4467,6 +4493,8 @@ onMounted(() => {
   border: 1px solid var(--crm-border-strong);
   border-radius: 8px;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 260px);
 }
 .feo-table {
   width: 100%;
@@ -4480,7 +4508,10 @@ onMounted(() => {
   background: var(--crm-table-header); padding: 9px 12px;
   text-align: left;
   border-bottom: 1px solid var(--crm-border-strong);
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-shadow: inset 0 -1px 0 var(--crm-border-strong);
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }

@@ -514,6 +514,8 @@ async def _do_feo_import(
         cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
 
     created = 0; updated = 0; skipped = 0; errors: list[dict] = []
+    updated_details: list[dict] = []
+    skipped_details: list[dict] = []
 
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int) -> FeoCategory:
         key = (subsidy_id, parent_id, name.lower().strip())
@@ -532,6 +534,8 @@ async def _do_feo_import(
         lvl2_name = get_cell(row, c_lvl2)
         if not lvl2_name or lvl2_name.startswith("←"):
             skipped += 1
+            if lvl2_name:
+                skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "служебная строка"})
             continue
 
         sub_name = get_cell(row, c_subsidy) if c_subsidy is not None else None
@@ -544,6 +548,7 @@ async def _do_feo_import(
             subsidy_id = default_subsidy_id
             if not subsidy_id:
                 skipped += 1
+                skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "не указана субсидия назначения"})
                 continue
 
         lvl3_name = get_cell(row, c_lvl3)
@@ -618,6 +623,7 @@ async def _do_feo_import(
                 leaf.is_active = is_active; changed = True
             if changed:
                 updated += 1
+                updated_details.append({"row": row_num, "name": leaf.name, "reason": "обновлены поля категории"})
 
             if lvl5_name and lvl5_name not in ("←", ""):
                 from app.models.feo_planned_item import FeoPlannedItem
@@ -649,14 +655,17 @@ async def _do_feo_import(
                         existing_item.amount = item_amount; ch2 = True
                     if ch2:
                         updated += 1
+                        updated_details.append({"row": row_num, "name": lvl5_name, "reason": "обновлена позиция"})
                     else:
                         skipped += 1
+                        skipped_details.append({"row": row_num, "name": lvl5_name, "reason": "без изменений"})
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
 
     await db.commit()
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
+    return {"created": created, "updated": updated, "skipped": skipped,
+            "errors": errors, "updated_details": updated_details, "skipped_details": skipped_details}
 
 
 @router.post("/import")

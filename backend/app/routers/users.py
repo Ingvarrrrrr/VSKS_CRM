@@ -249,10 +249,12 @@ async def get_me(
     if effective_org_id is not None:
         chosen_tabs, chosen_actions = await _resolve_for_org(effective_org_id)
 
-    # Phase 30.6 fix: если для запрошенной org tabs пуст — попробовать другие
-    # доступные пользователю орг и выбрать ту где tabs больше всего.
-    # Это решает кейс Филиппова: primary_org=ВСКС (0 прав), но в АНО 27 листов.
-    if not chosen_tabs:
+    # Phase 30.6 fix: если НЕТ активной орг вообще (effective_org_id is None) и
+    # tabs пуст — попробовать другие доступные орг и выбрать где tabs больше всего.
+    # ВАЖНО (Filippov fix 2026-06): эскалация НЕ должна срабатывать при явно
+    # выбранной активной орг. Иначе employee в ЦЕНТРПОИСК получает org_admin-листы
+    # из ВСКС, т.к. там прав больше. Явная активная орг = строгие права этой орг.
+    if not chosen_tabs and effective_org_id is None:
         from app.models.user_organization import UserOrganization
         candidate_org_ids: set[int] = set()
         try:

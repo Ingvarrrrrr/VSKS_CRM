@@ -126,7 +126,11 @@ const login = async () => {
     localStorage.setItem('user_role', data.role)
     localStorage.setItem('user_name', data.full_name || username.value)
     if (data.user_id) localStorage.setItem('user_id', String(data.user_id))
-    if (data.org_id) localStorage.setItem('user_org_id', String(data.org_id))
+    if (data.org_id) {
+      localStorage.setItem('user_org_id', String(data.org_id))
+      // authoritative active org from JWT — overwrite any stale value from prior session
+      localStorage.setItem('active_org_id', String(data.org_id))
+    }
     if (data.org_name) localStorage.setItem('user_org_name', data.org_name)
     localStorage.setItem('can_publish', data.can_publish ? 'true' : 'false')
     try {

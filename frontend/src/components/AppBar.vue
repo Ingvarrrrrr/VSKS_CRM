@@ -776,6 +776,7 @@ const switchOrgSingle = async (org: {id: number; name: string}) => {
       const data = await response.json()
       localStorage.setItem('auth_token', data.access_token)
       localStorage.setItem('user_org_id', String(data.org_id))
+      localStorage.setItem('active_org_id', String(data.org_id))
       localStorage.setItem('user_org_name', data.org_name)
       try {
         await authStore.loadPermissions(data.org_id)
@@ -868,6 +869,7 @@ async function applyOrgSelection() {
       orgPickerDialog.value = false
       try {
         const primaryOrgId = data.org_ids?.[0] ?? null
+        if (primaryOrgId != null) localStorage.setItem('active_org_id', String(primaryOrgId))
         await authStore.loadPermissions(primaryOrgId)
       } catch (e) {
         console.error('[org-select] loadPermissions failed, fail-open', e)

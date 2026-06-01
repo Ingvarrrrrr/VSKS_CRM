@@ -516,9 +516,8 @@ async def list_contractors_with_stats(
     from app.models.product import Product
 
     q = select(Contractor).order_by(Contractor.name)
-    org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
+    # Контрагенты — общий справочник юрлиц (см. фикс в list_contractors:1071).
+    # Org-фильтр снят: ContractorsView и autocomplete показывают всех.
     if search:
         term = f"%{search}%"
         q = q.where(or_(Contractor.name.ilike(term), Contractor.inn.ilike(term)))
@@ -1068,9 +1067,11 @@ async def list_contractors(
     limit: int = Query(200, ge=1, le=5000),
 ):
     q = select(Contractor)
-    org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.where(or_(Contractor.org_id.in_(org_ids), Contractor.org_id.is_(None)))
+    # Контрагенты — общий справочник юрлиц (не sensitive data). Org-фильтр
+    # убран: при создании закупки/договора любой пользователь должен видеть
+    # любого контрагента в autocomplete (фидбек Филиппов 01.06).
+    # Раньше: org_id IN user_orgs OR org_id IS NULL → не-админы не видели
+    # контрагентов привязанных к другим орг (КРАФТВЭЙ, ЛИНИЯ ГРАФИК и т.п.).
     if search:
         from sqlalchemy import case
         term = f"%{search}%"

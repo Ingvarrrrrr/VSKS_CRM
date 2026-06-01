@@ -1853,10 +1853,12 @@ async function openEditUser(item: UserItem) {
       apiFetch<{ primary: any; extra: any[] }>(`/users/${item.id}/organizations`),
       apiFetch<any[]>(`/users/${item.id}/salary`).catch(() => []),
     ])
-    editDialog.extraOrgIds = [
+    // Dedupe: одна организация = один chip, даже если юзер в нескольких отделах
+    // одной org (фидбек Филиппов 01.06 — раньше показывался АНО ЦЕНТРПОИСК × 2).
+    editDialog.extraOrgIds = [...new Set([
       ...(orgRes.primary?.id ? [orgRes.primary.id] : []),
       ...orgRes.extra.map((e: any) => e.id),
-    ]
+    ])]
     const pos: Record<number, string> = {}
     for (const e of orgRes.extra) {
       if (e.position) pos[e.id] = e.position

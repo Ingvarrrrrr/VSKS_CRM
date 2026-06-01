@@ -621,7 +621,11 @@
             </v-col>
             <v-col cols="12" md="4">
               <v-select v-model="dialog.form.item_type"
-                :items="[{ title: 'Товары', value: 'товар' }, { title: 'Услуги', value: 'услуга' }]"
+                :items="[
+                  { title: 'Товары', value: 'товар' },
+                  { title: 'Услуги', value: 'услуга' },
+                  { title: 'Товары и услуги', value: 'товар_и_услуга' },
+                ]"
                 label="Товары / Услуги" variant="outlined" density="compact" clearable />
             </v-col>
             <v-col cols="12" md="4">
@@ -1843,6 +1847,14 @@ onMounted(async () => {
     // 403 для не-admin — игнорируем, не критично
   }
   loadContracts(); loadSubsidies()
+  // #4a Филиппов 01.06: autocomplete контрагентов в диалоге создания договора
+  // был пуст — массив contractors никогда не наполнялся. Грузим список один раз
+  // при mount (как и subsidies).
+  try {
+    contractors.value = await apiFetch<Contractor[]>('/contractors/?limit=5000')
+  } catch (_) {
+    // тихо игнорируем — список останется пустым, можно ввести вручную
+  }
 })
 </script>
 

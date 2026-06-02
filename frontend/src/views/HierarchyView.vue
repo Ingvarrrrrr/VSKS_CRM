@@ -425,12 +425,37 @@
           <v-icon icon="mdi-domain" color="deep-purple" class="mr-2" />
           Новая организация
         </v-card-title>
-        <v-card-text class="pa-4 pt-0" style="max-height:75vh">
+        <v-card-text class="pa-4 pt-3" style="max-height:75vh">
+          <v-autocomplete
+            v-model="newOrgContractorId"
+            :items="newOrgContractors"
+            item-title="name" item-value="id"
+            label="Выбрать из существующих контрагентов"
+            prepend-inner-icon="mdi-account-search"
+            variant="outlined" density="compact" clearable
+            :custom-filter="orgContractorFilter"
+            :loading="contractorsStore.searching"
+            :menu-props="{ maxWidth: 560 }"
+            hint="Поиск по всей базе контрагентов (название или ИНН). Выбор заполнит поля ниже." persistent-hint
+            class="mb-4"
+            @update:search="onNewOrgContractorSearch"
+            @update:model-value="onNewOrgContractorSelect"
+          >
+            <template #item="{ item, props: itemProps }">
+              <v-list-item v-bind="itemProps" :title="undefined">
+                <template #title>
+                  <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
+                </template>
+                <template #subtitle>
+                  <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-autocomplete>
           <v-text-field
             v-model="newOrgDialog.name"
             label="Краткое название *"
             prepend-inner-icon="mdi-domain"
-            autofocus
             variant="outlined" density="compact" class="mb-2"
           />
           <v-text-field
@@ -499,7 +524,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, markRaw, h, onMounted } from 'vue'
+import { ref, markRaw, h, onMounted, nextTick } from 'vue'
 import {
   VueFlow, useVueFlow, Handle, Position,
   type Node, type Edge, type Connection,
@@ -518,19 +543,20 @@ import '@vue-flow/minimap/dist/style.css'
 // @ts-ignore
 import dagre from '@dagrejs/dagre'
 import { apiFetch } from '@/api'
+import { useContractorsStore } from '@/stores/contractors'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 268     // dept container width in px
 const USER_W = 240     // user node width in px
 const USER_H = 88      // user node height in px (name + position + role + counts)
-const DEPT_HEADER_H = 60   // base header height (1-line dept name)
+const DEPT_HEADER_H = 76   // base header height (синхронизирован с min-height .hnode-dept-header-bar): padding+toprow+gap+1 строка
 const USER_GAP = 8
 const DEPT_PAD_Y = 12  // bottom padding
 
 // Phase 30: динамическая высота шапки отдела — растёт если название многострочное.
 // При DEPT_W=268 и шрифте ~14px помещается ~24 символа в строке (с учётом padding/icons).
 // Каждая дополнительная строка +18px.
-const DEPT_NAME_CHARS_PER_LINE = 22
+const DEPT_NAME_CHARS_PER_LINE = 28
 const DEPT_HEADER_LINE_H = 18
 function deptHeaderHeight(name: string | undefined | null): number {
   const len = (name || '').length
@@ -601,6 +627,40 @@ const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '
 const newOrgEgrulLoading = ref(false)
 const newOrgEgrulMessage = ref('')
 const newOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
+const contractorsStore = useContractorsStore()
+const newOrgContractors = ref<any[]>([])
+const newOrgContractorId = ref<number | null>(null)
+let _newOrgContractorSearchTimeout: any = null
+const orgContractorFilter = (_value: string, query: string, item?: any): boolean => {
+  const q = query.toLowerCase()
+  const name = (item?.raw?.name || '').toLowerCase()
+  const inn = (item?.raw?.inn || '').toLowerCase()
+  return name.includes(q) || inn.includes(q)
+}
+function onNewOrgContractorSearch(query: string) {
+  clearTimeout(_newOrgContractorSearchTimeout)
+  if (!query || query.length < 2) return
+  _newOrgContractorSearchTimeout = setTimeout(async () => {
+    const list = await contractorsStore.search(query, 50)
+    const existing = new Set(newOrgContractors.value.map((c: any) => c.id))
+    for (const c of list) {
+      if (!existing.has(c.id)) newOrgContractors.value.push(c)
+    }
+  }, 300)
+}
+function onNewOrgContractorSelect(id: number | null) {
+  if (!id) return
+  const c = newOrgContractors.value.find((x: any) => x.id === id)
+  if (!c) return
+  const d = newOrgDialog.value
+  if (c.name && !d.name.trim()) d.name = c.name
+  if (c.full_name && !d.full_name.trim()) d.full_name = c.full_name
+  if (c.inn && !d.inn.trim()) d.inn = c.inn
+  if (c.kpp && !d.kpp.trim()) d.kpp = c.kpp
+  if (c.ogrn && !d.ogrn.trim()) d.ogrn = c.ogrn
+  if (c.address && !d.address.trim()) d.address = c.address
+  if (c.signatory && !d.signatory.trim()) d.signatory = c.signatory
+}
 const graphOrgs = ref<{ id: number; name: string }[]>([])
 const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
   show: false, deptId: null, available: [],
@@ -656,31 +716,30 @@ const DeptNode = markRaw({
   props: ['data'],
   setup(p: any) {
     return () => h('div', { class: 'hnode-dept-header-bar', style: p.data.orgColor ? `background:linear-gradient(135deg, ${p.data.orgColor}, ${p.data.orgColor}aa)` : '' }, [
-      // delete dept button — СЛЕВА от имени отдела (Phase 23.4)
-      h('span', {
-        class: 'mdi mdi-close-circle-outline hnode-dept-del-btn',
-        title: 'Удалить отдел',
-        style: 'color:#f44336;margin-right:4px;',
-        onClick: (e: Event) => { e.stopPropagation(); p.data.onDelete?.(p.data.deptId) },
-      }),
-      h('span', { class: 'mdi mdi-account-group', style: 'font-size:16px;margin-right:6px;flex-shrink:0' }),
-      h('span', { class: 'hnode-title', style: 'flex:1;min-width:0' }, p.data.label),
-      p.data.orgName
-        ? h('span', {
-            style: `font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;flex-shrink:0;background:${p.data.orgColor || '#1976d2'};color:#fff;opacity:0.9`,
-          }, p.data.orgName)
-        : null,
-      h('span', { class: 'hnode-dept-badge' }, `${p.data.memberCount}`),
-      // "+" button to add member to dept
-      h('span', {
-        class: 'mdi mdi-plus hnode-dept-add-btn',
-        title: 'Добавить сотрудника в отдел',
-        onClick: (e: Event) => { e.stopPropagation(); p.data.onAddMember?.(p.data.deptId) },
-      }),
+      // Верхняя полоса: контролы + бейджи организаций (вдоль верхней границы, перенос на след. строку)
+      h('div', { class: 'hnode-dept-toprow' }, [
+        h('span', {
+          class: 'mdi mdi-close-circle-outline hnode-dept-del-btn',
+          title: 'Удалить отдел',
+          onClick: (e: Event) => { e.stopPropagation(); p.data.onDelete?.(p.data.deptId) },
+        }),
+        h('span', { class: 'mdi mdi-account-group', style: 'font-size:15px;flex-shrink:0;opacity:0.9' }),
+        p.data.orgName
+          ? h('span', { class: 'hnode-dept-orgbadge', style: `background:${p.data.orgColor || '#1976d2'}` }, p.data.orgName)
+          : null,
+        h('span', { class: 'hnode-dept-badge' }, `${p.data.memberCount}`),
+        h('span', {
+          class: 'mdi mdi-plus hnode-dept-add-btn',
+          title: 'Добавить сотрудника в отдел',
+          onClick: (e: Event) => { e.stopPropagation(); p.data.onAddMember?.(p.data.deptId) },
+        }),
+      ]),
+      // Название отдела — отдельной строкой на всю ширину
+      h('div', { class: 'hnode-dept-name' }, p.data.label),
       // Target handle for user→dept "manager of dept" edges
       h(Handle, {
         type: 'target', position: Position.Left, id: 'tgt',
-        style: 'background:#ff9800;width:12px;height:12px;border:2px solid white;left:-6px;top:24px',
+        style: 'background:#ff9800;width:12px;height:12px;border:2px solid white;left:-6px;top:18px',
       }),
     ])
   },
@@ -777,7 +836,7 @@ const nodeTypes = { org: OrgNode, dept: DeptNode, user: UserNode }
 const defaultEdgeOptions = { type: 'smoothstep' }
 
 // ── VueFlow composable ─────────────────────────────────────────────────────────
-const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick } = useVueFlow()
+const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick, onNodesInitialized } = useVueFlow()
 
 const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', contractor_id: null as number | null })
 const editOrgEgrulLoading = ref(false)
@@ -1372,6 +1431,46 @@ function snapToSlot(draggedNode: Node) {
   savePositions(nodes.value)
 }
 
+// ── Phase 30: точная посадка карточек под ИЗМЕРЕННУЮ (DOM) высоту шапки отдела ──
+// JS-оценка deptHeaderHeight неточна → карточки наезжали. После маунта меряем
+// реальную высоту .hnode-dept-header-bar и пересаживаем дочерние user-узлы.
+function measuredDeptHeaderH(nodeId: string): number {
+  const el = document.querySelector(
+    `.vue-flow__node[data-id="${nodeId}"] .hnode-dept-header-bar`
+  ) as HTMLElement | null
+  return el && el.offsetHeight > 0 ? el.offsetHeight : DEPT_HEADER_H
+}
+
+function restackDeptUsers() {
+  const deptNodes = nodes.value.filter(n => n.type === 'dept')
+  let changed = false
+  for (const dept of deptNodes) {
+    const headerH = measuredDeptHeaderH(dept.id)
+    const children = nodes.value.filter(n => n.type === 'user' && n.parentNode === dept.id)
+    const sorted = [...children].sort((a, b) => a.position.y - b.position.y)
+    sorted.forEach((u, i) => {
+      const ny = headerH + 6 + i * (USER_H + USER_GAP)
+      if (u.position.x !== 10 || Math.abs(u.position.y - ny) > 0.5) {
+        u.position = { x: 10, y: ny }
+        changed = true
+      }
+    })
+    const newH = Math.max(headerH + sorted.length * (USER_H + USER_GAP) + DEPT_PAD_Y, 80)
+    if ((dept.style as any)?.height !== `${newH}px`) {
+      dept.style = { ...(dept.style as object), height: `${newH}px` }
+      changed = true
+    }
+  }
+  if (changed) {
+    nodes.value = [...nodes.value]
+    savePositions(nodes.value)
+  }
+}
+
+onNodesInitialized(() => {
+  nextTick(() => restackDeptUsers())
+})
+
 // ── Drag in/out of dept ────────────────────────────────────────────────────────
 
 onNodeDragStop(async ({ node }) => {
@@ -1666,11 +1765,13 @@ async function createNewOrg() {
       ogrn: d.ogrn.trim() || null,
       address: d.address.trim() || null,
       signatory: d.signatory.trim() || null,
-      contractor_id: null,
+      contractor_id: newOrgContractorId.value || null,
     }
     await apiFetch('/organizations/', { method: 'POST', body })
     showSnack(`Организация "${name}" создана`)
     newOrgDialog.value = { show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', loading: false }
+    newOrgContractorId.value = null
+    newOrgContractors.value = []
     newOrgEgrulMessage.value = ''
     await loadGraph()
   } catch (e: any) {
@@ -1876,8 +1977,7 @@ defineExpose({ refresh: loadGraph })
 /* Dept header bar (inside the dashed container) */
 :deep(.hnode-dept-header-bar) {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
   padding: 8px 12px;
   background: linear-gradient(135deg, #00695c, #26a69a);
@@ -1885,8 +1985,32 @@ defineExpose({ refresh: loadGraph })
   font-weight: 600;
   font-size: 13px;
   border-radius: 8px 8px 0 0;
-  min-height: 60px;
+  min-height: 76px;
   position: relative;
+}
+:deep(.hnode-dept-toprow) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+}
+:deep(.hnode-dept-name) {
+  width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.3;
+  font-size: 13px;
+  font-weight: 600;
+}
+:deep(.hnode-dept-orgbadge) {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: #fff;
+  opacity: 0.95;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 :deep(.hnode-dept-badge) {
   background: rgba(255,255,255,0.3);
@@ -1894,7 +2018,7 @@ defineExpose({ refresh: loadGraph })
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 700;
-  margin-left: 6px;
+  margin-left: auto;
   flex-shrink: 0;
 }
 :deep(.hnode-dept-add-btn) {
@@ -1930,7 +2054,7 @@ defineExpose({ refresh: loadGraph })
 :deep(.hnode-user) { min-width: 180px; width: 240px; border-color: #e0e0e0; }
 :deep(.hnode-user-row) { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; }
 :deep(.hnode-avatar) {
-  width: 34px; height: 34px; border-radius: 50%;
+  width: 32px; height: 44px; border-radius: 8px;
   background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #1e88e5);
   color: white; display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: bold; flex-shrink: 0; margin-top: 2px;

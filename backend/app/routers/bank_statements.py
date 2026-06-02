@@ -10,6 +10,7 @@ PATCH  /api/payments/registry/{id}/match    ручная привязка matche
 POST   /api/payments/registry/{id}/confirm  matched_confirmed=true → создать N Payment + recompute
 POST   /api/payments/registry/{id}/unbind   удалить все linked Payment + recompute (откат подтверждения)
 """
+import logging
 from datetime import date
 from typing import List, Optional
 
@@ -130,8 +131,13 @@ async def upload_bank_statement(
             match_counts = await match_all_in_import(db, import_run.id)
             rows_matched = match_counts.get("matched_contract", 0)
             rows_unmatched = match_counts.get("total", rows_imported) - rows_matched
-        except Exception:
-            # Если matcher ещё не задеплоен — не падаем
+        except Exception as match_exc:
+            # Matcher не должен ронять импорт, но сбой нельзя глотать молча —
+            # иначе импорт помечается done, а авто-матч тихо пропущен (счётчики врут).
+            logging.getLogger(__name__).warning(
+                f"match_all_in_import failed for import {import_run.id}: {match_exc}",
+                exc_info=True,
+            )
             rows_unmatched = rows_imported
 
         import_run.rows_total = rows_total

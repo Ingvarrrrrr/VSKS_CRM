@@ -37,7 +37,7 @@ async def create_payment(data: PaymentCreate, db: AsyncSession = Depends(get_db)
     return p
 
 @router.delete("/{pid}")
-async def delete_payment(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_tab('contracts'))):
+async def delete_payment(pid: int, db: AsyncSession = Depends(get_db), _=Depends(require_action('payment.register'))):
     result = await db.execute(select(Payment).where(Payment.id == pid))
     p = result.scalar_one_or_none()
     if not p:

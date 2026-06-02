@@ -6,7 +6,7 @@ from app.database import Base
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
-    feo_category_id = Column(Integer, ForeignKey("feo_categories.id"), nullable=True)
+    feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     description_44fz = Column(Text, nullable=True)  # Описание для 44-ФЗ (интервалы характеристик)

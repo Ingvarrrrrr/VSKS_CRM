@@ -24,6 +24,16 @@ if _db_url:
 
 target_metadata = Base.metadata
 
+# Legacy tables that exist in the DB via runtime-DDL but have no SQLAlchemy
+# model. The baseline migration creates them explicitly; exclude them from
+# autogenerate so it never tries to drop them.
+_LEGACY_TABLES = {"closing_documents", "expense_directions", "idempotency_keys"}
+
+def include_object(obj, name, type_, reflected, compare_to):
+    if type_ == "table" and name in _LEGACY_TABLES:
+        return False
+    return True
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -31,12 +41,17 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

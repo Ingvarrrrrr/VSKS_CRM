@@ -9,7 +9,7 @@ class Contract(Base):
     date = Column(Date)
     contract_type = Column(String(50), nullable=False)  # single / framework_cumulative / framework_with_amount
     contractor_id = Column(Integer, ForeignKey("contractors.id"))
-    subsidy_id = Column(Integer, ForeignKey("subsidies.id"), nullable=True)
+    subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     subject = Column(Text)
     max_amount = Column(Numeric(15, 2))
     status = Column(String(50), default="active")

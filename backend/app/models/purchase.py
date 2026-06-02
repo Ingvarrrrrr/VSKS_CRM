@@ -9,7 +9,7 @@ class Purchase(Base):
     row_number = Column(Integer)
     purchase_number = Column(Integer)
     order_number = Column(String(100))
-    feo_category_id = Column(Integer, ForeignKey("feo_categories.id"))
+    feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"))
     item_type = Column(String(20))
     item_name = Column(String(500))
     contractor_id = Column(Integer, ForeignKey("contractors.id"))
@@ -22,7 +22,7 @@ class Purchase(Base):
     final_total_amount = Column(Numeric(15, 2))
     delivery_payment_amount = Column(Numeric(15, 2))
     contract_id = Column(Integer, ForeignKey("contracts.id"))
-    subsidy_id = Column(Integer, ForeignKey("subsidies.id"))
+    subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"))
     status = Column(String(30), default="wishes")
     substatus = Column(String(30), nullable=True)          # tz_forming / kp_collecting / on_platform
     is_monthly_payment = Column(Boolean, default=False)    # ежемесячный платёж

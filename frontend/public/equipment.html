@@ -1,0 +1,2230 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Передача оборудования ВСКС — карта процессов</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1a1b2e;
+    --bg2: #22233a;
+    --bg3: #2d2e4a;
+    --border: #3a3b5c;
+    --text: #e2e4f0;
+    --text2: #9fa3c0;
+    --text3: #6b6e8a;
+    --dot: rgba(100,108,180,0.18);
+    --c0: #7c6af5;
+    --c1: #4ecdc4;
+    --c2: #f7b731;
+    --c3: #45b7d1;
+    --c4: #96ceb4;
+    --c5: #ff6b6b;
+    --c6: #a29bfe;
+    --c7: #fd79a8;
+    --c8: #00cec9;
+    --ok: #26de81;
+    --warn: #f9ca24;
+    --fail: #fc5c65;
+  }
+
+  html[data-theme="light"] {
+    --bg:     #f5f6fa;
+    --bg2:    #eceef5;
+    --bg3:    #ffffff;
+    --border: #d4d7e3;
+    --text:   #1a1b2e;
+    --text2:  #52557a;
+    --text3:  #8a8ca8;
+    --dot:    rgba(80,90,160,0.12);
+    --c0: #6250e0;
+    --c1: #2eb5ac;
+    --c2: #c48a00;
+    --c3: #2490b5;
+    --c4: #5a9e7e;
+    --c5: #e04040;
+    --c6: #7a6fe0;
+    --c7: #d45a8a;
+    --c8: #009e9a;
+    --ok:   #18a558;
+    --warn: #d39e00;
+    --fail: #d63040;
+  }
+
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    transition: background-color .2s, color .2s;
+  }
+
+  .header, .content, .legend-bar, .lane-body, .lane-header,
+  .proc-card, .status-node-card, .doc-card,
+  .node, .zoom-btn, .pdf-btn, .tab,
+  .docs-toolbar, .canvas-scroll {
+    transition: background-color .2s, color .2s, border-color .2s, box-shadow .2s;
+  }
+
+  /* HEADER */
+  .header {
+    flex-shrink: 0;
+    padding: 12px 20px 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  .header h1 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header h1 span { color: var(--c0); }
+
+  /* HEADER ACTIONS */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .header-actions h1 { margin-right: 4px; margin-bottom: 0; }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+
+  .tab {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    border-radius: 8px 8px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+  .tab:hover { color: var(--text); background: var(--bg3); }
+  .tab.active {
+    color: var(--text);
+    background: var(--bg2);
+    border-color: var(--border);
+    border-bottom: 1px solid var(--bg2);
+    margin-bottom: -1px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* CONTENT AREA */
+  .content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background: var(--bg2);
+  }
+
+  .view { display: none; width: 100%; height: 100%; }
+  .view.active { display: flex; flex-direction: column; }
+
+  /* LEGEND */
+  .legend-bar {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 20px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .legend-bar .l-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-right: 4px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* SWIMLANE CANVAS */
+  .canvas-wrap {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+    user-select: none;
+  }
+  .canvas-wrap.grabbing { cursor: grabbing; }
+
+  .canvas-inner {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    min-width: 100%;
+    min-height: 100%;
+  }
+
+  .canvas-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(var(--dot) 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .lanes-container {
+    display: flex;
+    position: relative;
+    padding: 0;
+  }
+
+  .lane-col {
+    flex-shrink: 0;
+    width: 220px;
+    position: relative;
+  }
+
+  .lane-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    padding: 10px 12px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    border-bottom: 2px solid;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+  }
+
+  .lane-body {
+    position: relative;
+    min-height: 400px;
+    border-right: 1px solid var(--border);
+    background: var(--bg2);
+  }
+  .lane-col:last-child .lane-header,
+  .lane-col:last-child .lane-body { border-right: none; }
+
+  .node {
+    position: absolute;
+    left: 10px;
+    width: 196px;
+    background: var(--bg3);
+    border-radius: 10px;
+    border-left: 3px solid;
+    padding: 10px 11px 8px;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    z-index: 2;
+  }
+  .node:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    z-index: 10;
+  }
+  .node.highlighted {
+    box-shadow: 0 0 0 2px currentColor, 0 6px 20px rgba(0,0,0,0.5);
+  }
+
+  .node-seq {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    background: rgba(255,255,255,0.08);
+    color: var(--text2);
+    letter-spacing: 0.3px;
+  }
+
+  .node-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .node.expanded .node-text {
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+  .node-more {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 4px;
+    cursor: pointer;
+  }
+  .node-more:hover { color: var(--text2); }
+
+  .connectors-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 1;
+    overflow: visible;
+  }
+
+  .connector {
+    fill: none;
+    stroke-width: 1.5;
+    stroke-opacity: 0.35;
+    transition: stroke-opacity 0.2s;
+  }
+  .connector.highlighted { stroke-opacity: 0.9; stroke-width: 2.5; }
+  .connector-arrow { fill-opacity: 0.35; transition: fill-opacity 0.2s; }
+  .connector-arrow.highlighted { fill-opacity: 0.9; }
+
+  .zoom-controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 20;
+  }
+  .zoom-btn {
+    width: 36px; height: 36px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s;
+    user-select: none;
+  }
+  .zoom-btn:hover { background: var(--border); }
+
+  /* STATUS FLOW VIEW */
+  .status-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .status-view::-webkit-scrollbar { width: 6px; }
+  .status-view::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .status-flow {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+  .status-flow::before {
+    content: '';
+    position: absolute;
+    left: 20px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--c0), var(--c6));
+    opacity: 0.3;
+  }
+
+  .status-node {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 14px 0;
+    position: relative;
+  }
+  .status-node-num {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    z-index: 1;
+    border: 2px solid;
+  }
+  .status-node-num.ok { background: rgba(38,222,129,0.12); border-color: var(--ok); color: var(--ok); }
+  .status-node-num.warn { background: rgba(249,202,36,0.12); border-color: var(--warn); color: var(--warn); }
+  .status-node-num.fail { background: rgba(252,92,101,0.12); border-color: var(--fail); color: var(--fail); }
+
+  .status-node-card {
+    flex: 1;
+    background: var(--bg3);
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    transition: box-shadow 0.15s;
+  }
+  .status-node-card.fail {
+    border-color: rgba(252,92,101,0.4);
+    box-shadow: 0 0 0 1px rgba(252,92,101,0.2), inset 0 0 20px rgba(252,92,101,0.05);
+  }
+  .status-node-card.warn {
+    border-color: rgba(249,202,36,0.3);
+  }
+  .status-node-process {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+  .status-node-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .meta-item { font-size: 11px; }
+  .meta-label { color: var(--text3); margin-right: 4px; }
+  .meta-val { color: var(--text2); }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 12px;
+    margin-top: 8px;
+  }
+  .status-badge.ok { background: rgba(38,222,129,0.12); color: var(--ok); }
+  .status-badge.warn { background: rgba(249,202,36,0.12); color: var(--warn); }
+  .status-badge.fail { background: rgba(252,92,101,0.12); color: var(--fail); }
+  .status-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* DOCUMENTS VIEW */
+  .docs-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .docs-view::-webkit-scrollbar { width: 6px; }
+  .docs-view::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .docs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .doc-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .doc-card:hover {
+    border-color: var(--c3);
+    transform: translateY(-2px);
+  }
+  .doc-num {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: rgba(69,183,209,0.15);
+    color: var(--c3);
+    font-size: 13px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .doc-name {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .doc-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 6px;
+    margin-right: 4px;
+  }
+  .doc-tag.cu-ro { background: rgba(124,106,245,0.15); color: var(--c0); }
+  .doc-tag.ro { background: rgba(78,205,196,0.15); color: var(--c1); }
+  .doc-tag.cu { background: rgba(255,107,107,0.15); color: var(--c5); }
+
+  .docs-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .docs-section-title:not(:first-child) { margin-top: 24px; }
+
+  .canvas-scroll {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+  }
+  .canvas-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .canvas-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .canvas-scroll::-webkit-scrollbar-corner { background: var(--bg2); }
+
+  .scale-hint {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    font-size: 11px;
+    color: var(--text3);
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  /* PDF EXPORT */
+  .pdf-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    user-select: none;
+    font-family: inherit;
+    height: 32px;
+  }
+  .pdf-btn:hover {
+    background: var(--border);
+    color: var(--text);
+    border-color: var(--c0);
+  }
+
+  .docs-toolbar {
+    flex-shrink: 0;
+    padding: 8px 20px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     PROCESS FLOW
+     ═══════════════════════════════════════════════════ */
+  .proc-flow-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 28px 24px 48px;
+  }
+  .proc-flow-scroll::-webkit-scrollbar { width: 6px; }
+  .proc-flow-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .proc-flow {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+
+  .proc-flow::before {
+    content: '';
+    position: absolute;
+    left: 20px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--c0), var(--c6));
+    opacity: 0.25;
+    z-index: 0;
+  }
+
+  .proc-node {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    padding: 12px 0;
+    position: relative;
+  }
+
+  .proc-num {
+    flex-shrink: 0;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: rgba(124,106,245,0.12);
+    border: 2px solid rgba(124,106,245,0.35);
+    color: var(--text2);
+    font-size: 14px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .proc-num-label {
+    position: relative;
+    z-index: 2;
+    font-weight: 700;
+    line-height: 1;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.55);
+    color: #fff;
+  }
+
+  .proc-card {
+    flex: 1;
+    background: var(--bg3);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    min-width: 0;
+  }
+
+  .proc-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    flex-wrap: wrap;
+  }
+  .proc-step-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.07);
+    color: var(--text3);
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+  }
+  .parallel-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(162,155,254,0.15);
+    color: var(--c6);
+    letter-spacing: 0.2px;
+  }
+
+  .proc-card-body {
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .proc-dept-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 5px;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .proc-task-text {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  .proc-cols {
+    display: flex;
+    align-items: stretch;
+  }
+  .proc-col {
+    flex: 1;
+    padding: 14px 16px;
+    min-width: 0;
+  }
+  .proc-col + .proc-col {
+    border-left: 1px solid var(--border);
+  }
+
+  .proc-arrow {
+    text-align: left;
+    padding-left: 62px;
+    font-size: 14px;
+    color: var(--text3);
+    line-height: 1;
+    user-select: none;
+    margin: -4px 0;
+  }
+
+  /* PDF overlay */
+  #pdf-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(26,27,46,0.82);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+  }
+  #pdf-overlay.visible {
+    display: flex;
+  }
+  #pdf-overlay-text {
+    font-size: 15px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  #pdf-overlay-sub {
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .pdf-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--c0);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  html[data-theme="light"] .proc-card {
+    box-shadow: 0 1px 4px rgba(30,40,100,0.10), 0 2px 8px rgba(30,40,100,0.07);
+  }
+  html[data-theme="light"] .status-node-card {
+    box-shadow: 0 1px 4px rgba(30,40,100,0.09);
+  }
+  html[data-theme="light"] .doc-card {
+    box-shadow: 0 1px 3px rgba(30,40,100,0.08);
+  }
+  html[data-theme="light"] .node {
+    box-shadow: 0 1px 4px rgba(30,40,100,0.12);
+  }
+  html[data-theme="light"] .node:hover {
+    box-shadow: 0 4px 14px rgba(30,40,100,0.18);
+  }
+  html[data-theme="light"] .proc-card-header {
+    background: rgba(0,0,0,0.03);
+  }
+  html[data-theme="light"] .proc-step-badge {
+    background: rgba(0,0,0,0.06);
+    color: var(--text3);
+  }
+  html[data-theme="light"] .node-seq {
+    background: rgba(0,0,0,0.06);
+  }
+  html[data-theme="light"] #pdf-overlay {
+    background: rgba(240,242,250,0.88);
+  }
+
+  #themeToggleBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    white-space: nowrap;
+    user-select: none;
+    font-family: inherit;
+    height: 32px;
+  }
+  #themeToggleBtn:hover {
+    background: var(--border);
+    color: var(--text);
+    border-color: var(--c0);
+  }
+
+  /* ═══════════════════════════════════════════════════
+     EDIT MODE CONTROLS
+     ═══════════════════════════════════════════════════ */
+  #editModeBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    white-space: nowrap;
+    user-select: none;
+    font-family: inherit;
+    height: 32px;
+  }
+  #editModeBtn:hover { background: var(--border); color: var(--text); border-color: var(--c0); }
+  body.editing #editModeBtn {
+    background: rgba(124,106,245,0.2);
+    border-color: var(--c0);
+    color: var(--c0);
+  }
+
+  /* Edit controls visibility */
+  .edit-only { display: none !important; }
+  body.editing .edit-only { display: flex !important; }
+  body.editing .edit-only-inline { display: inline-flex !important; }
+  .edit-only-inline { display: none !important; }
+
+  /* Small edit buttons */
+  .ed-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text2);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+    flex-shrink: 0;
+    user-select: none;
+    font-family: inherit;
+    padding: 0;
+  }
+  .ed-btn:hover { background: var(--border); color: var(--text); }
+  .ed-btn.danger:hover { background: rgba(252,92,101,0.2); color: var(--fail); border-color: var(--fail); }
+  .ed-btn.accent:hover { background: rgba(124,106,245,0.2); color: var(--c0); border-color: var(--c0); }
+
+  /* Step move+delete controls row */
+  .proc-node-controls {
+    display: none;
+    gap: 4px;
+    align-items: center;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  body.editing .proc-node-controls { display: flex; }
+
+  /* Add-step button between arrows */
+  .add-step-btn {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px 4px 62px;
+    font-size: 12px;
+    color: var(--text3);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    transition: color .12s;
+    width: 100%;
+    text-align: left;
+  }
+  body.editing .add-step-btn { display: flex; }
+  .add-step-btn:hover { color: var(--c0); }
+
+  /* Add-task (parallel) button inside col */
+  .add-task-btn-wrap {
+    display: none;
+    padding: 6px 14px 6px;
+    border-top: 1px dashed var(--border);
+  }
+  body.editing .add-task-btn-wrap { display: block; }
+
+  /* Inline textarea */
+  .proc-task-edit {
+    width: 100%;
+    min-height: 80px;
+    background: var(--bg2);
+    border: 1px solid var(--c0);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    resize: vertical;
+    font-family: inherit;
+    outline: none;
+  }
+
+  /* Dept selector in edit mode */
+  .dept-select-wrap {
+    display: none;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  body.editing .dept-select-wrap { display: flex; }
+  body.editing .proc-dept-badges-wrap .proc-dept-badge { cursor: pointer; }
+
+  .dept-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text2);
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    transition: background .1s;
+  }
+  .dept-checkbox-row:hover { background: var(--bg3); }
+  .dept-checkbox-row input { accent-color: var(--c0); }
+
+  /* Edit inputs for status/docs */
+  .ed-input {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 8px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .12s;
+  }
+  .ed-input:focus { border-color: var(--c0); }
+
+  .ed-select {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-size: 11px;
+    padding: 3px 6px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+  }
+  .ed-select:focus { border-color: var(--c0); }
+
+  /* Status node edit area */
+  .status-edit-row {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  body.editing .status-edit-row { display: flex; }
+  .status-edit-row label { font-size: 11px; color: var(--text3); margin-bottom: 2px; }
+  .status-edit-field { display: flex; flex-direction: column; gap: 2px; }
+
+  /* Doc card edit area */
+  .doc-edit-row {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  body.editing .doc-edit-row { display: flex; }
+
+  /* Add row button */
+  .add-row-btn {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text3);
+    cursor: pointer;
+    border: 1px dashed var(--border);
+    background: transparent;
+    border-radius: 8px;
+    font-family: inherit;
+    transition: color .12s, border-color .12s;
+    width: 100%;
+    margin-top: 8px;
+  }
+  body.editing .add-row-btn { display: flex; }
+  .add-row-btn:hover { color: var(--c0); border-color: var(--c0); }
+
+  /* Autosave indicator */
+  #save-indicator {
+    font-size: 11px;
+    color: var(--ok);
+    opacity: 0;
+    transition: opacity .3s;
+    white-space: nowrap;
+    pointer-events: none;
+    padding: 4px 8px;
+    border-radius: 5px;
+    background: rgba(38,222,129,0.1);
+    border: 1px solid rgba(38,222,129,0.2);
+  }
+  #save-indicator.show { opacity: 1; }
+
+  /* Col delete button */
+  .col-delete-btn {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+  }
+  body.editing .col-delete-btn { display: inline-flex; }
+  .proc-col { position: relative; }
+
+  /* Step controls float right in header */
+  .proc-card-header-controls {
+    margin-left: auto;
+    display: none;
+    gap: 4px;
+  }
+  body.editing .proc-card-header-controls { display: flex; }
+
+  /* ═══════════════════════════════════════════════════
+     MOBILE ADAPTATION
+     ═══════════════════════════════════════════════════ */
+  @media (max-width: 768px) {
+    html, body { overflow: hidden; }
+
+    .header {
+      padding: 8px 14px 0;
+    }
+    .header h1 {
+      font-size: 13px;
+    }
+    .header-actions {
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .pdf-btn, #themeToggleBtn, #editModeBtn {
+      font-size: 11px;
+      padding: 4px 9px;
+      height: 30px;
+    }
+    .tab {
+      padding: 6px 11px;
+      font-size: 12px;
+      min-height: 34px;
+    }
+    .legend-bar {
+      padding: 8px 14px;
+      gap: 6px;
+    }
+    .legend-item { font-size: 11px; }
+    .proc-flow-scroll {
+      padding: 16px 12px 36px;
+    }
+    .proc-num {
+      width: 34px; height: 34px;
+      font-size: 12px;
+    }
+    .proc-node { gap: 12px; padding: 8px 0; }
+    .proc-card-body { padding: 10px 12px; }
+    .proc-task-text { font-size: 13px; }
+    .proc-dept-badge { font-size: 9px; padding: 2px 6px; }
+    .proc-arrow { padding-left: 48px; }
+    .status-view { padding: 16px 12px; }
+    .docs-view { padding: 16px 12px; }
+    .docs-grid {
+      grid-template-columns: 1fr;
+    }
+    .status-node-card { padding: 10px 12px; }
+    .status-node-process { font-size: 12px; }
+  }
+
+  @media (max-width: 640px) {
+    /* Parallel columns → vertical stack on mobile */
+    .proc-cols {
+      flex-direction: column;
+    }
+    .proc-col + .proc-col {
+      border-left: none;
+      border-top: 1px solid var(--border);
+    }
+    /* Keep the parallel indicator readable */
+    .parallel-tag {
+      font-size: 9px;
+    }
+    .proc-col {
+      padding: 10px 12px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .header h1 {
+      font-size: 12px;
+    }
+    .header-actions {
+      row-gap: 4px;
+    }
+    /* Hide text on action buttons, keep icons */
+    .btn-label-long { display: none; }
+    .pdf-btn, #themeToggleBtn, #editModeBtn {
+      padding: 4px 8px;
+    }
+    .proc-flow-scroll {
+      padding: 12px 8px 32px;
+    }
+    .proc-num {
+      width: 30px; height: 30px;
+      font-size: 11px;
+    }
+    .proc-node { gap: 8px; }
+    .proc-card-body { padding: 8px 10px; }
+    .proc-task-text { font-size: 13px; line-height: 1.55; }
+    .proc-dept-badge { font-size: 9px; padding: 2px 5px; }
+    .proc-arrow { padding-left: 40px; }
+    .docs-grid { gap: 10px; }
+    .doc-card { padding: 12px; }
+    .doc-name { font-size: 12px; }
+    .status-view, .docs-view { padding: 12px 8px; }
+    .legend-bar { padding: 6px 10px; gap: 5px; }
+    .legend-item { font-size: 10px; }
+    .legend-dot { width: 8px; height: 8px; }
+    .tab {
+      padding: 5px 9px;
+      font-size: 11px;
+    }
+  }
+</style>
+<!-- Apply saved theme ASAP — before any rendering to prevent flash -->
+<script>
+(function(){
+  var saved = localStorage.getItem('vsks_theme');
+  if (saved === 'light' || saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+})();
+</script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-actions">
+    <h1 style="margin-bottom:0;">Передача оборудования <span>ВСКС</span> — карта процессов</h1>
+    <button class="pdf-btn" id="exportAllBtn" title="Экспортировать все вкладки в PDF">⬇ <span class="btn-label-long">Скачать все (PDF)</span><span class="btn-label-short" style="display:none">PDF</span></button>
+    <button class="pdf-btn" id="exportJsonBtn" title="Экспорт данных в JSON">⤓ <span class="btn-label-long">Экспорт JSON</span></button>
+    <label class="pdf-btn" id="importJsonLabel" title="Импорт данных из JSON" style="cursor:pointer">⤒ <span class="btn-label-long">Импорт JSON</span><input type="file" id="importJsonInput" accept=".json" style="display:none"></label>
+    <button class="pdf-btn" id="resetDataBtn" title="Сбросить к исходным данным">↺ <span class="btn-label-long">Сбросить</span></button>
+    <button id="editModeBtn" title="Включить режим редактирования">✎ <span class="btn-label-long">Режим правки</span></button>
+    <button id="themeToggleBtn" title="Переключить тему"></button>
+    <span id="save-indicator">Сохранено ✓</span>
+  </div>
+  <div class="tabs" id="tabBar"></div>
+</div>
+
+<div class="content" id="mainContent"></div>
+
+<!-- PDF export overlay -->
+<div id="pdf-overlay">
+  <div class="pdf-spinner"></div>
+  <div id="pdf-overlay-text">Готовлю PDF…</div>
+  <div id="pdf-overlay-sub"></div>
+</div>
+
+<script>
+// ─── SEED DATA ────────────────────────────────────────────────────────────────
+const DATA = {"swimlanes":[{"id":"Как_должно_быть","title":"Как должно быть (по текущей субсидии)","roles":["Руководитель организации","Заинтересованное лицо","МТО","Рег.Отдел","Бухгалтерия","Аппарат","Исполком"],"roleColMap":{"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6},"steps":[{"seq":1,"lanes":[1],"text":"Составление сметы с учётом всех потребностей для проведения мероприятия.\n(наименование, ед.измеререния, цена, количество, ссылка на товар)"},{"seq":2,"lanes":[2],"text":"Актуализации информации по количеству требуемого оборудование на складе"},{"seq":3,"lanes":[2],"text":"Предоставлениес сводной  с указанием  количества заправшиваемого оборудования и количестве на складе"},{"seq":4,"lanes":[0],"text":"Согласование источников предоставления оборудования (закупка/со склада)"},{"seq":5,"lanes":[1],"text":"Служебная записка на имя руководителя, на организацию закупки с приложением (наименование, количество,примерная цена, сроки поставки)"},{"seq":6,"lanes":[0],"text":"Согласование служебной записки ( количество, источник финансирования)"},{"seq":7,"lanes":[1],"text":"Передача подписанной и завизированной руководством служебной записки (с предварительной сметой сметой) для обновления цен и закупки в дальнейшем в отдел МТО."},{"seq":7,"lanes":[5],"text":"Передача подписанной и завизированной руководством служебной записки (со сметой) для обновления цен и закупки в дальнейшем в отдел МТО."},{"seq":8,"lanes":[1],"text":"Предоставление наименование РО (кто получает оборудование), адреса удобных пунктов выдачи и получатели, количество получаемого из общего кол-ва оборудования"},{"seq":9,"lanes":[2],"text":"Формирование ТЗ"},{"seq":10,"lanes":[1],"text":"Согласование ТЗ, перед проведением закупки. Проверка позиций, количества, описания на соответствии изначальным требованиям."},{"seq":11,"lanes":[2],"text":"Закупка оборудования (КП, ед.поставщик, ЭТП) отделом МТО (сопровождение документально, получение на месте, контроль оплаты)."},{"seq":12,"lanes":[1],"text":"Приёмка оборудования, подписание УПД (при необходимости, при запросе от МТО)."},{"seq":12,"lanes":[2],"text":"Приёмка оборудования, подписание УПД."},{"seq":13,"lanes":[4],"text":"Введение ТН/УПД в программу 1С . (постановка на баланс, присвоение инвентарных номеров)"},{"seq":14,"lanes":[2],"text":"Инвентаризация оборудования (нанесение инвентарных номеров)"},{"seq":15,"lanes":[4],"text":"Формирование  предварительных актов передачи на основании полученной информации от заинтерисованного лица"},{"seq":16,"lanes":[1],"text":"Вынесение на исполком вопроса о передаче оборудования"},{"seq":17,"lanes":[6],"text":"Решение исполкома о передаче оборудования"},{"seq":18,"lanes":[1],"text":"Получение протокола исполкома о передаче оборудования и предоставление его в Бухгалтерию и отдел МТО"},{"seq":19,"lanes":[1],"text":"Предоставление служебки на имя руководителя на отправку"},{"seq":20,"lanes":[1,2],"text":"Упаковка по регионам , в случае необходимости(на  основании предварительных актов передачи)"},{"seq":20,"lanes":[3],"text":"Упаковка по регионам , в случае необходимости(в части наградной продукции)"},{"seq":21,"lanes":[4],"text":"Передача информации необходимой для составления нового соглашения в отдел регионального взаимодействия"},{"seq":22,"lanes":[3],"text":"Формирование соглашений. \n(Соглашения составляется на 1 год (до момента окончания субсидии/проекта) в конце года возвратный акт."},{"seq":23,"lanes":[3],"text":"Подписание оригинала соглашения и передаточного акта у руководителя"},{"seq":24,"lanes":[3],"text":"Подписание соглашений с РО (получающим оборудование по проекту) СКАН."},{"seq":25,"lanes":[4],"text":"Подтверждение перевода, согласно ранее подготовленным актам на основании подписанных документов (скан)"},{"seq":26,"lanes":[2],"text":"Вложения договоров в посылку с отправляемым оборудованием, подписанных параллельно у Руководителя ВСКС в 2-экземплярах (1-ин останется у РО, 2-ой обязательно вернуть подписанный нам по адресу)."},{"seq":27,"lanes":[2],"text":"Оформления отправки через СДЭК и получения трек номеров, последующая отправка"},{"seq":27,"lanes":[3],"text":"Оформления отправки через СДЭК и получения трек номеров, последующая отправка (в части наградной продукции)"},{"seq":28,"lanes":[2],"text":"Сопровождения и отслеживания посылко  (взаимодействие с подрядчиком)"},{"seq":28,"lanes":[3],"text":"Сопровождения и отслеживание посылки и проработка с регионом получения ее"},{"seq":29,"lanes":[3],"text":"Сбор оригиналов подписанных соглашений и актов  и передача их в бухгалтерию"},{"seq":30,"lanes":[4],"text":"Занесение информации о получении оригиналов в журнал по получению оригиналов первичной документации"}]},{"id":"Возврат оборудования","title":"Возврат оборудования","roles":["Руководитель организации","Руководитель отделения","МТО","Рег.Отдел","Бухгалтерия","Аппарат","Исполком"],"roleColMap":{"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6},"steps":[{"seq":1,"lanes":[4],"text":"Фомирование предварительных инвентаризационных ведомостей (включает всё оборудование"},{"seq":2,"lanes":[3],"text":"Направление предварительных инвентаризационных ведомостей в регионы"},{"seq":3,"lanes":[1],"text":"Получение инвентаризационной ведомости"},{"seq":4,"lanes":[1],"text":"Инвентаризация оборудования и формы в соответствии с инвентаризационной ведомостью"},{"seq":5,"lanes":[1],"text":"Предоставление служебной записки на руководителя ВСКС на списание  формы и оборудования пришедшего в негодность. С приложением скан-копий выдачи оборудования добровольцам в пользование."},{"seq":6,"lanes":[3],"text":"Сбор служебных записок на списание"},{"seq":7,"lanes":[3],"text":"Выезд в регион для проверки списания (при необходимости)"},{"seq":8,"lanes":[3],"text":"Предоставление руководителю ВСКС служебных записок на списание"},{"seq":9,"lanes":[0],"text":"Согласование служебных записок от руководителей региональных отделений на списание оборудования и формы, для организации работ по списанию на комиссию"},{"seq":10,"lanes":[3],"text":"Организация работ по привлечению организаций для списания оборудования ( в случае необходимости)"},{"seq":11,"lanes":[4],"text":"Документальное проведение списания в 1С на основании подписанных документов"},{"seq":12,"lanes":[4],"text":"Фомирование итоговых инвентаризационных ведомостей"},{"seq":13,"lanes":[3],"text":"Формирование возвратных актов на возврат оборудования"},{"seq":14,"lanes":[3],"text":"Направление итоговых инвентаризацонных ведомостей и возвратных актов в регионы"},{"seq":15,"lanes":[3],"text":"Сбор сканов возвратных  актов и инвентаризационных ведомостей с регионов"},{"seq":16,"lanes":[3],"text":"Предоставление сканов возвратных  актов и инвентаризационных ведомостей в бухгалтерию"},{"seq":17,"lanes":[3],"text":"Сбор оригиналов возвратных  актов и инвентаризационных ведомостей с регионов"},{"seq":18,"lanes":[3],"text":"Предоставление оригиналов возвратных  актов и инвентаризационных ведомостей в бухгалтерию"},{"seq":19,"lanes":[4],"text":"Занесение информации о получении оригиналов в журнал по получению оригиналов первичной документации"}]},{"id":"Контроль оборудования","title":"Контроль оборудования (инвентаризация)","roles":["Руководитель организации","Руководитель отделения","МТО","Рег.Отдел","Бухгалтерия","Аппарат","Исполком"],"roleColMap":{"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6},"steps":[{"seq":1,"lanes":[4],"text":"Фомирование предварительных инвентаризационных ведомостей (включает всё оборудование"},{"seq":2,"lanes":[3],"text":"Направление предварительных инвентаризационных ведомостей в регионы"},{"seq":3,"lanes":[1],"text":"Получение инвентаризационной ведомости"},{"seq":4,"lanes":[1],"text":"Инвентаризация оборудования и формы в соответствии с инвентаризационной ведомостью"},{"seq":5,"lanes":[1],"text":"Предоставление служебной записки на руководителя ВСКС на списание  формы и оборудования пришедшего в негодность. С приложением скан-копий выдачи оборудования добровольцам в пользование."},{"seq":6,"lanes":[3],"text":"Сбор служебных записок на списание"},{"seq":7,"lanes":[3],"text":"Выезд в регион для проверки списания (при необходимости)"},{"seq":8,"lanes":[3],"text":"Предоставление руководителю ВСКС служебных записок на списание"},{"seq":9,"lanes":[0],"text":"Согласование служебных записок от руководителей региональных отделений на списание оборудования и формы, для организации работ по списанию на комиссию"},{"seq":10,"lanes":[3],"text":"Организация работ по привлечению организаций для списания оборудования ( в случае необходимости)"},{"seq":11,"lanes":[4],"text":"Документальное проведение списания в 1С на основании подписанных документов"},{"seq":12,"lanes":[4],"text":"Фомирование итоговых инвентаризационных ведомостей"},{"seq":13,"lanes":[3],"text":"Направление итоговых инвентаризацонных ведомостей в регионы"},{"seq":14,"lanes":[3],"text":"Сбор сканов инвентаризационных ведомостей с регионов"},{"seq":15,"lanes":[3],"text":"Предоставление сканов  инвентаризационных ведомостей  в бухгалтерию"},{"seq":16,"lanes":[3],"text":"Сбор оригиналов  инвентаризационных ведомостей с регионов"},{"seq":17,"lanes":[3],"text":"Предоставление  инвентаризационных ведомостей бухгалтерию"},{"seq":18,"lanes":[4],"text":"Занесение информации о получении оригиналов в журнал по получению оригиналов первичной документации"}]},{"id":"Трехлетнее_соглашение","title":"Трёхлетнее соглашение","roles":["Руководитель организации","Руководитель отделения","МТО","Рег.Отдел","Бухгалтерия","Аппарат","Исполком"],"roleColMap":{"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6},"steps":[{"seq":1,"lanes":[4],"text":"Формирование списка оборудования на основании ранее имевшегося в отделении, по всем субсидиям (инвентаризацоннаая ведомость)"},{"seq":2,"lanes":[3],"text":"Направление инвентаризационных ведомостей руководителям отделений"},{"seq":3,"lanes":[1],"text":"Получение инвентаризационной ведомости"},{"seq":4,"lanes":[1],"text":"Инвентаризация оборудования и формы в соответствии инвентаризационной ведомостью"},{"seq":5,"lanes":[1],"text":"Предоставление служебной записки на списание  формы и оборудования пришедшего в негодность"},{"seq":6,"lanes":[3],"text":"Сбор служебных записок на списание"},{"seq":7,"lanes":[3],"text":"Выезд в регион для проверки списани (при необходимости)"},{"seq":8,"lanes":[3],"text":"Предоставление руководителю служебных записок на списание"},{"seq":9,"lanes":[0],"text":"Согласование служебных записок от руководителей региональных отделений на списание оборудования и формы, для организации работ по списанию"},{"seq":10,"lanes":[3],"text":"Организация работ по привлечению организаций для списания оборудования ( в случае необходимости)"},{"seq":11,"lanes":[4],"text":"Документальное проведение списания в 1С"},{"seq":12,"lanes":[4],"text":"Фомирование инвентаризационных ведомостей"},{"seq":13,"lanes":[3],"text":"Формирование возвратных  актов, на основание инвентаризационной ведомости"},{"seq":14,"lanes":[3],"text":"Направление актов в регионы"},{"seq":15,"lanes":[3],"text":"Сбор сканов актов с регионов"},{"seq":16,"lanes":[3],"text":"Предоставление сканов актов в бухгалтерию и отдел МТО"},{"seq":17,"lanes":[3],"text":"Вынесение на исполком вопроса о передаче оборудования"},{"seq":18,"lanes":[6],"text":"Принятие решение о передаче новому человеку"},{"seq":19,"lanes":[3],"text":"Получение протокола исполкома о передаче оборудования и предоставление его в Бухгалтерию и отдел МТО"},{"seq":20,"lanes":[3],"text":"Формирование соглашений и передаточных на основании инвентаризационных ведомостей."},{"seq":21,"lanes":[3],"text":"Подписание оригинала соглашения и передаточного акта у руководителя ВСКС"},{"seq":22,"lanes":[3],"text":"Подписание соглашений с РО (получающим оборудование по проекту) СКАН."},{"seq":23,"lanes":[4],"text":"Подтверждение перевода, согласно ранее подготовленным актам на основании подписанных документов (скан)"},{"seq":24,"lanes":[3],"text":"Отправка оригиналов соглашений, подписанных параллельно у Руководителя ВСКС в 2-экземплярах (1-ин останется у РО, 2-ой обязательно вернуть подписанный нам по адресу)."},{"seq":25,"lanes":[3],"text":"Оформления отправки через СДЭК и получения трек номеров, последующая отправка"},{"seq":26,"lanes":[3],"text":"Сопровождения и отслеживание посылки и проработка с регионом получения ее"},{"seq":27,"lanes":[3],"text":"Сбор оригиналов подписанных соглашений и актов  и передача их в бухгалтерию"},{"seq":28,"lanes":[4],"text":"Занесение информации о получении оригиналов в журнал по получению оригиналов первичной документации"}]},{"id":"Смена_руководителя","title":"Смена руководителя отделения","roles":["Руководитель организации","Предыдущий руководитель отделения","Материально ответственное лицо","Новый руководитель отделения","МТО","Рег.Отдел","Бухгалтерия","Аппарат","Исполком"],"roleColMap":{"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8},"steps":[{"seq":1,"lanes":[5],"text":"Получение информации об отставке/смене руководителя, от Руководителя ВСКС или от Регионального отделения"},{"seq":2,"lanes":[5],"text":"Вынос решения о смене руководителя на ИСПОЛКОМ"},{"seq":3,"lanes":[8],"text":"Принятие решение об отставк/смене руководителя"},{"seq":4,"lanes":[6],"text":"Фомирование предварительных инвентаризационных ведомостей (включает всё оборудование"},{"seq":5,"lanes":[5],"text":"Направление предварительных инвентаризационных ведомостей предыдущему руководителю"},{"seq":6,"lanes":[1],"text":"Получение инвентаризационной ведомости"},{"seq":7,"lanes":[1],"text":"Инвентаризация оборудования и формы в соответствии инвентаризационной ведомостью"},{"seq":8,"lanes":[1],"text":"Предоставление служебной записки на списание  формы и оборудования пришедшего в негодность"},{"seq":9,"lanes":[5],"text":"Получение служебной записки на списание"},{"seq":10,"lanes":[5],"text":"Выезд в регион для проверки оборудования (при необходимости)"},{"seq":11,"lanes":[5],"text":"Предоставление руководителю ВСКС  служебных записок на списание"},{"seq":12,"lanes":[0],"text":"Согласование служебной записки от руководителя регионального отделения на списание оборудования и формы, для организации работ по списанию"},{"seq":13,"lanes":[5],"text":"Организация работ по привлечению организаций для списания оборудования ( в случае необходимости)"},{"seq":14,"lanes":[6],"text":"Документальное проведение списания в 1С"},{"seq":15,"lanes":[6],"text":"Фомирование инвентаризационных ведомостей"},{"seq":16,"lanes":[5],"text":"Вынесение на исполком вопроса о передаче оборудования на основании инвентаризационой ведомости"},{"seq":17,"lanes":[8],"text":"Принятие решение о передаче новому человеку"},{"seq":18,"lanes":[5],"text":"Формирование возвратных  актов от предущего руководителя  на основание инвентаризационной ведомости"},{"seq":19,"lanes":[5],"text":"Формирование соглашений о передаче новому лицу и  передаточных актов  на основание инвентаризационной ведомости"},{"seq":20,"lanes":[0],"text":"Подписание оригиналов  соглашений с новым лицом"},{"seq":21,"lanes":[6],"text":"Создание на нового предполагаемому руководителю или иному лицу, находящемуся в регионе, доверенности на получение"},{"seq":22,"lanes":[0],"text":"Подписание доверенности"},{"seq":23,"lanes":[5],"text":"Отправка доверенности человеку, который будет принимать оборудования и  соглашения с новым лицом"},{"seq":24,"lanes":[2],"text":"Получение доверенности на почте или через СДЭК"},{"seq":25,"lanes":[1],"text":"Подписание возвратного акта"},{"seq":25,"lanes":[2],"text":"Подписание возвратного акта, сотрудником организации, находящемся на месте или любым другим человеком по доверенности от ВСКС"},{"seq":25,"lanes":[3],"text":"Подписание передаточного акта, между предсатвителем организации и новым руководителем ( это может быть одно и то же лицо, только он должен действовать по доверенности когда передаёт)"},{"seq":26,"lanes":[2,3],"text":"Отправка сканов документов подписанных"},{"seq":27,"lanes":[2],"text":"Отправка оригиналов документов"},{"seq":28,"lanes":[5],"text":"Получение  сканов документов подписанных и предоставление их в бухгалтерию"},{"seq":29,"lanes":[6],"text":"Подтверждение перевода оборудования"},{"seq":30,"lanes":[5],"text":"Получение оригиналов документов подписанных и передача их в бухгалтерию"},{"seq":31,"lanes":[6],"text":"Занесение информации о получении оригиналов в журнал по получению оригиналов первичной документации"}]}],"status_flow":{"title":"Как есть сейчас (теоретически)","header":["№","Процесс","Исполнитель (плановый)","Кем фактически исполнено","Работоспособность"],"items":[{"num":"1","process":"Составление сметы (наименования) и первичная стоимость оборудования, ответственным куратором проекта или другого отдела от ВСКС.","planned":"Заинтересованное в поставке лицо","actual":"Заинтересованное в поставке лицо","status":"Работает","state":"ok"},{"num":"2","process":"Передача подписанной и завизированной руководством служебной записки (со сметой) для обновления цен и закупки в дальнейшем в отдел МТО.","planned":"Аппарат/Заинтересованное в поставке лицо","actual":"Аппарат/Заинтересованное в поставке лицо","status":"Работает","state":"ok"},{"num":"3","process":"Закупка оборудования (КП, ед.поставщик, ЭТП) отделом МТО (сопровождение документально, получение на месте, оплата).Параллельно с закупкой отдел МТО получает от ответственного куратора или другого отдела – наименование РО (кто получает оборудование), в идеале сразу адреса удобных пунктов выдачи и получатели, количество получаемого из общего кол-ва оборудования","planned":"МТО","actual":"МТО","status":"Работает","state":"ok"},{"num":"4","process":"Приёмка оборудования, подписания УПД.","planned":"МТО и Заинтересованное в поставке лицо","actual":"МТО","status":"Не работает. Представитель заказчика оборудования не присутствует на приёмке","state":"fail"},{"num":"5","process":"Введение ТН/УПД в программу 1С .","planned":"Бухгалтерия","actual":"МТО/бухгалтерия","status":"Работает","state":"ok"},{"num":"6","process":"Инвентаризация оборудования и упаковка по регионам (по спискам предоставленным ранее)","planned":"МТО и заинтересованное в поставке лицо","actual":"МТО и Заинтересованное в поставке лицо","status":"Работает","state":"ok"},{"num":"7","process":"Оформления отправки через СДЭК и получения трек номеров, последующая отправка","planned":"Мто /рег.отдел","actual":"Мто /рег.отдел","status":"Работает. Но каждый раз по разному.","state":"warn"},{"num":"8","process":"Перевод в программе 1С оборудования по составленным таблицам отделом МТО при сборе оборудования перед отправкой.","planned":"Бухгалтерия","actual":"Бухгалтерия/Мто","status":"Работает","state":"ok"},{"num":"9","process":"Сопровождения и отслеживания посылки и проработка с регионом получения ее (отдел МТО, отдел рег.взаимодействия).","planned":"Мто /рег.отдел","actual":"Мто /рег.отдел","status":"Работает. Но каждый раз по разному.","state":"warn"},{"num":"10","process":"Далее составление актуальных новых соглашений на данную отправку и подписание удаленно с РО, подписание у Руководителя ВСКС оригиналов соглашений (далее хранение соглашений).","planned":"Рег.отдел","actual":"","status":"Не работает. На данный момент нет подписанных соглашений.","state":"fail"},{"num":"11","process":"Соглашения составляется на 1 год (до момента окончания субсидии/проекта) в конце года возвратный акт.","planned":"Рег.отдел","actual":"","status":"Не работает. На данный момент нет подписанных соглашений.","state":"fail"}]},"documents":{"title":"Перечень необходимых документов","items":[{"num":"1","name":"Соглашение и акт на передачу нового оборудование актуальное годовое (для ЦУ и РО)"},{"num":"2","name":"Соглашение и акт на 3 года (с возможностью дополнительных актов) (для ЦУ и РО)"},{"num":"3","name":"Служебная записка на списание оборудования от РО (для ЦУ и РО)"},{"num":"4","name":"Служебная записка о предоставлении оборудования (для РО)"},{"num":"5","name":"Служебная записка о предоставлении форменной одежды (для РО)"},{"num":"6","name":"Регламент списания оборудования в РО (для ЦУ и РО) с подписью об ознакомлении"},{"num":"7","name":"Регламент передачи годового и на 3 года (для ЦУ) с подписью об ознакомлении"},{"num":"8","name":"Регламент приобретения и отправки для всех причастных отделов (для ЦУ) с подписью об ознакомлении"},{"num":"9","name":"Соглашение на передачу АВТОТЕХНИКИ (машина, прицеп, квадроцикл) (для ЦУ и РО)"},{"num":"10","name":"Ведомости выдачи форменной одежды (для РО)"},{"num":"11","name":"Ведомости выдачи оборудования (для внутренней работы РО) (для РО)"},{"num":"12","name":"Документ о передаче оборудования между РО (между собой) – на мероприятия / ЧС (для РО)"},{"num":"13","name":"Документ (акт) о передаче оборудования между РО и ЦУ (мероприятия/ЧС) (для ЦУ и РО)"}]}};
+
+// ─── ROLE COLOR MAP ────────────────────────────────────────────────────────────
+const ROLE_COLORS = {
+  'Руководитель организации': 'var(--c0)',
+  'Заинтересованное лицо': 'var(--c1)',
+  'Руководитель отделения': 'var(--c1)',
+  'Предыдущий руководитель отделения': 'var(--c1)',
+  'МТО': 'var(--c2)',
+  'Рег.Отдел': 'var(--c3)',
+  'Бухгалтерия': 'var(--c4)',
+  'Аппарат': 'var(--c5)',
+  'Исполком': 'var(--c6)',
+  'Материально ответственное лицо': 'var(--c7)',
+  'Новый руководитель отделения': 'var(--c8)',
+};
+
+const CSS_VARS = {
+  '--c0':'#7c6af5','--c1':'#4ecdc4','--c2':'#f7b731','--c3':'#45b7d1',
+  '--c4':'#96ceb4','--c5':'#ff6b6b','--c6':'#a29bfe','--c7':'#fd79a8','--c8':'#00cec9'
+};
+function resolveColor(v) { return CSS_VARS[v.replace(/var\(|\)/g,'').trim()] || v; }
+function roleColor(name) { return ROLE_COLORS[name] || 'var(--c3)'; }
+function roleColorHex(name) { return resolveColor(roleColor(name)); }
+
+// ─── DEEP COPY ────────────────────────────────────────────────────────────────
+function deepCopy(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ─── NORMALIZE: steps[] → levels[] ───────────────────────────────────────────
+// level = { tasks: [ { deptIndexes:[], text:'' }, ... ] }
+function stepsToLevels(steps) {
+  const seqMap = {};
+  steps.forEach(step => {
+    const key = step.seq;
+    if (!seqMap[key]) seqMap[key] = [];
+    seqMap[key].push(step);
+  });
+  const seqs = Object.keys(seqMap).map(Number).sort((a, b) => a - b);
+  return seqs.map(seq => {
+    const stepsForSeq = seqMap[seq];
+    const taskMap = new Map(); // text -> Set of laneIndexes
+    stepsForSeq.forEach(step => {
+      if (!taskMap.has(step.text)) taskMap.set(step.text, []);
+      step.lanes.forEach(li => {
+        if (!taskMap.get(step.text).includes(li)) taskMap.get(step.text).push(li);
+      });
+    });
+    const tasks = [];
+    const seen = new Set();
+    stepsForSeq.forEach(step => {
+      if (!seen.has(step.text)) {
+        seen.add(step.text);
+        tasks.push({ deptIndexes: taskMap.get(step.text), text: step.text });
+      }
+    });
+    return { tasks };
+  });
+}
+
+// ─── NORMALIZE: levels[] → steps[] (for export/save compat) ──────────────────
+function levelsToSteps(levels) {
+  const steps = [];
+  levels.forEach((level, li) => {
+    const seq = li + 1;
+    level.tasks.forEach(task => {
+      // If multiple dept indexes, each as lanes[] per step
+      steps.push({ seq, lanes: task.deptIndexes.slice(), text: task.text });
+    });
+  });
+  return steps;
+}
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+const STATE_KEY = 'vsks_data';
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.swimlanes) return parsed;
+    }
+  } catch(e) {}
+  return null;
+}
+
+const STATE = { data: loadState() || deepCopy(DATA) };
+
+function saveState() {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify(STATE.data));
+    showSaveIndicator();
+  } catch(e) {}
+}
+
+let _saveTimer = null;
+function showSaveIndicator() {
+  const el = document.getElementById('save-indicator');
+  if (!el) return;
+  el.classList.add('show');
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => el.classList.remove('show'), 1500);
+}
+
+// ─── TABS DEFINITION ──────────────────────────────────────────────────────────
+function buildTabs() {
+  return [
+    ...STATE.data.swimlanes.map(sl => ({ id: 'sl_'+sl.id, label: sl.title, type: 'swimlane', slId: sl.id })),
+    { id: 'status_flow', label: 'Как есть сейчас', type: 'status' },
+    { id: 'documents',   label: 'Документы',       type: 'docs'   },
+  ];
+}
+
+let TABS = buildTabs();
+let activeTab = TABS[0].id;
+let editMode = false;
+
+// ─── BUILD UI ─────────────────────────────────────────────────────────────────
+const tabBar = document.getElementById('tabBar');
+const mainContent = document.getElementById('mainContent');
+
+function rebuildTabBar() {
+  TABS = buildTabs();
+  tabBar.innerHTML = '';
+  TABS.forEach(tab => {
+    const btn = document.createElement('div');
+    btn.className = 'tab' + (tab.id === activeTab ? ' active' : '');
+    btn.textContent = tab.label;
+    btn.dataset.id = tab.id;
+    btn.addEventListener('click', () => switchTab(tab.id));
+    tabBar.appendChild(btn);
+  });
+}
+
+rebuildTabBar();
+
+function switchTab(id) {
+  activeTab = id;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.id === id));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.id === id));
+}
+
+// ─── RENDER ALL VIEWS ─────────────────────────────────────────────────────────
+function renderAll() {
+  mainContent.innerHTML = '';
+  TABS = buildTabs();
+  rebuildTabBar();
+  TABS.forEach(tab => {
+    if (tab.type === 'swimlane') buildSwimlaneView(tab);
+    else if (tab.type === 'status') buildStatusView(tab);
+    else if (tab.type === 'docs') buildDocsView(tab);
+  });
+  // ensure active tab is shown
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.id === activeTab));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.id === activeTab));
+}
+
+// ─── RENDER SINGLE TAB ────────────────────────────────────────────────────────
+function renderTab(tabId) {
+  const existing = mainContent.querySelector(`.view[data-id="${CSS.escape(tabId)}"]`);
+  const tab = TABS.find(t => t.id === tabId);
+  if (!tab) return;
+  const wasActive = existing ? existing.classList.contains('active') : false;
+  if (existing) existing.remove();
+  let newView;
+  if (tab.type === 'swimlane') newView = buildSwimlaneView(tab, true);
+  else if (tab.type === 'status') newView = buildStatusView(tab, true);
+  else if (tab.type === 'docs') newView = buildDocsView(tab, true);
+  if (newView && wasActive) newView.classList.add('active');
+}
+
+// ─── SWIMLANE VIEW ────────────────────────────────────────────────────────────
+function buildSwimlaneView(tab, returnOnly) {
+  const sl = STATE.data.swimlanes.find(s => s.id === tab.slId);
+  if (!sl) return;
+
+  // Normalize steps to levels
+  const levels = stepsToLevels(sl.steps);
+
+  const view = document.createElement('div');
+  view.className = 'view' + (tab.id === activeTab && !returnOnly ? ' active' : '');
+  view.dataset.id = tab.id;
+
+  // Legend + PDF button
+  const legend = document.createElement('div');
+  legend.className = 'legend-bar';
+  let legendHtml = `<span class="l-label">Роли:</span>`;
+  sl.roles.forEach(r => {
+    const c = roleColorHex(r);
+    legendHtml += `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${escHtml(r)}</span>`;
+  });
+  legendHtml += `<button class="pdf-btn" style="margin-left:auto;" data-proc-pdf>⬇ PDF</button>`;
+  legend.innerHTML = legendHtml;
+  legend.querySelector('[data-proc-pdf]').addEventListener('click', () => exportTabToPdf(tab.id));
+  view.appendChild(legend);
+
+  const scrollWrap = document.createElement('div');
+  scrollWrap.className = 'proc-flow-scroll';
+  view.appendChild(scrollWrap);
+
+  const flow = document.createElement('div');
+  flow.className = 'proc-flow';
+  scrollWrap.appendChild(flow);
+
+  function renderLevels() {
+    flow.innerHTML = '';
+    levels.forEach((level, li) => {
+      const seq = li + 1;
+      const isParallel = level.tasks.length > 1;
+
+      // Add-step button BEFORE this level
+      const addBefore = document.createElement('button');
+      addBefore.className = 'add-step-btn';
+      addBefore.innerHTML = '＋ Добавить шаг перед ' + seq;
+      addBefore.addEventListener('click', () => {
+        levels.splice(li, 0, { tasks: [{ deptIndexes: [0], text: 'Новый шаг' }] });
+        sl.steps = levelsToSteps(levels);
+        saveState();
+        renderLevels();
+      });
+      flow.appendChild(addBefore);
+
+      // Node row
+      const node = document.createElement('div');
+      node.className = 'proc-node';
+
+      // Step number circle — coloured by dept(s) of this level
+      const numEl = document.createElement('div');
+      numEl.className = 'proc-num';
+
+      // Collect unique colours from all tasks × deptIndexes of this level
+      const seenColors = [];
+      level.tasks.forEach(task => {
+        (task.deptIndexes || []).forEach(idx => {
+          const hex = roleColorHex(sl.roles[idx] || '');
+          if (hex && !seenColors.includes(hex)) seenColors.push(hex);
+        });
+      });
+
+      if (seenColors.length === 0) {
+        // fallback — keep default CSS styling
+      } else if (seenColors.length === 1) {
+        // Single dept: solid fill, white number
+        numEl.style.background = seenColors[0];
+        numEl.style.border = 'none';
+      } else {
+        // Multiple depts: conic-gradient with equal sectors
+        const step = 360 / seenColors.length;
+        let stops = '';
+        seenColors.forEach((c, i) => {
+          stops += `${c} ${i * step}deg ${(i + 1) * step}deg`;
+          if (i < seenColors.length - 1) stops += ', ';
+        });
+        numEl.style.background = `conic-gradient(${stops})`;
+        numEl.style.border = 'none';
+      }
+
+      // Use a labelled inner span so text stays readable over any gradient
+      const numLabel = document.createElement('span');
+      numLabel.className = 'proc-num-label';
+      numLabel.textContent = seq;
+      if (seenColors.length === 0) {
+        // fallback: use default text colour
+        numLabel.style.color = '';
+        numLabel.style.textShadow = '';
+      }
+      numEl.appendChild(numLabel);
+      node.appendChild(numEl);
+
+      // Card
+      const card = document.createElement('div');
+      card.className = 'proc-card';
+
+      // Card header
+      const cardHeader = document.createElement('div');
+      cardHeader.className = 'proc-card-header';
+      cardHeader.innerHTML = `<span class="proc-step-badge">Шаг ${seq}</span>`;
+      if (isParallel) {
+        cardHeader.innerHTML += `<span class="parallel-tag">⇄ выполняется параллельно</span>`;
+      }
+
+      // Header edit controls (move up/down/delete)
+      const hdrControls = document.createElement('div');
+      hdrControls.className = 'proc-card-header-controls edit-only';
+      hdrControls.style.display = 'none'; // overridden by body.editing CSS
+
+      const btnUp = document.createElement('button');
+      btnUp.className = 'ed-btn';
+      btnUp.title = 'Переместить вверх';
+      btnUp.textContent = '↑';
+      btnUp.addEventListener('click', (e) => { e.stopPropagation();
+        if (li === 0) return;
+        [levels[li-1], levels[li]] = [levels[li], levels[li-1]];
+        sl.steps = levelsToSteps(levels);
+        saveState(); renderLevels();
+      });
+
+      const btnDown = document.createElement('button');
+      btnDown.className = 'ed-btn';
+      btnDown.title = 'Переместить вниз';
+      btnDown.textContent = '↓';
+      btnDown.addEventListener('click', (e) => { e.stopPropagation();
+        if (li >= levels.length - 1) return;
+        [levels[li], levels[li+1]] = [levels[li+1], levels[li]];
+        sl.steps = levelsToSteps(levels);
+        saveState(); renderLevels();
+      });
+
+      const btnDel = document.createElement('button');
+      btnDel.className = 'ed-btn danger';
+      btnDel.title = 'Удалить шаг';
+      btnDel.textContent = '✕';
+      btnDel.addEventListener('click', (e) => { e.stopPropagation();
+        if (!confirm(`Удалить шаг ${seq}?`)) return;
+        levels.splice(li, 1);
+        sl.steps = levelsToSteps(levels);
+        saveState(); renderLevels();
+      });
+
+      // Add parallel task button
+      const btnAddTask = document.createElement('button');
+      btnAddTask.className = 'ed-btn accent edit-only';
+      btnAddTask.title = 'Добавить параллельную задачу';
+      btnAddTask.style.display = 'none';
+      btnAddTask.textContent = '⊕';
+      btnAddTask.addEventListener('click', (e) => { e.stopPropagation();
+        level.tasks.push({ deptIndexes: [0], text: 'Новая параллельная задача' });
+        sl.steps = levelsToSteps(levels);
+        saveState(); renderLevels();
+      });
+
+      hdrControls.appendChild(btnUp);
+      hdrControls.appendChild(btnDown);
+      hdrControls.appendChild(btnAddTask);
+      hdrControls.appendChild(btnDel);
+      cardHeader.appendChild(hdrControls);
+      card.appendChild(cardHeader);
+
+      // Build columns
+      if (!isParallel) {
+        // Single task
+        const col = level.tasks[0];
+        const body = document.createElement('div');
+        body.className = 'proc-card-body';
+        body.style.flexDirection = 'column';
+
+        const primaryRole = sl.roles[col.deptIndexes[0]];
+        const primaryColor = roleColorHex(primaryRole || '');
+        card.style.borderLeft = `4px solid ${primaryColor}`;
+
+        appendTaskContent(body, col, sl, li, 0, levels, level);
+        card.appendChild(body);
+      } else {
+        const colsWrap = document.createElement('div');
+        colsWrap.className = 'proc-cols';
+
+        level.tasks.forEach((col, ci) => {
+          const colEl = document.createElement('div');
+          colEl.className = 'proc-col';
+
+          // Col delete button
+          const colDelBtn = document.createElement('button');
+          colDelBtn.className = 'ed-btn danger col-delete-btn edit-only';
+          colDelBtn.title = 'Удалить эту задачу';
+          colDelBtn.textContent = '✕';
+          colDelBtn.style.display = 'none';
+          colDelBtn.addEventListener('click', (e) => { e.stopPropagation();
+            if (level.tasks.length <= 1) {
+              if (!confirm('Удалить последнюю задачу шага (удалит весь шаг)?')) return;
+              levels.splice(li, 1);
+            } else {
+              level.tasks.splice(ci, 1);
+            }
+            sl.steps = levelsToSteps(levels);
+            saveState(); renderLevels();
+          });
+          colEl.appendChild(colDelBtn);
+
+          appendTaskContent(colEl, col, sl, li, ci, levels, level);
+          colsWrap.appendChild(colEl);
+        });
+
+        card.appendChild(colsWrap);
+      }
+
+      node.appendChild(card);
+      flow.appendChild(node);
+
+      // Arrow + add-step between levels
+      if (li < levels.length - 1) {
+        const arrow = document.createElement('div');
+        arrow.className = 'proc-arrow';
+        arrow.textContent = '↓';
+        flow.appendChild(arrow);
+      }
+    });
+
+    // Final "add step" button
+    const addEnd = document.createElement('button');
+    addEnd.className = 'add-step-btn';
+    addEnd.innerHTML = '＋ Добавить шаг в конец';
+    addEnd.addEventListener('click', () => {
+      levels.push({ tasks: [{ deptIndexes: [0], text: 'Новый шаг' }] });
+      sl.steps = levelsToSteps(levels);
+      saveState();
+      renderLevels();
+    });
+    flow.appendChild(addEnd);
+  }
+
+  renderLevels();
+  if (returnOnly) { mainContent.appendChild(view); return view; }
+  mainContent.appendChild(view);
+  return view;
+}
+
+// ── Task content: dept badges + text (editable in edit mode) ─────────────────
+function appendTaskContent(container, col, sl, li, ci, levels, level) {
+  // Dept badges wrapper
+  const badgesWrap = document.createElement('div');
+  badgesWrap.className = 'proc-dept-badges-wrap';
+  badgesWrap.style.marginBottom = '8px';
+
+  function renderBadges() {
+    badgesWrap.innerHTML = '';
+    // Read-only badges (always visible)
+    const badgesRow = document.createElement('div');
+    badgesRow.style.display = 'flex';
+    badgesRow.style.flexWrap = 'wrap';
+    badgesRow.style.gap = '5px';
+    col.deptIndexes.forEach(idx => {
+      const role = sl.roles[idx];
+      if (!role) return;
+      const hex = roleColorHex(role);
+      const badge = document.createElement('span');
+      badge.className = 'proc-dept-badge';
+      badge.textContent = role;
+      badge.style.background = hex + '22';
+      badge.style.color = hex;
+      badge.style.border = `1px solid ${hex}55`;
+      badgesRow.appendChild(badge);
+    });
+    badgesWrap.appendChild(badgesRow);
+
+    // Edit-mode dept checkboxes
+    const deptEdit = document.createElement('div');
+    deptEdit.className = 'dept-select-wrap edit-only';
+    deptEdit.style.display = 'none';
+    sl.roles.forEach((role, ri) => {
+      const label = document.createElement('label');
+      label.className = 'dept-checkbox-row';
+      const hex = roleColorHex(role);
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = col.deptIndexes.includes(ri);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          if (!col.deptIndexes.includes(ri)) col.deptIndexes.push(ri);
+        } else {
+          if (col.deptIndexes.length > 1) {
+            col.deptIndexes = col.deptIndexes.filter(x => x !== ri);
+          } else {
+            cb.checked = true; // keep at least one
+            return;
+          }
+        }
+        sl.steps = levelsToSteps(levels);
+        saveState();
+        renderBadges();
+      });
+      const dot = document.createElement('span');
+      dot.style.width = '8px'; dot.style.height = '8px';
+      dot.style.borderRadius = '50%'; dot.style.background = hex;
+      dot.style.display = 'inline-block'; dot.style.flexShrink = '0';
+      label.appendChild(cb);
+      label.appendChild(dot);
+      label.appendChild(document.createTextNode(role));
+      deptEdit.appendChild(label);
+    });
+    badgesWrap.appendChild(deptEdit);
+  }
+  renderBadges();
+  container.appendChild(badgesWrap);
+
+  // Task text
+  const taskText = document.createElement('div');
+  taskText.className = 'proc-task-text';
+  taskText.innerHTML = escHtml(col.text);
+
+  // Edit textarea (shown on click in edit mode)
+  const editArea = document.createElement('textarea');
+  editArea.className = 'proc-task-edit';
+  editArea.style.display = 'none';
+  editArea.value = col.text;
+
+  taskText.addEventListener('click', () => {
+    if (!editMode) return;
+    taskText.style.display = 'none';
+    editArea.style.display = 'block';
+    editArea.focus();
+    editArea.select();
+  });
+
+  editArea.addEventListener('blur', () => {
+    const newVal = editArea.value;
+    col.text = newVal;
+    taskText.innerHTML = escHtml(newVal);
+    editArea.style.display = 'none';
+    taskText.style.display = 'block';
+    sl.steps = levelsToSteps(levels);
+    saveState();
+  });
+  editArea.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      editArea.value = col.text;
+      editArea.dispatchEvent(new Event('blur'));
+    }
+  });
+
+  container.appendChild(taskText);
+  container.appendChild(editArea);
+}
+
+// ─── STATUS VIEW ──────────────────────────────────────────────────────────────
+function buildStatusView(tab, returnOnly) {
+  const view = document.createElement('div');
+  view.className = 'view' + (tab.id === activeTab && !returnOnly ? ' active' : '');
+  view.dataset.id = tab.id;
+
+  const sf = STATE.data.status_flow;
+
+  const legend = document.createElement('div');
+  legend.className = 'legend-bar';
+  legend.innerHTML = `
+    <span class="l-label">Статус:</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--ok)"></span>Работает</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--warn)"></span>С отклонениями</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--fail)"></span>Не работает</span>
+    <button class="pdf-btn" style="margin-left:auto;" id="pdf-btn-status">⬇ PDF</button>
+  `;
+  view.appendChild(legend);
+  legend.querySelector('#pdf-btn-status').addEventListener('click', () => exportTabToPdf(tab.id));
+
+  const scrollArea = document.createElement('div');
+  scrollArea.className = 'status-view';
+
+  const flow = document.createElement('div');
+  flow.className = 'status-flow';
+  scrollArea.appendChild(flow);
+
+  function renderStatusItems() {
+    flow.innerHTML = '';
+    sf.items.forEach((item, idx) => {
+      const nodeDiv = document.createElement('div');
+      nodeDiv.className = 'status-node';
+
+      const num = document.createElement('div');
+      num.className = `status-node-num ${item.state}`;
+      num.textContent = item.num;
+
+      const card = document.createElement('div');
+      card.className = `status-node-card ${item.state}`;
+
+      card.innerHTML = `
+        <div class="status-node-process">${escHtml(item.process)}</div>
+        <div class="status-node-meta">
+          <span class="meta-item"><span class="meta-label">Плановый:</span><span class="meta-val">${escHtml(item.planned)}</span></span>
+          ${item.actual ? `<span class="meta-item"><span class="meta-label">Фактический:</span><span class="meta-val">${escHtml(item.actual)}</span></span>` : ''}
+        </div>
+        <div class="status-badge ${item.state}">${escHtml(item.status)}</div>
+      `;
+
+      // Edit row
+      const editRow = document.createElement('div');
+      editRow.className = 'status-edit-row';
+
+      function mkField(label, key, multiline) {
+        const wrap = document.createElement('div');
+        wrap.className = 'status-edit-field';
+        const lbl = document.createElement('label');
+        lbl.textContent = label;
+        wrap.appendChild(lbl);
+        let inp;
+        if (multiline) {
+          inp = document.createElement('textarea');
+          inp.className = 'ed-input';
+          inp.style.resize = 'vertical';
+          inp.style.minHeight = '56px';
+        } else {
+          inp = document.createElement('input');
+          inp.className = 'ed-input';
+          inp.type = 'text';
+        }
+        inp.value = item[key] || '';
+        inp.addEventListener('input', () => {
+          item[key] = inp.value;
+          saveState();
+        });
+        inp.addEventListener('change', () => renderStatusItems());
+        wrap.appendChild(inp);
+        return wrap;
+      }
+
+      const stateWrap = document.createElement('div');
+      stateWrap.className = 'status-edit-field';
+      const stateLbl = document.createElement('label');
+      stateLbl.textContent = 'Состояние';
+      const stateSelect = document.createElement('select');
+      stateSelect.className = 'ed-select';
+      [['ok','Работает'],['warn','С отклонениями'],['fail','Не работает']].forEach(([val, lbl]) => {
+        const opt = document.createElement('option');
+        opt.value = val; opt.textContent = lbl;
+        if (item.state === val) opt.selected = true;
+        stateSelect.appendChild(opt);
+      });
+      stateSelect.addEventListener('change', () => {
+        item.state = stateSelect.value;
+        saveState(); renderStatusItems();
+      });
+      stateWrap.appendChild(stateLbl);
+      stateWrap.appendChild(stateSelect);
+
+      editRow.appendChild(mkField('Процесс', 'process', true));
+      editRow.appendChild(mkField('Плановый исполнитель', 'planned', false));
+      editRow.appendChild(mkField('Фактический исполнитель', 'actual', false));
+      editRow.appendChild(mkField('Статус (описание)', 'status', false));
+      editRow.appendChild(stateWrap);
+
+      // Delete button
+      const delBtn = document.createElement('button');
+      delBtn.className = 'ed-btn danger';
+      delBtn.textContent = '✕ Удалить запись';
+      delBtn.style.marginTop = '4px';
+      delBtn.style.width = 'auto';
+      delBtn.style.height = '28px';
+      delBtn.style.padding = '0 10px';
+      delBtn.style.fontSize = '11px';
+      delBtn.addEventListener('click', () => {
+        if (!confirm('Удалить эту запись?')) return;
+        sf.items.splice(idx, 1);
+        saveState(); renderStatusItems();
+      });
+      editRow.appendChild(delBtn);
+      card.appendChild(editRow);
+
+      nodeDiv.appendChild(num);
+      nodeDiv.appendChild(card);
+      flow.appendChild(nodeDiv);
+    });
+
+    // Add row button
+    const addBtn = document.createElement('button');
+    addBtn.className = 'add-row-btn edit-only';
+    addBtn.textContent = '＋ Добавить запись';
+    addBtn.style.display = 'none';
+    addBtn.addEventListener('click', () => {
+      sf.items.push({
+        num: String(sf.items.length + 1),
+        process: 'Новый процесс',
+        planned: '',
+        actual: '',
+        status: 'Работает',
+        state: 'ok'
+      });
+      saveState(); renderStatusItems();
+    });
+    flow.appendChild(addBtn);
+  }
+
+  renderStatusItems();
+  view.appendChild(scrollArea);
+  if (returnOnly) { mainContent.appendChild(view); return view; }
+  mainContent.appendChild(view);
+  return view;
+}
+
+// ─── DOCUMENTS VIEW ───────────────────────────────────────────────────────────
+function buildDocsView(tab, returnOnly) {
+  const view = document.createElement('div');
+  view.className = 'view' + (tab.id === activeTab && !returnOnly ? ' active' : '');
+  view.dataset.id = tab.id;
+
+  const docsToolbar = document.createElement('div');
+  docsToolbar.className = 'docs-toolbar';
+  docsToolbar.innerHTML = `<span class="l-label">Документы</span>`;
+  const docsPdfBtn = document.createElement('button');
+  docsPdfBtn.className = 'pdf-btn';
+  docsPdfBtn.style.marginLeft = 'auto';
+  docsPdfBtn.textContent = '⬇ PDF';
+  docsPdfBtn.addEventListener('click', () => exportTabToPdf(tab.id));
+  docsToolbar.appendChild(docsPdfBtn);
+  view.appendChild(docsToolbar);
+
+  const scrollArea = document.createElement('div');
+  scrollArea.className = 'docs-view';
+
+  const docsData = STATE.data.documents;
+
+  function extractTags(name) {
+    const tags = [];
+    if (name.includes('для ЦУ и РО')) tags.push({ cls:'cu-ro', txt:'ЦУ и РО' });
+    else if (name.includes('для РО')) tags.push({ cls:'ro', txt:'для РО' });
+    else if (name.includes('для ЦУ')) tags.push({ cls:'cu', txt:'для ЦУ' });
+    return tags;
+  }
+  function cleanName(name) {
+    return name.replace(/\s*\(для ЦУ и РО\)|\s*\(для РО\)|\s*\(для ЦУ\)/g,'').trim();
+  }
+
+  function renderDocs() {
+    scrollArea.innerHTML = '';
+    const cuRo = docsData.items.filter(d => d.name.includes('для ЦУ и РО'));
+    const roOnly = docsData.items.filter(d => d.name.includes('для РО') && !d.name.includes('для ЦУ и РО'));
+    const cuOnly = docsData.items.filter(d => d.name.includes('для ЦУ') && !d.name.includes('для ЦУ и РО'));
+    const other = docsData.items.filter(d => !d.name.includes('для ЦУ и РО') && !d.name.includes('для РО') && !d.name.includes('для ЦУ'));
+
+    function renderSection(title, items) {
+      if (!items.length) return;
+      const t = document.createElement('div');
+      t.className = 'docs-section-title';
+      t.textContent = title;
+      scrollArea.appendChild(t);
+
+      const grid = document.createElement('div');
+      grid.className = 'docs-grid';
+      items.forEach(doc => {
+        const tags = extractTags(doc.name);
+        const cleanedName = cleanName(doc.name);
+        const card = document.createElement('div');
+        card.className = 'doc-card';
+        card.style.flexDirection = 'column';
+
+        const topRow = document.createElement('div');
+        topRow.style.display = 'flex';
+        topRow.style.gap = '12px';
+        topRow.style.alignItems = 'flex-start';
+        topRow.innerHTML = `
+          <div class="doc-num">${doc.num}</div>
+          <div>
+            <div class="doc-name">${escHtml(cleanedName)}</div>
+            ${tags.map(tg=>`<span class="doc-tag ${tg.cls}">${tg.txt}</span>`).join('')}
+          </div>
+        `;
+        card.appendChild(topRow);
+
+        // Edit row
+        const editRow = document.createElement('div');
+        editRow.className = 'doc-edit-row';
+
+        const nameInp = document.createElement('input');
+        nameInp.className = 'ed-input';
+        nameInp.type = 'text';
+        nameInp.value = doc.name;
+        nameInp.style.width = '100%';
+        nameInp.placeholder = 'Название документа';
+        nameInp.addEventListener('input', () => { doc.name = nameInp.value; saveState(); });
+        nameInp.addEventListener('change', () => renderDocs());
+
+        const numInp = document.createElement('input');
+        numInp.className = 'ed-input';
+        numInp.type = 'text';
+        numInp.value = doc.num;
+        numInp.style.width = '60px';
+        numInp.placeholder = '№';
+        numInp.addEventListener('change', () => { doc.num = numInp.value; saveState(); renderDocs(); });
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'ed-btn danger';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Удалить документ';
+        delBtn.addEventListener('click', () => {
+          if (!confirm('Удалить документ?')) return;
+          const i = docsData.items.indexOf(doc);
+          if (i > -1) docsData.items.splice(i, 1);
+          saveState(); renderDocs();
+        });
+
+        const numRow = document.createElement('div');
+        numRow.style.display = 'flex'; numRow.style.gap = '6px'; numRow.style.alignItems = 'center';
+        const numLbl = document.createElement('span');
+        numLbl.textContent = '№';
+        numLbl.style.fontSize = '11px';
+        numLbl.style.color = 'var(--text3)';
+        numRow.appendChild(numLbl);
+        numRow.appendChild(numInp);
+        numRow.appendChild(delBtn);
+
+        editRow.appendChild(numRow);
+        editRow.appendChild(nameInp);
+        card.appendChild(editRow);
+        grid.appendChild(card);
+      });
+      scrollArea.appendChild(grid);
+    }
+
+    renderSection('Для ЦУ и РО', cuRo);
+    renderSection('Только для РО', roOnly);
+    renderSection('Только для ЦУ', cuOnly);
+    if (other.length) renderSection('Прочие', other);
+
+    // Add doc button
+    const addBtn = document.createElement('button');
+    addBtn.className = 'add-row-btn edit-only';
+    addBtn.textContent = '＋ Добавить документ';
+    addBtn.style.display = 'none';
+    addBtn.style.maxWidth = '1100px';
+    addBtn.style.margin = '8px auto 0';
+    addBtn.addEventListener('click', () => {
+      docsData.items.push({ num: String(docsData.items.length + 1), name: 'Новый документ' });
+      saveState(); renderDocs();
+    });
+    scrollArea.appendChild(addBtn);
+  }
+
+  renderDocs();
+  view.appendChild(scrollArea);
+  if (returnOnly) { mainContent.appendChild(view); return view; }
+  mainContent.appendChild(view);
+  return view;
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ─── PDF EXPORT ───────────────────────────────────────────────────────────────
+function sanitizeFilename(name) {
+  return (name || 'tab').replace(/[\\/:*?"<>|]/g,'_').trim();
+}
+
+function showPdfOverlay(text, sub) {
+  const ov = document.getElementById('pdf-overlay');
+  document.getElementById('pdf-overlay-text').textContent = text || 'Готовлю PDF…';
+  document.getElementById('pdf-overlay-sub').textContent = sub || '';
+  ov.classList.add('visible');
+}
+function hidePdfOverlay() {
+  document.getElementById('pdf-overlay').classList.remove('visible');
+}
+
+async function exportTabToPdf(tabId) {
+  if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+    alert('Для экспорта в PDF нужен интернет (загрузка html2canvas/jsPDF)');
+    return;
+  }
+
+  const tab = TABS.find(t => t.id === tabId);
+  if (!tab) return;
+
+  const sl = tab.type === 'swimlane' ? STATE.data.swimlanes.find(s => s.id === tab.slId) : null;
+  const label = sl ? sl.title : tab.label;
+  const filename = sanitizeFilename(label) + '.pdf';
+
+  showPdfOverlay('Готовлю PDF…', label);
+
+  try {
+    const targetView = document.querySelector(`.view[data-id="${CSS.escape(tabId)}"]`);
+    if (!targetView) throw new Error('View not found: ' + tabId);
+
+    const wasActive = targetView.classList.contains('active');
+    if (!wasActive) {
+      targetView.style.display = 'flex';
+      targetView.style.position = 'fixed';
+      targetView.style.top = '-9999px';
+      targetView.style.left = '-9999px';
+      targetView.style.width = '1400px';
+      targetView.style.height = '900px';
+      targetView.style.zIndex = '-1';
+    }
+
+    const pdfBgColor = getComputedStyle(document.documentElement)
+      .getPropertyValue('--bg2').trim() || '#22233a';
+
+    const selMap = { swimlane: '.proc-flow-scroll', status: '.status-view', docs: '.docs-view' };
+    const elSel = selMap[tab.type];
+    if (!elSel) throw new Error('Unknown tab type');
+
+    const el = targetView.querySelector(elSel);
+    if (!el) throw new Error(elSel + ' not found');
+
+    const prevOverflow = el.style.overflow;
+    const prevHeight = el.style.height;
+    el.style.overflow = 'visible';
+    el.style.height = 'auto';
+
+    await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
+
+    const sw = Math.max(el.scrollWidth, 900);
+    const sh = el.scrollHeight;
+
+    const canvas = await html2canvas(el, {
+      backgroundColor: pdfBgColor,
+      scale: 2,
+      useCORS: true,
+      width: sw, height: sh,
+      windowWidth: sw, windowHeight: sh,
+      scrollX: 0, scrollY: 0,
+      x: 0, y: 0,
+      logging: false
+    });
+
+    el.style.overflow = prevOverflow;
+    el.style.height = prevHeight;
+
+    buildPdfFromCanvas(canvas, filename);
+
+    if (!wasActive) {
+      targetView.style.display = '';
+      targetView.style.position = '';
+      targetView.style.top = '';
+      targetView.style.left = '';
+      targetView.style.width = '';
+      targetView.style.height = '';
+      targetView.style.zIndex = '';
+    }
+
+  } catch (err) {
+    console.error('PDF export error:', err);
+    alert('Ошибка при создании PDF: ' + err.message);
+  } finally {
+    hidePdfOverlay();
+  }
+}
+
+function buildPdfFromCanvas(canvas, filename) {
+  const { jsPDF } = window.jspdf;
+  const w = canvas.width;
+  const h = canvas.height;
+  const orientation = w > h ? 'l' : 'p';
+  const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h], compress: true });
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, w, h);
+  pdf.save(filename);
+}
+
+async function exportAllTabs() {
+  for (let i = 0; i < TABS.length; i++) {
+    const tab = TABS[i];
+    const sl = tab.type === 'swimlane' ? STATE.data.swimlanes.find(s => s.id === tab.slId) : null;
+    const label = sl ? sl.title : tab.label;
+    showPdfOverlay(`Экспорт ${i+1}/${TABS.length}…`, label);
+    await exportTabToPdf(tab.id);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  hidePdfOverlay();
+}
+
+// ─── JSON EXPORT/IMPORT/RESET ─────────────────────────────────────────────────
+document.getElementById('exportAllBtn').addEventListener('click', exportAllTabs);
+
+document.getElementById('exportJsonBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(STATE.data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'vsks_processes.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('importJsonInput').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed || !parsed.swimlanes) {
+        alert('Неверный формат JSON: нет поля swimlanes');
+        return;
+      }
+      STATE.data = parsed;
+      saveState();
+      renderAll();
+    } catch(err) {
+      alert('Ошибка чтения JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  this.value = '';
+});
+
+document.getElementById('resetDataBtn').addEventListener('click', () => {
+  if (!confirm('Сбросить все данные к исходным? Все правки будут потеряны.')) return;
+  STATE.data = deepCopy(DATA);
+  localStorage.removeItem(STATE_KEY);
+  renderAll();
+});
+
+// ─── EDIT MODE TOGGLE ─────────────────────────────────────────────────────────
+document.getElementById('editModeBtn').addEventListener('click', () => {
+  editMode = !editMode;
+  document.body.classList.toggle('editing', editMode);
+  const btn = document.getElementById('editModeBtn');
+  btn.querySelector('.btn-label-long').textContent = editMode ? 'Выйти из правки' : 'Режим правки';
+  // Show/hide edit-only elements
+  document.querySelectorAll('.edit-only').forEach(el => {
+    el.style.display = editMode ? 'flex' : 'none';
+  });
+  document.querySelectorAll('.edit-only-inline').forEach(el => {
+    el.style.display = editMode ? 'inline-flex' : 'none';
+  });
+});
+
+// ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
+const THEME_KEY = 'vsks_theme';
+
+function getCurrentTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'dark';
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem(THEME_KEY, theme);
+  updateThemeBtn(theme);
+}
+
+function updateThemeBtn(theme) {
+  const btn = document.getElementById('themeToggleBtn');
+  if (!btn) return;
+  if (theme === 'light') {
+    btn.textContent = '🌙 Тёмная тема';
+    btn.title = 'Переключить на тёмную тему';
+  } else {
+    btn.textContent = '☀ Светлая тема';
+    btn.title = 'Переключить на светлую тему';
+  }
+}
+
+document.getElementById('themeToggleBtn').addEventListener('click', function() {
+  applyTheme(getCurrentTheme() === 'light' ? 'dark' : 'light');
+});
+
+updateThemeBtn(getCurrentTheme());
+
+// ─── INITIAL RENDER ───────────────────────────────────────────────────────────
+renderAll();
+</script>
+</body>
+</html>

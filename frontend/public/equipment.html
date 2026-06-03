@@ -1237,6 +1237,28 @@ function resolveColor(v) { return CSS_VARS[v.replace(/var\(|\)/g,'').trim()] || 
 function roleColor(name) { return ROLE_COLORS[name] || 'var(--c3)'; }
 function roleColorHex(name) { return resolveColor(roleColor(name)); }
 
+// Pie background for multi-colour step numbers (html2canvas can't render conic-gradient,
+// so we rasterise equal sectors onto a canvas and use it as a background image).
+function makePieDataUrl(colors) {
+  const size = 84;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const r = size / 2;
+  const seg = (Math.PI * 2) / colors.length;
+  let start = -Math.PI / 2;
+  colors.forEach(col => {
+    ctx.beginPath();
+    ctx.moveTo(r, r);
+    ctx.arc(r, r, r, start, start + seg);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    start += seg;
+  });
+  return c.toDataURL('image/png');
+}
+
 // ─── DEEP COPY ────────────────────────────────────────────────────────────────
 function deepCopy(obj) { return JSON.parse(JSON.stringify(obj)); }
 
@@ -1490,14 +1512,12 @@ function buildSwimlaneView(tab, returnOnly) {
         numEl.style.background = seenColors[0];
         numEl.style.border = 'none';
       } else {
-        // Multiple depts: conic-gradient with equal sectors
-        const step = 360 / seenColors.length;
-        let stops = '';
-        seenColors.forEach((c, i) => {
-          stops += `${c} ${i * step}deg ${(i + 1) * step}deg`;
-          if (i < seenColors.length - 1) stops += ', ';
-        });
-        numEl.style.background = `conic-gradient(${stops})`;
+        // Multiple depts: rasterised pie (html2canvas can't render conic-gradient)
+        const pieUrl = makePieDataUrl(seenColors);
+        numEl.style.backgroundColor = seenColors[0];
+        numEl.style.backgroundImage = `url(${pieUrl})`;
+        numEl.style.backgroundSize = 'cover';
+        numEl.style.backgroundRepeat = 'no-repeat';
         numEl.style.border = 'none';
       }
 
@@ -2100,20 +2120,32 @@ async function exportTabToPdf(tabId) {
 
   showPdfOverlay('Готовлю PDF…', label);
 
+  const targetView = document.querySelector(`.view[data-id="${CSS.escape(tabId)}"]`);
+  let prevStyle = null;
+  let el = null, prevOverflow = '', prevHeight = '', pdfTitleEl = null;
+
   try {
-    const targetView = document.querySelector(`.view[data-id="${CSS.escape(tabId)}"]`);
     if (!targetView) throw new Error('View not found: ' + tabId);
 
-    const wasActive = targetView.classList.contains('active');
-    if (!wasActive) {
-      targetView.style.display = 'flex';
-      targetView.style.position = 'fixed';
-      targetView.style.top = '-9999px';
-      targetView.style.left = '-9999px';
-      targetView.style.width = '1400px';
-      targetView.style.height = '900px';
-      targetView.style.zIndex = '-1';
-    }
+    // Always render off-screen at a fixed A4-friendly width so the export is
+    // identical for single and "all tabs" and never depends on device width.
+    const PDF_WIDTH = 1180;
+    prevStyle = {
+      display: targetView.style.display,
+      position: targetView.style.position,
+      top: targetView.style.top,
+      left: targetView.style.left,
+      width: targetView.style.width,
+      height: targetView.style.height,
+      zIndex: targetView.style.zIndex,
+    };
+    targetView.style.display = 'flex';
+    targetView.style.position = 'fixed';
+    targetView.style.top = '-9999px';
+    targetView.style.left = '-9999px';
+    targetView.style.width = PDF_WIDTH + 'px';
+    targetView.style.height = 'auto';
+    targetView.style.zIndex = '-1';
 
     const pdfBgColor = getComputedStyle(document.documentElement)
       .getPropertyValue('--bg2').trim() || '#22233a';
@@ -2122,13 +2154,22 @@ async function exportTabToPdf(tabId) {
     const elSel = selMap[tab.type];
     if (!elSel) throw new Error('Unknown tab type');
 
-    const el = targetView.querySelector(elSel);
+    el = targetView.querySelector(elSel);
     if (!el) throw new Error(elSel + ' not found');
 
-    const prevOverflow = el.style.overflow;
-    const prevHeight = el.style.height;
+    prevOverflow = el.style.overflow;
+    prevHeight = el.style.height;
     el.style.overflow = 'visible';
     el.style.height = 'auto';
+
+    // Inject the sheet title at the top so the export shows the process name.
+    const pdfTitleColor = getComputedStyle(document.documentElement)
+      .getPropertyValue('--text').trim() || '#fff';
+    pdfTitleEl = document.createElement('div');
+    pdfTitleEl.textContent = label;
+    pdfTitleEl.style.cssText = 'font-size:24px;font-weight:800;text-align:center;' +
+      'width:100%;box-sizing:border-box;padding:4px 16px 18px;color:' + pdfTitleColor + ';';
+    el.insertBefore(pdfTitleEl, el.firstChild);
 
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => requestAnimationFrame(r));
@@ -2150,33 +2191,69 @@ async function exportTabToPdf(tabId) {
     el.style.overflow = prevOverflow;
     el.style.height = prevHeight;
 
-    buildPdfFromCanvas(canvas, filename);
-
-    if (!wasActive) {
-      targetView.style.display = '';
-      targetView.style.position = '';
-      targetView.style.top = '';
-      targetView.style.left = '';
-      targetView.style.width = '';
-      targetView.style.height = '';
-      targetView.style.zIndex = '';
-    }
+    buildPdfFromCanvas(canvas, filename, pdfBgColor);
 
   } catch (err) {
     console.error('PDF export error:', err);
     alert('Ошибка при создании PDF: ' + err.message);
   } finally {
+    if (el) { el.style.overflow = prevOverflow; el.style.height = prevHeight; }
+    if (pdfTitleEl && pdfTitleEl.parentNode) pdfTitleEl.parentNode.removeChild(pdfTitleEl);
+    if (targetView && prevStyle) {
+      targetView.style.display = prevStyle.display;
+      targetView.style.position = prevStyle.position;
+      targetView.style.top = prevStyle.top;
+      targetView.style.left = prevStyle.left;
+      targetView.style.width = prevStyle.width;
+      targetView.style.height = prevStyle.height;
+      targetView.style.zIndex = prevStyle.zIndex;
+    }
     hidePdfOverlay();
   }
 }
 
-function buildPdfFromCanvas(canvas, filename) {
+function buildPdfFromCanvas(canvas, filename, bgColor) {
   const { jsPDF } = window.jspdf;
-  const w = canvas.width;
-  const h = canvas.height;
-  const orientation = w > h ? 'l' : 'p';
-  const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h], compress: true });
-  pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, w, h);
+  const imgW = canvas.width;
+  const imgH = canvas.height;
+
+  // Wide content → landscape A4, tall content → portrait A4.
+  const orientation = imgW > imgH * 1.25 ? 'l' : 'p';
+  const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4', compress: true });
+
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 8;
+  const contentW = pageW - margin * 2;
+  const contentH = pageH - margin * 2;
+
+  // Scale so the image width fills the printable A4 width.
+  const ratio = contentW / imgW;       // mm per source px
+  const fullScaledH = imgH * ratio;    // mm height of the whole image
+
+  if (fullScaledH <= contentH + 0.5) {
+    // Fits on one A4 page — center vertically.
+    const offY = margin + (contentH - fullScaledH) / 2;
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', margin, offY, contentW, fullScaledH);
+  } else {
+    // Paginate: slice the source canvas into A4-page-height chunks.
+    const pagePxH = Math.floor(contentH / ratio); // source px per A4 page
+    let y = 0, page = 0;
+    while (y < imgH) {
+      const sliceH = Math.min(pagePxH, imgH - y);
+      const tmp = document.createElement('canvas');
+      tmp.width = imgW;
+      tmp.height = sliceH;
+      const ctx = tmp.getContext('2d');
+      if (bgColor) { ctx.fillStyle = bgColor; ctx.fillRect(0, 0, imgW, sliceH); }
+      ctx.drawImage(canvas, 0, y, imgW, sliceH, 0, 0, imgW, sliceH);
+      const sliceMmH = sliceH * ratio;
+      if (page > 0) pdf.addPage();
+      pdf.addImage(tmp.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, contentW, sliceMmH);
+      y += sliceH;
+      page++;
+    }
+  }
   pdf.save(filename);
 }
 

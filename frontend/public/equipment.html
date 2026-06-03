@@ -29,6 +29,7 @@
     --c6: #a29bfe;
     --c7: #fd79a8;
     --c8: #00cec9;
+    --c9: #e67e22;
     --ok: #26de81;
     --warn: #f9ca24;
     --fail: #fc5c65;
@@ -52,6 +53,7 @@
     --c6: #7a6fe0;
     --c7: #d45a8a;
     --c8: #009e9a;
+    --c9: #b85c1a;
     --ok:   #18a558;
     --warn: #d39e00;
     --fail: #d63040;
@@ -1203,11 +1205,12 @@ const ROLE_COLORS = {
   'Исполком': 'var(--c6)',
   'Материально ответственное лицо': 'var(--c7)',
   'Новый руководитель отделения': 'var(--c8)',
+  'Инвентаризационная комиссия': 'var(--c9)',
 };
 
 const CSS_VARS = {
   '--c0':'#7c6af5','--c1':'#4ecdc4','--c2':'#f7b731','--c3':'#45b7d1',
-  '--c4':'#96ceb4','--c5':'#ff6b6b','--c6':'#a29bfe','--c7':'#fd79a8','--c8':'#00cec9'
+  '--c4':'#96ceb4','--c5':'#ff6b6b','--c6':'#a29bfe','--c7':'#fd79a8','--c8':'#00cec9','--c9':'#e67e22'
 };
 function resolveColor(v) { return CSS_VARS[v.replace(/var\(|\)/g,'').trim()] || v; }
 function roleColor(name) { return ROLE_COLORS[name] || 'var(--c3)'; }
@@ -1274,7 +1277,19 @@ function loadState() {
   return null;
 }
 
-const STATE = { data: loadState() || deepCopy(DATA) };
+const INVENTORY_DEPT = 'Инвентаризационная комиссия';
+function migrateData(data) {
+  if (data && Array.isArray(data.swimlanes)) {
+    data.swimlanes.forEach(sl => {
+      if (Array.isArray(sl.roles) && !sl.roles.includes(INVENTORY_DEPT)) {
+        sl.roles.push(INVENTORY_DEPT);
+      }
+    });
+  }
+  return data;
+}
+
+const STATE = { data: migrateData(loadState() || deepCopy(DATA)) };
 
 function saveState() {
   try {
@@ -2159,7 +2174,7 @@ document.getElementById('importJsonInput').addEventListener('change', function()
         alert('Неверный формат JSON: нет поля swimlanes');
         return;
       }
-      STATE.data = parsed;
+      STATE.data = migrateData(parsed);
       saveState();
       renderAll();
     } catch(err) {
@@ -2172,7 +2187,7 @@ document.getElementById('importJsonInput').addEventListener('change', function()
 
 document.getElementById('resetDataBtn').addEventListener('click', () => {
   if (!confirm('Сбросить все данные к исходным? Все правки будут потеряны.')) return;
-  STATE.data = deepCopy(DATA);
+  STATE.data = migrateData(deepCopy(DATA));
   localStorage.removeItem(STATE_KEY);
   renderAll();
 });

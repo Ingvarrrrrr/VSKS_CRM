@@ -979,22 +979,18 @@
 
   .proc-header {
     display: none;
-    position: relative;
-    padding: 30px 24px 8px;
+    padding: 22px 24px 8px;
   }
   body.order-on .proc-header { display: block; }
   .order-edit-fields { display: none; align-items: center; gap: 10px; }
   body.editing.order-on .order-edit-fields { display: inline-flex; }
   .proc-appendix {
-    position: absolute;
-    top: 10px;
-    right: 24px;
     text-align: right;
     font-size: 14px;
     line-height: 1.45;
     color: var(--text);
     opacity: 0.85;
-    white-space: nowrap;
+    margin-bottom: 10px;
   }
   .proc-header-title {
     margin: 0;
@@ -1002,11 +998,6 @@
     font-size: 22px;
     font-weight: 800;
     color: var(--text);
-    padding: 0 200px;
-  }
-  @media (max-width: 720px) {
-    .proc-appendix { position: static; text-align: right; margin-bottom: 6px; }
-    .proc-header-title { padding: 0; }
   }
 
   .ed-select {
@@ -2276,14 +2267,14 @@ async function exportTabToPdf(tabId) {
       .getPropertyValue('--text').trim() || '#fff';
     pdfTitleEl = document.createElement('div');
     if (sl && STATE.data.orderEnabled) {
-      pdfTitleEl.style.cssText = 'position:relative;width:100%;box-sizing:border-box;padding:10px 16px 20px;';
+      pdfTitleEl.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 16px 18px;';
       const appx = document.createElement('div');
-      appx.style.cssText = 'position:absolute;top:2px;right:16px;text-align:right;font-size:16px;line-height:1.45;color:' + pdfTitleColor + ';';
+      appx.style.cssText = 'text-align:right;font-size:16px;line-height:1.45;margin-bottom:12px;color:' + pdfTitleColor + ';';
       appx.innerHTML = 'Приложение №' + escHtml(String(sl.appendixNo)) +
         '<br>к приказу №' + escHtml(String(sl.decree)) + ' от ' + escHtml(String(sl.date));
       const t = document.createElement('div');
       t.textContent = label;
-      t.style.cssText = 'font-size:25px;font-weight:800;text-align:center;color:' + pdfTitleColor + ';padding:0 180px;';
+      t.style.cssText = 'font-size:25px;font-weight:800;text-align:center;color:' + pdfTitleColor + ';';
       pdfTitleEl.appendChild(appx);
       pdfTitleEl.appendChild(t);
     } else {

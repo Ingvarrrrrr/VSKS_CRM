@@ -956,6 +956,27 @@
   }
   .ed-input:focus { border-color: var(--c0); }
 
+  .proc-title-edit {
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    background: var(--bg3);
+    border: 1px dashed var(--c0);
+    border-radius: 8px;
+  }
+  .proc-title-edit-label {
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0.7;
+    white-space: nowrap;
+  }
+  .proc-title-input {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
   .ed-select {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -1385,6 +1406,26 @@ function buildSwimlaneView(tab, returnOnly) {
   const view = document.createElement('div');
   view.className = 'view' + (tab.id === activeTab && !returnOnly ? ' active' : '');
   view.dataset.id = tab.id;
+
+  // Editable process title (edit mode only)
+  const titleEdit = document.createElement('div');
+  titleEdit.className = 'proc-title-edit edit-only';
+  const titleLabel = document.createElement('span');
+  titleLabel.className = 'proc-title-edit-label';
+  titleLabel.textContent = 'Название процесса:';
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'ed-input proc-title-input';
+  titleInput.value = sl.title;
+  titleInput.addEventListener('input', () => {
+    sl.title = titleInput.value;
+    const tabBtn = tabBar.querySelector('.tab[data-id="' + CSS.escape(tab.id) + '"]');
+    if (tabBtn) tabBtn.textContent = titleInput.value;
+    saveState();
+  });
+  titleEdit.appendChild(titleLabel);
+  titleEdit.appendChild(titleInput);
+  view.appendChild(titleEdit);
 
   // Legend + PDF button
   const legend = document.createElement('div');

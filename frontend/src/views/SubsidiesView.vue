@@ -2200,7 +2200,7 @@ import ContractorPicker from '@/components/ContractorPicker.vue'
 const { globalSubsidyId } = useGlobalSubsidy()
 
 const feoResize = useResizableColumns('feo-table', {
-  name: 0, budget: 180, spent: 180, actions: 130,
+  name: 0, budget: 180, spent: 180, actions: 200,
 })
 
 const router = useRouter()
@@ -4552,7 +4552,7 @@ onMounted(() => {
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }
-.feo-th-actions { min-width: 170px; }
+.feo-th-actions { min-width: 200px; }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
@@ -4560,7 +4560,7 @@ onMounted(() => {
 .feo-td-name { min-width: 0; }
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
-.feo-td-actions { text-align: right; white-space: nowrap; min-width: 170px; }
+.feo-td-actions { text-align: right; white-space: nowrap; min-width: 200px; }
 .feo-td-actions .v-btn { background: transparent !important; }
 .feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }

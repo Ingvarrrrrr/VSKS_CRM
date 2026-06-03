@@ -977,6 +977,38 @@
     font-weight: 600;
   }
 
+  .proc-header {
+    display: none;
+    position: relative;
+    padding: 30px 24px 8px;
+  }
+  body.order-on .proc-header { display: block; }
+  .order-edit-fields { display: none; align-items: center; gap: 10px; }
+  body.editing.order-on .order-edit-fields { display: inline-flex; }
+  .proc-appendix {
+    position: absolute;
+    top: 10px;
+    right: 24px;
+    text-align: right;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  .proc-header-title {
+    margin: 0;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--text);
+    padding: 0 200px;
+  }
+  @media (max-width: 720px) {
+    .proc-appendix { position: static; text-align: right; margin-bottom: 6px; }
+    .proc-header-title { padding: 0; }
+  }
+
   .ed-select {
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -1193,6 +1225,9 @@
     <button class="pdf-btn" id="exportJsonBtn" title="Экспорт данных в JSON">⤓ <span class="btn-label-long">Экспорт JSON</span></button>
     <label class="pdf-btn" id="importJsonLabel" title="Импорт данных из JSON" style="cursor:pointer">⤒ <span class="btn-label-long">Импорт JSON</span><input type="file" id="importJsonInput" accept=".json" style="display:none"></label>
     <button class="pdf-btn" id="resetDataBtn" title="Сбросить к исходным данным">↺ <span class="btn-label-long">Сбросить</span></button>
+    <label id="orderToggleLabel" class="pdf-btn" title="Показать «Приложение к приказу» на каждом листе" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="orderToggle" style="margin:0;cursor:pointer;"><span class="btn-label-long">Соответствие приказу</span>
+    </label>
     <button id="editModeBtn" title="Включить режим редактирования">✎ <span class="btn-label-long">Режим правки</span></button>
     <button id="themeToggleBtn" title="Переключить тему"></button>
     <span id="save-indicator">Сохранено ✓</span>
@@ -1321,12 +1356,18 @@ function loadState() {
 }
 
 const INVENTORY_DEPT = 'Инвентаризационная комиссия';
+const ORDER_DEFAULT = { decree: '34', date: '01.06.2026' };
 function migrateData(data) {
   if (data && Array.isArray(data.swimlanes)) {
-    data.swimlanes.forEach(sl => {
+    if (!data.order) data.order = { ...ORDER_DEFAULT };
+    if (data.orderEnabled == null) data.orderEnabled = true;
+    data.swimlanes.forEach((sl, idx) => {
       if (Array.isArray(sl.roles) && !sl.roles.includes(INVENTORY_DEPT)) {
         sl.roles.push(INVENTORY_DEPT);
       }
+      if (sl.appendixNo == null) sl.appendixNo = idx + 1;
+      if (sl.decree == null) sl.decree = (data.order && data.order.decree) || ORDER_DEFAULT.decree;
+      if (sl.date == null) sl.date = (data.order && data.order.date) || ORDER_DEFAULT.date;
     });
   }
   return data;
@@ -1429,24 +1470,91 @@ function buildSwimlaneView(tab, returnOnly) {
   view.className = 'view' + (tab.id === activeTab && !returnOnly ? ' active' : '');
   view.dataset.id = tab.id;
 
-  // Editable process title (edit mode only)
+  // Visible header: centered title + top-right «Приложение / приказ»
+  const header = document.createElement('div');
+  header.className = 'proc-header';
+  const appxEl = document.createElement('div');
+  appxEl.className = 'proc-appendix';
+  function renderAppendix() {
+    appxEl.innerHTML = 'Приложение №' + escHtml(String(sl.appendixNo)) +
+      '<br>к приказу №' + escHtml(String(sl.decree)) + ' от ' + escHtml(String(sl.date));
+  }
+  renderAppendix();
+  const headerTitle = document.createElement('h2');
+  headerTitle.className = 'proc-header-title';
+  headerTitle.textContent = sl.title;
+  header.appendChild(appxEl);
+  header.appendChild(headerTitle);
+  view.appendChild(header);
+
+  // Editable fields (edit mode only): title + appendix № + decree № + date
   const titleEdit = document.createElement('div');
   titleEdit.className = 'proc-title-edit edit-only';
   const titleLabel = document.createElement('span');
   titleLabel.className = 'proc-title-edit-label';
-  titleLabel.textContent = 'Название процесса:';
+  titleLabel.textContent = 'Название:';
   const titleInput = document.createElement('input');
   titleInput.type = 'text';
   titleInput.className = 'ed-input proc-title-input';
   titleInput.value = sl.title;
   titleInput.addEventListener('input', () => {
     sl.title = titleInput.value;
+    headerTitle.textContent = titleInput.value;
     const tabBtn = tabBar.querySelector('.tab[data-id="' + CSS.escape(tab.id) + '"]');
     if (tabBtn) tabBtn.textContent = titleInput.value;
     saveState();
   });
+  // «Приложение к приказу» fields — shown only when the toggle is on
+  const orderFields = document.createElement('span');
+  orderFields.className = 'order-edit-fields';
+  const appxLbl = document.createElement('span');
+  appxLbl.className = 'proc-title-edit-label';
+  appxLbl.textContent = 'Прил. №';
+  const appxInput = document.createElement('input');
+  appxInput.type = 'text';
+  appxInput.className = 'ed-input';
+  appxInput.style.width = '56px';
+  appxInput.value = sl.appendixNo;
+  appxInput.addEventListener('input', () => {
+    sl.appendixNo = appxInput.value;
+    renderAppendix();
+    saveState();
+  });
+  const decreeLbl = document.createElement('span');
+  decreeLbl.className = 'proc-title-edit-label';
+  decreeLbl.textContent = 'Приказ №';
+  const decreeInput = document.createElement('input');
+  decreeInput.type = 'text';
+  decreeInput.className = 'ed-input';
+  decreeInput.style.width = '70px';
+  decreeInput.value = sl.decree;
+  decreeInput.addEventListener('input', () => {
+    sl.decree = decreeInput.value;
+    renderAppendix();
+    saveState();
+  });
+  const dateLbl = document.createElement('span');
+  dateLbl.className = 'proc-title-edit-label';
+  dateLbl.textContent = 'от';
+  const dateInput = document.createElement('input');
+  dateInput.type = 'text';
+  dateInput.className = 'ed-input';
+  dateInput.style.width = '110px';
+  dateInput.value = sl.date;
+  dateInput.addEventListener('input', () => {
+    sl.date = dateInput.value;
+    renderAppendix();
+    saveState();
+  });
   titleEdit.appendChild(titleLabel);
   titleEdit.appendChild(titleInput);
+  orderFields.appendChild(appxLbl);
+  orderFields.appendChild(appxInput);
+  orderFields.appendChild(decreeLbl);
+  orderFields.appendChild(decreeInput);
+  orderFields.appendChild(dateLbl);
+  orderFields.appendChild(dateInput);
+  titleEdit.appendChild(orderFields);
   view.appendChild(titleEdit);
 
   // Legend + PDF button
@@ -2162,24 +2270,52 @@ async function exportTabToPdf(tabId) {
     el.style.overflow = 'visible';
     el.style.height = 'auto';
 
-    // Inject the sheet title at the top so the export shows the process name.
+    // Inject the sheet header at the top so the export shows the process name
+    // and (for swimlanes) the «Приложение / приказ» block in the top-right.
     const pdfTitleColor = getComputedStyle(document.documentElement)
       .getPropertyValue('--text').trim() || '#fff';
     pdfTitleEl = document.createElement('div');
-    pdfTitleEl.textContent = label;
-    pdfTitleEl.style.cssText = 'font-size:24px;font-weight:800;text-align:center;' +
-      'width:100%;box-sizing:border-box;padding:4px 16px 18px;color:' + pdfTitleColor + ';';
+    if (sl && STATE.data.orderEnabled) {
+      pdfTitleEl.style.cssText = 'position:relative;width:100%;box-sizing:border-box;padding:10px 16px 20px;';
+      const appx = document.createElement('div');
+      appx.style.cssText = 'position:absolute;top:2px;right:16px;text-align:right;font-size:16px;line-height:1.45;color:' + pdfTitleColor + ';';
+      appx.innerHTML = 'Приложение №' + escHtml(String(sl.appendixNo)) +
+        '<br>к приказу №' + escHtml(String(sl.decree)) + ' от ' + escHtml(String(sl.date));
+      const t = document.createElement('div');
+      t.textContent = label;
+      t.style.cssText = 'font-size:25px;font-weight:800;text-align:center;color:' + pdfTitleColor + ';padding:0 180px;';
+      pdfTitleEl.appendChild(appx);
+      pdfTitleEl.appendChild(t);
+    } else {
+      pdfTitleEl.textContent = label;
+      pdfTitleEl.style.cssText = 'font-size:24px;font-weight:800;text-align:center;' +
+        'width:100%;box-sizing:border-box;padding:4px 16px 18px;color:' + pdfTitleColor + ';';
+    }
     el.insertBefore(pdfTitleEl, el.firstChild);
 
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => requestAnimationFrame(r));
+
+    const SCALE = 2;
+
+    // Measure step/row tops so the PDF never splits one item across pages.
+    const nodeSelMap = { swimlane: '.proc-node', status: '.status-node', docs: '.doc-card' };
+    const nodeSel = nodeSelMap[tab.type];
+    const breakPoints = [];
+    if (nodeSel) {
+      const elTop = el.getBoundingClientRect().top;
+      el.querySelectorAll(nodeSel).forEach(n => {
+        const top = Math.round((n.getBoundingClientRect().top - elTop) * SCALE);
+        if (top > 0) breakPoints.push(top);
+      });
+    }
 
     const sw = Math.max(el.scrollWidth, 900);
     const sh = el.scrollHeight;
 
     const canvas = await html2canvas(el, {
       backgroundColor: pdfBgColor,
-      scale: 2,
+      scale: SCALE,
       useCORS: true,
       width: sw, height: sh,
       windowWidth: sw, windowHeight: sh,
@@ -2191,7 +2327,7 @@ async function exportTabToPdf(tabId) {
     el.style.overflow = prevOverflow;
     el.style.height = prevHeight;
 
-    buildPdfFromCanvas(canvas, filename, pdfBgColor);
+    buildPdfFromCanvas(canvas, filename, pdfBgColor, breakPoints);
 
   } catch (err) {
     console.error('PDF export error:', err);
@@ -2212,7 +2348,7 @@ async function exportTabToPdf(tabId) {
   }
 }
 
-function buildPdfFromCanvas(canvas, filename, bgColor) {
+function buildPdfFromCanvas(canvas, filename, bgColor, breakPoints) {
   const { jsPDF } = window.jspdf;
   const imgW = canvas.width;
   const imgH = canvas.height;
@@ -2236,11 +2372,24 @@ function buildPdfFromCanvas(canvas, filename, bgColor) {
     const offY = margin + (contentH - fullScaledH) / 2;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', margin, offY, contentW, fullScaledH);
   } else {
-    // Paginate: slice the source canvas into A4-page-height chunks.
-    const pagePxH = Math.floor(contentH / ratio); // source px per A4 page
+    // Paginate: slice the source canvas into A4-page-height chunks. Snap each
+    // page's bottom edge to a step/row boundary so no item is split in two.
+    const pagePxH = Math.floor(contentH / ratio); // max source px per A4 page
+    const bps = (breakPoints || []).slice().sort((a, b) => a - b);
     let y = 0, page = 0;
     while (y < imgH) {
-      const sliceH = Math.min(pagePxH, imgH - y);
+      const targetEnd = y + pagePxH;
+      let sliceEnd;
+      if (targetEnd >= imgH) {
+        sliceEnd = imgH;
+      } else {
+        let snap = -1;
+        for (const bp of bps) {
+          if (bp > y + 4 && bp <= targetEnd && bp > snap) snap = bp;
+        }
+        sliceEnd = (snap > y + pagePxH * 0.15) ? snap : targetEnd;
+      }
+      const sliceH = Math.max(1, Math.round(sliceEnd - y));
       const tmp = document.createElement('canvas');
       tmp.width = imgW;
       tmp.height = sliceH;
@@ -2250,7 +2399,7 @@ function buildPdfFromCanvas(canvas, filename, bgColor) {
       const sliceMmH = sliceH * ratio;
       if (page > 0) pdf.addPage();
       pdf.addImage(tmp.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, contentW, sliceMmH);
-      y += sliceH;
+      y = sliceEnd;
       page++;
     }
   }
@@ -2295,6 +2444,7 @@ document.getElementById('importJsonInput').addEventListener('change', function()
       STATE.data = migrateData(parsed);
       saveState();
       renderAll();
+      applyOrderEnabled(STATE.data.orderEnabled);
     } catch(err) {
       alert('Ошибка чтения JSON: ' + err.message);
     }
@@ -2308,6 +2458,7 @@ document.getElementById('resetDataBtn').addEventListener('click', () => {
   STATE.data = migrateData(deepCopy(DATA));
   localStorage.removeItem(STATE_KEY);
   renderAll();
+  applyOrderEnabled(STATE.data.orderEnabled);
 });
 
 // ─── EDIT MODE TOGGLE ─────────────────────────────────────────────────────────
@@ -2324,6 +2475,21 @@ document.getElementById('editModeBtn').addEventListener('click', () => {
     el.style.display = editMode ? 'inline-flex' : 'none';
   });
 });
+
+// ─── ORDER (Приложение к приказу) TOGGLE ──────────────────────────────────────
+const orderToggle = document.getElementById('orderToggle');
+function applyOrderEnabled(on) {
+  STATE.data.orderEnabled = !!on;
+  document.body.classList.toggle('order-on', !!on);
+  if (orderToggle) orderToggle.checked = !!on;
+}
+applyOrderEnabled(STATE.data.orderEnabled);
+if (orderToggle) {
+  orderToggle.addEventListener('change', () => {
+    applyOrderEnabled(orderToggle.checked);
+    saveState();
+  });
+}
 
 // ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
 const THEME_KEY = 'vsks_theme';

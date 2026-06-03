@@ -361,6 +361,49 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
     )
 
 
+@router.get("/duplicate-check")
+async def duplicate_check(
+    subsidy_id: int = Query(...),
+    contractor_id: int = Query(...),
+    amount: float = Query(...),
+    exclude_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('purchases')),
+):
+    """Возможные повторы: разовые закупки (НЕ ежемесячные платежи) в той же субсидии
+    с тем же контрагентом и той же итоговой суммой. Ежемесячные платежи исключены
+    намеренно — это повторяющиеся платежи, а не дубли."""
+    from decimal import ROUND_HALF_UP
+    amt = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    stmt = (
+        select(Purchase)
+        .where(
+            Purchase.subsidy_id == subsidy_id,
+            Purchase.contractor_id == contractor_id,
+            Purchase.is_monthly_payment.isnot(True),
+            func.round(func.coalesce(Purchase.total_nmck, 0), 2) == amt,
+        )
+        .options(selectinload(Purchase.contractor))
+        .order_by(Purchase.id.desc())
+        .limit(10)
+    )
+    if exclude_id:
+        stmt = stmt.where(Purchase.id != exclude_id)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": p.id,
+            "purchase_number": p.purchase_number,
+            "name": p.item_name or p.subject,
+            "total_nmck": float(p.total_nmck) if p.total_nmck is not None else None,
+            "status": p.status,
+            "contract_date": p.contract_date.isoformat() if p.contract_date else None,
+            "contractor_name": p.contractor.name if p.contractor else None,
+        }
+        for p in rows
+    ]
+
+
 @router.get("/responsible-persons")
 async def list_responsible_persons(
     subsidy_id: Optional[int] = Query(None),

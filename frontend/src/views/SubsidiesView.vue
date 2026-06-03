@@ -508,6 +508,10 @@
                                         title="Снять сопоставление"
                                         @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
                                       />
+                                      <v-btn v-if="ai === 0" icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                        title="Удалить плановую позицию"
+                                        @click="deletePlannedItem(planned)"
+                                      />
                                     </td>
                                   </tr>
                                 </template>
@@ -932,7 +936,15 @@
             </v-btn>
           </template>
           <template v-else>
-            Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.
+            <div class="mb-2">Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.</div>
+            <v-alert v-if="deleteImpact && (deleteImpact.feo_categories > 0 || deleteImpact.planned_items > 0)"
+              type="warning" variant="tonal" density="compact">
+              Вместе с субсидией будет безвозвратно удалено:
+              <ul class="mt-1 mb-0" style="padding-left:18px;">
+                <li v-if="deleteImpact.feo_categories > 0">{{ deleteImpact.feo_categories }} категорий ФЭО</li>
+                <li v-if="deleteImpact.planned_items > 0">{{ deleteImpact.planned_items }} плановых позиций</li>
+              </ul>
+            </v-alert>
           </template>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -1745,13 +1757,27 @@
 
           <!-- Step 3: Result -->
           <template v-if="feoImport.step === 3">
-            <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
-              Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
-              Обновлено: <strong>{{ feoImport.result.updated ?? 0 }}</strong> &nbsp;
-              Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
-            </v-alert>
-            <v-expansion-panels v-if="feoImport.result" multiple class="mb-3">
-              <v-expansion-panel v-if="feoImport.result.updated_details?.length">
+            <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
+              <v-chip color="success" variant="flat">
+                <v-icon icon="mdi-plus-circle" start size="16" />Создано: {{ feoImport.result.created }}
+              </v-chip>
+              <v-chip color="warning" variant="flat"
+                :disabled="!feoImport.result.updated_details?.length"
+                @click="feoToggleResultPanel('updated')">
+                <v-icon icon="mdi-pencil" start size="16" />Обновлено: {{ feoImport.result.updated ?? 0 }}
+                <v-icon v-if="feoImport.result.updated_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('updated') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+              </v-chip>
+              <v-chip color="grey" variant="flat"
+                :disabled="!feoImport.result.skipped_details?.length"
+                @click="feoToggleResultPanel('skipped')">
+                <v-icon icon="mdi-debug-step-over" start size="16" />Пропущено: {{ feoImport.result.skipped }}
+                <v-icon v-if="feoImport.result.skipped_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('skipped') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+              </v-chip>
+            </div>
+            <v-expansion-panels v-if="feoImport.result" v-model="feoResultPanels" multiple class="mb-3">
+              <v-expansion-panel v-if="feoImport.result.updated_details?.length" value="updated">
                 <v-expansion-panel-title>
                   <v-icon icon="mdi-pencil" size="18" color="warning" class="mr-2" />
                   Обновлённые позиции ({{ feoImport.result.updated_details.length }})
@@ -1763,7 +1789,7 @@
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
-              <v-expansion-panel v-if="feoImport.result.skipped_details?.length">
+              <v-expansion-panel v-if="feoImport.result.skipped_details?.length" value="skipped">
                 <v-expansion-panel-title>
                   <v-icon icon="mdi-debug-step-over" size="18" color="grey" class="mr-2" />
                   Пропущенные позиции ({{ feoImport.result.skipped_details.length }})
@@ -2448,6 +2474,7 @@ const templateFileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingDocType     = ref<string | null>(null)
 const deleteTarget       = ref<SubsidyRow | null>(null)
 const deleteErrorLinked  = ref(false)
+const deleteImpact       = ref<{ feo_categories: number; planned_items: number; purchases: number; contracts: number } | null>(null)
 const feoEditTarget      = ref<FeoCategory | null>(null)
 const feoDeleteTarget    = ref<FeoCategory | null>(null)
 const feoDeleteError     = ref('')
@@ -2507,12 +2534,18 @@ const FEO_TARGET_FIELDS = [
   { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
-  { value: 'budget',   title: 'Финансирование Ур.2–4 (бюджет категории ФЭО)', required: false },
+  { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
   { value: 'active',   title: 'Активна (да / нет)',                          required: false },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})
 const feoIgnoredCols = ref<number[]>([])
 const feoDragOverTarget = ref<string | null>(null)
+const feoResultPanels = ref<string[]>([])
+function feoToggleResultPanel(key: string) {
+  const i = feoResultPanels.value.indexOf(key)
+  if (i >= 0) feoResultPanels.value.splice(i, 1)
+  else feoResultPanels.value.push(key)
+}
 
 const feoCurrentSheet = computed(() => {
   if (!feoImport.previewData) return null
@@ -2542,7 +2575,7 @@ function feoGetColumnLabel(idx: number): string {
 }
 function feoGetSamples(idx: number): string[] {
   const sample = feoCurrentSheet.value?.sample || []
-  return (sample as any[][]).slice(0, 1)
+  return (sample as any[][]).slice(0, 3)
     .map((row: any[]) => String(row[idx] ?? '').trim())
     .filter(Boolean)
 }
@@ -3658,10 +3691,14 @@ async function startEdit(s: SubsidyRow) {
   showEditDialog.value = true
 }
 
-function confirmDelete(s: SubsidyRow) {
+async function confirmDelete(s: SubsidyRow) {
   deleteTarget.value = s
   deleteErrorLinked.value = false
+  deleteImpact.value = null
   showDeleteDialog.value = true
+  try {
+    deleteImpact.value = await apiFetch<any>(`/subsidies/${s.id}/delete-impact`)
+  } catch { /* предупреждение опционально */ }
 }
 
 async function addSubsidy() {

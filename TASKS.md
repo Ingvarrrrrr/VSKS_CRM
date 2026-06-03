@@ -1,5 +1,15 @@
 # TASKS — VSKS_CRM
 
+## 2026-06-03 — Публикация визуализации «Передача оборудования ВСКС» по ссылке
+
+- [x] **Цель сессии**: окрасить порядковые номера шагов в цвет отдела + опубликовать HTML-визуализацию по ссылке (Telegram на iOS не рендерит .html инлайн)
+  - Окраска `.proc-num`: один отдел → сплошная заливка цветом подразделения (белая цифра + text-shadow), несколько → conic-gradient секторами, без отдела → нейтральный fallback. Проверено read-only.
+  - Опубликовано: копия → `frontend/public/equipment.html` (2230 строк) → коммит `95584bd` → push в `origin/claude` (autodeploy). Раздаётся через frontend dist + server.mjs, минуя SPA-fallback.
+  - Ссылка для телефона: **https://gaaala.duckdns.org/equipment.html** (Safari, как обычный сайт).
+  - Push строго в scope: только equipment.html; 6 несвязанных modified файлов (subsidies/purchases/feo + 3 вью) НЕ тронуты, остались локально.
+- [x] **Деплой подтверждён**: после пересборки frontend `curl https://gaaala.duckdns.org/equipment.html` → `HTTP 200 size=104210` (полный файл, не SPA-fallback). Фоновая проверка `bvbvt44wx` сматчила контент `tabBar/proc-num`.
+- [ ] **Следующий шаг**: открыть ссылку на айфоне в Safari, проверить рендер всех 7 вкладок и PDF-экспорт на телефоне.
+
 ## 2026-06-02 — /gsd:graphify (граф знаний)
 
 - [x] **Цель сессии**: выполнить `/gsd:graphify` — построить/обновить граф знаний проекта

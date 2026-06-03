@@ -368,17 +368,50 @@
             />
           </template>
           <template v-else>
-            <v-alert v-if="feoImport.result" type="success" variant="tonal" class="mb-3">
-              Создано: <strong>{{ feoImport.result.created }}</strong> &nbsp;
-              Пропущено: <strong>{{ feoImport.result.skipped }}</strong>
-            </v-alert>
-            <div v-if="feoImport.result?.errors?.length" class="mt-2">
-              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
-              <v-list density="compact" class="bg-error-lighten-5 rounded">
-                <v-list-item v-for="e in feoImport.result.errors" :key="e.row"
-                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
-              </v-list>
-            </div>
+            <template v-if="feoImport.result">
+              <div class="d-flex flex-wrap mb-3" style="gap:8px;">
+                <v-chip size="small" color="success" variant="flat">Создано: {{ feoImport.result.created }}</v-chip>
+                <v-chip size="small" color="info" variant="flat"
+                  :class="{ 'cursor-pointer': feoImport.result.updated_details?.length }"
+                  :disabled="!feoImport.result.updated_details?.length"
+                  @click="feoImport.showUpdated = !feoImport.showUpdated">
+                  Обновлено: {{ feoImport.result.updated }}
+                  <v-icon v-if="feoImport.result.updated_details?.length" end size="small">{{ feoImport.showUpdated ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                </v-chip>
+                <v-chip size="small" color="warning" variant="flat"
+                  :class="{ 'cursor-pointer': feoImport.result.skipped_details?.length }"
+                  :disabled="!feoImport.result.skipped_details?.length"
+                  @click="feoImport.showSkipped = !feoImport.showSkipped">
+                  Пропущено: {{ feoImport.result.skipped }}
+                  <v-icon v-if="feoImport.result.skipped_details?.length" end size="small">{{ feoImport.showSkipped ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                </v-chip>
+              </div>
+              <v-expand-transition>
+                <div v-if="feoImport.showUpdated && feoImport.result.updated_details?.length" class="mb-2">
+                  <div class="text-subtitle-2 mb-1 text-info">Обновлено ({{ feoImport.result.updated_details.length }}):</div>
+                  <v-list density="compact" class="rounded border" style="max-height:220px;overflow-y:auto;">
+                    <v-list-item v-for="(u, i) in feoImport.result.updated_details" :key="'u'+i"
+                      :subtitle="`Стр. ${u.row}: ${u.name} — ${u.reason}`" />
+                  </v-list>
+                </div>
+              </v-expand-transition>
+              <v-expand-transition>
+                <div v-if="feoImport.showSkipped && feoImport.result.skipped_details?.length" class="mb-2">
+                  <div class="text-subtitle-2 mb-1 text-warning">Пропущено ({{ feoImport.result.skipped_details.length }}):</div>
+                  <v-list density="compact" class="rounded border" style="max-height:220px;overflow-y:auto;">
+                    <v-list-item v-for="(s, i) in feoImport.result.skipped_details" :key="'s'+i"
+                      :subtitle="`Стр. ${s.row}: ${s.name} — ${s.reason}`" />
+                  </v-list>
+                </div>
+              </v-expand-transition>
+              <div v-if="feoImport.result.errors?.length" class="mt-2">
+                <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
+                <v-list density="compact" class="bg-error-lighten-5 rounded">
+                  <v-list-item v-for="e in feoImport.result.errors" :key="e.row"
+                    :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+                </v-list>
+              </div>
+            </template>
           </template>
         </v-card-text>
         <v-card-actions class="px-6 pb-4">
@@ -790,13 +823,20 @@ const deleteChildrenCount = computed(() => {
 // ─── FEO Import ───────────────────────────────────────────────────────────────
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
-  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  loading: false, showUpdated: false, showSkipped: false,
+  result: null as {
+    created: number; updated: number; skipped: number;
+    errors: { row: number; name: string; message: string }[];
+    updated_details?: { row: number; name: string; reason: string }[];
+    skipped_details?: { row: number; name: string; reason: string }[];
+  } | null,
 })
 
 function closeFeoImport() {
   const wasCreated = (feoImport.result?.created ?? 0) > 0
   feoImport.show = false; feoImport.step = 1
   feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  feoImport.showUpdated = false; feoImport.showSkipped = false
   if (wasCreated && selectedId.value) loadFeo(selectedId.value)
 }
 

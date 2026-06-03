@@ -322,6 +322,37 @@ async def update_subsidy(
         d["contractor_inn"] = None
     return d
 
+@router.get("/{subsidy_id}/delete-impact")
+async def subsidy_delete_impact(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('subsidies')),
+):
+    """Counts of dependent rows so the UI can warn before deleting a subsidy."""
+    from app.models.purchase import Purchase
+    from app.models.contract import Contract
+    from app.models.feo_planned_item import FeoPlannedItem
+    feo_count = await db.scalar(
+        select(func.count()).select_from(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )
+    planned_count = await db.scalar(
+        select(func.count()).select_from(FeoPlannedItem)
+        .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
+        .where(FeoCategory.subsidy_id == subsidy_id)
+    )
+    p_count = await db.scalar(
+        select(func.count()).select_from(Purchase).where(Purchase.subsidy_id == subsidy_id)
+    )
+    c_count = await db.scalar(
+        select(func.count()).select_from(Contract).where(Contract.subsidy_id == subsidy_id)
+    )
+    return {
+        "feo_categories": feo_count or 0,
+        "planned_items": planned_count or 0,
+        "purchases": p_count or 0,
+        "contracts": c_count or 0,
+    }
+
 @router.delete("/{subsidy_id}")
 async def delete_subsidy(
     subsidy_id: int,
@@ -354,15 +385,31 @@ async def delete_subsidy(
             detail=f"Нельзя удалить субсидию: связано {' и '.join(parts)}. Сначала удалите или перепривяжите их."
         )
 
-    # Cascade delete FEO categories (all levels, bottom-up by level desc)
-    cats = (await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.level.desc())
-    )).scalars().all()
-    for cat in cats:
-        await db.delete(cat)
-
-    await db.delete(db_subsidy)
-    await db.commit()
+    # Bulk-delete dependents via SQL (not ORM cascade): feo_planned_items.feo_category_id
+    # is NOT NULL, and ORM-level cascade would try to NULL it on parent delete -> IntegrityError.
+    # Direct DELETE relies on the DB and avoids the autoflush nullify path entirely.
+    from app.models.feo_planned_item import FeoPlannedItem
+    try:
+        cat_ids_subq = select(FeoCategory.id).where(FeoCategory.subsidy_id == subsidy_id)
+        await db.execute(
+            delete(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(cat_ids_subq))
+        )
+        await db.execute(
+            delete(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+        )
+        await db.delete(db_subsidy)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.warning("delete_subsidy %s blocked by FK: %s", subsidy_id, e)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Не удалось удалить субсидию: на неё ссылаются другие записи "
+                "(закупки, договоры или плановые позиции). Сначала удалите или "
+                "перепривяжите связанные данные, затем повторите."
+            ),
+        )
     return {"message": "Субсидия удалена"}
 
 

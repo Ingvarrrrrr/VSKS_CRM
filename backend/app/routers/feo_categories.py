@@ -117,6 +117,114 @@ async def get_feo_leaves(
     return result
 
 
+@router.get("/budget-residuals")
+async def feo_budget_residuals(
+    subsidy_id: int = Query(...),
+    category_ids: str = Query("", description="comma-separated leaf FeoCategory ids"),
+    exclude_purchase_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Остатки бюджета по ФЭО для формы закупки.
+
+    Всегда возвращает направления (ур.1) субсидии — чтобы при формировании заказа
+    было видно, вылезли ли за бюджет по направлению. Дополнительно, если переданы
+    category_ids (выбранные листовые ФЭО), возвращает их остатки + остатки предков.
+
+    budget листа = FeoCategory.budget; used = SUM(PurchaseItem.total_price) по feo_category_id листа.
+    Узел выше: budget = собственный .budget если задан, иначе сумма budget детей;
+    used = сумма used всех листьев-потомков. residual = budget - used.
+    Ответ: {directions:[{id,name,level,path,budget,used,residual}],
+            leaves:[{id,name,level,path,budget,used,residual,ancestors:[...]}]}
+    (ancestors — сверху вниз: ур.1 первым).
+    """
+    from sqlalchemy import select as _sel, func as _f
+    from app.models.purchase_item import PurchaseItem
+
+    ids = [int(x) for x in category_ids.split(",") if x.strip().isdigit()]
+    all_cats = (await db.execute(
+        _sel(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if not all_cats:
+        return {"directions": [], "leaves": []}
+    cat_by_id = {c.id: c for c in all_cats}
+    children: dict[int, list] = {}
+    for c in all_cats:
+        if c.parent_id is not None:
+            children.setdefault(c.parent_id, []).append(c.id)
+    leaf_ids_all = [c.id for c in all_cats if not children.get(c.id)]
+
+    used_q = (
+        _sel(PurchaseItem.feo_category_id,
+             _f.coalesce(_f.sum(PurchaseItem.total_price), 0).label("used"))
+        .where(PurchaseItem.feo_category_id.in_(leaf_ids_all))
+    )
+    if exclude_purchase_id is not None:
+        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    used_q = used_q.group_by(PurchaseItem.feo_category_id)
+    leaf_used = {r.feo_category_id: float(r.used) for r in (await db.execute(used_q)).all()}
+
+    def descendant_leaves(cid):
+        ch = children.get(cid)
+        if not ch:
+            return [cid]
+        out = []
+        for x in ch:
+            out.extend(descendant_leaves(x))
+        return out
+
+    def calc_budget(cid):
+        c = cat_by_id[cid]
+        ch = children.get(cid)
+        if not ch:
+            return float(c.budget) if c.budget is not None else 0.0
+        if c.budget is not None:
+            return float(c.budget)
+        return sum(calc_budget(x) for x in ch)
+
+    def used_of(cid):
+        return sum(leaf_used.get(l, 0.0) for l in descendant_leaves(cid))
+
+    def node_info(cid):
+        c = cat_by_id[cid]
+        b = calc_budget(cid)
+        u = used_of(cid)
+        return {"id": cid, "name": c.name, "level": c.level,
+                "budget": b, "used": u, "residual": b - u}
+
+    def path_of(cid):
+        names = []
+        cur = cat_by_id.get(cid)
+        while cur is not None:
+            names.append(cur.name)
+            cur = cat_by_id.get(cur.parent_id) if cur.parent_id else None
+        return " \u203a ".join(reversed(names))
+
+    # Направления (ур.1) субсидии — всегда, для контроля бюджета при формировании.
+    directions = []
+    for c in all_cats:
+        if c.level == 1 or c.parent_id is None:
+            d = node_info(c.id)
+            d["path"] = path_of(c.id)
+            directions.append(d)
+    directions.sort(key=lambda d: d["name"] or "")
+
+    leaves = []
+    for lid in ids:
+        if lid not in cat_by_id:
+            continue
+        leaf = node_info(lid)
+        leaf["path"] = path_of(lid)
+        ancestors = []
+        cur = cat_by_id[lid]
+        while cur.parent_id and cur.parent_id in cat_by_id:
+            cur = cat_by_id[cur.parent_id]
+            ancestors.append(node_info(cur.id))
+        leaf["ancestors"] = list(reversed(ancestors))
+        leaves.append(leaf)
+    return {"directions": directions, "leaves": leaves}
+
+
 @router.get("/", response_model=List[FeoCategoryOut])
 async def list_categories(
     parent_id: Optional[int] = Query(None),

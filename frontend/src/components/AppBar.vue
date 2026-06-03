@@ -429,10 +429,15 @@
     </v-list>
 
     <template v-slot:append>
-      <div class="pa-4 text-center">
-        <v-chip size="small" color="primary" variant="flat">
-          {{ userRole }}
-        </v-chip>
+      <div class="pa-3 drawer-user-footer">
+        <div class="d-flex align-center ga-2 mb-2" style="min-width:0">
+          <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="36" />
+          <div style="min-width:0; flex:1 1 auto">
+            <div class="text-body-2 font-weight-medium text-truncate" :title="userName">{{ userName }}</div>
+            <div v-if="orgSummary" class="text-caption text-medium-emphasis text-truncate" :title="orgSummary">{{ orgSummary }}</div>
+          </div>
+        </div>
+        <v-chip size="small" color="primary" variant="flat">{{ userRole }}</v-chip>
       </div>
     </template>
   </v-navigation-drawer>
@@ -529,6 +534,15 @@ const userRole = computed(() => {
   return roles[userRoleRaw.value] || userRoleRaw.value || 'Неизвестно'
 })
 const isSuperadmin = computed(() => userRoleRaw.value === 'superadmin')
+const orgSummary = computed(() => {
+  if (isSuperadmin.value) {
+    const n = selectedOrgNames.value.length
+    if (n === 0) return 'Организации не выбраны'
+    if (n === 1) return selectedOrgNames.value[0]
+    return `${n} организаций`
+  }
+  return userOrgName.value || ''
+})
 
 // Phase 30.2: fleet group auto-expand when on /fleet/* or /m/driver
 const isFleetGroupOpen = computed(() =>

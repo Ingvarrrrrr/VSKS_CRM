@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
 
@@ -16,4 +16,7 @@ class FeoPlannedItem(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
 
-    feo_category = relationship("FeoCategory", backref="planned_items")
+    feo_category = relationship(
+        "FeoCategory",
+        backref=backref("planned_items", cascade="all, delete-orphan", passive_deletes=True),
+    )

@@ -82,7 +82,10 @@
 
           <!-- Cargo -->
           <div class="dwv__card" v-if="waybill.cargo_description || waybill.cargo_weight_t">
-            <div class="dwv__card-title">Груз</div>
+            <div class="dwv__card-title">
+              Груз
+              <StatusPill v-if="isHumanitarianCargo" variant="info" style="margin-left:8px">гум. помощь</StatusPill>
+            </div>
             <div class="dwv__cargo-desc">
               {{ waybill.cargo_description }}
               <b v-if="waybill.cargo_weight_t"> · {{ waybill.cargo_weight_t }} т</b>
@@ -111,11 +114,18 @@
 
           <!-- Current status banner -->
           <div class="dwv__banner-active">
-            <div>
-              <div class="dwv__banner-label">Следующий пункт</div>
-              <div class="dwv__banner-val">{{ nextStopName }}</div>
+            <div class="dwv__banner-top">
+              <div>
+                <div class="dwv__banner-label">Текущий участок</div>
+                <div class="dwv__banner-val">{{ currentSegment }}</div>
+              </div>
+              <StatusPill variant="ok" :dot="true">В пути</StatusPill>
             </div>
-            <StatusPill variant="ok" :dot="true">В пути</StatusPill>
+            <div class="dwv__banner-stats">
+              <span>Прошёл · <b>{{ kmDone != null ? kmDone.toLocaleString('ru-RU') + ' км' : '—' }}</b></span>
+              <span>Осталось · <b>{{ kmLeft != null ? kmLeft.toLocaleString('ru-RU') + ' км' : '—' }}</b></span>
+              <span>ETA · <b>{{ etaTime }}</b></span>
+            </div>
           </div>
 
           <!-- Odometer readings per stop -->
@@ -336,6 +346,7 @@
             <div class="dwv__sig-wrap">
               <SignaturePad v-model="form.signature" :width="sigPadWidth" :height="100" />
             </div>
+            <div v-if="form.signature" class="dwv__sig-caption">{{ signedCaption }}</div>
           </div>
         </div>
 
@@ -516,6 +527,7 @@ interface Waybill {
   route_from?: string | null
   route_to?: string | null
   dispatcher_name?: string | null
+  driver_name?: string | null
   vehicle?: Vehicle | null
   route_stops?: RouteStop[]
   odometer_readings?: OdometerReading[]
@@ -679,6 +691,46 @@ const totalFuelCost = computed<number | null>(() => {
 const allChecksDone = computed(() => checklist.every(c => c.state === 'ok'))
 
 const sigPadWidth = computed(() => Math.min(typeof window !== 'undefined' ? window.innerWidth - 64 : 320, 400))
+
+const currentSegment = computed<string>(() => {
+  const stops = waybill.value?.route_stops
+  if (!stops?.length) return '—'
+  let prevName = stops[0]?.name ?? '—'
+  for (const stop of stops) {
+    if (stopReading(stop)) {
+      prevName = stop.name
+    }
+  }
+  return `${prevName} → ${nextStopName.value}`
+})
+
+const kmDone = computed<number | null>(() => {
+  if (lastOdometerValue.value != null && waybill.value?.odometer_start != null) {
+    return Math.max(0, lastOdometerValue.value - waybill.value.odometer_start)
+  }
+  return null
+})
+
+const kmLeft = computed<number | null>(() => {
+  if (waybill.value?.planned_mileage_km != null && kmDone.value != null) {
+    return Math.max(0, waybill.value.planned_mileage_km - kmDone.value)
+  }
+  return null
+})
+
+const etaTime = computed<string>(() => fmtTime(waybill.value?.date_end) || '—')
+
+const driverName = computed<string>(() =>
+  waybill.value?.driver_name ?? localStorage.getItem('user_name') ?? 'Водитель'
+)
+
+const signedCaption = computed<string>(() =>
+  `${driverName.value} · ${fmt(new Date().toISOString())}`
+)
+
+const isHumanitarianCargo = computed<boolean>(() =>
+  /гуман|гум\.?\s/i.test(waybill.value?.cargo_description ?? '')
+)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1094,8 +1146,11 @@ onMounted(() => { loadWaybill() })
   background: linear-gradient(135deg, rgba(34,201,151,.1), rgba(93,208,255,.04));
   border: 1px solid rgba(34, 201, 151, 0.3);
   border-radius: 16px; padding: 14px;
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; flex-direction: column; gap: 10px;
 }
+.dwv__banner-top   { display: flex; justify-content: space-between; align-items: center; }
+.dwv__banner-stats { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted, #8a93a8); }
+.dwv__banner-stats b { color: var(--text, #e9edf5); font-weight: 600; }
 .dwv__banner-label { font-size: 11px; color: var(--muted, #8a93a8); margin-bottom: 4px; }
 .dwv__banner-val   { font-size: 14px; font-weight: 600; }
 
@@ -1176,6 +1231,7 @@ onMounted(() => { loadWaybill() })
 
 /* ── Signature ─────────────────────────────────────────────────────────────── */
 .dwv__sig-wrap { width: 100%; overflow-x: auto; }
+.dwv__sig-caption { font-size: 10px; color: var(--muted, #8a93a8); margin-top: 8px; text-align: center; }
 
 /* ── Offline banner ────────────────────────────────────────────────────────── */
 .dwv__offline-banner {

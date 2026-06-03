@@ -232,7 +232,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import axios from 'axios'
+import { apiFetch } from '@/api'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 const props = defineProps<{
@@ -318,21 +318,11 @@ function formatDate(d: string): string {
 }
 
 function extractErrorMessage(e: unknown): string {
-  if (axios.isAxiosError(e)) {
-    const detail = e.response?.data?.detail
-    if (typeof detail === 'object' && detail?.message) return detail.message
-    if (typeof detail === 'string') return detail
-    return `HTTP ${e.response?.status ?? '?'}: ошибка сервера`
-  }
-  return 'Неизвестная ошибка'
+  return (e as any)?.payload?.message ?? (e as any)?.message ?? 'Неизвестная ошибка'
 }
 
 function extractErrorCode(e: unknown): string | null {
-  if (axios.isAxiosError(e)) {
-    const detail = e.response?.data?.detail
-    if (typeof detail === 'object' && detail?.code) return detail.code
-  }
-  return null
+  return (e as any)?.payload?.code ?? null
 }
 
 // ── Load data ─────────────────────────────────────────────────────────────────
@@ -340,8 +330,7 @@ async function fetchRows() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await axios.get('/api/vehicle-odometer/', { params: { vehicle_id: props.vehicleId } })
-    rows.value = res.data
+    rows.value = await apiFetch<OdometerRow[]>('/vehicle-odometer/?vehicle_id=' + props.vehicleId)
   } catch (e) {
     loadError.value = extractErrorMessage(e)
   } finally {
@@ -389,9 +378,12 @@ async function saveEdit(item: OdometerRow) {
 
   cellError.value = ''
   try {
-    const res = await axios.patch(`/api/vehicle-odometer/${item.id}`, payload)
+    const updated = await apiFetch<OdometerRow>(`/vehicle-odometer/${item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
     const idx = rows.value.findIndex(r => r.id === item.id)
-    if (idx !== -1) rows.value[idx] = res.data
+    if (idx !== -1) rows.value[idx] = updated
     cancelEdit()
   } catch (e) {
     const code = extractErrorCode(e)
@@ -399,8 +391,7 @@ async function saveEdit(item: OdometerRow) {
       // Show inline red text for 409
       cellError.value = 'Запись на эту дату уже существует'
     } else if (code === 'NON_MONOTONIC_ODOMETER') {
-      const detail = axios.isAxiosError(e) ? e.response?.data?.detail : null
-      const lastKm = detail?.last_km ?? '?'
+      const lastKm = (e as any)?.payload?.details?.last_km ?? '?'
       cellError.value = `Одометр не может уменьшаться (последнее значение: ${lastKm} км)`
     } else {
       showError(extractErrorMessage(e))
@@ -442,8 +433,11 @@ async function addRow() {
       note: newRow.note || null,
       source: newRow.source,
     }
-    const res = await axios.post('/api/vehicle-odometer/', payload)
-    rows.value.unshift(res.data)
+    const created = await apiFetch<OdometerRow>('/vehicle-odometer/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    rows.value.unshift(created)
     // Reset form
     newRow.date = today
     newRow.odometer_km = null
@@ -454,8 +448,7 @@ async function addRow() {
     if (code === 'DUPLICATE_ODOMETER_DATE') {
       newRowErrors.date = 'Запись на эту дату уже существует'
     } else if (code === 'NON_MONOTONIC_ODOMETER') {
-      const detail = axios.isAxiosError(e) ? e.response?.data?.detail : null
-      const lastKm = detail?.last_km ?? '?'
+      const lastKm = (e as any)?.payload?.details?.last_km ?? '?'
       newRowErrors.odometer_km = `Одометр не может уменьшаться (последнее значение: ${lastKm} км)`
     } else {
       showError(extractErrorMessage(e))
@@ -475,7 +468,7 @@ async function doDelete() {
   if (!deleteTarget.value) return
   deletingId.value = deleteTarget.value.id
   try {
-    await axios.delete(`/api/vehicle-odometer/${deleteTarget.value.id}`)
+    await apiFetch(`/vehicle-odometer/${deleteTarget.value.id}`, { method: 'DELETE' })
     rows.value = rows.value.filter(r => r.id !== deleteTarget.value!.id)
     deleteDialog.value = false
     deleteTarget.value = null

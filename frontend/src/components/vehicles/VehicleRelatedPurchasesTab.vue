@@ -152,7 +152,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import { apiFetch } from '@/api'
 
 const props = defineProps<{
   vehicleId: number
@@ -215,8 +215,10 @@ async function fetchPurchases () {
   error.value = ''
   backendFilterMissing.value = false
   try {
-    const res = await axios.get('/api/purchases/', { params: { vehicle_id: props.vehicleId } })
-    const data: PurchaseRow[] = res.data?.items ?? res.data ?? []
+    const res = await apiFetch<{ items?: PurchaseRow[] } | PurchaseRow[]>(
+      '/purchases/?vehicle_id=' + props.vehicleId
+    )
+    const data: PurchaseRow[] = (res as any)?.items ?? (res as PurchaseRow[]) ?? []
 
     // Check if backend actually filtered or returned everything
     const hasUnrelated = data.some(p => p.vehicle_id !== props.vehicleId && p.vehicle_id != null)
@@ -228,20 +230,19 @@ async function fetchPurchases () {
       allPurchases.value = data
     }
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { detail?: string }; status?: number } }
-    if (err?.response?.status === 422 || err?.response?.status === 400) {
+    const status = (e as any)?.status as number | undefined
+    if (status === 422 || status === 400) {
       // Param not supported — fetch all and filter client-side
       backendFilterMissing.value = true
       try {
-        const fallback = await axios.get('/api/purchases/')
-        const fallbackData: PurchaseRow[] = fallback.data?.items ?? fallback.data ?? []
+        const fallback = await apiFetch<{ items?: PurchaseRow[] } | PurchaseRow[]>('/purchases/')
+        const fallbackData: PurchaseRow[] = (fallback as any)?.items ?? (fallback as PurchaseRow[]) ?? []
         allPurchases.value = fallbackData.filter(p => p.vehicle_id === props.vehicleId)
       } catch (e2: unknown) {
-        const err2 = e2 as { response?: { data?: { detail?: string } } }
-        error.value = err2?.response?.data?.detail ?? 'Ошибка загрузки закупок'
+        error.value = (e2 as any)?.payload?.message ?? (e2 as any)?.message ?? 'Ошибка загрузки закупок'
       }
     } else {
-      error.value = err?.response?.data?.detail ?? 'Ошибка загрузки закупок'
+      error.value = (e as any)?.payload?.message ?? (e as any)?.message ?? 'Ошибка загрузки закупок'
     }
   } finally {
     loading.value = false
@@ -251,8 +252,10 @@ async function fetchPurchases () {
 async function fetchRepairs () {
   loadingRepairs.value = true
   try {
-    const res = await axios.get('/api/vehicle-repairs/', { params: { vehicle_id: props.vehicleId } })
-    const data: RepairRow[] = res.data?.items ?? res.data ?? []
+    const res = await apiFetch<{ items?: RepairRow[] } | RepairRow[]>(
+      '/vehicle-repairs/?vehicle_id=' + props.vehicleId
+    )
+    const data: RepairRow[] = (res as any)?.items ?? (res as RepairRow[]) ?? []
     repairs.value = data
   } catch {
     repairs.value = []

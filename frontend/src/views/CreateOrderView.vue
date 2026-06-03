@@ -31,14 +31,40 @@
       <v-btn variant="outlined" prepend-icon="mdi-arrow-left" :to="backRoute">К списку</v-btn>
     </div>
 
-    <v-alert v-if="budgetInfo" :type="budgetInfo.exceeded ? 'error' : 'info'" variant="tonal" class="mb-4" density="compact">
-      <template v-if="budgetInfo.exceeded">
-        Превышение бюджета субсидии на <strong>{{ formatMoney(budgetInfo.over) }}</strong>
+    <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
+      <!-- Остатки по направлениям ФЭО (ур.1) — видны при формировании, контроль бюджета -->
+      <v-alert
+        v-if="canViewAllLevelsBudget && feoDirections.length"
+        :type="feoDirections.some(d => d.residual < 0) ? 'error' : 'info'"
+        variant="tonal" density="compact" class="mb-2">
+        <div class="text-subtitle-2 mb-1">Остатки по направлениям ФЭО</div>
+        <div v-for="d in feoDirections" :key="d.id" class="d-flex justify-space-between text-body-2">
+          <span>{{ d.name }}</span>
+          <span :class="d.residual < 0 ? 'text-error font-weight-bold' : ''">
+            {{ formatMoney(d.residual) }}
+            <span class="text-caption text-medium-emphasis"> из {{ formatMoney(d.budget) }}</span>
+          </span>
+        </div>
+      </v-alert>
+      <!-- Остатки по выбранным листовым ФЭО (после выбора пункта) -->
+      <template v-if="canViewLeafBudget">
+        <v-alert
+          v-for="r in feoResiduals" :key="r.id"
+          :type="r.residual < 0 ? 'error' : 'info'"
+          variant="tonal" density="compact" class="mb-2">
+          <div>
+            Остаток по «{{ r.name }}»:
+            <strong>{{ formatMoney(r.residual) }}</strong>
+            <span class="text-caption text-medium-emphasis"> (бюджет {{ formatMoney(r.budget) }} − использовано {{ formatMoney(r.used) }})</span>
+          </div>
+          <div v-if="canViewAllLevelsBudget && r.ancestors && r.ancestors.length" class="mt-1 text-caption">
+            <div v-for="a in r.ancestors" :key="a.id">
+              ур.{{ a.level }} «{{ a.name }}»: остаток <strong>{{ formatMoney(a.residual) }}</strong>
+            </div>
+          </div>
+        </v-alert>
       </template>
-      <template v-else>
-        Остаток бюджета субсидии: <strong>{{ formatMoney(budgetInfo.remaining) }}</strong>
-      </template>
-    </v-alert>
+    </div>
 
     <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
@@ -2468,6 +2494,32 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="duplicateDialog" max-width="560">
+      <v-card>
+        <v-card-title class="text-warning">Возможный повтор закупки</v-card-title>
+        <v-card-text>
+          <div class="mb-3">Уже есть разовые закупки с такой же суммой и контрагентом в этой субсидии. Возможно, это повтор:</div>
+          <v-list density="compact">
+            <v-list-item v-for="m in duplicateMatches" :key="m.id"
+              @click="$router.push(`/orders/${m.id}/edit`)" style="cursor:pointer;">
+              <v-list-item-title>№{{ m.purchase_number ?? m.id }} — {{ m.name || 'без названия' }}</v-list-item-title>
+              <v-list-item-subtitle>
+                {{ m.total_nmck != null ? Number(m.total_nmck).toLocaleString('ru-RU') + ' ₽' : '' }}
+                <span v-if="m.contract_date"> · {{ m.contract_date }}</span>
+                · {{ m.status }}
+              </v-list-item-subtitle>
+              <template #append><v-icon size="small">mdi-open-in-new</v-icon></template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer/>
+          <v-btn variant="text" @click="duplicateDialog = false">Отмена</v-btn>
+          <v-btn color="warning" variant="flat" @click="confirmDuplicateSave">Всё равно сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Генератор ежемесячных этапов рамочного договора -->
     <MonthlyStagesDialog
       v-if="isFramework && form.contract_id && selectedFrameworkContract"
@@ -3313,6 +3365,7 @@
 import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { useContractorsStore } from '@/stores/contractors'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
@@ -3815,6 +3868,7 @@ const _focusoutHandler = (e: FocusEvent) => {
 }
 onMounted(() => document.addEventListener('focusout', _focusoutHandler, true))
 onUnmounted(() => document.removeEventListener('focusout', _focusoutHandler, true))
+onMounted(() => { if (!authStore.loaded) authStore.loadPermissions() })
 
 function activeDescription(item: OrderItem): string | undefined {
   if (form.description_mode === '44fz') return item._description_44fz || item._description
@@ -4365,6 +4419,41 @@ async function confirmDocDownload() {
 const snack = reactive({ show: false, text: '', color: 'success', actionText: '' as string, onAction: null as (() => void) | null })
 const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
+// Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
+const authStore = useAuthStore()
+const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
+const canViewAllLevelsBudget = computed(() => authStore.hasAction('feo_budget.view_all_levels'))
+type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number }
+type FeoLeaf = FeoNode & { ancestors: FeoNode[] }
+const feoDirections = ref<FeoNode[]>([])
+const feoResiduals = ref<FeoLeaf[]>([])
+const leafCatIds = computed<number[]>(() => {
+  if (form.feo_per_item) {
+    const s = new Set<number>()
+    for (const it of items.value) {
+      const cid = (it as any).feo_category_id
+      if (cid) s.add(Number(cid))
+    }
+    return [...s]
+  }
+  return form.feo_category_id ? [Number(form.feo_category_id)] : []
+})
+const loadFeoResiduals = async () => {
+  if (!form.subsidy_id || (!canViewLeafBudget.value && !canViewAllLevelsBudget.value)) {
+    feoDirections.value = []
+    feoResiduals.value = []
+    return
+  }
+  try {
+    const qs = new URLSearchParams({ subsidy_id: String(form.subsidy_id) })
+    if (leafCatIds.value.length) qs.set('category_ids', leafCatIds.value.join(','))
+    if (purchaseId.value) qs.set('exclude_purchase_id', String(purchaseId.value))
+    const data = await apiFetch<{ directions: FeoNode[]; leaves: FeoLeaf[] }>(`/feo-categories/budget-residuals?${qs.toString()}`)
+    feoDirections.value = data.directions || []
+    feoResiduals.value = data.leaves || []
+  } catch { feoDirections.value = []; feoResiduals.value = [] }
+}
+watch([() => form.subsidy_id, leafCatIds, canViewLeafBudget, canViewAllLevelsBudget], loadFeoResiduals, { immediate: true })
 const budgetOverrideDialog = ref(false)
 const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 
@@ -5298,6 +5387,12 @@ const isContracted = computed(() => CONTRACTED_STATUSES.includes(form.status))
 
 // Saved НМЦД from DB (frozen value)
 const savedNmck = ref<number | null>(null)
+
+// Предупреждение о возможном повторе разовой закупки
+const duplicateDialog = ref(false)
+const duplicateMatches = ref<any[]>([])
+let duplicateConfirmed = false
+let duplicatePendingOverride = false
 
 // Display НМЦД: manual override → frozen contracted value → live from items
 const displayNmck = computed(() => {
@@ -6518,6 +6613,23 @@ const doSave = async (adminOverride: boolean) => {
       return
     }
   }
+  // Предупреждение о возможном повторе: разовая закупка (НЕ ежемесячный платёж)
+  // с той же суммой и контрагентом в пределах субсидии. См. фидбек пользователя.
+  if (!isEdit.value && !form.is_monthly_payment && !duplicateConfirmed
+      && form.subsidy_id && form.contractor_id && displayNmck.value > 0) {
+    try {
+      const matches = await apiFetch<any[]>(
+        `/purchases/duplicate-check?subsidy_id=${form.subsidy_id}&contractor_id=${form.contractor_id}&amount=${displayNmck.value}`
+      )
+      if (matches.length > 0) {
+        duplicateMatches.value = matches
+        duplicatePendingOverride = adminOverride
+        duplicateDialog.value = true
+        return
+      }
+    } catch { /* проверка опциональна — не блокируем сохранение */ }
+  }
+  duplicateConfirmed = false
   saving.value = true
   try {
     const validItems = items.value
@@ -6653,6 +6765,12 @@ const doSave = async (adminOverride: boolean) => {
   } finally {
     saving.value = false
   }
+}
+
+function confirmDuplicateSave() {
+  duplicateDialog.value = false
+  duplicateConfirmed = true
+  doSave(duplicatePendingOverride)
 }
 
 // Доработка 5 мая: подсветка незаполненных полей при отказе перехода статуса.

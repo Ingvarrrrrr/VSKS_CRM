@@ -229,9 +229,9 @@ export function useRiskScores(opts: UseRiskScoresOptions): UseRiskScoresReturn {
     try {
       const [charts, contracts, wishes, purchases] = await Promise.all([
         apiFetch<ChartsResponse>('/dashboard/charts'),
-        apiFetch<ContractRow[]>('/contracts').catch(() => [] as ContractRow[]),
-        apiFetch<WishRow[]>('/wishes').catch(() => [] as WishRow[]),
-        apiFetch<PurchaseRow[]>('/purchases').catch(() => [] as PurchaseRow[]),
+        apiFetch<ContractRow[]>('/contracts/').catch(() => [] as ContractRow[]),
+        apiFetch<WishRow[]>('/wishes/').catch(() => [] as WishRow[]),
+        apiFetch<PurchaseRow[]>('/purchases/').catch(() => [] as PurchaseRow[]),
       ])
       rawCharts.value = charts
       rawContracts.value = Array.isArray(contracts) ? contracts : []

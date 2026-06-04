@@ -1566,6 +1566,15 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"subsidy-org materialize backfill skipped (non-fatal): {e}"
         )
+    # org-dedup: мерж дублей organizations по ИНН (свежие данные побеждают, FK перепривязываются)
+    try:
+        from app.routers.subsidies import _merge_duplicate_orgs_by_inn
+        async with async_session() as _db_m:
+            await _merge_duplicate_orgs_by_inn(_db_m)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"org-dedup по ИНН skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:

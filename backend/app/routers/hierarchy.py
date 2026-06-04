@@ -259,8 +259,30 @@ async def get_hierarchy_graph(
         )).scalars().all()
         uo_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "org_id": r.org_id} for r in mo_rows]
 
+    # Dedup org-узлов по ИНН: одна организация (один ИНН) = один узел, даже если
+    # на неё ссылаются несколько субсидий/контрагентов. Представителя выбираем по
+    # приоритету: есть отделы > есть contractor_id > меньший id. Орг без ИНН не трогаем.
+    dept_org_ids = {d.org_id for d in depts}
+    by_inn: dict[str, object] = {}
+    deduped_orgs = []
+    for o in orgs:
+        _inn = (getattr(o, "inn", None) or "").strip()
+        if not _inn:
+            deduped_orgs.append(o)
+            continue
+        prev = by_inn.get(_inn)
+        if prev is None:
+            by_inn[_inn] = o
+            deduped_orgs.append(o)
+            continue
+        def _rank(x):
+            return (1 if x.id in dept_org_ids else 0, 1 if getattr(x, "contractor_id", None) else 0, -x.id)
+        if _rank(o) > _rank(prev):
+            deduped_orgs[deduped_orgs.index(prev)] = o
+            by_inn[_inn] = o
+
     return {
-        "orgs": [{"id": o.id, "name": o.name, "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in orgs],
+        "orgs": [{"id": o.id, "name": o.name, "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in deduped_orgs],
         "departments": [
             {
                 "id": d.id, "name": d.name, "org_id": d.org_id,

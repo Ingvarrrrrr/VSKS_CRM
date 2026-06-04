@@ -1419,7 +1419,7 @@ function formatDate(dateStr: string) {
 async function loadWishes() {
   loading.value = true
   try {
-    myWishes.value = await apiFetch<Wish[]>('/wishes' + buildFilterParams({ mine_only: true }))
+    myWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ mine_only: true }))
   } catch (e: any) {
     showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {

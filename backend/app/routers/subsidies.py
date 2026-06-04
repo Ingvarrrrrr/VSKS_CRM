@@ -218,6 +218,154 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor) -> None
     await db.commit()
 
 
+async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
+    """Идемпотентный мерж дублей organizations по ИНН.
+
+    Алгоритм:
+    - survivor = MIN(id) в группе (стабильный якорь).
+    - Победа «свежих данных»: для каждого поля берём непустое значение из строки с MAX(id).
+    - Все FK перепривязываются через information_schema (generic), SAVEPOINT защищает
+      от конфликтов уникальных индексов (junction-таблицы).
+    - losers удаляются, commit выполняется после всех групп.
+    - Функция НЕ падает фатально — ошибка группы логируется и пропускается.
+    """
+    _log = logging.getLogger(__name__)
+
+    # 1. Найти группы дублей по ИНН
+    dup_result = await db.execute(text(
+        "SELECT inn, array_agg(id ORDER BY id) AS ids "
+        "FROM organizations "
+        "WHERE inn IS NOT NULL AND btrim(inn) <> '' "
+        "GROUP BY inn HAVING count(*) > 1"
+    ))
+    groups = dup_result.fetchall()
+
+    if not groups:
+        _log.info("org-merge по ИНН: дублей не найдено")
+        return
+
+    # 2. Собрать FK-ссылки на organizations.id через information_schema (один раз)
+    fk_result = await db.execute(text(
+        "SELECT tc.table_name, kcu.column_name "
+        "FROM information_schema.table_constraints tc "
+        "JOIN information_schema.key_column_usage kcu "
+        "  ON tc.constraint_name = kcu.constraint_name "
+        "  AND tc.table_schema = kcu.table_schema "
+        "JOIN information_schema.constraint_column_usage ccu "
+        "  ON tc.constraint_name = ccu.constraint_name "
+        "  AND tc.table_schema = ccu.table_schema "
+        "WHERE tc.constraint_type = 'FOREIGN KEY' "
+        "  AND ccu.table_name = 'organizations' "
+        "  AND ccu.column_name = 'id'"
+    ))
+    fk_refs = fk_result.fetchall()  # список (table_name, column_name)
+
+    # Поля для «свежих данных»
+    _merge_fields = [
+        "name", "full_name", "kpp", "ogrn", "address",
+        "signatory", "color", "contractor_id", "is_active",
+    ]
+
+    total_deleted = 0
+    n_groups = len(groups)
+
+    for row in groups:
+        inn_val = row[0]
+        ids = row[1]  # уже упорядочены по возрастанию
+        survivor_id = ids[0]
+        loser_ids = ids[1:]
+
+        try:
+            # 3. Загрузить все строки группы и выбрать «свежие» непустые поля
+            all_rows_result = await db.execute(
+                text("SELECT id, name, full_name, kpp, ogrn, address, signatory, "
+                     "color, contractor_id, is_active "
+                     "FROM organizations WHERE id = ANY(:ids) ORDER BY id DESC"),
+                {"ids": ids}
+            )
+            all_rows = all_rows_result.fetchall()
+
+            # Для каждого поля: берём первое непустое значение при обходе от MAX к MIN id
+            updates = {}
+            for field_idx, field in enumerate(_merge_fields):
+                for r in all_rows:
+                    val = r[field_idx + 1]  # +1 т.к. id в col 0
+                    if val is None:
+                        continue
+                    if isinstance(val, str) and val.strip() == "":
+                        continue
+                    updates[field] = val
+                    break
+
+            # Получить текущие значения survivor для сравнения
+            surv_row_result = await db.execute(
+                text("SELECT name, full_name, kpp, ogrn, address, signatory, "
+                     "color, contractor_id, is_active "
+                     "FROM organizations WHERE id = :sid"),
+                {"sid": survivor_id}
+            )
+            surv_row = surv_row_result.fetchone()
+            surv_dict = dict(zip(_merge_fields, surv_row)) if surv_row else {}
+
+            # Применить только изменившиеся поля
+            changed = {k: v for k, v in updates.items() if surv_dict.get(k) != v}
+            if changed:
+                set_clause = ", ".join(f"{k} = :{k}" for k in changed)
+                changed["_sid"] = survivor_id
+                await db.execute(
+                    text(f"UPDATE organizations SET {set_clause} WHERE id = :_sid"),
+                    changed
+                )
+
+            # 4. Перепривязать все FK (generic)
+            for fk_table, fk_col in fk_refs:
+                # Пропускаем self-reference organizations.id на organizations.id
+                # (т.е. если таблица=organizations и колонка=id — это PK, не FK)
+                # Но root_org_id — это FK и должен перепривязаться, он пройдёт как обычно
+                try:
+                    async with db.begin_nested():
+                        await db.execute(
+                            text(f'UPDATE "{fk_table}" SET "{fk_col}" = :surv '
+                                 f'WHERE "{fk_col}" = ANY(:losers)'),
+                            {"surv": survivor_id, "losers": loser_ids}
+                        )
+                except Exception as upd_err:
+                    # Конфликт уникального индекса — fallback: удалить loser-строки
+                    _log.warning(
+                        f"org-merge: UPDATE {fk_table}.{fk_col} конфликт ({upd_err!r}), "
+                        f"fallback DELETE loser-строк"
+                    )
+                    try:
+                        async with db.begin_nested():
+                            await db.execute(
+                                text(f'DELETE FROM "{fk_table}" '
+                                     f'WHERE "{fk_col}" = ANY(:losers)'),
+                                {"losers": loser_ids}
+                            )
+                    except Exception as del_err:
+                        _log.warning(
+                            f"org-merge: DELETE fallback {fk_table}.{fk_col} тоже провалился: {del_err!r}"
+                        )
+
+            # 5. Удалить losers
+            await db.execute(
+                text("DELETE FROM organizations WHERE id = ANY(:losers)"),
+                {"losers": loser_ids}
+            )
+            total_deleted += len(loser_ids)
+
+        except Exception as group_err:
+            _log.warning(
+                f"org-merge: группа ИНН={inn_val!r} пропущена из-за ошибки: {group_err!r}"
+            )
+            continue
+
+    await db.commit()
+    _log.info(
+        f"org-merge по ИНН: групп {n_groups}, удалено дублей {total_deleted}"
+    )
+
+
 @router.post("/", response_model=SubsidyOut)
 async def create_subsidy(
     subsidy: SubsidyCreate,

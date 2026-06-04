@@ -360,6 +360,20 @@ async def _ensure_purchases_service_note_to_user_id_column(conn) -> None:
         print(f"  ⚠️   purchases.service_note_to_user_id ensure failed: {e}")
 
 
+async def _ensure_feo_categories_sort_order_column(conn) -> None:
+    """FEO-reorder: ADD sort_order column to feo_categories (idempotent)."""
+    try:
+        await conn.execute(text(
+            "ALTER TABLE feo_categories ADD COLUMN IF NOT EXISTS sort_order INTEGER"
+        ))
+        await conn.execute(text(
+            "UPDATE feo_categories SET sort_order = id WHERE sort_order IS NULL"
+        ))
+        print("  ✅  feo_categories.sort_order column ensured (FEO-reorder)")
+    except Exception as e:
+        print(f"  ⚠️   feo_categories.sort_order ensure failed: {e}")
+
+
 async def _ensure_wish_items_feo_category_column(conn) -> None:
     """B9: ADD feo_category_id FK column to wish_items (idempotent)."""
     try:

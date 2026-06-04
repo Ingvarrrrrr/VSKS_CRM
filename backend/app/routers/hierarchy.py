@@ -47,7 +47,9 @@ class OkOut(BaseModel):
 class OrgOut(BaseModel):
     id: int
     name: str
+    inn: Optional[str] = None
     color: Optional[str] = None  # Phase 30: hex цвет орг для иерархии
+    contractor_id: Optional[int] = None  # привязка к контрагенту (единая карточка)
 
 
 class DeptGraphOut(BaseModel):
@@ -118,6 +120,11 @@ async def get_hierarchy_graph(
     current_user: User = Depends(get_current_user),
 ):
     org_ids = get_org_filter(current_user)
+    # Hierarchy canvas is the org-management surface: SaaS roles see ALL orgs
+    # regardless of the transient active-org focus selection (otherwise a
+    # newly-created org card never shows up). Fixes "created org not appearing".
+    if current_user.role in ('superadmin', 'account_owner'):
+        org_ids = None
 
     # Load orgs
     q_orgs = select(Organization)
@@ -125,6 +132,20 @@ async def get_hierarchy_graph(
         q_orgs = q_orgs.where(Organization.id.in_(org_ids))
     orgs = (await db.execute(q_orgs)).scalars().all()
     org_id_set = {o.id for o in orgs}
+
+    # Rule: any org linked to a subsidy is "in the contour" → ensure its card
+    # appears even if it's outside the dept-based org filter.
+    from app.models.subsidy import Subsidy
+    subsidy_org_rows = (await db.execute(
+        select(Subsidy.org_id).where(Subsidy.org_id.isnot(None)).distinct()
+    )).all()
+    extra_org_ids = {r[0] for r in subsidy_org_rows if r[0] is not None} - org_id_set
+    if extra_org_ids:
+        extra_orgs = (await db.execute(
+            select(Organization).where(Organization.id.in_(extra_org_ids))
+        )).scalars().all()
+        orgs = list(orgs) + list(extra_orgs)
+        org_id_set = org_id_set | {o.id for o in extra_orgs}
 
     # Load departments
     q_depts = select(Department)
@@ -239,7 +260,7 @@ async def get_hierarchy_graph(
         uo_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "org_id": r.org_id} for r in mo_rows]
 
     return {
-        "orgs": [{"id": o.id, "name": o.name, "color": getattr(o, "color", None)} for o in orgs],
+        "orgs": [{"id": o.id, "name": o.name, "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in orgs],
         "departments": [
             {
                 "id": d.id, "name": d.name, "org_id": d.org_id,

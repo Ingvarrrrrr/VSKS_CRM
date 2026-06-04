@@ -144,6 +144,7 @@
 
     <!-- ── Table ── -->
     <v-data-table
+      v-resizable-columns="'contracts'"
       :headers="tableHeaders"
       :items="filteredWithRowNum"
       :loading="loading"
@@ -857,7 +858,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -870,6 +871,7 @@ import { useContractorsStore } from '@/stores/contractors'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 // Prevent browser from opening dropped files globally
 const preventDrop = (e: DragEvent) => { e.preventDefault(); e.stopPropagation() }
@@ -1860,6 +1862,12 @@ async function doImportMapped() {
 }
 
 onMounted(async () => {
+  // Читаем ?subsidy_id из URL и выставляем фильтр
+  const qSub = route.query.subsidy_id
+  if (qSub) {
+    const id = Number(qSub)
+    if (!Number.isNaN(id)) fSubsidy.value = [id]
+  }
   // Phase 27.1.7: auto-enrich pending contracts on view load (idempotent, fire-and-forget)
   try {
     await apiFetch('/contracts/bulk-enrich-from-purchases', { method: 'POST' })

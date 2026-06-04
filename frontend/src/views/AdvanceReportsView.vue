@@ -109,6 +109,7 @@
     </v-chip-group>
 
     <v-data-table
+        v-resizable-columns="'advance-reports'"
         v-model="selected"
         v-model:expanded="expandedRows"
         :headers="tableHeaders"

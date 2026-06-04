@@ -272,6 +272,7 @@
 
     <!-- Table -->
     <v-data-table
+      v-resizable-columns="'payment-registry'"
       :headers="tableHeaders"
       :items="searchedItemsWithRowNum"
       :loading="loading"

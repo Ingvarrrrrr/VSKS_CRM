@@ -16,6 +16,7 @@
           {{ error }}
         </v-alert>
         <v-data-table
+          v-resizable-columns="'vehicle-drill'"
           v-else
           :items="items"
           :headers="headers"

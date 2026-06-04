@@ -46,6 +46,7 @@
         </div>
 
         <v-data-table
+          v-resizable-columns="'vehicle-related-purchases'"
           :headers="headers"
           :items="group.rows"
           density="compact"
@@ -116,6 +117,7 @@
     </div>
 
     <v-data-table
+      v-resizable-columns="'vehicle-related-repairs'"
       v-else
       :headers="repairHeaders"
       :items="repairsWithoutPurchase"

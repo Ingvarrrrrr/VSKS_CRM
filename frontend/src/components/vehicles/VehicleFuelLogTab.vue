@@ -26,6 +26,7 @@
 
     <!-- Table -->
     <v-data-table
+      v-resizable-columns="'vehicle-fuel-log'"
       :headers="headers"
       :items="logs"
       :loading="loading"

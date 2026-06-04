@@ -47,7 +47,7 @@ const gradient = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 28%;
   color: #fff;
   font-weight: 700;
   letter-spacing: 0.5px;

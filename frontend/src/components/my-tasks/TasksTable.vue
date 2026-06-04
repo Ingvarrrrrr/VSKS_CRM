@@ -1,5 +1,6 @@
 <template>
   <v-data-table
+      v-resizable-columns="'my-tasks'"
       :headers="taskListHeaders"
       :items="tasks"
       density="compact"

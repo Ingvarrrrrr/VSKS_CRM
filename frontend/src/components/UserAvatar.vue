@@ -28,7 +28,7 @@ const props = withDefaults(defineProps<{
   avatar?: string | null
   size?: number | string
   square?: boolean
-}>(), { size: 32, square: false })
+}>(), { size: 32, square: true })
 
 const iconCfg = computed(() =>
   AVATARS.find(a => a.id === props.avatar) || { icon: 'mdi-account', color: '#9E9E9E' }

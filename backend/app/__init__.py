@@ -1491,6 +1491,17 @@ async def lifespan(app_: FastAPI):
             f"SN-UX service_note_to_user_id column setup skipped (non-fatal): {e}"
         )
 
+    # FEO-reorder: feo_categories.sort_order column
+    try:
+        from check_schema import _ensure_feo_categories_sort_order_column
+        from .database import engine as _engine_feo_so
+        async with _engine_feo_so.begin() as conn:
+            await _ensure_feo_categories_sort_order_column(conn)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"FEO-reorder sort_order column setup skipped (non-fatal): {e}"
+        )
+
     # B9: wish_items.feo_category_id column
     try:
         from check_schema import _ensure_wish_items_feo_category_column
@@ -1530,6 +1541,30 @@ async def lifespan(app_: FastAPI):
     except Exception as e:
         logging.getLogger(__name__).warning(
             f"contractor-card columns setup skipped (non-fatal): {e}"
+        )
+    # subsidy-org-materialize: backfill зеркальных организаций для субсидий,
+    # привязанных к контрагентам (получатель субсидии должен попадать в Персонал/Иерархию)
+    try:
+        from app.routers.subsidies import _materialize_org_from_contractor
+        from app.models.subsidy import Subsidy as _SubMat
+        from app.models.contractor import Contractor as _CtrMat
+        from sqlalchemy import select as _select_mat
+        async with async_session() as _db_mat:
+            _cids = (await _db_mat.execute(
+                _select_mat(_SubMat.contractor_id)
+                .where(_SubMat.contractor_id.isnot(None))
+                .distinct()
+            )).scalars().all()
+            for _cid in _cids:
+                _ctr = await _db_mat.get(_CtrMat, _cid)
+                if _ctr is not None:
+                    await _materialize_org_from_contractor(_db_mat, _ctr)
+        logging.getLogger(__name__).info(
+            f"subsidy-org materialize backfill: {len(_cids)} контрагент(ов) обработано"
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"subsidy-org materialize backfill skipped (non-fatal): {e}"
         )
     yield
     task.cancel()

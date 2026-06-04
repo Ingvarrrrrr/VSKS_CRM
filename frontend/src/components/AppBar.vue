@@ -161,13 +161,8 @@
 
     <v-menu>
       <template v-slot:activator="{ props }">
-        <v-btn v-bind="props" variant="text">
-          <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="32" class="mr-2" />
-          <div class="text-left d-none d-sm-block">
-            <div>{{ userName }}</div>
-            <div v-if="userOrgName && !isSuperadmin" class="text-caption opacity-70" style="line-height:1.1">{{ userOrgName }}</div>
-          </div>
-          <v-icon icon="mdi-chevron-down" class="ml-2 d-none d-sm-inline" />
+        <v-btn v-bind="props" variant="text" icon>
+          <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="32" />
         </v-btn>
       </template>
       <v-list>
@@ -430,14 +425,14 @@
 
     <template v-slot:append>
       <div class="pa-3 drawer-user-footer">
-        <div class="d-flex align-center ga-2 mb-2" style="min-width:0">
+        <div class="d-flex align-center ga-2" style="min-width:0">
           <UserAvatar :photo-url="myPhotoUrl" :avatar="myAvatar" :size="36" />
           <div style="min-width:0; flex:1 1 auto">
             <div class="text-body-2 font-weight-medium text-truncate" :title="userName">{{ userName }}</div>
             <div v-if="orgSummary" class="text-caption text-medium-emphasis text-truncate" :title="orgSummary">{{ orgSummary }}</div>
+            <v-chip size="x-small" color="primary" variant="flat" class="mt-1">{{ userRole }}</v-chip>
           </div>
         </div>
-        <v-chip size="small" color="primary" variant="flat">{{ userRole }}</v-chip>
       </div>
     </template>
   </v-navigation-drawer>

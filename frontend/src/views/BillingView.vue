@@ -19,6 +19,7 @@
         </v-card-title>
 
         <v-data-table
+          v-resizable-columns="'billing-main'"
           v-if="!showHistory"
           :headers="visibleHeaders"
           :items="orgs"
@@ -124,7 +125,7 @@
               @update:model-value="loadHistory"
             />
           </v-card-text>
-          <v-data-table v-if="historyItems.length"
+          <v-data-table v-resizable-columns="'billing-history'" v-if="historyItems.length"
             :headers="historyHeaders" :items="historyItems" :loading="historyLoading"
             density="comfortable" :items-per-page="12" class="billing-table">
             <template #item.month="{ item }">{{ monthName(item.month) }} {{ item.year }}</template>
@@ -227,6 +228,7 @@
           <v-card variant="outlined" rounded="lg">
             <v-card-title class="text-subtitle-2 pa-4 pb-2">История платежей</v-card-title>
             <v-data-table
+              v-resizable-columns="'billing-org-history'"
               :headers="orgAdminHistoryHeaders" :items="myHistory"
               :loading="historyLoading" density="compact" :items-per-page="6">
               <template #item.month="{ item }">{{ monthName(item.month) }} {{ item.year }}</template>

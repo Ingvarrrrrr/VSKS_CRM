@@ -3,7 +3,8 @@
     "allow": [
       "Read(//c/Users/1/Documents/VAULT_for_LLM/Projects/VSKS_CRM/**)",
       "Read(//c/Users/1/Documents/VAULT_for_LLM/**)",
-      "Read(//c/Users/1/.claude/**)"
+      "Read(//c/Users/1/.claude/**)",
+      "Read(//c/Users/1/Desktop/Cursor/VSKS_CRM/frontend/src/views/**)"
     ]
   },
   "hooks": {
@@ -27,14 +28,14 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Bash|Edit|Write|MultiEdit|Agent|Task",
         "hooks": [
           {
             "type": "command",
             "command": "\"C:/Program Files/nodejs/node.exe\" \".claude/hooks/gsd-context-monitor.js\"",
             "timeout": 10
           }
-        ],
-        "matcher": "Bash|Edit|Write|MultiEdit|Agent|Task"
+        ]
       },
       {
         "matcher": "Read",

@@ -23,6 +23,7 @@
 
     <!-- Table -->
     <v-data-table
+        v-resizable-columns="'system-incidents'"
         :headers="visibleHeaders"
         :items="incidents"
         :loading="loading"

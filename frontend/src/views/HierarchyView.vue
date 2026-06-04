@@ -205,7 +205,7 @@
           <v-card-title class="pa-4 text-body-1">
             <v-icon icon="mdi-domain" class="mr-2" />Редактировать организацию
           </v-card-title>
-          <v-card-text class="pa-4 pt-0" style="max-height:75vh">
+          <v-card-text class="pa-4 pt-3" style="max-height:75vh">
             <v-alert
               v-if="editOrgDialog.contractor_id"
               type="info" density="compact" variant="tonal" class="mb-3"
@@ -215,6 +215,34 @@
                 Данные берутся из карточки контрагента. Редактируйте реквизиты в разделе «Контрагенты».
               </span>
             </v-alert>
+
+            <v-autocomplete
+              v-if="!editOrgDialog.contractor_id"
+              v-model="editOrgContractorId"
+              :items="editOrgContractors"
+              item-title="name" item-value="id"
+              label="Найти контрагента (привязать по ИНН)"
+              prepend-inner-icon="mdi-account-search"
+              variant="outlined" density="compact" clearable
+              :custom-filter="orgContractorFilter"
+              :loading="contractorsStore.searching"
+              :menu-props="{ maxWidth: 560 }"
+              hint="Поиск по всей базе контрагентов (название или ИНН). Выбор привяжет организацию и заполнит реквизиты." persistent-hint
+              class="mb-4"
+              @update:search="onEditOrgContractorSearch"
+              @update:model-value="onEditOrgContractorSelect"
+            >
+              <template #item="{ item, props: itemProps }">
+                <v-list-item v-bind="itemProps" :title="undefined">
+                  <template #title>
+                    <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
+                  </template>
+                  <template #subtitle>
+                    <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-autocomplete>
 
             <v-text-field
               v-model="editOrgDialog.name" label="Краткое название *"
@@ -286,6 +314,13 @@
         </v-card>
       </v-dialog>
     </Teleport>
+
+    <!-- Edit contractor dialog (единая карточка контрагента — для организаций с contractor_id) -->
+    <ContractorEditDialog
+      v-model="contractorDialog.show"
+      :contractor-id="contractorDialog.contractorId"
+      @saved="onContractorSaved"
+    />
 
     <!-- New dept dialog -->
     <v-dialog v-model="newDeptDialog.show" max-width="420">
@@ -544,6 +579,7 @@ import '@vue-flow/minimap/dist/style.css'
 import dagre from '@dagrejs/dagre'
 import { apiFetch } from '@/api'
 import { useContractorsStore } from '@/stores/contractors'
+import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 268     // dept container width in px
@@ -661,6 +697,36 @@ function onNewOrgContractorSelect(id: number | null) {
   if (c.address && !d.address.trim()) d.address = c.address
   if (c.signatory && !d.signatory.trim()) d.signatory = c.signatory
 }
+
+const editOrgContractors = ref<any[]>([])
+const editOrgContractorId = ref<number | null>(null)
+let _editOrgContractorSearchTimeout: any = null
+function onEditOrgContractorSearch(query: string) {
+  clearTimeout(_editOrgContractorSearchTimeout)
+  if (!query || query.length < 2) return
+  _editOrgContractorSearchTimeout = setTimeout(async () => {
+    const list = await contractorsStore.search(query, 50)
+    const existing = new Set(editOrgContractors.value.map((c: any) => c.id))
+    for (const c of list) {
+      if (!existing.has(c.id)) editOrgContractors.value.push(c)
+    }
+  }, 300)
+}
+function onEditOrgContractorSelect(id: number | null) {
+  if (!id) return
+  const c = editOrgContractors.value.find((x: any) => x.id === id)
+  if (!c) return
+  const d = editOrgDialog.value
+  d.contractor_id = id
+  if (c.name) d.name = c.name
+  if (c.full_name) d.full_name = c.full_name
+  if (c.inn) d.inn = c.inn
+  if (c.kpp) d.kpp = c.kpp
+  if (c.ogrn) d.ogrn = c.ogrn
+  if (c.address) d.address = c.address
+  if (c.signatory) d.signatory = c.signatory
+}
+
 const graphOrgs = ref<{ id: number; name: string }[]>([])
 const addMemberDialog = ref<{ show: boolean; deptId: number | null; available: { id: number; label: string }[] }>({
   show: false, deptId: null, available: [],
@@ -697,6 +763,7 @@ const OrgNode = markRaw({
           onClick: (e: Event) => { e.stopPropagation(); e.preventDefault(); document.dispatchEvent(new CustomEvent('hv-delete-org', { detail: { id: p.data.orgId, name: p.data.label } })) },
         }) : null,
       ]),
+      p.data.inn ? h('div', { class: 'hnode-org-inn' }, `ИНН: ${p.data.inn}`) : null,
     ])
   },
 })
@@ -839,6 +906,12 @@ const defaultEdgeOptions = { type: 'smoothstep' }
 const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick, onNodesInitialized } = useVueFlow()
 
 const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', contractor_id: null as number | null })
+// Единая карточка контрагента (для организаций, привязанных к контрагенту)
+const contractorDialog = ref({ show: false, contractorId: null as number | null })
+async function onContractorSaved() {
+  contractorDialog.value.show = false
+  await loadGraph()
+}
 const editOrgEgrulLoading = ref(false)
 const editOrgEgrulMessage = ref('')
 const editOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
@@ -894,6 +967,13 @@ onNodeDoubleClick(({ node }) => {
     const org = _lastGraphData.value?.orgs.find(o => o.id === orgId)
     if (org) {
       const o = org as any
+      // Если организация привязана к контрагенту — открываем единую богатую карточку
+      // контрагента (то же хранилище, что и на странице «Контрагенты»).
+      if (o.contractor_id) {
+        contractorDialog.value = { show: true, contractorId: o.contractor_id }
+        return
+      }
+      // Иначе — fallback: урезанный диалог редактирования организации
       editOrgDialog.value = {
         show: true, id: orgId,
         name: o.name || '', full_name: o.full_name || '',
@@ -948,7 +1028,7 @@ async function saveOrg() {
 // ── Graph data ─────────────────────────────────────────────────────────────────
 
 interface GraphData {
-  orgs: { id: number; name: string }[]
+  orgs: { id: number; name: string; inn?: string | null; color?: string | null; contractor_id?: number | null }[]
   departments: { id: number; name: string; org_id: number; head_user_id: number | null; member_ids: number[] }[]
   users: { id: number; full_name: string | null; username: string; role: string; org_id: number; extra_org_ids: number[]; avatar: string | null; position: string | null }[]
   user_user_edges: { id: number; manager_id: number; subordinate_id: number }[]
@@ -1191,7 +1271,7 @@ function buildGraph(data: GraphData) {
     newNodes.push({
       id, type: 'org',
       position: savedPos[id] || { x: 80 + oi * 320, y: 60 },
-      data: { label: org.name, orgColor: oColor, orgId: org.id, onColorPick: pickOrgColor, canDeleteOrg },
+      data: { label: org.name, inn: org.inn || '', orgColor: oColor, orgId: org.id, onColorPick: pickOrgColor, canDeleteOrg },
       draggable: true,
     })
   })
@@ -1213,6 +1293,7 @@ function buildGraph(data: GraphData) {
         memberCount: mc,
         headUserId: dept.head_user_id,
         deptId: dept.id,
+        orgId: dept.org_id,
         orgName,
         orgColor,
         onAddMember: (deptId: number) => openAddMemberDialog(deptId),
@@ -1349,25 +1430,10 @@ function autoLayout() {
   const deptNodes = nodes.value.filter(n => n.type === 'dept')
   const freeUsers = nodes.value.filter(n => n.type === 'user' && !n.parentNode)
 
-  // Org row
-  let x = 60
-  for (const n of orgNodes) {
-    n.position = { x, y: 60 }
-    x += DEPT_W + 40
-  }
-
-  // Dept row
-  x = 60
-  for (const n of deptNodes) {
-    n.position = { x, y: 200 }
-    x += DEPT_W + 40
-  }
-
-  // Users inside depts: sort by rank, then arrange in column
+  // Arrange members inside each dept (column) + resize dept height. Independent of x/y placement.
   for (const dept of deptNodes) {
     const children = nodes.value.filter(n => n.type === 'user' && n.parentNode === dept.id)
     const headUserId = (dept.data as any).headUserId as number | null
-    // Sort by rank
     const sorted = [...children].sort((a, b) => {
       const aid = parseInt(a.id.replace('user-', ''))
       const bid = parseInt(b.id.replace('user-', ''))
@@ -1381,18 +1447,50 @@ function autoLayout() {
     sorted.forEach((u, i) => {
       u.position = { x: 10, y: dHeadH + 4 + i * (USER_H + USER_GAP) }
     })
-    // Save sorted order
     const deptId = parseInt(dept.id.replace('dept-', ''))
     saveDeptOrder(deptId, sorted.map(u => parseInt(u.id.replace('user-', ''))))
-    // Resize dept
     const newH = Math.max(calcDeptHeight(sorted.length), 80)
     dept.style = { ...dept.style as object, height: `${newH}px` }
     ;(dept.data as any).memberCount = sorted.length
   }
 
-  // Free users row
-  x = 60
-  let y = 600
+  // Grouped block layout: each org card sits centered above its own departments.
+  const GAP_X = 40
+  const ORG_Y = 60
+  const DEPT_Y = 230
+  let cursorX = 60
+  let maxBottom = DEPT_Y
+  const placedDeptIds = new Set<string>()
+  for (const org of orgNodes) {
+    const orgId = (org.data as any).orgId
+    const myDepts = deptNodes.filter(d => (d.data as any).orgId === orgId)
+    myDepts.forEach(d => placedDeptIds.add(d.id))
+    const count = Math.max(myDepts.length, 1)
+    const blockWidth = count * DEPT_W + (count - 1) * GAP_X
+    org.position = { x: cursorX + (blockWidth - DEPT_W) / 2, y: ORG_Y }
+    let dx = cursorX
+    for (const d of myDepts) {
+      d.position = { x: dx, y: DEPT_Y }
+      dx += DEPT_W + GAP_X
+      const h = parseInt(String((d.style as any)?.height || '120'))
+      if (DEPT_Y + h > maxBottom) maxBottom = DEPT_Y + h
+    }
+    cursorX += blockWidth + GAP_X * 2
+  }
+
+  // Orphan depts whose org card is not present — lay them out in a trailing row.
+  let ox = cursorX
+  for (const d of deptNodes) {
+    if (placedDeptIds.has(d.id)) continue
+    d.position = { x: ox, y: DEPT_Y }
+    ox += DEPT_W + GAP_X
+    const h = parseInt(String((d.style as any)?.height || '120'))
+    if (DEPT_Y + h > maxBottom) maxBottom = DEPT_Y + h
+  }
+
+  // Free users (no dept) — row below the tallest dept block.
+  let x = 60
+  let y = maxBottom + 60
   for (const u of freeUsers) {
     u.position = { x, y }
     x += USER_W + 30
@@ -1968,7 +2066,8 @@ defineExpose({ refresh: loadGraph })
 }
 
 /* Org node */
-:deep(.hnode-org) { min-width: 200px; border-color: #1565c0; }
+:deep(.hnode-org) { min-width: 200px; max-width: 280px; border-color: #1565c0; }
+:deep(.hnode-org-inn) { padding: 4px 14px 8px; font-size: 11px; color: var(--crm-text-secondary, #607d8b); }
 :deep(.hnode-header) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-weight: 600; font-size: 13px; }
 :deep(.hnode-header-org) { background: linear-gradient(135deg, #1565c0, #1e88e5); color: white; }
 :deep(.hnode-icon) { font-size: 16px; }
@@ -2010,7 +2109,12 @@ defineExpose({ refresh: loadGraph })
   color: #fff;
   opacity: 0.95;
   font-weight: 600;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
 }
 :deep(.hnode-dept-badge) {
   background: rgba(255,255,255,0.3);

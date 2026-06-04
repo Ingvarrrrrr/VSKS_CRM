@@ -57,7 +57,7 @@ async def get_feo_leaves(
     from app.models.purchase_item import PurchaseItem
 
     # Все FeoCategory для subsidy
-    cats_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.id)
+    cats_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id)
     all_cats = (await db.execute(cats_q)).scalars().all()
     if not all_cats:
         return []
@@ -250,7 +250,7 @@ async def list_categories(
         q = q.where(FeoCategory.appendix == appendix)
     if is_active is not None:
         q = q.where(FeoCategory.is_active == is_active)
-    result = await db.execute(q.order_by(FeoCategory.id))
+    result = await db.execute(q.order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id))
     return result.scalars().all()
 
 
@@ -267,7 +267,7 @@ async def category_tree(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.join(Subsidy, FeoCategory.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-    result = await db.execute(q.order_by(FeoCategory.level, FeoCategory.id))
+    result = await db.execute(q.order_by(FeoCategory.level, FeoCategory.sort_order.nulls_last(), FeoCategory.id))
     all_cats = result.scalars().all()
     by_id = {c.id: {"id": c.id, "parent_id": c.parent_id, "subsidy_id": c.subsidy_id,
                     "level": c.level, "name": c.name, "code": c.code,
@@ -622,13 +622,14 @@ async def _do_feo_import(
         cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
 
     created = 0; updated = 0; skipped = 0; errors: list[dict] = []
+    created_details: list[dict] = []
     updated_details: list[dict] = []
     skipped_details: list[dict] = []
 
-    async def find_or_create(subsidy_id: int, parent_id, name: str, level: int) -> FeoCategory:
+    async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
         key = (subsidy_id, parent_id, name.lower().strip())
         if key in cat_cache:
-            return cat_cache[key]
+            return cat_cache[key], False
         cat = FeoCategory(
             name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
             is_active=True,
@@ -636,14 +637,17 @@ async def _do_feo_import(
         db.add(cat)
         await db.flush()
         cat_cache[key] = cat
-        return cat
+        return cat, True
 
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
         if not lvl2_name or lvl2_name.startswith("←"):
             skipped += 1
-            if lvl2_name:
-                skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "служебная строка"})
+            skipped_details.append({
+                "row": row_num,
+                "name": lvl2_name or "(пустая строка)",
+                "reason": "служебная строка" if lvl2_name else "нет наименования (уровень 2 пуст)",
+            })
             continue
 
         sub_name = get_cell(row, c_subsidy) if c_subsidy is not None else None
@@ -683,9 +687,10 @@ async def _do_feo_import(
         amt_lvl4 = to_dec(get_cell(row, c_amt_lvl4)) if c_amt_lvl4 is not None else None
 
         try:
-            cat_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
-            if cat_l1.id and (subsidy_id, None, lvl2_name.lower().strip()) not in {k for k in cat_cache if cat_cache[k] is cat_l1 and cat_cache[k].id == cat_l1.id}:
+            cat_l1, new_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
+            if new_l1:
                 created += 1
+                created_details.append({"row": row_num, "name": lvl2_name, "reason": "направление (ур. 2)"})
             if qty_lvl2 is not None and cat_l1.planned_quantity != qty_lvl2:
                 cat_l1.planned_quantity = qty_lvl2
             if unit_lvl2 and cat_l1.unit != unit_lvl2:
@@ -693,12 +698,13 @@ async def _do_feo_import(
             if amt_lvl2 is not None and cat_l1.planned_amount != amt_lvl2:
                 cat_l1.planned_amount = amt_lvl2
             leaf = cat_l1
+            leaf_is_new = new_l1
 
             if lvl3_name:
-                is_new_l2 = (subsidy_id, cat_l1.id, lvl3_name.lower().strip()) not in cat_cache
-                cat_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
-                if is_new_l2 and cat_l2.id:
+                cat_l2, new_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
+                if new_l2:
                     created += 1
+                    created_details.append({"row": row_num, "name": lvl3_name, "reason": "категория (ур. 3)"})
                 if qty_lvl3 is not None and cat_l2.planned_quantity != qty_lvl3:
                     cat_l2.planned_quantity = qty_lvl3
                 if unit_lvl3 and cat_l2.unit != unit_lvl3:
@@ -706,12 +712,13 @@ async def _do_feo_import(
                 if amt_lvl3 is not None and cat_l2.planned_amount != amt_lvl3:
                     cat_l2.planned_amount = amt_lvl3
                 leaf = cat_l2
+                leaf_is_new = new_l2
 
                 if lvl4_name:
-                    is_new_l3 = (subsidy_id, cat_l2.id, lvl4_name.lower().strip()) not in cat_cache
-                    cat_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
-                    if is_new_l3 and cat_l3.id:
+                    cat_l3, new_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
+                    if new_l3:
                         created += 1
+                        created_details.append({"row": row_num, "name": lvl4_name, "reason": "статья (ур. 4)"})
                     if qty_lvl4 is not None and cat_l3.planned_quantity != qty_lvl4:
                         cat_l3.planned_quantity = qty_lvl4
                     if unit_lvl4 and cat_l3.unit != unit_lvl4:
@@ -719,6 +726,7 @@ async def _do_feo_import(
                     if amt_lvl4 is not None and cat_l3.planned_amount != amt_lvl4:
                         cat_l3.planned_amount = amt_lvl4
                     leaf = cat_l3
+                    leaf_is_new = new_l3
 
             changed = False
             if code is not None and leaf.code != code:
@@ -729,7 +737,7 @@ async def _do_feo_import(
                 leaf.budget = budget; changed = True
             if leaf.is_active != is_active:
                 leaf.is_active = is_active; changed = True
-            if changed:
+            if changed and not leaf_is_new:
                 updated += 1
                 updated_details.append({"row": row_num, "name": leaf.name, "reason": "обновлены поля категории"})
 
@@ -753,6 +761,7 @@ async def _do_feo_import(
                     db.add(pi)
                     await db.flush()
                     created += 1
+                    created_details.append({"row": row_num, "name": lvl5_name, "reason": "плановая позиция (ур. 5)"})
                 else:
                     ch2 = False
                     if item_qty is not None and existing_item.quantity != item_qty:
@@ -773,7 +782,8 @@ async def _do_feo_import(
 
     await db.commit()
     return {"created": created, "updated": updated, "skipped": skipped,
-            "errors": errors, "updated_details": updated_details, "skipped_details": skipped_details}
+            "errors": errors, "created_details": created_details,
+            "updated_details": updated_details, "skipped_details": skipped_details}
 
 
 @router.post("/import")
@@ -982,7 +992,7 @@ async def export_feo_to_excel(
         raise HTTPException(404, "Субсидия не найдена")
 
     cats = (await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.id)
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id)
     )).scalars().all()
 
     # purchase totals
@@ -1253,3 +1263,44 @@ async def move_category(
     if warning:
         result["warning"] = warning
     return result
+
+
+@router.patch("/{cat_id}/reorder")
+async def reorder_category(
+    cat_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_tab('feo_categories')),
+):
+    """Move a category up/down among its siblings (same parent, same subsidy).
+    Body: {"direction": "up"|"down"}. Swaps sort_order with the adjacent sibling."""
+    direction = (data.get("direction") or "").lower()
+    if direction not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="direction должен быть 'up' или 'down'")
+    cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Категория не найдена")
+    sib_filter = (
+        FeoCategory.parent_id.is_(None) if cat.parent_id is None
+        else FeoCategory.parent_id == cat.parent_id
+    )
+    siblings = (await db.execute(
+        select(FeoCategory)
+        .where(FeoCategory.subsidy_id == cat.subsidy_id, sib_filter)
+        .order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id)
+    )).scalars().all()
+    # Normalize any NULL sort_order to a stable increasing sequence
+    for i, s in enumerate(siblings):
+        if s.sort_order is None:
+            s.sort_order = (i + 1) * 10
+    idx = next((i for i, s in enumerate(siblings) if s.id == cat_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Категория не найдена среди соседей")
+    swap_idx = idx - 1 if direction == "up" else idx + 1
+    if swap_idx < 0 or swap_idx >= len(siblings):
+        await db.commit()
+        return {"ok": True, "moved": False}
+    a, b = siblings[idx], siblings[swap_idx]
+    a.sort_order, b.sort_order = b.sort_order, a.sort_order
+    await db.commit()
+    return {"ok": True, "moved": True}

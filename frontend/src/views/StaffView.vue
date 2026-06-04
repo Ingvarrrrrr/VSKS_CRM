@@ -244,6 +244,7 @@
         </v-alert>
 
         <v-data-table
+            v-resizable-columns="'staff'"
             :headers="visibleHeaders"
             :items="filteredUsers"
             :loading="usersLoading"

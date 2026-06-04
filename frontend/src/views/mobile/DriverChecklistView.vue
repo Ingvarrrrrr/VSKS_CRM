@@ -4,10 +4,10 @@
     <div class="checklist__header pa-4 pb-0">
       <div class="d-flex align-center justify-space-between mb-2">
         <div class="text-h6 font-weight-bold">Чек-лист осмотра</div>
-        <div class="text-caption font-weight-bold text-medium-emphasis">Шаг {{ step }}/5</div>
+        <div class="text-caption font-weight-bold text-medium-emphasis">{{ progressPct }}%</div>
       </div>
       <v-progress-linear
-        :model-value="(step / 5) * 100"
+        :model-value="progressPct"
         color="primary"
         rounded
         height="6"
@@ -29,11 +29,11 @@
       <div v-else class="text-caption text-medium-emphasis mb-1">Нет выбранного ТС</div>
     </div>
 
-    <!-- Step content -->
+    <!-- Single scrollable form: all sections visible -->
     <div class="checklist__body pa-4">
 
-      <!-- Step 1: Odometer -->
-      <div v-if="step === 1">
+      <!-- Текущий пробег -->
+      <div class="checklist__section">
         <div class="checklist__field-label">Текущий пробег, км</div>
         <v-text-field
           v-model.number="form.odometer"
@@ -62,40 +62,22 @@
         </div>
       </div>
 
-      <!-- Step 2: Fuel level — цифры + прогноз пробега -->
-      <div v-if="step === 2">
-        <div class="checklist__field-label">Топливо в баке</div>
-        <v-text-field
-          v-model.number="form.fuelLiters"
-          type="number"
-          label="Литров в баке"
-          suffix="л"
-          inputmode="decimal"
-          step="0.5"
-          min="0"
-          :max="vehicle?.props?.tank_capacity_l || vehicle?.tank_capacity_l || 200"
-          variant="outlined"
-          density="comfortable"
-          rounded="lg"
-          hide-details="auto"
-          placeholder="Введите количество литров"
-          class="mt-2"
-        />
-        <!-- Прогноз пробега -->
-        <div v-if="rangeKm > 0" class="fuel-estimate mt-3 rounded-xl pa-3">
-          <div class="d-flex align-center ga-2">
-            <v-icon icon="mdi-gauge" color="info" size="20" />
-            <span class="fuel-estimate__main">≈ <b>{{ rangeKm }} км</b></span>
-            <span class="fuel-estimate__sub text-caption text-medium-emphasis">по норме {{ currentNorm }} л/100км</span>
-          </div>
-        </div>
-        <div v-else-if="!currentNorm" class="text-caption text-medium-emphasis mt-2">
-          Норма расхода не указана для данного ТС
+      <!-- Уровень топлива (сегментированный) -->
+      <div class="checklist__section">
+        <div class="checklist__field-label">Уровень топлива</div>
+        <div class="checklist__seg mt-2">
+          <button
+            v-for="opt in fuelOptions"
+            :key="opt.value"
+            class="checklist__seg__opt"
+            :class="{ 'checklist__seg__opt--active': form.fuelLevel === opt.value }"
+            @click="form.fuelLevel = opt.value"
+          >{{ opt.label }}</button>
         </div>
       </div>
 
-      <!-- Step 3: Overall state -->
-      <div v-if="step === 3">
+      <!-- Общее тех. состояние -->
+      <div class="checklist__section">
         <div class="checklist__field-label">Общее тех. состояние</div>
         <div class="checklist__toggle mt-2">
           <button
@@ -111,8 +93,8 @@
         </div>
       </div>
 
-      <!-- Step 4: Checklist items -->
-      <div v-if="step === 4">
+      <!-- Комплектность -->
+      <div class="checklist__section">
         <div class="checklist__field-label">Комплектность · нажми статус</div>
         <div class="d-flex flex-column gap-2 mt-2">
           <div
@@ -139,8 +121,8 @@
         </div>
       </div>
 
-      <!-- Step 5: Paint condition + photos + notes -->
-      <div v-if="step === 5">
+      <!-- Состояние ЛКП -->
+      <div class="checklist__section">
         <div class="checklist__field-label">Состояние ЛКП</div>
         <div class="checklist__toggle mt-2">
           <button
@@ -154,11 +136,14 @@
             @click="form.paintCondition = opt.value"
           >{{ opt.label }}</button>
         </div>
+      </div>
 
-        <div class="checklist__field-label mt-4">Фото (до 4)</div>
+      <!-- Фото -->
+      <div class="checklist__section">
+        <div class="checklist__field-label">Фото (до 5)</div>
         <div class="checklist__photo-grid mt-2">
           <div
-            v-for="n in 4"
+            v-for="n in 5"
             :key="n"
             class="checklist__photo-cell rounded-xl"
           >
@@ -173,9 +158,9 @@
             </div>
           </div>
         </div>
-        <!-- Hidden file inputs (4 slots) -->
+        <!-- Hidden file inputs (5 slots) -->
         <input
-          v-for="n in 4"
+          v-for="n in 5"
           :key="`fi-${n}`"
           :ref="(el) => { if (el) fileInputs[n - 1] = el as HTMLInputElement }"
           type="file"
@@ -184,8 +169,11 @@
           style="display: none"
           @change="(e) => onPhotoChange(e, n - 1)"
         />
+      </div>
 
-        <div class="checklist__field-label mt-4">Замечания</div>
+      <!-- Замечания -->
+      <div class="checklist__section">
+        <div class="checklist__field-label">Замечания</div>
         <v-textarea
           v-model="form.notes"
           variant="outlined"
@@ -207,10 +195,8 @@
           rounded="lg"
           size="large"
           style="flex: 1"
-          @click="prevStep"
-        >
-          {{ step === 1 ? 'Отмена' : 'Назад' }}
-        </v-btn>
+          @click="router.push({ name: 'm-driver-home' })"
+        >Отмена</v-btn>
         <v-btn
           color="primary"
           variant="flat"
@@ -218,10 +204,8 @@
           size="large"
           style="flex: 2"
           :loading="submitting"
-          @click="nextOrSubmit"
-        >
-          {{ step < 5 ? 'Далее' : 'Отправить' }}
-        </v-btn>
+          @click="submitChecklist"
+        >Отправить</v-btn>
       </div>
     </div>
 
@@ -244,7 +228,6 @@ import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 const router = useRouter()
 
 // ---- State ----
-const step = ref(1)
 const vehicle = ref<any>(null)
 const submitting = ref(false)
 
@@ -256,39 +239,12 @@ const photoPreviews = ref<string[]>([])
 
 const form = reactive({
   odometer: null as number | null,
-  fuelLiters: null as number | null,
   fuelLevel: '' as string,
   overallState: '' as string,
   paintCondition: '' as string,
   notes: '',
   items: {} as Record<string, string>,
 })
-
-// ---- Fuel norm + range computed ----
-const currentNorm = computed<number>(() => {
-  if (!vehicle.value) return 0
-  const month = new Date().getMonth() + 1
-  const isWinter = month >= 11 || month <= 3
-  return isWinter
-    ? (vehicle.value.fuel_norm_winter || vehicle.value.fuel_norm_summer || 0)
-    : (vehicle.value.fuel_norm_summer || 0)
-})
-
-const rangeKm = computed<number>(() => {
-  if (!form.fuelLiters || !currentNorm.value) return 0
-  return Math.round(form.fuelLiters * 100 / currentNorm.value)
-})
-
-// Map литры → fuel_level enum
-function litersToFuelLevel(liters: number | null): string {
-  if (liters === null || liters <= 0) return '1/2'
-  const tank = vehicle.value?.props?.tank_capacity_l || vehicle.value?.tank_capacity_l || 60
-  const pct = liters / tank
-  if (pct < 0.25) return '1/4'
-  if (pct < 0.5)  return '1/2'
-  if (pct < 0.75) return '3/4'
-  return 'full'
-}
 
 // ---- Options ----
 const fuelOptions = [
@@ -305,10 +261,9 @@ const stateOptions = [
 ]
 
 const paintOptions = [
-  { value: 'excellent', label: 'Отличное', color: 'ok' },
   { value: 'good', label: 'Хорошее', color: 'ok' },
-  { value: 'satisfactory', label: 'Удовл.', color: 'warn' },
-  { value: 'poor', label: 'Плохое', color: 'alert' },
+  { value: 'satisfactory', label: 'Незнач. поврежд.', color: 'warn' },
+  { value: 'poor', label: 'Сильные', color: 'alert' },
 ]
 
 const pips = [
@@ -326,11 +281,24 @@ const checkItems = [
   { key: 'fire_ext', label: 'Огнетушитель' },
   { key: 'spare_wheel', label: 'Запасное колесо' },
   { key: 'tools', label: 'Полный набор ключей' },
+  { key: 'branding', label: 'Брендирование' },
 ]
 
 // Init default item statuses
 checkItems.forEach((item) => {
   form.items[item.key] = 'ok'
+})
+
+// ---- Progress ----
+const progressPct = computed<number>(() => {
+  let filled = 0
+  const total = 5
+  if (form.odometer != null) filled++
+  if (form.fuelLevel) filled++
+  if (form.overallState) filled++
+  if (checkItems.every((ci) => form.items[ci.key])) filled++
+  if (form.paintCondition) filled++
+  return Math.round((filled / total) * 100)
 })
 
 // ---- Methods ----
@@ -348,22 +316,6 @@ async function loadVehicle() {
     }
   } catch {
     // ignore
-  }
-}
-
-function prevStep() {
-  if (step.value === 1) {
-    router.push({ name: 'm-driver-home' })
-  } else {
-    step.value--
-  }
-}
-
-function nextOrSubmit() {
-  if (step.value < 5) {
-    step.value++
-  } else {
-    submitChecklist()
   }
 }
 
@@ -401,20 +353,13 @@ async function submitChecklist() {
       status: form.items[ci.key] || 'unknown',
     }))
 
-    // Вычисляем fuel_level из литров (или используем устаревший enum если литры не введены)
-    const computedFuelLevel = form.fuelLiters !== null
-      ? litersToFuelLevel(form.fuelLiters)
-      : (form.fuelLevel || '1/2')
-
     const body = {
       vehicle_id: vehicleId,
       type: 'pre_trip',
       overall_state: form.overallState || 'operational',
-      fuel_level: computedFuelLevel,
+      fuel_level: form.fuelLevel || '1/2',
       paint_condition: form.paintCondition || 'good',
-      notes: form.fuelLiters !== null
-        ? `Топливо: ${form.fuelLiters} л${rangeKm.value > 0 ? ` (≈ ${rangeKm.value} км)` : ''}${form.notes ? '\n' + form.notes : ''}`
-        : (form.notes || ''),
+      notes: form.notes || '',
       odometer_km: form.odometer,
       items: itemsArr,
     }
@@ -458,6 +403,10 @@ onMounted(loadVehicle)
 
 .checklist__body {
   flex: 1;
+}
+
+.checklist__section {
+  margin-bottom: 18px;
 }
 
 .checklist__bottom {
@@ -597,7 +546,7 @@ onMounted(loadVehicle)
 /* Photo grid */
 .checklist__photo-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
 }
 
@@ -632,21 +581,4 @@ onMounted(loadVehicle)
 .gap-1 { gap: 4px; }
 .gap-2 { gap: 8px; }
 .gap-3 { gap: 12px; }
-
-/* Fuel estimate block */
-.fuel-estimate {
-  background: rgba(var(--v-theme-info), 0.08);
-  border: 1px solid rgba(var(--v-theme-info), 0.25);
-  display: flex;
-  align-items: center;
-}
-
-.fuel-estimate__main {
-  font-size: 15px;
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.fuel-estimate__sub {
-  opacity: 0.7;
-}
 </style>

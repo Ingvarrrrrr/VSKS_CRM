@@ -420,6 +420,7 @@
       <v-card class="fleet-table-card" elevation="0">
         <v-card-text class="pa-0">
           <v-data-table
+            v-resizable-columns="'vehicle-dashboard'"
             :items="filteredVehicles"
             :headers="tableHeaders"
             :search="searchQuery"

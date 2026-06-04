@@ -185,6 +185,7 @@
 
     <!-- Table -->
     <v-data-table
+        v-resizable-columns="'orders'"
         ref="ordersTableRef"
         :headers="tableHeaders"
         :items="filteredOrdersWithRowNum"

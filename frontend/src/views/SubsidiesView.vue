@@ -410,6 +410,10 @@
                           title="Показать плановые / фактические позиции"
                           @click="toggleItemPanel(node)"
                         /></span>
+                        <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
+                          title="Переместить выше" @click.stop="reorderFeoNode(node, 'up')" />
+                        <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
+                          title="Переместить ниже" @click.stop="reorderFeoNode(node, 'down')" />
                         <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                           title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
                         <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
@@ -927,12 +931,16 @@
         <v-divider />
         <v-card-text class="pt-4">
           <template v-if="deleteErrorLinked">
-            <v-alert type="error" variant="tonal" class="mb-3">
-              Нельзя удалить <strong>{{ deleteTarget?.name }}</strong>: есть связанные закупки.
-              Сначала удалите или перенесите их.
+            <v-alert type="error" variant="tonal" class="mb-3" style="white-space:pre-line">
+              {{ deleteErrorMsg || 'Нельзя удалить субсидию: есть связанные записи. Сначала удалите или перепривяжите их.' }}
             </v-alert>
-            <v-btn block color="primary" variant="tonal" prepend-icon="mdi-cart-outline" @click="goToLinkedPurchases">
-              Перейти к закупкам субсидии
+            <v-btn v-if="(deleteImpact?.purchases ?? 0) > 0" block color="primary" variant="tonal"
+              prepend-icon="mdi-cart-outline" class="mb-2" @click="goToLinkedPurchases">
+              Перейти к закупкам ({{ deleteImpact?.purchases }})
+            </v-btn>
+            <v-btn v-if="(deleteImpact?.contracts ?? 0) > 0" block color="primary" variant="tonal"
+              prepend-icon="mdi-file-document-outline" @click="goToLinkedContracts">
+              Перейти к договорам ({{ deleteImpact?.contracts }})
             </v-btn>
           </template>
           <template v-else>
@@ -1249,6 +1257,7 @@
         <v-divider />
         <v-card-text class="pa-0">
           <v-data-table
+            v-resizable-columns="'subsidies-approvers'"
             :headers="approversHeaders"
             :items="approversList"
             :loading="loadingApprovers"
@@ -1266,6 +1275,12 @@
             </template>
             <template #item.order_num="{ item, index }">
               <span class="text-caption text-medium-emphasis">{{ index + 1 }}</span>
+            </template>
+            <template #item.full_name="{ item }">
+              <span v-if="item.role_name === 'Ответственный исполнитель'" class="text-medium-emphasis font-italic">
+                — Исполнитель определяется для каждой закупки
+              </span>
+              <span v-else>{{ item.full_name }}</span>
             </template>
             <template #item.actions="{ item, index }">
               <v-btn icon="mdi-arrow-up" size="x-small" variant="text" :disabled="index === 0" @click="moveApprover(index, -1)" />
@@ -1349,7 +1364,16 @@
             hide-details
             @update:model-value="onApproverRoleChange"
           />
+          <v-alert
+            v-if="approverForm.role_name === 'Ответственный исполнитель'"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+            text="Для роли «Ответственный исполнитель» ФИО не указывается — исполнитель определяется для каждой закупки из её данных."
+          />
           <v-autocomplete
+            v-if="approverForm.role_name !== 'Ответственный исполнитель'"
             v-model="approverForm.selectedUser"
             :items="approverUsersList"
             item-title="full_name"
@@ -1398,7 +1422,7 @@
           <v-btn
             color="teal"
             :loading="savingApprover"
-            :disabled="!approverForm.role_name || !approverForm.selectedUser"
+            :disabled="!approverForm.role_name || (approverForm.role_name !== 'Ответственный исполнитель' && !approverForm.selectedUser)"
             @click="saveApprover"
           >
             {{ approverEditTarget ? 'Сохранить' : 'Добавить' }}
@@ -1471,6 +1495,7 @@
                   class="mb-2"
                 />
                 <v-data-table
+                  v-resizable-columns="'subsidies-template-vars'"
                   :headers="[
                     { title: 'Переменная', key: 'var', width: '280px', minWidth: '280px' },
                     { title: 'Описание', key: 'description' },
@@ -1758,8 +1783,12 @@
           <!-- Step 3: Result -->
           <template v-if="feoImport.step === 3">
             <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
-              <v-chip color="success" variant="flat">
-                <v-icon icon="mdi-plus-circle" start size="16" />Создано: {{ feoImport.result.created }}
+              <v-chip color="success" variant="flat"
+                :disabled="!feoImport.result.created_details?.length"
+                @click="feoToggleResultPanel('created')">
+                <v-icon icon="mdi-plus-circle" start size="16" />Создано: {{ feoImport.result.created ?? 0 }}
+                <v-icon v-if="feoImport.result.created_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('created') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
               </v-chip>
               <v-chip color="warning" variant="flat"
                 :disabled="!feoImport.result.updated_details?.length"
@@ -1777,6 +1806,18 @@
               </v-chip>
             </div>
             <v-expansion-panels v-if="feoImport.result" v-model="feoResultPanels" multiple class="mb-3">
+              <v-expansion-panel v-if="feoImport.result.created_details?.length" value="created">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-plus-circle" size="18" color="success" class="mr-2" />
+                  Созданные позиции ({{ feoImport.result.created_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.result.created_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
               <v-expansion-panel v-if="feoImport.result.updated_details?.length" value="updated">
                 <v-expansion-panel-title>
                   <v-icon icon="mdi-pencil" size="18" color="warning" class="mr-2" />
@@ -2474,6 +2515,7 @@ const templateFileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingDocType     = ref<string | null>(null)
 const deleteTarget       = ref<SubsidyRow | null>(null)
 const deleteErrorLinked  = ref(false)
+const deleteErrorMsg     = ref('')
 const deleteImpact       = ref<{ feo_categories: number; planned_items: number; purchases: number; contracts: number } | null>(null)
 const feoEditTarget      = ref<FeoCategory | null>(null)
 const feoDeleteTarget    = ref<FeoCategory | null>(null)
@@ -3434,6 +3476,24 @@ async function loadFeo(subsidyId: number) {
   }
 }
 
+async function reorderFeoNode(node: any, direction: 'up' | 'down') {
+  if (!selectedId.value) return
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${node.id}/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ direction }),
+    })
+    if (res?.moved === false) {
+      showSnack(direction === 'up' ? 'Уже первая в списке' : 'Уже последняя в списке', 'info')
+      return
+    }
+    await loadFeo(selectedId.value)
+    syncFeoFilled()
+  } catch (e: any) {
+    showSnack(e?.detail || e?.payload?.message || 'Не удалось переместить', 'error')
+  }
+}
+
 // ── Actions ───────────────────────────────────────
 // 12-04: load FEO residuals for selected subsidy
 async function loadResiduals() {
@@ -3694,6 +3754,7 @@ async function startEdit(s: SubsidyRow) {
 async function confirmDelete(s: SubsidyRow) {
   deleteTarget.value = s
   deleteErrorLinked.value = false
+  deleteErrorMsg.value = ''
   deleteImpact.value = null
   showDeleteDialog.value = true
   try {
@@ -3712,8 +3773,8 @@ async function addSubsidy() {
     showAddDialog.value = false
     form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
     showSnack('Субсидия добавлена')
-  } catch {
-    showSnack('Ошибка добавления', 'error')
+  } catch (e: any) {
+    showSnack(e?.detail || e?.payload?.message || 'Ошибка добавления', 'error')
   } finally {
     saving.value = false
   }
@@ -3734,7 +3795,7 @@ async function updateSubsidy() {
     showSnack('Субсидия обновлена')
   } catch (e: any) {
     console.error('updateSubsidy failed:', e)
-    showSnack('Ошибка сохранения', 'error')
+    showSnack(e?.detail || e?.payload?.message || 'Ошибка сохранения', 'error')
   } finally {
     saving.value = false
   }
@@ -3750,10 +3811,11 @@ async function deleteSubsidy() {
     showDeleteDialog.value = false
     showSnack('Субсидия удалена', 'warning')
   } catch (e: any) {
-    if (e?.status === 409 || e?.detail?.includes('закупк')) {
+    if (e?.status === 409) {
       deleteErrorLinked.value = true
+      deleteErrorMsg.value = e?.detail || e?.payload?.message || ''
     } else {
-      showSnack(e?.detail || 'Ошибка удаления', 'error')
+      showSnack(e?.detail || e?.payload?.message || 'Ошибка удаления', 'error')
     }
   } finally {
     saving.value = false
@@ -3763,6 +3825,11 @@ async function deleteSubsidy() {
 function goToLinkedPurchases() {
   showDeleteDialog.value = false
   router.push(`/orders?subsidy_id=${deleteTarget.value?.id}`)
+}
+
+function goToLinkedContracts() {
+  showDeleteDialog.value = false
+  router.push(`/contracts?subsidy_id=${deleteTarget.value?.id}`)
 }
 
 async function addFeoCategory() {
@@ -3929,8 +3996,10 @@ async function openApproversDialog(s: SubsidyRow) {
 const RESPONSIBLE_PLACEHOLDER = '_________________'
 
 function onApproverRoleChange(role: string) {
-  if (role === 'Ответственный исполнитель' && !approverForm.value.full_name) {
+  if (role === 'Ответственный исполнитель') {
     approverForm.value.full_name = RESPONSIBLE_PLACEHOLDER
+    approverForm.value.selectedUser = null
+    approverForm.value.user_id = null
   }
 }
 

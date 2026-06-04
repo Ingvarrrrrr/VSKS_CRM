@@ -12,6 +12,7 @@
 
     <!-- Main table -->
     <v-data-table
+      v-resizable-columns="'vehicle-odometer'"
       :headers="headers"
       :items="rows"
       :loading="loading"

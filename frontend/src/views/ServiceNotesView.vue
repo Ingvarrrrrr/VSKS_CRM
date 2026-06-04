@@ -111,6 +111,7 @@
     </v-chip-group>
 
     <v-data-table
+        v-resizable-columns="'service-notes'"
         :headers="visibleHeaders"
         :items="filteredItems"
         :loading="loading"

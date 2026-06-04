@@ -20,6 +20,7 @@
 
     <!-- Table -->
     <v-data-table
+        v-resizable-columns="'suppliers'"
         :headers="visibleHeaders"
         :items="filteredSuppliers"
         :loading="loading"

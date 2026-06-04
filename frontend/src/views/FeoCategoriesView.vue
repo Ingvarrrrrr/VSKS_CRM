@@ -190,6 +190,10 @@
 
                     <!-- Действия -->
                     <td class="feo-td feo-th-actions">
+                      <v-btn icon="mdi-arrow-up" variant="text" size="small" color="grey-darken-1"
+                        title="Переместить вверх" @click="reorderNode(node, 'up')" />
+                      <v-btn icon="mdi-arrow-down" variant="text" size="small" color="grey-darken-1"
+                        title="Переместить вниз" @click="reorderNode(node, 'down')" />
                       <v-btn icon="mdi-plus-circle-outline" variant="text" size="small" color="primary"
                         title="Добавить дочернюю" @click="openAddDialog(node)" />
                       <v-btn icon="mdi-pencil-outline" variant="text" size="small" color="secondary"
@@ -803,6 +807,19 @@ async function onDropToRoot(e: DragEvent) {
 
 function onDragEnd() {
   dragNodeId.value = null; dragOverId.value = null
+}
+
+async function reorderNode(node: FeoNode, direction: 'up' | 'down') {
+  try {
+    const res = await apiFetch<any>(`/feo-categories/${node.id}/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ direction }),
+    })
+    if (res?.moved === false) return
+    await loadFeo(selectedId.value!)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка перемещения', 'error')
+  }
 }
 
 // ─── Parent options for edit dialog ───────────────────────────────────────────

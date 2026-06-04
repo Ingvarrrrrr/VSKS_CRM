@@ -99,6 +99,7 @@
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
       <v-data-table
+        v-resizable-columns="'wishes-my'"
         :headers="wishHeaders"
         :items="myWishesFiltered"
         :loading="loading"
@@ -263,6 +264,7 @@
     <!-- ── INCOMING FOR APPROVAL TAB ── -->
     <div v-if="activeTab === 'incoming'">
       <v-data-table
+        v-resizable-columns="'wishes-incoming'"
         :headers="wishHeaders"
         :items="incomingWishesFiltered"
         :loading="loadingIncoming"
@@ -413,6 +415,7 @@
       </div>
 
       <v-data-table
+        v-resizable-columns="'wishes-all'"
         :headers="wishHeadersAll"
         :items="allWishesFiltered"
         :loading="loadingAll"

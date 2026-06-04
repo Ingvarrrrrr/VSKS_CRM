@@ -20,6 +20,7 @@
 
     <!-- Table -->
     <v-data-table
+      v-resizable-columns="'vehicle-trips'"
       v-else
       :headers="headers"
       :items="trips"

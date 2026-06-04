@@ -185,6 +185,39 @@ async def get_subsidy(
         d["contractor_inn"] = None
     return d
 
+async def _materialize_org_from_contractor(db: AsyncSession, contractor) -> None:
+    """Find-or-create Organization, зеркалящую контрагента (получатель субсидии),
+    чтобы он попадал в контур (Персонал/Иерархия). Матч по contractor_id, затем по ИНН.
+    Идемпотентно. НЕ трогает subsidy.org_id (мультитенантность)."""
+    if contractor is None:
+        return
+    from app.models.organization import Organization
+    org = (await db.execute(
+        select(Organization).where(Organization.contractor_id == contractor.id)
+    )).scalars().first()
+    if org is None and contractor.inn:
+        org = (await db.execute(
+            select(Organization).where(Organization.inn == contractor.inn)
+        )).scalars().first()
+    if org is None:
+        org = Organization(
+            name=(contractor.name or "")[:255] or f"Контрагент #{contractor.id}",
+            full_name=(contractor.full_name or None),
+            inn=contractor.inn,
+            kpp=contractor.kpp,
+            ogrn=contractor.ogrn,
+            address=((contractor.address or "")[:500] or None),
+            signatory=((contractor.signatory or "")[:500] or None),
+            contractor_id=contractor.id,
+            is_active=True,
+        )
+        db.add(org)
+        await db.flush()
+    elif org.contractor_id is None:
+        org.contractor_id = contractor.id
+    await db.commit()
+
+
 @router.post("/", response_model=SubsidyOut)
 async def create_subsidy(
     subsidy: SubsidyCreate,
@@ -193,6 +226,13 @@ async def create_subsidy(
 ):
     data = subsidy.dict()
     data['org_id'] = get_single_org_id(current_user) or current_user.org_id
+    _new_name = (data.get('name') or '').strip()
+    if _new_name:
+        _dup = (await db.execute(
+            select(Subsidy.id).where(func.lower(func.trim(Subsidy.name)) == _new_name.lower())
+        )).first()
+        if _dup:
+            raise HTTPException(status_code=409, detail=f"Субсидия с названием «{_new_name}» уже существует")
     db_subsidy = Subsidy(**data)
     db.add(db_subsidy)
     await db.commit()
@@ -206,6 +246,7 @@ async def create_subsidy(
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
         d["contractor_inn"] = contractor.inn if contractor else None
+        await _materialize_org_from_contractor(db, contractor)
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
@@ -232,6 +273,16 @@ async def update_subsidy(
     calc = await calculate_budget_from_categories(db, subsidy_id)
 
     # Step 2: try normal setattr → commit
+    _upd_name = (payload.get('name') or '').strip()
+    if _upd_name:
+        _dup = (await db.execute(
+            select(Subsidy.id).where(
+                func.lower(func.trim(Subsidy.name)) == _upd_name.lower(),
+                Subsidy.id != subsidy_id,
+            )
+        )).first()
+        if _dup:
+            raise HTTPException(status_code=409, detail=f"Субсидия с названием «{_upd_name}» уже существует")
     for key, value in payload.items():
         setattr(db_subsidy, key, value)
     db_subsidy.calculated_budget = calc
@@ -317,6 +368,7 @@ async def update_subsidy(
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
         d["contractor_inn"] = contractor.inn if contractor else None
+        await _materialize_org_from_contractor(db, contractor)
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
@@ -368,21 +420,29 @@ async def delete_subsidy(
     from app.models.purchase import Purchase
     from app.models.contract import Contract
 
-    p_count = await db.scalar(
-        select(func.count()).select_from(Purchase).where(Purchase.subsidy_id == subsidy_id)
-    )
-    c_count = await db.scalar(
-        select(func.count()).select_from(Contract).where(Contract.subsidy_id == subsidy_id)
-    )
-    if p_count or c_count:
+    blocking_purchases = (await db.execute(
+        select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
+    )).all()
+    blocking_contracts = (await db.execute(
+        select(Contract.id).where(Contract.subsidy_id == subsidy_id)
+    )).all()
+    if blocking_purchases or blocking_contracts:
         parts = []
-        if p_count:
-            parts.append(f"{p_count} закупок")
-        if c_count:
-            parts.append(f"{c_count} контрактов")
+        if blocking_purchases:
+            ids = ", ".join(f"#{p.id}" for p in blocking_purchases[:20])
+            more = f" и ещё {len(blocking_purchases) - 20}" if len(blocking_purchases) > 20 else ""
+            parts.append(f"{len(blocking_purchases)} закупок (ID: {ids}{more})")
+        if blocking_contracts:
+            ids = ", ".join(f"#{c.id}" for c in blocking_contracts[:20])
+            more = f" и ещё {len(blocking_contracts) - 20}" if len(blocking_contracts) > 20 else ""
+            parts.append(f"{len(blocking_contracts)} договоров (ID: {ids}{more})")
         raise HTTPException(
             status_code=409,
-            detail=f"Нельзя удалить субсидию: связано {' и '.join(parts)}. Сначала удалите или перепривяжите их."
+            detail=(
+                f"Нельзя удалить субсидию «{db_subsidy.name}»: связано "
+                f"{' и '.join(parts)}. Часть закупок может быть скрыта фильтрами в списке "
+                f"(например, разделённые закупки со статусом «split»). Сначала удалите или перепривяжите их."
+            ),
         )
 
     # Bulk-delete dependents via SQL (not ORM cascade): feo_planned_items.feo_category_id

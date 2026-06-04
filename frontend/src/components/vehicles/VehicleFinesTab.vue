@@ -29,6 +29,7 @@
 
     <!-- Table -->
     <v-data-table
+      v-resizable-columns="'vehicle-fines'"
       v-else
       :headers="headers"
       :items="fines"

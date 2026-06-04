@@ -36,6 +36,7 @@
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
       </v-card-title>
       <v-data-table
+        v-resizable-columns="'payment-import'"
         :headers="visibleHeaders"
         :items="imports"
         :loading="loadingList"

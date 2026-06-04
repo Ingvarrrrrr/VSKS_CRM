@@ -8,6 +8,7 @@ class FeoCategory(Base):
     parent_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="CASCADE"), nullable=True)
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="CASCADE"), nullable=False)
     level = Column(Integer, nullable=False)  # 1=направление расходов, 2=тип расходов, 3=конкретизированный
+    sort_order = Column(Integer, nullable=True)  # порядок среди соседей (NULL = по id)
     name = Column(String(500), nullable=False)
     code = Column(String(50))
     appendix = Column(String(100), nullable=True)  # Номер приложения (например, "Прил. 2")

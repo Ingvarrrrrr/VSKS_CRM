@@ -21,6 +21,7 @@
     </div>
 
     <v-data-table
+        v-resizable-columns="'organizations'"
         :headers="visibleHeaders"
         :items="orgs"
         :loading="loading"

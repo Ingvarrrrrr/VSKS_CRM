@@ -40,6 +40,7 @@
 
     <!-- Table -->
     <v-data-table
+        v-resizable-columns="'commercial-requests'"
         :headers="visibleHeaders"
         :items="filteredRequests"
         :loading="loading"

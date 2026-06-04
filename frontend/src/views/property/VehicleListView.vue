@@ -169,6 +169,7 @@
 
     <!-- Table -->
     <v-data-table-server
+      v-resizable-columns="'vehicle-list'"
       :headers="dtHeaders"
       :items="Array.isArray(vehicles) ? vehicles : []"
       :loading="loading"

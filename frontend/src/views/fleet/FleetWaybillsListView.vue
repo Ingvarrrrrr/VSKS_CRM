@@ -84,6 +84,7 @@
     <!-- Table -->
     <div class="wb-table-wrap">
       <v-data-table-server
+        v-resizable-columns="'fleet-waybills'"
         v-model:items-per-page="itemsPerPage"
         v-model:page="page"
         :headers="headers"

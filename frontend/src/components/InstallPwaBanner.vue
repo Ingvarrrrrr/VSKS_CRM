@@ -72,9 +72,15 @@
         <v-btn icon="mdi-close" variant="text" size="small" @click="safariDialog = false" />
       </v-card-title>
       <v-card-text>
-        <p class="text-body-2 mb-3">
-          На iPhone приложение можно установить <strong>только через Safari</strong> — это ограничение Apple, в Chrome кнопки установки нет.
+        <p class="text-body-2 mb-2">
+          На iPhone приложение устанавливается <strong>только через Safari</strong> — в Chrome кнопки установки нет и не появится.
         </p>
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Почему так: Apple разрешает добавлять приложения на домашний экран
+          только своему браузеру Safari. Chrome и другие браузеры на iPhone
+          работают на движке Apple и этой возможности лишены — это ограничение
+          самой iOS, а не нашего приложения.
+        </v-alert>
         <v-list density="compact" class="text-body-2">
           <v-list-item>
             <template #prepend><v-icon size="20">mdi-numeric-1-circle</v-icon></template>

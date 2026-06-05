@@ -78,15 +78,15 @@ async def get_mobileconfig(request: Request):
         {icon_block}<key>IsRemovable</key>
         <true/>
         <key>Label</key>
-        <string>VSKS CRM</string>
+        <string>GALA</string>
         <key>PayloadDescription</key>
-        <string>Web Clip для VSKS CRM</string>
+        <string>Web Clip для GALA</string>
         <key>PayloadDisplayName</key>
-        <string>VSKS CRM</string>
+        <string>GALA</string>
         <key>PayloadIdentifier</key>
-        <string>ru.vsks.crm.webclip</string>
+        <string>ru.gala.crm.webclip</string>
         <key>PayloadOrganization</key>
-        <string>VSKS</string>
+        <string>GALA</string>
         <key>PayloadType</key>
         <string>com.apple.webClip.managed</string>
         <key>PayloadUUID</key>
@@ -98,13 +98,13 @@ async def get_mobileconfig(request: Request):
         </dict>
     </array>
     <key>PayloadDescription</key>
-    <string>Установит ярлык VSKS CRM на главный экран iPhone</string>
+    <string>Установит ярлык GALA на главный экран iPhone</string>
     <key>PayloadDisplayName</key>
-    <string>VSKS CRM</string>
+    <string>GALA</string>
     <key>PayloadIdentifier</key>
-    <string>ru.vsks.crm.profile</string>
+    <string>ru.gala.crm.profile</string>
     <key>PayloadOrganization</key>
-    <string>VSKS</string>
+    <string>GALA</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
@@ -120,7 +120,7 @@ async def get_mobileconfig(request: Request):
         content=plist,
         media_type="application/x-apple-aspen-config",
         headers={
-            "Content-Disposition": 'attachment; filename="VSKS_CRM.mobileconfig"',
+            "Content-Disposition": 'attachment; filename="GALA.mobileconfig"',
             "Cache-Control": "no-store",
         },
     )

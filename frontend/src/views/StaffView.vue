@@ -372,7 +372,7 @@
           <v-text-field v-model="createDialog.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-3"
             :error="!!createDialog.password_confirm && createDialog.password !== createDialog.password_confirm"
             :error-messages="createDialog.password_confirm && createDialog.password !== createDialog.password_confirm ? 'Пароли не совпадают' : ''" />
-          <v-autocomplete v-if="isSuperadmin" v-model="createDialog.org_id" :items="organizations" item-title="name" item-value="id"
+          <v-autocomplete v-if="canPickOrg" v-model="createDialog.org_id" :items="organizations" item-title="name" item-value="id"
             label="Организация *" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-domain" :rules="[v => !!v || 'Организация обязательна']" />
           <v-text-field v-else label="Организация" variant="outlined" density="compact" class="mb-3"
@@ -415,7 +415,7 @@
           <v-btn variant="text" @click="createDialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="flat"
             :loading="createDialog.saving"
-            :disabled="!createDialog.email || !createDialog.password || createDialog.password !== createDialog.password_confirm || (isSuperadmin && !createDialog.org_id)"
+            :disabled="!createDialog.email || !createDialog.password || createDialog.password !== createDialog.password_confirm || (canPickOrg && !createDialog.org_id)"
             @click="saveUser">
             Создать
           </v-btn>
@@ -1342,6 +1342,8 @@ const organizations = ref<any[]>([])
 const currentOrgId = parseInt(localStorage.getItem('user_org_id') || '0') || null
 const currentOrgName = localStorage.getItem('user_org_name') || ''
 const isSuperadmin = computed(() => currentRole === 'superadmin')
+// SaaS-роли видят все орг → дать им выбор организации (account_owner Цыганов тоже).
+const canPickOrg = computed(() => ['superadmin', 'account_owner'].includes(currentRole))
 
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
@@ -1757,9 +1759,15 @@ function openCreateUser() {
   createDialog.subsidy_id = null
   createDialog.saving = false
   createDialog.show = true
-  // Load organizations for superadmin
-  if (isSuperadmin.value && organizations.value.length === 0) {
-    apiFetch<any[]>('/organizations/').then(r => { organizations.value = r }).catch(() => {})
+  // Load organizations for SaaS-роли (выбор орг). Если протухший currentOrgId
+  // не входит в список — сбрасываем, чтобы заставить выбрать валидную орг.
+  if (canPickOrg.value) {
+    apiFetch<any[]>('/organizations/').then(r => {
+      organizations.value = r
+      if (createDialog.org_id && !r.some(o => o.id === createDialog.org_id)) {
+        createDialog.org_id = null
+      }
+    }).catch(() => {})
   }
 }
 

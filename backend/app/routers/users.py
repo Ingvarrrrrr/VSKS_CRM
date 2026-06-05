@@ -97,6 +97,13 @@ async def create_user(
     if not org_id:
         raise HTTPException(400, "Необходимо указать организацию")
 
+    # Орг могла быть удалена при мерже дублей по ИНН — тогда id из localStorage/JWT
+    # «протух». Без этой проверки insert падал FK-violation → INTERNAL_ERROR без
+    # внятного сообщения. Отдаём чистую 400 с просьбой выбрать орг из списка.
+    from app.models.organization import Organization
+    if not await db.get(Organization, org_id):
+        raise HTTPException(400, f"Организация (id={org_id}) не найдена — возможно, была объединена. Выберите организацию из списка.")
+
     norm_dept = data.department.strip().title() if data.department else data.department
     user = User(
         username=username,

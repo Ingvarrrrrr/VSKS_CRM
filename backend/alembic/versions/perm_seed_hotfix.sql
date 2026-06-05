@@ -107,7 +107,7 @@ WITH matrix(key, role_name) AS (VALUES
   ('contract.delete',     'superadmin'),   ('contract.delete',     'account_owner'), ('contract.delete',     'admin'), ('contract.delete',     'org_admin'),
   ('payment.register',    'superadmin'),   ('payment.register',    'account_owner'), ('payment.register',    'admin'), ('payment.register',    'org_admin'), ('payment.register',    'manager'),
   ('subsidy.edit',        'superadmin'),   ('subsidy.edit',        'account_owner'), ('subsidy.edit',        'admin'), ('subsidy.edit',        'org_admin'),
-  ('user.manage',         'superadmin'),   ('user.manage',         'account_owner'), ('user.manage',         'admin')
+  ('user.manage',         'superadmin'),   ('user.manage',         'account_owner'), ('user.manage',         'admin'), ('user.manage',         'org_admin')
 )
 INSERT INTO role_permissions (role_name, key, granted)
 SELECT role_name, key, TRUE FROM matrix

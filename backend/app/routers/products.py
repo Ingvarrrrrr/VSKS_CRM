@@ -121,6 +121,7 @@ async def product_summary(
     quarter: Optional[int] = Query(None, ge=1, le=4),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _perm: User = Depends(require_tab('products.summary')),
 ):
     """Сводная по продукции — агрегация закупок по продуктам через все субсидии."""
     from app.models.purchase_item import PurchaseItem
@@ -170,6 +171,23 @@ async def product_summary(
             pass
     if quarter is not None:
         q = q.where(extract("quarter", Purchase.delivery_date) == quarter)
+
+    # Org-scope: не-SaaS видят только свои организации — применяется ВСЕГДА,
+    # даже при явном org_id (иначе можно подсунуть чужой org_id и увидеть чужое).
+    # explicit org_id выше лишь сужает внутри scope.
+    if current_user.role not in ('superadmin', 'account_owner'):
+        from app.auth.jwt import get_org_filter
+        from app.models.user_organization import UserOrganization
+        scope_ids = get_org_filter(current_user)
+        if not scope_ids:
+            scope_ids = (await db.execute(
+                select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
+            )).scalars().all()
+            scope_ids = list({s for s in scope_ids if s}) or ([current_user.org_id] if current_user.org_id else [])
+        if scope_ids:
+            q = q.where(Subsidy.org_id.in_(scope_ids))
+        else:
+            return []
 
     # Also need subsidy name, org name, org_id — use add_columns
     q = q.add_columns(

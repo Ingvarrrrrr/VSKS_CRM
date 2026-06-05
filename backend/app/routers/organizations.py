@@ -392,8 +392,8 @@ async def get_organization(
     return _merge_org_with_contractor(org, user_count=uc)
 
 
-@router.delete("/api/organizations/{org_id}", status_code=204)
-async def delete_organization(
+@router.get("/api/organizations/{org_id}/delete-impact")
+async def organization_delete_impact(
     org_id: int,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_role('superadmin', 'admin', 'account_owner')),
@@ -401,5 +401,54 @@ async def delete_organization(
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Организация не найдена")
+    from app.models.user import User as _U
+    from app.models.user_organization import UserOrganization as _UO
+    from app.models.department import Department as _D
+    from app.models.subsidy import Subsidy as _S
+    primary_users = (await db.execute(select(_U).where(_U.org_id == org_id, _U.role != 'superadmin'))).scalars().all()
+    uo_user_ids = (await db.execute(select(_UO.user_id).where(_UO.org_id == org_id))).scalars().all()
+    emp_ids = {u.id for u in primary_users} | set(uo_user_ids)
+    employees = []
+    if emp_ids:
+        rows = (await db.execute(select(_U).where(_U.id.in_(emp_ids)))).scalars().all()
+        employees = [{"id": u.id, "full_name": u.full_name, "username": u.username, "role": u.role} for u in rows]
+    dept_count = (await db.execute(select(func.count()).select_from(_D).where(_D.org_id == org_id))).scalar() or 0
+    subsidy_count = (await db.execute(select(func.count()).select_from(_S).where(_S.org_id == org_id))).scalar() or 0
+    return {
+        "org_id": org_id,
+        "org_name": org.name,
+        "employee_count": len(employees),
+        "employees": employees,
+        "department_count": int(dept_count),
+        "subsidy_count": int(subsidy_count),
+        "has_dependencies": bool(employees or dept_count or subsidy_count),
+    }
+
+
+@router.delete("/api/organizations/{org_id}", status_code=204)
+async def delete_organization(
+    org_id: int,
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role('superadmin', 'admin', 'account_owner')),
+):
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "Организация не найдена")
+    if not force:
+        from app.models.user import User as _U
+        from app.models.user_organization import UserOrganization as _UO
+        from app.models.department import Department as _D
+        from app.models.subsidy import Subsidy as _S
+        emp = (await db.execute(select(func.count()).select_from(_U).where(_U.org_id == org_id, _U.role != 'superadmin'))).scalar() or 0
+        emp += (await db.execute(select(func.count()).select_from(_UO).where(_UO.org_id == org_id))).scalar() or 0
+        depts = (await db.execute(select(func.count()).select_from(_D).where(_D.org_id == org_id))).scalar() or 0
+        subs = (await db.execute(select(func.count()).select_from(_S).where(_S.org_id == org_id))).scalar() or 0
+        if emp or depts or subs:
+            raise HTTPException(status_code=409, detail=(
+                f"Нельзя удалить организацию: связано сотрудников {int(emp)}, "
+                f"отделов {int(depts)}, субсидий {int(subs)}. "
+                f"Сначала перенесите/отвяжите их или подтвердите принудительное удаление."
+            ))
     await db.delete(org)
     await db.commit()

@@ -410,7 +410,7 @@
     </v-dialog>
 
     <!-- Phase 30 restore: Delete org confirm dialog -->
-    <v-dialog v-model="deleteOrgConfirm.show" max-width="420">
+    <v-dialog v-model="deleteOrgConfirm.show" max-width="480">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-domain-remove" color="error" class="mr-2" />
@@ -418,15 +418,81 @@
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
           Удалить организацию <strong>«{{ deleteOrgConfirm.name }}»</strong>?
-          <div class="text-caption text-medium-emphasis mt-2">
-            Все отделы, сотрудники и связи будут удалены (CASCADE).
-            Действие необратимо. Доступно только для superadmin / admin / account_owner.
+
+          <!-- Загрузка impact -->
+          <div v-if="deleteOrgConfirm.loadingImpact" class="d-flex align-center mt-3 ga-2">
+            <v-progress-circular size="18" width="2" indeterminate color="warning" />
+            <span class="text-caption text-medium-emphasis">Проверяем зависимости…</span>
           </div>
+
+          <!-- Есть зависимости — предупреждение -->
+          <template v-else-if="deleteOrgConfirm.impact?.has_dependencies">
+            <v-alert type="warning" variant="tonal" class="mt-3 mb-2" density="compact">
+              В организации:
+              сотрудников — <strong>{{ deleteOrgConfirm.impact.employee_count }}</strong>,
+              отделов — <strong>{{ deleteOrgConfirm.impact.department_count }}</strong>,
+              субсидий — <strong>{{ deleteOrgConfirm.impact.subsidy_count }}</strong>.<br/>
+              При удалении сотрудники потеряют привязку, субсидии и отделы будут удалены безвозвратно.
+            </v-alert>
+
+            <!-- Список затронутых сотрудников -->
+            <v-expansion-panels v-if="deleteOrgConfirm.impact.employees?.length" variant="accordion" class="mb-2">
+              <v-expansion-panel>
+                <v-expansion-panel-title class="text-body-2 py-2">
+                  Сотрудники, которые будут затронуты ({{ deleteOrgConfirm.impact.employees.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="180" style="overflow-y:auto">
+                    <v-list-item
+                      v-for="emp in deleteOrgConfirm.impact.employees"
+                      :key="emp.id"
+                      :title="emp.full_name || emp.username"
+                      :subtitle="emp.role"
+                      prepend-icon="mdi-account"
+                      density="compact"
+                    />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+
+            <v-checkbox
+              v-model="deleteOrgConfirm.forceAck"
+              label="Понимаю последствия и хочу удалить организацию"
+              color="error"
+              density="compact"
+              hide-details
+              class="mt-1"
+            />
+          </template>
+
+          <!-- Нет зависимостей -->
+          <template v-else-if="!deleteOrgConfirm.loadingImpact">
+            <div class="text-caption text-medium-emphasis mt-2">
+              Все отделы, сотрудники и связи будут удалены (CASCADE).
+              Действие необратимо.
+            </div>
+          </template>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="deleteOrgConfirm.show = false">Отмена</v-btn>
-          <v-btn color="error" variant="flat" :loading="deleteOrgConfirm.loading" @click="confirmDeleteOrg">Удалить</v-btn>
+          <v-btn
+            v-if="deleteOrgConfirm.impact?.has_dependencies"
+            color="error"
+            variant="flat"
+            :loading="deleteOrgConfirm.loading"
+            :disabled="!deleteOrgConfirm.forceAck"
+            @click="confirmDeleteOrg"
+          >Всё равно удалить</v-btn>
+          <v-btn
+            v-else
+            color="error"
+            variant="flat"
+            :loading="deleteOrgConfirm.loading"
+            :disabled="deleteOrgConfirm.loadingImpact"
+            @click="confirmDeleteOrg"
+          >Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -594,20 +660,22 @@ const DEPT_PAD_Y = 12  // bottom padding
 // Каждая дополнительная строка +18px.
 const DEPT_NAME_CHARS_PER_LINE = 28
 const DEPT_HEADER_LINE_H = 18
-function deptHeaderHeight(name: string | undefined | null): number {
+const DEPT_HEADER_BADGE_H = 22  // высота строки org-бейджа в шапке отдела (когда орг > 1)
+
+function deptHeaderHeight(name: string | undefined | null, hasOrgBadge = false): number {
   const len = (name || '').length
   const lines = Math.max(1, Math.ceil(len / DEPT_NAME_CHARS_PER_LINE))
-  return DEPT_HEADER_H + (lines - 1) * DEPT_HEADER_LINE_H
+  return DEPT_HEADER_H + (lines - 1) * DEPT_HEADER_LINE_H + (hasOrgBadge ? DEPT_HEADER_BADGE_H : 0)
 }
 
-function calcDeptHeight(memberCount: number, name?: string) {
-  return deptHeaderHeight(name) + Math.max(memberCount, 0) * (USER_H + USER_GAP) + DEPT_PAD_Y
+function calcDeptHeight(memberCount: number, name?: string, hasOrgBadge = false) {
+  return deptHeaderHeight(name, hasOrgBadge) + Math.max(memberCount, 0) * (USER_H + USER_GAP) + DEPT_PAD_Y
 }
 
-function mkDeptStyle(memberCount: number, name?: string): Record<string, string> {
+function mkDeptStyle(memberCount: number, name?: string, hasOrgBadge = false): Record<string, string> {
   return {
     width: `${DEPT_W}px`,
-    height: `${Math.max(calcDeptHeight(memberCount, name), 80)}px`,
+    height: `${Math.max(calcDeptHeight(memberCount, name, hasOrgBadge), 80)}px`,
     background: 'rgba(0, 105, 92, 0.05)',
     border: '2px dashed #00897b',
     borderRadius: '10px',
@@ -1155,18 +1223,27 @@ onMounted(() => {
 })
 
 // Phase 30 restore: delete org/user state + handlers
-const deleteOrgConfirm = ref<{ show: boolean; orgId: number | null; name: string; loading: boolean }>({ show: false, orgId: null, name: '', loading: false })
+const deleteOrgConfirm = ref<{ show: boolean; orgId: number | null; name: string; loading: boolean; impact: any | null; loadingImpact: boolean; forceAck: boolean }>({ show: false, orgId: null, name: '', loading: false, impact: null, loadingImpact: false, forceAck: false })
 const deleteUserConfirm = ref<{ show: boolean; userId: number | null; name: string; loading: boolean }>({ show: false, userId: null, name: '', loading: false })
 
-function deleteOrgNode(orgId: number, name: string) {
-  deleteOrgConfirm.value = { show: true, orgId, name, loading: false }
+async function deleteOrgNode(orgId: number, name: string) {
+  deleteOrgConfirm.value = { show: true, orgId, name, loading: false, impact: null, loadingImpact: true, forceAck: false }
+  try {
+    const imp = await apiFetch(`/organizations/${orgId}/delete-impact`)
+    deleteOrgConfirm.value.impact = imp
+  } catch {
+    deleteOrgConfirm.value.impact = null
+  } finally {
+    deleteOrgConfirm.value.loadingImpact = false
+  }
 }
 async function confirmDeleteOrg() {
   const { orgId } = deleteOrgConfirm.value
   if (!orgId) return
   deleteOrgConfirm.value.loading = true
   try {
-    await apiFetch(`/organizations/${orgId}`, { method: 'DELETE' })
+    const needsForce = !!deleteOrgConfirm.value.impact?.has_dependencies
+    await apiFetch(`/organizations/${orgId}${needsForce ? '?force=true' : ''}`, { method: 'DELETE' })
     showSnack('Организация удалена')
     deleteOrgConfirm.value.show = false
     await loadGraph()
@@ -1278,16 +1355,17 @@ function buildGraph(data: GraphData) {
 
   // Dept nodes
   const orgList = data.orgs || []
+  const hasOrgBadge = orgList.length > 1  // орг-бейдж в шапке только когда > 1 орг в контуре
   data.departments.forEach((dept, di) => {
     const id = `dept-${dept.id}`
     const mc = dept.member_ids.length
     const orgIdx = orgList.findIndex((o: any) => o.id === dept.org_id)
-    const orgName = orgList.length > 1 ? orgList[orgIdx]?.name : null
+    const orgName = hasOrgBadge ? orgList[orgIdx]?.name : null
     const orgColor = getOrgColor(dept.org_id, orgIdx >= 0 ? orgIdx : 0)
     newNodes.push({
       id, type: 'dept',
       position: savedPos[id] || { x: 80 + di * (DEPT_W + 40), y: 200 },
-      style: { ...mkDeptStyle(mc, dept.name), background: `${orgColor}0D`, border: `2px dashed ${orgColor}` },
+      style: { ...mkDeptStyle(mc, dept.name, hasOrgBadge), background: `${orgColor}0D`, border: `2px dashed ${orgColor}` },
       data: {
         label: dept.name,
         memberCount: mc,
@@ -1324,12 +1402,15 @@ function buildGraph(data: GraphData) {
         const uOrgColor = getOrgColor(uOrgId, uOrgIdx >= 0 ? uOrgIdx : 0)
         // Unique id per dept placement (first keeps original id for edge compatibility)
         const nodeId = ci === 0 ? `user-${user.id}` : `user-${user.id}-d${di.deptId}`
-        const headerH = deptHeaderHeight(dept?.name)
+        const headerH = deptHeaderHeight(dept?.name, hasOrgBadge)
         const defaultRelPos = { x: 10, y: headerH + 4 + di.idx * (USER_H + USER_GAP) }
+        // Страховка: если сохранённая pos наезжает на шапку — сбрасываем на корректную
+        const sp = savedPos[nodeId]
+        const pos = (sp && typeof sp.y === 'number' && sp.y >= headerH) ? sp : defaultRelPos
         newNodes.push({
           id: nodeId, type: 'user',
           parentNode: `dept-${di.deptId}`,
-          position: savedPos[nodeId] || defaultRelPos,
+          position: pos,
           data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
           draggable: true,
           zIndex: 1000,
@@ -1443,13 +1524,14 @@ function autoLayout() {
       const rb = getPositionRank((b.data as any).position || null)
       return ra - rb
     })
-    const dHeadH = deptHeaderHeight((dept.data as any)?.label)
+    const _autoLayoutBadge = ((_lastGraphData.value?.orgs?.length || 0) > 1)
+    const dHeadH = deptHeaderHeight((dept.data as any)?.label, _autoLayoutBadge)
     sorted.forEach((u, i) => {
       u.position = { x: 10, y: dHeadH + 4 + i * (USER_H + USER_GAP) }
     })
     const deptId = parseInt(dept.id.replace('dept-', ''))
     saveDeptOrder(deptId, sorted.map(u => parseInt(u.id.replace('user-', ''))))
-    const newH = Math.max(calcDeptHeight(sorted.length), 80)
+    const newH = Math.max(calcDeptHeight(sorted.length, (dept.data as any)?.label, _autoLayoutBadge), 80)
     dept.style = { ...dept.style as object, height: `${newH}px` }
     ;(dept.data as any).memberCount = sorted.length
   }
@@ -1510,7 +1592,8 @@ function snapToSlot(draggedNode: Node) {
   const siblings = nodes.value.filter(n => n.type === 'user' && n.parentNode === draggedNode.parentNode)
   // Phase 30: учитываем динамическую высоту шапки отдела
   const dNode = nodes.value.find(n => n.id === draggedNode.parentNode)
-  const dHeadH = deptHeaderHeight((dNode?.data as any)?.label)
+  const _snapBadge = ((_lastGraphData.value?.orgs?.length || 0) > 1)
+  const dHeadH = deptHeaderHeight((dNode?.data as any)?.label, _snapBadge)
 
   // Sort all users in dept by current y position to determine new order
   const sorted = [...siblings].sort((a, b) => a.position.y - b.position.y)
@@ -1644,9 +1727,10 @@ onNodeDragStop(async ({ node }) => {
           )
           // Shrink dept
           const remaining = nodes.value.filter(n => n.parentNode === oldParent).length
+          const _dragOutBadge = ((_lastGraphData.value?.orgs?.length || 0) > 1)
           nodes.value = nodes.value.map(n => {
             if (n.id === oldParent) {
-              const newH = Math.max(calcDeptHeight(remaining), 80)
+              const newH = Math.max(calcDeptHeight(remaining, (n.data as any)?.label, _dragOutBadge), 80)
               return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: remaining } }
             }
             return n
@@ -1695,12 +1779,13 @@ onNodeDragStop(async ({ node }) => {
         // Update nodes locally — no full reload to avoid flicker
         // Backend may have removed user from another dept (exclusive membership)
         // Find if user was visually inside another dept and remove them
+        const _dropBadge = ((_lastGraphData.value?.orgs?.length || 0) > 1)
         const oldParentId = node.parentNode
         if (oldParentId && oldParentId !== targetDept.id) {
           const oldRemaining = nodes.value.filter(n => n.parentNode === oldParentId && n.id !== node.id).length
           nodes.value = nodes.value.map(n => {
             if (n.id === oldParentId) {
-              const newH = Math.max(calcDeptHeight(oldRemaining), 80)
+              const newH = Math.max(calcDeptHeight(oldRemaining, (n.data as any)?.label, _dropBadge), 80)
               return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: oldRemaining } }
             }
             return n
@@ -1709,7 +1794,7 @@ onNodeDragStop(async ({ node }) => {
 
         // Count existing children in target dept (excluding this user)
         const existingCount = nodes.value.filter(n => n.parentNode === targetDept.id && n.id !== node.id).length
-        const tDeptHeadH = deptHeaderHeight((targetDept.data as any)?.label)
+        const tDeptHeadH = deptHeaderHeight((targetDept.data as any)?.label, _dropBadge)
         const relPos = { x: 10, y: tDeptHeadH + 4 + existingCount * (USER_H + USER_GAP) }
         const newCount = existingCount + 1
 
@@ -1726,7 +1811,7 @@ onNodeDragStop(async ({ node }) => {
             return { ...n, parentNode: targetDept.id, position: relPos, zIndex: 1000, data: updatedData }
           }
           if (n.id === targetDept.id) {
-            const newH = Math.max(calcDeptHeight(newCount), 80)
+            const newH = Math.max(calcDeptHeight(newCount, (n.data as any)?.label, _dropBadge), 80)
             return { ...n, style: { ...n.style as object, height: `${newH}px` }, data: { ...(n.data as object), memberCount: newCount } }
           }
           return n

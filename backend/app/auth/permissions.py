@@ -94,16 +94,19 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
         if uoa and uoa.role:
             effective_role = uoa.role
 
-    # Step 0b: per-org fallback — if contour role is missing/unknown, find best per-org role
-    if effective_role not in _ROLE_PRIORITY:
-        all_uoa_rows = (await db.execute(
-            select(UserOrgAccess.role).where(
-                UserOrgAccess.user_id == user.id,
-                UserOrgAccess.role.isnot(None),
-            )
-        )).scalars().all()
-        if all_uoa_rows:
-            effective_role = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+    # Step 0b: elevate to best per-org role if it outranks the contour role.
+    # Модель: вкладки/действия — по max-роли (глоб. ИЛИ лучшая per-org).
+    # Данные при этом скоупятся отдельно через get_org_filter в эндпоинтах.
+    all_uoa_rows = (await db.execute(
+        select(UserOrgAccess.role).where(
+            UserOrgAccess.user_id == user.id,
+            UserOrgAccess.role.isnot(None),
+        )
+    )).scalars().all()
+    if all_uoa_rows:
+        best_per_org = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+        if _ROLE_PRIORITY.get(best_per_org, 0) > _ROLE_PRIORITY.get(effective_role, 0):
+            effective_role = best_per_org
 
     # Step 1: base from role matrix with resolved role
     rp_rows = await db.execute(

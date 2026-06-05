@@ -135,17 +135,20 @@ async def get_hierarchy_graph(
 
     # Rule: any org linked to a subsidy is "in the contour" → ensure its card
     # appears even if it's outside the dept-based org filter.
-    from app.models.subsidy import Subsidy
-    subsidy_org_rows = (await db.execute(
-        select(Subsidy.org_id).where(Subsidy.org_id.isnot(None)).distinct()
-    )).all()
-    extra_org_ids = {r[0] for r in subsidy_org_rows if r[0] is not None} - org_id_set
-    if extra_org_ids:
-        extra_orgs = (await db.execute(
-            select(Organization).where(Organization.id.in_(extra_org_ids))
-        )).scalars().all()
-        orgs = list(orgs) + list(extra_orgs)
-        org_id_set = org_id_set | {o.id for o in extra_orgs}
+    # Только для SaaS-ролей: org_admin видит только свои орги, subsidy-expansion
+    # давала ему чужие карточки.
+    if current_user.role in ('superadmin', 'account_owner'):
+        from app.models.subsidy import Subsidy
+        subsidy_org_rows = (await db.execute(
+            select(Subsidy.org_id).where(Subsidy.org_id.isnot(None)).distinct()
+        )).all()
+        extra_org_ids = {r[0] for r in subsidy_org_rows if r[0] is not None} - org_id_set
+        if extra_org_ids:
+            extra_orgs = (await db.execute(
+                select(Organization).where(Organization.id.in_(extra_org_ids))
+            )).scalars().all()
+            orgs = list(orgs) + list(extra_orgs)
+            org_id_set = org_id_set | {o.id for o in extra_orgs}
 
     # Load departments
     q_depts = select(Department)

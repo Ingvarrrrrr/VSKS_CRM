@@ -70,6 +70,19 @@ async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> b
     if user.role in roles:
         return True
 
+    # Per-org elevation: org_admin/manager в любой орг должен удовлетворять
+    # require_role того же уровня (вкладки/действия по max-роли; данные скоупятся
+    # отдельно). Не затрагивает require_superadmin: org_admin не равен superadmin.
+    from app.models.user_org_access import UserOrgAccess
+    uoa_roles = (await db.execute(
+        select(UserOrgAccess.role).where(
+            UserOrgAccess.user_id == user.id,
+            UserOrgAccess.role.isnot(None),
+        )
+    )).scalars().all()
+    if any(r in roles for r in uoa_roles):
+        return True
+
     # Avoid circular import — lazy
     from app.auth.visibility import get_visible_user_ids
     visible = await get_visible_user_ids(user, db)

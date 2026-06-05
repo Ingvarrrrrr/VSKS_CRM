@@ -3,11 +3,11 @@
     <div class="pwa-install-row">
       <v-icon icon="mdi-cellphone-arrow-down" class="pwa-install-icon" />
       <div class="pwa-install-text">
-        <div class="pwa-install-title">Установить приложение</div>
-        <div class="pwa-install-subtitle">{{ isIos ? 'Откроется как отдельное приложение' : 'Быстрый доступ с домашнего экрана' }}</div>
+        <div class="pwa-install-title">{{ iosNeedsSafari ? 'Откройте в Safari' : 'Установить приложение' }}</div>
+        <div class="pwa-install-subtitle">{{ iosNeedsSafari ? 'На iPhone установка работает только из Safari' : (isIos ? 'Откроется как отдельное приложение' : 'Быстрый доступ с домашнего экрана') }}</div>
       </div>
       <v-btn size="small" color="primary" variant="flat" @click="onInstall">
-        Установить
+        {{ iosNeedsSafari ? 'Как?' : 'Установить' }}
       </v-btn>
       <v-btn size="small" variant="text" icon="mdi-close" @click="dismiss" />
     </div>
@@ -62,6 +62,42 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <v-dialog v-model="safariDialog" max-width="420">
+    <v-card>
+      <v-card-title class="d-flex align-center">
+        <v-icon start>mdi-apple-safari</v-icon>
+        Установка только из Safari
+        <v-spacer />
+        <v-btn icon="mdi-close" variant="text" size="small" @click="safariDialog = false" />
+      </v-card-title>
+      <v-card-text>
+        <p class="text-body-2 mb-3">
+          На iPhone приложение можно установить <strong>только через Safari</strong> — это ограничение Apple, в Chrome кнопки установки нет.
+        </p>
+        <v-list density="compact" class="text-body-2">
+          <v-list-item>
+            <template #prepend><v-icon size="20">mdi-numeric-1-circle</v-icon></template>
+            Скопируйте ссылку кнопкой ниже
+          </v-list-item>
+          <v-list-item>
+            <template #prepend><v-icon size="20">mdi-numeric-2-circle</v-icon></template>
+            Откройте <strong>Safari</strong> и вставьте ссылку
+          </v-list-item>
+          <v-list-item>
+            <template #prepend><v-icon size="20">mdi-numeric-3-circle</v-icon></template>
+            Внизу появится баннер <strong>«Установить приложение»</strong>
+          </v-list-item>
+        </v-list>
+      </v-card-text>
+      <v-card-actions class="px-4 pb-4">
+        <v-btn color="primary" variant="flat" block size="large" @click="copyLink">
+          <v-icon start>{{ linkCopied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+          {{ linkCopied ? 'Ссылка скопирована' : 'Скопировать ссылку' }}
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script setup lang="ts">
@@ -74,11 +110,17 @@ const visible = ref(false)
 const iosDialog = ref(false)
 const iosStep = ref(1)
 const isIos = ref(false)
+const iosNeedsSafari = ref(false)  // iOS-устройство, но браузер не Safari (Chrome/Firefox)
+const safariDialog = ref(false)
+const linkCopied = ref(false)
 
 function downloadProfile() {
   iosStep.value = 2
-  // Trigger profile download — Safari opens the .mobileconfig install flow
-  window.location.href = '/api/install.mobileconfig'
+  // Trigger profile download — Safari opens the .mobileconfig install flow.
+  // Передаём origin: за nginx бэкенд не видит публичный хост → иначе webclip
+  // указывал бы на http://localhost:80/ и ярлык был бы мёртвый.
+  const base = encodeURIComponent(window.location.origin)
+  window.location.href = `/api/install.mobileconfig?base=${base}`
 }
 
 let deferredPrompt: any = null
@@ -93,11 +135,23 @@ function isMobile(): boolean {
     window.matchMedia('(max-width: 768px)').matches
 }
 
+function detectIosDevice(): boolean {
+  const ua = navigator.userAgent
+  return /iPhone|iPad|iPod/i.test(ua) ||
+    (ua.includes('Macintosh') && 'ontouchend' in document)
+}
+
 function detectIos(): boolean {
   const ua = navigator.userAgent
-  const ios = /iPhone|iPad|iPod/i.test(ua) ||
-    (ua.includes('Macintosh') && 'ontouchend' in document)
-  return ios && /Safari/i.test(ua) && !/CriOS|FxiOS/i.test(ua)
+  return detectIosDevice() && /Safari/i.test(ua) && !/CriOS|FxiOS/i.test(ua)
+}
+
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.origin + '/')
+    linkCopied.value = true
+    setTimeout(() => { linkCopied.value = false }, 2500)
+  } catch { /* clipboard заблокирован — пользователь скопирует из адресной строки */ }
 }
 
 function recentlyDismissed(): boolean {
@@ -115,6 +169,10 @@ function onBeforeInstallPrompt(e: Event) {
 }
 
 async function onInstall() {
+  if (iosNeedsSafari.value) {
+    safariDialog.value = true
+    return
+  }
   if (isIos.value) {
     iosStep.value = 1
     iosDialog.value = true
@@ -151,6 +209,11 @@ onMounted(() => {
   // iOS Safari doesn't fire beforeinstallprompt — show banner with instructions
   if (detectIos()) {
     isIos.value = true
+    visible.value = true
+  } else if (detectIosDevice()) {
+    // Chrome/Firefox на iOS: Apple запрещает установку PWA вне Safari и не шлёт
+    // beforeinstallprompt → показываем подсказку «откройте в Safari».
+    iosNeedsSafari.value = true
     visible.value = true
   }
 })

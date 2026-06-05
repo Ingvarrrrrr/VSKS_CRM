@@ -49,14 +49,26 @@ def _stable_uuid(seed: str) -> str:
 
 
 @router.get("/install.mobileconfig")
-async def get_mobileconfig(request: Request):
-    # Resolve target URL — use the host the user came from (proxy-aware)
-    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost"
-    base = os.getenv("BASE_URL") or f"{fwd_proto}://{fwd_host}"
-    parsed = urlparse(base)
-    domain = parsed.netloc or fwd_host
-    target = base.rstrip("/") + "/"
+async def get_mobileconfig(request: Request, base: str | None = None):
+    # Resolve target URL. За nginx бэкенд НЕ получает публичный хост (Host=localhost:80,
+    # X-Forwarded-* не прокидываются) → раньше webclip вёл на http://localhost:80/ и
+    # ярлык на iPhone был мёртвый. Фронт шлёт ?base=<origin> — это самый надёжный
+    # источник публичного адреса (это собственный origin пользователя).
+    candidate = (
+        base
+        or os.getenv("BASE_URL")
+        or request.headers.get("x-forwarded-host")
+        and f"{request.headers.get('x-forwarded-proto') or 'https'}://{request.headers.get('x-forwarded-host')}"
+        or request.headers.get("host")
+        and f"{request.url.scheme}://{request.headers.get('host')}"
+        or "https://localhost"
+    )
+    parsed = urlparse(candidate)
+    # Защита: принимаем только http/https с непустым хостом, иначе fallback.
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        parsed = urlparse(os.getenv("BASE_URL") or "https://localhost")
+    domain = parsed.netloc
+    target = f"{parsed.scheme}://{parsed.netloc}/"
 
     icon_b64 = _icon_b64()
     icon_block = f"<key>Icon</key>\n        <data>{icon_b64}</data>\n        <key>PrecomposedIcon</key>\n        <true/>\n        " if icon_b64 else ""

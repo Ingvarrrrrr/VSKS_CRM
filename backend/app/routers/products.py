@@ -66,7 +66,7 @@ async def list_products(
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     search: Optional[str] = Query(None, description="Полнотекстовый поиск по имени/описанию/типу"),
-    limit: Optional[int] = Query(None, ge=1, le=500, description="Ограничить кол-во результатов"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Ограничить кол-во результатов (фронт грузит весь каталог в пикер)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

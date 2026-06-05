@@ -885,6 +885,8 @@
                       variant="outlined"
                       density="compact"
                       :readonly="!isWishEditable"
+                      :error-messages="serverFieldErrors.desired_date"
+                      @update:model-value="serverFieldErrors.desired_date = ''"
                     />
                   </v-col>
                 </v-row>
@@ -1036,7 +1038,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -1309,6 +1311,9 @@ const editingWishId = ref<number | null>(null)
 const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
 const saving = ref(false)
+// Серверные ошибки валидации по полям: {desired_date: 'неверный формат даты'}.
+// Биндим в :error-messages → Vuetify сам рисует красную подпись (стрелочка к полю).
+const serverFieldErrors = ref<Record<string, string>>({})
 
 const isWishEditable = computed(() =>
   !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
@@ -1459,6 +1464,7 @@ async function reloadActiveTab() {
 }
 
 function resetForm() {
+  serverFieldErrors.value = {}
   wishForm.value = {
     subsidy_id: null,
     feo_category_id: null,
@@ -1646,7 +1652,23 @@ async function saveWish(andSubmit = false) {
     wishDialog.value = false
     await reloadActiveTab()
   } catch (e: any) {
-    showSnack(`Ошибка при сохранении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    // Серверная валидация: backend шлёт {message, fields:[{field,label}]}.
+    // Подсвечиваем проблемные поля и скроллим к первому — «стрелочка» вместо
+    // технического дампа с именами переменных.
+    const fields = e?.payload?.fields
+    if (Array.isArray(fields) && fields.length) {
+      serverFieldErrors.value = {}
+      for (const f of fields) {
+        serverFieldErrors.value[f.field] = e?.payload?.message?.includes('обязательно')
+          ? 'Заполните это поле'
+          : 'Проверьте значение'
+      }
+      await nextTick()
+      document.querySelector('.v-overlay--active .v-input--error')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    const msg = e?.payload?.message || e?.message || 'неизвестная ошибка'
+    showSnack(`Не удалось сохранить: ${msg}`, 'error')
   } finally {
     saving.value = false
   }

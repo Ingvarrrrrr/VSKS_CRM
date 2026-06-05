@@ -10,7 +10,7 @@ class WishItem(Base):
     wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="CASCADE"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     item_name = Column(Text, nullable=False)
-    item_type = Column(String(20), default="товар")  # товар / услуга / работа
+    item_type = Column(String(200), default="товар")  # товар / услуга / работа (фронт может слать описательный тип)
     quantity = Column(Numeric(15, 4), default=1)
     unit = Column(String(50), default="шт")
     unit_price = Column(Numeric(15, 2), default=0)

@@ -1618,12 +1618,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         "execution_term": "Срок исполнения", "nmck": "НМЦК", "contract_price": "Цена договора",
         "planned_total_price": "Плановая сумма", "payment_amount": "Сумма оплаты",
         "number": "Номер", "subject": "Предмет", "max_amount": "Максимальная сумма",
+        # wishes (заявки)
+        "title": "Название", "category": "Категория", "description": "Описание",
+        "quantity": "Количество", "unit": "Ед. изм.", "estimated_price": "Ориент. цена",
+        "link": "Ссылка", "priority": "Приоритет", "desired_date": "Желаемая дата",
+        "justification": "Обоснование", "org_id": "Организация",
+        "assigned_to": "Ответственный", "event_id": "Мероприятие",
+        "execution_deadline": "Срок исполнения",
     }
     errors = []
+    fields = []  # для фронта: подсветка/стрелочка к проблемному полю
     for err in exc.errors():
         loc = [str(l) for l in err.get("loc", []) if l != "body"]
         field = loc[-1] if loc else "?"
         label = field_labels.get(field, field)
+        fields.append({"field": field, "label": label})
         msg = err.get("msg", "")
         # Translate common pydantic messages
         if "required" in msg.lower():
@@ -1636,13 +1645,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             errors.append(f"Поле «{label}»: ожидается целое число")
         else:
             errors.append(f"Поле «{label}»: {msg}")
-    message = "; ".join(errors) if errors else "Ошибка валидации данных"
+    message = "; ".join(errors) if errors else "Проверьте правильность заполнения формы"
     return JSONResponse(
         status_code=422,
         content={
             "code": "VALIDATION_ERROR",
             "message": message,
-            "details": str(exc.errors()),
+            "fields": fields,  # [{field, label}] — фронт подсвечивает поля
             "correlation_id": correlation_id,
         },
     )

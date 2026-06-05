@@ -15,6 +15,14 @@ def _clamp_title(v: Optional[str]) -> Optional[str]:
     return v
 
 
+def _blank_to_none(v):
+    """Пустая строка из формы для опционального поля = «не заполнено» = None.
+    Иначе pydantic роняет date/Decimal на '' с непонятным VALIDATION_ERROR."""
+    if isinstance(v, str) and v.strip() == "":
+        return None
+    return v
+
+
 class WishItemOut(BaseModel):
     id: int
     product_id: Optional[int] = None
@@ -57,6 +65,11 @@ class WishCreate(BaseModel):
     def _v_title(cls, v):
         return _clamp_title(v)
 
+    @field_validator('desired_date', 'quantity', 'estimated_price', mode='before')
+    @classmethod
+    def _v_blank(cls, v):
+        return _blank_to_none(v)
+
 
 class WishUpdate(BaseModel):
     title: Optional[str] = None
@@ -79,6 +92,11 @@ class WishUpdate(BaseModel):
     @classmethod
     def _v_title(cls, v):
         return _clamp_title(v)
+
+    @field_validator('desired_date', 'quantity', 'estimated_price', mode='before')
+    @classmethod
+    def _v_blank(cls, v):
+        return _blank_to_none(v)
 
 
 class WishReject(BaseModel):

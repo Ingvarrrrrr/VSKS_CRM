@@ -1,7 +1,18 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
+
+# wishes.title — VARCHAR(500). Заголовок формируется на фронте из названий
+# позиций; при множестве товаров он может превысить лимит → раньше падало
+# INTERNAL_ERROR (StringDataRightTruncation). Клампим централизованно.
+_TITLE_MAX = 500
+
+
+def _clamp_title(v: Optional[str]) -> Optional[str]:
+    if v and len(v) > _TITLE_MAX:
+        return v[:_TITLE_MAX - 1] + "…"
+    return v
 
 
 class WishItemOut(BaseModel):
@@ -41,6 +52,11 @@ class WishCreate(BaseModel):
     assigned_to: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
+    @field_validator('title')
+    @classmethod
+    def _v_title(cls, v):
+        return _clamp_title(v)
+
 
 class WishUpdate(BaseModel):
     title: Optional[str] = None
@@ -58,6 +74,11 @@ class WishUpdate(BaseModel):
     event_id: Optional[int] = None
     assigned_to: Optional[int] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
+
+    @field_validator('title')
+    @classmethod
+    def _v_title(cls, v):
+        return _clamp_title(v)
 
 
 class WishReject(BaseModel):

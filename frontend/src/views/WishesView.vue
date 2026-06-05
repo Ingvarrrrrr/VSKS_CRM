@@ -1610,7 +1610,15 @@ async function saveWish(andSubmit = false) {
   saving.value = true
   try {
     const feo = selectedFeo3.value || selectedFeo2.value || selectedFeo1.value
-    const title = wishForm.value.items.map(i => i.item_name).filter(Boolean).join(', ') || 'Новая заявка'
+    // Заголовок: краткий и читаемый. При множестве позиций — первая + счётчик,
+    // иначе склейка переполняет title (VARCHAR 500) и роняет создание заявки.
+    const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
+    let title = names.join(', ') || 'Новая заявка'
+    if (title.length > 255) {
+      title = names.length > 1
+        ? `${names[0].slice(0, 120)} + ещё ${names.length - 1} поз.`
+        : names[0].slice(0, 252) + '…'
+    }
     const payload = {
       ...wishForm.value,
       feo_category_id: feo,

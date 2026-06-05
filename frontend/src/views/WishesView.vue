@@ -1604,8 +1604,12 @@ async function saveExecution() {
 
 // TODO: B8 — нужен отдельный endpoint PATCH /wishes/{id}/feo для approver на submitted-заявке
 async function saveWish(andSubmit = false) {
-  const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
-  if (!valid) return
+  // Черновик можно сохранить всегда — прерваться на любом этапе (даже 200 позиций,
+  // часть не в каталоге). Валидацию формы требуем только при отправке на согласование.
+  if (andSubmit) {
+    const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
+    if (!valid) return
+  }
 
   saving.value = true
   try {

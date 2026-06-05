@@ -81,8 +81,19 @@ async def create_user(
         if existing:
             raise HTTPException(400, "Пользователь с таким логином уже существует")
 
-    # Org admins can only create users in their org
-    org_id = data.org_id if current_user.role == 'superadmin' and data.org_id else current_user.org_id
+    # Куда создаём сотрудника. org_admin привязан к своей орг через user_org_access
+    # (напр. Артеева → Донецкое, org 26), а его базовый User.org_id может быть пуст.
+    # Поэтому принимаем org_id из запроса, если он входит в доступные пользователю
+    # орг (get_org_filter учитывает JWT-контур + UOA). SaaS-роли — без ограничений.
+    from app.auth.jwt import get_org_filter
+    allowed = get_org_filter(current_user)  # None = все орг (SaaS), иначе список
+    requested = data.org_id
+    if current_user.role in ('superadmin', 'account_owner'):
+        org_id = requested or current_user.org_id or (allowed[0] if allowed else None)
+    elif requested and (allowed is None or requested in allowed):
+        org_id = requested
+    else:
+        org_id = current_user.org_id or (allowed[0] if allowed else None)
     if not org_id:
         raise HTTPException(400, "Необходимо указать организацию")
 

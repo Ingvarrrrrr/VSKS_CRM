@@ -342,6 +342,7 @@
       <v-card>
         <v-card-title class="pa-4">Добавить сотрудника</v-card-title>
         <v-card-text class="pa-4 pt-0">
+          <v-form ref="createFormRef">
           <v-text-field v-model="createDialog.full_name" label="ФИО *" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-account" :rules="[v => !!v || 'ФИО обязательно']" />
           <v-text-field v-model="createDialog.email" label="Email *" variant="outlined" density="compact" class="mb-3"
@@ -407,6 +408,7 @@
             </div>
           </div>
           <v-text-field v-model="createDialog.city" label="Город" variant="outlined" density="compact" />
+          </v-form>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -1101,7 +1103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveComponent } from 'vue'
+import { ref, computed, reactive, onMounted, watch, defineComponent, h, resolveComponent, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
@@ -1333,6 +1335,7 @@ const createDialog = reactive({
   role: 'employee', city: '', department: '', position: '', phone: '', work_phone: '', telegram_id: '', avatar: '', saving: false,
   org_id: null as number | null, subsidy_id: null as number | null,
 })
+const createFormRef = ref<any>(null)
 // Pre-load dicts when superadmin picks an org in createDialog
 watch(() => createDialog.org_id, (id) => { if (id) loadDicts(id) })
 const organizations = ref<any[]>([])
@@ -1761,6 +1764,17 @@ function openCreateUser() {
 }
 
 async function saveUser() {
+  // Подсветить «стрелочками» (красные поля + сообщения) все незаполненные/невалидные
+  // поля и проскроллить к первому проблемному, вместо общего непонятного снэкбара.
+  const res = await createFormRef.value?.validate?.()
+  if (res && res.valid === false) {
+    await nextTick()
+    const firstErr = document.querySelector('.v-dialog--active .v-input--error, .v-dialog .v-input--error') as HTMLElement | null
+    firstErr?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    firstErr?.querySelector('input, textarea')?.dispatchEvent(new Event('focus'))
+    showSnack('Заполните выделенные поля', 'error')
+    return
+  }
   if (createDialog.password !== createDialog.password_confirm) {
     showSnack('Пароли не совпадают', 'error')
     return
@@ -1785,7 +1799,7 @@ async function saveUser() {
         work_phone: unformatPhone(createDialog.work_phone) || null,
         telegram_id: createDialog.telegram_id || null,
         avatar: createDialog.avatar || randomAvatarId(),
-        org_id: isSuperadmin.value ? createDialog.org_id : null,
+        org_id: createDialog.org_id ?? null,
       },
     })
     users.value = [...users.value, u]

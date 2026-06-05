@@ -57,6 +57,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         user._active_org_id = int(jwt_org_id)
     else:
         user._active_org_id = user.org_id
+    # Per-org data scope: орг, к которым у пользователя есть явный доступ через
+    # user_org_access (напр. org_admin привязан к Донецкому через роль).
+    # Без этого data-scope опирался только на JWT-контур/user_organizations —
+    # пользователь видел вкладки, но не данные своей орг (субсидии/персонал пусты).
+    user._uoa_org_ids = []
+    if user.role not in ('superadmin', 'account_owner'):
+        from app.models.user_org_access import UserOrgAccess
+        _uoa_ids = (await db.execute(
+            select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
+        )).scalars().all()
+        user._uoa_org_ids = list({int(x) for x in _uoa_ids if x})
     return user
 
 async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> bool:
@@ -125,13 +136,16 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     if current_user.role in ('superadmin', 'account_owner'):
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
-    # For all other roles: use contour org_ids from JWT if available
+    # For all other roles: contour org_ids from JWT + per-org access (UOA).
+    uoa_ids = getattr(current_user, '_uoa_org_ids', None) or []
     org_ids = getattr(current_user, '_active_org_ids', None)
-    if org_ids:
-        return org_ids
-    # Fallback: single org
-    active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
-    return [active_org_id] if active_org_id else None
+    base = list(org_ids) if org_ids else []
+    if not base:
+        active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
+        if active_org_id:
+            base = [active_org_id]
+    merged = list({*base, *uoa_ids})
+    return merged or None
 
 def get_single_org_id(current_user: User) -> Optional[int]:
     """Get single org_id for entity creation. Uses first selected org for superadmin."""

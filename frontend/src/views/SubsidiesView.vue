@@ -4621,7 +4621,7 @@ onMounted(() => {
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }
-.feo-th-actions { min-width: 200px; }
+.feo-th-actions { min-width: 200px; position: sticky; right: 0; z-index: 5; }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
@@ -4629,8 +4629,25 @@ onMounted(() => {
 .feo-td-name { min-width: 0; }
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
-.feo-td-actions { text-align: right; white-space: nowrap; min-width: 200px; }
+.feo-td-actions {
+  text-align: right; white-space: nowrap; min-width: 200px;
+  position: sticky; right: 0; z-index: 2;
+  background: var(--crm-surface);
+  box-shadow: inset 1px 0 0 var(--crm-border-strong);
+}
 .feo-td-actions .v-btn { background: transparent !important; }
+/* sticky-колонку действий держим непрозрачной во всех состояниях строки,
+   иначе при горизонтальном скролле сквозь неё видны другие колонки */
+.feo-tr:hover .feo-td-actions { background: var(--crm-surface-alt); }
+.feo-tr--l1 .feo-td-actions { background: var(--crm-surface-alt); }
+.feo-tr--l1:hover .feo-td-actions { background: var(--crm-surface-hover); }
+.feo-tr--over .feo-td-actions,
+.feo-tr--children-exceed .feo-td-actions {
+  background: linear-gradient(rgba(239,68,68,0.08), rgba(239,68,68,0.08)), var(--crm-surface) !important;
+}
+.feo-tr--over:hover .feo-td-actions {
+  background: linear-gradient(rgba(239,68,68,0.13), rgba(239,68,68,0.13)), var(--crm-surface-alt) !important;
+}
 .feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }

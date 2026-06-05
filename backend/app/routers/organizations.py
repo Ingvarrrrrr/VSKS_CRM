@@ -189,6 +189,16 @@ async def create_organization(
     if current_user.role not in (*OWNER_ROLES,):
         from fastapi import HTTPException as _HTTPException
         raise _HTTPException(403, "Недостаточно прав")
+    # ИНН уникален (бизнес-правило + UNIQUE-индекс uq_organizations_inn). Заранее
+    # отдаём понятную 400 со ссылкой на существующую орг, а не сырой 500.
+    _inn = (data.inn or '').strip() if data.inn else ''
+    if _inn:
+        from fastapi import HTTPException as _HTTPException
+        _dup = (await db.execute(
+            select(Organization).where(Organization.inn == _inn).limit(1)
+        )).scalar_one_or_none()
+        if _dup:
+            raise _HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
     if current_user.role == 'account_owner':
         org = Organization(
             name=data.name,
@@ -279,6 +289,14 @@ async def update_organization(
     org = res.scalar_one_or_none()
     if not org:
         raise HTTPException(404, "Организация не найдена")
+    # ИНН уникален: запрещаем смену на ИНН другой существующей орг (иначе 500 от индекса).
+    _inn = (data.inn or '').strip() if data.inn else ''
+    if _inn and _inn != (org.inn or ''):
+        _dup = (await db.execute(
+            select(Organization).where(Organization.inn == _inn, Organization.id != org_id).limit(1)
+        )).scalar_one_or_none()
+        if _dup:
+            raise HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
     org.name = data.name
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:

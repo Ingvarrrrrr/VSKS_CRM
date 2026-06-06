@@ -1,5 +1,49 @@
 <template>
   <v-container fluid class="pa-4">
+    <!-- Consent banner: pending wish participations -->
+    <v-expand-transition>
+      <div v-if="pendingWishConsents.length" class="mb-4">
+        <div class="d-flex align-center mb-2" style="gap:8px">
+          <v-icon color="orange" size="20">mdi-bell-ring</v-icon>
+          <span class="font-weight-bold">Требуется ваше согласие на заявки</span>
+          <v-chip color="orange" size="x-small" variant="tonal">{{ pendingWishConsents.length }}</v-chip>
+        </div>
+        <v-row dense>
+          <v-col
+            v-for="pc in pendingWishConsents"
+            :key="pc.wish_id"
+            cols="12"
+            sm="6"
+            md="4"
+          >
+            <v-card variant="outlined" style="border-color: rgb(251,146,60)" class="pa-3">
+              <div class="font-weight-medium mb-1">{{ pc.title }}</div>
+              <div class="text-caption text-medium-emphasis mb-2">
+                Добавил: <b>{{ pc.added_by_name || '—' }}</b>
+                <span v-if="pc.created_at"> · {{ pc.created_at.split('T')[0] }}</span>
+              </div>
+              <div class="d-flex" style="gap:8px">
+                <v-btn
+                  color="success"
+                  size="small"
+                  variant="tonal"
+                  :loading="consentLoading === pc.wish_id + '_a'"
+                  @click="respondWishConsent(pc.wish_id, true)"
+                >Принять</v-btn>
+                <v-btn
+                  color="error"
+                  size="small"
+                  variant="tonal"
+                  :loading="consentLoading === pc.wish_id + '_d'"
+                  @click="respondWishConsent(pc.wish_id, false)"
+                >Отклонить</v-btn>
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+      </div>
+    </v-expand-transition>
+
     <!-- Header -->
     <div class="d-flex align-center mb-4 flex-wrap" style="gap:12px">
       <div>
@@ -724,6 +768,57 @@
               </v-card-text>
             </v-card>
 
+            <!-- Section: Участники заявки -->
+            <v-card v-if="editingWishId" variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2" color="primary">mdi-account-multiple-plus</v-icon>
+                Участники заявки
+                <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishMembers.length }}</v-chip>
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-autocomplete
+                  v-model="participantToAdd"
+                  :items="orgUsers"
+                  item-title="full_name"
+                  item-value="id"
+                  label="Добавить участника"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                  :disabled="!isWishEditable"
+                  hide-details
+                  @update:model-value="(val) => { if (val) { addWishMember(val); } }"
+                >
+                  <template #item="{ item, props: itemProps }">
+                    <v-list-item v-bind="itemProps">
+                      <template #title>{{ item.raw.full_name }}</template>
+                      <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                    </v-list-item>
+                  </template>
+                </v-autocomplete>
+                <div class="text-caption text-medium-emphasis mt-1 mb-3">
+                  Если у вас нет права ставить задачи участнику — потребуется его согласие.
+                </div>
+                <div class="d-flex flex-wrap" style="gap:8px">
+                  <v-chip
+                    v-for="m in wishMembers"
+                    :key="m.user_id"
+                    :closable="isWishEditable"
+                    @click:close="removeWishMember(m.user_id)"
+                  >
+                    {{ m.full_name || m.username || '—' }}
+                    <v-chip
+                      v-if="m.consent_pending"
+                      size="x-small"
+                      color="orange"
+                      variant="tonal"
+                      class="ml-1"
+                    >ждёт согласия</v-chip>
+                  </v-chip>
+                </div>
+              </v-card-text>
+            </v-card>
+
             <!-- Section: Принудительная смена статуса (только superadmin/account_owner) -->
             <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4" color="red-lighten-5">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
@@ -1329,6 +1424,32 @@ const saving = ref(false)
 // Биндим в :error-messages → Vuetify сам рисует красную подпись (стрелочка к полю).
 const serverFieldErrors = ref<Record<string, string>>({})
 
+// Wish members
+interface WishMember {
+  id: number
+  wish_id: number
+  user_id: number
+  role: string
+  added_by_id: number | null
+  consent_pending: boolean
+  username: string | null
+  full_name: string | null
+  added_by_name: string | null
+}
+interface PendingWishConsent {
+  wish_id: number
+  wish_member_id: number
+  title: string
+  org_id: number | null
+  status: string | null
+  added_by_name: string | null
+  created_at: string | null
+}
+const wishMembers = ref<WishMember[]>([])
+const participantToAdd = ref<number | null>(null)
+const pendingWishConsents = ref<PendingWishConsent[]>([])
+const consentLoading = ref<string | null>(null)
+
 const isWishEditable = computed(() =>
   !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
 )
@@ -1500,6 +1621,7 @@ function resetForm() {
 function openCreateDialog() {
   editingWishId.value = null
   editingWish.value = null
+  wishMembers.value = []
   resetForm()
   wishDialog.value = true
 }
@@ -1573,6 +1695,7 @@ async function openEditDialog(wish: Wish) {
     total_price: i.total_price != null ? Number(i.total_price) : null,
     country_origin: i.country_origin || 'РФ',
   })) as any
+  await loadWishMembers()
   wishDialog.value = true
 }
 
@@ -1619,6 +1742,55 @@ async function saveExecution() {
     showSnack(`Ошибка: ${e?.message || e?.payload?.message || 'не удалось сохранить'}`, 'error')
   } finally {
     savingExecution.value = false
+  }
+}
+
+// Wish members functions
+async function loadWishMembers() {
+  if (!editingWishId.value) { wishMembers.value = []; return }
+  try {
+    wishMembers.value = await apiFetch<WishMember[]>(`/wishes/${editingWishId.value}/members`)
+  } catch { wishMembers.value = [] }
+}
+async function addWishMember(userId: number | null) {
+  participantToAdd.value = null
+  if (!userId || !editingWishId.value) return
+  if (wishMembers.value.some(m => m.user_id === userId)) return
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, role: 'participant' }),
+    })
+    await loadWishMembers()
+    showSnack('Участник добавлен')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось добавить участника', 'error')
+  }
+}
+async function removeWishMember(userId: number) {
+  if (!editingWishId.value) return
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/members/${userId}`, { method: 'DELETE' })
+    await loadWishMembers()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось удалить участника', 'error')
+  }
+}
+async function loadPendingWishConsents() {
+  try {
+    pendingWishConsents.value = await apiFetch<PendingWishConsent[]>('/wishes/members/pending-consent')
+  } catch { pendingWishConsents.value = [] }
+}
+async function respondWishConsent(wishId: number, accept: boolean) {
+  consentLoading.value = wishId + (accept ? '_a' : '_d')
+  try {
+    await apiFetch(`/wishes/${wishId}/members/consent?accept=${accept}`, { method: 'POST' })
+    showSnack(accept ? 'Вы приняли участие в заявке' : 'Вы отклонили участие')
+    await loadPendingWishConsents()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось обработать согласие', 'error')
+  } finally {
+    consentLoading.value = null
   }
 }
 
@@ -1938,6 +2110,7 @@ onMounted(async () => {
   if (isManagerOrAdmin.value) {
     await loadAllWishes()
   }
+  loadPendingWishConsents()
 })
 </script>
 

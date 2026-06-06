@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from datetime import date
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.auth.visibility import build_visibility_clause, get_visible_user_ids
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
+from app.models.wish_member import WishMember
 from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
@@ -106,12 +107,22 @@ async def list_wishes(
     if org_ids is not None:
         q = q.where(Wish.org_id.in_(org_ids))
 
+    # Preload wish_ids where current user is a participant (for visibility extension)
+    member_res = await db.execute(
+        select(WishMember.wish_id).where(WishMember.user_id == current_user.id)
+    )
+    member_wish_ids = {r[0] for r in member_res.all()}
+
     if assigned_to_me:
         # Explicit shortcut: wishes where I am the designated approver
         q = q.where(Wish.assigned_to == current_user.id)
     elif mine_only or current_user.role == 'employee':
-        # Employee always sees only own; or explicit mine_only flag
-        q = q.where(Wish.created_by == current_user.id)
+        # Employee always sees only own + wishes they are a participant in
+        base_cond = Wish.created_by == current_user.id
+        if member_wish_ids:
+            q = q.where(or_(base_cond, Wish.id.in_(member_wish_ids)))
+        else:
+            q = q.where(base_cond)
     elif subordinates_only:
         # Phase 28: use unified visibility helper (covers SaaS bypass + hierarchy +
         # dept heads + managed orgs + UOA org_admin/manager)
@@ -127,10 +138,13 @@ async def list_wishes(
                 return []
             q = q.where(Wish.created_by.in_(sub_ids))
     else:
-        # Phase 28: unified visibility helper
+        # Phase 28: unified visibility helper + member visibility
         clause = await build_visibility_clause(current_user, db, 'wish')
         if clause is not None:
-            q = q.where(clause)
+            if member_wish_ids:
+                q = q.where(or_(clause, Wish.id.in_(member_wish_ids)))
+            else:
+                q = q.where(clause)
 
     # Дополнительные фильтры (применяются после visibility — только сужают)
     if creator_id is not None:
@@ -166,7 +180,15 @@ async def get_wish(
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
     if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+        # Check if current user is a participant (wish member)
+        member_res = await db.execute(
+            select(WishMember).where(
+                WishMember.wish_id == wish_id,
+                WishMember.user_id == current_user.id,
+            )
+        )
+        if member_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
     return _enrich(wish)
 
 

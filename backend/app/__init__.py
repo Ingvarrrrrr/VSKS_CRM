@@ -22,6 +22,7 @@ from .routers import (
     staff_directory,
 )
 from .routers import wish_documents
+from .routers import wish_members as wish_members_router
 from .routers import user_addresses as user_addresses_router
 from .routers import org_config
 from .routers import purchase_transitions
@@ -1779,6 +1780,10 @@ app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
 # so the specific path resolves before the catch-all /{wish_id} in wishes.router
 # (same ordering principle as task_badges/task_delegation before tasks.router, commit 3d37cf9)
 app.include_router(wish_documents.router)
+# wish_members.pending_router (/api/wishes/members/pending-consent) MUST be before wishes.router
+# to avoid /{wish_id:int} swallowing the static "members" segment.
+app.include_router(wish_members_router.pending_router)
+app.include_router(wish_members_router.router)
 app.include_router(wishes.router)
 app.include_router(push_router.router)
 app.include_router(permissions_router.router)

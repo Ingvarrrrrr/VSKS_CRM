@@ -123,6 +123,52 @@ async def _handle_callback(cq: dict) -> None:
                 await _answer_cq(cq_id, "Ошибка")
         return
 
+    # ── Wish member consent ──────────────────────────────────────────────────
+    if data.startswith(("wm_consent_accept:", "wm_consent_decline:")):
+        accept = data.startswith("wm_consent_accept:")
+        parts = data.split(":", 1)[1].split(":")
+        if len(parts) == 2:
+            wish_id, uid = int(parts[0]), int(parts[1])
+            try:
+                async with async_session() as db:
+                    from app.models.wish_member import WishMember
+                    from app.models.user import User as UserModel
+                    user = (await db.execute(
+                        select(UserModel).where(UserModel.telegram_id == chat_id)
+                    )).scalars().first()
+                    if not user:
+                        await _answer_cq(cq_id, "Пользователь не найден")
+                        return
+                    m = (await db.execute(
+                        select(WishMember).where(
+                            WishMember.wish_id == wish_id,
+                            WishMember.user_id == uid,
+                        )
+                    )).scalar_one_or_none()
+                    if not m:
+                        await _answer_cq(cq_id, "Запись не найдена")
+                        return
+                    if accept:
+                        m.consent_pending = False
+                        await db.commit()
+                        await _answer_cq(cq_id, "✅ Принято!")
+                    else:
+                        added_by_id = m.added_by_id
+                        await db.delete(m)
+                        await db.commit()
+                        if added_by_id:
+                            adder = await db.get(UserModel, added_by_id)
+                            if adder:
+                                from app.notifications import notify_user, _esc
+                                await notify_user(adder,
+                                    f"❌ <b>{_esc(user.full_name or user.username)}</b> отклонил добавление в заявку #{wish_id}"
+                                )
+                        await _answer_cq(cq_id, "❌ Отклонено")
+            except Exception as e:
+                logger.error("WM consent error: %s", e)
+                await _answer_cq(cq_id, "Ошибка")
+        return
+
     # ── Consent callbacks ────────────────────────────────────────────────────
     if not data.startswith(("consent_accept:", "consent_decline:")):
         await _answer_cq(cq_id, "")

@@ -373,6 +373,64 @@ async def notify_purchase_member_added(purchase, added_user, added_by_name: str)
                        reply_markup_override=_purchase_keyboard(purchase.id))
 
 
+def _wish_url(wish_id: int) -> str:
+    return f"{BASE_URL}/wishes/{wish_id}"
+
+
+def _wish_keyboard(wish_id: int) -> dict:
+    """Keyboard: open CRM for wish notifications."""
+    return {
+        "inline_keyboard": [[
+            {"text": "➡️ Открыть", "url": _wish_url(wish_id)},
+        ]]
+    }
+
+
+def _wish_consent_keyboard(wish_id: int, user_id: int) -> dict:
+    """Keyboard: Accept/Decline for wish membership consent."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Принять", "callback_data": f"wm_consent_accept:{wish_id}:{user_id}"},
+                {"text": "❌ Отклонить", "callback_data": f"wm_consent_decline:{wish_id}:{user_id}"},
+            ],
+            [
+                {"text": "➡️ Открыть", "url": _wish_url(wish_id)},
+            ],
+        ]
+    }
+
+
+async def notify_wish_consent_required(wish, added_user, added_by_name: str) -> None:
+    """Notify user that they've been added to a wish and consent is required."""
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    text = (
+        f"🤝 <b>Вас добавляют в заявку</b>\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"👤 Добавил: <i>{_esc(added_by_name)}</i>\n\n"
+        f"Примите или отклоните участие:"
+    )
+    tg = getattr(added_user, "telegram_id", None)
+    mx = getattr(added_user, "max_chat_id", None)
+    if tg:
+        await _send_telegram(str(tg), text,
+                              reply_markup_override=_wish_consent_keyboard(wish.id, added_user.id))
+    if mx:
+        await _send_max(str(mx), text)
+
+
+async def notify_wish_member_added(wish, added_user, added_by_name: str) -> None:
+    """Notify user that they've been added to a wish (no consent needed)."""
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    text = (
+        f"👥 <b>Вас добавили в заявку</b>\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"👤 Добавил: <i>{_esc(added_by_name)}</i>"
+    )
+    await notify_user(added_user, text,
+                      reply_markup_override=_wish_keyboard(wish.id))
+
+
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
     """Notify about approaching purchase deadline."""
     subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")

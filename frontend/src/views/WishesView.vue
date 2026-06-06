@@ -1287,8 +1287,22 @@ const feoLevel3 = computed(() =>
     : []
 )
 
+const orgMembers = ref<User[]>([])
+
+watch(() => wishForm.value.subsidy_id, async (sid) => {
+  orgMembers.value = []
+  if (!sid) return
+  const sub = subsidies.value.find(s => s.id === sid)
+  const orgId = sub?.org_id
+  if (!orgId) return
+  try {
+    orgMembers.value = await apiFetch<User[]>(`/users/?org_id=${orgId}`)
+  } catch { orgMembers.value = [] }
+}, { immediate: true })
+
 const orgUsers = computed(() => {
   if (!wishForm.value.subsidy_id) return users.value
+  if (orgMembers.value.length) return orgMembers.value
   const sub = subsidies.value.find(s => s.id === wishForm.value.subsidy_id)
   if (!sub || !sub.org_id) return users.value
   return users.value.filter(u => u.org_id === sub.org_id)

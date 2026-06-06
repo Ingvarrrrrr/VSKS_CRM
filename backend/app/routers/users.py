@@ -38,6 +38,7 @@ async def list_users(
     can_drive: Optional[bool] = Query(None, description="Phase 30.2: фильтр водителей — can_drive=true"),
     fleet_role: Optional[str] = Query(None, description="Фильтр по fleet_role (driver/mechanic/doctor/...)"),
     limit: int = Query(500, ge=1, le=1000),
+    org_id: Optional[int] = Query(None, description="Вернуть всех членов этой орг: primary User.org_id ИЛИ членство в user_organizations ИЛИ user_org_access"),
 ):
     q = select(User).order_by(User.full_name)
     # D-09: hide superadmin from non-superadmin callers
@@ -46,6 +47,19 @@ async def list_users(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.where(User.org_id.in_(org_ids))
+    # org_id param: union-membership filter (primary + user_organizations + user_org_access)
+    if org_id is not None:
+        from sqlalchemy import or_
+        from app.models.user_organization import UserOrganization
+        member_q = select(UserOrganization.user_id).where(UserOrganization.org_id == org_id)
+        conds = [User.org_id == org_id, User.id.in_(member_q)]
+        try:
+            from app.models.user_org_access import UserOrgAccess
+            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id == org_id)
+            conds.append(User.id.in_(uoa_q))
+        except Exception:
+            pass
+        q = q.where(or_(*conds))
     # Phase 30.2: driver-only filter — can_drive=True OR fleet_role='driver'
     if can_drive is True:
         from sqlalchemy import or_

@@ -46,8 +46,12 @@ async def list_users(
     if current_user.role != "superadmin":
         q = q.where(User.role != "superadmin")
     org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.where(User.org_id.in_(org_ids))
+    explicit_assign_mode = org_id is not None or subsidy_id is not None
+    # Контур вызывающего применяем НИЖЕ — только если НЕ передан явный org_id/subsidy_id.
+    # В режиме назначения (явная цель) список = сотрудники орг субсидии
+    # ∪ те, кому вызывающий может ставить задачи (подчинённые/управляемые орг и
+    # отделы, в т.ч. из ДРУГИХ организаций). Контур НЕ применяем, иначе он резал бы
+    # union до активной орг вызывающего (баг: super/owner с активной орг=5 видел 2 чел).
     # Резолвим целевой набор орг: явный org_id + (по субсидии) орг контрагента и
     # орг с тем же ИНН — чтобы дубли организаций (одно юрлицо = несколько org-строк)
     # не урезали список сотрудников.
@@ -84,19 +88,31 @@ async def list_users(
                     select(Organization.id).where(Organization.inn.in_(list(inns)))
                 )).scalars().all()
                 target_org_ids.update(inn_org_ids)
-    if target_org_ids:
+    if explicit_assign_mode:
         from sqlalchemy import or_
-        from app.models.user_organization import UserOrganization
-        target_list = list(target_org_ids)
-        member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
-        conds = [User.org_id.in_(target_list), User.id.in_(member_q)]
-        try:
-            from app.models.user_org_access import UserOrgAccess
-            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
-            conds.append(User.id.in_(uoa_q))
-        except Exception:
-            pass
-        q = q.where(or_(*conds))
+        from app.services.consent import compute_assignable_user_ids
+        # Кому вызывающий может ставить задачи. None = super-роль → ВСЕ (без ограничений).
+        assignable = await compute_assignable_user_ids(current_user, db)
+        if assignable is not None:
+            from app.models.user_organization import UserOrganization
+            conds = []
+            if target_org_ids:
+                target_list = list(target_org_ids)
+                member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
+                conds += [User.org_id.in_(target_list), User.id.in_(member_q)]
+                try:
+                    from app.models.user_org_access import UserOrgAccess
+                    uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
+                    conds.append(User.id.in_(uoa_q))
+                except Exception:
+                    pass
+            if assignable:
+                conds.append(User.id.in_(list(assignable)))
+            # Пустой conds (нет ни орг, ни assignable) → вернуть пусто, не весь список.
+            q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
+    elif org_ids is not None:
+        # Обычный режим (без явной цели) — ограничиваем контуром вызывающего.
+        q = q.where(User.org_id.in_(org_ids))
     # Phase 30.2: driver-only filter — can_drive=True OR fleet_role='driver'
     if can_drive is True:
         from sqlalchemy import or_

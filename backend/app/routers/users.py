@@ -39,6 +39,7 @@ async def list_users(
     fleet_role: Optional[str] = Query(None, description="Фильтр по fleet_role (driver/mechanic/doctor/...)"),
     limit: int = Query(500, ge=1, le=1000),
     org_id: Optional[int] = Query(None, description="Вернуть всех членов этой орг: primary User.org_id ИЛИ членство в user_organizations ИЛИ user_org_access"),
+    subsidy_id: Optional[int] = Query(None, description="Вернуть всех сотрудников орг(а), связанных с субсидией: subsidy.org_id + орг по contractor_id + орг с тем же ИНН (учёт дублей орг)"),
 ):
     q = select(User).order_by(User.full_name)
     # D-09: hide superadmin from non-superadmin callers
@@ -47,15 +48,51 @@ async def list_users(
     org_ids = get_org_filter(current_user)
     if org_ids is not None:
         q = q.where(User.org_id.in_(org_ids))
-    # org_id param: union-membership filter (primary + user_organizations + user_org_access)
+    # Резолвим целевой набор орг: явный org_id + (по субсидии) орг контрагента и
+    # орг с тем же ИНН — чтобы дубли организаций (одно юрлицо = несколько org-строк)
+    # не урезали список сотрудников.
+    target_org_ids: set[int] = set()
     if org_id is not None:
+        target_org_ids.add(org_id)
+    if subsidy_id is not None:
+        from app.models.subsidy import Subsidy
+        from app.models.organization import Organization
+        from app.models.contractor import Contractor
+        sub = await db.get(Subsidy, subsidy_id)
+        if sub is not None:
+            inns: set[str] = set()
+            if sub.org_id:
+                target_org_ids.add(sub.org_id)
+                o = await db.get(Organization, sub.org_id)
+                if o is not None and o.inn:
+                    inns.add(o.inn)
+            if sub.contractor_id:
+                c = await db.get(Contractor, sub.contractor_id)
+                if c is not None and c.inn:
+                    inns.add(c.inn)
+                rows = (await db.execute(
+                    select(Organization.id, Organization.inn).where(
+                        Organization.contractor_id == sub.contractor_id
+                    )
+                )).all()
+                for oid, oinn in rows:
+                    target_org_ids.add(oid)
+                    if oinn:
+                        inns.add(oinn)
+            if inns:
+                inn_org_ids = (await db.execute(
+                    select(Organization.id).where(Organization.inn.in_(list(inns)))
+                )).scalars().all()
+                target_org_ids.update(inn_org_ids)
+    if target_org_ids:
         from sqlalchemy import or_
         from app.models.user_organization import UserOrganization
-        member_q = select(UserOrganization.user_id).where(UserOrganization.org_id == org_id)
-        conds = [User.org_id == org_id, User.id.in_(member_q)]
+        target_list = list(target_org_ids)
+        member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
+        conds = [User.org_id.in_(target_list), User.id.in_(member_q)]
         try:
             from app.models.user_org_access import UserOrgAccess
-            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id == org_id)
+            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
             conds.append(User.id.in_(uoa_q))
         except Exception:
             pass

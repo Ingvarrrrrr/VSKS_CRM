@@ -1387,11 +1387,8 @@ const orgMembers = ref<User[]>([])
 watch(() => wishForm.value.subsidy_id, async (sid) => {
   orgMembers.value = []
   if (!sid) return
-  const sub = subsidies.value.find(s => s.id === sid)
-  const orgId = sub?.org_id
-  if (!orgId) return
   try {
-    orgMembers.value = await apiFetch<User[]>(`/users/?org_id=${orgId}`)
+    orgMembers.value = await apiFetch<User[]>(`/users/?subsidy_id=${sid}`)
   } catch { orgMembers.value = [] }
 }, { immediate: true })
 

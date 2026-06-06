@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 
 SCORE_AUTO = 0.95     # auto-accept: no human review needed
 SCORE_SUGGEST = 0.60  # suggest: show candidates to user for review
+SCORE_DIFFERENT = 0.40  # ниже этого — почти наверняка другой товар, не предлагаем вовсе
 
 # ---------------------------------------------------------------------------
 # Noise tokens stripped before scoring
@@ -174,6 +175,12 @@ def progressive_match(
         ))
 
     candidates.sort(key=lambda x: x.score, reverse=True)
+
+    # Отсекаем заведомо чужие товары: при <40% покрытия это почти наверняка
+    # совсем другой товар — не зашумляем выбор пользователя ложными кандидатами.
+    candidates = [c for c in candidates if c.score >= SCORE_DIFFERENT]
+    if not candidates:
+        return 'create', []
 
     if len(candidates) == 1 and candidates[0].score >= 1.0:
         return 'auto', candidates

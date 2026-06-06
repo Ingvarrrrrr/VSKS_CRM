@@ -1184,7 +1184,7 @@
             <v-switch
               v-model="smartImportSkipCatalog"
               label="Не добавлять в каталог при импорте"
-              hint="Позиции попадут только в эту закупку. Полезно для уникальных позиций (билеты, акты)."
+              hint="Позиции попадут только в эту закупку, без сопоставления с каталогом — один-в-один как в чеке. Идеально для авансовых платежей, билетов, актов."
               persistent-hint
               density="compact"
               color="primary"
@@ -3581,6 +3581,19 @@ async function doSmartImport() {
         create_new: true,
       }))
       commitPreviewItems(bypassResolved)
+      return
+    }
+
+    // «Не добавлять в каталог» (напр. авансовые платежи): позиции должны быть
+    // один-в-один как в чеке. Сопоставление с каталогом не нужно — коммитим как есть,
+    // без привязки и без диалога.
+    if (smartImportSkipCatalog.value) {
+      const skipResolved = smartImportPreview.value.map(row => ({
+        query: row.item_name || '',
+        product_id: null as number | null,
+        create_new: false,
+      }))
+      commitPreviewItems(skipResolved)
       return
     }
 

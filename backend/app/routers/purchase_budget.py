@@ -47,6 +47,12 @@ from app.models.subsidy import Subsidy
 FRAMEWORK_TYPES: set = {"framework_cumulative", "framework_with_amount"}
 """Contract purchase_contract_type values that trigger framework sequencing."""
 
+CONTRACTED_STATUSES: set = {"contracted", "ordered", "delivered", "paid"}
+"""Statuses where a contract/order is already placed (used for uncontracted_remaining)."""
+
+PLANNED_STATUSES: set = {"plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"}
+"""Statuses that represent financially planned spend (used for spendable_remaining)."""
+
 
 # ---------------------------------------------------------------------------
 # Helpers

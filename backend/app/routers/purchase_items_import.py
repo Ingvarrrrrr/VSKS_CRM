@@ -1703,28 +1703,31 @@ async def _save_smart_preview_to_purchase(
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
-        # 1) exact match (fast path)
-        matched = product_by_name.get(item_name.lower().strip())
-        if not matched:
-            # 2) fuzzy fallback
-            best_score = 0.0
-            best_candidate = None
-            for _key, _p in product_by_name.items():
-                _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
-                if _s > best_score:
-                    best_score = _s
-                    best_candidate = _p
-            if best_score >= _SCORE_AUTO and best_candidate is not None:
-                matched = best_candidate
-        if matched:
-            product_id = matched.id
-            matched_catalog += 1
-            if not unit_price and matched.price:
-                unit_price = matched.price
-                total_price = qty * unit_price
+        if skip_catalog:
+            # «Не добавлять в каталог» (напр. авансовые платежи): позиции должны быть
+            # один-в-один как в чеке, без какой-либо привязки к каталогу. Не матчим вовсе.
+            product_id = None
+            matched = None
         else:
-            if skip_catalog:
-                product_id = None  # анти-засорение: не добавлять в каталог
+            # 1) exact match (fast path)
+            matched = product_by_name.get(item_name.lower().strip())
+            if not matched:
+                # 2) fuzzy fallback
+                best_score = 0.0
+                best_candidate = None
+                for _key, _p in product_by_name.items():
+                    _s = _fuzzy_score(item_name, _p.name if hasattr(_p, 'name') else _key)
+                    if _s > best_score:
+                        best_score = _s
+                        best_candidate = _p
+                if best_score >= _SCORE_AUTO and best_candidate is not None:
+                    matched = best_candidate
+            if matched:
+                product_id = matched.id
+                matched_catalog += 1
+                if not unit_price and matched.price:
+                    unit_price = matched.price
+                    total_price = qty * unit_price
             else:
                 product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
                 new_in_catalog += 1

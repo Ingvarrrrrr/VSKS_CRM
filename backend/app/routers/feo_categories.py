@@ -53,8 +53,10 @@ async def get_feo_leaves(
     Response: [{id, name, parent_id, level, budget, used_amount, residual, path}]
     where path = "Direction › Subcategory › LeafName".
     """
-    from sqlalchemy import select, func as sqlfunc
+    from sqlalchemy import select, func as sqlfunc, case
     from app.models.purchase_item import PurchaseItem
+    from app.models.purchase import Purchase as _Purchase
+    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
 
     # Все FeoCategory для subsidy
     cats_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id)
@@ -75,18 +77,29 @@ async def get_feo_leaves(
 
     leaf_ids = [c.id for c in leaves]
 
-    # Aggregate used per feo_category_id
+    # Aggregate contracted_used and planned_used per feo_category_id via conditional sums
     used_q = (
         select(
             PurchaseItem.feo_category_id,
-            sqlfunc.coalesce(sqlfunc.sum(PurchaseItem.total_price), 0).label("used"),
+            sqlfunc.coalesce(
+                sqlfunc.sum(case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("contracted_used"),
+            sqlfunc.coalesce(
+                sqlfunc.sum(case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("planned_used"),
         )
+        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
         .where(PurchaseItem.feo_category_id.in_(leaf_ids))
     )
     if exclude_purchase_id is not None:
         used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
     used_q = used_q.group_by(PurchaseItem.feo_category_id)
-    used_map = {r.feo_category_id: float(r.used) for r in (await db.execute(used_q)).all()}
+    # leaf_used_map: {feo_category_id: (contracted_used, planned_used)}
+    leaf_used_map: dict[int, tuple[float, float]] = {}
+    for r in (await db.execute(used_q)).all():
+        leaf_used_map[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
 
     # Build path "Direction › Subcategory › Leaf"
     def build_path(cat) -> str:
@@ -100,15 +113,23 @@ async def get_feo_leaves(
     result = []
     for c in leaves:
         budget = float(c.budget or 0)
-        used = used_map.get(c.id, 0.0)
+        contracted_used, planned_used = leaf_used_map.get(c.id, (0.0, 0.0))
+        uncontracted_remaining = budget - contracted_used
+        spendable_remaining = budget - planned_used
         result.append({
             "id": c.id,
             "name": c.name,
             "parent_id": c.parent_id,
             "level": c.level,
             "budget": budget,
-            "used_amount": used,
-            "residual": budget - used,
+            # New metrics
+            "contracted_used": contracted_used,
+            "planned_used": planned_used,
+            "uncontracted_remaining": uncontracted_remaining,
+            "spendable_remaining": spendable_remaining,
+            # Legacy fields (kept for backward compat): used_amount = planned_used, residual = spendable_remaining
+            "used_amount": planned_used,
+            "residual": spendable_remaining,
             "path": build_path(c),
         })
 
@@ -138,8 +159,10 @@ async def feo_budget_residuals(
             leaves:[{id,name,level,path,budget,used,residual,ancestors:[...]}]}
     (ancestors — сверху вниз: ур.1 первым).
     """
-    from sqlalchemy import select as _sel, func as _f
+    from sqlalchemy import select as _sel, func as _f, case as _case
     from app.models.purchase_item import PurchaseItem
+    from app.models.purchase import Purchase as _Purchase
+    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
 
     ids = [int(x) for x in category_ids.split(",") if x.strip().isdigit()]
     all_cats = (await db.execute(
@@ -155,14 +178,27 @@ async def feo_budget_residuals(
     leaf_ids_all = [c.id for c in all_cats if not children.get(c.id)]
 
     used_q = (
-        _sel(PurchaseItem.feo_category_id,
-             _f.coalesce(_f.sum(PurchaseItem.total_price), 0).label("used"))
+        _sel(
+            PurchaseItem.feo_category_id,
+            _f.coalesce(
+                _f.sum(_case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("contracted_used"),
+            _f.coalesce(
+                _f.sum(_case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("planned_used"),
+        )
+        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
         .where(PurchaseItem.feo_category_id.in_(leaf_ids_all))
     )
     if exclude_purchase_id is not None:
         used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
     used_q = used_q.group_by(PurchaseItem.feo_category_id)
-    leaf_used = {r.feo_category_id: float(r.used) for r in (await db.execute(used_q)).all()}
+    # leaf_used: {feo_category_id: (contracted_used, planned_used)}
+    leaf_used: dict[int, tuple[float, float]] = {}
+    for r in (await db.execute(used_q)).all():
+        leaf_used[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
 
     def descendant_leaves(cid):
         ch = children.get(cid)
@@ -182,15 +218,28 @@ async def feo_budget_residuals(
             return float(c.budget)
         return sum(calc_budget(x) for x in ch)
 
-    def used_of(cid):
-        return sum(leaf_used.get(l, 0.0) for l in descendant_leaves(cid))
+    def contracted_of(cid):
+        return sum(leaf_used.get(l, (0.0, 0.0))[0] for l in descendant_leaves(cid))
+
+    def planned_of(cid):
+        return sum(leaf_used.get(l, (0.0, 0.0))[1] for l in descendant_leaves(cid))
 
     def node_info(cid):
         c = cat_by_id[cid]
         b = calc_budget(cid)
-        u = used_of(cid)
-        return {"id": cid, "name": c.name, "level": c.level,
-                "budget": b, "used": u, "residual": b - u}
+        cu = contracted_of(cid)
+        pu = planned_of(cid)
+        return {
+            "id": cid, "name": c.name, "level": c.level,
+            "budget": b,
+            "contracted_used": cu,
+            "planned_used": pu,
+            "uncontracted_remaining": b - cu,
+            "spendable_remaining": b - pu,
+            # Legacy fields (backward compat): used = planned_used, residual = spendable_remaining
+            "used": pu,
+            "residual": b - pu,
+        }
 
     def path_of(cid):
         names = []

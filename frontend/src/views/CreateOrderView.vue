@@ -33,33 +33,46 @@
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
       <!-- Остатки по направлениям ФЭО (ур.1) — видны при формировании, контроль бюджета -->
-      <v-alert
-        v-if="canViewAllLevelsBudget && feoDirections.length"
-        :type="feoDirections.some(d => d.residual < 0) ? 'error' : 'info'"
-        variant="tonal" density="compact" class="mb-2">
-        <div class="text-subtitle-2 mb-1">Остатки по направлениям ФЭО</div>
-        <div v-for="d in feoDirections" :key="d.id" class="d-flex justify-space-between text-body-2">
-          <span>{{ d.name }}</span>
-          <span :class="d.residual < 0 ? 'text-error font-weight-bold' : ''">
-            {{ formatMoney(d.residual) }}
-            <span class="text-caption text-medium-emphasis"> из {{ formatMoney(d.budget) }}</span>
-          </span>
-        </div>
-      </v-alert>
+      <template v-if="canViewAllLevelsBudget && feoDirections.length">
+        <v-alert
+          v-for="d in feoDirections" :key="d.id"
+          :type="d.spendable_remaining < 0 ? 'error' : 'info'"
+          variant="tonal" density="compact" class="mb-2">
+          <div class="text-subtitle-2 mb-1">{{ d.name }}</div>
+          <div class="d-flex flex-wrap gap-x-4 text-body-2">
+            <span>
+              Незаконтрактовано:
+              <strong :class="d.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(d.uncontracted_remaining) }}</strong>
+            </span>
+            <span>
+              На траты:
+              <strong :class="d.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(d.spendable_remaining) }}</strong>
+              <span class="text-caption text-medium-emphasis"> из {{ formatMoney(d.budget) }}</span>
+            </span>
+          </div>
+        </v-alert>
+      </template>
       <!-- Остатки по выбранным листовым ФЭО (после выбора пункта) -->
       <template v-if="canViewLeafBudget">
         <v-alert
           v-for="r in feoResiduals" :key="r.id"
-          :type="r.residual < 0 ? 'error' : 'info'"
+          :type="(basketForNode(r.id) > r.spendable_remaining) ? 'warning' : r.spendable_remaining < 0 ? 'error' : 'info'"
           variant="tonal" density="compact" class="mb-2">
-          <div>
-            Остаток по «{{ r.name }}»:
-            <strong>{{ formatMoney(r.residual) }}</strong>
-            <span class="text-caption text-medium-emphasis"> (бюджет {{ formatMoney(r.budget) }} − использовано {{ formatMoney(r.used) }})</span>
+          <div class="text-subtitle-2 mb-1">Остаток по «{{ r.name }}»</div>
+          <div class="text-body-2">
+            <div>Бюджет: <strong>{{ formatMoney(r.budget) }}</strong></div>
+            <div>Осталось незаконтрактованным: <strong :class="r.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(r.uncontracted_remaining) }}</strong></div>
+            <div>Осталось на траты: <strong :class="r.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(r.spendable_remaining) }}</strong></div>
+            <div :class="(r.spendable_remaining - basketForNode(r.id)) < 0 ? 'text-error font-weight-bold' : ''">
+              Осталось потратить (с учётом этой заявки): <strong>{{ formatMoney(r.spendable_remaining - basketForNode(r.id)) }}</strong>
+            </div>
+            <div v-if="(r.spendable_remaining - basketForNode(r.id)) < 0" class="text-error text-caption mt-1">
+              Превышение на {{ formatMoney(Math.abs(r.spendable_remaining - basketForNode(r.id))) }} — потребуется согласование руководителя
+            </div>
           </div>
-          <div v-if="canViewAllLevelsBudget && r.ancestors && r.ancestors.length" class="mt-1 text-caption">
+          <div v-if="canViewAllLevelsBudget && r.ancestors && r.ancestors.length" class="mt-2 text-caption">
             <div v-for="a in r.ancestors" :key="a.id">
-              ур.{{ a.level }} «{{ a.name }}»: остаток <strong>{{ formatMoney(a.residual) }}</strong>
+              ур.{{ a.level }} «{{ a.name }}»: незаконтрактовано <strong>{{ formatMoney(a.uncontracted_remaining) }}</strong> / на траты <strong>{{ formatMoney(a.spendable_remaining) }}</strong>
             </div>
           </div>
         </v-alert>
@@ -4423,7 +4436,7 @@ const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | 
 const authStore = useAuthStore()
 const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
 const canViewAllLevelsBudget = computed(() => authStore.hasAction('feo_budget.view_all_levels'))
-type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number }
+type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number; contracted_used: number; planned_used: number; uncontracted_remaining: number; spendable_remaining: number }
 type FeoLeaf = FeoNode & { ancestors: FeoNode[] }
 const feoDirections = ref<FeoNode[]>([])
 const feoResiduals = ref<FeoLeaf[]>([])
@@ -4454,6 +4467,24 @@ const loadFeoResiduals = async () => {
   } catch { feoDirections.value = []; feoResiduals.value = [] }
 }
 watch([() => form.subsidy_id, leafCatIds, canViewLeafBudget, canViewAllLevelsBudget], loadFeoResiduals, { immediate: true })
+
+// Личная корзина по узлу ФЭО: сумма позиций текущей формы, привязанных к данному узлу
+const basketForNode = (nodeId: number, leafIds?: Set<number>): number => {
+  if (form.feo_per_item) {
+    // per-item режим: смотрим feo_category_id каждой позиции
+    const allowed = leafIds ?? new Set([nodeId])
+    return items.value.reduce((s, i) => {
+      const cid = (i as any).feo_category_id
+      return s + (cid && allowed.has(Number(cid)) ? (i.total_price || 0) : 0)
+    }, 0)
+  } else {
+    // одиночный режим: если выбранная категория совпадает с узлом — берём planned_total_price
+    const selId = form.feo_category_id ? Number(form.feo_category_id) : null
+    if (selId === nodeId) return Number((form as any).planned_total_price) || 0
+    return 0
+  }
+}
+
 const budgetOverrideDialog = ref(false)
 const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 

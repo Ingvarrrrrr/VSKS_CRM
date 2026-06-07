@@ -72,6 +72,135 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
     return wish
 
 
+async def _distribute_wish_to_purchases(wish, db, current_user) -> list[int]:
+    """Создаёт закупки (status='wishes') из позиций заявки по группам колонок,
+    копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
+    Возвращает список id созданных закупок. Транзакцию/commit НЕ делает — это на вызывающем.
+    Защита от дублей: если по заявке уже есть закупки (purchases.wish_id == wish.id) — НИЧЕГО не создаёт и возвращает их id."""
+    from sqlalchemy.orm import selectinload as sil
+    from app.models.product import Product
+
+    # Защита от дублей: если по заявке уже есть закупки — ничего не создаём
+    existing = (await db.execute(
+        select(Purchase.id).where(Purchase.wish_id == wish.id)
+    )).scalars().all()
+    if existing:
+        return list(existing)
+
+    # Preload wish items with products for category resolution
+    res = await db.execute(
+        select(WishItem)
+        .options(sil(WishItem.product))
+        .where(WishItem.wish_id == wish.id)
+    )
+    items_full = res.scalars().all()
+
+    # Backfill product_id + category by item_name for legacy wish_items
+    # (created before product_id was persisted on wish_items).
+    missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
+    name_to_product: dict[str, Product] = {}
+    if missing:
+        names = list({(it.item_name or "").strip() for it in missing})
+        pres = await db.execute(select(Product).where(Product.name.in_(names)))
+        for p in pres.scalars().all():
+            name_to_product[(p.name or "").strip().lower()] = p
+        for it in missing:
+            hit = name_to_product.get((it.item_name or "").strip().lower())
+            if hit:
+                it.product_id = hit.id
+
+    def _resolve_key(it: WishItem) -> str:
+        """target_column_key → product.category → name-matched product.category → '__uncategorized__'"""
+        if it.target_column_key:
+            return it.target_column_key
+        if it.product_id and it.product and it.product.category:
+            return it.product.category
+        hit = name_to_product.get((it.item_name or "").strip().lower())
+        if hit and hit.category:
+            return hit.category
+        return "__uncategorized__"
+
+    groups: dict[str, list] = {}
+    for it in items_full:
+        groups.setdefault(_resolve_key(it), []).append(it)
+
+    if not groups:
+        raise HTTPException(status_code=400, detail="Нет позиций для распределения")
+
+    created_purchase_ids: list[int] = []
+    for column_key, items_in_col in groups.items():
+        total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
+        display_key = "Не определено" if column_key == "__uncategorized__" else column_key
+        total_qty_grp = sum(float(i.quantity or 0) for i in items_in_col)
+        p = Purchase(
+            wish_id=wish.id,
+            subsidy_id=wish.subsidy_id,
+            feo_category_id=wish.feo_category_id,
+            event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
+            item_name=(wish.title or "").strip() or f"Заявка #{wish.id}",
+            subject=f"{(wish.title or '').strip() or f'Заявка #{wish.id}'} — {display_key}",
+            planned_quantity=total_qty_grp or wish.quantity,
+            planned_total_price=total_nmck,
+            total_nmck=total_nmck,
+            nmck=total_nmck,
+            status="wishes",
+            assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec
+            execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
+            service_note_text=wish.justification,
+            service_note_by=wish.created_by,
+        )
+        db.add(p)
+        await db.flush()  # get p.id
+        created_purchase_ids.append(p.id)
+
+        for wi in items_in_col:
+            pi = PurchaseItem(
+                purchase_id=p.id,
+                product_id=wi.product_id,
+                item_name=wi.item_name,
+                item_type=wi.item_type,
+                quantity=wi.quantity,
+                unit=wi.unit,
+                unit_price=wi.unit_price,
+                total_price=wi.total_price,
+                country_origin=wi.country_origin,
+                feo_category_id=wi.feo_category_id,  # B9: per-item feo
+            )
+            db.add(pi)
+        await db.flush()
+
+        # Add wish author as purchase member (viewer role) so they can see the purchase
+        if wish.created_by and wish.created_by != current_user.id:
+            db.add(PurchaseMember(
+                purchase_id=p.id,
+                user_id=wish.created_by,
+                role="viewer",
+                added_by_id=current_user.id,
+                consent_pending=False,
+            ))
+        # Also add assigned_to as member if different from author and current_user
+        if wish.assigned_to and wish.assigned_to not in (wish.created_by, current_user.id):
+            db.add(PurchaseMember(
+                purchase_id=p.id,
+                user_id=wish.assigned_to,
+                role="viewer",
+                added_by_id=current_user.id,
+                consent_pending=False,
+            ))
+        await db.flush()
+
+        # Create chat room per purchase if there is an assignee different from current user
+        if wish.assigned_to and wish.assigned_to != current_user.id:
+            org_id = getattr(current_user, 'org_id', None) or wish.org_id
+            await _create_assignment_chat_room(
+                db, current_user.id, wish.assigned_to,
+                org_id,
+                f"Закупка: {p.subject}",
+            )
+
+    return created_purchase_ids
+
+
 @router.get("/", response_model=list[WishOut])
 async def list_wishes(
     status: Optional[str] = None,
@@ -162,6 +291,9 @@ async def list_wishes(
 
     if status and status != 'all':
         q = q.where(Wish.status == status)
+    elif not status:
+        # По умолчанию «Заявки» = в работе; распределённые (converted) живут в «Закупках»
+        q = q.where(Wish.status != 'converted')
     q = q.order_by(Wish.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)
     wishes = result.scalars().all()
@@ -420,17 +552,43 @@ async def force_wish_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Superadmin/account_owner: force-переключение статуса заявки (минуя workflow-guard'ы)."""
+    """Superadmin/account_owner: force-переключение статуса заявки (минуя workflow-guard'ы).
+
+    Форс «как будто пройден обычный путь»: при переключении в 'converted' реально
+    создаются закупки (status='wishes') и заявка уходит из «Заявок» в «Закупки».
+    'approved' — только одобрена (остаётся в «Заявках», закупки не создаются).
+    """
     if not _is_saas(current_user):
         raise HTTPException(status_code=403, detail="Только superadmin/account_owner может переключать статусы напрямую")
     allowed = {"draft", "submitted", "approved", "rejected", "converted"}
     if body.status not in allowed:
         raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
     wish = await _load_wish(wish_id, db)
-    wish.status = body.status
-    if body.status == "approved" and not wish.approved_by:
-        wish.approved_by = current_user.id
-    await db.commit()
+
+    if body.status == "converted":
+        if not wish.items:
+            raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
+        try:
+            await _distribute_wish_to_purchases(wish, db, current_user)
+            wish.status = "converted"
+            wish.approved_by = wish.approved_by or current_user.id
+            await db.commit()
+        except HTTPException:
+            await db.rollback()
+            raise
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=500, detail=f"Ошибка при создании закупок — откат: {e}")
+    elif body.status == "approved":
+        wish.status = "approved"
+        if not wish.approved_by:
+            wish.approved_by = current_user.id
+        await db.commit()
+    else:
+        # draft / submitted / rejected — просто переключение статуса
+        wish.status = body.status
+        await db.commit()
+
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
 
@@ -488,6 +646,7 @@ async def convert_wish(
     eff_price = body.approved_price if (body.approved_price and float(body.approved_price) > 0) else (total_nmck or wish.estimated_price)
 
     p = Purchase(
+        wish_id=wish.id,
         subsidy_id=body.subsidy_id or wish.subsidy_id,
         feo_category_id=wish.feo_category_id,  # B9
         event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
@@ -582,138 +741,27 @@ async def approve_distribution(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """D-05/D-06: Atomic all-or-nothing approve. Creates N purchases (status='wishes'),
+    """D-05/D-06: Atomic all-or-nothing распределение. Creates N purchases (status='wishes'),
     one per distinct resolved column key group, copies wish items to purchase_items,
-    creates assignment chat rooms, then marks wish.status='approved'.
+    creates assignment chat rooms, links purchase.wish_id, then marks wish.status='converted'.
 
+    Распределённая заявка уходит из «Заявок» в «Закупки» (status='converted').
     Rolls back entirely on any failure — zero purchases persist if any step fails.
-    Returns 400 if wish is already approved.
+    Returns 400 if wish is already distributed.
     """
-    from sqlalchemy.orm import selectinload as sil
-
     wish = await _load_wish(wish_id, db)
-    if not _is_saas(current_user) and wish.status == "approved":
-        raise HTTPException(status_code=400, detail="Заявка уже одобрена")
-    if not _is_saas(current_user) and wish.status not in ("draft", "submitted"):
-        raise HTTPException(status_code=400, detail=f"Нельзя одобрить заявку в статусе {wish.status}")
+    if not _is_saas(current_user) and wish.status == "converted":
+        raise HTTPException(status_code=400, detail="Заявка уже распределена")
+    if not _is_saas(current_user) and wish.status not in ("draft", "submitted", "approved"):
+        raise HTTPException(status_code=400, detail=f"Нельзя распределить заявку в статусе {wish.status}")
     if current_user.role not in ADMIN_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Распределять заявку может админ или назначенный согласующий")
     if not wish.items:
-        raise HTTPException(status_code=400, detail="Заявка пустая — нечего одобрять")
+        raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
 
-    # Preload wish items with products for category resolution
-    res = await db.execute(
-        select(WishItem)
-        .options(sil(WishItem.product))
-        .where(WishItem.wish_id == wish_id)
-    )
-    items_full = res.scalars().all()
-
-    # Backfill product_id + category by item_name for legacy wish_items
-    # (created before product_id was persisted on wish_items).
-    from app.models.product import Product
-    missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
-    name_to_product: dict[str, Product] = {}
-    if missing:
-        names = list({(it.item_name or "").strip() for it in missing})
-        pres = await db.execute(select(Product).where(Product.name.in_(names)))
-        for p in pres.scalars().all():
-            name_to_product[(p.name or "").strip().lower()] = p
-        for it in missing:
-            hit = name_to_product.get((it.item_name or "").strip().lower())
-            if hit:
-                it.product_id = hit.id
-
-    def _resolve_key(it: WishItem) -> str:
-        """target_column_key → product.category → name-matched product.category → '__uncategorized__'"""
-        if it.target_column_key:
-            return it.target_column_key
-        if it.product_id and it.product and it.product.category:
-            return it.product.category
-        hit = name_to_product.get((it.item_name or "").strip().lower())
-        if hit and hit.category:
-            return hit.category
-        return "__uncategorized__"
-
-    groups: dict[str, list] = {}
-    for it in items_full:
-        groups.setdefault(_resolve_key(it), []).append(it)
-
-    if not groups:
-        raise HTTPException(status_code=400, detail="Нет позиций для распределения")
-
-    created_purchase_ids: list[int] = []
     try:
-        for column_key, items_in_col in groups.items():
-            total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
-            display_key = "Не определено" if column_key == "__uncategorized__" else column_key
-            total_qty_grp = sum(float(i.quantity or 0) for i in items_in_col)
-            p = Purchase(
-                subsidy_id=wish.subsidy_id,
-                feo_category_id=wish.feo_category_id,
-                event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
-                item_name=(wish.title or "").strip() or f"Заявка #{wish.id}",
-                subject=f"{(wish.title or '').strip() or f'Заявка #{wish.id}'} — {display_key}",
-                planned_quantity=total_qty_grp or wish.quantity,
-                planned_total_price=total_nmck,
-                total_nmck=total_nmck,
-                nmck=total_nmck,
-                status="wishes",
-                assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec
-                execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
-                service_note_text=wish.justification,
-                service_note_by=wish.created_by,
-            )
-            db.add(p)
-            await db.flush()  # get p.id
-            created_purchase_ids.append(p.id)
-
-            for wi in items_in_col:
-                pi = PurchaseItem(
-                    purchase_id=p.id,
-                    product_id=wi.product_id,
-                    item_name=wi.item_name,
-                    item_type=wi.item_type,
-                    quantity=wi.quantity,
-                    unit=wi.unit,
-                    unit_price=wi.unit_price,
-                    total_price=wi.total_price,
-                    country_origin=wi.country_origin,
-                    feo_category_id=wi.feo_category_id,  # B9: per-item feo
-                )
-                db.add(pi)
-            await db.flush()
-
-            # Add wish author as purchase member (viewer role) so they can see the purchase
-            if wish.created_by and wish.created_by != current_user.id:
-                db.add(PurchaseMember(
-                    purchase_id=p.id,
-                    user_id=wish.created_by,
-                    role="viewer",
-                    added_by_id=current_user.id,
-                    consent_pending=False,
-                ))
-            # Also add assigned_to as member if different from author and current_user
-            if wish.assigned_to and wish.assigned_to not in (wish.created_by, current_user.id):
-                db.add(PurchaseMember(
-                    purchase_id=p.id,
-                    user_id=wish.assigned_to,
-                    role="viewer",
-                    added_by_id=current_user.id,
-                    consent_pending=False,
-                ))
-            await db.flush()
-
-            # Create chat room per purchase if there is an assignee different from current user
-            if wish.assigned_to and wish.assigned_to != current_user.id:
-                org_id = getattr(current_user, 'org_id', None) or wish.org_id
-                await _create_assignment_chat_room(
-                    db, current_user.id, wish.assigned_to,
-                    org_id,
-                    f"Закупка: {p.subject}",
-                )
-
-        wish.status = "approved"
+        ids = await _distribute_wish_to_purchases(wish, db, current_user)
+        wish.status = "converted"
         wish.approved_by = current_user.id
         await db.commit()
     except HTTPException:
@@ -725,7 +773,122 @@ async def approve_distribution(
 
     return {
         "wish_id": wish.id,
-        "purchase_ids": created_purchase_ids,
-        "count": len(created_purchase_ids),
-        "status": "approved",
+        "purchase_ids": ids,
+        "count": len(ids),
+        "status": "converted",
     }
+
+
+@router.get("/{wish_id}/export.xlsx")
+async def export_wish_xlsx(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from fastapi.responses import StreamingResponse
+    import io
+    from urllib.parse import quote
+    wish = await _load_wish(wish_id, db)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    # Позиции заявки + связанный товар (фото/категория/вид/описание/ссылки)
+    res = await db.execute(
+        select(WishItem)
+        .where(WishItem.wish_id == wish_id)
+        .options(selectinload(WishItem.product))
+        .order_by(WishItem.id)
+    )
+    items = res.scalars().all()
+
+    from openpyxl.styles import Border, Side
+    wb = Workbook(); ws = wb.active; ws.title = "Заявка"
+    thin = Side(style="thin", color="C0C0C0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill("solid", fgColor="FB923C")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    link_font = Font(color="0563C1", underline="single")
+
+    headers = [
+        "№ п/п", "Наименование", "Фото", "Категория товара", "Вид",
+        "Описание", "Ссылка пример", "Количество", "Ед. изм.",
+        "Плановая Цена за ед", "Плановая Сумма",
+    ]
+    widths = [7, 34, 30, 20, 16, 50, 32, 12, 10, 16, 16]
+    for c, (h, w) in enumerate(zip(headers, widths), start=1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font = header_font; cell.fill = header_fill
+        cell.alignment = center; cell.border = border
+        ws.column_dimensions[cell.column_letter].width = w
+    ws.row_dimensions[1].height = 32
+
+    def _photo_url(p):
+        if not p:
+            return ""
+        return p.photo_url or p.photo_link or (f"/api/products/{p.id}/photo" if p.photo_data else "")
+
+    def _example_url(p):
+        if not p:
+            return ""
+        links = p.price_links if isinstance(p.price_links, list) else []
+        for l in links:
+            url = l.get("url") if isinstance(l, dict) else None
+            if url and str(url).startswith("http"):
+                return url
+        cl = p.clarification_link or ""
+        return cl if cl.startswith("http") else ""
+
+    r = 2
+    for i, it in enumerate(items, start=1):
+        p = getattr(it, "product", None)
+        name = it.item_name or (p.name if p else "") or ""
+        category = (p.category if p else "") or ""
+        kind = (p.product_type if p else "") or ""
+        descr = (p.description if p else "") or ""
+        photo = _photo_url(p)
+        example = _example_url(p)
+        ws.cell(row=r, column=1, value=i)
+        ws.cell(row=r, column=2, value=name)
+        c3 = ws.cell(row=r, column=3, value=photo)
+        if photo.startswith("http"):
+            c3.hyperlink = photo; c3.font = link_font
+        ws.cell(row=r, column=4, value=category)
+        ws.cell(row=r, column=5, value=kind)
+        ws.cell(row=r, column=6, value=descr)
+        c7 = ws.cell(row=r, column=7, value=example)
+        if example.startswith("http"):
+            c7.hyperlink = example; c7.font = link_font
+        qty = float(it.quantity or 0)
+        unit_price = float(it.unit_price or 0)
+        sum_val = float(it.total_price or 0) or (qty * unit_price)
+        ws.cell(row=r, column=8, value=qty)
+        ws.cell(row=r, column=9, value=it.unit or "")
+        price = ws.cell(row=r, column=10, value=unit_price)
+        total = ws.cell(row=r, column=11, value=sum_val)
+        price.number_format = '# ##0.00'
+        total.number_format = '# ##0.00'
+        for c in range(1, 12):
+            cell = ws.cell(row=r, column=c)
+            cell.border = border
+            if c in (2, 6):
+                cell.alignment = left_top
+            elif c in (3, 7):
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        r += 1
+
+    last_row = max(r - 1, 1)
+    ws.auto_filter.ref = f"A1:K{last_row}"
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"zayavka_{wish.id}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )

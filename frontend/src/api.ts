@@ -10,6 +10,13 @@ function authHeaders(): Record<string, string> {
 let _consecutive5xx = 0
 let _autoRecoveryTriggered = false
 
+// Глобальный индикатор загрузки: счётчик активных запросов.
+// App.vue слушает 'api-loading' и показывает полосу прогресса сверху.
+let _inflight = 0
+function emitLoading() {
+  try { window.dispatchEvent(new CustomEvent('api-loading', { detail: { count: _inflight } })) } catch {}
+}
+
 export async function forceClearCacheAndReload(): Promise<void> {
   try {
     if ('serviceWorker' in navigator) {
@@ -31,6 +38,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
     ? JSON.stringify(options.body)
     : options.body
+  _inflight += 1
+  emitLoading()
+  try {
   const res = await fetch(BASE + path, {
     ...options,
     body,
@@ -123,5 +133,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     return JSON.parse(text) as T
   } catch {
     return undefined as unknown as T
+  }
+  } finally {
+    _inflight -= 1
+    emitLoading()
   }
 }

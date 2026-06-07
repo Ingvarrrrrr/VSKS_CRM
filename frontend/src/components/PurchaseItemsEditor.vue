@@ -858,13 +858,13 @@
     </div>
 
     <!-- ===== Product picker dialog ===== -->
-    <v-dialog v-model="productPickerDialog" max-width="720" :fullscreen="display.smAndDown" scrollable>
-      <v-card>
+    <v-dialog v-model="productPickerDialog" max-width="1600" width="95vw" scrollable>
+      <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
         <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
           <span>Выбрать товар из каталога</span>
           <v-btn icon="mdi-close" variant="text" size="small" @click="productPickerDialog = false" />
         </v-card-title>
-        <v-card-text class="px-4 pb-2">
+        <v-card-text class="px-4 pb-2 flex-grow-1" style="overflow-y:auto">
           <v-text-field
             v-model="productPickerSearch"
             prepend-inner-icon="mdi-magnify"
@@ -930,12 +930,13 @@
     </v-dialog>
 
     <!-- ===== Full product card dialog ===== -->
-    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="700" :fullscreen="display.smAndDown" scrollable>
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-4 px-sm-6">
-          {{ fullProductEditingId ? 'Редактировать товар / услугу' : 'Добавить товар / услугу в каталог' }}
+    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="1600" width="95vw" scrollable>
+      <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
+        <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
+          <span>{{ fullProductEditingId ? 'Редактировать товар / услугу' : 'Добавить товар / услугу в каталог' }}</span>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="fullProductDialog = false" />
         </v-card-title>
-        <v-card-text class="px-4 px-sm-6">
+        <v-card-text class="px-4 px-sm-6 flex-grow-1" style="overflow-y:auto">
           <v-row dense>
             <v-col cols="12">
               <v-combobox

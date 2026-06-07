@@ -1,5 +1,12 @@
 <template>
   <v-app>
+    <v-progress-linear
+      v-if="apiLoading"
+      indeterminate
+      color="primary"
+      height="3"
+      style="position:fixed;top:0;left:0;right:0;z-index:99999"
+    />
     <app-bar v-if="showAppBar" />
     <v-main>
       <router-view v-slot="{ Component, route }">
@@ -50,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import AppBar from './components/AppBar.vue'
@@ -65,6 +72,12 @@ const route = useRoute()
 const theme = useTheme()
 const authStore = useAuthStore()
 
+const apiLoading = ref(false)
+function onApiLoading(e: Event) {
+  const count = (e as CustomEvent).detail?.count ?? 0
+  apiLoading.value = count > 0
+}
+
 const PUBLIC_ROUTES = ['/', '/login', '/register', '/verify-email', '/reset-password']
 
 const isAuthenticated = computed(() => localStorage.getItem('auth_token') !== null)
@@ -78,6 +91,7 @@ const showAppBar = computed(() =>
 
 // Restore theme preference + init global table resize
 onMounted(async () => {
+  window.addEventListener('api-loading', onApiLoading)
   const saved = localStorage.getItem('theme')
   if (saved && (saved === 'dark' || saved === 'light')) {
     theme.global.name.value = saved
@@ -113,6 +127,10 @@ onMounted(async () => {
       authStore.loaded = true
     }
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('api-loading', onApiLoading)
 })
 </script>
 

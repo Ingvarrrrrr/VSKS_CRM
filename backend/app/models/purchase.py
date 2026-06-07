@@ -105,6 +105,10 @@ class Purchase(Base):
     # Ссылка на родительскую закупку — если эту создали разбиением другой
     parent_purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="SET NULL"), nullable=True)
 
+    # Связь с заявкой-источником (Wish), из которой эта закупка была распределена.
+    # Распределённая заявка переходит в status='converted' и уходит из «Заявок» в «Закупки».
+    wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="SET NULL"), nullable=True, index=True)
+
     # Авансовый отчёт: кому возмещать (сотрудник)
     reimbursement_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 

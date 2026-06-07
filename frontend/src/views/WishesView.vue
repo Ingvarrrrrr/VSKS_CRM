@@ -255,6 +255,7 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
             <template v-if="item.status === 'draft'">
               <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditDialog(item)" />
               <v-btn
@@ -420,6 +421,7 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
             <template v-if="item.status === 'submitted'">
               <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
                 Распределить
@@ -571,6 +573,7 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
+            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
             <template v-if="item.status === 'submitted'">
               <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
                 Распределить
@@ -993,6 +996,9 @@
 
         <v-card-actions class="px-4 pb-4 flex-wrap">
           <v-btn variant="text" @click="wishDialog = false">Закрыть</v-btn>
+          <v-btn v-if="editingWishId && editingWish" variant="tonal" color="green-darken-1" prepend-icon="mdi-microsoft-excel" :loading="downloadingExcelId === editingWishId" @click="downloadWishExcel(editingWish as any)">
+            Скачать Excel
+          </v-btn>
           <v-spacer />
           <template v-if="isWishEditable">
             <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
@@ -1384,20 +1390,20 @@ const feoLevel3 = computed(() =>
 
 const orgMembers = ref<User[]>([])
 
-watch(() => wishForm.value.subsidy_id, async (sid) => {
+async function loadOrgMembers(sid: number | null) {
   orgMembers.value = []
   if (!sid) return
   try {
     orgMembers.value = await apiFetch<User[]>(`/users/?subsidy_id=${sid}`)
   } catch { orgMembers.value = [] }
-}, { immediate: true })
+}
+
+watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
 
 const orgUsers = computed(() => {
   if (!wishForm.value.subsidy_id) return users.value
   if (orgMembers.value.length) return orgMembers.value
-  const sub = subsidies.value.find(s => s.id === wishForm.value.subsidy_id)
-  if (!sub || !sub.org_id) return users.value
-  return users.value.filter(u => u.org_id === sub.org_id)
+  return users.value
 })
 
 // Должность сотрудника: per-org → fallback на legacy User.position/department
@@ -1531,6 +1537,7 @@ const kanbanItems = ref<any[]>([])
 
 // Service note download (Phase 13 / D-07)
 const downloadingServiceNoteId = ref<number | null>(null)
+const downloadingExcelId = ref<number | null>(null)
 
 // Snackbar
 const snackbar = ref(false)
@@ -1628,6 +1635,7 @@ async function openEditDialog(wish: Wish) {
   editingWish.value = wish
   resetForm()
   wishForm.value.subsidy_id = wish.subsidy_id ?? null
+  loadOrgMembers(wishForm.value.subsidy_id)
   wishForm.value.feo_category_id = wish.feo_category_id ?? null
   wishForm.value.assigned_to = wish.assigned_to ?? null
   wishForm.value.event_id = (wish as any).event_id ?? null
@@ -1961,6 +1969,30 @@ async function downloadServiceNote(wish: Wish) {
     showSnack(e?.message || 'Ошибка скачивания служебной записки', 'error')
   } finally {
     downloadingServiceNoteId.value = null
+  }
+}
+
+async function downloadWishExcel(wish: Wish) {
+  downloadingExcelId.value = wish.id
+  try {
+    const token = localStorage.getItem('auth_token') || ''
+    const resp = await fetch(`/api/wishes/${wish.id}/export.xlsx`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `zayavka_${wish.id}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка скачивания Excel', 'error')
+  } finally {
+    downloadingExcelId.value = null
   }
 }
 

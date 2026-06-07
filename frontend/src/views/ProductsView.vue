@@ -669,7 +669,7 @@
         </v-card-title>
         <v-card-text class="px-6">
           <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-            Из каждой группы остаётся <strong>один эталон</strong> (с фото / описанием / ссылками — приоритет автоматический). Остальные товары удаляются, но все их позиции в закупках перепривязываются к эталону. Снимите галочку с дубликата, если он на самом деле не дубликат.
+            Из каждой группы остаётся <strong>один эталон</strong> (с фото / описанием / ссылками — приоритет автоматический). Остальные товары удаляются, но все их позиции в закупках перепривязываются к эталону. <strong>Точные совпадения (100%)</strong> отмечены галочкой по умолчанию. <strong>Неполные совпадения (80–99%)</strong> нужно подтвердить галочкой вручную.
           </v-alert>
           <v-expansion-panels variant="accordion">
             <v-expansion-panel v-for="(grp, idx) in dupDialog.groups" :key="idx">
@@ -705,6 +705,8 @@
                     </template>
                     <v-list-item-title :class="{ 'text-decoration-line-through text-medium-emphasis': !dupDialog.skipIds.has(dup.id) }">
                       {{ dup.name }}
+                      <v-chip v-if="dup.match === 'exact'" size="x-small" color="success" variant="tonal" class="ml-2">100%</v-chip>
+                      <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">{{ dup.score }}% · подтвердите</v-chip>
                     </v-list-item-title>
                     <v-list-item-subtitle>
                       {{ dup.category || '—' }}
@@ -785,7 +787,7 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
 
 const deduplicating = ref(false)
-interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean }
+interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean; score?: number; match?: 'exact' | 'fuzzy' }
 interface DupGroup { winner: DupProduct; duplicates: DupProduct[] }
 const dupDialog = reactive({
   show: false,
@@ -805,6 +807,7 @@ async function deduplicateProducts() {
     }
     dupDialog.groups = result.groups
     dupDialog.skipIds = new Set()
+    for (const g of result.groups) for (const d of g.duplicates) if (d.match === 'fuzzy') dupDialog.skipIds.add(d.id)
     dupDialog.show = true
   } catch (e: any) {
     showSnack(e.message || 'Ошибка поиска дубликатов', 'error')

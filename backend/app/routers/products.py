@@ -846,10 +846,31 @@ async def import_products_from_excel(
                 except: pass
 
             if dedup_key in existing_by_key:
-                # Product already in catalog — update price if file has a newer one
+                # Product already in catalog — update price + backfill empty fields
                 ep = existing_by_key[dedup_key]
                 if price and ep.price != price:
                     ep.price = price
+
+                # Fill ONLY empty string-fields on existing product from this row
+                def _fill(attr, val):
+                    if val and not getattr(ep, attr):
+                        setattr(ep, attr, val)
+
+                _fill("category", cell(row, "category"))
+                _fill("product_type", cell(row, "product_type"))
+                _fill("photo_link", cell(row, "photo_link"))
+                _fill("description", cell(row, "description"))
+
+                # feo_category_id — numeric, set only if empty
+                if feo_id and not ep.feo_category_id:
+                    ep.feo_category_id = feo_id
+
+                # price_links — list, fill only if existing empty and new non-empty
+                if price_links and not ep.price_links:
+                    from sqlalchemy.orm.attributes import flag_modified
+                    ep.price_links = price_links
+                    flag_modified(ep, "price_links")
+
                 all_products.append(ep)
                 product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
                 skipped += 1
@@ -909,17 +930,16 @@ async def import_products_from_excel(
 @router.post("/deduplicate")
 async def deduplicate_products(
     dry_run: bool = False,
-    threshold: float = 0.7,
+    threshold: float = 0.8,
     skip_ids: Optional[str] = None,  # CSV: дубликаты, которые пользователь снял с галочкой
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('products')),
 ):
     """Удалить дубликаты товаров. Группировка через fuzzy-матчинг по имени
-    (token-set + char-ratio, то же что и при импорте). Группируем только в
-    пределах одной организации.
+    (token-set + char-ratio, то же что и при импорте). Единый общий каталог.
 
     `dry_run=true` — вернуть найденные группы без удаления (для preview UI).
-    `threshold` — порог сходства (по умолчанию 0.7, как при auto-link чека).
+    `threshold` — порог сходства (по умолчанию 0.8).
     `skip_ids` — CSV id'шников, которые пользователь снял с галочкой и НЕ хочет удалять.
     """
     from app.product_matcher import name_similarity
@@ -937,11 +957,6 @@ async def deduplicate_products(
     result = await db.execute(select(Product))
     all_products: list[Product] = list(result.scalars().all())
 
-    # Группировка по org_id — не сливаем товары разных организаций
-    by_org: dict[int | None, list[Product]] = defaultdict(list)
-    for p in all_products:
-        by_org[p.org_id].append(p)
-
     def priority_score(p: Product) -> tuple:
         has_price_links = bool(p.price_links)
         has_photo = bool(p.photo_data is not None or p.photo_url or p.photo_link)
@@ -951,10 +966,10 @@ async def deduplicate_products(
 
     duplicate_groups: list[dict] = []
 
-    for org_products in by_org.values():
-        n = len(org_products)
-        if n < 2:
-            continue
+    # Единый общий каталог — дедупликация по всей базе без деления по org_id
+    org_products = all_products
+    n = len(org_products)
+    if n >= 2:
         # Union-find для транзитивного объединения
         parent = list(range(n))
 
@@ -985,6 +1000,21 @@ async def deduplicate_products(
             ps.sort(key=priority_score, reverse=True)
             winner = ps[0]
             dups = ps[1:]
+            dup_dicts = []
+            for p in dups:
+                sim = name_similarity(winner.name or '', p.name or '')
+                match = "exact" if sim >= 0.999 else "fuzzy"
+                score = round(sim * 100)
+                dup_dicts.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "category": p.category,
+                    "product_type": p.product_type,
+                    "has_photo": bool(p.photo_data or p.photo_url or p.photo_link),
+                    "has_description": bool((p.description or '').strip()),
+                    "score": score,
+                    "match": match,
+                })
             duplicate_groups.append({
                 "winner": {
                     "id": winner.id,
@@ -994,17 +1024,7 @@ async def deduplicate_products(
                     "has_photo": bool(winner.photo_data or winner.photo_url or winner.photo_link),
                     "has_description": bool((winner.description or '').strip()),
                 },
-                "duplicates": [
-                    {
-                        "id": p.id,
-                        "name": p.name,
-                        "category": p.category,
-                        "product_type": p.product_type,
-                        "has_photo": bool(p.photo_data or p.photo_url or p.photo_link),
-                        "has_description": bool((p.description or '').strip()),
-                    }
-                    for p in dups
-                ],
+                "duplicates": dup_dicts,
             })
 
     if dry_run:

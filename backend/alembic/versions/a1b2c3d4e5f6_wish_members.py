@@ -17,23 +17,30 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'wish_members',
-        sa.Column('id', sa.Integer(), primary_key=True),
-        sa.Column('wish_id', sa.Integer(),
-                  sa.ForeignKey('wishes.id', ondelete='CASCADE'),
-                  nullable=False),
-        sa.Column('user_id', sa.Integer(),
-                  sa.ForeignKey('users.id', ondelete='CASCADE'),
-                  nullable=False),
-        sa.Column('role', sa.String(50), server_default='participant', nullable=True),
-        sa.Column('added_by_id', sa.Integer(),
-                  sa.ForeignKey('users.id', ondelete='SET NULL'),
-                  nullable=True),
-        sa.Column('consent_pending', sa.Boolean(), server_default='false', nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
-    )
-    op.create_index('ix_wish_members_wish_id', 'wish_members', ['wish_id'])
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    if 'wish_members' not in insp.get_table_names():
+        op.create_table(
+            'wish_members',
+            sa.Column('id', sa.Integer(), primary_key=True),
+            sa.Column('wish_id', sa.Integer(),
+                      sa.ForeignKey('wishes.id', ondelete='CASCADE'),
+                      nullable=False),
+            sa.Column('user_id', sa.Integer(),
+                      sa.ForeignKey('users.id', ondelete='CASCADE'),
+                      nullable=False),
+            sa.Column('role', sa.String(50), server_default='participant', nullable=True),
+            sa.Column('added_by_id', sa.Integer(),
+                      sa.ForeignKey('users.id', ondelete='SET NULL'),
+                      nullable=True),
+            sa.Column('consent_pending', sa.Boolean(), server_default='false', nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
+        )
+        existing_idx = []
+    else:
+        existing_idx = [ix['name'] for ix in insp.get_indexes('wish_members')]
+    if 'ix_wish_members_wish_id' not in existing_idx:
+        op.create_index('ix_wish_members_wish_id', 'wish_members', ['wish_id'])
 
 
 def downgrade() -> None:

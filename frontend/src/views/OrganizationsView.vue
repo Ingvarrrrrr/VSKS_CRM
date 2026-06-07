@@ -17,10 +17,23 @@
         style="max-width: 320px"
         @update:model-value="debouncedLoad"
       />
+      <v-btn-toggle
+        v-if="!mobile"
+        v-model="viewMode"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+        class="ml-1"
+      >
+        <v-btn value="table" size="small" icon="mdi-table" />
+        <v-btn value="cards" size="small" icon="mdi-view-grid" />
+      </v-btn-toggle>
       <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
     </div>
 
     <v-data-table
+        v-if="effectiveView === 'table'"
         v-resizable-columns="'organizations'"
         :headers="visibleHeaders"
         :items="orgs"
@@ -58,6 +71,73 @@
           </div>
         </template>
       </v-data-table>
+    <div v-else>
+      <v-row dense>
+        <v-col
+          v-for="org in pagedCards"
+          :key="org.id"
+          cols="12" sm="6" lg="4"
+        >
+          <v-card hover class="h-100">
+            <v-card-item>
+              <v-card-title class="text-body-1 font-weight-bold">{{ org.name }}</v-card-title>
+              <v-card-subtitle v-if="org.full_name && org.full_name !== org.name" class="text-caption">
+                {{ org.full_name }}
+              </v-card-subtitle>
+            </v-card-item>
+            <v-card-text class="pt-0">
+              <div class="d-flex flex-wrap align-center" style="gap:6px">
+                <v-chip
+                  :color="org.is_active ? 'success' : 'error'"
+                  size="x-small"
+                  variant="tonal"
+                >
+                  {{ org.is_active ? 'Активна' : 'Деактивирована' }}
+                </v-chip>
+                <span v-if="org.inn" class="text-caption text-medium-emphasis">ИНН: {{ org.inn }}</span>
+              </div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                <v-icon size="x-small" class="mr-1">mdi-account-multiple-outline</v-icon>
+                Пользователей: {{ org.user_count }}
+              </div>
+              <div class="text-caption text-medium-emphasis mt-1">
+                Создана: {{ formatDate(org.created_at) }}
+              </div>
+            </v-card-text>
+            <v-card-actions @click.stop>
+              <v-btn
+                icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                title="Редактировать реквизиты"
+                @click="openEditOrg(org)"
+              />
+              <v-btn
+                :icon="org.is_active ? 'mdi-toggle-switch' : 'mdi-toggle-switch-off'"
+                :color="org.is_active ? 'success' : 'grey'"
+                size="x-small" variant="text"
+                :title="org.is_active ? 'Деактивировать' : 'Активировать'"
+                @click="toggleActive(org)"
+              />
+              <v-btn
+                icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                @click="confirmDelete(org)"
+              />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10 text-medium-emphasis">
+        <v-icon size="48" class="mb-2">mdi-domain-off</v-icon>
+        <div>Организации не найдены</div>
+      </div>
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
 
     <!-- Edit org dialog -->
     <v-dialog v-model="editOrgDialog" max-width="640" scrollable>
@@ -213,6 +293,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Org {
@@ -409,6 +490,21 @@ const allColumns: ColumnDef[] = [
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('organizations', allColumns)
 const showColumnPicker = ref(false)
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'organizations_view_mode',
+  source: () => orgs.value,
+  search: () => search.value,
+  searchFields: (o: Org) => [o.name, o.full_name, o.inn],
+  pageSize: 24,
+})
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('ru-RU')

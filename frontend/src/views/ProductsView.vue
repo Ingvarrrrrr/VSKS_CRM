@@ -13,6 +13,10 @@
         <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" :loading="deduplicating" @click="deduplicateProducts">Удалить дубликаты</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-table-column" @click="colConfigDialog = true">Столбцы</v-btn>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
       </div>
     </div>
 
@@ -67,12 +71,12 @@
     </v-card>
 
     <!-- Horizontal scrollbar — always visible above the table -->
-    <div ref="mirrorScrollRef" class="mirror-hscroll">
+    <div v-if="effectiveView === 'table'" ref="mirrorScrollRef" class="mirror-hscroll">
       <div :style="{ width: tableScrollWidth + 'px', height: '1px' }" />
     </div>
 
     <!-- Table -->
-    <v-card variant="outlined">
+    <v-card v-if="effectiveView === 'table'" variant="outlined">
       <!-- Bulk action bar -->
       <v-toolbar v-if="selectedIds.length" color="primary" density="compact" class="px-2 rounded-t">
         <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
@@ -266,6 +270,105 @@
         </template>
       </v-data-table>
     </v-card>
+
+    <!-- Cards view -->
+    <div v-else>
+      <!-- Bulk action bar (cards mode) -->
+      <v-toolbar v-if="selectedIds.length" color="primary" density="compact" class="px-2 rounded mb-3">
+        <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
+        <v-btn variant="text" size="small" prepend-icon="mdi-close-circle" color="white" class="ml-2"
+          @click="selectedIds = []">Снять</v-btn>
+        <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
+          @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
+        <v-spacer />
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
+          @click="bulkToggleActive(true)">Активировать</v-btn>
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
+          @click="bulkToggleActive(false)">Деактивировать</v-btn>
+        <v-btn variant="flat" size="small" prepend-icon="mdi-delete" color="error"
+          @click="bulkDeleteDialog = true">Удалить выбранные</v-btn>
+        <v-btn v-if="isSuperadmin" variant="flat" size="small" prepend-icon="mdi-delete-sweep" color="error" class="ml-2"
+          @click="deleteAllDialog = true">Удалить ВСЕ</v-btn>
+      </v-toolbar>
+
+      <v-row v-if="pagedProducts.length" dense>
+        <v-col
+          v-for="p in pagedProducts"
+          :key="p.id"
+          cols="12" sm="6" md="4" lg="3"
+        >
+          <v-card
+            hover
+            variant="outlined"
+            class="d-flex flex-column h-100"
+            style="cursor:pointer"
+            @click="openEdit(p)"
+          >
+            <!-- Photo -->
+            <v-img
+              :src="cardPhotoSrc(p)"
+              height="180"
+              :cover="false"
+              class="bg-grey-lighten-4 flex-shrink-0"
+            >
+              <template #error>
+                <div class="d-flex align-center justify-center fill-height">
+                  <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
+                </div>
+              </template>
+              <template #placeholder>
+                <div class="d-flex align-center justify-center fill-height">
+                  <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
+                </div>
+              </template>
+            </v-img>
+
+            <v-card-text class="flex-grow-1 pb-1">
+              <div class="font-weight-bold text-body-2 mb-1" style="line-height:1.3">{{ p.name }}</div>
+              <div class="d-flex flex-wrap gap-1 mb-1">
+                <v-chip v-if="p.product_type" size="x-small" variant="tonal" :color="typeColor(p.product_type)">
+                  {{ p.product_type }}
+                </v-chip>
+                <v-chip v-if="p.category" size="x-small" variant="tonal" color="grey">
+                  {{ p.category }}
+                </v-chip>
+                <v-chip size="x-small" :color="p.is_active ? 'success' : 'grey'" variant="tonal">
+                  {{ p.is_active ? 'Активен' : 'Неактивен' }}
+                </v-chip>
+              </div>
+              <div v-if="p.price" class="font-weight-medium text-blue-darken-2 text-body-2">
+                {{ Number(p.price).toLocaleString('ru-RU') }} ₽
+              </div>
+              <div v-if="p.description" class="text-caption text-medium-emphasis mt-1" style="line-height:1.3">
+                {{ p.description.slice(0, 80) }}{{ p.description.length > 80 ? '…' : '' }}
+              </div>
+            </v-card-text>
+
+            <v-card-actions @click.stop class="pt-0">
+              <v-spacer />
+              <v-btn icon="mdi-pencil-outline" variant="text" size="small" @click.stop="openEdit(p)" />
+              <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error" @click.stop="confirmDelete(p)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+
+      <!-- Empty state -->
+      <div v-else class="text-center py-10">
+        <v-icon icon="mdi-package-variant-closed" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Товары не найдены</div>
+      </div>
+
+      <!-- Pagination -->
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        :total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
 
     <!-- Add / Edit dialog -->
     <v-dialog v-model="dialog" max-width="700" scrollable>
@@ -738,6 +841,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, reactive, watch } from 'vue'
 import { apiFetch } from '@/api'
+import { useCardView } from '@/composables/useCardView'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
@@ -1003,6 +1107,27 @@ const filteredProducts = computed(() => {
   if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
   return r
 })
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedProducts,
+} = useCardView({
+  storageKey: 'products_view_mode',
+  source: () => filteredProducts.value,
+  search: () => search.value,
+  searchFields: (p: Product) => [p.name, p.description, p.product_type, p.category],
+  pageSize: 24,
+})
+
+function cardPhotoSrc(p: Product): string | undefined {
+  if (p.has_photo) return `/api/products/${p.id}/photo`
+  if (p.photo_url || p.photo_link) return (p.photo_url || p.photo_link) as string
+  return undefined
+}
 
 // Hash-based color for any free-text type
 const PALETTE = ['blue', 'teal', 'orange', 'purple', 'pink', 'green', 'indigo', 'cyan', 'deep-orange']

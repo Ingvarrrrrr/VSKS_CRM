@@ -6,6 +6,19 @@
         {{ props.itemsTitle ?? (itemShape === 'purchase' ? 'Позиции закупки' : 'Позиции') }}
       </span>
       <div class="d-flex align-center ga-2 flex-wrap">
+        <!-- View-mode toggle (hidden on mobile, which is forced to cards) -->
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" density="compact" mandatory variant="outlined">
+          <v-tooltip text="Таблица" location="top">
+            <template #activator="{ props: tip }">
+              <v-btn v-bind="tip" value="table" size="small" icon="mdi-table" />
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Карточки" location="top">
+            <template #activator="{ props: tip }">
+              <v-btn v-bind="tip" value="cards" size="small" icon="mdi-view-grid" />
+            </template>
+          </v-tooltip>
+        </v-btn-toggle>
         <v-btn v-if="selectedItemIdxs.length > 0 && !props.readonly"
           variant="tonal" prepend-icon="mdi-delete-sweep-outline" size="small" color="error"
           @click="removeSelectedItems">
@@ -61,788 +74,223 @@
 
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
-      <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) -->
+      <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) — Layer 3: extracted -->
       <template v-if="stagesEnabled">
-        <v-table density="compact">
-          <thead>
-            <tr>
-              <th style="width:36px"></th>
-              <th style="width:36px;padding:0 4px;text-align:center">
-                <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
-                  :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
-                  @update:model-value="toggleSelectAll" />
-              </th>
-              <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-              <th>Наименование</th>
-              <th style="min-width:280px">Суммы стадий</th>
-              <th style="width:48px">Матч</th>
-              <th style="width:80px"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="(item, idx) in localItems" :key="idx">
-              <!-- Summary row -->
-              <tr class="summary-row" style="cursor:pointer" @click="toggleExpand(idx)">
-                <td style="width:36px;text-align:center">
-                  <v-btn
-                    :icon="expanded[idx] ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-                    size="small" variant="text" density="compact"
-                    @click.stop="toggleExpand(idx)"
-                  />
-                </td>
-                <td style="width:36px;padding:0 4px;text-align:center" @click.stop>
-                  <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
-                    @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
-                </td>
-                <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
-                <td>
-                  <div class="d-flex align-center gap-1">
-                    <v-tooltip v-if="item._photo_url" location="right">
-                      <template #activator="{ props: tip }">
-                        <v-avatar v-bind="tip" size="28" rounded="sm" class="flex-shrink-0" style="overflow:hidden">
-                          <img :src="item._photo_url" style="width:28px;height:28px;object-fit:cover;display:block" />
-                        </v-avatar>
-                      </template>
-                      <img :src="item._photo_url" style="width:160px;height:160px;object-fit:cover;border-radius:8px;display:block" />
-                    </v-tooltip>
-                    <v-icon v-else size="20" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-                    <span class="text-body-2" style="max-width:300px;white-space:normal;line-height:1.3">{{ summaryName(idx) || '—' }}</span>
-                  </div>
-                </td>
-                <td>
-                  <div class="d-flex ga-1 flex-wrap align-center">
-                    <v-chip size="x-small" color="info" variant="tonal">ТЗ: {{ stageTotals(idx).tz > 0 ? stageTotals(idx).tz.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
-                    <v-chip size="x-small" color="success" variant="tonal">Дог: {{ stageTotals(idx).dog > 0 ? stageTotals(idx).dog.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
-                    <v-chip size="x-small" color="purple" variant="tonal">Пост: {{ stageTotals(idx).delivery > 0 ? stageTotals(idx).delivery.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
-                  </div>
-                </td>
-                <td style="text-align:center">
-                  <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Fuzzy-match — требует подтверждения" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-icon v-bind="tip" color="warning" icon="mdi-alert" size="small" />
-                    </template>
-                  </v-tooltip>
-                  <v-icon v-else-if="item.product_id" color="success" icon="mdi-check" size="small" />
-                  <v-tooltip v-else-if="item.item_name" text="Позиция не привязана к каталогу — выберите товар или создайте новый" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-icon v-bind="tip" color="warning" icon="mdi-alert" size="small" />
-                    </template>
-                  </v-tooltip>
-                  <v-icon v-else color="grey" icon="mdi-minus" size="small" />
-                </td>
-                <td @click.stop>
-                  <div class="d-flex">
-                    <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Подтвердить матч" location="top">
-                      <template #activator="{ props: tip }">
-                        <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
-                          color="warning" :disabled="props.readonly"
-                          @click.stop="confirmMatch(idx)" />
-                      </template>
-                    </v-tooltip>
-                    <!-- P1-B: кнопка перепривязки к каталогу -->
-                    <v-tooltip text="Изменить привязку к каталогу" location="top">
-                      <template #activator="{ props: tip }">
-                        <v-btn v-bind="tip" icon="mdi-link-variant-plus" size="x-small" variant="text"
-                          color="teal" :disabled="props.readonly"
-                          @click.stop="openRepickDialog(idx)" />
-                      </template>
-                    </v-tooltip>
-                    <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                      :disabled="props.readonly"
-                      @click.stop="removeItem(idx)" />
-                  </div>
-                </td>
-              </tr>
-              <!-- Expanded sub-rows -->
-              <tr v-if="expanded[idx]" class="stage-row-wrapper">
-                <td colspan="7" style="padding:0 0 8px 48px">
-                  <v-table density="compact" class="nested-stages-table">
-                    <thead>
-                      <tr>
-                        <th style="width:90px">Стадия</th>
-                        <th style="min-width:280px">Наименование</th>
-                        <th style="min-width:90px">Кол-во</th>
-                        <th style="min-width:80px">Ед.</th>
-                        <th style="min-width:110px">Цена ед., ₽</th>
-                        <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС %</th>
-                        <th v-if="showVatColumnsInExpandRow" style="min-width:110px">НДС сумма, ₽</th>
-                        <th style="min-width:120px">{{ showVatColumnsInExpandRow ? 'Сумма с НДС, ₽' : 'Сумма, ₽' }}</th>
-                        <th v-if="props.feoPerItem" style="min-width:240px">ФЭО позиция *</th>
-                        <th style="min-width:200px">Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <!-- ТЗ sub-row -->
-                      <tr class="stage-tz-row">
-                        <td><v-chip color="info" size="x-small" variant="tonal">ТЗ</v-chip></td>
-                        <td>
-                          <div class="d-flex align-center gap-1">
-                            <v-textarea
-                              v-model="item.item_name"
-                              density="compact" variant="outlined" hide-details clearable readonly
-                              rows="1" auto-grow class="my-1 flex-grow-1" style="cursor:pointer;min-width:200px"
-                              placeholder="Нажмите для выбора..."
-                              :disabled="props.readonly"
-                              @click="openProductPicker(idx)"
-                              @click:clear.stop="clearItem(idx)"
-                            />
-                            <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
-                              <template #activator="{ props: tip }">
-                                <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
-                                  color="teal" class="flex-shrink-0" :disabled="props.readonly"
-                                  @click.stop="openQuickProductEdit(item)" />
-                              </template>
-                            </v-tooltip>
-                          </div>
-                          <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
-                        </td>
-                        <td>
-                          <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                            variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                            @update:model-value="calcItemTotal(idx)" />
-                        </td>
-                        <td>
-                          <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
-                            hide-details class="my-1" :disabled="props.readonly" />
-                        </td>
-                        <td>
-                          <v-text-field
-                            :model-value="formatNumber(item.unit_price)"
-                            density="compact" variant="outlined" hide-details class="my-1"
-                            :disabled="props.readonly"
-                            @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
-                          />
-                        </td>
-                        <!-- Fix 4/5: НДС % column -->
-                        <td v-if="showVatColumnsInExpandRow">
-                          <v-combobox v-model="item.vat_rate"
-                            :items="VAT_RATE_OPTIONS"
-                            item-title="title" item-value="value"
-                            density="compact" variant="outlined" hide-details class="my-1"
-                            style="min-width:90px" :disabled="props.readonly"
-                            placeholder="НДС %"
-                            @update:model-value="onVatRateChange(idx, $event)"
-                          />
-                        </td>
-                        <!-- Fix 4/5: НДС сумма column -->
-                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
-                        <!-- Fix 4/5: Сумма с НДС column -->
-                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
-                        <!-- F-PIF2/FCAT-F1: ФЭО позиция — отдельная колонка в expand-row table -->
-                        <td v-if="props.feoPerItem">
-                          <v-autocomplete
-                            v-model="item.feo_category_id"
-                            :items="feoLeaves"
-                            item-title="path"
-                            item-value="id"
-                            label="ФЭО позиция"
-                            variant="outlined"
-                            density="compact"
-                            clearable
-                            hide-details
-                            class="my-1"
-                            style="min-width:200px"
-                            :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
-                            :error="isFeoMissing(item)"
-                            :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
-                            :disabled="props.readonly"
-                            @update:model-value="emit('items-changed')"
-                          >
-                            <template #item="{ props: itemProps, item: feoItem }">
-                              <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                                <template #subtitle>
-                                  <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
-                                  <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
-                                </template>
-                              </v-list-item>
-                            </template>
-                            <template #selection="{ item: feoItem }">
-                              <span style="font-size:12px">{{ feoItem.raw.name }}</span>
-                            </template>
-                          </v-autocomplete>
-                          <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
-                            <v-icon icon="mdi-alert-outline" size="14" />
-                            Превышение: {{ fmtRub(overBudgetDelta(item)) }}
-                          </div>
-                        </td>
-                        <td>
-                          <div class="d-flex align-center ga-1 flex-wrap">
-                            <!-- Тип -->
-                            <v-select v-model="item.item_type"
-                              :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
-                              item-title="title" item-value="value" density="compact" variant="outlined"
-                              hide-details style="min-width:100px" class="my-1" :disabled="props.readonly" />
-                            <!-- Страна -->
-                            <v-text-field v-model="item.country_origin" density="compact"
-                              variant="outlined" hide-details class="my-1" placeholder="РФ"
-                              style="min-width:120px" :disabled="props.readonly" />
-                            <!-- Контрагент (advance_report column mode) -->
-                            <template v-if="showContractorColumn">
-                              <v-autocomplete
-                                :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                                :items="contractors" item-title="name" item-value="id" return-object
-                                variant="outlined" density="compact" clearable auto-select-first hide-details
-                                class="my-1" style="min-width:180px"
-                                :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
-                                placeholder="Поставщик..." :disabled="props.readonly"
-                                @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                                @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                              >
-                                <template #append-inner>
-                                  <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
-                                    :disabled="props.readonly" @click.stop="openContractorQuickCreate(idx)" />
-                                </template>
-                              </v-autocomplete>
-                            </template>
-                            <!-- ТЗ contractor chip (non-advance mode, if contractor set from Phase 24 D-05) -->
-                            <v-chip
-                              v-if="!showContractorColumn && item.contractor_id && contractorNameById(item.contractor_id)"
-                              size="x-small" color="info" variant="tonal"
-                              prepend-icon="mdi-store" class="text-truncate" style="max-width:160px"
-                            >
-                              {{ contractorNameById(item.contractor_id) }}
-                            </v-chip>
-                          </div>
-                        </td>
-                      </tr>
-                      <!-- Договор sub-row -->
-                      <tr class="stage-contract-row">
-                        <td><v-chip color="success" size="x-small" variant="tonal">Договор</v-chip></td>
-                        <td>
-                          <v-textarea
-                            :model-value="getContractItemFor(idx)?.name ?? (isAdvance ? (localItems[idx] as any)?.item_name ?? '' : '')"
-                            density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
-                            rows="1" auto-grow class="my-1 flex-grow-1" style="min-width:200px"
-                            :disabled="props.readonly"
-                            @update:model-value="(v: string) => updateContractField(idx, 'name', v)"
-                          />
-                        </td>
-                        <td>
-                          <v-text-field
-                            :model-value="getContractItemFor(idx)?.quantity ?? (isAdvance ? (localItems[idx] as any)?.quantity ?? '' : '')"
-                            type="number" density="compact" variant="outlined" hide-details
-                            :disabled="props.readonly"
-                            @update:model-value="(v: string) => updateContractField(idx, 'quantity', Number(v))"
-                          />
-                        </td>
-                        <td>
-                          <v-text-field
-                            :model-value="getContractItemFor(idx)?.unit ?? (isAdvance ? (localItems[idx] as any)?.unit ?? '' : '')"
-                            density="compact" variant="outlined" hide-details
-                            :disabled="props.readonly"
-                            @update:model-value="(v: string) => updateContractField(idx, 'unit', v)"
-                          />
-                        </td>
-                        <td>
-                          <v-text-field
-                            :model-value="getContractItemFor(idx)?.unit_price ?? (isAdvance ? (localItems[idx] as any)?.unit_price ?? '' : '')"
-                            type="number" density="compact" variant="outlined" hide-details
-                            :disabled="props.readonly"
-                            @update:model-value="(v: string) => updateContractField(idx, 'unit_price', Number(v))"
-                          />
-                        </td>
-                        <!-- Fix 4/5: НДС % column (Договор) -->
-                        <td v-if="showVatColumnsInExpandRow">
-                          <v-combobox
-                            :model-value="getContractItemFor(idx)?.vat_rate ?? localItems[idx]?.vat_rate ?? null"
-                            :items="VAT_RATE_OPTIONS"
-                            item-title="title" item-value="value"
-                            density="compact" variant="outlined" hide-details class="my-1"
-                            style="min-width:90px" :disabled="props.readonly"
-                            placeholder="НДС %"
-                            @update:model-value="(v: any) => {
-                              const ci = getContractItemFor(idx)
-                              if (!ci) return
-                              let rate: string | null
-                              if (v == null || v === '' || v === 'Без НДС') { rate = null }
-                              else { const s = String(v); rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s }
-                              ;(ci as any).vat_rate = rate
-                              emitContractItemsUpdate()
-                            }"
-                          />
-                        </td>
-                        <!-- Fix 4/5: НДС сумма column (Договор) -->
-                        <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmountForStage(idx, 'contract')) }}</td>
-                        <!-- Fix 4/5: Сумма с НДС column (Договор) -->
-                        <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVatForStage(idx, 'contract')) }}</td>
-                        <td>
-                          <div class="d-flex align-center ga-1 flex-wrap" style="font-size:11px">
-                            <v-chip
-                              v-if="contractStageContractorName(idx)"
-                              size="x-small" color="success" variant="tonal"
-                              prepend-icon="mdi-store"
-                              class="text-truncate" style="max-width:180px"
-                            >
-                              {{ contractStageContractorName(idx) }}
-                            </v-chip>
-                            <span v-else class="text-medium-emphasis text-caption">—</span>
-                          </div>
-                        </td>
-                      </tr>
-                      <!-- Поставка sub-row (D-01.1.1) -->
-                      <tr class="stage-delivery-row" :class="{ 'stage-delivery-empty': !isDeliveryFilled(idx) }">
-                        <td><v-chip color="purple" size="x-small" variant="tonal">Поставка</v-chip></td>
-                        <template v-if="isDelivered(idx) && getContractItemFor(idx)">
-                          <!-- delivered/paid: копия Договор, readonly textarea (унифицировано с ТЗ/Договор) -->
-                          <td>
-                            <v-textarea
-                              :model-value="getContractItemFor(idx)?.name || '—'"
-                              density="compact" variant="outlined" hide-details readonly
-                              rows="1" auto-grow class="my-1" style="min-width:200px"
-                              bg-color="grey-lighten-4"
-                            />
-                          </td>
-                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
-                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
-                          <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
-                          <!-- Fix 4/5: НДС % readonly (Поставка) -->
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ effectiveVatRate(idx, 'delivery') ?? '—' }}</td>
-                          <!-- Fix 4/5: НДС сумма readonly (Поставка) -->
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmountForStage(idx, 'delivery')) }}</td>
-                          <!-- Fix 4/5: Сумма с НДС readonly (Поставка) -->
-                          <td class="text-caption text-grey-darken-1 font-weight-medium">
-                            {{ fmtRub(totalWithVatForStage(idx, 'delivery')) }}
-                          </td>
-                          <td>
-                            <div class="d-flex align-center ga-1 flex-wrap">
-                              <v-chip
-                                v-if="deliveryStageContractorName(idx)"
-                                size="x-small" color="purple" variant="tonal"
-                                prepend-icon="mdi-truck-delivery" class="text-truncate" style="max-width:140px"
-                              >
-                                {{ deliveryStageContractorName(idx) }}
-                              </v-chip>
-                              <v-tooltip location="top" text="Появится в Phase 27 (delivery_items). Будет создавать «Поставка 1» + «Поставка 2» для частичных поставок.">
-                                <template #activator="{ props: tp }">
-                                  <v-btn v-bind="tp" icon="mdi-arrow-split-vertical" size="x-small" variant="text"
-                                    color="grey" disabled />
-                                </template>
-                              </v-tooltip>
-                            </div>
-                          </td>
-                        </template>
-                        <template v-else-if="isAdvance">
-                          <!-- advance: показываем данные из ТЗ вместо заглушки -->
-                          <td>
-                            <v-textarea
-                              :model-value="(localItems[idx] as any)?.item_name ?? ''"
-                              density="compact" variant="outlined" hide-details readonly
-                              rows="1" auto-grow class="my-1" style="min-width:200px"
-                              bg-color="grey-lighten-4"
-                            />
-                          </td>
-                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.quantity ?? '—' }}</td>
-                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit ?? '—' }}</td>
-                          <td class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.unit_price ?? '—' }}</td>
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ (localItems[idx] as any)?.vat_rate ?? '—' }}</td>
-                          <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ fmtRub(vatAmount((localItems[idx] as any) ?? {})) }}</td>
-                          <td class="text-caption text-grey-darken-1 font-weight-medium">{{ fmtRub(Number((localItems[idx] as any)?.total_price ?? 0)) }}</td>
-                          <td></td>
-                        </template>
-                        <template v-else>
-                          <td colspan="9" class="text-caption text-grey-lighten-1 text-center py-1">
-                            Поставок ещё нет — появятся в Phase 27 (delivery_items)
-                          </td>
-                        </template>
-                      </tr>
-                    </tbody>
-                  </v-table>
-                </td>
-              </tr>
-            </template>
-            <tr v-if="!localItems.length">
-              <td colspan="7" class="text-center text-medium-emphasis py-4">
-                Нет позиций. Нажмите «Добавить позицию».
-              </td>
-            </tr>
-          </tbody>
-          <tfoot v-if="localItems.length">
-            <tr>
-              <td colspan="3" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
-              <td colspan="4" class="py-2 font-weight-bold text-blue-darken-2">
-                {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
-              </td>
-            </tr>
-          </tfoot>
-        </v-table>
-
-        <!-- Savings badge under the expand-row table -->
-        <div v-if="contractItemsTotal > 0" class="mt-3 d-flex ga-2 flex-wrap align-center">
-          <v-chip color="primary" variant="tonal" size="small">
-            Сумма позиций договора: {{ contractItemsTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
-          </v-chip>
-          <v-chip color="info" variant="tonal" size="small">
-            НМЦД заявки: {{ purchasePlannedTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
-          </v-chip>
-          <v-chip
-            v-if="contractSavings != null"
-            :color="Number(contractSavings) >= 0 ? 'success' : 'error'"
-            variant="tonal" size="small"
-          >
-            Экономия: {{ contractSavings.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽ ({{ contractSavingsPercent }}%)
-          </v-chip>
-        </div>
+        <ItemsTableStages
+          :items="localItems"
+          :readonly="props.readonly"
+          :allowed-item-types="props.allowedItemTypes"
+          :contractors="contractors"
+          :contractor-lookup-loading="contractorLookupLoading"
+          :selected-item-idxs="selectedItemIdxs"
+          :all-items-selected="allItemsSelected"
+          :total-nmck="internalTotalNmck"
+          :unit-options="UNIT_OPTIONS"
+          :vat-rate-options="VAT_RATE_OPTIONS"
+          :feo-leaves="feoLeaves"
+          :feo-per-item="props.feoPerItem"
+          :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
+          :show-contractor-column="showContractorColumn"
+          :is-advance="isAdvance"
+          :expanded="expanded"
+          :contract-items-total="contractItemsTotal"
+          :purchase-planned-total="purchasePlannedTotal"
+          :contract-savings="contractSavings"
+          :contract-savings-percent="contractSavingsPercent"
+          :summary-name="summaryName"
+          :stage-totals="stageTotals"
+          :is-delivered="isDelivered"
+          :is-delivery-filled="isDeliveryFilled"
+          :effective-vat-rate="effectiveVatRate"
+          :vat-amount="vatAmount"
+          :vat-amount-for-stage="vatAmountForStage"
+          :total-with-vat="totalWithVat"
+          :total-with-vat-for-stage="totalWithVatForStage"
+          :get-contract-item-for="getContractItemFor"
+          :contractor-name-by-id="contractorNameById"
+          :contract-stage-contractor-name="contractStageContractorName"
+          :delivery-stage-contractor-name="deliveryStageContractorName"
+          :is-over-budget="isOverBudget"
+          :over-budget-delta="overBudgetDelta"
+          :is-feo-missing="isFeoMissing"
+          :fmt-rub="fmtRub"
+          :format-number="formatNumber"
+          :parse-number="parseNumber"
+          :contractor-filter="contractorFilter"
+          @toggle-select-all="toggleSelectAll"
+          @toggle-item-select="toggleItemSelect"
+          @toggle-expand="toggleExpand"
+          @confirm-match="confirmMatch"
+          @open-repick-dialog="openRepickDialog"
+          @remove-item="removeItem"
+          @open-product-picker="openProductPicker"
+          @clear-item="clearItem"
+          @open-quick-product-edit="openQuickProductEdit"
+          @calc-item-total="calcItemTotal"
+          @vat-rate-change="onVatRateChange"
+          @items-changed="emit('items-changed')"
+          @contractor-search-input="onContractorSearchInput"
+          @item-contractor-select="onItemContractorSelect"
+          @open-contractor-quick-create="openContractorQuickCreate"
+          @update-contract-field="updateContractField"
+          @contract-vat-change="onContractVatRateChange"
+        />
       </template>
 
-      <!-- Legacy flat table (when stagesEnabled is false, i.e. pre-Phase 27.1.1) -->
+
+      <!-- Legacy flat table (when stagesEnabled is false) — Layer 3: extracted.
+           View-mode: cards (mobile-forced or desktop toggle) vs compact table. -->
       <template v-else>
-        <div class="overflow-x-auto">
-          <v-table density="compact" class="items-flat-table">
-            <thead>
-              <tr>
-                <th style="width:36px;padding:0 4px;text-align:center">
-                  <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
-                    :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
-                    @update:model-value="toggleSelectAll" />
-                </th>
-                <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-                <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
-                <th :style="resizeStyle('type')">Тип{{ props.feoPerItem ? ' / ФЭО *' : '' }}<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
-                <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
-                <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
-                <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
-                <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
-                <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
-                <th v-if="props.vatMode === 'per_item'" style="min-width:130px">НДС</th>
-                <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
-                <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(item, idx) in localItems" :key="idx">
-                <td style="width:36px;padding:0 4px;text-align:center">
-                  <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
-                    @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
-                </td>
-                <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
-                <td style="min-width:420px">
-                  <div class="d-flex align-center gap-1">
-                    <v-tooltip v-if="item._photo_url" location="right">
-                      <template #activator="{ props: tip }">
-                        <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
-                          <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
-                        </v-avatar>
-                      </template>
-                      <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
-                    </v-tooltip>
-                    <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-                    <v-tooltip v-if="item.item_name && !item.product_id" text="Позиция не привязана к каталогу" location="top">
-                      <template #activator="{ props: tip }">
-                        <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
-                      </template>
-                    </v-tooltip>
-                    <v-textarea
-                      v-model="item.item_name" density="compact" variant="outlined" hide-details clearable readonly
-                      rows="1" auto-grow class="my-1" style="cursor:pointer;min-width:280px"
-                      placeholder="Нажмите для выбора..." :disabled="props.readonly"
-                      @click="openProductPicker(idx)" @click:clear.stop="clearItem(idx)"
-                    />
-                    <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
-                      <template #activator="{ props: tip }">
-                        <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
-                          color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
-                          @click.stop="openQuickProductEdit(item)" />
-                      </template>
-                    </v-tooltip>
-                    <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Подтвердить, что товар из каталога определён правильно" location="top">
-                      <template #activator="{ props: tip }">
-                        <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
-                          color="warning" class="flex-shrink-0 ml-1" :disabled="props.readonly"
-                          @click.stop="confirmMatch(idx)" />
-                      </template>
-                    </v-tooltip>
-                  </div>
-                  <!-- Phase 27.1.2: inline contractor убран для не-advance из flat layout. Per-item contractor только в advance_report mode (колонка showContractorColumn справа). -->
-                </td>
-                <td>
-                  <v-select v-model="item.item_type"
-                    :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
-                    item-title="title" item-value="value" density="compact" variant="outlined"
-                    hide-details class="my-1" :disabled="props.readonly" />
-                  <!-- F-PIF2/FCAT-F1: ФЭО позиция — ПОД Тип (компактная вертикальная компоновка) -->
-                  <template v-if="props.feoPerItem">
-                    <v-autocomplete
-                      v-model="item.feo_category_id"
-                      :items="feoLeaves"
-                      item-title="path"
-                      item-value="id"
-                      label="ФЭО позиция"
-                      variant="outlined"
-                      density="compact"
-                      clearable
-                      hide-details="auto"
-                      class="my-1"
-                      :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
-                      :error="isFeoMissing(item)"
-                      :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
-                      :disabled="props.readonly"
-                      @update:model-value="emit('items-changed')"
-                    >
-                      <template #item="{ props: itemProps, item: feoItem }">
-                        <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                          <template #subtitle>
-                            <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
-                            <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
-                          </template>
-                        </v-list-item>
-                      </template>
-                      <template #selection="{ item: feoItem }">
-                        <span style="font-size:12px">{{ feoItem.raw.name }}</span>
-                      </template>
-                    </v-autocomplete>
-                    <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1">
-                      <v-icon icon="mdi-alert-outline" size="12" />
-                      <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
-                    </div>
-                  </template>
-                </td>
-                <td>
-                  <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                    variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                    @update:model-value="calcItemTotal(idx)" />
-                </td>
-                <td>
-                  <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
-                    hide-details class="my-1" :disabled="props.readonly" />
-                </td>
-                <td>
-                  <v-text-field
-                    :model-value="formatNumber(item.unit_price)"
-                    density="compact" variant="outlined" hide-details class="my-1"
-                    :disabled="props.readonly"
-                    @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
-                  />
-                </td>
-                <td>
-                  <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
-                    variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
-                </td>
-                <td>
-                  <v-text-field v-model="item.country_origin" density="compact"
-                    variant="outlined" hide-details class="my-1" placeholder="РФ" :disabled="props.readonly" />
-                </td>
-                <td v-if="props.vatMode === 'per_item'">
-                  <v-combobox v-model="item.vat_rate"
-                    :items="VAT_RATE_OPTIONS"
-                    item-title="title" item-value="value"
-                    density="compact" variant="outlined" hide-details class="my-1"
-                    style="min-width:100px" :disabled="props.readonly"
-                    placeholder="НДС %"
-                    @update:model-value="onVatRateChange(idx, $event)" />
-                </td>
-                <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
-                  <v-autocomplete
-                    :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                    :items="contractors" item-title="name" item-value="id" return-object
-                    variant="outlined" density="compact" clearable auto-select-first hide-details
-                    class="my-1" :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
-                    :menu-props="{ maxWidth: 500 }" placeholder="Поставщик. Поиск по названию или ИНН..."
-                    :disabled="props.readonly"
-                    @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                    @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                  >
-                    <template #item="{ item: i, props: itemProps }">
-                      <v-list-item v-bind="itemProps" :title="undefined">
-                        <template #title><span style="white-space:normal;word-break:break-word;line-height:1.4">{{ i.raw.name }}</span></template>
-                        <template #subtitle><span v-if="i.raw.inn" class="text-caption">ИНН: {{ i.raw.inn }}</span></template>
-                      </v-list-item>
-                    </template>
-                    <template #append-inner>
-                      <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
-                        title="Добавить контрагента" :disabled="props.readonly"
-                        @click.stop="openContractorQuickCreate(idx)" />
-                    </template>
-                    <template #no-data>
-                      <v-list-item>
-                        <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.</v-alert>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                  <div v-if="item.receipt_id" class="text-caption text-medium-emphasis mt-1 d-flex align-center gap-1">
-                    <v-icon size="12">mdi-receipt</v-icon>
-                    <span>из чека #{{ item.receipt_id }}</span>
-                  </div>
-                </td>
-                <td>
-                  <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                    :disabled="props.readonly" @click="removeItem(idx)" />
-                </td>
-              </tr>
-              <tr v-if="!localItems.length">
-                <td :colspan="showContractorColumn ? 11 : 10" class="text-center text-medium-emphasis py-4">
-                  Нет позиций. Нажмите «Добавить позицию».
-                </td>
-              </tr>
-            </tbody>
-            <tfoot v-if="localItems.length">
-              <tr>
-                <td colspan="7" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
-                <td class="py-2 font-weight-bold text-blue-darken-2">
-                  {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
-                </td>
-                <td :colspan="showContractorColumn ? 3 : 2"></td>
-              </tr>
-            </tfoot>
-          </v-table>
-        </div>
+        <ItemsCardsView
+          v-if="effectiveView === 'cards'"
+          :items="localItems"
+          :readonly="props.readonly"
+          :allowed-item-types="props.allowedItemTypes"
+          :vat-mode="props.vatMode || 'uniform'"
+          :feo-per-item="props.feoPerItem"
+          :show-contractor-column="showContractorColumn"
+          :contractors="contractors"
+          :contractor-lookup-loading="contractorLookupLoading"
+          :selected-item-idxs="selectedItemIdxs"
+          :all-items-selected="allItemsSelected"
+          :total-nmck="internalTotalNmck"
+          :feo-leaves="feoLeaves"
+          :unit-options="UNIT_OPTIONS"
+          :vat-rate-options="VAT_RATE_OPTIONS"
+          :is-over-budget="isOverBudget"
+          :over-budget-delta="overBudgetDelta"
+          :is-feo-missing="isFeoMissing"
+          :fmt-rub="fmtRub"
+          :format-number="formatNumber"
+          :parse-number="parseNumber"
+          :contractor-filter="contractorFilter"
+          :product-photo-src="productPhotoSrc"
+          @toggle-select-all="toggleSelectAll"
+          @toggle-item-select="toggleItemSelect"
+          @inline-match-pick="onInlineMatchPick"
+          @inline-match-create-new="onInlineMatchCreateNew"
+          @inline-match-clear="onInlineMatchClear"
+          @open-quick-product-edit="openQuickProductEdit"
+          @confirm-match="confirmMatch"
+          @calc-item-total="calcItemTotal"
+          @vat-rate-change="onVatRateChange"
+          @remove-item="removeItem"
+          @contractor-search-input="onContractorSearchInput"
+          @item-contractor-select="onItemContractorSelect"
+          @open-contractor-quick-create="openContractorQuickCreate"
+          @items-changed="emitUpdate"
+        />
+        <ItemsTableFlat
+          v-else
+          :items="localItems"
+          :readonly="props.readonly"
+          :allowed-item-types="props.allowedItemTypes"
+          :vat-mode="props.vatMode || 'uniform'"
+          :feo-per-item="props.feoPerItem"
+          :show-contractor-column="showContractorColumn"
+          :contractors="contractors"
+          :contractor-lookup-loading="contractorLookupLoading"
+          :selected-item-idxs="selectedItemIdxs"
+          :all-items-selected="allItemsSelected"
+          :total-nmck="internalTotalNmck"
+          :feo-leaves="feoLeaves"
+          :unit-options="UNIT_OPTIONS"
+          :vat-rate-options="VAT_RATE_OPTIONS"
+          :resize-style="resizeStyle"
+          :on-resize-start="onResizeStart"
+          :is-over-budget="isOverBudget"
+          :over-budget-delta="overBudgetDelta"
+          :is-feo-missing="isFeoMissing"
+          :fmt-rub="fmtRub"
+          :format-number="formatNumber"
+          :parse-number="parseNumber"
+          :contractor-filter="contractorFilter"
+          :product-photo-src="productPhotoSrc"
+          @toggle-select-all="toggleSelectAll"
+          @toggle-item-select="toggleItemSelect"
+          @inline-match-pick="onInlineMatchPick"
+          @inline-match-create-new="onInlineMatchCreateNew"
+          @inline-match-clear="onInlineMatchClear"
+          @open-quick-product-edit="openQuickProductEdit"
+          @confirm-match="confirmMatch"
+          @calc-item-total="calcItemTotal"
+          @vat-rate-change="onVatRateChange"
+          @remove-item="removeItem"
+          @contractor-search-input="onContractorSearchInput"
+          @item-contractor-select="onItemContractorSelect"
+          @open-contractor-quick-create="openContractorQuickCreate"
+          @items-changed="emitUpdate"
+        />
       </template>
     </template>
 
-    <!-- Wish shape table -->
+    <!-- Wish shape — Layer 3: extracted. Card view applies here too (mobile-forced
+         or desktop toggle); table otherwise. -->
     <template v-else>
-      <div class="overflow-x-auto">
-        <v-table density="compact">
-          <thead>
-            <tr>
-              <th style="width:36px;padding:0 4px;text-align:center">
-                <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
-                  :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
-                  @update:model-value="toggleSelectAll" />
-              </th>
-              <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
-              <th style="min-width:380px">Наименование</th>
-              <th style="min-width:150px">Тип</th>
-              <th style="min-width:120px">Кол-во</th>
-              <th style="min-width:120px">Ед. изм.</th>
-              <th style="min-width:140px">Цена ед., ₽</th>
-              <th style="min-width:140px">Сумма, ₽</th>
-              <th style="width:48px"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(item, idx) in localItems" :key="idx">
-              <td style="width:36px;padding:0 4px;text-align:center">
-                <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
-                  @update:model-value="(val: boolean | null) => toggleItemSelect(idx, val)" />
-              </td>
-              <td style="width:36px;text-align:center;color:#888;font-size:12px;font-weight:500">{{ idx + 1 }}</td>
-              <td style="min-width:380px">
-                <div class="d-flex align-center gap-1">
-                  <v-tooltip v-if="item._photo_url" location="right">
-                    <template #activator="{ props: tip }">
-                      <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
-                        <img :src="item._photo_url" style="width:36px;height:36px;object-fit:cover;display:block" />
-                      </v-avatar>
-                    </template>
-                    <img :src="item._photo_url" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
-                  </v-tooltip>
-                  <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-
-                  <v-tooltip v-if="item.item_name && !item.product_id"
-                    text="Позиция не привязана к каталогу" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-icon v-bind="tip" size="18" color="warning" class="flex-shrink-0">mdi-alert</v-icon>
-                    </template>
-                  </v-tooltip>
-
-                  <v-textarea
-                    v-model="item.item_name"
-                    density="compact"
-                    variant="outlined"
-                    hide-details
-                    clearable
-                    readonly
-                    rows="1"
-                    auto-grow
-                    class="my-1"
-                    style="cursor:pointer;min-width:240px"
-                    placeholder="Нажмите для выбора..."
-                    :disabled="props.readonly"
-                    @click="openProductPicker(idx)"
-                    @click:clear.stop="clearItem(idx)"
-                  />
-                  <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
-                    <template #activator="{ props: tip }">
-                      <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
-                        color="teal" class="flex-shrink-0 ml-1" :disabled="props.readonly"
-                        @click.stop="openQuickProductEdit(item)" />
-                    </template>
-                  </v-tooltip>
-                </div>
-                <!-- Phase 26-X: inline contractor picker in wish table -->
-                <v-autocomplete
-                  :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                  :items="contractors"
-                  :custom-filter="contractorFilter"
-                  item-title="name"
-                  item-value="id"
-                  return-object
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  clearable
-                  class="mt-1"
-                  style="min-width:180px"
-                  placeholder="Контрагент (магазин)..."
-                  prepend-inner-icon="mdi-store"
-                  no-data-text="Не найден"
-                  :disabled="props.readonly"
-                  @update:model-value="(v: Contractor | null) => onItemContractorSelect(idx, v)"
-                  @update:search="(s: string) => onContractorSearchInput(idx, s)"
-                >
-                  <template #no-data>
-                    <v-list-item>
-                      <v-alert type="warning" density="compact" variant="tonal" class="text-caption ma-0">
-                        Контрагент не найден в БД.
-                      </v-alert>
-                      <v-btn size="x-small" color="primary" variant="tonal" class="mt-1" prepend-icon="mdi-plus"
-                        @click.stop="openContractorQuickCreate(idx)">
-                        Создать нового
-                      </v-btn>
-                    </v-list-item>
-                  </template>
-                </v-autocomplete>
-              </td>
-              <td>
-                <v-select v-model="item.item_type"
-                  :items="props.allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
-                  item-title="title" item-value="value" density="compact" variant="outlined"
-                  hide-details class="my-1" :disabled="props.readonly" />
-              </td>
-              <td>
-                <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                  variant="outlined" hide-details class="my-1" :disabled="props.readonly"
-                  @update:model-value="calcItemTotal(idx)" />
-              </td>
-              <td>
-                <v-combobox v-model="item.unit" :items="UNIT_OPTIONS" density="compact" variant="outlined"
-                  hide-details class="my-1" :disabled="props.readonly" />
-              </td>
-              <td>
-                <v-text-field
-                  :model-value="formatNumber(item.unit_price)"
-                  density="compact" variant="outlined" hide-details class="my-1"
-                  :disabled="props.readonly"
-                  @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; calcItemTotal(idx) }"
-                />
-              </td>
-              <td>
-                <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
-                  variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
-              </td>
-              <td>
-                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                  :disabled="props.readonly"
-                  @click="removeItem(idx)" />
-              </td>
-            </tr>
-            <tr v-if="!localItems.length">
-              <td colspan="9" class="text-center text-medium-emphasis py-4">
-                Нет позиций. Нажмите «Добавить позицию».
-              </td>
-            </tr>
-          </tbody>
-          <tfoot v-if="localItems.length">
-            <tr>
-              <td colspan="6" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
-              <td class="py-2 font-weight-bold text-blue-darken-2">
-                {{ internalTotalNmck.toLocaleString('ru-RU') }} ₽
-              </td>
-              <td colspan="2"></td>
-            </tr>
-          </tfoot>
-        </v-table>
-      </div>
+      <ItemsCardsView
+        v-if="effectiveView === 'cards'"
+        :items="localItems"
+        :readonly="props.readonly"
+        :allowed-item-types="props.allowedItemTypes"
+        :vat-mode="'uniform'"
+        :feo-per-item="false"
+        :show-contractor-column="false"
+        :contractors="contractors"
+        :contractor-lookup-loading="contractorLookupLoading"
+        :selected-item-idxs="selectedItemIdxs"
+        :all-items-selected="allItemsSelected"
+        :total-nmck="internalTotalNmck"
+        :feo-leaves="feoLeaves"
+        :unit-options="UNIT_OPTIONS"
+        :vat-rate-options="VAT_RATE_OPTIONS"
+        :is-over-budget="isOverBudget"
+        :over-budget-delta="overBudgetDelta"
+        :is-feo-missing="isFeoMissing"
+        :fmt-rub="fmtRub"
+        :format-number="formatNumber"
+        :parse-number="parseNumber"
+        :contractor-filter="contractorFilter"
+        :product-photo-src="productPhotoSrc"
+        @toggle-select-all="toggleSelectAll"
+        @toggle-item-select="toggleItemSelect"
+        @inline-match-pick="onInlineMatchPick"
+        @inline-match-create-new="onInlineMatchCreateNew"
+        @inline-match-clear="onInlineMatchClear"
+        @open-quick-product-edit="openQuickProductEdit"
+        @confirm-match="confirmMatch"
+        @calc-item-total="calcItemTotal"
+        @vat-rate-change="onVatRateChange"
+        @remove-item="removeItem"
+        @contractor-search-input="onContractorSearchInput"
+        @item-contractor-select="onItemContractorSelect"
+        @open-contractor-quick-create="openContractorQuickCreate"
+        @items-changed="emitUpdate"
+      />
+      <ItemsTableWish
+        v-else
+        :items="localItems"
+        :readonly="props.readonly"
+        :allowed-item-types="props.allowedItemTypes"
+        :contractors="contractors"
+        :selected-item-idxs="selectedItemIdxs"
+        :all-items-selected="allItemsSelected"
+        :total-nmck="internalTotalNmck"
+        :unit-options="UNIT_OPTIONS"
+        :format-number="formatNumber"
+        :parse-number="parseNumber"
+        :contractor-filter="contractorFilter"
+        @toggle-select-all="toggleSelectAll"
+        @toggle-item-select="toggleItemSelect"
+        @inline-match-pick="onInlineMatchPick"
+        @inline-match-create-new="onInlineMatchCreateNew"
+        @inline-match-clear="onInlineMatchClear"
+        @open-quick-product-edit="openQuickProductEdit"
+        @calc-item-total="calcItemTotal"
+        @remove-item="removeItem"
+        @contractor-search-input="onContractorSearchInput"
+        @item-contractor-select="onItemContractorSelect"
+        @open-contractor-quick-create="openContractorQuickCreate"
+      />
     </template>
 
     <!-- Bottom action buttons -->
@@ -857,524 +305,88 @@
       </v-btn>
     </div>
 
-    <!-- ===== Product picker dialog ===== -->
-    <v-dialog v-model="productPickerDialog" max-width="1600" width="95vw" scrollable>
-      <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
-        <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
-          <span>Выбрать товар из каталога</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="productPickerDialog = false" />
-        </v-card-title>
-        <v-card-text class="px-4 pb-2 flex-grow-1" style="overflow-y:auto">
-          <v-text-field
-            v-model="productPickerSearch"
-            prepend-inner-icon="mdi-magnify"
-            label="Поиск"
-            placeholder="Наименование, описание или тип"
-            variant="outlined" density="compact" clearable hide-details autofocus
-            class="mb-3"
-          />
-          <div v-if="!productPickerResults.length" class="text-center text-medium-emphasis py-8">
-            <v-icon icon="mdi-package-variant-closed" size="40" class="mb-2" />
-            <div>Ничего не найдено</div>
-            <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
-              @click="createProductFromPicker">
-              Добавить в каталог{{ productPickerSearch.length <= 30 ? ': «' + productPickerSearch + '»' : '' }}
-            </v-btn>
-          </div>
-          <v-table v-else density="compact" hover>
-            <thead>
-              <tr>
-                <th style="width:48px"></th>
-                <th>Наименование</th>
-                <th style="width:110px">Тип</th>
-                <th style="width:130px;text-align:right">Цена, ₽</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in productPickerResults" :key="p.id"
-                style="cursor:pointer" @click="selectFromPicker(p)">
-                <td>
-                  <v-avatar size="36" rounded="sm" class="my-1" style="overflow:hidden">
-                    <img v-if="productPhotoSrc(p)" :src="productPhotoSrc(p)!" style="width:36px;height:36px;object-fit:cover;display:block" @error="($event.target as HTMLImageElement).style.display='none'" />
-                    <v-icon v-else icon="mdi-package-variant" color="grey" size="20" />
-                  </v-avatar>
-                </td>
-                <td>
-                  <div class="font-weight-medium">{{ p.name }}</div>
-                  <div v-if="p.description" class="text-caption text-medium-emphasis"
-                    style="max-width:340px;white-space:normal;line-height:1.3">
-                    {{ p.description.slice(0, 90) }}{{ p.description.length > 90 ? '…' : '' }}
-                  </div>
-                </td>
-                <td>
-                  <v-chip v-if="p.product_type" size="x-small" variant="tonal">{{ p.product_type }}</v-chip>
-                </td>
-                <td style="text-align:right" class="font-weight-medium text-blue-darken-2">
-                  {{ p.price ? Number(p.price).toLocaleString('ru-RU') + ' ₽' : '—' }}
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-3 d-flex flex-wrap" style="gap:6px">
-          <v-btn v-if="props.supportsFullProductDialog"
-            variant="tonal" color="teal" size="small" prepend-icon="mdi-plus"
-            @click="createProductFromPicker" class="flex-grow-0">
-            Новый товар
-          </v-btn>
-          <span class="text-caption text-medium-emphasis">{{ productPickerResults.length }} позиций</span>
-          <v-spacer />
-          <v-btn variant="text" size="small" @click="productPickerDialog = false">Отмена</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- ===== Product picker dialog (Layer 2: extracted) ===== -->
+    <ProductPickerDialog
+      v-model="productPickerDialog"
+      :search="productPickerSearch"
+      :results="productPickerResults"
+      :supports-full-product-dialog="props.supportsFullProductDialog"
+      :photo-src="productPhotoSrc"
+      @update:search="(v: string) => productPickerSearch = v"
+      @pick="selectFromPicker"
+      @create-new="createProductFromPicker"
+    />
 
-    <!-- ===== Full product card dialog ===== -->
-    <v-dialog v-if="props.supportsFullProductDialog" v-model="fullProductDialog" max-width="1600" width="95vw" scrollable>
-      <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
-        <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
-          <span>{{ fullProductEditingId ? 'Редактировать товар / услугу' : 'Добавить товар / услугу в каталог' }}</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="fullProductDialog = false" />
-        </v-card-title>
-        <v-card-text class="px-4 px-sm-6 flex-grow-1" style="overflow-y:auto">
-          <v-row dense>
-            <v-col cols="12">
-              <v-combobox
-                v-model="fullProductForm.name"
-                v-model:search="fullProductNameSearch"
-                :items="fullProductNameSuggestions"
-                no-filter
-                label="Наименование *"
-                variant="outlined" density="compact"
-                autofocus
-                :rules="[(v: string) => !!v || 'Обязательное поле']"
-                :hint="isFullProductDuplicate ? '⚠ Товар с таким названием уже есть в каталоге' : ''"
-                :persistent-hint="isFullProductDuplicate"
-              >
-                <template #item="{ item: listItem, props: itemProps }">
-                  <v-list-item v-bind="itemProps" :title="listItem.raw">
-                    <template #append>
-                      <v-chip size="x-small" color="warning" variant="tonal">уже есть</v-chip>
-                    </template>
-                  </v-list-item>
-                </template>
-              </v-combobox>
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="fullProductForm.item_kind"
-                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
-                label="Товар / Услуга" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-combobox v-model="fullProductForm.product_type"
-                :items="fullProductTypeOptions"
-                label="Тип товара" variant="outlined" density="compact" clearable
-                hint="Напр.: Ноутбук, Тренажёр" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-combobox v-model="fullProductForm.category"
-                :items="fullProductCategoryOptions"
-                label="Категория *"
-                :rules="[v => (!!v && String(v).trim().length > 0) || 'Категория обязательна']"
-                required
-                variant="outlined" density="compact"
-                hint="Выберите или введите новую (обязательное поле)" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="fullProductForm.price" label="Цена за ед., ₽" type="number"
-                variant="outlined" density="compact"
-                :readonly="fullAvgPrice !== null"
-                :hint="fullAvgPrice !== null ? 'Среднее из ссылок — ' + fullAvgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки'"
-                persistent-hint />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-switch v-model="fullProductForm.is_active" label="Активен" color="success" density="compact" hide-details class="mt-1" />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="fullProductForm.description" label="Описание" variant="outlined"
-                density="compact" rows="2" auto-grow />
-            </v-col>
-            <v-col v-if="props.supportsPhotoUpload" cols="12">
-              <div class="text-subtitle-2 mb-2">Фото товара</div>
-              <div v-if="fullProductPhotoPreview" class="mb-3">
-                <img :src="fullProductPhotoPreview" style="max-width:100%;max-height:140px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5" />
-              </div>
-              <v-file-input
-                v-model="fullProductPhotoFileList"
-                label="Загрузить фото с компьютера"
-                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                variant="outlined" density="compact" prepend-icon="mdi-camera" show-size clearable
-                @update:model-value="onFullPhotoFileChange"
-              />
-              <v-text-field v-model="fullProductForm.photo_link" label="Или ссылка на фото" variant="outlined"
-                density="compact" prepend-inner-icon="mdi-image-outline" class="mt-2"
-                :disabled="!!fullProductPhotoFile" />
-            </v-col>
-            <v-col cols="12">
-              <div class="text-subtitle-2 mb-2">
-                Ссылки для сравнения цен
-                <span v-if="fullAvgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
-                  ср. {{ fullAvgPrice.toLocaleString('ru-RU') }} ₽
-                </span>
-              </div>
-              <div v-for="(link, i) in fullProductForm.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-                <v-text-field v-model="link.url" :label="'Ссылка ' + (i + 1)" variant="outlined" density="compact"
-                  hide-details prepend-inner-icon="mdi-link" class="flex-grow-1" />
-                <v-text-field v-model.number="link.price" label="Цена, ₽" type="number"
-                  variant="outlined" density="compact" hide-details style="max-width:140px" />
-                <v-btn v-if="link.url" icon="mdi-open-in-new" variant="text" size="x-small" color="primary"
-                  :href="link.url" target="_blank" />
-                <v-btn icon="mdi-minus-circle" variant="text" size="x-small" color="error"
-                  @click="fullProductForm.priceLinks.splice(i, 1)" />
-              </div>
-              <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary"
-                @click="fullProductForm.priceLinks.push({ url: '', price: null })">
-                Добавить ссылку
-              </v-btn>
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4 d-flex flex-wrap" style="gap:8px">
-          <v-spacer />
-          <v-btn variant="text" @click="fullProductDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="fullProductSaving"
-            :disabled="!fullProductForm.category || !String(fullProductForm.category).trim()"
-            @click="saveFullProduct">
-            {{ fullProductEditingId ? 'Сохранить' : 'Добавить в каталог' }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- ===== Full product card dialog (Layer 2: extracted) ===== -->
+    <FullProductDialog
+      v-if="props.supportsFullProductDialog"
+      v-model="fullProductDialog"
+      :form="fullProductForm"
+      :editing-id="fullProductEditingId"
+      :saving="fullProductSaving"
+      :supports-photo-upload="props.supportsPhotoUpload"
+      :name-search="fullProductNameSearch"
+      :name-suggestions="fullProductNameSuggestions"
+      :is-duplicate="isFullProductDuplicate"
+      :type-options="fullProductTypeOptions"
+      :category-options="fullProductCategoryOptions"
+      :avg-price="fullAvgPrice"
+      :photo-preview="fullProductPhotoPreview"
+      :photo-file-list="fullProductPhotoFileList"
+      :has-photo-file="!!fullProductPhotoFile"
+      @update:name-search="(v) => fullProductNameSearch = v"
+      @photo-file-change="onFullPhotoFileChange"
+      @save="saveFullProduct"
+    />
 
-    <!-- ===== Items import dialog (Excel 2-step + Smart import) ===== -->
-    <v-dialog v-model="itemsImportDialog" max-width="1400" scrollable>
-      <v-card>
-        <v-card-title class="pa-4 d-flex align-center">
-          <v-icon :icon="isSmartMode ? 'mdi-brain' : 'mdi-package-variant-plus'" class="mr-2" />
-          {{ isSmartMode ? 'Умный импорт позиций' : 'Импорт товаров из файла' }}
-          <v-spacer />
-          <v-chip v-if="importStep > 1 && !isSmartMode" size="small" color="primary" variant="tonal" class="ml-2">
-            Шаг {{ importStep }} / 3
-          </v-chip>
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-4 pb-0">
-          <v-btn-toggle :model-value="isSmartMode" @update:model-value="switchImportMode" density="compact" mandatory color="primary" class="mb-2">
-            <v-btn :value="true" prepend-icon="mdi-brain">Авто (умный)</v-btn>
-            <v-btn :value="false" prepend-icon="mdi-tune-vertical">Вручную (выбор листа и колонок)</v-btn>
-          </v-btn-toggle>
-          <div class="text-caption text-medium-emphasis mb-2">
-            Если автоматический режим не распознал позиции (например, mojibake-кодировка или скан PDF без OCR) — переключитесь в ручной режим.
-          </div>
-        </v-card-text>
-        <v-card-text class="pa-4">
-          <!-- Excel import: Step 1 - Upload file -->
-          <template v-if="!isSmartMode && importStep === 1">
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
-              <div class="text-body-2">
-                <strong>Поддерживаемые форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
-                <strong>Название листа:</strong> любое — система прочитает первый лист (или предложит выбрать)<br>
-                <strong>Заголовки столбцов:</strong> определяются автоматически по ключевым словам
-                (наименование, количество, цена, сумма и т.д.). Могут быть в любой строке.<br>
-                <strong>На следующем шаге</strong> вы увидите распознанные столбцы и укажете соответствие полей.
-              </div>
-            </v-alert>
-            <FileDropZone v-model="itemsImportFile"
-              accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm"
-              hint="Excel, PDF, Word, HTML — перетащите или нажмите"
-              class="mb-2" />
-          </template>
+    <!-- ===== Items import dialog (Excel 2-step + Smart import) — Layer 2: extracted ===== -->
+    <ItemsImportWizard
+      v-model="itemsImportDialog"
+      :state="importWizardState"
+      :import-preview-data="importPreviewData"
+      :items-import-result="itemsImportResult"
+      :items-import-loading="itemsImportLoading"
+      :import-error="importError"
+      :current-sheet-data="currentSheetData"
+      :current-sheet-headers="currentSheetHeaders"
+      :mapping-has-name="mappingHasName"
+      :unmapped-count="unmappedCount"
+      :target-fields="TARGET_FIELDS"
+      :smart-import-preview="smartImportPreview"
+      :smart-import-columns="smartImportColumns"
+      :smart-import-result="smartImportResult"
+      :smart-import-loading="smartImportLoading"
+      :column-mapping-applied="columnMappingApplied"
+      :crm-mapping-fields="CRM_MAPPING_FIELDS"
+      :crm-field-select-items="crmFieldSelectItems"
+      :is-mapped="isMapped"
+      :is-ignored="isIgnored"
+      :is-target-filled="isTargetFilled"
+      :get-column-label="getColumnLabel"
+      :get-samples="getSamples"
+      @switch-mode="switchImportMode"
+      @close="closeImportDialog"
+      @import-preview="doImportPreview"
+      @mapped-import="doMappedImport"
+      @import-all-tables="doImportAllTables"
+      @smart-preview="doSmartPreview"
+      @smart-import="doSmartImport"
+      @apply-column-mapping="applyColumnMapping"
+      @download-debug-report="downloadDebugReport"
+      @drop-to-target="onDropToTarget"
+      @drop-to-unresolved="onDropToUnresolved"
+      @drag-start="onDragStart"
+      @unmap-target="unmapTarget"
+      @ignore-column="ignoreColumn"
+    />
 
-          <!-- Excel import: Step 2 - Column mapping -->
-          <template v-if="!isSmartMode && importStep === 2 && importPreviewData">
-            <v-alert v-if="currentSheetData" type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-file-table-outline">
-              <strong>Лист:</strong> {{ currentSheetData.name }} ({{ currentSheetData.total_rows }} строк данных)
-            </v-alert>
-            <v-select
-              v-if="importPreviewData.sheets.length > 1"
-              v-model="importSelectedSheet"
-              :items="importPreviewData.sheets.map((s: any) => ({ title: `${s.name} (${s.total_rows} строк)`, value: s.name }))"
-              label="Сменить лист" variant="outlined" density="compact" class="mb-3"
-            />
-
-            <!-- COLUMN TABLE: headers on top, cards below -->
-            <div class="imap-grid">
-              <div v-for="target in TARGET_FIELDS" :key="target.value"
-                class="imap-col"
-                :class="{
-                  'imap-col--over': dragOverTarget === target.value,
-                  'imap-col--filled': isTargetFilled(target.value),
-                  'imap-col--required': target.required && !isTargetFilled(target.value),
-                }"
-                @dragover.prevent="dragOverTarget = target.value"
-                @dragleave="dragOverTarget = null"
-                @drop.prevent="onDropToTarget(target.value, $event)">
-                <div class="imap-col-hdr">{{ target.title }}<span v-if="target.required" style="color:#e53935">*</span></div>
-                <div class="imap-col-body">
-                  <div v-if="isTargetFilled(target.value)"
-                    class="imap-card"
-                    draggable="true"
-                    @dragstart="onDragStart(dragMapping[target.value] as number, $event)">
-                    <div class="imap-card-row">
-                      <span class="imap-card-name">{{ getColumnLabel(dragMapping[target.value] as number) }}</span>
-                      <button class="imap-card-x" @click.stop="unmapTarget(target.value)">×</button>
-                    </div>
-                    <div class="imap-card-samples">{{ getSamples(dragMapping[target.value] as number).join(', ') || '—' }}</div>
-                  </div>
-                  <div v-else class="imap-col-empty">—</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- NOT RESOLVED section -->
-            <div class="imap-unresolved mt-3"
-              :class="{ 'imap-unresolved--over': dragOverTarget === '_unresolved' }"
-              @dragover.prevent="dragOverTarget = '_unresolved'"
-              @dragleave="dragOverTarget = null"
-              @drop.prevent="onDropToUnresolved($event)">
-              <span class="imap-unresolved-label">Не определилось</span>
-              <div class="d-flex gap-2 flex-wrap mt-1">
-                <template v-for="(_, colIdx) in currentSheetHeaders" :key="colIdx">
-                  <div v-if="!isMapped(colIdx) && !isIgnored(colIdx)"
-                    class="imap-card imap-card--free"
-                    draggable="true"
-                    @dragstart="onDragStart(colIdx, $event)">
-                    <div class="imap-card-row">
-                      <span class="imap-card-name">{{ getColumnLabel(colIdx) }}</span>
-                      <button class="imap-card-x imap-card-x--grey" title="Убрать" @click.stop="ignoreColumn(colIdx)">×</button>
-                    </div>
-                    <div class="imap-card-samples">{{ getSamples(colIdx).join(', ') || '—' }}</div>
-                  </div>
-                </template>
-                <span v-if="unmappedCount === 0" style="font-size:11px;color:#888;align-self:center">все распределены ✓</span>
-              </div>
-            </div>
-
-            <v-alert v-if="!mappingHasName" type="warning" density="compact" icon="mdi-alert" class="mt-3">
-              Укажите столбец «Наименование»
-            </v-alert>
-          </template>
-
-          <!-- Excel import: Step 3 - Result -->
-          <template v-if="!isSmartMode && importStep === 3">
-            <v-alert v-if="itemsImportResult" type="success" density="compact" class="mb-2">
-              <div>Добавлено позиций: <strong>{{ (itemsImportResult as any).added ?? (itemsImportResult as any).imported }}</strong></div>
-              <div v-if="(itemsImportResult as any).matched_catalog">Из каталога: {{ (itemsImportResult as any).matched_catalog }}</div>
-              <div v-if="(itemsImportResult as any).new_in_catalog">Новых в каталоге: {{ (itemsImportResult as any).new_in_catalog }}</div>
-            </v-alert>
-            <v-alert v-if="importError" type="error" density="compact">
-              {{ importError }}
-            </v-alert>
-          </template>
-
-          <!-- Smart import section -->
-          <template v-if="isSmartMode">
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
-              <div class="text-body-2">
-                <strong>Умный импорт</strong> — автоматически распознаёт наименования, количество и цены из файла.<br>
-                Поддерживаются Excel, Word, PDF, HTML, <strong>JPG/PNG/WEBP</strong> (фото чека с QR ФНС или текстом).<br>
-                <span class="text-medium-emphasis">Для фото чека: лучший результат даёт QR-код ФНС (приложение «Проверка чека»). OCR-распознавание текста менее точно.</span>
-              </div>
-            </v-alert>
-            <FileDropZone v-model="smartImportFile"
-              accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
-              hint="Excel, PDF, Word, HTML, фото чека — перетащите или нажмите"
-              class="mb-4" />
-
-            <!-- import-no-clutter: тогл «не добавлять в каталог» -->
-            <v-switch
-              v-model="smartImportSkipCatalog"
-              label="Не добавлять в каталог при импорте"
-              hint="Позиции попадут только в эту закупку, без сопоставления с каталогом — один-в-один как в чеке. Идеально для авансовых платежей, билетов, актов."
-              persistent-hint
-              density="compact"
-              color="primary"
-              hide-details="auto"
-              class="mb-3"
-            />
-
-            <!-- Preview table -->
-            <template v-if="smartImportPreview && smartImportPreview.length">
-              <div class="text-subtitle-2 mb-2">
-                Распознано позиций: <strong>{{ smartImportPreview.length }}</strong>
-                <span v-if="smartImportColumns?.length" class="ml-2 text-caption text-medium-emphasis">
-                  (столбцы: {{ smartImportColumns.join(', ') }})
-                </span>
-              </div>
-
-              <!-- Column mapping panel toggle -->
-              <v-btn v-if="!columnMappingApplied" variant="tonal" size="small" class="mb-3"
-                prepend-icon="mdi-tune" @click="showMappingPanel = !showMappingPanel">
-                {{ showMappingPanel ? 'Скрыть' : 'Настроить' }} маппинг столбцов
-              </v-btn>
-              <v-chip v-if="columnMappingApplied" color="success" variant="tonal" size="small" class="mb-3">
-                Маппинг применён
-              </v-chip>
-
-              <div v-if="showMappingPanel" class="mb-3 pa-3" style="border:1px solid #e0e0e0;border-radius:8px">
-                <div class="text-caption font-weight-bold mb-2">Сопоставление столбцов файла → полей CRM</div>
-                <v-row dense>
-                  <v-col v-for="(label, field) in CRM_MAPPING_FIELDS" :key="field" cols="12" md="4">
-                    <v-select
-                      v-model="columnFieldMapping[field]"
-                      :items="crmFieldSelectItems"
-                      :label="label"
-                      item-title="title" item-value="value"
-                      variant="outlined" density="compact" hide-details class="mb-2"
-                    />
-                  </v-col>
-                </v-row>
-                <v-btn color="primary" size="small" variant="flat" @click="applyColumnMapping">
-                  Применить маппинг
-                </v-btn>
-              </div>
-
-              <v-table density="compact" class="mb-3">
-                <thead>
-                  <tr>
-                    <th>Наименование</th>
-                    <th>Тип</th>
-                    <th>Кол-во</th>
-                    <th>Ед.</th>
-                    <th>Цена ед.</th>
-                    <th>Сумма</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, ri) in smartImportPreview.slice(0, 10)" :key="ri">
-                    <td>{{ row.item_name || '—' }}</td>
-                    <td>{{ row.item_type || '—' }}</td>
-                    <td>{{ row.quantity ?? '—' }}</td>
-                    <td>{{ row.unit || '—' }}</td>
-                    <td>{{ row.unit_price ?? '—' }}</td>
-                    <td>{{ row.total_price ?? '—' }}</td>
-                  </tr>
-                </tbody>
-              </v-table>
-              <div v-if="smartImportPreview.length > 10" class="text-caption text-medium-emphasis mb-2">
-                + ещё {{ smartImportPreview.length - 10 }} строк
-              </div>
-            </template>
-
-            <!-- import-pdf-debug C3: alert при пустом результате -->
-            <v-alert
-              v-if="smartImportFile && smartImportPreview !== null && smartImportPreview.length === 0 && !smartImportLoading"
-              type="warning" variant="tonal" class="mb-3">
-              <div>Не удалось автоматически распознать таблицу в этом файле.</div>
-              <div class="mt-2 d-flex ga-2 flex-wrap">
-                <v-btn size="small" variant="tonal" @click="switchImportMode(false)">
-                  Переключиться на Ручной режим
-                </v-btn>
-                <v-btn size="small" variant="tonal" color="info" @click="downloadDebugReport">
-                  Скачать debug-отчёт
-                </v-btn>
-              </div>
-            </v-alert>
-
-            <v-alert v-if="smartImportResult" type="success" density="compact" class="mb-2">
-              Добавлено позиций: <strong>{{ smartImportResult.added }}</strong>
-            </v-alert>
-          </template>
-
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-btn v-if="!isSmartMode && importStep > 1 && importStep < 3" variant="text" @click="importStep--">
-            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="closeImportDialog">Закрыть</v-btn>
-
-          <!-- Excel import buttons -->
-          <template v-if="!isSmartMode">
-            <v-btn v-if="importStep === 1" color="primary" variant="flat"
-              :loading="itemsImportLoading"
-              :disabled="!itemsImportFile"
-              @click="doImportPreview">
-              Далее
-            </v-btn>
-            <v-btn v-if="importStep === 2 && (importPreviewData?.sheets?.length ?? 0) > 1"
-              color="success" variant="tonal"
-              :loading="itemsImportLoading"
-              prepend-icon="mdi-table-multiple"
-              @click="doImportAllTables">
-              Импортировать ВСЕ таблицы ({{ importPreviewData?.sheets?.length }})
-            </v-btn>
-            <v-btn v-if="importStep === 2" color="success" variant="flat"
-              :loading="itemsImportLoading"
-              :disabled="!mappingHasName"
-              @click="doMappedImport">
-              Импортировать
-            </v-btn>
-            <v-btn v-if="importStep === 3" color="primary" variant="flat"
-              @click="closeImportDialog">
-              Готово
-            </v-btn>
-          </template>
-
-          <!-- Smart import buttons -->
-          <template v-if="isSmartMode">
-            <v-btn v-if="!smartImportPreview" color="primary" variant="flat"
-              :loading="smartImportLoading"
-              :disabled="!smartImportFile"
-              @click="doSmartPreview">
-              Распознать
-            </v-btn>
-            <v-btn v-if="smartImportPreview && smartImportPreview.length && !smartImportResult"
-              color="success" variant="flat"
-              :loading="smartImportLoading"
-              @click="doSmartImport">
-              Добавить позиции
-            </v-btn>
-          </template>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ===== Contractor quick-create dialog (Phase 26-X) ===== -->
-    <v-dialog v-model="contractorPickerDialog" max-width="480" persistent>
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-4 d-flex align-center justify-space-between">
-          <span><v-icon icon="mdi-store-plus" class="mr-2" />Новый контрагент</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="contractorPickerDialog = false" />
-        </v-card-title>
-        <v-card-text class="px-4 pb-2">
-          <v-alert type="info" density="compact" variant="tonal" class="mb-3 text-caption">
-            Контрагент не найден в БД. Заполните минимальные данные для создания.
-          </v-alert>
-          <v-text-field
-            v-model="contractorPickerForm.name"
-            label="Наименование *"
-            variant="outlined" density="compact"
-            :rules="[v => !!v || 'Обязательное поле']"
-            class="mb-2"
-          />
-          <v-text-field
-            v-model="contractorPickerForm.inn"
-            label="ИНН"
-            variant="outlined" density="compact" class="mb-2"
-          />
-          <v-text-field
-            v-model="contractorPickerForm.kpp"
-            label="КПП"
-            variant="outlined" density="compact" class="mb-2"
-          />
-          <v-text-field
-            v-model="contractorPickerForm.address"
-            label="Адрес"
-            variant="outlined" density="compact"
-          />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="contractorPickerDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="contractorPickerSaving"
-            :disabled="!contractorPickerForm.name.trim()"
-            @click="saveContractorQuickCreate">
-            Создать
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- ===== Contractor quick-create dialog (Phase 26-X) — Layer 2: extracted ===== -->
+    <ContractorQuickCreate
+      v-model="contractorPickerDialog"
+      :form="contractorPickerForm"
+      :saving="contractorPickerSaving"
+      @save="saveContractorQuickCreate"
+    />
 
     <!-- ===== Product Match Review Dialog ===== -->
     <ProductMatchReviewDialog
@@ -1419,9 +431,27 @@ import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
 import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
 import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
 import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
+import ProductPickerDialog from '@/components/items/ProductPickerDialog.vue'
+import FullProductDialog from '@/components/items/FullProductDialog.vue'
+import ItemsImportWizard from '@/components/items/ItemsImportWizard.vue'
+import ContractorQuickCreate from '@/components/items/ContractorQuickCreate.vue'
+import ItemsTableFlat from '@/components/items/ItemsTableFlat.vue'
+import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
+import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
+import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
+import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
+import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
+import {
+  VAT_RATE_OPTIONS,
+  parseVatRatePercent,
+  vatAmount,
+  totalWithVat,
+  normalizeVatRate,
+} from '@/composables/useVatCalc'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -1434,6 +464,7 @@ interface Contractor {
 }
 
 interface EditorItem {
+  _uid?: string | number    // BUG #3: stable row identity for :key (insertion order)
   product_id: number | null
   item_name: string
   item_type: string
@@ -1493,35 +524,11 @@ interface PriceLink {
 const UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
 const COUNTRIES = ['РФ', 'Беларусь', 'Казахстан', 'Китай', 'Германия', 'США', 'Япония', 'Турция', 'Индия']
 
-// Fix 3 + Fix 4/5: VAT options (5/10/22/Без НДС/custom)
-const VAT_RATE_OPTIONS = [
-  { title: '5%', value: '5%' },
-  { title: '10%', value: '10%' },
-  { title: '22%', value: '22%' },
-  { title: 'Без НДС', value: null },
-]
-
-function parseVatRatePercent(rate: string | null | undefined): number {
-  if (!rate || rate === 'Без НДС') return 0
-  const m = String(rate).match(/^(\d+(?:\.\d+)?)\s*%?$/)
-  return m ? parseFloat(m[1]) : 0
-}
-
-// Phase 27.1.16: формулы НДС переопределены — unit_price / total_price из чека ФФД ВКЛЮЧАЮТ НДС.
-// vatAmount = выделение НДС из суммы С НДС: total * pct / (100 + pct).
-// Пример: total=392 ₽ с НДС 22% → vatAmount = 392 * 22 / 122 = 70,69 ₽.
-// totalWithVat возвращает total_price напрямую (он уже с НДС).
-function vatAmount(item: EditorItem | ContractItem): number {
-  const total = Number((item as any).total_price ?? (item as any).total ?? 0)
-  const pct = parseVatRatePercent((item as any).vat_rate)
-  if (pct <= 0) return 0
-  return Number((total * pct / (100 + pct)).toFixed(2))
-}
-
-function totalWithVat(item: EditorItem | ContractItem): number {
-  // total_price УЖЕ с НДС (стандарт: цена из чека/договора включает НДС)
-  return Number((item as any).total_price ?? (item as any).total ?? 0)
-}
+// Fix 3 + Fix 4/5: VAT options/helpers now from @/composables/useVatCalc
+// (VAT_RATE_OPTIONS, parseVatRatePercent, vatAmount, totalWithVat,
+// normalizeVatRate imported above). Phase 27.1.16 convention preserved:
+// unit_price / total_price из чека ФФД ВКЛЮЧАЮТ НДС; vatAmount выделяет НДС
+// из суммы С НДС: total * pct / (100 + pct).
 
 // Phase 27.1.17: per-stage helpers с fallback vat_rate на PurchaseItem
 function effectiveVatRate(idx: number, stage: 'contract' | 'delivery'): string | null {
@@ -1553,26 +560,30 @@ function totalWithVatForStage(idx: number, stage: 'contract' | 'delivery'): numb
   return Number(getContractItemFor(idx)?.total ?? 0)
 }
 
-function fmtRub(n: number | null | undefined): string {
-  if (n == null || isNaN(Number(n))) return '—'
-  return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
-}
+// fmtRub now imported from @/utils/numberFormat
 
 function onVatRateChange(idx: number, v: any) {
   const item = localItems.value[idx]
   if (!item) return
-  if (v == null || v === '' || v === 'Без НДС') {
-    item.vat_rate = null
-  } else {
-    const s = String(v)
-    // Normalize: if user typed just a number without %, add %
-    item.vat_rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s
-  }
+  item.vat_rate = normalizeVatRate(v)
   calcItemTotal(idx)
 }
 
 // Export COUNTRIES so template can use it if needed (not currently rendered but kept for completeness)
 void COUNTRIES
+
+// BUG #3: stable, monotonically-increasing row identity. Used as :key so that
+// rows keep insertion order and do NOT re-order/re-render when item_name changes
+// (e.g. via inline catalog matching).
+let _uidCounter = 0
+function nextUid(): string {
+  _uidCounter += 1
+  return `it-${Date.now().toString(36)}-${_uidCounter}`
+}
+function ensureUid<T extends { _uid?: string | number }>(item: T): T {
+  if (item._uid == null) item._uid = nextUid()
+  return item
+}
 
 // ── Props & Emits ────────────────────────────────────────────────────────────
 
@@ -1632,50 +643,25 @@ const props = withDefaults(defineProps<{
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
 const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)
 
-// ── F-PIF2: per-item FEO residuals ───────────────────────────────────────────
-// FCAT-F1: leaf FeoCategory (level=3 без детей) с агрегатами
-interface FeoLeaf {
-  id: number
-  name: string
-  parent_id: number | null
-  level: number
-  budget: number
-  used_amount: number
-  residual: number
-  path: string  // "Экипировка › Комплекты › Костюм-двойка"
-}
-const feoLeaves = ref<FeoLeaf[]>([])
+// ── F-PIF2: per-item FEO residuals (composable) ───────────────────────────────
+// FCAT-F1: leaf FeoCategory loading + budget helpers via @/composables/useFeoLeaves.
+// FeoLeaf type imported above.
+const {
+  feoLeaves,
+  isOverBudget: feoIsOverBudget,
+  overBudgetDelta: feoOverBudgetDelta,
+} = useFeoLeaves({
+  subsidyId: computed(() => props.subsidyId),
+  excludePurchaseId: computed(() => props.purchaseIdFeo),
+})
 
-watch(
-  () => [props.subsidyId, props.purchaseIdFeo] as const,
-  async ([subsidyId, purchaseIdFeo]) => {
-    if (!subsidyId) { feoLeaves.value = []; return }
-    try {
-      const qs = purchaseIdFeo != null ? `&exclude_purchase_id=${purchaseIdFeo}` : ''
-      feoLeaves.value = await apiFetch<FeoLeaf[]>(`/feo-categories/leaves?subsidy_id=${subsidyId}${qs}`)
-    } catch {
-      feoLeaves.value = []
-    }
-  },
-  { immediate: true },
-)
-
-function getFeoLeaf(id: number | undefined | null): FeoLeaf | null {
-  if (!id) return null
-  return feoLeaves.value.find(r => r.id === id) ?? null
-}
-
+// Thin row-wrappers so templates keep calling isOverBudget(item) / overBudgetDelta(item)
 function isOverBudget(row: EditorItem): boolean {
-  if (!row.feo_category_id) return false
-  const r = getFeoLeaf(row.feo_category_id)
-  if (!r) return false
-  return (r.used_amount + Number(row.total_price || 0)) > r.budget
+  return feoIsOverBudget(row.feo_category_id, row.total_price)
 }
 
 function overBudgetDelta(row: EditorItem): number {
-  const r = getFeoLeaf(row.feo_category_id)
-  if (!r) return 0
-  return (r.used_amount + Number(row.total_price || 0)) - r.budget
+  return feoOverBudgetDelta(row.feo_category_id, row.total_price)
 }
 
 function isFeoMissing(row: EditorItem): boolean {
@@ -1697,7 +683,19 @@ const emit = defineEmits<{
 // ── Local state ──────────────────────────────────────────────────────────────
 
 const display = useDisplay()
-const localItems = ref<EditorItem[]>([...props.modelValue])
+
+// View-mode toggle (table | cards). On mobile the card layout is forced
+// regardless of the toggle; on desktop the toggle drives the effective mode.
+const viewMode = ref<'table' | 'cards'>('table')
+const mobile = computed(() => display.mobile.value)
+const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' : viewMode.value)
+
+// BUG #3: assign stable _uid to every incoming item missing one (in-place so the
+// parent's objects keep identity), preserving insertion order.
+function normalizeItems(items: EditorItem[]): EditorItem[] {
+  return items.map(it => ensureUid(it))
+}
+const localItems = ref<EditorItem[]>(normalizeItems([...props.modelValue]))
 
 // Duplicate merge dialog state
 const dupMergeShow = ref(false)
@@ -1705,13 +703,22 @@ const dupMergeGroups = ref<DupGroup[]>([])
 // Pending items waiting for user decision in DuplicateMergeDialog
 let _pendingMergeItems: EditorItem[] = []
 
+// Perf: self-emit guard breaks the emit→parent-writeback→watch-rebuild echo loop.
+// Shallow watch (no deep) — we only need to react when the parent SWAPS the array
+// reference (load/reset). Local nested-field edits mutate localItems[idx] objects
+// directly and call emitUpdate() explicitly, so deep traversal is unnecessary.
+let _selfEmit = false
 watch(
   () => props.modelValue,
-  (v) => { localItems.value = [...v] },
-  { deep: true }
+  (v) => {
+    // Skip rebuild when the incoming value is the array we just emitted.
+    if (_selfEmit) { _selfEmit = false; return }
+    localItems.value = normalizeItems([...v])
+  }
 )
 
 function emitUpdate() {
+  _selfEmit = true
   emit('update:modelValue', [...localItems.value])
   emit('items-changed')
 }
@@ -1720,13 +727,18 @@ function emitUpdate() {
 
 const localContractItems = ref<ContractItem[]>([...(props.contractItems || [])])
 
+// Perf: same self-emit guard for the contractItems echo loop (CreateOrderView full mode).
+let _selfEmitContract = false
 watch(
   () => props.contractItems,
-  (v) => { localContractItems.value = [...(v || [])] },
-  { deep: true },
+  (v) => {
+    if (_selfEmitContract) { _selfEmitContract = false; return }
+    localContractItems.value = [...(v || [])]
+  },
 )
 
 function emitContractItemsUpdate() {
+  _selfEmitContract = true
   emit('update:contractItems', [...localContractItems.value])
 }
 
@@ -1884,6 +896,18 @@ function updateContractField(rowIdx: number, field: keyof ContractItem, value: u
       ci.total = Math.round(Number(ci.quantity || 0) * Number(ci.unit_price || 0) * 100) / 100
     }
   }
+  emitContractItemsUpdate()
+}
+
+// Layer 3: extracted from the inline Договор-VAT @update:model-value handler so
+// the stages table template can call a named parent handler (logic unchanged).
+function onContractVatRateChange(idx: number, v: any) {
+  const ci = getContractItemFor(idx)
+  if (!ci) return
+  let rate: string | null
+  if (v == null || v === '' || v === 'Без НДС') { rate = null }
+  else { const s = String(v); rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s }
+  ;(ci as any).vat_rate = rate
   emitContractItemsUpdate()
 }
 
@@ -2055,6 +1079,9 @@ function showSnack(text: string, color = 'success') {
 
 // Products catalogue
 const products = ref<Product[]>([])
+
+// Catalog matching (composable) — shared by inline match, repick, import review
+const { applyCandidate: applyMatchCandidate, clearBinding: clearMatchBinding } = useItemMatching()
 
 // ── Contractors catalogue ────────────────────────────────────────────────────
 
@@ -2310,6 +1337,7 @@ const internalTotalNmck = computed(() =>
 
 function addItem() {
   const newItem: EditorItem = {
+    _uid: nextUid(),
     product_id: null,
     item_name: '',
     item_type: props.defaultItemType,
@@ -2458,38 +1486,57 @@ void hasProducts
 function onItemProductSelect(idx: number, val: any) {
   const item = localItems.value[idx]
   if (!val) {
-    item.item_name = ''
-    item.product_id = null
-    item._selectedProduct = null
-    item._photo_url = undefined
-    item._description = undefined
+    clearMatchBinding(item)
     item._description_44fz = undefined
-  } else if (typeof val === 'string') {
+    ;(item as any).match_confirmed = true
+    emitUpdate()
+    return
+  }
+  if (typeof val === 'string') {
     item.item_name = val
     item.product_id = null
     item._selectedProduct = val
     item._photo_url = undefined
     item._description = undefined
     item._description_44fz = undefined
-  } else {
-    item.item_name = val.name || ''
-    item.product_id = val.id
-    item._selectedProduct = val
-    item._photo_url = productPhotoSrc(val)
-    item._description = val.description || undefined
-    item._description_44fz = val.description_44fz || undefined
-    if (val.product_type && !item.item_type) item.item_type = val.product_type
-    if (!item.unit_price) {
-      const bestPrice = val.contract_price ?? val.price
-      if (bestPrice) {
-        item.unit_price = Number(bestPrice)
-        calcItemTotal(idx)
-      }
-    }
+    ;(item as any).match_confirmed = true
+    emitUpdate()
+    return
   }
-  // Any explicit user action on the product field counts as confirmation.
-  ;(item as any).match_confirmed = true
+  // Catalog Product object → apply via shared matching logic.
+  applyMatchCandidate(item as any, {
+    product_id: val.id,
+    name: val.name || '',
+    price: val.price ?? null,
+    score: 1,
+    description: val.description ?? null,
+    photo_url: productPhotoSrc(val) ?? null,
+    item_type: val.product_type ?? null,
+    contract_price: val.contract_price ?? null,
+  })
+  item._description_44fz = val.description_44fz || undefined
   emitUpdate()
+}
+
+// ── BUG #5: inline per-row catalog matching ──────────────────────────────────
+// InlineProductMatch emits a chosen candidate; apply it without opening a dialog.
+function onInlineMatchPick(idx: number, candidate: MatchCandidate) {
+  const item = localItems.value[idx]
+  if (!item) return
+  applyMatchCandidate(item as any, candidate)
+  emitUpdate()
+}
+
+function onInlineMatchClear(idx: number) {
+  clearItem(idx)
+}
+
+// Fall back to the full product dialog for "create new" from inline match.
+function onInlineMatchCreateNew(idx: number) {
+  const row = idx >= 0 ? localItems.value[idx] : null
+  const prefillName = row?.item_name || ''
+  const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
+  openFullProduct(idx, prefillName, undefined, price)
 }
 
 // ── Product picker dialog ────────────────────────────────────────────────────
@@ -3103,6 +2150,7 @@ async function doMappedImport() {
       const dataNoPid = await respNoPid.json()
       const backendItems: any[] = dataNoPid.items || []
       const newItems: EditorItem[] = backendItems.map((bi) => ({
+        _uid: nextUid(),
         product_id: null,
         item_name: bi.item_name || '',
         item_type: bi.item_type || 'товар',
@@ -3200,16 +2248,7 @@ const smartImportColumns = ref<string[] | null>(null)
 const smartImportResult = ref<{ added: number; matched_catalog: number; unmatched: number } | null>(null)
 
 // ── Product match review dialog ───────────────────────────────────────────────
-interface MatchCandidate {
-  product_id: number
-  name: string
-  price: number | null
-  score: number
-  description?: string | null
-  photo_url?: string | null
-  item_type?: string | null
-  category?: string | null
-}
+// MatchCandidate now imported from @/composables/useItemMatching
 interface ResolvedRow {
   query: string
   product_id: number | null
@@ -3240,12 +2279,7 @@ function onRepickPick(candidate: MatchCandidate) {
   if (idx < 0) return
   const item = localItems.value[idx]
   if (!item) return
-  item.product_id = candidate.product_id
-  item.item_name = candidate.name
-  item._description = candidate.description ?? undefined
-  item._photo_url = candidate.photo_url ?? undefined
-  if (candidate.item_type) item.item_type = candidate.item_type
-  ;(item as any).match_confirmed = true
+  applyMatchCandidate(item as any, candidate)
   repickDialog.value.show = false
   emitUpdate()
   showSnack(`Товар перепривязан: ${candidate.name}`, 'success')
@@ -3271,6 +2305,32 @@ const crmFieldSelectItems = [
 const showMappingPanel = ref(false)
 const columnFieldMapping = ref<Record<string, string>>({})
 const columnMappingApplied = ref(false)
+
+// Layer 2: reactive proxy bundling the mutable UI state the ItemsImportWizard
+// child needs to two-way bind. Getters/setters delegate to the existing refs so
+// ALL business logic and state ownership stay in this parent (no duplication).
+const importWizardState = reactive({
+  get isSmartMode() { return isSmartMode.value },
+  set isSmartMode(v: boolean) { isSmartMode.value = v },
+  get itemsImportFile() { return itemsImportFile.value },
+  set itemsImportFile(v: File | null) { itemsImportFile.value = v },
+  get importStep() { return importStep.value },
+  set importStep(v: number) { importStep.value = v },
+  get importSelectedSheet() { return importSelectedSheet.value },
+  set importSelectedSheet(v: string) { importSelectedSheet.value = v },
+  get dragMapping() { return dragMapping.value },
+  set dragMapping(v: Record<string, number | null>) { dragMapping.value = v },
+  get dragOverTarget() { return dragOverTarget.value },
+  set dragOverTarget(v: string | null) { dragOverTarget.value = v },
+  get smartImportFile() { return smartImportFile.value },
+  set smartImportFile(v: File | null) { smartImportFile.value = v },
+  get smartImportSkipCatalog() { return smartImportSkipCatalog.value },
+  set smartImportSkipCatalog(v: boolean) { smartImportSkipCatalog.value = v },
+  get showMappingPanel() { return showMappingPanel.value },
+  set showMappingPanel(v: boolean) { showMappingPanel.value = v },
+  get columnFieldMapping() { return columnFieldMapping.value },
+  set columnFieldMapping(v: Record<string, string>) { columnFieldMapping.value = v },
+})
 
 watch(smartImportPreview, (v) => {
   if (v) {
@@ -3444,6 +2504,7 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
     // P0-B: если привязан к каталогу — берём имя/описание/фото из кандидата
     const hasCatalog = res?.product_id != null && cand != null
     const item: EditorItem = {
+      _uid: nextUid(),
       product_id: res?.product_id ?? null,
       // item_name: из каталога если привязан, иначе из xlsx
       item_name: hasCatalog ? (cand!.name || row.item_name || '') : (row.item_name || ''),
@@ -3675,20 +2736,7 @@ async function downloadDebugReport() {
   }
 }
 
-// SN-UX: форматирование чисел с разделителями тысяч (unit_price / total_price)
-function formatNumber(v: number | null | undefined): string {
-  if (v == null || v === ('' as any)) return ''
-  const n = Number(v)
-  if (isNaN(n)) return String(v)
-  return n.toLocaleString('ru-RU', { maximumFractionDigits: 2, useGrouping: true })
-}
-function parseNumber(s: string | number | null | undefined): number | null {
-  if (s == null || s === '' as any) return null
-  if (typeof s === 'number') return s
-  const cleaned = String(s).replace(/[\s\u00A0]/g, '').replace(',', '.')
-  const n = parseFloat(cleaned)
-  return isNaN(n) ? null : n
-}
+// SN-UX: formatNumber / parseNumber now imported from @/utils/numberFormat
 
 // F-PIF2/FCAT-F1: expose helpers for parent (CreateOrderView hard validation)
 defineExpose({
@@ -3839,57 +2887,4 @@ th { position: relative; }
 .purchase-items-editor {
   width: 100%;
 }
-/* Phase 27.1.1: expand-row layout */
-.summary-row:hover {
-  background: rgba(0, 0, 0, 0.02);
-}
-.stage-row-wrapper td {
-  background: #fafafa;
-}
-.nested-stages-table {
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-}
-.nested-stages-table :deep(.v-text-field input),
-.nested-stages-table :deep(.v-combobox input),
-.nested-stages-table :deep(.v-text-field .v-field__input),
-.nested-stages-table :deep(.v-combobox .v-field__input) {
-  font-size: 12px !important;
-  padding-top: 4px !important;
-  padding-bottom: 4px !important;
-  min-height: 32px !important;
-}
-.nested-stages-table :deep(.v-field) {
-  --v-field-padding-start: 8px;
-  --v-field-padding-end: 8px;
-}
-.stage-tz-row td {
-  background: rgba(25, 118, 210, 0.04);
-}
-.stage-contract-row td {
-  background: rgba(46, 125, 50, 0.04);
-}
-.stage-delivery-row td {
-  background: rgba(156, 39, 176, 0.04);
-}
-.stage-delivery-empty td {
-  opacity: 0.6;
-}
-/* F-PIF2: soft-warning при превышении FEO плана */
-.feo-over-budget :deep(.v-field) {
-  background: rgba(255, 193, 7, 0.08);
-  border-color: rgba(255, 193, 7, 0.5);
-}
-/* F-PIF2: hard-error при отсутствии FEO позиции в режиме feoPerItem */
-.feo-missing :deep(.v-field) {
-  background: rgba(244, 67, 54, 0.06);
-  border-color: rgba(244, 67, 54, 0.5);
-}
-
-/* SN-UX: шрифт 12px во всех inline-полях flat-таблицы позиций */
-.items-flat-table :deep(.v-field__input) { font-size: 12px !important; }
-.items-flat-table :deep(.v-field__field) { font-size: 12px; }
-.items-flat-table :deep(.v-select__selection) { font-size: 12px; }
-.items-flat-table :deep(.v-autocomplete .v-field__input) { font-size: 12px !important; }
-.items-flat-table :deep(.v-textarea .v-field__input) { font-size: 12px !important; }
 </style>

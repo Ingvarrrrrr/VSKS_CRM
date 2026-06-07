@@ -40,6 +40,10 @@
         </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить</v-btn>
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
       </div>
     </div>
 
@@ -144,6 +148,7 @@
 
     <!-- ── Table ── -->
     <v-data-table
+      v-if="effectiveView === 'table'"
       v-resizable-columns="'contracts'"
       :headers="tableHeaders"
       :items="filteredWithRowNum"
@@ -523,6 +528,72 @@
       </template>
     </v-data-table>
 
+    <!-- ── Cards view ── -->
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="c in pagedCards" :key="c.id" cols="12" sm="6" lg="4">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openEdit(c)">
+            <v-card-item class="pb-1">
+              <v-card-title class="text-body-2 d-flex align-center ga-2 flex-wrap">
+                <span class="font-weight-bold">{{ c.number || ('#' + c.id) }}</span>
+                <v-chip :color="contractTypeColor(c.contract_type)" size="x-small" variant="tonal">{{ contractTypeLabel(c.contract_type) }}</v-chip>
+                <v-chip v-if="c.status" :color="c.status === 'active' ? 'success' : 'grey'" size="x-small" variant="tonal">{{ statusLabel(c.status) }}</v-chip>
+              </v-card-title>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div v-if="c.subject" class="text-caption text-medium-emphasis mb-1" style="overflow-wrap:anywhere">{{ c.subject.length > 80 ? c.subject.slice(0, 80) + '...' : c.subject }}</div>
+              <div class="text-caption text-medium-emphasis">Контрагент</div>
+              <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">{{ c.contractor_name || '—' }}</div>
+              <div class="text-caption text-medium-emphasis">Субсидия</div>
+              <div class="mb-1 d-flex flex-wrap ga-1">
+                <v-chip v-if="c.subsidy_name" size="x-small" color="primary" variant="tonal">{{ c.subsidy_name }}</v-chip>
+                <v-chip v-for="es in (c.extra_subsidies || [])" :key="es.subsidy_id" size="x-small" color="secondary" variant="tonal">{{ es.subsidy_name }}</v-chip>
+                <span v-if="!c.subsidy_name && !(c.extra_subsidies?.length)" class="text-body-2 text-medium-emphasis">—</span>
+              </div>
+              <div class="d-flex flex-wrap ga-3 mt-2">
+                <div>
+                  <div class="text-caption text-medium-emphasis">Предельная сумма</div>
+                  <div class="text-body-2 font-weight-bold">{{ c.max_amount ? formatMoney(c.max_amount) : '—' }}</div>
+                </div>
+                <div>
+                  <div class="text-caption text-medium-emphasis">Заказано</div>
+                  <div class="text-body-2" :style="c.max_amount && Number(c.total_ordered) > Number(c.max_amount) ? 'color:var(--color-loss);font-weight:700' : ''">{{ c.total_ordered ? formatMoney(c.total_ordered) : '—' }}</div>
+                </div>
+                <div>
+                  <div class="text-caption text-medium-emphasis">Оплачено</div>
+                  <div class="text-body-2" style="color:var(--color-profit)">{{ c.total_paid ? formatMoney(c.total_paid) : '—' }}</div>
+                </div>
+                <div>
+                  <div class="text-caption text-medium-emphasis">Остаток</div>
+                  <div class="text-body-2" :style="Number(c.remaining_ordered) < 0 ? 'color:var(--color-loss);font-weight:700' : ''">{{ c.remaining_ordered != null ? formatMoney(c.remaining_ordered) : '—' }}</div>
+                </div>
+              </div>
+              <div class="d-flex justify-space-between mt-2">
+                <div>
+                  <div class="text-caption text-medium-emphasis">Дата</div>
+                  <div class="text-body-2">{{ fmtDate(c.date) }}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-caption text-medium-emphasis">Срок</div>
+                  <div class="text-body-2" :style="c.end_date && isExpired(c.end_date) ? 'color:#DC2626' : ''">{{ fmtDate(c.end_date) }}</div>
+                </div>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDelete(c)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10">
+        <v-icon icon="mdi-file-document-outline" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Договоры не найдены</div>
+      </div>
+      <v-pagination v-if="cardsTotalPages > 1" v-model="cardsPage" :length="cardsTotalPages" density="compact" total-visible="7" class="d-flex justify-center mt-4" />
+    </div>
+
     <!-- Column Config Dialog -->
     <ColumnConfigDialog
       v-model="showColumnPicker"
@@ -869,6 +940,7 @@ import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney as formatMoneyUtil } from '@/utils/formatMoney'
 import { useContractorsStore } from '@/stores/contractors'
 import ContractorPicker from '@/components/ContractorPicker.vue'
+import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
 const route = useRoute()
@@ -1331,6 +1403,14 @@ const filteredWithRowNum = computed(() => {
 const filteredSum = computed(() =>
   filtered.value.reduce((acc, c) => acc + (c.max_amount ? Number(c.max_amount) : 0), 0)
 )
+
+// ── Card view (table↔cards toggle) ────────────────────────────────────────
+const { mobile, viewMode, effectiveView, page: cardsPage, totalPages: cardsTotalPages, paged: pagedCards } = useCardView({
+  storageKey: 'contracts_view_mode',
+  source: () => filteredWithRowNum.value,
+  searchFields: (c: any) => [c.number, c.contractor_name, c.subsidy_name, c.subject, c.contractor_inn],
+  pageSize: 24,
+})
 
 // ── Type / method / status lookup tables ──────────────────────────────────
 const contractTypeItems = [

@@ -6,8 +6,12 @@
         <span class="text-body-2 text-medium-emphasis">{{ suppliers.length }} записей</span>
       </div>
       <v-spacer />
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-center">
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить поставщика</v-btn>
       </div>
     </div>
@@ -18,8 +22,9 @@
       variant="outlined" density="compact" clearable hide-details class="mb-4" style="max-width:400px"
     />
 
-    <!-- Table -->
+    <!-- Table / Cards toggle -->
     <v-data-table
+        v-if="effectiveView === 'table'"
         v-resizable-columns="'suppliers'"
         :headers="visibleHeaders"
         :items="filteredSuppliers"
@@ -43,6 +48,63 @@
           </div>
         </template>
       </v-data-table>
+
+    <!-- Cards view -->
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover>
+            <v-card-item class="pb-1">
+              <template #title>
+                <span class="font-weight-bold text-body-1">{{ item.name }}</span>
+              </template>
+              <template #subtitle>
+                <span v-if="item.inn" class="text-caption">
+                  ИНН: {{ item.inn }}<span v-if="item.kpp"> / КПП: {{ item.kpp }}</span>
+                </span>
+              </template>
+            </v-card-item>
+            <v-card-text class="pt-1 flex-grow-1">
+              <div v-if="item.contact" class="d-flex align-center gap-1 text-body-2">
+                <v-icon icon="mdi-account-outline" size="14" color="grey" />
+                <span>{{ item.contact }}</span>
+              </div>
+              <div v-if="item.phone" class="d-flex align-center gap-1 text-body-2">
+                <v-icon icon="mdi-phone-outline" size="14" color="grey" />
+                <span>{{ item.phone }}</span>
+              </div>
+              <div v-if="item.email" class="d-flex align-center gap-1 text-body-2">
+                <v-icon icon="mdi-email-outline" size="14" color="grey" />
+                <span>{{ item.email }}</span>
+              </div>
+              <div v-if="item.products.length" class="mt-2">
+                <v-chip v-for="p in item.products.slice(0, 3)" :key="p.id" size="x-small" variant="tonal" class="mr-1 mb-1">
+                  {{ p.product_id }}
+                </v-chip>
+                <span v-if="item.products.length > 3" class="text-caption text-medium-emphasis">+{{ item.products.length - 3 }}</span>
+              </div>
+            </v-card-text>
+            <v-card-actions @click.stop class="pt-0">
+              <v-spacer />
+              <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEdit(item)" />
+              <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error" @click="confirmDelete(item)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10">
+        <v-icon icon="mdi-domain" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Поставщики не найдены</div>
+      </div>
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
 
     <!-- Create/Edit dialog -->
     <v-dialog v-model="formDialog.show" max-width="560" scrollable>
@@ -119,6 +181,7 @@
 import { ref, computed, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface SupplierProduct { id: number; product_id?: number; price_notes?: string; source?: string }
@@ -151,6 +214,19 @@ const filteredSuppliers = computed(() => {
   return suppliers.value.filter(s =>
     s.name.toLowerCase().includes(q) || (s.inn || '').includes(q)
   )
+})
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'suppliers_view_mode',
+  source: () => filteredSuppliers.value,
+  pageSize: 24,
 })
 
 const formDialog = reactive({

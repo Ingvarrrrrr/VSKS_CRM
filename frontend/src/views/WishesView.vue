@@ -53,6 +53,18 @@
         </span>
       </div>
       <v-spacer />
+      <v-btn-toggle
+        v-if="!mobile && activeTab === 'my'"
+        v-model="viewMode"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+        class="ml-1"
+      >
+        <v-btn value="table" size="small" icon="mdi-table" />
+        <v-btn value="cards" size="small" icon="mdi-view-grid" />
+      </v-btn-toggle>
       <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="reloadActiveTab">
         Обновить
       </v-btn>
@@ -143,6 +155,7 @@
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
       <v-data-table
+        v-if="effectiveView === 'table'"
         v-resizable-columns="'wishes-my'"
         :headers="wishHeaders"
         :items="myWishesFiltered"
@@ -294,6 +307,92 @@
           </div>
         </template>
       </v-data-table>
+
+      <!-- Cards view (my wishes) -->
+      <div v-else>
+        <v-row dense>
+          <v-col v-for="w in pagedWishes" :key="w.id" cols="12" sm="6" lg="4">
+            <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openEditDialog(w)">
+              <v-card-item class="pb-1">
+                <template #prepend>
+                  <v-icon icon="mdi-hand-heart-outline" color="primary" size="20" />
+                </template>
+                <v-card-title class="text-body-2 font-weight-bold" style="overflow-wrap:anywhere">
+                  {{ w.title || '—' }}
+                </v-card-title>
+              </v-card-item>
+              <v-card-text class="py-1 flex-grow-1">
+                <div class="d-flex flex-wrap align-center ga-1 mb-2">
+                  <v-chip :color="statusColor[w.status]" size="x-small" variant="tonal">
+                    {{ statusLabel[w.status] }}
+                  </v-chip>
+                  <span v-if="w.registry_number" class="text-caption text-medium-emphasis">{{ w.registry_number }}</span>
+                </div>
+                <div v-if="w.creator_name" class="text-caption text-medium-emphasis mb-1">
+                  От: <span class="font-weight-medium text-high-emphasis">{{ w.creator_name }}</span>
+                </div>
+                <div v-if="w.assigned_to_name" class="text-caption text-medium-emphasis mb-1">
+                  Кому: <span class="font-weight-medium text-high-emphasis">{{ w.assigned_to_name }}</span>
+                </div>
+                <div v-if="w.executor_name" class="text-caption text-medium-emphasis mb-1">
+                  Исполнитель: <span class="font-weight-medium text-high-emphasis">{{ w.executor_name }}</span>
+                </div>
+                <div v-if="w.execution_deadline" class="text-caption text-medium-emphasis mb-1">
+                  Срок: <span class="font-weight-medium">{{ formatDate(w.execution_deadline) }}</span>
+                </div>
+                <div v-if="w.total_amount" class="text-caption text-medium-emphasis mb-1">
+                  НМЦК: <span class="font-weight-medium">{{ formatPrice(w.total_amount) }}</span>
+                </div>
+              </v-card-text>
+              <v-divider />
+              <v-card-actions class="py-1" @click.stop>
+                <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === w.id" @click.stop="downloadWishExcel(w)" title="Скачать в Excel" />
+                <template v-if="w.status === 'draft'">
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="openEditDialog(w)" />
+                  <v-btn
+                    icon="mdi-send"
+                    size="x-small"
+                    variant="text"
+                    color="success"
+                    :loading="submittingId === w.id"
+                    @click.stop="submitWish(w)"
+                  />
+                  <v-btn
+                    icon="mdi-delete-outline"
+                    size="x-small"
+                    variant="text"
+                    color="error"
+                    :loading="deletingId === w.id"
+                    @click.stop="deleteWish(w)"
+                  />
+                </template>
+                <v-btn
+                  v-else-if="w.status === 'converted' && w.purchase_id"
+                  size="x-small"
+                  variant="tonal"
+                  color="purple"
+                  prepend-icon="mdi-cart-arrow-right"
+                  @click.stop="$router.push(`/orders/${w.purchase_id}/edit`)"
+                >
+                  Закупка
+                </v-btn>
+              </v-card-actions>
+            </v-card>
+          </v-col>
+        </v-row>
+        <div v-if="!pagedWishes.length" class="text-center py-10">
+          <v-icon icon="mdi-hand-heart-outline" size="48" color="grey-lighten-1" class="mb-3" />
+          <div class="text-medium-emphasis">Нет заявок</div>
+        </div>
+        <v-pagination
+          v-if="cardsTotalPages > 1"
+          v-model="cardsPage"
+          :length="cardsTotalPages"
+          density="compact"
+          total-visible="7"
+          class="d-flex justify-center mt-4"
+        />
+      </div>
 
       <!-- FAB to create new wish -->
       <v-btn
@@ -615,8 +714,14 @@
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
-    <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable>
+    <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable persistent>
       <v-card>
+        <v-overlay v-model="wishDialogLoading" contained class="align-center justify-center" persistent>
+          <div class="d-flex flex-column align-center ga-3">
+            <v-progress-circular indeterminate size="56" width="5" color="primary" />
+            <div class="text-body-2 text-medium-emphasis">Загрузка позиций…</div>
+          </div>
+        </v-overlay>
         <v-card-title class="pa-4 pb-2">
           {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
         </v-card-title>
@@ -724,6 +829,11 @@
                       :disabled="!selectedFeo2"
                       :readonly="!isWishEditable && !canAssigneeAct"
                     />
+                  </v-col>
+                  <v-col cols="12" v-if="selectedFeoLeaf">
+                    <v-alert density="compact" variant="tonal" :color="selectedFeoLeaf.residual > 0 ? 'success' : 'error'" class="py-2">
+                      План: {{ formatMoney(selectedFeoLeaf.budget) }} • Остаток: {{ formatMoney(selectedFeoLeaf.residual) }}
+                    </v-alert>
                   </v-col>
                   <v-col cols="12">
                     <v-autocomplete
@@ -942,6 +1052,9 @@
                   :supports-photo-upload="true"
                   :readonly="!isWishEditable"
                 />
+                <div class="d-flex justify-end mt-3">
+                  <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
+                </div>
               </v-card-text>
             </v-card>
 
@@ -1142,9 +1255,11 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
 
@@ -1372,6 +1487,14 @@ const selectedFeo1 = ref<number | null>(null)
 const selectedFeo2 = ref<number | null>(null)
 const selectedFeo3 = ref<number | null>(null)
 
+// FEO leaves with budget/residual (additional data source for residual display)
+const feoLeaves = ref<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>([])
+
+const selectedFeoLeaf = computed(() => {
+  const id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value
+  return id ? feoLeaves.value.find(l => l.id === id) ?? null : null
+})
+
 const feoLevel1 = computed(() =>
   wishForm.value.subsidy_id
     ? allFeoCategories.value.filter(c => c.subsidy_id === wishForm.value.subsidy_id && !c.parent_id)
@@ -1400,6 +1523,13 @@ async function loadOrgMembers(sid: number | null) {
 
 watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
 
+watch(() => wishForm.value.subsidy_id, async (sid) => {
+  if (!sid) { feoLeaves.value = []; return }
+  try {
+    feoLeaves.value = await apiFetch<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>(`/feo-categories/leaves?subsidy_id=${sid}`)
+  } catch { feoLeaves.value = [] }
+}, { immediate: true })
+
 const orgUsers = computed(() => {
   if (!wishForm.value.subsidy_id) return users.value
   if (orgMembers.value.length) return orgMembers.value
@@ -1419,6 +1549,7 @@ function resolveUserPosition(u: any): string {
 
 // Create/edit dialog
 const wishDialog = ref(false)
+const wishDialogLoading = ref(false)
 const editingWishId = ref<number | null>(null)
 const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
@@ -1662,46 +1793,72 @@ async function openEditDialog(wish: Wish) {
     selectedFeo3.value = chain[2] ?? null
   }
 
-  let rawItems: any[] = []
-  if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
-    rawItems = (wish as any).items
-  } else {
-    try {
-      const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
-      if (Array.isArray(fresh?.items)) rawItems = fresh.items
-    } catch {}
-  }
-
-  // Backfill product_id by matching item_name against catalog — handles legacy
-  // wish_items saved before product_id was persisted on backend.
-  const needsBackfill = rawItems.some((i: any) => !i.product_id && i.item_name)
-  if (needsBackfill) {
-    try {
-      const products = await apiFetch<any[]>('/products/?limit=10000')
-      const byName = new Map<string, any>(
-        (products || []).map((p: any) => [(p.name || '').trim().toLowerCase(), p])
-      )
-      for (const it of rawItems) {
-        if (!it.product_id && it.item_name) {
-          const hit = byName.get(it.item_name.trim().toLowerCase())
-          if (hit) it.product_id = hit.id
-        }
-      }
-    } catch {}
-  }
-
-  wishForm.value.items = rawItems.map((i: any) => ({
-    product_id: i.product_id ?? null,
-    item_name: i.item_name || '',
-    item_type: i.item_type || 'товар',
-    quantity: i.quantity != null ? Number(i.quantity) : null,
-    unit: i.unit || 'шт.',
-    unit_price: i.unit_price != null ? Number(i.unit_price) : null,
-    total_price: i.total_price != null ? Number(i.total_price) : null,
-    country_origin: i.country_origin || 'РФ',
-  })) as any
-  await loadWishMembers()
+  // Открываем диалог СРАЗУ после синхронного заполнения формы — пользователь
+  // видит окно мгновенно, а тяжёлая загрузка позиций идёт под спиннером.
   wishDialog.value = true
+  wishDialogLoading.value = true
+
+  try {
+    let rawItems: any[] = []
+    if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
+      rawItems = (wish as any).items
+    } else {
+      try {
+        const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
+        if (Array.isArray(fresh?.items)) rawItems = fresh.items
+      } catch {}
+    }
+
+    // Backfill product_id by matching item_name against catalog — handles legacy
+    // wish_items saved before product_id was persisted on backend.
+    // Also build a by-id map to hydrate _photo_url on positions that already have
+    // a product_id (most catalog products have photos, but the editor never set
+    // _photo_url for existing items → only a placeholder icon was shown).
+    const needsBackfill = rawItems.some((i: any) => !i.product_id && i.item_name)
+    const hasProductIds = rawItems.some((i: any) => i.product_id != null)
+    let byId = new Map<number, any>()
+    if (needsBackfill || hasProductIds) {
+      try {
+        const products = await apiFetch<any[]>('/products/?limit=10000')
+        const byName = new Map<string, any>(
+          (products || []).map((p: any) => [(p.name || '').trim().toLowerCase(), p])
+        )
+        byId = new Map<number, any>((products || []).map((p: any) => [p.id, p]))
+        for (const it of rawItems) {
+          if (!it.product_id && it.item_name) {
+            const hit = byName.get(it.item_name.trim().toLowerCase())
+            if (hit) it.product_id = hit.id
+          }
+        }
+      } catch {}
+    }
+
+    // Mirror of the editor's productPhotoSrc logic.
+    const photoOf = (p: any): string | undefined => {
+      if (!p) return undefined
+      if (p.has_photo) return `/api/products/${p.id}/photo`
+      return p.photo_url || p.photo_link || undefined
+    }
+
+    wishForm.value.items = rawItems.map((i: any) => {
+      const prod = i.product_id != null ? byId.get(i.product_id) : null
+      return {
+        product_id: i.product_id ?? null,
+        item_name: i.item_name || '',
+        item_type: i.item_type || 'товар',
+        quantity: i.quantity != null ? Number(i.quantity) : null,
+        unit: i.unit || 'шт.',
+        unit_price: i.unit_price != null ? Number(i.unit_price) : null,
+        total_price: i.total_price != null ? Number(i.total_price) : null,
+        country_origin: i.country_origin || 'РФ',
+        _photo_url: prod ? photoOf(prod) : undefined,
+        _description: prod?.description || undefined,
+      }
+    }) as any
+    await loadWishMembers()
+  } finally {
+    wishDialogLoading.value = false
+  }
 }
 
 // Superadmin: force-смена статуса
@@ -2120,6 +2277,20 @@ function applyColFilters(rows: Wish[]): Wish[] {
 const myWishesFiltered = computed(() => applyColFilters(myWishes.value))
 const incomingWishesFiltered = computed(() => applyColFilters(incomingWishes.value))
 const allWishesFiltered = computed(() => applyColFilters(allWishes.value))
+
+// ── Card/table view toggle (primary "my" tab only) ──
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedWishes,
+} = useCardView({
+  storageKey: 'wishes_view_mode',
+  source: () => myWishesFiltered.value,
+  pageSize: 24,
+})
 
 watch(activeTab, (v) => {
   if (v === 'my') loadWishes()

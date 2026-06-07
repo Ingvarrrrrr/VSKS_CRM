@@ -7,6 +7,10 @@
       </div>
       <div class="d-flex gap-2">
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn color="primary" prepend-icon="mdi-plus" to="/service-notes/create">Добавить</v-btn>
       </div>
     </div>
@@ -111,59 +115,121 @@
     </v-chip-group>
 
     <v-data-table
-        v-resizable-columns="'service-notes'"
-        :headers="visibleHeaders"
-        :items="filteredItems"
-        :loading="loading"
-        :search="search"
+      v-if="effectiveView === 'table'"
+      v-resizable-columns="'service-notes'"
+      :headers="visibleHeaders"
+      :items="filteredItems"
+      :loading="loading"
+      :search="search"
+      density="compact"
+      hover
+      items-per-page="25"
+      :items-per-page-options="[25, 50, 100, -1]"
+    >
+      <template #item.status="{ item }">
+        <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
+          {{ statusLabel(item.status, item) }}
+        </v-chip>
+      </template>
+
+      <template #item.nmck="{ item }">
+        {{ formatMoney(item.total_nmck ?? item.planned_total_price) }}
+      </template>
+
+      <template #item.delivery_date="{ item }">
+        {{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}
+      </template>
+
+      <template #item.creator_name="{ item }">
+        {{ resolveUserName(item.service_note_by) }}
+      </template>
+
+      <template #item.assigned_user_name="{ item }">
+        {{ resolveUserName(item.assigned_user_id) }}
+      </template>
+
+      <template #item.subject="{ item }">
+        <span :title="item.subject || ''">{{ truncate(item.subject, 40) }}</span>
+      </template>
+
+      <template #item.service_note_at="{ item }">
+        {{ item.service_note_at ? new Date(item.service_note_at).toLocaleDateString('ru-RU') : '—' }}
+      </template>
+
+      <template #item.actions="{ item }">
+        <v-btn icon="mdi-pencil" variant="text" size="small"
+          :to="`/service-notes/${item.id}/edit`" />
+      </template>
+
+      <template #no-data>
+        <div class="text-center py-10">
+          <v-icon icon="mdi-file-account-outline" size="48" color="grey-lighten-1" class="mb-3" />
+          <div class="text-medium-emphasis">Служебные записки не найдены</div>
+          <v-btn color="primary" class="mt-3" to="/service-notes/create">Создать первую</v-btn>
+        </div>
+      </template>
+    </v-data-table>
+
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
+          <v-card
+            variant="outlined"
+            class="h-100 d-flex flex-column"
+            hover
+            @click="router.push(`/service-notes/${item.id}/edit`)"
+          >
+            <v-card-item class="pb-1">
+              <v-card-title class="text-body-2 d-flex align-center ga-2">
+                <span class="font-weight-bold">{{ item.purchase_number ? '#' + item.purchase_number : '—' }}</span>
+                <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
+                  {{ statusLabel(item.status, item) }}
+                </v-chip>
+              </v-card-title>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div class="text-body-2 font-weight-medium mb-2" style="overflow-wrap:anywhere">
+                {{ item.subject || item.item_name || '—' }}
+              </div>
+              <div class="d-flex justify-space-between mb-1">
+                <div>
+                  <div class="text-caption text-medium-emphasis">НМЦД</div>
+                  <div class="text-body-2 font-weight-bold">{{ formatMoney(item.total_nmck ?? item.planned_total_price) }}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-caption text-medium-emphasis">Срок поставки</div>
+                  <div class="text-body-2">{{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}</div>
+                </div>
+              </div>
+              <div class="text-caption text-medium-emphasis">От кого</div>
+              <div class="text-body-2 mb-1">{{ resolveUserName(item.service_note_by) }}</div>
+              <div class="text-caption text-medium-emphasis">Кому</div>
+              <div class="text-body-2 mb-1">{{ resolveUserName(item.assigned_user_id) }}</div>
+              <div class="text-caption text-medium-emphasis">Дата СЗ</div>
+              <div class="text-body-2">{{ item.service_note_at ? new Date(item.service_note_at).toLocaleDateString('ru-RU') : '—' }}</div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-btn icon="mdi-pencil" variant="text" size="small" :to="`/service-notes/${item.id}/edit`" @click.stop />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10">
+        <v-icon icon="mdi-file-account-outline" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Служебные записки не найдены</div>
+        <v-btn color="primary" class="mt-3" to="/service-notes/create">Создать первую</v-btn>
+      </div>
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
         density="compact"
-        hover
-        items-per-page="25"
-        :items-per-page-options="[25, 50, 100, -1]"
-      >
-        <template #item.status="{ item }">
-          <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
-            {{ statusLabel(item.status, item) }}
-          </v-chip>
-        </template>
-
-        <template #item.nmck="{ item }">
-          {{ formatMoney(item.total_nmck ?? item.planned_total_price) }}
-        </template>
-
-        <template #item.delivery_date="{ item }">
-          {{ item.delivery_date ? new Date(item.delivery_date).toLocaleDateString('ru-RU') : '—' }}
-        </template>
-
-        <template #item.creator_name="{ item }">
-          {{ resolveUserName(item.service_note_by) }}
-        </template>
-
-        <template #item.assigned_user_name="{ item }">
-          {{ resolveUserName(item.assigned_user_id) }}
-        </template>
-
-        <template #item.subject="{ item }">
-          <span :title="item.subject || ''">{{ truncate(item.subject, 40) }}</span>
-        </template>
-
-        <template #item.service_note_at="{ item }">
-          {{ item.service_note_at ? new Date(item.service_note_at).toLocaleDateString('ru-RU') : '—' }}
-        </template>
-
-        <template #item.actions="{ item }">
-          <v-btn icon="mdi-pencil" variant="text" size="small"
-            :to="`/service-notes/${item.id}/edit`" />
-        </template>
-
-        <template #no-data>
-          <div class="text-center py-10">
-            <v-icon icon="mdi-file-account-outline" size="48" color="grey-lighten-1" class="mb-3" />
-            <div class="text-medium-emphasis">Служебные записки не найдены</div>
-            <v-btn color="primary" class="mt-3" to="/service-notes/create">Создать первую</v-btn>
-          </div>
-        </template>
-      </v-data-table>
+        total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
 
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -184,9 +250,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+
+const router = useRouter()
 
 interface Purchase {
   id: number
@@ -294,6 +364,21 @@ const filteredItems = computed(() => {
     r = r.filter(p => p.service_note_at ? new Date(p.service_note_at).getTime() <= to : false)
   }
   return r
+})
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'service_notes_view_mode',
+  source: () => filteredItems.value,
+  search: () => search.value,
+  searchFields: (n: Purchase) => [n.purchase_number, n.subject, n.item_name, resolveUserName(n.service_note_by), resolveUserName(n.assigned_user_id), n.status],
+  pageSize: 24,
 })
 
 async function load() {

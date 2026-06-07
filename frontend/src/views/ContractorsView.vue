@@ -75,6 +75,18 @@
         @click="clearFilters"
       >Сбросить</v-btn>
       <span class="search-count">{{ filtered.length }} из {{ contractorsTotal }}</span>
+      <v-btn-toggle
+        v-if="!mobile"
+        v-model="viewMode"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+        class="ml-1"
+      >
+        <v-btn value="table" size="small" icon="mdi-table" />
+        <v-btn value="cards" size="small" icon="mdi-view-grid" />
+      </v-btn-toggle>
     </div>
 
     <v-alert v-if="enrichAllResult" type="info" variant="tonal" density="compact" class="mb-4" closable @click:close="enrichAllResult = null">
@@ -98,7 +110,7 @@
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <!-- ── Table ── -->
-    <div class="table-card">
+    <div v-if="effectiveView === 'table'" class="table-card">
       <v-table class="contractors-table">
         <thead>
           <tr>
@@ -188,6 +200,71 @@
         <span class="text-body-2">Стр. {{ contractorsPage }} из {{ totalPages }}</span>
         <v-btn icon="mdi-chevron-right" variant="text" size="small" :disabled="contractorsPage >= totalPages" @click="goPage(contractorsPage + 1)" />
       </div>
+    </div>
+
+    <!-- ── Cards view ── -->
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="c in pagedCards" :key="c.id" cols="12" sm="6" lg="4">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openEdit(c)">
+            <v-card-item class="pb-1">
+              <template #prepend>
+                <v-checkbox-btn
+                  :model-value="selectedIds.has(c.id)"
+                  density="compact"
+                  @click.stop
+                  @update:model-value="toggleOne(c.id)"
+                />
+              </template>
+              <v-card-title class="text-body-2 font-weight-bold" style="overflow-wrap:anywhere">
+                {{ c.name }}
+              </v-card-title>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div class="d-flex gap-2 mb-2 flex-wrap">
+                <span v-if="c.inn" class="text-caption text-medium-emphasis">ИНН: <span class="text-mono font-weight-medium text-body-2">{{ c.inn }}</span></span>
+                <span v-if="c.kpp" class="text-caption text-medium-emphasis">КПП: <span class="text-mono font-weight-medium text-body-2">{{ c.kpp }}</span></span>
+              </div>
+              <div v-if="c.address" class="text-caption text-medium-emphasis mb-1">{{ c.address }}</div>
+              <div v-if="c.contact_person" class="text-caption mb-1">{{ c.contact_person }}</div>
+              <div v-if="c.phone || c.email" class="text-caption text-medium-emphasis">
+                <span v-if="c.phone">{{ formatPhoneRu(c.phone) }}</span>
+                <span v-if="c.phone && c.email"> · </span>
+                <span v-if="c.email">{{ c.email }}</span>
+              </div>
+              <div v-if="c.product_categories.length > 0" class="d-flex flex-wrap gap-1 mt-2">
+                <v-chip v-if="c.product_categories.includes('Все')" size="x-small" color="blue" variant="tonal">Все категории</v-chip>
+                <template v-else>
+                  <v-chip v-for="cat in c.product_categories.slice(0, 2)" :key="cat" size="x-small" color="teal" variant="tonal">{{ cat }}</v-chip>
+                  <v-chip
+                    v-if="c.product_categories.length > 2"
+                    size="x-small" color="grey" variant="tonal"
+                    class="cursor-pointer"
+                    @click.stop="openCategoriesDialog(c)"
+                  >+{{ c.product_categories.length - 2 }}</v-chip>
+                </template>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-btn icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDelete(c)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10 text-medium-emphasis">
+        <v-icon icon="mdi-account-off-outline" size="48" color="grey-lighten-1" class="d-block mx-auto mb-3" />
+        Контрагенты не найдены
+      </div>
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
     </div>
 
     <!-- ── Categories dialog ── -->
@@ -478,6 +555,7 @@ import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import { formatPhoneRu } from '@/utils/phoneFormat'
+import { useCardView } from '@/composables/useCardView'
 
 interface ContractorWithStats {
   id: number
@@ -626,6 +704,23 @@ const allProductCategories = computed(() => {
 const filtered = computed(() => contractors.value)
 
 const totalPages = computed(() => Math.ceil(contractorsTotal.value / contractorsPerPage))
+
+// ── Card view (table ↔ cards toggle) ─────────────────
+// IMPORTANT: called AFTER `filtered` to avoid Temporal Dead Zone
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'contractors_view_mode',
+  source: () => filtered.value,
+  search: () => search.value,
+  searchFields: (c: any) => [c.name, c.inn, c.kpp, c.full_name],
+  pageSize: 24,
+})
 
 function clearFilters() {
   search.value = ''

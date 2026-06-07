@@ -1,5 +1,19 @@
 # TASKS — VSKS_CRM
 
+## 2026-06-07 — Рефакторинг монолита PurchaseItemsEditor + 5 багов заявок
+
+- [x] **Цель сессии**: разбить монолит `PurchaseItemsEditor.vue` (~3895 строк) на переиспользуемые сегменты (`frontend/src/components/items/` + composables + utils) без изменения публичного контракта, и починить 5 багов в WishesView.
+  - **Сегментация выполнена**: parent уменьшен до 2774 строк (логика/state остались в parent), вынесены презентационные дети `frontend/src/components/items/`: FullProductDialog, ProductPickerDialog, ItemsImportWizard, ContractorQuickCreate, ItemsTableFlat, ItemsTableWish, ItemsTableStages, InlineProductMatch, types.ts (всё получает данные/хелперы через props, эмитит наружу). Composables `useFeoLeaves`, `useItemMatching`, `useVatCalc` + `utils/numberFormat.ts` — единый источник для match-вызова/НДС/форматирования.
+  - **Контракт сохранён**: props (`itemShape`, `unifiedStagesView`, `feoPerItem`, `subsidyId`, `purchaseIdFeo`, `contractors` и др.), emits (`update:modelValue`, `update:contractItems`, `update:vatMode`, `product-created`, `items-changed`, `reload-requested`…), defineExpose (`hasMissingFeoLinks`, `missingFeoRowsCount`) на месте. Оба call-site (CreateOrderView полный/стейджи, WishesView упрощённый) бьются по props.
+  - **BUG #1** остаток ФЭО в WishesView: загрузка `/feo-categories/leaves?subsidy_id=` + computed `selectedFeoLeaf` + alert «План/Остаток».
+  - **BUG #2** сумма заявки `totalNmck` отрендерена под редактором.
+  - **BUG #3** порядок позиций при смене названия: стабильный `_uid` (ensureUid/nextUid), `:key="item._uid ?? idx"` + № = `idx + 1` во всех трёх таблицах.
+  - **BUG #4** диалог заявки получил `persistent`.
+  - **BUG #5** inline-сопоставление выпадающим меню `InlineProductMatch.vue` (v-autocomplete + статус-бейдж + debounce /products/match, emits pick/create-new/clear) в flat и wish таблицах — без «проваливания» в диалог.
+  - **Проверки**: `npx vue-tsc --noEmit` → EXIT 0 (весь фронт типобезопасен); `npm run build` → ✓ built 23.45s; `docker compose build frontend` → Built (cache). Facade-свитч по itemShape/stagesEnabled цел.
+- Достижение цели: **~95%** — оба требования выполнены и проверены сборкой/типчеком.
+- [ ] **Следующий шаг**: убрать мёртвый импорт `InlineProductMatch` из `PurchaseItemsEditor.vue:339` (компонент теперь используется только внутри дочерних таблиц), затем UAT в браузере по 5 багам + оба режима редактора.
+
 ## 2026-06-04 — Карточка контрагента в Иерархии + drag-resize колонок (по скриншотам)
 
 - [x] **Цель сессии**: устранить дублирование карточки орг в «Иерархии» (должна быть та же, что в «Контрагентах»), добавить drag-resize колонок во всех таблицах, поправить отображение «Ответственный исполнитель» в согласующих, разобраться почему орг по субсидии не попадает в «Персонал». Коммит `59ff1ca`, push в `origin/claude` (autodeploy).

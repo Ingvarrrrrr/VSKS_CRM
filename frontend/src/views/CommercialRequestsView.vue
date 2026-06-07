@@ -6,7 +6,19 @@
         <h1 class="text-h5 font-weight-bold">Запросы КП</h1>
         <span class="text-body-2 text-medium-emphasis">{{ requests.length }} записей</span>
       </div>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-center">
+        <v-btn-toggle
+          v-if="!mobile"
+          v-model="viewMode"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+          class="ml-1"
+        >
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
           Создать запрос КП
@@ -38,61 +50,138 @@
       </v-card-text>
     </v-card>
 
-    <!-- Table -->
+    <!-- Table / Cards -->
     <v-data-table
-        v-resizable-columns="'commercial-requests'"
-        :headers="visibleHeaders"
-        :items="filteredRequests"
-        :loading="loading"
-        item-value="id"
-        :items-per-page="20"
-        density="comfortable"
-        class="cr-clickable"
-        @click:row="(_, { item }) => openDetailDialog(item)"
-      >
-        <template v-slot:item.status="{ item }">
-          <v-chip :color="statusColor(item.status)" size="small" variant="tonal">
-            {{ statusLabel(item.status) }}
+      v-if="effectiveView === 'table'"
+      v-resizable-columns="'commercial-requests'"
+      :headers="visibleHeaders"
+      :items="filteredRequests"
+      :loading="loading"
+      item-value="id"
+      :items-per-page="20"
+      density="comfortable"
+      class="cr-clickable"
+      @click:row="(_, { item }) => openDetailDialog(item)"
+    >
+      <template v-slot:item.status="{ item }">
+        <v-chip :color="statusColor(item.status)" size="small" variant="tonal">
+          {{ statusLabel(item.status) }}
+        </v-chip>
+      </template>
+      <template v-slot:item.recipients="{ item }">
+        <div class="d-flex gap-1 flex-wrap">
+          <v-chip
+            v-for="r in item.recipients" :key="r.id"
+            :color="recipientStatusColor(r.status)"
+            size="x-small" variant="tonal"
+            :title="r.email || ''"
+          >
+            {{ r.contractor_name || r.email || '—' }}
           </v-chip>
-        </template>
-        <template v-slot:item.recipients="{ item }">
-          <div class="d-flex gap-1 flex-wrap">
-            <v-chip
-              v-for="r in item.recipients" :key="r.id"
-              :color="recipientStatusColor(r.status)"
-              size="x-small" variant="tonal"
-              :title="r.email || ''"
-            >
-              {{ r.contractor_name || r.email || '—' }}
-            </v-chip>
-          </div>
-        </template>
-        <template v-slot:item.delivery_date="{ item }">
-          {{ item.delivery_date ? formatDate(item.delivery_date) : '—' }}
-        </template>
-        <template v-slot:item.created_at="{ item }">
-          {{ item.created_at ? item.created_at.slice(0, 10) : '—' }}
-        </template>
-        <template v-slot:item.actions="{ item }">
-          <div class="d-flex gap-1" @click.stop>
-            <v-btn
-              v-if="item.status === 'prepared'"
-              icon="mdi-send" size="x-small" variant="text" color="primary"
-              @click.stop="updateStatus(item.id, 'sent')" title="Отметить отправленным"
-            />
-            <v-btn
-              v-if="item.status === 'sent'"
-              icon="mdi-check-all" size="x-small" variant="text" color="success"
-              @click.stop="updateStatus(item.id, 'received')" title="Получены ответы"
-            />
-            <v-btn
-              v-if="['prepared','sent','received'].includes(item.status)"
-              icon="mdi-archive" size="x-small" variant="text" color="grey"
-              @click.stop="updateStatus(item.id, 'closed')" title="Закрыть"
-            />
-          </div>
-        </template>
-      </v-data-table>
+        </div>
+      </template>
+      <template v-slot:item.delivery_date="{ item }">
+        {{ item.delivery_date ? formatDate(item.delivery_date) : '—' }}
+      </template>
+      <template v-slot:item.created_at="{ item }">
+        {{ item.created_at ? item.created_at.slice(0, 10) : '—' }}
+      </template>
+      <template v-slot:item.actions="{ item }">
+        <div class="d-flex gap-1" @click.stop>
+          <v-btn
+            v-if="item.status === 'prepared'"
+            icon="mdi-send" size="x-small" variant="text" color="primary"
+            @click.stop="updateStatus(item.id, 'sent')" title="Отметить отправленным"
+          />
+          <v-btn
+            v-if="item.status === 'sent'"
+            icon="mdi-check-all" size="x-small" variant="text" color="success"
+            @click.stop="updateStatus(item.id, 'received')" title="Получены ответы"
+          />
+          <v-btn
+            v-if="['prepared','sent','received'].includes(item.status)"
+            icon="mdi-archive" size="x-small" variant="text" color="grey"
+            @click.stop="updateStatus(item.id, 'closed')" title="Закрыть"
+          />
+        </div>
+      </template>
+    </v-data-table>
+
+    <!-- Cards view -->
+    <div v-else>
+      <v-row v-if="pagedCards.length" dense>
+        <v-col
+          v-for="item in pagedCards"
+          :key="item.id"
+          cols="12" sm="6" lg="4"
+        >
+          <v-card
+            hover
+            class="h-100"
+            @click="openDetailDialog(item)"
+          >
+            <v-card-title class="pb-1 d-flex align-center gap-2">
+              <span class="text-body-1 font-weight-bold">#{{ item.id }}</span>
+              <v-chip :color="statusColor(item.status)" size="small" variant="tonal" class="ml-auto">
+                {{ statusLabel(item.status) }}
+              </v-chip>
+            </v-card-title>
+            <v-card-text class="pt-1 pb-2">
+              <div v-if="item.subject" class="text-body-2 mb-2">{{ item.subject }}</div>
+              <div class="text-caption text-medium-emphasis mb-1">
+                <v-icon size="x-small" class="mr-1">mdi-calendar-clock</v-icon>
+                Срок КП: {{ item.delivery_date ? formatDate(item.delivery_date) : '—' }}
+              </div>
+              <div class="text-caption text-medium-emphasis mb-2">
+                <v-icon size="x-small" class="mr-1">mdi-calendar-plus</v-icon>
+                Создан: {{ item.created_at ? item.created_at.slice(0, 10) : '—' }}
+              </div>
+              <div v-if="item.recipients.length" class="d-flex gap-1 flex-wrap">
+                <v-chip
+                  v-for="r in item.recipients" :key="r.id"
+                  :color="recipientStatusColor(r.status)"
+                  size="x-small" variant="tonal"
+                  :title="r.email || ''"
+                >
+                  {{ r.contractor_name || r.email || '—' }}
+                </v-chip>
+              </div>
+            </v-card-text>
+            <v-card-actions @click.stop class="pt-0">
+              <v-btn
+                v-if="item.status === 'prepared'"
+                icon="mdi-send" size="x-small" variant="text" color="primary"
+                @click.stop="updateStatus(item.id, 'sent')" title="Отметить отправленным"
+              />
+              <v-btn
+                v-if="item.status === 'sent'"
+                icon="mdi-check-all" size="x-small" variant="text" color="success"
+                @click.stop="updateStatus(item.id, 'received')" title="Получены ответы"
+              />
+              <v-btn
+                v-if="['prepared','sent','received'].includes(item.status)"
+                icon="mdi-archive" size="x-small" variant="text" color="grey"
+                @click.stop="updateStatus(item.id, 'closed')" title="Закрыть"
+              />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <v-empty-state
+        v-else
+        icon="mdi-email-search-outline"
+        title="Нет запросов КП"
+        text="Попробуйте изменить фильтры или создайте новый запрос"
+      />
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        :total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
 
     <!-- Create Dialog -->
     <v-dialog v-model="createDialog.show" max-width="680" scrollable>
@@ -368,6 +457,7 @@ import { ref, computed, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { useContractorsStore } from '@/stores/contractors'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Recipient { id: number; contractor_id?: number; contractor_name?: string; email?: string; status: string }
@@ -530,6 +620,19 @@ const filteredRequests = computed(() => {
     r = r.filter(x => (x.subject || '').toLowerCase().includes(q))
   }
   return r
+})
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'commercial_requests_view_mode',
+  source: () => filteredRequests.value,
+  pageSize: 24,
 })
 
 async function loadRequests() {

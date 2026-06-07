@@ -6,8 +6,12 @@
         <span class="text-body-2 text-medium-emphasis">Лог ошибок бэкенда</span>
       </div>
       <v-spacer />
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-center">
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="comfortable" variant="outlined" divided>
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn color="error" variant="outlined" prepend-icon="mdi-delete-sweep" :loading="clearing" @click="confirmClear">
           Очистить всё
         </v-btn>
@@ -21,8 +25,9 @@
       @update:model-value="debouncedLoad"
     />
 
-    <!-- Table -->
+    <!-- Table view -->
     <v-data-table
+        v-if="effectiveView === 'table'"
         v-resizable-columns="'system-incidents'"
         :headers="visibleHeaders"
         :items="incidents"
@@ -37,7 +42,7 @@
         <template v-slot:item.method="{ item }">
           <v-chip
             size="x-small"
-            :color="item.method === 'GET' ? 'info' : item.method === 'POST' ? 'success' : item.method === 'DELETE' ? 'error' : 'warning'"
+            :color="methodColor(item.method)"
             variant="tonal"
           >
             {{ item.method || '—' }}
@@ -60,6 +65,61 @@
           </div>
         </template>
       </v-data-table>
+
+    <!-- Cards view -->
+    <div v-else>
+      <v-row>
+        <v-col
+          v-for="item in paged"
+          :key="item.id"
+          cols="12" sm="6" md="4" lg="3"
+        >
+          <v-card variant="outlined" rounded="lg" class="h-100">
+            <v-card-item>
+              <template #title>
+                <span class="text-body-2 font-weight-medium">{{ item.message }}</span>
+              </template>
+              <template #subtitle>
+                <span class="text-caption text-medium-emphasis">{{ formatDate(item.created_at) }}</span>
+              </template>
+              <template #append>
+                <v-chip
+                  v-if="item.method"
+                  size="x-small"
+                  :color="methodColor(item.method)"
+                  variant="tonal"
+                >
+                  {{ item.method }}
+                </v-chip>
+              </template>
+            </v-card-item>
+            <v-card-text class="pt-0">
+              <div v-if="item.path" class="text-caption text-medium-emphasis mb-1">{{ item.path }}</div>
+              <div class="d-flex align-center gap-2 flex-wrap">
+                <v-chip v-if="item.code" size="x-small" color="error" variant="tonal">{{ item.code }}</v-chip>
+                <span class="text-caption text-medium-emphasis text-truncate" style="max-width:160px">
+                  {{ item.correlation_id }}
+                </span>
+              </div>
+            </v-card-text>
+            <v-card-actions class="pa-2 pt-0">
+              <v-btn size="x-small" variant="text" prepend-icon="mdi-information-outline" @click.stop="viewDetail(item)">
+                Детали
+              </v-btn>
+              <v-btn size="x-small" variant="text" color="error" prepend-icon="mdi-delete-outline" @click.stop="deleteIncident(item)">
+                Удалить
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <v-pagination
+        v-if="totalPages > 1"
+        v-model="page"
+        :length="totalPages"
+        class="mt-4"
+      />
+    </div>
 
     <!-- Detail dialog -->
     <v-dialog v-model="detailDialog.show" max-width="700" scrollable>
@@ -117,6 +177,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 interface Incident {
@@ -133,6 +194,11 @@ interface Incident {
 
 const incidents = ref<Incident[]>([])
 const loading = ref(false)
+
+const { mobile, viewMode, effectiveView, page, totalPages, paged } = useCardView<Incident>({
+  storageKey: 'system_incidents_view_mode',
+  source: () => incidents.value,
+})
 const clearing = ref(false)
 const search = ref('')
 const clearDialog = ref(false)
@@ -152,6 +218,13 @@ const allColumns: ColumnDef[] = [
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('system_incidents', allColumns)
 const showColumnPicker = ref(false)
+
+function methodColor(method?: string) {
+  if (method === 'GET') return 'info'
+  if (method === 'POST') return 'success'
+  if (method === 'DELETE') return 'error'
+  return 'warning'
+}
 
 function formatDate(iso: string) {
   if (!iso) return '—'

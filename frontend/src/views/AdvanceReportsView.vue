@@ -5,9 +5,13 @@
         <h1 class="text-h5 font-weight-bold">Авансовые отчёты</h1>
         <span class="text-body-2 text-medium-emphasis">{{ enrichedItems.length }} записей</span>
       </div>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-center">
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
+        <v-btn-toggle v-if="!arMobile" v-model="arViewMode" mandatory density="comfortable" variant="outlined" divided class="ml-1">
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
       </div>
     </div>
 
@@ -109,6 +113,7 @@
     </v-chip-group>
 
     <v-data-table
+        v-if="arEffectiveView === 'table'"
         v-resizable-columns="'advance-reports'"
         v-model="selected"
         v-model:expanded="expandedRows"
@@ -417,6 +422,70 @@
         </template>
       </v-data-table>
 
+    <!-- Cards view -->
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="item in arPaged" :key="item.id" cols="12" sm="6" md="4" lg="3">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="router.push(`/advance-reports/${item.id}/edit`)">
+            <v-card-item class="pb-1">
+              <v-card-title class="text-body-2 d-flex align-center ga-2 flex-wrap">
+                <span class="font-weight-bold" style="color:#7c3aed; font-family:monospace">
+                  {{ item.registry_number || ('#' + item.id) }}
+                </span>
+                <v-chip :color="statusColor(item.status)" size="x-small" variant="tonal">
+                  {{ statusLabel(item.status, item) }}
+                </v-chip>
+              </v-card-title>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div v-if="item.displayName && item.displayName !== '—'" class="text-caption text-medium-emphasis mb-1" style="overflow-wrap:anywhere">
+                {{ item.displayName.length > 80 ? item.displayName.slice(0, 80) + '...' : item.displayName }}
+              </div>
+              <div class="text-caption text-medium-emphasis">Контрагент</div>
+              <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">
+                <span v-if="(item as any)._unique_item_contractor_count >= 1">
+                  {{ (item as any)._unique_item_contractor_name }}
+                  <span v-if="(item as any)._unique_item_contractor_count > 1" class="text-caption text-medium-emphasis">
+                    +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
+                  </span>
+                </span>
+                <span v-else>{{ item.contractor_name || '—' }}</span>
+              </div>
+              <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis mb-1">
+                <v-icon size="12" color="purple">mdi-account</v-icon>
+                возмещ.: {{ (item as any).reimbursement_user_name }}
+              </div>
+              <div class="text-caption text-medium-emphasis">Субсидия</div>
+              <div class="mb-1">
+                <v-chip v-if="item.subsidy_name" size="x-small" color="primary" variant="tonal">{{ item.subsidy_name }}</v-chip>
+                <span v-else class="text-body-2 text-medium-emphasis">—</span>
+              </div>
+              <div class="d-flex flex-wrap ga-3 mt-2">
+                <div>
+                  <div class="text-caption text-medium-emphasis">Сумма</div>
+                  <div class="text-body-2 font-weight-bold">{{ formatMoney(item.total_nmck ?? item.planned_total_price) }}</div>
+                </div>
+                <div v-if="item.executionDate">
+                  <div class="text-caption text-medium-emphasis">Дата исполнения</div>
+                  <div class="text-body-2">{{ new Date(item.executionDate).toLocaleDateString('ru-RU') }}</div>
+                </div>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-btn icon="mdi-pencil" variant="text" size="small" color="primary" @click.stop="router.push(`/advance-reports/${item.id}/edit`)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!arPaged.length" class="text-center py-10">
+        <v-icon icon="mdi-cash-register" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Авансовые отчёты не найдены</div>
+      </div>
+      <v-pagination v-if="arTotalPages > 1" v-model="arPage" :length="arTotalPages" density="compact" total-visible="7" class="d-flex justify-center mt-4" />
+    </div>
+
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
     </v-snackbar>
@@ -443,6 +512,7 @@ import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
+import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
 
@@ -781,6 +851,30 @@ async function load() {
     loading.value = false
   }
 }
+
+// ── Card view (table↔cards toggle) ────────────────────────────────────────
+const {
+  mobile: arMobile,
+  viewMode: arViewMode,
+  effectiveView: arEffectiveView,
+  page: arPage,
+  totalPages: arTotalPages,
+  paged: arPaged,
+} = useCardView({
+  storageKey: 'advance_reports_view_mode',
+  source: () => filteredItemsWithRowNum.value,
+  search: () => search.value,
+  searchFields: (item) => [
+    item.registry_number,
+    item.displayName,
+    item.contractor_name,
+    item.subsidy_name,
+    item.reimbursement_user_name,
+    item.subject,
+    item.item_name,
+    (item as any)._unique_item_contractor_name,
+  ],
+})
 
 onMounted(load)
 </script>

@@ -97,6 +97,10 @@
             Сохранить фильтр
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
+            <v-btn value="table" size="small" icon="mdi-table" />
+            <v-btn value="cards" size="small" icon="mdi-view-grid" />
+          </v-btn-toggle>
           <v-chip
             v-if="activeFilterCount > 0"
             color="deep-orange" variant="tonal" size="small"
@@ -183,8 +187,9 @@
       </div>
     </v-alert>
 
-    <!-- Table -->
+    <!-- Table / Cards toggle -->
     <v-data-table
+        v-if="effectiveView === 'table'"
         v-resizable-columns="'orders'"
         ref="ordersTableRef"
         :headers="tableHeaders"
@@ -587,6 +592,59 @@
         </template>
       </v-data-table>
 
+    <!-- Cards view -->
+    <div v-else>
+      <v-row dense>
+        <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="router.push(`/orders/${item.id}/edit`)">
+            <v-card-item class="pb-1">
+              <template #prepend>
+                <v-checkbox-btn :model-value="isOrderSelected(item)" density="compact" @click.stop @update:model-value="toggleOrderSelected(item)" />
+              </template>
+              <v-card-title class="text-body-2 d-flex align-center ga-2">
+                <span class="font-weight-bold">{{ item.registry_number || ('#' + item.id) }}</span>
+                <v-chip :color="STATUS_COLOR[item.status] || 'grey'" size="x-small" variant="tonal">{{ statusLabelFor(item) }}</v-chip>
+              </v-card-title>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div class="text-body-2 font-weight-medium mb-1" style="overflow-wrap:anywhere">{{ item.subject || item.item_name || '—' }}</div>
+              <div class="d-flex flex-wrap ga-1 mb-2">
+                <v-chip :color="purchaseTypeColor(item)" size="x-small" variant="tonal">{{ purchaseTypeLabel(item) }}</v-chip>
+                <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal">{{ APPROVAL_STATUS_LABEL[item.approval_status] }}</v-chip>
+              </div>
+              <div class="text-caption text-medium-emphasis">Контрагент</div>
+              <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">{{ item.contractor_name || '—' }}</div>
+              <div class="text-caption text-medium-emphasis">Субсидия</div>
+              <div class="text-body-2 mb-1">{{ item.subsidy_name || '—' }}</div>
+              <div class="d-flex justify-space-between mt-2">
+                <div>
+                  <div class="text-caption text-medium-emphasis">Сумма</div>
+                  <div class="text-body-1 font-weight-bold">{{ formatMoney(effectivePrice(item)) }}</div>
+                </div>
+                <div class="text-right">
+                  <div class="text-caption text-medium-emphasis">Договор</div>
+                  <div class="text-body-2">{{ item.contract_date ? formatDate(item.contract_date) : '—' }}</div>
+                </div>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-btn v-if="nextStatus(item.status)" size="x-small" :color="STATUS_COLOR[nextStatus(item.status)!]" variant="tonal" :loading="transitioning === item.id" @click.stop="doTransition(item)">→ {{ statusLabelFor(item, nextStatus(item.status)!) }}</v-btn>
+              <v-spacer />
+              <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDeleteOne(item)" />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <div v-if="!pagedCards.length" class="text-center py-10">
+        <v-icon icon="mdi-clipboard-text-outline" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">Закупки не найдены</div>
+      </div>
+      <div v-if="cardsTotalPages > 1" class="d-flex justify-center mt-4">
+        <v-pagination v-model="cardsPage" :length="cardsTotalPages" density="compact" total-visible="7" />
+      </div>
+    </div>
+
     <!-- Delete dialog -->
     <v-dialog v-model="deleteDialog.show" max-width="420">
       <v-card>
@@ -894,11 +952,20 @@ import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
+import { useDisplay } from 'vuetify'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
 const route = useRoute()
 const router = useRouter()
+
+// View mode toggle (table ↔ cards)
+const { mobile } = useDisplay()
+const viewMode = ref<'table' | 'cards'>((localStorage.getItem('orders_view_mode') as 'table' | 'cards') || 'table')
+watch(viewMode, v => localStorage.setItem('orders_view_mode', v))
+const effectiveView = computed(() => (mobile.value ? 'cards' : viewMode.value))
+const cardsPage = ref(1)
+const cardsPageSize = 24
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
@@ -1461,6 +1528,23 @@ const filteredOrdersWithRowNum = computed(() => {
   }
   return result
 })
+
+// Cards pagination + selection (declared after filteredOrdersWithRowNum to avoid TDZ).
+// cardsSource also applies the free-text `search` (which the v-data-table handled
+// internally via :search — cards must replicate it to keep search interactive).
+const cardsSource = computed(() => {
+  const q = (search.value || '').trim().toLowerCase()
+  if (!q) return filteredOrdersWithRowNum.value
+  return filteredOrdersWithRowNum.value.filter((o: any) =>
+    [o.registry_number, o.subject, o.item_name, o.contractor_name, o.subsidy_name, o.contract_number, o.order_number, o.agreement_number]
+      .some(v => String(v ?? '').toLowerCase().includes(q))
+  )
+})
+const cardsTotalPages = computed(() => Math.max(1, Math.ceil(cardsSource.value.length / cardsPageSize)))
+const pagedCards = computed(() => { const s = (cardsPage.value - 1) * cardsPageSize; return cardsSource.value.slice(s, s + cardsPageSize) })
+watch(cardsTotalPages, t => { if (cardsPage.value > t) cardsPage.value = t })
+function isOrderSelected(item: any) { return selectedOrders.value.some((o: any) => o.id === item.id) }
+function toggleOrderSelected(item: any) { const i = selectedOrders.value.findIndex((o: any) => o.id === item.id); if (i >= 0) selectedOrders.value.splice(i, 1); else selectedOrders.value.push(item) }
 
 const filteredSum = computed(() =>
   filteredOrders.value.reduce((acc, o) => acc + (effectivePrice(o) ?? 0), 0)

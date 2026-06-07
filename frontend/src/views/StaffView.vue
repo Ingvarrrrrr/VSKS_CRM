@@ -224,6 +224,18 @@
             Импорт из Excel
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-btn-toggle
+            v-if="!staffMobile"
+            v-model="staffViewMode"
+            mandatory
+            density="compact"
+            variant="outlined"
+            divided
+            class="ml-1"
+          >
+            <v-btn value="table" size="small" icon="mdi-table" title="Таблица" />
+            <v-btn value="cards" size="small" icon="mdi-view-grid" title="Карточки" />
+          </v-btn-toggle>
         </div>
 
         <!-- B6: кнопка дубликатов по ИНН -->
@@ -244,6 +256,7 @@
         </v-alert>
 
         <v-data-table
+            v-if="staffEffectiveView === 'table'"
             v-resizable-columns="'staff'"
             :headers="visibleHeaders"
             :items="filteredUsers"
@@ -323,6 +336,85 @@
               </tr>
             </template>
           </v-data-table>
+
+        <!-- Cards view -->
+        <div v-else>
+          <div v-if="filteredUsers.length === 0" class="text-center py-12 text-medium-emphasis">
+            <v-icon icon="mdi-account-group-outline" size="48" color="grey-lighten-2" class="mb-3 d-block" />
+            Нет сотрудников
+          </div>
+          <v-row v-else dense>
+            <v-col
+              v-for="u in staffPagedCards"
+              :key="u.id"
+              cols="12"
+              sm="6"
+              lg="4"
+            >
+              <v-card
+                variant="outlined"
+                class="pa-0 h-100"
+                hover
+                @click="openEditUser(u)"
+              >
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-center mb-2">
+                    <v-avatar size="38" class="mr-3 flex-shrink-0" color="primary" variant="tonal">
+                      <UserAvatar
+                        v-if="u.photo_url || u.avatar"
+                        :photo-url="u.photo_url"
+                        :avatar="u.avatar"
+                        :size="38"
+                        square
+                      />
+                      <span v-else class="text-body-2 font-weight-bold">
+                        {{ (u.full_name || u.username || '?').charAt(0).toUpperCase() }}
+                      </span>
+                    </v-avatar>
+                    <div class="flex-grow-1 min-width-0">
+                      <div class="text-body-1 font-weight-bold text-truncate">
+                        {{ u.full_name || u.username }}
+                      </div>
+                      <div class="text-caption text-medium-emphasis text-truncate">
+                        {{ u.position || '—' }}
+                      </div>
+                    </div>
+                    <v-chip :color="roleColor(u.role)" size="x-small" variant="tonal" class="ml-2 flex-shrink-0">
+                      {{ ROLE_LABELS[u.role] || u.role }}
+                    </v-chip>
+                  </div>
+                  <div v-if="u.email" class="d-flex align-center text-body-2 text-truncate mb-1">
+                    <v-icon icon="mdi-email-outline" size="14" class="mr-1 flex-shrink-0" color="grey" />
+                    {{ u.email }}
+                  </div>
+                  <div v-if="u.department" class="d-flex align-center text-caption text-medium-emphasis text-truncate">
+                    <v-icon icon="mdi-sitemap-outline" size="14" class="mr-1 flex-shrink-0" color="grey" />
+                    {{ u.department }}
+                  </div>
+                </v-card-text>
+                <v-card-actions class="pa-2 pt-0" @click.stop>
+                  <v-spacer />
+                  <template v-if="isAdmin">
+                    <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
+                      @click.stop="openEditUser(u)" title="Редактировать" />
+                    <v-btn icon="mdi-account-supervisor" size="x-small" variant="text" color="teal"
+                      @click.stop="openHierarchyDialog(u)" title="Настроить подчиненных" />
+                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                      @click.stop="confirmDelete(u)" :disabled="u.username === 'admin'" />
+                  </template>
+                </v-card-actions>
+              </v-card>
+            </v-col>
+          </v-row>
+          <v-pagination
+            v-if="staffCardsTotalPages > 1"
+            v-model="staffCardsPage"
+            :length="staffCardsTotalPages"
+            density="compact"
+            :total-visible="7"
+            class="d-flex justify-center mt-4"
+          />
+        </div>
       </v-window-item>
 
       <!-- ═══════════════════════════════════════════════════════ -->
@@ -1113,6 +1205,7 @@ import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { useCardView } from '@/composables/useCardView'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -1240,6 +1333,19 @@ const filteredUsers = computed(() => {
   if (filterUserRole.value) list = list.filter(u => u.role === filterUserRole.value)
   if (filterUserOrgId.value) list = list.filter(u => (u as any).org_id === filterUserOrgId.value)
   return list
+})
+
+const {
+  mobile: staffMobile,
+  viewMode: staffViewMode,
+  effectiveView: staffEffectiveView,
+  page: staffCardsPage,
+  totalPages: staffCardsTotalPages,
+  paged: staffPagedCards,
+} = useCardView<UserItem>({
+  storageKey: 'staff_view_mode',
+  source: () => filteredUsers.value,
+  pageSize: 24,
 })
 
 // B6: дедуп пользователей по ИНН

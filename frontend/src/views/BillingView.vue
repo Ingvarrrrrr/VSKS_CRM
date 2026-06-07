@@ -11,7 +11,11 @@
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <span class="text-subtitle-1 font-weight-bold">Контуры — текущий месяц</span>
           <v-spacer />
-          <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" class="mr-2" @click="showColumnPicker = true">Колонки</v-btn>
+          <v-btn-toggle v-if="!blMobile" v-model="blViewMode" mandatory density="comfortable" variant="outlined" divided class="mr-2">
+            <v-btn value="table" size="small" icon="mdi-table" />
+            <v-btn value="cards" size="small" icon="mdi-view-grid" />
+          </v-btn-toggle>
+          <v-btn v-if="blEffectiveView === 'table'" variant="tonal" prepend-icon="mdi-view-column" size="small" class="mr-2" @click="showColumnPicker = true">Колонки</v-btn>
           <v-btn size="small" variant="outlined" :color="showHistory ? 'primary' : undefined"
             prepend-icon="mdi-history" @click="showHistory = !showHistory">
             {{ showHistory ? 'Скрыть историю' : 'История' }}
@@ -20,7 +24,7 @@
 
         <v-data-table
           v-resizable-columns="'billing-main'"
-          v-if="!showHistory"
+          v-if="!showHistory && blEffectiveView === 'table'"
           :headers="visibleHeaders"
           :items="orgs"
           :loading="loading"
@@ -114,6 +118,71 @@
             </v-btn>
           </template>
         </v-data-table>
+
+        <!-- Карточки контуров -->
+        <template v-if="!showHistory && blEffectiveView === 'cards'">
+          <v-card-text>
+            <v-row>
+              <v-col v-for="item in blPaged" :key="item.org_id" cols="12" sm="6" md="4" lg="3">
+                <v-card variant="outlined" rounded="lg" class="pa-3 h-100 d-flex flex-column">
+                  <div class="d-flex align-center mb-2">
+                    <v-icon size="18" color="primary" class="mr-1">mdi-domain</v-icon>
+                    <span class="text-subtitle-2 font-weight-bold text-truncate">{{ item.org_name }}</span>
+                  </div>
+                  <div class="text-caption text-medium-emphasis mb-1">Подключена: {{ fmtDate(item.created_at) }}</div>
+                  <div class="d-flex align-center gap-2 mb-2 flex-wrap">
+                    <v-chip :color="tierColor(item.current.tier)" size="small" label variant="flat">
+                      {{ item.current.tier_label }}
+                    </v-chip>
+                    <span class="text-caption text-medium-emphasis">Мес. {{ item.current.month_num }}</span>
+                  </div>
+                  <div class="d-flex align-center justify-space-between mb-2">
+                    <div>
+                      <div class="text-caption text-medium-emphasis">Уник. сотр.</div>
+                      <div class="font-weight-bold">
+                        {{ item.unique_user_count }}
+                        <span v-if="item.org_breakdown.length > 1" class="text-caption text-medium-emphasis">(ун.)</span>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <div class="text-caption text-medium-emphasis">К оплате</div>
+                      <div class="font-weight-bold">
+                        {{ item.current.amount_due === 0 ? '0 ₽' : fmtMoney(item.current.amount_due) }}
+                      </div>
+                    </div>
+                  </div>
+                  <v-chip
+                    :color="item.current.is_paid ? 'success' : (item.current.amount_due > 0 ? 'error' : 'grey')"
+                    size="small" label variant="flat" class="mb-3"
+                  >
+                    <v-icon :icon="item.current.is_paid ? 'mdi-check-circle' : 'mdi-close-circle'" size="16" class="mr-1" />
+                    {{ item.current.is_paid ? 'Оплачено' : (item.current.amount_due > 0 ? 'Не оплачено' : '—') }}
+                  </v-chip>
+                  <v-spacer />
+                  <div class="d-flex gap-1">
+                    <v-btn v-if="item.current.amount_due > 0 && !item.current.is_paid"
+                      size="small" variant="tonal" color="success" prepend-icon="mdi-check" block
+                      :loading="payingId === item.org_id" @click.stop="markPaid(item)">
+                      Оплачено
+                    </v-btn>
+                    <v-btn v-else-if="item.current.is_paid"
+                      size="small" variant="text" color="error" prepend-icon="mdi-undo" block
+                      :loading="payingId === item.org_id" @click.stop="markUnpaid(item)">
+                      Отменить
+                    </v-btn>
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+            <v-pagination
+              v-if="blTotalPages > 1"
+              v-model="blPage"
+              :length="blTotalPages"
+              density="comfortable"
+              class="mt-4"
+            />
+          </v-card-text>
+        </template>
 
         <!-- История по выбранной организации -->
         <template v-if="showHistory">
@@ -277,6 +346,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import { useCardView, refGetter } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 
 const role = localStorage.getItem('user_role') || ''
@@ -289,6 +359,16 @@ const showSnack = (text: string, color = 'success') => { snack.value = { show: t
 
 // ── Superadmin state ──
 const orgs = ref<any[]>([])
+
+const {
+  mobile: blMobile,
+  viewMode: blViewMode,
+  effectiveView: blEffectiveView,
+  page: blPage,
+  totalPages: blTotalPages,
+  paged: blPaged,
+} = useCardView({ storageKey: 'billing_view_mode', source: refGetter(orgs) })
+
 const showHistory = ref(false)
 const historyOrgId = ref<number | null>(null)
 const historyItems = ref<any[]>([])

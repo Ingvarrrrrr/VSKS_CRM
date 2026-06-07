@@ -1,0 +1,314 @@
+<template>
+  <!-- Presentational large-card view — editable drop-in alternative to
+       ItemsTableFlat for the flat/simple (wish + purchase non-stages) shape.
+       Holds NO business state: all data comes in via props, all mutations leave
+       via emits with the SAME names/payloads as ItemsTableFlat so the parent's
+       handlers work unchanged. Used on mobile (forced) and via the desktop toggle. -->
+  <div class="items-cards-view">
+    <!-- Select-all header strip (mirrors the table's header checkbox) -->
+    <div v-if="items.length" class="d-flex align-center ga-2 mb-2 px-1">
+      <v-checkbox :model-value="allItemsSelected" density="compact" hide-details :rules="[]"
+        :indeterminate="selectedItemIdxs.length > 0 && !allItemsSelected"
+        :disabled="readonly"
+        @update:model-value="(v: boolean | null) => emit('toggle-select-all', v)" />
+      <span class="text-caption text-medium-emphasis">Выбрать все</span>
+    </div>
+
+    <v-card
+      v-for="(item, idx) in items"
+      :key="item._uid ?? idx"
+      variant="outlined"
+      class="mb-3 item-card"
+      :class="{ 'cv-card': virtualize }"
+    >
+      <!-- Delete (top-right, absolute) -->
+      <v-btn v-if="!readonly" icon="mdi-delete-outline" variant="text" size="small" color="error"
+        class="item-card-delete" @click="emit('remove-item', idx)" />
+
+      <v-row no-gutters>
+        <!-- LEFT: big photo + № + select -->
+        <v-col cols="12" sm="4" md="3" class="pa-3 d-flex flex-column align-center">
+          <div class="d-flex align-center justify-space-between w-100 mb-2">
+            <v-chip size="x-small" variant="tonal" color="grey">№ {{ idx + 1 }}</v-chip>
+            <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
+              :disabled="readonly"
+              @update:model-value="(val: boolean | null) => emit('toggle-item-select', idx, val)" />
+          </div>
+          <v-img :src="item._photo_url" height="200" width="100%" :cover="false" rounded="lg" class="item-card-photo">
+            <template #error>
+              <div class="d-flex align-center justify-center fill-height bg-grey-lighten-4">
+                <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
+              </div>
+            </template>
+            <template #placeholder>
+              <div class="d-flex align-center justify-center fill-height bg-grey-lighten-4">
+                <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
+              </div>
+            </template>
+          </v-img>
+        </v-col>
+
+        <!-- RIGHT: editable fields -->
+        <v-col cols="12" sm="8" md="9" class="pa-3">
+          <v-row dense>
+            <!-- Name: InlineProductMatch + edit-product + confirm-match -->
+            <v-col cols="12">
+              <div class="d-flex align-center gap-1 pr-10">
+                <InlineProductMatch
+                  class="flex-grow-1"
+                  style="min-width:240px"
+                  :item-name="item.item_name"
+                  :product-id="item.product_id"
+                  :match-confirmed="item.match_confirmed"
+                  :disabled="readonly"
+                  @pick="(c: MatchCandidate) => emit('inline-match-pick', idx, c)"
+                  @create-new="emit('inline-match-create-new', idx)"
+                  @clear="emit('inline-match-clear', idx)"
+                />
+                <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
+                  <template #activator="{ props: tip }">
+                    <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
+                      color="teal" class="flex-shrink-0 ml-1" :disabled="readonly"
+                      @click.stop="emit('open-quick-product-edit', item)" />
+                  </template>
+                </v-tooltip>
+                <v-tooltip v-if="item.match_confirmed === false && item.product_id" text="Подтвердить, что товар из каталога определён правильно" location="top">
+                  <template #activator="{ props: tip }">
+                    <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal"
+                      color="warning" class="flex-shrink-0 ml-1" :disabled="readonly"
+                      @click.stop="emit('confirm-match', idx)" />
+                  </template>
+                </v-tooltip>
+              </div>
+            </v-col>
+
+            <!-- Тип (+ ФЭО позиция under it, like the flat table) -->
+            <v-col cols="12" sm="6">
+              <v-select v-model="item.item_type"
+                :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
+                item-title="title" item-value="value" density="compact" variant="outlined"
+                :label="feoPerItem ? 'Тип / ФЭО *' : 'Тип'"
+                hide-details :disabled="readonly" />
+              <template v-if="feoPerItem">
+                <v-autocomplete
+                  v-model="item.feo_category_id"
+                  :items="feoLeaves"
+                  item-title="path"
+                  item-value="id"
+                  label="ФЭО позиция"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                  hide-details="auto"
+                  class="mt-2"
+                  :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
+                  :error="isFeoMissing(item)"
+                  :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
+                  :disabled="readonly"
+                  @update:model-value="emit('items-changed')"
+                >
+                  <template #item="{ props: itemProps, item: feoItem }">
+                    <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
+                      <template #subtitle>
+                        <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
+                        <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
+                      </template>
+                    </v-list-item>
+                  </template>
+                  <template #selection="{ item: feoItem }">
+                    <span style="font-size:12px">{{ feoItem.raw.name }}</span>
+                  </template>
+                </v-autocomplete>
+                <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1 mt-1">
+                  <v-icon icon="mdi-alert-outline" size="12" />
+                  <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
+                </div>
+              </template>
+            </v-col>
+
+            <!-- Кол-во -->
+            <v-col cols="6" sm="3">
+              <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                variant="outlined" label="Кол-во" hide-details :disabled="readonly"
+                @update:model-value="emit('calc-item-total', idx)" />
+            </v-col>
+
+            <!-- Ед. изм. -->
+            <v-col cols="6" sm="3">
+              <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
+                label="Ед. изм." hide-details :disabled="readonly" />
+            </v-col>
+
+            <!-- Цена ед. -->
+            <v-col cols="6" sm="4">
+              <v-text-field
+                :model-value="formatNumber(item.unit_price)"
+                density="compact" variant="outlined" label="Цена ед., ₽" hide-details
+                :disabled="readonly"
+                @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+              />
+            </v-col>
+
+            <!-- Сумма (readonly) -->
+            <v-col cols="6" sm="4">
+              <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
+                variant="outlined" label="Сумма, ₽" hide-details bg-color="grey-lighten-4" />
+            </v-col>
+
+            <!-- Страна -->
+            <v-col cols="12" sm="4">
+              <v-text-field v-model="item.country_origin" density="compact"
+                variant="outlined" label="Страна происхождения" hide-details placeholder="РФ" :disabled="readonly" />
+            </v-col>
+
+            <!-- НДС (per_item only) -->
+            <v-col v-if="vatMode === 'per_item'" cols="6" sm="4">
+              <v-combobox v-model="item.vat_rate"
+                :items="vatRateOptions"
+                item-title="title" item-value="value"
+                density="compact" variant="outlined" hide-details
+                label="НДС" placeholder="НДС %" :disabled="readonly"
+                @update:model-value="emit('vat-rate-change', idx, $event)" />
+            </v-col>
+
+            <!-- Контрагент (advance_report mode only) -->
+            <v-col v-if="showContractorColumn" cols="12">
+              <v-autocomplete
+                :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                :items="contractors" item-title="name" item-value="id" return-object
+                variant="outlined" density="compact" clearable auto-select-first hide-details
+                label="Контрагент" :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
+                :menu-props="{ maxWidth: 500 }" placeholder="Поставщик. Поиск по названию или ИНН..."
+                :disabled="readonly"
+                @update:search="(s: string) => emit('contractor-search-input', idx, s)"
+                @update:model-value="(v: Contractor | null) => emit('item-contractor-select', idx, v)"
+              >
+                <template #item="{ item: i, props: itemProps }">
+                  <v-list-item v-bind="itemProps" :title="undefined">
+                    <template #title><span style="white-space:normal;word-break:break-word;line-height:1.4">{{ i.raw.name }}</span></template>
+                    <template #subtitle><span v-if="i.raw.inn" class="text-caption">ИНН: {{ i.raw.inn }}</span></template>
+                  </v-list-item>
+                </template>
+                <template #append-inner>
+                  <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                    title="Добавить контрагента" :disabled="readonly"
+                    @click.stop="emit('open-contractor-quick-create', idx)" />
+                </template>
+                <template #no-data>
+                  <v-list-item>
+                    <v-alert type="info" density="compact" variant="tonal" class="text-caption ma-0">Введите ИНН (10 или 12 цифр) — данные подтянутся из ФНС автоматически.</v-alert>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+              <div v-if="item.receipt_id" class="text-caption text-medium-emphasis mt-1 d-flex align-center gap-1">
+                <v-icon size="12">mdi-receipt</v-icon>
+                <span>из чека #{{ item.receipt_id }}</span>
+              </div>
+            </v-col>
+          </v-row>
+        </v-col>
+      </v-row>
+    </v-card>
+
+    <div v-if="!items.length" class="text-center text-medium-emphasis py-6">
+      Нет позиций. Нажмите «Добавить позицию».
+    </div>
+
+    <div v-if="items.length" class="d-flex justify-end pa-2 text-caption font-weight-bold">
+      <span>НМЦД итого:&nbsp;</span>
+      <span class="text-blue-darken-2">{{ totalNmck.toLocaleString('ru-RU') }} ₽</span>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
+import type { MatchCandidate } from '@/composables/useItemMatching'
+import type { Contractor, ProductLike } from '@/components/items/types'
+
+// EditorItem is structurally identical to the parent's; kept loose here since the
+// parent owns the canonical definition and passes its own objects through.
+type EditorItem = any
+
+// Perf: only enable content-visibility virtualization above this row count so
+// small lists render identically to before. Mirrors ItemsTableFlat's threshold.
+const VIRT_THRESHOLD = 40
+
+const props = defineProps<{
+  items: EditorItem[]
+  readonly: boolean
+  allowedItemTypes: string[]
+  vatMode: 'uniform' | 'per_item'
+  feoPerItem: boolean
+  showContractorColumn: boolean
+  contractors: Contractor[]
+  contractorLookupLoading: Record<number, boolean>
+  selectedItemIdxs: number[]
+  allItemsSelected: boolean
+  totalNmck: number
+  feoLeaves: any[]
+  unitOptions: string[]
+  vatRateOptions: any[]
+  // Pure helper / computed-bound function props supplied by the parent:
+  isOverBudget: (item: EditorItem) => boolean
+  overBudgetDelta: (item: EditorItem) => number
+  isFeoMissing: (item: EditorItem) => boolean
+  fmtRub: (v: number) => string
+  formatNumber: (v: number | null | undefined) => string
+  parseNumber: (v: string) => number | null
+  contractorFilter: (value: string, query: string, item?: any) => boolean
+  productPhotoSrc?: (p: ProductLike | null | undefined) => string | undefined
+}>()
+
+const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
+
+// Identical contract to ItemsTableFlat — same emit names & payload shapes so the
+// parent handlers are wired unchanged.
+const emit = defineEmits<{
+  'toggle-select-all': [val: boolean | null]
+  'toggle-item-select': [idx: number, val: boolean | null]
+  'inline-match-pick': [idx: number, candidate: MatchCandidate]
+  'inline-match-create-new': [idx: number]
+  'inline-match-clear': [idx: number]
+  'open-quick-product-edit': [item: EditorItem]
+  'confirm-match': [idx: number]
+  'calc-item-total': [idx: number]
+  'vat-rate-change': [idx: number, v: any]
+  'remove-item': [idx: number]
+  'contractor-search-input': [idx: number, search: string]
+  'item-contractor-select': [idx: number, val: Contractor | null]
+  'open-contractor-quick-create': [idx: number]
+  'items-changed': []
+}>()
+</script>
+
+<style scoped>
+.item-card { position: relative; }
+.item-card-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+}
+.item-card-photo { background: rgb(var(--v-theme-surface)); }
+
+/* F-PIF2: soft-warning при превышении FEO плана */
+.feo-over-budget :deep(.v-field) {
+  background: rgba(255, 193, 7, 0.08);
+  border-color: rgba(255, 193, 7, 0.5);
+}
+.feo-missing :deep(.v-field) {
+  background: rgba(244, 67, 54, 0.06);
+  border-color: rgba(244, 67, 54, 0.5);
+}
+
+/* Perf: content-visibility virtualization for large lists (> VIRT_THRESHOLD),
+   mirroring ItemsTableFlat. Browser skips layout/paint of offscreen cards;
+   contain-intrinsic-size reserves an approximate card height so scroll stays
+   stable. Applied only when items.length > threshold. */
+.cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+</style>

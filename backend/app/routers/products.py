@@ -942,8 +942,9 @@ async def deduplicate_products(
     `threshold` — порог сходства (по умолчанию 0.8).
     `skip_ids` — CSV id'шников, которые пользователь снял с галочкой и НЕ хочет удалять.
     """
-    from app.product_matcher import name_similarity
+    from app.product_matcher import name_similarity, _normalize, _tokens
     from collections import defaultdict
+    from difflib import SequenceMatcher
     from sqlalchemy import update as sa_update
     from app.models.purchase_item import PurchaseItem
 
@@ -954,12 +955,17 @@ async def deduplicate_products(
         except ValueError:
             pass
 
-    result = await db.execute(select(Product))
-    all_products: list[Product] = list(result.scalars().all())
+    from sqlalchemy.orm import defer
+    result = await db.execute(
+        select(Product, Product.photo_data.isnot(None)).options(defer(Product.photo_data))
+    )
+    _rows = result.all()
+    all_products: list[Product] = [r[0] for r in _rows]
+    has_photo_blob: dict[int, bool] = {r[0].id: bool(r[1]) for r in _rows}
 
     def priority_score(p: Product) -> tuple:
         has_price_links = bool(p.price_links)
-        has_photo = bool(p.photo_data is not None or p.photo_url or p.photo_link)
+        has_photo = bool(has_photo_blob.get(p.id) or p.photo_url or p.photo_link)
         has_desc = bool((p.description or '').strip())
         contract_date_ts = p.contract_date.toordinal() if p.contract_date else 0
         return (has_price_links, has_photo, has_desc, contract_date_ts, p.id)
@@ -984,11 +990,20 @@ async def deduplicate_products(
             if ra != rb:
                 parent[ra] = rb
 
-        # O(n²) — для каталогов < 10k норм
-        for i in range(n):
-            for j in range(i + 1, n):
-                if name_similarity(org_products[i].name or '', org_products[j].name or '') >= threshold:
-                    union(i, j)
+        # Дубликат = ТОЛЬКО точное совпадение имени (после нормализации регистра/
+        # пробелов/ё). Похожие названия с РАЗНЫМИ характеристиками — это разные
+        # товары (Гофрокороб д600/Т24 ≠ д500/Т22; ZenBook 14 i7 ≠ ZenBook 13 i5).
+        # Никакого fuzzy (token-set / char-ratio): он ложно сливал разные SKU.
+        norms = [_normalize(p.name or '') for p in org_products]
+        by_norm: dict[str, int] = {}
+        for i, key in enumerate(norms):
+            if not key:
+                continue
+            prev = by_norm.get(key)
+            if prev is not None:
+                union(i, prev)
+            else:
+                by_norm[key] = i
 
         groups_map: dict[int, list[Product]] = defaultdict(list)
         for i, p in enumerate(org_products):
@@ -1010,7 +1025,7 @@ async def deduplicate_products(
                     "name": p.name,
                     "category": p.category,
                     "product_type": p.product_type,
-                    "has_photo": bool(p.photo_data or p.photo_url or p.photo_link),
+                    "has_photo": bool(has_photo_blob.get(p.id) or p.photo_url or p.photo_link),
                     "has_description": bool((p.description or '').strip()),
                     "score": score,
                     "match": match,
@@ -1021,7 +1036,7 @@ async def deduplicate_products(
                     "name": winner.name,
                     "category": winner.category,
                     "product_type": winner.product_type,
-                    "has_photo": bool(winner.photo_data or winner.photo_url or winner.photo_link),
+                    "has_photo": bool(has_photo_blob.get(winner.id) or winner.photo_url or winner.photo_link),
                     "has_description": bool((winner.description or '').strip()),
                 },
                 "duplicates": dup_dicts,
@@ -1039,18 +1054,18 @@ async def deduplicate_products(
     deleted = 0
     for grp in duplicate_groups:
         winner_id = grp["winner"]["id"]
-        for dup in grp["duplicates"]:
-            if dup["id"] in skipped_ids:
-                continue
-            await db.execute(
-                sa_update(PurchaseItem)
-                .where(PurchaseItem.product_id == dup["id"])
-                .values(product_id=winner_id)
-            )
-            await db.execute(
-                Product.__table__.delete().where(Product.id == dup["id"])
-            )
-            deleted += 1
+        dup_ids = [dup["id"] for dup in grp["duplicates"] if dup["id"] not in skipped_ids]
+        if not dup_ids:
+            continue
+        await db.execute(
+            sa_update(PurchaseItem)
+            .where(PurchaseItem.product_id.in_(dup_ids))
+            .values(product_id=winner_id)
+        )
+        await db.execute(
+            Product.__table__.delete().where(Product.id.in_(dup_ids))
+        )
+        deleted += len(dup_ids)
 
     await db.commit()
     return {

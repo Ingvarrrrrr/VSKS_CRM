@@ -17,6 +17,10 @@
             filter variant="elevated" color="primary" size="small"
           >{{ year }}</v-chip>
         </v-chip-group>
+        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="comfortable" variant="outlined" divided class="mr-2">
+          <v-btn value="table" size="small" icon="mdi-table" title="Таблица" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" title="Карточки" />
+        </v-btn-toggle>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
           Добавить
         </v-btn>
@@ -39,10 +43,66 @@
       </div>
 
       <template v-else>
+        <!-- ── Table view ── -->
+        <v-data-table
+          v-if="effectiveView === 'table'"
+          :headers="subsidyTableHeaders"
+          :items="filteredSubsidies"
+          density="compact"
+          :items-per-page="25"
+          hover
+          class="subsidy-main-table mb-3"
+        >
+          <template #item.feo_budget_total="{ item }">
+            {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
+          </template>
+          <template #item.plan_schedule="{ item }">
+            <span style="color:#F59E0B">{{ formatCurrencyShort(item.plan_schedule) }}</span>
+          </template>
+          <template #item.ordered="{ item }">
+            <span style="color:#3B82F6">{{ formatCurrencyShort(item.ordered) }}</span>
+          </template>
+          <template #item.paid="{ item }">
+            <span style="color:var(--color-paid)">{{ formatCurrencyShort(item.paid) }}</span>
+          </template>
+          <template #item.contractor_name="{ item }">
+            <span v-if="item.contractor_name" class="d-flex align-center">
+              <v-icon icon="mdi-account-tie" size="13" class="mr-1" color="teal" />
+              {{ item.contractor_name }}
+            </span>
+            <span v-else class="text-medium-emphasis">—</span>
+          </template>
+          <template #item.feo_filled="{ item }">
+            <v-icon
+              :icon="item.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'"
+              :color="item.feo_filled ? 'success' : 'grey-lighten-1'"
+              size="18"
+            />
+          </template>
+          <template #item.name="{ item }">
+            <span class="font-weight-medium cursor-pointer" @click="toggleSelect(item.id)">{{ item.name }}</span>
+          </template>
+          <template #item.actions="{ item }">
+            <div class="d-flex align-center justify-end" style="gap:2px">
+              <v-btn
+                icon="mdi-file-document-outline"
+                size="x-small" variant="text"
+                :color="contractTemplates[item.id] ? 'indigo' : 'grey-lighten-1'"
+                :title="contractTemplates[item.id] ? 'Шаблон договора (загружен)' : 'Шаблон договора (не загружен)'"
+                @click.stop="openTemplateDialog(item)"
+              />
+              <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(item)" />
+              <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="openHistoryDialog(item)" />
+              <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(item)" />
+              <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(item)" />
+            </div>
+          </template>
+        </v-data-table>
+
         <!-- ── Cards grid ── -->
-        <div class="subsidies-grid">
+        <div v-else class="subsidies-grid">
           <div
-            v-for="(s, idx) in filteredSubsidies" :key="s.id"
+            v-for="(s, idx) in subPaged" :key="s.id"
             class="subsidy-card"
             :class="{ 'subsidy-card--active': selectedId === s.id, 'subsidy-card--drag-over': cardDragOverIdx === idx, 'subsidy-card--dragging': cardDragIdx === idx }"
             draggable="true"
@@ -105,6 +165,10 @@
               </div>
             </div>
           </div>
+        </div>
+        <!-- cards pagination -->
+        <div v-if="subTotalPages > 1" class="d-flex justify-center mt-3">
+          <v-pagination v-model="subPage" :length="subTotalPages" density="comfortable" />
         </div>
 
         <!-- ── Summary bar ── -->
@@ -2235,6 +2299,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
+import { useCardView } from '@/composables/useCardView'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 
@@ -2961,6 +3026,23 @@ const filteredSubsidies = computed(() => {
     return ai - bi
   })
 })
+
+// ── Table ↔ Cards toggle ──────────────────────────
+const { mobile, viewMode, effectiveView, page: subPage, totalPages: subTotalPages, paged: subPaged } = useCardView<SubsidyRow>({
+  storageKey: 'subsidies_view_mode',
+  source: () => filteredSubsidies.value,
+})
+
+const subsidyTableHeaders = [
+  { title: 'Название', key: 'name', minWidth: '200px' },
+  { title: 'Бюджет ФЭО', key: 'feo_budget_total', align: 'end' as const },
+  { title: 'Запланировано', key: 'plan_schedule', align: 'end' as const },
+  { title: 'Заказано', key: 'ordered', align: 'end' as const },
+  { title: 'Оплачено', key: 'paid', align: 'end' as const },
+  { title: 'Контрагент', key: 'contractor_name' },
+  { title: 'ФЭО', key: 'feo_filled', align: 'center' as const },
+  { title: '', key: 'actions', sortable: false, align: 'end' as const },
+]
 
 const selectedSubsidy = computed(() =>
   allSubsidies.value.find(s => s.id === selectedId.value) ?? null

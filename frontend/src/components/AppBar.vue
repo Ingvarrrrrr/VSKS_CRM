@@ -514,7 +514,7 @@ const navShortcuts = computed(() =>
 
 const _allBottomNavItems = [
   { label: 'Дашборд',      icon: 'mdi-view-dashboard',    route: '/dashboard',    tab_key: 'dashboard' },
-  { label: 'Заявки',       icon: 'mdi-hand-heart-outline', route: '/wishes',       tab_key: 'wishes' },
+  { label: 'Чат',          icon: 'mdi-chat',              route: '/chat',         tab_key: 'chat' },
   { label: 'Закупки',      icon: 'mdi-clipboard-list',    route: '/orders',       tab_key: 'purchases' },
   { label: 'Задачи',       icon: 'mdi-clipboard-account', route: '/my-tasks',     tab_key: 'my_tasks' },
   { label: 'Автопарк',     icon: 'mdi-warehouse',         route: '/fleet',        tab_key: 'vehicles' },

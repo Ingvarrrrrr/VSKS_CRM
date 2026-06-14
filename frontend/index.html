@@ -62,6 +62,43 @@
         }
       })();
     </script>
+
+    <!-- Self-heal: если закэшированный index.html ссылается на удалённый JS/CSS-чанк
+         (404 → белый экран), ловим ошибку загрузки ассета, чистим SW+кэши и
+         перезагружаемся ОДИН раз за сессию (guard от цикла, окно 30с). В отличие
+         от one-time флага выше — срабатывает на КАЖДЫЙ будущий устаревший билд. -->
+    <script>
+      (function () {
+        function isAssetFail(t) {
+          if (!t) return false;
+          var src = t.src || t.href || '';
+          return (t.tagName === 'SCRIPT' || t.tagName === 'LINK') && src.indexOf('/assets/') !== -1;
+        }
+        window.addEventListener('error', function (e) {
+          if (!isAssetFail(e.target)) return;
+          try {
+            var last = +(sessionStorage.getItem('gala_chunk_reload_ts') || 0);
+            if (Date.now() - last < 30000) return; // уже чинились недавно — не зацикливаемся
+            sessionStorage.setItem('gala_chunk_reload_ts', String(Date.now()));
+          } catch (_) { return; }
+          var done = function () { window.location.reload(); };
+          try {
+            var jobs = [];
+            if ('serviceWorker' in navigator) {
+              jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+                return Promise.all(rs.map(function (r) { return r.unregister(); }));
+              }));
+            }
+            if ('caches' in window) {
+              jobs.push(caches.keys().then(function (ks) {
+                return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+              }));
+            }
+            Promise.all(jobs).then(done).catch(done);
+          } catch (_) { done(); }
+        }, true);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

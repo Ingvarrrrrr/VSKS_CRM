@@ -78,7 +78,7 @@
   </v-card>
 
   <!-- ── Reject dialog ── -->
-  <v-dialog v-model="rejectDialog" max-width="480">
+  <v-dialog v-model="rejectDialog" max-width="480" :fullscreen="mobile">
     <v-card>
       <v-card-title>Отклонение согласования</v-card-title>
       <v-card-text>
@@ -96,7 +96,7 @@
   </v-dialog>
 
   <!-- ── Approve dialog: электронно или бумажно ── -->
-  <v-dialog v-model="approveDialog" max-width="440">
+  <v-dialog v-model="approveDialog" max-width="440" :fullscreen="mobile">
     <v-card>
       <v-card-title class="pt-4 px-5">Подписать согласование</v-card-title>
       <v-card-text class="px-5">
@@ -168,7 +168,7 @@
   </v-dialog>
 
   <!-- ── Start approval dialog ── -->
-  <v-dialog v-model="startDialog" max-width="480">
+  <v-dialog v-model="startDialog" max-width="480" :fullscreen="mobile">
     <v-card>
       <v-card-title class="pt-4 px-5">Запуск согласования</v-card-title>
       <v-card-text class="px-5">
@@ -238,7 +238,7 @@
   <SignaturePad ref="sigPadRef" @saved="onSignatureSaved" />
 
   <!-- ── Add Approver Dialog ── -->
-  <v-dialog v-model="addApproverDialog" max-width="480">
+  <v-dialog v-model="addApproverDialog" max-width="480" :fullscreen="mobile">
     <v-card>
       <v-card-title class="pt-4 px-5 d-flex align-center">
         <v-icon icon="mdi-account-plus-outline" color="primary" class="mr-2" />
@@ -284,8 +284,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import SignaturePad from '@/components/SignaturePad.vue'
+
+const { mobile } = useDisplay()
 
 interface Approval {
   id: number; purchase_id: number; order_num: number

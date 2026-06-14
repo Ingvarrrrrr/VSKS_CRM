@@ -107,7 +107,7 @@
     </div>
 
     <!-- Create/Edit dialog -->
-    <v-dialog v-model="formDialog.show" max-width="560" scrollable>
+    <v-dialog v-model="formDialog.show" max-width="560" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           {{ formDialog.isEdit ? 'Редактировать поставщика' : 'Добавить поставщика' }}

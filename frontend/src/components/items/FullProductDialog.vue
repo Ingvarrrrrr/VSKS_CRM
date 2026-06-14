@@ -4,7 +4,7 @@
        the saving flag and the save handler. This child renders the form
        (mutating the passed reactive `form` in place) and emits intents.
        Extracted from PurchaseItemsEditor.vue (Layer 2). -->
-  <v-dialog :model-value="modelValue" max-width="1600" width="95vw" scrollable
+  <v-dialog :model-value="modelValue" max-width="1600" width="95vw" scrollable :fullscreen="mobile"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)">
     <v-card class="d-flex flex-column" style="height: calc(100vh - 48px)">
       <v-card-title class="text-h6 pt-4 px-4 px-sm-6 d-flex align-center justify-space-between">
@@ -125,6 +125,9 @@
 
 <script setup lang="ts">
 import type { FullProductForm } from '@/components/items/types'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 defineProps<{
   modelValue: boolean

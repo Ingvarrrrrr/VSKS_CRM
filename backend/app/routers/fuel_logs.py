@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.permissions import require_tab, require_action
 from app.models.vehicle import Vehicle
 from app.models.fuel_log import FuelLog
@@ -84,6 +84,12 @@ class LatestPriceOut(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _assert_vehicle_visible(vehicle: Vehicle, user) -> None:
+    org_ids = get_org_filter(user)
+    if org_ids is not None and vehicle.owner_org_id not in org_ids and vehicle.assigned_org_id not in org_ids:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
+
 
 async def _get_vehicle_or_404(vehicle_id: int, db: AsyncSession) -> Vehicle:
     v = (await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))).scalar_one_or_none()
@@ -327,6 +333,7 @@ async def patch_fuel_log(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
 
     vehicle = await _get_vehicle_or_404(log.vehicle_id, db)
+    _assert_vehicle_visible(vehicle, current_user)
 
     patch_data = body.model_dump(exclude_unset=True)
     for field, value in patch_data.items():
@@ -353,6 +360,9 @@ async def delete_fuel_log(
     log = (await db.execute(select(FuelLog).where(FuelLog.id == log_id))).scalar_one_or_none()
     if not log:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
+
+    vehicle = await _get_vehicle_or_404(log.vehicle_id, db)
+    _assert_vehicle_visible(vehicle, current_user)
 
     await db.delete(log)
     await db.commit()

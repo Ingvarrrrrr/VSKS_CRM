@@ -608,7 +608,7 @@
     />
 
     <!-- Export Dialog -->
-    <v-dialog v-model="exportDialog" max-width="480">
+    <v-dialog v-model="exportDialog" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-file-excel-outline" color="success" class="mr-2" />Скачать реестр договоров
@@ -629,7 +629,7 @@
     </v-dialog>
 
     <!-- Duplicates Dialog -->
-    <v-dialog v-model="dupDialog" max-width="700" scrollable>
+    <v-dialog v-model="dupDialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />
@@ -668,7 +668,7 @@
     </v-dialog>
 
     <!-- Create/Edit Dialog -->
-    <v-dialog v-model="dialog.show" max-width="680">
+    <v-dialog v-model="dialog.show" max-width="680" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
           {{ dialog.id ? 'Редактировать документ' : 'Новый документ' }}
@@ -845,7 +845,7 @@
     </v-dialog>
 
     <!-- Import from file dialog -->
-    <v-dialog v-model="importDialog.show" max-width="800" persistent>
+    <v-dialog v-model="importDialog.show" max-width="800" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
           Импорт договоров из файла

@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="800" @update:model-value="$emit('update:modelValue', $event)">
+  <v-dialog :model-value="modelValue" max-width="800" :fullscreen="mobile" @update:model-value="$emit('update:modelValue', $event)">
     <v-card>
       <v-card-title class="d-flex justify-space-between align-center">
         <span class="text-h6">
@@ -142,6 +142,9 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 interface Props {
   modelValue: boolean

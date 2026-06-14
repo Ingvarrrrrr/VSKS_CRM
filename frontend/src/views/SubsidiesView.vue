@@ -153,6 +153,17 @@
               :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
               height="6" rounded class="mt-3"
             />
+            <BudgetBar
+              class="mt-3"
+              :subsidy="{
+                id: s.id,
+                name: s.name,
+                budget: s.feo_budget_total || s.budget,
+                planned: s.planned,
+                contracted: s.contracted,
+                paid: s.paid,
+              }"
+            />
             <div v-if="s.contractor_name" class="sc-contractor">
               <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
               <span>{{ s.contractor_name }}</span>
@@ -761,7 +772,7 @@
     </template>
 
     <!-- ── Add Event Dialog ── -->
-    <v-dialog v-model="showAddEventDialog" max-width="640">
+    <v-dialog v-model="showAddEventDialog" max-width="640" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-calendar-plus" color="primary" class="mr-2" />
@@ -798,7 +809,7 @@
     </v-dialog>
 
     <!-- ── Edit Event Dialog ── -->
-    <v-dialog v-model="showEditEventDialog" max-width="640">
+    <v-dialog v-model="showEditEventDialog" max-width="640" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-calendar-edit" color="primary" class="mr-2" />
@@ -835,7 +846,7 @@
     </v-dialog>
 
     <!-- ── Add Subsidy Dialog ── -->
-    <v-dialog v-model="showAddDialog" max-width="520">
+    <v-dialog v-model="showAddDialog" max-width="520" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-plus-circle-outline" color="primary" class="mr-2" />
@@ -886,7 +897,7 @@
     </v-dialog>
 
     <!-- ── Edit Subsidy Dialog ── -->
-    <v-dialog v-model="showEditDialog" max-width="520">
+    <v-dialog v-model="showEditDialog" max-width="520" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
@@ -1028,7 +1039,7 @@
     </v-dialog>
 
     <!-- ── Add FEO category dialog ── -->
-    <v-dialog v-model="showAddFeoDialog" max-width="520">
+    <v-dialog v-model="showAddFeoDialog" max-width="520" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-folder-plus-outline" color="primary" class="mr-2" />
@@ -1139,7 +1150,7 @@
     </v-dialog>
 
     <!-- ── Edit FEO category dialog ── -->
-    <v-dialog v-model="showEditFeoDialog" max-width="520">
+    <v-dialog v-model="showEditFeoDialog" max-width="520" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
@@ -1311,7 +1322,7 @@
     </v-dialog>
 
     <!-- ── Approvers Dialog ── -->
-    <v-dialog v-model="showApproversDialog" max-width="700" scrollable>
+    <v-dialog v-model="showApproversDialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-account-multiple" color="teal" class="mr-2" />
@@ -1371,7 +1382,7 @@
     </v-dialog>
 
     <!-- ── Copy Approvers Sub-dialog ── -->
-    <v-dialog v-model="showCopyApproversDialog" max-width="520">
+    <v-dialog v-model="showCopyApproversDialog" max-width="520" :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
@@ -1409,7 +1420,7 @@
     </v-dialog>
 
     <!-- ── Approver Add/Edit Dialog ── -->
-    <v-dialog v-model="showApproverFormDialog" max-width="480" :persistent="true">
+    <v-dialog v-model="showApproverFormDialog" max-width="480" :persistent="true" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon :icon="approverEditTarget ? 'mdi-pencil-outline' : 'mdi-plus'" color="teal" class="mr-2" />
@@ -1496,7 +1507,7 @@
     </v-dialog>
 
     <!-- ── Templates Dialog (multi-type) ── -->
-    <v-dialog v-model="showTemplateDialog" max-width="1100" scrollable>
+    <v-dialog v-model="showTemplateDialog" max-width="1100" scrollable :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-file-document-multiple-outline" color="indigo" class="mr-2" />
@@ -1616,7 +1627,7 @@
     </v-dialog>
 
     <!-- ── Copy Templates Sub-dialog ── -->
-    <v-dialog v-model="showCopyTemplatesDialog" max-width="520">
+    <v-dialog v-model="showCopyTemplatesDialog" max-width="520" :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
@@ -1654,7 +1665,7 @@
     </v-dialog>
 
     <!-- ── Contractor Override Dialog ── -->
-    <v-dialog v-model="showOverrideDialog" max-width="640" scrollable>
+    <v-dialog v-model="showOverrideDialog" max-width="640" scrollable :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-account-edit-outline" color="teal" class="mr-2" />
@@ -1732,7 +1743,7 @@
     </v-dialog>
 
     <!-- ── Import FEO dialog ── -->
-    <v-dialog v-model="feoImport.show" max-width="1400" persistent>
+    <v-dialog v-model="feoImport.show" max-width="1400" persistent :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-upload" color="primary" class="mr-2" />
@@ -1949,7 +1960,7 @@
     </v-snackbar>
 
     <!-- ── Диалог редактирования плановой позиции ── -->
-    <v-dialog v-model="editPlannedDialog.show" max-width="480">
+    <v-dialog v-model="editPlannedDialog.show" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
           <v-icon icon="mdi-pencil" color="blue" class="mr-2" />Редактировать плановую позицию
@@ -1975,7 +1986,7 @@
     </v-dialog>
 
     <!-- ── Диалог сопоставления позиций ── -->
-    <v-dialog v-model="showMapDialog" max-width="520">
+    <v-dialog v-model="showMapDialog" max-width="520" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
           <v-icon icon="mdi-link-variant" color="teal" class="mr-2" />
@@ -2016,7 +2027,7 @@
     </v-dialog>
 
     <!-- ── Диалог добавления плановой позиции ── -->
-    <v-dialog v-model="showAddPlannedDialog" max-width="440">
+    <v-dialog v-model="showAddPlannedDialog" max-width="440" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
           <v-icon icon="mdi-plus-circle" color="teal" class="mr-2" />
@@ -2068,7 +2079,7 @@
     <BudgetHistoryDialog ref="historyDialogRef" />
 
     <!-- 12-04: Version History Dialog -->
-    <v-dialog v-model="showVersionHistoryDialog" max-width="720" scrollable>
+    <v-dialog v-model="showVersionHistoryDialog" max-width="720" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-history" size="20" color="blue-grey" class="mr-2" />
@@ -2153,7 +2164,7 @@
     </v-dialog>
 
     <!-- 12-04/12-05: Version Snapshot Dialog -->
-    <v-dialog v-model="showVersionSnapshotDialog" max-width="960" scrollable>
+    <v-dialog v-model="showVersionSnapshotDialog" max-width="960" scrollable :fullscreen="mobile">
       <v-card v-if="selectedVersionSnapshot">
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-database-eye" size="20" color="blue" class="mr-2" />
@@ -2247,7 +2258,7 @@
     </v-dialog>
 
     <!-- 12-05: Save version dialog -->
-    <v-dialog v-model="showSaveVersionDialog" max-width="540">
+    <v-dialog v-model="showSaveVersionDialog" max-width="540" :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex justify-space-between align-center">
           Сохранить редакцию ФЭО
@@ -2302,6 +2313,7 @@ import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useCardView } from '@/composables/useCardView'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
+import BudgetBar from '@/components/BudgetBar.vue'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 

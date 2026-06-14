@@ -119,7 +119,7 @@
     </div>
 
     <!-- ─── Диалог: История перемещений ─── -->
-    <v-dialog v-model="historyDialog" max-width="900" scrollable @click.stop>
+    <v-dialog v-model="historyDialog" max-width="900" scrollable :fullscreen="mobile" @click.stop>
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2">mdi-history</v-icon>
@@ -172,7 +172,7 @@
     </v-dialog>
 
     <!-- ─── Диалог: История ТО ─── -->
-    <v-dialog v-model="maintenanceDialog" max-width="900" scrollable @click.stop>
+    <v-dialog v-model="maintenanceDialog" max-width="900" scrollable :fullscreen="mobile" @click.stop>
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2">mdi-wrench</v-icon>
@@ -222,7 +222,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import { vehicleCategory, CATEGORY_LABEL } from '@/utils/vehicleCategory'
@@ -811,8 +814,8 @@ function checkState(val: boolean | null | undefined): string {
 /* Checklist */
 .fleet-card__check {
   display: grid;
-  /* auto-fill: при узкой карточке (<~280px) items перенесутся в 2+ строк вместо обрезания */
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  /* минимум 92px на колонку — подпись «Зеркала/Аптечка/Запаска» влезает в одну строку */
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
   gap: 8px;
   padding: 12px 16px 0;
 }
@@ -835,10 +838,10 @@ function checkState(val: boolean | null | undefined): string {
   font-size: 11px;
   color: var(--muted);
   font-weight: 600;
-  /* обрезаем только текст label, но не весь chip */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* перенос по словам вместо обрезания — короткие подписи (Зеркала/Аптечка) видны целиком */
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.15;
   min-width: 0;
 }
 

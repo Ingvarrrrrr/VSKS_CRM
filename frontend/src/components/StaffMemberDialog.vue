@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="open" max-width="540" scrollable>
+  <v-dialog v-model="open" max-width="540" scrollable :fullscreen="mobile">
     <v-card v-if="user">
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-account-circle-outline" color="primary" class="mr-2" />
@@ -60,7 +60,10 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useDisplay } from 'vuetify'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
+
+const { mobile } = useDisplay()
 
 interface DirectoryUser {
   id: number

@@ -370,7 +370,7 @@
     </div>
 
     <!-- New Chat Dialog -->
-    <v-dialog v-model="showNewChatDialog" max-width="500" scrollable>
+    <v-dialog v-model="showNewChatDialog" max-width="500" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon icon="mdi-chat-plus" class="me-2" />
@@ -463,7 +463,7 @@
   </v-dialog>
 
   <!-- Participants Dialog -->
-  <v-dialog v-model="showParticipantsDialog" max-width="400" scrollable>
+  <v-dialog v-model="showParticipantsDialog" max-width="400" scrollable :fullscreen="mobile">
     <v-card v-if="selectedRoom">
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-account-group" class="me-2" />
@@ -555,7 +555,7 @@ interface StaffMember {
 
 // ─── Composables ──────────────────────────────────────────────────────────────
 
-const { smAndUp } = useDisplay()
+const { smAndUp, mobile } = useDisplay()
 
 // ─── State ────────────────────────────────────────────────────────────────────
 

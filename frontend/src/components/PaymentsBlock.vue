@@ -99,7 +99,7 @@
   </v-card>
 
   <!-- Диалог добавления ручного платежа -->
-  <v-dialog v-model="addDialog" max-width="480" persistent>
+  <v-dialog v-model="addDialog" max-width="480" persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-subtitle-1 font-weight-bold pa-4">
         Добавить платёж вручную
@@ -162,7 +162,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 const props = defineProps<{
   purchaseId: number | null

@@ -1,6 +1,6 @@
 <template>
   <!-- General Task Dialog (create/edit) -->
-  <v-dialog :model-value="show" max-width="680" @update:model-value="$emit('update:show', $event)">
+  <v-dialog :model-value="show" max-width="680" :fullscreen="mobile" @update:model-value="$emit('update:show', $event)">
     <v-card>
       <v-card-title class="d-flex align-center justify-space-between">
         <span>{{ editingTask ? 'Задача' : 'Новая задача' }}</span>
@@ -74,7 +74,7 @@
         </div>
 
         <!-- Диалог привязки закупки -->
-        <v-dialog v-model="linkPurchaseDialog" max-width="520">
+        <v-dialog v-model="linkPurchaseDialog" max-width="520" :fullscreen="mobile">
           <v-card>
             <v-card-title class="text-subtitle-1 pt-4 px-4">
               <v-icon class="mr-1" size="20">mdi-cart-plus</v-icon>
@@ -158,7 +158,7 @@
   </v-dialog>
 
   <!-- Delegation dialog -->
-  <v-dialog v-model="showDelegateDialog" max-width="520">
+  <v-dialog v-model="showDelegateDialog" max-width="520" :fullscreen="mobile">
     <v-card>
       <v-card-title>Делегировать подзадачу</v-card-title>
       <v-card-text>
@@ -183,7 +183,7 @@
   </v-dialog>
 
   <!-- Broadcast dialog -->
-  <v-dialog v-model="broadcastDialog" max-width="480" persistent>
+  <v-dialog v-model="broadcastDialog" max-width="480" persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center gap-2 pt-4">
         <v-icon color="orange">mdi-bullhorn</v-icon>
@@ -223,7 +223,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 import ChatEmbed from '@/components/ChatEmbed.vue'
 
 const props = defineProps<{

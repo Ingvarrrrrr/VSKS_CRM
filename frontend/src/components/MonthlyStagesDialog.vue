@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="show" max-width="720" scrollable>
+  <v-dialog v-model="show" max-width="720" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
         Создать ежемесячные этапы
@@ -139,7 +139,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },

@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog" max-width="720" scrollable>
+  <v-dialog v-model="dialog" max-width="720" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon start color="primary">mdi-link-variant</v-icon>
@@ -203,7 +203,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 import { useToast } from '@/composables/useToast'
 
 // ── Props & emits ──────────────────────────────────────────────────────────

@@ -234,7 +234,7 @@
     </template>
 
     <!-- ── Диалог добавления ── -->
-    <v-dialog v-model="addDialog" max-width="560">
+    <v-dialog v-model="addDialog" max-width="560" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-5 pb-2">Добавить категорию</v-card-title>
         <v-card-text class="pa-5 pt-2">
@@ -271,7 +271,7 @@
     </v-dialog>
 
     <!-- ── Диалог редактирования ── -->
-    <v-dialog v-model="editDialog" max-width="560">
+    <v-dialog v-model="editDialog" max-width="560" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-5 pb-2">Редактировать категорию</v-card-title>
         <v-card-text class="pa-5 pt-2">
@@ -342,7 +342,7 @@
     </v-dialog>
 
     <!-- Import FEO dialog -->
-    <v-dialog v-model="feoImport.show" max-width="540" persistent>
+    <v-dialog v-model="feoImport.show" max-width="540" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">Импорт категорий ФЭО из Excel</v-card-title>
         <v-card-text class="px-6">
@@ -435,7 +435,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, reactive, nextTick } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 interface SubsidyRow {
   id: number; name: string; year: number

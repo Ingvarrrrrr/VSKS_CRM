@@ -36,7 +36,7 @@
     </v-autocomplete>
 
     <!-- Add contractor dialog -->
-    <v-dialog v-model="addContractorDialog" max-width="700" scrollable>
+    <v-dialog v-model="addContractorDialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-account-plus" class="mr-2" />Новый контрагент
@@ -109,7 +109,7 @@
     </v-dialog>
 
     <!-- ЕГРЮЛ diff dialog -->
-    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent>
+    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-database-sync-outline" color="primary" class="mr-2" />
@@ -155,7 +155,10 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 import { useContractorsStore } from '@/stores/contractors'
 import FileDropZone from '@/components/FileDropZone.vue'
 

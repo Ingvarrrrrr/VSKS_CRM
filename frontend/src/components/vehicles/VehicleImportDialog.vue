@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="640" persistent @update:model-value="$emit('update:modelValue', $event)">
+  <v-dialog :model-value="modelValue" max-width="640" persistent :fullscreen="mobile" @update:model-value="$emit('update:modelValue', $event)">
     <v-card>
       <v-card-title class="pa-5 pb-2 d-flex align-center">
         <v-icon icon="mdi-file-excel" color="green" class="mr-2" />
@@ -205,8 +205,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+
+const { mobile } = useDisplay()
 
 // ─────────────── Props / Emits ───────────────
 

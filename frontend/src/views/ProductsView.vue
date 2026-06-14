@@ -371,7 +371,7 @@
     </div>
 
     <!-- Add / Edit dialog -->
-    <v-dialog v-model="dialog" max-width="700" scrollable>
+    <v-dialog v-model="dialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">
           {{ editingId ? 'Редактировать товар' : 'Добавить товар' }}
@@ -607,7 +607,7 @@
     </v-dialog>
 
     <!-- Import dialog -->
-    <v-dialog v-model="importDialog.show" max-width="540" persistent>
+    <v-dialog v-model="importDialog.show" max-width="540" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">Импорт товаров из Excel</v-card-title>
         <v-card-text class="px-6">
@@ -677,7 +677,7 @@
     </v-dialog>
 
     <!-- Download photos dialog -->
-    <v-dialog v-model="dlPhotoDialog.show" max-width="480" persistent>
+    <v-dialog v-model="dlPhotoDialog.show" max-width="480" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">
           <v-icon icon="mdi-image-sync" class="mr-2" />Скачать фото по ссылкам
@@ -760,7 +760,7 @@
     </v-dialog>
 
     <!-- Dedup preview dialog -->
-    <v-dialog v-model="dupDialog.show" max-width="900" scrollable>
+    <v-dialog v-model="dupDialog.show" max-width="900" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pt-4 px-6">
           <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />

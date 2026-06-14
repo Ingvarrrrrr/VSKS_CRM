@@ -2,7 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>GALA — Procurement &amp; Budget Control</title>
 
     <!-- PWA -->
@@ -14,10 +14,24 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f0e0c'/%3E%3Cpath d='M22 6 L8 6 L8 26 L22 26 L22 17 L15 17' stroke='%23fb923c' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
     <link rel="icon" type="image/png" href="/pwa-192x192.png" />
 
-    <!-- Google Fonts: Syne, Inter Tight, JetBrains Mono -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <!-- M5: брендовый фон под status-bar и до загрузки Vue — убирает белую вспышку
+         при запуске PWA на iOS/Android (apple-touch-startup-image требует device-точные
+         PNG, которых нет; фон даёт тот же эффект «нет белого флэша» без ассетов). -->
+    <style>
+      html, body { margin: 0; background-color: #0f0e0c; }
+      @media (prefers-color-scheme: light) { html, body { background-color: #ffffff; } }
+      #app:empty::after {
+        content: '';
+        position: fixed; inset: 0;
+        background: #0f0e0c url("/pwa-192x192.png") center / 72px no-repeat;
+        opacity: 0.9;
+      }
+    </style>
+
+    <!-- Локальные шрифты (офлайн): объявлены через @font-face в src/styles/gala.css, файлы в public/fonts/.
+         Preload основных начертаний, чтобы не было FOUT при старте. -->
+    <link rel="preload" href="/fonts/syne-v24-latin-800.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="preload" href="/fonts/inter-tight-v9-latin-regular.ttf" as="font" type="font/ttf" crossorigin>
 
     <!-- Phase 26-FFF: one-time SW + cache cleanup для пользователей со старым bundle.
          Срабатывает максимум 1 раз (флаг в localStorage). Помогает тем кто впервые

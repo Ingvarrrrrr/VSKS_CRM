@@ -1787,7 +1787,7 @@
       </v-card>
 
       <!-- Purchase broadcast dialog -->
-      <v-dialog v-model="pBroadcastDialog" max-width="480" persistent>
+      <v-dialog v-model="pBroadcastDialog" max-width="480" persistent :fullscreen="mobile">
         <v-card>
           <v-card-title class="d-flex align-center gap-2 pt-4">
             <v-icon color="orange">mdi-bullhorn</v-icon>
@@ -1914,7 +1914,7 @@
       </v-card>
 
       <!-- Диалог загрузки файла -->
-      <v-dialog v-model="uploadDialog" max-width="420" persistent>
+      <v-dialog v-model="uploadDialog" max-width="420" persistent :fullscreen="mobile">
         <v-card>
           <v-card-title class="text-subtitle-1 pt-4 px-4">Загрузить файл</v-card-title>
           <v-card-text class="pb-0">
@@ -2232,7 +2232,7 @@
       </v-card>
 
       <!-- Диалог создания связанной задачи -->
-      <v-dialog v-model="linkedTaskDialog" max-width="560" persistent>
+      <v-dialog v-model="linkedTaskDialog" max-width="560" persistent :fullscreen="mobile">
         <v-card>
           <v-card-title class="text-subtitle-1 pt-4 px-4">
             <v-icon class="mr-1" size="20">mdi-clipboard-plus-outline</v-icon>
@@ -2266,7 +2266,7 @@
       </v-dialog>
 
       <!-- Диалог привязки существующей задачи -->
-      <v-dialog v-model="linkTaskDialog" max-width="520">
+      <v-dialog v-model="linkTaskDialog" max-width="520" :fullscreen="mobile">
         <v-card>
           <v-card-title class="text-subtitle-1 pt-4 px-4">
             <v-icon class="mr-1" size="20">mdi-link-variant</v-icon>
@@ -2340,7 +2340,7 @@
     </v-form>
 
     <!-- Publish dialog -->
-    <v-dialog v-model="publishDialog" max-width="480">
+    <v-dialog v-model="publishDialog" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
           <v-icon color="deep-purple">mdi-broadcast</v-icon>
@@ -2484,7 +2484,7 @@
     </v-dialog>
 
     <!-- Диалог подтверждения превышения бюджета -->
-    <v-dialog v-model="budgetOverrideDialog" max-width="480">
+    <v-dialog v-model="budgetOverrideDialog" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 d-flex align-center ga-2">
           <v-icon color="warning">mdi-alert</v-icon>
@@ -2507,7 +2507,7 @@
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="duplicateDialog" max-width="560">
+    <v-dialog v-model="duplicateDialog" max-width="560" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-warning">Возможный повтор закупки</v-card-title>
         <v-card-text>
@@ -2554,7 +2554,7 @@
     </v-snackbar>
 
     <!-- Split purchase kanban dialog -->
-    <v-dialog v-model="splitKanbanDialog" max-width="1200" scrollable>
+    <v-dialog v-model="splitKanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 pb-2">
           <v-icon class="mr-2" color="primary">mdi-call-split</v-icon>
@@ -2577,7 +2577,7 @@
     </v-dialog>
 
     <!-- File preview dialog -->
-    <v-dialog v-model="previewDialog" max-width="900" scrollable>
+    <v-dialog v-model="previewDialog" max-width="900" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon :icon="fileIcon(previewFile?.mime_type)" class="mr-2" />
@@ -2598,7 +2598,7 @@
     </v-dialog>
 
     <!-- Add contractor inline dialog -->
-    <v-dialog v-model="addContractorDialog" max-width="700" scrollable>
+    <v-dialog v-model="addContractorDialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-account-plus" class="mr-2" />Новый контрагент
@@ -2671,7 +2671,7 @@
     </v-dialog>
 
     <!-- ЕГРЮЛ diff dialog -->
-    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent>
+    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-database-sync-outline" color="primary" class="mr-2" />
@@ -2712,7 +2712,7 @@
     </v-dialog>
 
     <!-- Framework contracts dialog -->
-    <v-dialog v-model="frameworkDialog" max-width="860" scrollable>
+    <v-dialog v-model="frameworkDialog" max-width="860" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6 d-flex align-center justify-space-between">
           <span>Рамочные договоры</span>
@@ -2771,7 +2771,7 @@
     </v-dialog>
 
     <!-- КП dialog -->
-    <v-dialog v-model="kpDialog" max-width="780" scrollable>
+    <v-dialog v-model="kpDialog" max-width="780" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
           <v-icon color="cyan-darken-2">mdi-email-multiple-outline</v-icon>
@@ -3023,7 +3023,7 @@
     </v-dialog>
 
     <!-- New framework contract dialog -->
-    <v-dialog v-model="newFrameworkDialog" max-width="520" @after-enter="focusNewContractNumber">
+    <v-dialog v-model="newFrameworkDialog" max-width="520" @after-enter="focusNewContractNumber" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-6">Новый рамочный договор</v-card-title>
         <v-card-text class="px-6 pb-2">
@@ -3057,7 +3057,7 @@
     </v-dialog>
 
     <!-- ── Approver Picker Dialog ── -->
-    <v-dialog v-model="docPickerDialog" max-width="560" scrollable>
+    <v-dialog v-model="docPickerDialog" max-width="560" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-account-check-outline" color="teal" class="mr-2" />
@@ -3156,7 +3156,7 @@
     </v-dialog>
 
     <!-- Phase 27.2-02: Диалог выбора закрывающих документов перед скачиванием СЗ -->
-    <v-dialog v-model="acceptanceDocPickerDialog" max-width="520" scrollable>
+    <v-dialog v-model="acceptanceDocPickerDialog" max-width="520" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-file-check-outline" color="teal" class="mr-2" />
@@ -3201,7 +3201,7 @@
     </v-dialog>
 
     <!-- Диалог добавления ответственного исполнителя -->
-    <v-dialog v-model="addResponsibleDialog" max-width="400">
+    <v-dialog v-model="addResponsibleDialog" max-width="400" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-subtitle-1 pt-4 px-4">Добавить в справочник</v-card-title>
         <v-card-text class="pb-0">
@@ -3222,7 +3222,7 @@
     </v-dialog>
 
     <!-- Phase 21: Manual receipt dialog -->
-    <v-dialog v-model="manualReceiptDialog.show" max-width="700">
+    <v-dialog v-model="manualReceiptDialog.show" max-width="700" :fullscreen="mobile">
       <v-card>
         <v-card-title>Чек — ручной ввод</v-card-title>
         <v-card-text>
@@ -3276,7 +3276,7 @@
     <QrScannerDialog v-model="qrScanShow" @detected="onQrDetected" />
 
     <!-- Phase 23: диалог «Доступные переменные шаблонов» -->
-    <v-dialog v-model="showPlaceholdersDialog" max-width="960" scrollable>
+    <v-dialog v-model="showPlaceholdersDialog" max-width="960" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-code-braces" class="mr-2" />Доступные переменные шаблонов
@@ -3404,6 +3404,9 @@ function onMonthlyStagesCreated(res: any) {
 }
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 const route = useRoute()
 const router = useRouter()

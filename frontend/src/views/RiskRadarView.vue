@@ -142,7 +142,7 @@
   </div>
 
   <!-- ── Formulas info dialog ── -->
-  <v-dialog v-model="formulasDialogOpen" max-width="720">
+  <v-dialog v-model="formulasDialogOpen" max-width="720" :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-h6 pa-4 pb-2">Как считаются риски</v-card-title>
       <v-card-text class="pa-4">
@@ -220,13 +220,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '../api'
 import { useRiskScores, type RiskScore } from '../composables/useRiskScores'
 import { useDashboardMode } from '../composables/useDashboardMode'
 import { useToast } from '../composables/useToast'
 import RiskMetricCard from '../components/RiskMetricCard.vue'
 import AlertsTicker from '../components/AlertsTicker.vue'
+
+const { mobile } = useDisplay()
 
 // ─── Theme (D-03, D-04) ────────────────────────────────────────────
 const theme = useTheme()

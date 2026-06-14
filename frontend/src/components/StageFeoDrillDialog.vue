@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="visible" max-width="1100" scrollable
+  <v-dialog :model-value="visible" max-width="1100" scrollable :fullscreen="mobile"
     @update:model-value="v => !v && emit('close')">
     <v-card>
       <!-- Header with breadcrumb -->
@@ -110,7 +110,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 interface Props {
   visible: boolean

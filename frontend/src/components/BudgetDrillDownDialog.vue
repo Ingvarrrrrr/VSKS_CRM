@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog" max-width="1300" scrollable>
+  <v-dialog v-model="dialog" max-width="1300" scrollable :fullscreen="mobile">
     <v-card style="min-height: 560px;">
 
       <!-- Header -->
@@ -54,9 +54,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 
+const { mobile } = useDisplay()
 const theme = useTheme()
 const isDark = computed(() => theme.global.name.value === 'dark')
 const chartText  = computed(() => isDark.value ? '#E2E8F0' : '#374151')

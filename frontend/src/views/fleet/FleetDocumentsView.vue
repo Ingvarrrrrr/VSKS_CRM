@@ -292,7 +292,7 @@
     </section>
 
     <!-- ── Upload/Edit Dialog ── -->
-    <v-dialog v-model="dialogOpen" max-width="560" persistent>
+    <v-dialog v-model="dialogOpen" max-width="560" persistent :fullscreen="mobile">
       <v-card class="fdocs-dialog">
         <v-card-title class="fdocs-dialog__title">
           {{ editingDoc ? 'Редактировать документ' : 'Загрузить документ' }}
@@ -441,12 +441,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import KpiCard from '@/components/fleet/KpiCard.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+
+const { mobile } = useDisplay()
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = useTheme()

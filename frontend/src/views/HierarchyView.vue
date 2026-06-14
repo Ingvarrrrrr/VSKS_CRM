@@ -69,7 +69,7 @@
     </VueFlow>
 
     <!-- Help dialog -->
-    <v-dialog v-model="helpDialog" max-width="460">
+    <v-dialog v-model="helpDialog" max-width="460" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-help-circle" color="primary" class="mr-2" />
@@ -137,7 +137,7 @@
 
     <!-- Copy user to dept dialog -->
     <Teleport to="body">
-      <v-dialog v-model="copyUserDialog.show" max-width="420" :z-index="9999">
+      <v-dialog v-model="copyUserDialog.show" max-width="420" :z-index="9999" :fullscreen="mobile">
         <v-card>
           <v-card-title class="pa-4 text-body-1">
             <v-icon icon="mdi-content-copy" class="mr-2" />Копировать «{{ copyUserDialog.userName }}» в отдел
@@ -164,7 +164,7 @@
 
     <!-- User info dialog -->
     <Teleport to="body">
-      <v-dialog v-model="userInfoDialog.show" max-width="520" :z-index="9999">
+      <v-dialog v-model="userInfoDialog.show" max-width="520" :z-index="9999" :fullscreen="mobile">
         <v-card>
           <v-card-title class="pa-4 text-body-1">
             <v-icon icon="mdi-account-details" class="mr-2" />{{ userInfoDialog.userName }}
@@ -200,7 +200,7 @@
 
     <!-- Edit org dialog -->
     <Teleport to="body">
-      <v-dialog v-model="editOrgDialog.show" max-width="640" :z-index="9999" scrollable>
+      <v-dialog v-model="editOrgDialog.show" max-width="640" :z-index="9999" scrollable :fullscreen="mobile">
         <v-card>
           <v-card-title class="pa-4 text-body-1">
             <v-icon icon="mdi-domain" class="mr-2" />Редактировать организацию
@@ -323,7 +323,7 @@
     />
 
     <!-- New dept dialog -->
-    <v-dialog v-model="newDeptDialog.show" max-width="420">
+    <v-dialog v-model="newDeptDialog.show" max-width="420" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-account-group" color="teal" class="mr-2" />
@@ -361,7 +361,7 @@
     </v-dialog>
 
     <!-- Add member to dept dialog -->
-    <v-dialog v-model="addMemberDialog.show" max-width="420">
+    <v-dialog v-model="addMemberDialog.show" max-width="420" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-account-plus" color="teal" class="mr-2" />
@@ -410,7 +410,7 @@
     </v-dialog>
 
     <!-- Phase 30 restore: Delete org confirm dialog -->
-    <v-dialog v-model="deleteOrgConfirm.show" max-width="480">
+    <v-dialog v-model="deleteOrgConfirm.show" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-domain-remove" color="error" class="mr-2" />
@@ -520,7 +520,7 @@
     </v-dialog>
 
     <!-- New org dialog (superadmin only) -->
-    <v-dialog v-model="newOrgDialog.show" max-width="640" scrollable>
+    <v-dialog v-model="newOrgDialog.show" max-width="640" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">
           <v-icon icon="mdi-domain" color="deep-purple" class="mr-2" />
@@ -645,6 +645,9 @@ import '@vue-flow/minimap/dist/style.css'
 import dagre from '@dagrejs/dagre'
 import { apiFetch } from '@/api'
 import { useContractorsStore } from '@/stores/contractors'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 
 // ── Constants ──────────────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@
           hide-details class="ml-3"
         />
         <v-btn
+          v-if="!mobile"
           :icon="isEditing ? 'mdi-lock-open' : 'mdi-cursor-move'"
           :variant="isEditing ? 'flat' : 'tonal'"
           :color="isEditing ? 'warning' : 'default'"
@@ -35,7 +36,7 @@
           :title="isEditing ? 'Завершить редактирование' : 'Настроить расположение'"
         />
         <v-btn
-          v-if="isEditing"
+          v-if="isEditing && !mobile"
           icon="mdi-restore" variant="tonal" color="error"
           size="small" class="ml-1"
           @click="resetLayout"
@@ -119,18 +120,18 @@
     </div>
 
     <GridLayout
-      v-model:layout="layout"
+      :layout="effectiveLayout"
       :col-num="12"
       :row-height="30"
-      :is-draggable="isEditing"
-      :is-resizable="isEditing"
+      :is-draggable="isEditing && !mobile"
+      :is-resizable="isEditing && !mobile"
       :margin="[12, 12]"
       :vertical-compact="true"
       :use-css-transforms="true"
-      @layout-updated="onLayoutUpdated"
+      @layout-updated="handleLayoutUpdated"
     >
       <!-- ── KPI Cards ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'kpi')" key="kpi">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'kpi')" key="kpi">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> KPI
@@ -147,7 +148,7 @@
                   <v-icon :icon="card.icon" size="26" />
                 </div>
                 <div class="kpi-body">
-                  <div class="kpi-value">{{ formatCurrency(card.value) }}</div>
+                  <div class="kpi-value">{{ mobile ? formatCurrencyShort(card.value) : formatCurrency(card.value) }}</div>
                   <div class="kpi-label">{{ card.label }}</div>
                 </div>
                 <div class="kpi-badge" v-if="card.badge">{{ card.badge }}</div>
@@ -158,7 +159,7 @@
       </GridItem>
 
       <!-- ── Donut Chart ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'donut')" key="donut">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'donut')" key="donut">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Структура бюджета
@@ -195,7 +196,7 @@
       </GridItem>
 
       <!-- ── Radial Gauge ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'radial')" key="radial">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'radial')" key="radial">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Освоение
@@ -216,7 +217,7 @@
       </GridItem>
 
       <!-- ── Pipeline ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'pipeline')" key="pipeline">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'pipeline')" key="pipeline">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Закупки по этапам
@@ -311,7 +312,7 @@
       </GridItem>
 
       <!-- ── Monthly Contracts ── -->
-      <GridItem v-if="monthlyContractsRemaining.length > 0" v-bind="layout.find(l => l.i === 'monthly')" key="monthly">
+      <GridItem v-if="monthlyContractsRemaining.length > 0" v-bind="effectiveLayout.find(l => l.i === 'monthly')" key="monthly">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Ежемесячные договоры
@@ -343,7 +344,7 @@
       </GridItem>
 
       <!-- ── Goods/Services Breakdown ── -->
-      <GridItem v-if="pipelineByType.some(s => s.total > 0)" v-bind="layout.find(l => l.i === 'breakdown')" key="breakdown">
+      <GridItem v-if="pipelineByType.some(s => s.total > 0)" v-bind="effectiveLayout.find(l => l.i === 'breakdown')" key="breakdown">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Товары / Услуги
@@ -386,33 +387,8 @@
         </div>
       </GridItem>
 
-      <!-- ── Subsidy Bar Chart ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'bar')" key="bar">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Субсидии — бюджет
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-chart-bar" size="18" color="#8B5CF6" class="mr-2" />
-              <span class="chart-card-title">Субсидии — бюджет и исполнение</span>
-            </div>
-            <div v-if="barReady">
-              <div class="text-caption text-medium-emphasis mb-1" style="font-size:10px">
-                <v-icon icon="mdi-cursor-pointer" size="12" class="mr-1" />Нажмите на столбец для детализации по ФЭО категориям
-              </div>
-              <apexchart type="bar" :height="Math.max(220, filteredSubsidyStats.length * 70)" :options="barOptions" :series="barSeries" />
-            </div>
-            <div v-else class="chart-empty">
-              <v-icon icon="mdi-chart-bar" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет субсидий за {{ selectedYear }} год</div>
-            </div>
-          </div>
-        </div>
-      </GridItem>
-
       <!-- ── Recent Purchases ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'purchases')" key="purchases">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'purchases')" key="purchases">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Последние закупки
@@ -459,7 +435,7 @@
       </GridItem>
 
       <!-- ── Summary Table ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'table')" key="table">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'table')" key="table">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Детализация субсидий
@@ -477,6 +453,21 @@
                   Аналитика
                 </v-btn>
               </div>
+            </div>
+
+            <div v-if="filteredSubsidies.length > 0" class="px-3 pt-2 d-flex flex-column" style="gap:10px">
+              <BudgetBar
+                v-for="s in filteredSubsidies"
+                :key="s.id"
+                :subsidy="{
+                  id: s.id,
+                  name: s.name,
+                  budget: s.budget,
+                  planned: s.planned,
+                  contracted: s.contracted,
+                  paid: s.paid,
+                }"
+              />
             </div>
 
             <v-table density="compact" class="dash-table mt-3">
@@ -558,7 +549,7 @@
       </GridItem>
 
       <!-- ── Financial Plan ── -->
-      <GridItem v-bind="layout.find(l => l.i === 'finplan')" key="finplan">
+      <GridItem v-bind="effectiveLayout.find(l => l.i === 'finplan')" key="finplan">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Финансовый план
@@ -832,7 +823,7 @@
     />
 
     <!-- Status pie drill-down dialog -->
-    <v-dialog v-model="statusDrillDialog" max-width="700" scrollable>
+    <v-dialog v-model="statusDrillDialog" max-width="700" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
           <v-icon :icon="'mdi-cart-outline'" :color="STATUS_COLORS[statusDrillStatus] || 'grey'" />
@@ -875,7 +866,7 @@
     </v-dialog>
 
     <!-- Donut drill-down dialog (legacy, kept for direct use) -->
-    <v-dialog v-model="drillDownDialog" max-width="500">
+    <v-dialog v-model="drillDownDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
           <v-icon :color="['success','primary','warning','grey'][drillDownSegment ?? 0]"
@@ -918,7 +909,7 @@
     </v-dialog>
 
     <!-- ── Financial Plan Drill-Down Dialog ── -->
-    <v-dialog v-model="finplanDrilldown.show" max-width="1100" scrollable>
+    <v-dialog v-model="finplanDrilldown.show" max-width="1100" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-3">
           <v-icon icon="mdi-format-list-bulleted" class="mr-2" />
@@ -996,20 +987,50 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
 import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
+import BudgetBar from '@/components/BudgetBar.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { GridLayout, GridItem } from 'grid-layout-plus'
-import { useDashboardLayout } from '@/composables/useDashboardLayout'
+import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardLayout'
 import { useDashboardMode } from '@/composables/useDashboardMode'
 
 const { globalSubsidyId } = useGlobalSubsidy()
-const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated } = useDashboardLayout()
+const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, DEFAULT_SUMMARY_LAYOUT } = useDashboardLayout()
 const { setMode } = useDashboardMode()
+
+const { mobile } = useDisplay()
+
+// Mobile-only stacked layout (full-width, single column, tuned heights)
+const MOBILE_ITEMS: Array<{ i: string; h: number }> = [
+  { i: 'kpi',       h: 5  },
+  { i: 'donut',     h: 11 },
+  { i: 'radial',    h: 7  },
+  { i: 'pipeline',  h: 11 },
+  { i: 'monthly',   h: 8  },
+  { i: 'breakdown', h: 9  },
+  { i: 'purchases', h: 11 },
+  { i: 'table',     h: 14 },
+  { i: 'finplan',   h: 14 },
+]
+const mobileLayout = computed<LayoutItem[]>(() => {
+  let y = 0
+  return MOBILE_ITEMS.map(({ i, h }) => {
+    const item: LayoutItem = { i, x: 0, y, w: 12, h, minW: 12, minH: h }
+    y += h
+    return item
+  })
+})
+
+const effectiveLayout = computed<LayoutItem[]>(() => mobile.value ? mobileLayout.value : layout.value)
+
+function handleLayoutUpdated(l: typeof layout.value) {
+  if (!mobile.value) onLayoutUpdated(l)
+}
 const dashboardToggleMode = ref<'classic' | 'radar'>('classic')
 watch(dashboardToggleMode, (v) => {
   if (v === 'classic' || v === 'radar') setMode(v)
@@ -1085,8 +1106,6 @@ const filteredSubsidies = computed(() => {
     res = res.filter(s => selectedSubsidyIds.value.includes(s.id))
   return res
 })
-
-const filteredSubsidyStats = computed(() => filteredSubsidies.value)
 
 // Recent purchases filtered to selected subsidies
 const recentPurchases = computed(() => {
@@ -1600,65 +1619,6 @@ const statusPieOptions = computed(() => ({
       }
     }
   },
-}))
-
-// ── Chart: Bar ────────────────────────────────────
-const barReady = computed(() => filteredSubsidyStats.value.length > 0)
-
-const barSeries = computed(() => [
-  { name: 'Бюджет',          data: filteredSubsidyStats.value.map(s => s.budget) },
-  { name: 'Заказано',        data: filteredSubsidyStats.value.map(s => s.ordered) },
-  { name: 'Законтрактовано', data: filteredSubsidyStats.value.map(s => s.contracted) },
-  { name: 'Оплачено',        data: filteredSubsidyStats.value.map(s => s.paid) },
-])
-
-const barOptions = computed(() => ({
-  chart: {
-    type: 'bar', background: 'transparent', toolbar: { show: false },
-    animations: { speed: 500 },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
-    events: {
-      dataPointSelection: (_e: any, _ctx: any, config: any) => {
-        const sub = filteredSubsidyStats.value[config.dataPointIndex]
-        if (sub) {
-          drillDialogSubsidies.value = [sub]
-          breakdownMetric.value = 'budget'
-          showBreakdownDialog.value = true
-        }
-      }
-    }
-  },
-  colors: ['#8B5CF6', '#3B82F6', '#F59E0B', '#22C55E'],
-  plotOptions: {
-    bar: {
-      horizontal: true,
-      dataLabels: { position: 'top' },
-      barHeight: '60%',
-      borderRadius: 3,
-      borderRadiusApplication: 'end'
-    }
-  },
-  dataLabels: {
-    enabled: true,
-    style: { fontSize: '10px', fontWeight: '600', colors: ['#1F2937'] },
-    formatter: (val: number) => val > 0 ? formatCurrencyShort(val) : '',
-    offsetX: 6,
-    background: { enabled: false }
-  },
-  xaxis: {
-    categories: filteredSubsidyStats.value.map(s => truncate(s.name, 28)),
-    labels: {
-      style: { colors: chartMuted.value, fontSize: '11px' },
-      formatter: (val: number) => formatCurrencyShort(val)
-    }
-  },
-  yaxis: { labels: { style: { colors: chartText.value, fontSize: '11px' } } },
-  legend: {
-    show: true, position: 'top',
-    fontSize: '12px', labels: { colors: chartText.value }
-  },
-  grid: { borderColor: chartGrid.value },
-  tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } }
 }))
 
 // ── Load data ─────────────────────────────────────
@@ -2313,6 +2273,44 @@ onMounted(() => {
   color: var(--crm-text);
 }
 
+/* Mobile: вертикальный стек (как в Radar) — иконка сверху, значение на всю ширину карточки */
+@media (max-width: 599px) {
+  .kpi-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px;
+  }
+  .kpi-icon-box {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+  }
+  .kpi-icon-box :deep(.v-icon) {
+    font-size: 18px !important;
+  }
+  .kpi-body {
+    width: 100%;
+  }
+  .kpi-value {
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .kpi-label {
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: normal;
+    margin-top: 1px;
+  }
+  .kpi-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+    align-self: flex-start;
+  }
+}
+
 /* ── Chart Cards ── */
 .chart-row { margin-bottom: 4px; }
 
@@ -2452,7 +2450,7 @@ onMounted(() => {
 .dash-table thead th {
   font-size: 12px !important;
   font-weight: 600 !important;
-  color: var(--crm-text-muted) !important;
+  color: var(--crm-text-secondary) !important;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   background: var(--crm-table-header);

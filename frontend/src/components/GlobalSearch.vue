@@ -25,7 +25,7 @@
     </v-btn-toggle>
 
     <!-- Global search results dialog (only when scope=global) -->
-    <v-dialog v-model="globalDialog" max-width="600" :retain-focus="false">
+    <v-dialog v-model="globalDialog" max-width="600" :retain-focus="false" :fullscreen="mobile">
       <v-card>
         <v-card-text class="pa-2 pb-0">
           <v-text-field
@@ -73,10 +73,12 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useAppSearch } from '@/composables/useAppSearch'
 
 const router = useRouter()
+const { mobile } = useDisplay()
 const { appSearch, appSearchScope } = useAppSearch()
 const globalDialog = ref(false)
 const loading = ref(false)

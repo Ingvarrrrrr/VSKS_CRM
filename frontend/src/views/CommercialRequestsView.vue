@@ -184,7 +184,7 @@
     </div>
 
     <!-- Create Dialog -->
-    <v-dialog v-model="createDialog.show" max-width="680" scrollable>
+    <v-dialog v-model="createDialog.show" max-width="680" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-email-plus-outline" color="primary" class="mr-2" />
@@ -341,7 +341,7 @@
     </v-dialog>
 
     <!-- Quick add contractor dialog -->
-    <v-dialog v-model="quickContractor.show" max-width="420">
+    <v-dialog v-model="quickContractor.show" max-width="420" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-account-plus-outline" color="primary" class="mr-2" />
@@ -366,7 +366,7 @@
     </v-dialog>
 
     <!-- Detail / Edit Dialog -->
-    <v-dialog v-model="detailDialog.show" max-width="720" scrollable>
+    <v-dialog v-model="detailDialog.show" max-width="720" scrollable :fullscreen="mobile">
       <v-card v-if="detailDialog.item">
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-email-outline" color="primary" class="mr-2" />

@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.auth.jwt import get_current_user
+from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.permissions import require_tab, require_action
 from app.models.vehicle import Vehicle
 from app.models.vehicle_odometer import VehicleOdometer
@@ -62,6 +62,12 @@ class OdometerOut(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _assert_vehicle_visible(vehicle: Vehicle, user) -> None:
+    org_ids = get_org_filter(user)
+    if org_ids is not None and vehicle.owner_org_id not in org_ids and vehicle.assigned_org_id not in org_ids:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
+
 
 async def _get_vehicle_or_404(vehicle_id: int, db: AsyncSession) -> Vehicle:
     v = (await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))).scalar_one_or_none()
@@ -226,6 +232,7 @@ async def patch_odometer(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
 
     vehicle = await _get_vehicle_or_404(entry.vehicle_id, db)
+    _assert_vehicle_visible(vehicle, current_user)
 
     patch_data = body.model_dump(exclude_unset=True)
     new_odometer_km = patch_data.get("odometer_km", entry.odometer_km)
@@ -283,6 +290,9 @@ async def delete_odometer(
     )).scalar_one_or_none()
     if not entry:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Запись не найдена"})
+
+    vehicle = await _get_vehicle_or_404(entry.vehicle_id, db)
+    _assert_vehicle_visible(vehicle, current_user)
 
     vehicle_id = entry.vehicle_id
     await db.delete(entry)

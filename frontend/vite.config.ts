@@ -33,7 +33,13 @@ export default defineConfig({
             src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable',
+            purpose: 'any',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
@@ -43,7 +49,7 @@ export default defineConfig({
         // пользователь не получал свежие коммиты без Ctrl+F5. Теперь NetworkFirst через
         // runtimeCaching ниже: сначала пробуем сеть (timeout 3s), fallback на кэш только
         // если оффлайн. Assets (JS/CSS) precache'ятся как обычно — у них immutable hash.
-        globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
+        globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2,ttf}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         importScripts: ['/custom-sw.js'],
         skipWaiting: true,

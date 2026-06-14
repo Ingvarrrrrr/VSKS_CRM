@@ -33,106 +33,193 @@
       <v-card-title class="text-body-1 font-weight-medium pa-4 pb-2 d-flex align-center">
         <v-icon icon="mdi-history" class="mr-2" />Журнал прогонов
         <v-spacer />
+        <v-btn-toggle
+          v-if="!mobile"
+          v-model="viewMode"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+          class="mr-2"
+        >
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
       </v-card-title>
-      <v-data-table
-        v-resizable-columns="'payment-import'"
-        :headers="visibleHeaders"
-        :items="imports"
-        :loading="loadingList"
-        density="compact"
-        hover
-        no-data-text="Прогонов ещё нет"
-      >
-        <!-- Дата -->
-        <template #item.uploaded_at="{ item }">
-          {{ formatDateTime(item.uploaded_at) }}
-        </template>
 
-        <!-- Строк -->
-        <template #item.rows_total="{ item }">
-          <span class="text-mono">{{ item.rows_total ?? '—' }}</span>
-        </template>
+      <!-- Table view -->
+      <template v-if="effectiveView === 'table'">
+        <v-data-table
+          v-resizable-columns="'payment-import'"
+          :headers="visibleHeaders"
+          :items="imports"
+          :loading="loadingList"
+          density="compact"
+          hover
+          no-data-text="Прогонов ещё нет"
+        >
+          <!-- Дата -->
+          <template #item.uploaded_at="{ item }">
+            {{ formatDateTime(item.uploaded_at) }}
+          </template>
 
-        <!-- Импортировано -->
-        <template #item.rows_imported="{ item }">
-          <span class="text-mono text-success">{{ item.rows_imported ?? '—' }}</span>
-        </template>
+          <!-- Строк -->
+          <template #item.rows_total="{ item }">
+            <span class="text-mono">{{ item.rows_total ?? '—' }}</span>
+          </template>
 
-        <!-- Сматчено -->
-        <template #item.rows_matched="{ item }">
-          <span class="text-mono text-info">{{ item.rows_matched ?? '—' }}</span>
-        </template>
+          <!-- Импортировано -->
+          <template #item.rows_imported="{ item }">
+            <span class="text-mono text-success">{{ item.rows_imported ?? '—' }}</span>
+          </template>
 
-        <!-- Не сматчено -->
-        <template #item.rows_unmatched="{ item }">
-          <span class="text-mono" :class="item.rows_unmatched > 0 ? 'text-warning' : ''">
-            {{ item.rows_unmatched ?? '—' }}
-          </span>
-        </template>
+          <!-- Сматчено -->
+          <template #item.rows_matched="{ item }">
+            <span class="text-mono text-info">{{ item.rows_matched ?? '—' }}</span>
+          </template>
 
-        <!-- Дубликаты -->
-        <template #item.rows_dup="{ item }">
-          <span class="text-mono" :class="item.rows_dup > 0 ? 'text-secondary' : ''">
-            {{ item.rows_dup ?? '—' }}
-          </span>
-        </template>
+          <!-- Не сматчено -->
+          <template #item.rows_unmatched="{ item }">
+            <span class="text-mono" :class="item.rows_unmatched > 0 ? 'text-warning' : ''">
+              {{ item.rows_unmatched ?? '—' }}
+            </span>
+          </template>
 
-        <!-- Статус -->
-        <template #item.status="{ item }">
-          <v-chip
-            size="x-small"
-            :color="statusColor(item.status)"
-            variant="tonal"
-          >
-            {{ statusLabel(item.status) }}
-          </v-chip>
-        </template>
+          <!-- Дубликаты -->
+          <template #item.rows_dup="{ item }">
+            <span class="text-mono" :class="item.rows_dup > 0 ? 'text-secondary' : ''">
+              {{ item.rows_dup ?? '—' }}
+            </span>
+          </template>
 
-        <!-- Действия -->
-        <template #item.actions="{ item }">
-          <div class="d-flex gap-1">
-            <v-btn
+          <!-- Статус -->
+          <template #item.status="{ item }">
+            <v-chip
               size="x-small"
-              variant="text"
-              color="primary"
-              icon="mdi-open-in-app"
-              title="Открыть детали"
-              @click="openDetails(item.id)"
-            />
-            <v-menu>
-              <template #activator="{ props: menuProps }">
-                <v-btn icon size="small" variant="text" color="primary"
-                       v-bind="menuProps"
-                       :loading="rematchingId === item.id"
-                       title="Перематчить">
-                  <v-icon>mdi-refresh</v-icon>
-                </v-btn>
-              </template>
-              <v-list density="compact">
-                <v-list-item
-                  prepend-icon="mdi-refresh"
-                  title="Перематчить unmatched"
-                  @click="rematchImport(item, false, true)"
-                />
-                <v-list-item
-                  prepend-icon="mdi-restart"
-                  title="Перепарсить и пересмотреть все"
-                  @click="rematchImport(item, true, false)"
-                />
-              </v-list>
-            </v-menu>
-            <v-btn
-              size="x-small"
-              variant="text"
-              color="error"
-              icon="mdi-delete-outline"
-              title="Удалить прогон"
-              @click="deleteImport(item.id)"
-            />
+              :color="statusColor(item.status)"
+              variant="tonal"
+            >
+              {{ statusLabel(item.status) }}
+            </v-chip>
+          </template>
+
+          <!-- Действия -->
+          <template #item.actions="{ item }">
+            <div class="d-flex gap-1">
+              <v-btn
+                size="x-small"
+                variant="text"
+                color="primary"
+                icon="mdi-open-in-app"
+                title="Открыть детали"
+                @click="openDetails(item.id)"
+              />
+              <v-menu>
+                <template #activator="{ props: menuProps }">
+                  <v-btn icon size="small" variant="text" color="primary"
+                         v-bind="menuProps"
+                         :loading="rematchingId === item.id"
+                         title="Перематчить">
+                    <v-icon>mdi-refresh</v-icon>
+                  </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-item
+                    prepend-icon="mdi-refresh"
+                    title="Перематчить unmatched"
+                    @click="rematchImport(item, false, true)"
+                  />
+                  <v-list-item
+                    prepend-icon="mdi-restart"
+                    title="Перепарсить и пересмотреть все"
+                    @click="rematchImport(item, true, false)"
+                  />
+                </v-list>
+              </v-menu>
+              <v-btn
+                size="x-small"
+                variant="text"
+                color="error"
+                icon="mdi-delete-outline"
+                title="Удалить прогон"
+                @click="deleteImport(item.id)"
+              />
+            </div>
+          </template>
+        </v-data-table>
+      </template>
+
+      <!-- Cards view -->
+      <template v-else>
+        <v-card-text>
+          <v-progress-linear v-if="loadingList" indeterminate color="primary" class="mb-3" />
+          <div v-if="!loadingList && pagedImports.length === 0" class="text-center py-8 text-medium-emphasis">
+            <v-icon icon="mdi-history" size="40" color="grey-lighten-2" class="d-block mx-auto mb-2" />
+            Прогонов ещё нет
           </div>
-        </template>
-      </v-data-table>
+          <v-row dense>
+            <v-col v-for="item in pagedImports" :key="item.id" cols="12" sm="6" lg="4">
+              <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openDetails(item.id)">
+                <v-card-item class="pb-1">
+                  <v-card-title class="text-body-2 font-weight-bold" style="overflow-wrap:anywhere">
+                    {{ item.file_name || ('Прогон #' + item.id) }}
+                  </v-card-title>
+                  <template #append>
+                    <v-chip size="x-small" :color="statusColor(item.status)" variant="tonal">
+                      {{ statusLabel(item.status) }}
+                    </v-chip>
+                  </template>
+                </v-card-item>
+                <v-card-text class="py-1 flex-grow-1">
+                  <div class="text-caption text-medium-emphasis mb-1">
+                    {{ formatDateTime(item.uploaded_at) }}
+                  </div>
+                  <div class="d-flex flex-wrap gap-x-4 gap-y-1 text-caption mt-1">
+                    <span>Строк: <strong class="text-mono">{{ item.rows_total ?? '—' }}</strong></span>
+                    <span>Импорт.: <strong class="text-mono text-success">{{ item.rows_imported ?? '—' }}</strong></span>
+                    <span>Сматч.: <strong class="text-mono text-info">{{ item.rows_matched ?? '—' }}</strong></span>
+                    <span :class="item.rows_unmatched > 0 ? 'text-warning' : ''">
+                      Не сматч.: <strong class="text-mono">{{ item.rows_unmatched ?? '—' }}</strong>
+                    </span>
+                    <span :class="item.rows_dup > 0 ? 'text-secondary' : ''">
+                      Дубл.: <strong class="text-mono">{{ item.rows_dup ?? '—' }}</strong>
+                    </span>
+                  </div>
+                </v-card-text>
+                <v-divider />
+                <v-card-actions class="py-1" @click.stop>
+                  <v-spacer />
+                  <v-btn size="x-small" variant="text" color="primary" icon="mdi-open-in-app" title="Открыть детали" @click.stop="openDetails(item.id)" />
+                  <v-menu>
+                    <template #activator="{ props: menuProps }">
+                      <v-btn icon size="small" variant="text" color="primary"
+                             v-bind="menuProps"
+                             :loading="rematchingId === item.id"
+                             title="Перематчить">
+                        <v-icon>mdi-refresh</v-icon>
+                      </v-btn>
+                    </template>
+                    <v-list density="compact">
+                      <v-list-item prepend-icon="mdi-refresh" title="Перематчить unmatched" @click="rematchImport(item, false, true)" />
+                      <v-list-item prepend-icon="mdi-restart" title="Перепарсить и пересмотреть все" @click="rematchImport(item, true, false)" />
+                    </v-list>
+                  </v-menu>
+                  <v-btn size="x-small" variant="text" color="error" icon="mdi-delete-outline" title="Удалить прогон" @click.stop="deleteImport(item.id)" />
+                </v-card-actions>
+              </v-card>
+            </v-col>
+          </v-row>
+          <v-pagination
+            v-if="importsTotalPages > 1"
+            v-model="importsPage"
+            :length="importsTotalPages"
+            density="compact"
+            total-visible="7"
+            class="d-flex justify-center mt-4"
+          />
+        </v-card-text>
+      </template>
     </v-card>
 
     <ColumnConfigDialog
@@ -156,6 +243,7 @@ import { useToast } from '@/composables/useToast'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
 const { success, error } = useToast()
@@ -180,6 +268,19 @@ const allColumns: ColumnDef[] = [
 
 const { state: colState, visibleHeaders, toggleVisible, setPosition, setWidth, reset: resetColumns } = useColumnConfig('payment_imports', allColumns)
 const showColumnPicker = ref(false)
+
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: importsPage,
+  totalPages: importsTotalPages,
+  paged: pagedImports,
+} = useCardView({
+  storageKey: 'payment_imports_view_mode',
+  source: () => imports.value,
+  pageSize: 24,
+})
 
 function formatDateTime(dt: string | null) {
   if (!dt) return '—'

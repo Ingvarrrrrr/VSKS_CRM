@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog" max-width="800" scrollable>
+  <v-dialog v-model="dialog" max-width="800" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center pa-4" style="background: #1e3a5f; color: white; flex-shrink: 0">
         <v-icon icon="mdi-history" class="mr-2" />
@@ -61,7 +61,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 interface HistoryItem {
   id: number

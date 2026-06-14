@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="780" persistent scrollable
+  <v-dialog :model-value="modelValue" max-width="780" persistent scrollable :fullscreen="mobile"
     @update:model-value="emit('update:modelValue', $event)">
     <v-card class="dialog-card">
       <v-card-title class="dialog-title">
@@ -284,7 +284,7 @@
   </v-dialog>
 
   <!-- ── EGRUL diff confirm ── -->
-  <v-dialog v-model="egrulDiffDialog" max-width="520" persistent>
+  <v-dialog v-model="egrulDiffDialog" max-width="520" persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="pa-4 text-subtitle-1 font-weight-bold">
         <v-icon color="primary" class="mr-2">mdi-database-sync-outline</v-icon>
@@ -326,9 +326,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
+
+const { mobile } = useDisplay()
 
 interface ContractorFull {
   id: number

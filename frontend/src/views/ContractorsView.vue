@@ -268,7 +268,7 @@
     </div>
 
     <!-- ── Categories dialog ── -->
-    <v-dialog v-model="categoriesDialog" max-width="480" scrollable>
+    <v-dialog v-model="categoriesDialog" max-width="480" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-tag-multiple-outline" color="teal" class="mr-2" />
@@ -354,7 +354,7 @@
     </v-dialog>
 
     <!-- ── Contractor Import Dialog ── -->
-    <v-dialog v-model="contractorImportDialog" max-width="1000" persistent scrollable>
+    <v-dialog v-model="contractorImportDialog" max-width="1000" persistent scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <span>Импорт контрагентов — шаг {{ contractorImportStep }} из 2</span>
@@ -472,7 +472,7 @@
     </v-dialog>
 
     <!-- ── Duplicates by INN dialog ── -->
-    <v-dialog v-model="showDuplicatesDialog" max-width="900" scrollable>
+    <v-dialog v-model="showDuplicatesDialog" max-width="900" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />

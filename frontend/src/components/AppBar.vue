@@ -209,7 +209,7 @@
   </v-app-bar>
 
   <!-- Superadmin org picker dialog -->
-  <v-dialog v-model="orgPickerDialog" max-width="520" :persistent="selectedOrgIds.length === 0" scrollable>
+  <v-dialog v-model="orgPickerDialog" max-width="520" :persistent="selectedOrgIds.length === 0" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon icon="mdi-domain" class="mr-2" />
@@ -436,6 +436,30 @@
       </div>
     </template>
   </v-navigation-drawer>
+
+  <v-bottom-navigation
+    v-if="mobile"
+    grow
+    color="primary"
+    height="60"
+    elevation="8"
+    class="mobile-bottom-nav"
+  >
+    <v-btn
+      v-for="item in bottomNavItems"
+      :key="item.route"
+      :to="item.route"
+      :active="$route.path === item.route || $route.path.startsWith(item.route + '/')"
+      size="small"
+    >
+      <v-icon :icon="item.icon" />
+      <span class="text-caption">{{ item.label }}</span>
+    </v-btn>
+    <v-btn size="small" @click="drawerOpen = true">
+      <v-icon icon="mdi-dots-horizontal" />
+      <span class="text-caption">Ещё</span>
+    </v-btn>
+  </v-bottom-navigation>
 </template>
 
 <script setup lang="ts">
@@ -456,10 +480,10 @@ const authStore = useAuthStore()
 
 const router = useRouter()
 const $route = useRoute()
-const { mdAndUp } = useDisplay()
+const { mdAndUp, mobile } = useDisplay()
 
 // Drawer: open by default on desktop, closed on mobile
-const drawerOpen = ref(true)
+const drawerOpen = ref(!mobile.value)
 
 // Auto-close drawer on navigation (mobile)
 watch(() => $route.path, () => {
@@ -486,6 +510,18 @@ const allNavShortcuts = [
 ]
 const navShortcuts = computed(() =>
   allNavShortcuts.filter(n => authStore.hasTab(n.tab_key))
+)
+
+const _allBottomNavItems = [
+  { label: 'Дашборд',      icon: 'mdi-view-dashboard',    route: '/dashboard',    tab_key: 'dashboard' },
+  { label: 'Заявки',       icon: 'mdi-hand-heart-outline', route: '/wishes',       tab_key: 'wishes' },
+  { label: 'Закупки',      icon: 'mdi-clipboard-list',    route: '/orders',       tab_key: 'purchases' },
+  { label: 'Задачи',       icon: 'mdi-clipboard-account', route: '/my-tasks',     tab_key: 'my_tasks' },
+  { label: 'Автопарк',     icon: 'mdi-warehouse',         route: '/fleet',        tab_key: 'vehicles' },
+  { label: 'Контрагенты',  icon: 'mdi-account-group',     route: '/contractors',  tab_key: 'contractors' },
+]
+const bottomNavItems = computed(() =>
+  _allBottomNavItems.filter(item => authStore.hasTab(item.tab_key)).slice(0, 4)
 )
 // ── Sidebar badges ──
 const badgeNewTasks = ref(0)
@@ -948,6 +984,17 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
 </script>
 
 <style scoped>
+.mobile-bottom-nav {
+  position: fixed !important;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100% !important;
+  transform: none !important;
+  z-index: 2000;
+  padding-bottom: env(safe-area-inset-bottom);
+  height: calc(60px + env(safe-area-inset-bottom)) !important;
+}
 .v-list-item--active {
   border-radius: 0 24px 24px 0;
 }

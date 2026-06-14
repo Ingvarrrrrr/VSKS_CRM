@@ -81,7 +81,7 @@
     </div>
 
     <!-- Add/edit widget dialog -->
-    <v-dialog v-model="widgetDialog" max-width="600">
+    <v-dialog v-model="widgetDialog" max-width="600" :fullscreen="mobile">
       <v-card>
         <v-card-title>{{ editingWidget?.i ? 'Изменить' : 'Добавить' }} виджет</v-card-title>
         <v-card-text>
@@ -126,7 +126,7 @@
     </v-dialog>
 
     <!-- Save dashboard dialog -->
-    <v-dialog v-model="saveDialog" max-width="500">
+    <v-dialog v-model="saveDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Сохранить дашборд</v-card-title>
         <v-card-text>
@@ -147,12 +147,14 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import WidgetRenderer from '@/components/WidgetRenderer.vue'
 
 const route = useRoute()
+const { mobile } = useDisplay()
 const router = useRouter()
 const toast = useToast()
 

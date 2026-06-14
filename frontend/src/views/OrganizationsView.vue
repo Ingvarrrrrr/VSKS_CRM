@@ -80,8 +80,8 @@
         >
           <v-card hover class="h-100">
             <v-card-item>
-              <v-card-title class="text-body-1 font-weight-bold">{{ org.name }}</v-card-title>
-              <v-card-subtitle v-if="org.full_name && org.full_name !== org.name" class="text-caption">
+              <v-card-title class="text-body-1 font-weight-bold" style="white-space:normal; word-break:break-word; line-height:1.25">{{ org.name }}</v-card-title>
+              <v-card-subtitle v-if="org.full_name && org.full_name !== org.name" class="text-caption" style="white-space:normal; word-break:break-word; line-height:1.2">
                 {{ org.full_name }}
               </v-card-subtitle>
             </v-card-item>
@@ -140,7 +140,7 @@
     </div>
 
     <!-- Edit org dialog -->
-    <v-dialog v-model="editOrgDialog" max-width="640" scrollable>
+    <v-dialog v-model="editOrgDialog" max-width="640" scrollable :fullscreen="mobile">
       <v-card class="org-dialog-card">
         <v-card-title class="pa-4">Реквизиты организации</v-card-title>
         <v-card-text class="pa-4 pt-0" style="max-height:75vh">
@@ -230,7 +230,7 @@
     </v-dialog>
 
     <!-- EGRUL diff confirm -->
-    <v-dialog v-model="egrulDiffDialog" max-width="520" persistent>
+    <v-dialog v-model="egrulDiffDialog" max-width="520" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 text-subtitle-1 font-weight-bold">
           <v-icon color="primary" class="mr-2">mdi-database-sync-outline</v-icon>

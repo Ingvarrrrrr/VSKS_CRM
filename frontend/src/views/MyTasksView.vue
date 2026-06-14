@@ -162,7 +162,7 @@
     />
 
     <!-- Purchase comment dialog -->
-    <v-dialog v-model="commentDialog" max-width="500">
+    <v-dialog v-model="commentDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Комментарий к задаче</v-card-title>
         <v-card-text>
@@ -181,7 +181,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 import { useAuthStore } from '@/stores/auth'
 import OrgSelector from '@/components/my-tasks/OrgSelector.vue'
 import OrgSummaryBar from '@/components/my-tasks/OrgSummaryBar.vue'

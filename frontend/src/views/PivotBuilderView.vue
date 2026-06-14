@@ -214,7 +214,7 @@
     </v-row>
 
     <!-- Save dialog -->
-    <v-dialog v-model="saveDialog" max-width="500">
+    <v-dialog v-model="saveDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Сохранить сводную</v-card-title>
         <v-card-text>
@@ -231,7 +231,7 @@
     </v-dialog>
 
     <!-- Add calc column dialog -->
-    <v-dialog v-model="addCalcColumnDialog" max-width="500">
+    <v-dialog v-model="addCalcColumnDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Добавить расчётную колонку</v-card-title>
         <v-card-text>
@@ -260,7 +260,7 @@
     </v-dialog>
 
     <!-- Drill dialog -->
-    <v-dialog v-model="drillDialog" max-width="900">
+    <v-dialog v-model="drillDialog" max-width="900" :fullscreen="mobile">
       <v-card>
         <v-card-title>Drill-down: {{ drillContext }}</v-card-title>
         <v-card-text>
@@ -292,12 +292,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { usePivotConfig } from '@/composables/usePivotConfig'
 
 const route = useRoute()
 const router = useRouter()
+const { mobile } = useDisplay()
 const toast = useToast()
 const pivot = usePivotConfig()
 

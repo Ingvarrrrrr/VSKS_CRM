@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="show" max-width="600" scrollable>
+  <v-dialog v-model="show" max-width="600" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon start color="teal">mdi-link-variant-plus</v-icon>
@@ -56,7 +56,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 interface CatalogCandidate {
   product_id: number

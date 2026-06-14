@@ -79,14 +79,25 @@
         clearable
         class="wb-search"
       />
+      <v-btn-toggle
+        v-if="!mobile"
+        v-model="viewMode"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+      >
+        <v-btn value="table" size="small" icon="mdi-table" />
+        <v-btn value="cards" size="small" icon="mdi-view-grid" />
+      </v-btn-toggle>
     </div>
 
-    <!-- Table -->
-    <div class="wb-table-wrap">
+    <!-- Table view -->
+    <div v-if="effectiveView === 'table'" class="wb-table-wrap">
       <v-data-table-server
         v-resizable-columns="'fleet-waybills'"
-        v-model:items-per-page="itemsPerPage"
-        v-model:page="page"
+        v-model:items-per-page="tableItemsPerPage"
+        v-model:page="tablePage"
         :headers="headers"
         :items="filteredRows"
         :items-length="filteredRows.length"
@@ -208,6 +219,72 @@
       </v-data-table-server>
     </div>
 
+    <!-- Cards view -->
+    <div v-else class="py-2">
+      <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
+      <div v-if="!loading && pagedCards.length === 0" class="wb-empty">
+        <v-icon size="48" color="var(--muted)">mdi-file-document-outline</v-icon>
+        <div>Путевые листы не найдены</div>
+      </div>
+      <v-row dense>
+        <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openWaybill(item)">
+            <v-card-item class="pb-1">
+              <v-card-title class="text-body-2 font-weight-bold">
+                <span class="wb-num">{{ item.number }}</span>
+              </v-card-title>
+              <template #append>
+                <StatusPill :variant="statusVariant(item.status)" :dot="item.status === 'in_progress'">
+                  {{ statusLabel(item.status) }}
+                </StatusPill>
+              </template>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div class="text-caption text-medium-emphasis mb-1">{{ formatDate(item.date_start) }}</div>
+              <div v-if="item.driver_name" class="d-flex align-center gap-2 mb-1">
+                <GradientAvatar :full-name="item.driver_name || '?'" size="sm" />
+                <span class="text-body-2">{{ item.driver_name }}</span>
+              </div>
+              <div v-if="item.vehicle_plate" class="d-flex align-center gap-2 mb-1">
+                <LicensePlate v-if="item.vehicle_plate" :model-value="item.vehicle_plate" size="sm" />
+                <span v-if="item.vehicle_model" class="text-caption text-medium-emphasis">{{ item.vehicle_model }}</span>
+              </div>
+              <div v-if="item.route_from || item.route_to" class="text-caption d-flex align-center gap-1">
+                <span>{{ item.route_from || '—' }}</span>
+                <v-icon size="12" color="var(--muted)">mdi-arrow-right</v-icon>
+                <span>{{ item.route_to || '—' }}</span>
+              </div>
+              <div class="d-flex gap-4 mt-1 text-caption text-medium-emphasis">
+                <span v-if="item.actual_mileage_km != null">Пробег: <strong>{{ item.actual_mileage_km }} км</strong></span>
+                <span v-if="item.fuel_issued_l != null">Топливо: <strong>{{ item.fuel_issued_l }} л</strong></span>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-btn icon="mdi-open-in-new" size="x-small" variant="text" title="Открыть" @click.stop="openWaybill(item)" />
+              <v-btn
+                icon="mdi-download"
+                size="x-small"
+                variant="text"
+                title="Скачать .docx"
+                :loading="downloadingId === item.id"
+                @click.stop="downloadDocx(item.id, item.number)"
+              />
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <v-pagination
+        v-if="cardsTotalPages > 1"
+        v-model="cardsPage"
+        :length="cardsTotalPages"
+        density="compact"
+        total-visible="7"
+        class="d-flex justify-center mt-4"
+      />
+    </div>
+
     <!-- Split panel: chart + top drivers -->
     <div class="wb-split">
       <!-- Chart by days -->
@@ -269,6 +346,7 @@ import KpiCard from '@/components/fleet/KpiCard.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
 import GradientAvatar from '@/components/fleet/GradientAvatar.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
 
@@ -314,8 +392,8 @@ const items = ref<WaybillRow[]>([])
 const stats = ref<TripStats>({})
 const activeFilter = ref('all')
 const search = ref('')
-const page = ref(1)
-const itemsPerPage = ref(25)
+const tablePage = ref(1)
+const tableItemsPerPage = ref(25)
 const downloadingId = ref<number | null>(null)
 
 const headers = [
@@ -358,6 +436,22 @@ const filteredRows = computed(() => {
     )
   }
   return rows
+})
+
+// ─── Card view (table ↔ cards toggle) ────────────────────────────────────────
+const {
+  mobile,
+  viewMode,
+  effectiveView,
+  page: cardsPage,
+  totalPages: cardsTotalPages,
+  paged: pagedCards,
+} = useCardView({
+  storageKey: 'fleet_waybills_view_mode',
+  source: () => filteredRows.value,
+  search: () => search.value,
+  searchFields: (r: WaybillRow) => [r.number, r.driver_name, r.vehicle_plate, r.route_from, r.route_to],
+  pageSize: 24,
 })
 
 // ─── Chart data aggregated on client ─────────────────────────────────────────
@@ -510,8 +604,8 @@ onMounted(() => {
   loadItems()
 })
 
-watch(search, () => { page.value = 1 })
-watch(activeFilter, () => { page.value = 1 })
+watch(search, () => { tablePage.value = 1 })
+watch(activeFilter, () => { tablePage.value = 1 })
 </script>
 
 <style scoped>

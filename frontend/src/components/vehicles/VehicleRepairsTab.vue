@@ -157,7 +157,7 @@
     </v-timeline>
 
     <!-- Create / Edit dialog -->
-    <v-dialog v-model="formDialog" max-width="560" persistent>
+    <v-dialog v-model="formDialog" max-width="560" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title>{{ editingRepair ? 'Редактировать ремонт' : 'Новый ремонт' }}</v-card-title>
         <v-card-text>
@@ -265,9 +265,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import RepairAttachmentSlot from './RepairAttachmentSlot.vue'
+
+const { mobile } = useDisplay()
 
 interface RepairAttachment {
   id: number

@@ -31,7 +31,7 @@
     </div>
 
     <!-- 27.4-21: Reconciliation dialog -->
-    <v-dialog v-model="reconciliationDialog" max-width="1100" scrollable>
+    <v-dialog v-model="reconciliationDialog" max-width="1100" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4 pb-2">
           <v-icon start color="warning">mdi-table-check</v-icon>
@@ -813,6 +813,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
 import { formatMoney } from '@/utils/formatMoney'
 import { useCardView } from '@/composables/useCardView'
+import { useDisplay } from 'vuetify'
 
 // ── Route & auth ───────────────────────────────────────────────────────────
 const route = useRoute()
@@ -1416,6 +1417,8 @@ function statusColor(s: string | null) {
   if (s === 'АННУЛИРОВАН') return 'error'
   return 'warning'
 }
+
+const { mobile } = useDisplay()
 
 // ── Card view (table↔cards toggle) ───────────────────────────────────────────
 const {

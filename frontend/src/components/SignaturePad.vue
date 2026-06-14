@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialog" max-width="520" persistent>
+  <v-dialog v-model="dialog" max-width="520" persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex align-center justify-space-between pt-4 px-5">
         <span class="text-subtitle-1 font-weight-bold">
@@ -66,7 +66,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 const dialog = ref(false)
 const canvasRef = ref<HTMLCanvasElement | null>(null)

@@ -107,7 +107,7 @@
     </v-data-table>
 
     <!-- ─── Add / Edit Dialog ─── -->
-    <v-dialog v-model="dialog" max-width="680" persistent>
+    <v-dialog v-model="dialog" max-width="680" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center gap-2 pa-5 pb-3">
           <v-icon :icon="editingTrip ? 'mdi-pencil' : 'mdi-plus-circle-outline'" color="primary" />
@@ -343,7 +343,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 

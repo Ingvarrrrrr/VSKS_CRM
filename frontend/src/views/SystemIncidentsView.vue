@@ -122,7 +122,7 @@
     </div>
 
     <!-- Detail dialog -->
-    <v-dialog v-model="detailDialog.show" max-width="700" scrollable>
+    <v-dialog v-model="detailDialog.show" max-width="700" scrollable :fullscreen="mobile">
       <v-card v-if="detailDialog.item">
         <v-card-title class="pa-4 d-flex align-center">
           Детали инцидента #{{ detailDialog.item.id }}

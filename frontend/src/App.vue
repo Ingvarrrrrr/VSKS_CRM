@@ -135,6 +135,25 @@ onUnmounted(() => {
 </script>
 
 <style>
+/* Mobile bottom-nav (AppBar.vue) фиксирован внизу — освобождаем место под него */
+@media (max-width: 959px) {
+  .v-main {
+    padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+  }
+  /* Без этого широкая таблица/тулбар раздвигают layout-viewport (innerWidth>375),
+     ломают fixed bottom-nav и показывают desktop-элементы (d-sm-flex).
+     Полностраничный горизонтальный скролл = «сайт, а не приложение». */
+  html, body, .v-application, .v-main {
+    overflow-x: hidden !important;
+    max-width: 100vw;
+  }
+  /* широкий контент (таблицы) скроллится внутри своего контейнера, не страницы */
+  .v-main .v-table__wrapper,
+  .v-main .v-data-table__wrapper {
+    overflow-x: auto !important;
+  }
+}
+
 /* ── v-data-table: table-layout fixed чтобы width на th/td реально применялся ── */
 /* Без этого браузер применяет auto layout и игнорирует inline width когда content большой.
    ВАЖНО: только на desktop (≥960px). На mobile fixed-layout превращает текст в

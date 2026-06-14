@@ -102,7 +102,7 @@
     </v-row>
 
     <!-- Lightbox dialog -->
-    <v-dialog v-model="lightboxOpen" max-width="960" @keydown.esc="lightboxOpen = false">
+    <v-dialog v-model="lightboxOpen" max-width="960" :fullscreen="mobile" @keydown.esc="lightboxOpen = false">
       <v-card v-if="lightboxPhoto">
         <v-toolbar density="compact" color="surface">
           <v-toolbar-title class="text-body-2">{{ lightboxPhoto.name }}</v-toolbar-title>
@@ -172,7 +172,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { useDisplay } from 'vuetify'
 import FileDropZone from '@/components/FileDropZone.vue'
+
+const { mobile } = useDisplay()
 
 interface PhotoMeta {
   id: number

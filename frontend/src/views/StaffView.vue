@@ -31,7 +31,7 @@
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="departments">
         <!-- Dept toolbar -->
-        <div class="d-flex align-center mb-4 flex-wrap" style="gap:8px">
+        <div class="d-flex align-center mb-4 flex-wrap dept-toolbar" style="gap:8px">
           <v-select
             v-model="filterDeptOrgId"
             v-if="organizations.length > 1"
@@ -430,7 +430,7 @@
     <!-- ═══════════════════════════════════════════════════════════ -->
 
     <!-- 1. Create user dialog -->
-    <v-dialog v-model="createDialog.show" max-width="440">
+    <v-dialog v-model="createDialog.show" max-width="440" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">Добавить сотрудника</v-card-title>
         <v-card-text class="pa-4 pt-0">
@@ -516,7 +516,7 @@
     </v-dialog>
 
     <!-- 2. Edit user dialog -->
-    <v-dialog v-model="editDialog.show" max-width="500">
+    <v-dialog v-model="editDialog.show" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4">Редактировать: {{ editDialog.full_name || editDialog.email }}</v-card-title>
         <v-card-text class="pa-4 pt-0">
@@ -857,7 +857,7 @@
     </v-dialog>
 
     <!-- 4. Hierarchy dialog -->
-    <v-dialog v-model="hierarchyDialog.show" max-width="500">
+    <v-dialog v-model="hierarchyDialog.show" max-width="500" :fullscreen="mobile">
       <v-card v-if="hierarchyDialog.user">
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-account-supervisor" color="teal" class="mr-2" />
@@ -907,7 +907,7 @@
     </v-dialog>
 
     <!-- 5. User import Excel dialog -->
-    <v-dialog v-model="userImportDialog.show" max-width="520">
+    <v-dialog v-model="userImportDialog.show" max-width="520" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-file-excel-outline" color="success" class="mr-2" />
@@ -949,7 +949,7 @@
     </v-dialog>
 
     <!-- 6. Dept create/edit dialog -->
-    <v-dialog v-model="deptDialog" max-width="520">
+    <v-dialog v-model="deptDialog" max-width="520" :fullscreen="mobile">
       <v-card>
         <v-card-title>{{ editingDept ? 'Редактировать отдел' : 'Новый отдел' }}</v-card-title>
         <v-card-text>
@@ -994,7 +994,7 @@
     </v-dialog>
 
     <!-- 7. Add member to dept dialog -->
-    <v-dialog v-model="addMemberDialog" max-width="500">
+    <v-dialog v-model="addMemberDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center">
           Добавить сотрудника в отдел
@@ -1122,7 +1122,7 @@
     </v-dialog>
 
     <!-- B6. INN duplicates dialog (просмотр, merge — backend TBD) -->
-    <v-dialog v-model="innDupDialog" max-width="640" scrollable>
+    <v-dialog v-model="innDupDialog" max-width="640" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 d-flex align-center">
           <v-icon icon="mdi-account-multiple-outline" color="warning" class="mr-2" />
@@ -1206,6 +1206,7 @@ import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useCardView } from '@/composables/useCardView'
+import { useDisplay } from 'vuetify'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -1334,6 +1335,8 @@ const filteredUsers = computed(() => {
   if (filterUserOrgId.value) list = list.filter(u => (u as any).org_id === filterUserOrgId.value)
   return list
 })
+
+const { mobile } = useDisplay()
 
 const {
   mobile: staffMobile,
@@ -2659,6 +2662,25 @@ onMounted(async () => {
   color: #3B82F6;
 }
 .staff-view .feo-set-hint:hover { color: #2563EB; }
+
+/* Mobile: фильтры персонала в столбик (не сжаты в нечитаемые «(»), строки дерева переносятся */
+@media (max-width: 599px) {
+  .staff-view .dept-toolbar > .v-input,
+  .staff-view .dept-toolbar > .v-select,
+  .staff-view .dept-toolbar > .v-autocomplete {
+    max-width: 100% !important;
+    flex: 1 1 100%;
+  }
+  .staff-view .dept-tree-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 8px 10px;
+  }
+  /* счётчик «N чел.» (outlined-чип) не сжимать — иначе обрезается до «0 ч» */
+  .staff-view .dept-tree-row .v-chip--variant-outlined {
+    flex-shrink: 0;
+  }
+}
 </style>
 
 <style scoped>

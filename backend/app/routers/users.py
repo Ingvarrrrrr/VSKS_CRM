@@ -394,6 +394,8 @@ async def get_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Пользователь не найден")
+    if user.role == "superadmin" and current_user.role != "superadmin":
+        raise HTTPException(404, "Пользователь не найден")
     return user
 
 

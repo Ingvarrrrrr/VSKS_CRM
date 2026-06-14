@@ -303,7 +303,7 @@ async def export_excel(
     state: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_tab("vehicles")),
 ):
     """Excel-выгрузка списка ТС. Применяет те же фильтры что list endpoint."""
     from io import BytesIO
@@ -583,7 +583,7 @@ async def patch_vehicle(
 async def vehicle_distinct_values(
     field: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_tab("vehicles")),
 ):
     """GET /api/vehicles/distinct/{field} — уникальные значения колонки для autocomplete.
     Только whitelisted поля (защита от SQL-injection через имя колонки)."""

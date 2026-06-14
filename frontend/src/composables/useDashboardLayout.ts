@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref } from 'vue'
 
 export interface LayoutItem {
   x: number
@@ -18,7 +18,6 @@ const DEFAULT_SUMMARY_LAYOUT: LayoutItem[] = [
   { i: 'pipeline',   x: 6, y: 4,  w: 6,  h: 11, minW: 4,  minH: 7 },
   { i: 'monthly',    x: 0, y: 15, w: 8,  h: 7,  minW: 4,  minH: 4 },
   { i: 'breakdown',  x: 0, y: 22, w: 8,  h: 8,  minW: 4,  minH: 5 },
-  { i: 'bar',        x: 0, y: 30, w: 7,  h: 10, minW: 4,  minH: 7 },
   { i: 'purchases',  x: 7, y: 30, w: 5,  h: 10, minW: 3,  minH: 6 },
   { i: 'table',      x: 0, y: 40, w: 12, h: 12, minW: 6,  minH: 6 },
   { i: 'finplan',    x: 0, y: 52, w: 12, h: 12, minW: 6,  minH: 8 },

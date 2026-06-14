@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="show" max-width="900" scrollable persistent>
+  <v-dialog v-model="show" max-width="900" scrollable persistent :fullscreen="mobile">
     <v-card>
       <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center gap-2 px-4 pt-4">
         <v-icon icon="mdi-content-duplicate" color="warning" />
@@ -76,6 +76,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 interface DupItem {
   quantity: number | null

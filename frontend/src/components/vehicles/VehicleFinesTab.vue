@@ -129,7 +129,7 @@
     </v-data-table>
 
     <!-- ── Add Fine Dialog ── -->
-    <v-dialog v-model="addDialog" max-width="520" persistent>
+    <v-dialog v-model="addDialog" max-width="520" persistent :fullscreen="mobile">
       <v-card rounded="lg">
         <v-card-title class="d-flex align-center ga-2 pa-4 pb-2">
           <v-icon icon="mdi-alert-octagon-outline" color="warning" />
@@ -262,7 +262,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 const props = defineProps<{ vehicleId: number }>()
 

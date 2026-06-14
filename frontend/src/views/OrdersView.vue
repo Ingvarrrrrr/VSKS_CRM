@@ -701,7 +701,7 @@
     </v-dialog>
 
     <!-- ── Import Dialog ── -->
-    <v-dialog v-model="importDialog.show" max-width="580" persistent>
+    <v-dialog v-model="importDialog.show" max-width="580" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-5 pb-2 d-flex align-center">
           <v-icon icon="mdi-file-import" color="blue" class="mr-2" />
@@ -869,7 +869,7 @@
     />
 
     <!-- Excel Export Dialog -->
-    <v-dialog v-model="exportDialog.show" max-width="680" scrollable>
+    <v-dialog v-model="exportDialog.show" max-width="680" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-microsoft-excel" color="success" class="mr-2" />
@@ -1328,7 +1328,7 @@ const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
 const loading = ref(false)
 const transitioning = ref<number | null>(null)
-const filterStatus = ref<string>('')
+const filterStatus = ref<string | null>(null)
 const filterSubsidyId = ref<number | null>(null)
 const filterFeoCategoryId = ref<number | null>(null)
 const filterMethod   = ref<string>('')

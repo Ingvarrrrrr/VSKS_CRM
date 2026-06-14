@@ -185,7 +185,7 @@
     </v-row>
 
     <!-- Save dialog -->
-    <v-dialog v-model="saveDialog" max-width="500">
+    <v-dialog v-model="saveDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Сохранить шаблон реестра</v-card-title>
         <v-card-text>
@@ -202,7 +202,7 @@
     </v-dialog>
 
     <!-- Composite column dialog -->
-    <v-dialog v-model="compositeDialog" max-width="600">
+    <v-dialog v-model="compositeDialog" max-width="600" :fullscreen="mobile">
       <v-card>
         <v-card-title>{{ editingIdx >= 0 ? 'Редактировать' : 'Добавить' }} шаблон-колонку</v-card-title>
         <v-card-text>
@@ -226,7 +226,7 @@
     </v-dialog>
 
     <!-- Constant column dialog -->
-    <v-dialog v-model="constantDialog" max-width="500">
+    <v-dialog v-model="constantDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Константная колонка</v-card-title>
         <v-card-text>
@@ -242,7 +242,7 @@
     </v-dialog>
 
     <!-- Edit column dialog (для field-колонок) -->
-    <v-dialog v-model="editFieldDialog" max-width="500">
+    <v-dialog v-model="editFieldDialog" max-width="500" :fullscreen="mobile">
       <v-card>
         <v-card-title>Настройки колонки</v-card-title>
         <v-card-text v-if="editFieldData">
@@ -271,12 +271,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useContractorsStore } from '@/stores/contractors'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
+const { mobile } = useDisplay()
 const toast = useToast()
 
 // State

@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="visible" @update:model-value="$emit('update:visible', $event)" max-width="900" scrollable>
+  <v-dialog :model-value="visible" @update:model-value="$emit('update:visible', $event)" max-width="900" scrollable :fullscreen="mobile">
     <v-card>
       <v-card-title class="d-flex justify-space-between align-center">
         <div>
@@ -168,6 +168,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 interface Props {
   visible: boolean

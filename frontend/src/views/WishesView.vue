@@ -268,7 +268,15 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
-            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" title="Скачать в Excel" @click.stop />
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-image" title="С фото" @click="downloadWishExcel(item, true)" />
+                <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(item, false)" />
+              </v-list>
+            </v-menu>
             <template v-if="item.status === 'draft'">
               <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditDialog(item)" />
               <v-btn
@@ -346,7 +354,15 @@
               </v-card-text>
               <v-divider />
               <v-card-actions class="py-1" @click.stop>
-                <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === w.id" @click.stop="downloadWishExcel(w)" title="Скачать в Excel" />
+                <v-menu>
+                  <template #activator="{ props: menuProps }">
+                    <v-btn v-bind="menuProps" icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === w.id" title="Скачать в Excel" @click.stop />
+                  </template>
+                  <v-list density="compact">
+                    <v-list-item prepend-icon="mdi-image" title="С фото" @click="downloadWishExcel(w, true)" />
+                    <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(w, false)" />
+                  </v-list>
+                </v-menu>
                 <template v-if="w.status === 'draft'">
                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="openEditDialog(w)" />
                   <v-btn
@@ -520,7 +536,15 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
-            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" title="Скачать в Excel" @click.stop />
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-image" title="С фото" @click="downloadWishExcel(item, true)" />
+                <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(item, false)" />
+              </v-list>
+            </v-menu>
             <template v-if="item.status === 'submitted'">
               <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
                 Распределить
@@ -672,7 +696,15 @@
         </template>
         <template #item.actions="{ item }">
           <div class="d-flex align-center" style="gap:4px" @click.stop>
-            <v-btn icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" @click="downloadWishExcel(item)" title="Скачать в Excel" />
+            <v-menu>
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" icon="mdi-microsoft-excel" size="x-small" variant="text" color="green-darken-1" :loading="downloadingExcelId === item.id" title="Скачать в Excel" @click.stop />
+              </template>
+              <v-list density="compact">
+                <v-list-item prepend-icon="mdi-image" title="С фото" @click="downloadWishExcel(item, true)" />
+                <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(item, false)" />
+              </v-list>
+            </v-menu>
             <template v-if="item.status === 'submitted'">
               <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
                 Распределить
@@ -714,7 +746,7 @@
     </div>
 
     <!-- ── CREATE/EDIT DIALOG ── -->
-    <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable persistent>
+    <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable persistent :fullscreen="mobile">
       <v-card>
         <v-overlay v-model="wishDialogLoading" contained class="align-center justify-center" persistent>
           <div class="d-flex flex-column align-center ga-3">
@@ -1109,9 +1141,15 @@
 
         <v-card-actions class="px-4 pb-4 flex-wrap">
           <v-btn variant="text" @click="wishDialog = false">Закрыть</v-btn>
-          <v-btn v-if="editingWishId && editingWish" variant="tonal" color="green-darken-1" prepend-icon="mdi-microsoft-excel" :loading="downloadingExcelId === editingWishId" @click="downloadWishExcel(editingWish as any)">
-            Скачать Excel
-          </v-btn>
+          <v-menu v-if="editingWishId && editingWish">
+            <template #activator="{ props: menuProps }">
+              <v-btn v-bind="menuProps" variant="tonal" color="green-darken-1" prepend-icon="mdi-microsoft-excel" :loading="downloadingExcelId === editingWishId">Скачать Excel</v-btn>
+            </template>
+            <v-list density="compact">
+              <v-list-item prepend-icon="mdi-image" title="С фото" @click="downloadWishExcel(editingWish as any, true)" />
+              <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(editingWish as any, false)" />
+            </v-list>
+          </v-menu>
           <v-spacer />
           <template v-if="isWishEditable">
             <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
@@ -1139,7 +1177,7 @@
     </v-dialog>
 
     <!-- ── KANBAN DISTRIBUTION DIALOG (Phase 13) ── -->
-    <v-dialog v-model="kanbanDialog" max-width="1200" scrollable>
+    <v-dialog v-model="kanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 pb-2">
           <v-icon class="mr-2" color="primary">mdi-view-column-outline</v-icon>
@@ -1163,7 +1201,7 @@
     </v-dialog>
 
     <!-- ── REJECT DIALOG ── -->
-    <v-dialog v-model="rejectDialog" max-width="480">
+    <v-dialog v-model="rejectDialog" max-width="480" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 pb-2">Отклонить заявку</v-card-title>
         <v-card-text class="pa-4">
@@ -1187,7 +1225,7 @@
     </v-dialog>
 
     <!-- ── CONVERT DIALOG ── -->
-    <v-dialog v-model="convertDialog" max-width="540">
+    <v-dialog v-model="convertDialog" max-width="540" :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 pb-2">Создать закупку из заявки</v-card-title>
         <v-card-text class="pa-4">
@@ -1521,15 +1559,6 @@ async function loadOrgMembers(sid: number | null) {
   } catch { orgMembers.value = [] }
 }
 
-watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
-
-watch(() => wishForm.value.subsidy_id, async (sid) => {
-  if (!sid) { feoLeaves.value = []; return }
-  try {
-    feoLeaves.value = await apiFetch<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>(`/feo-categories/leaves?subsidy_id=${sid}`)
-  } catch { feoLeaves.value = [] }
-}, { immediate: true })
-
 const orgUsers = computed(() => {
   if (!wishForm.value.subsidy_id) return users.value
   if (orgMembers.value.length) return orgMembers.value
@@ -1613,6 +1642,17 @@ const wishForm = ref({
   executor_id: null as number | null,
   execution_deadline: '' as string,
 })
+
+// Watchers зависят от wishForm — объявлены ПОСЛЕ его ref, иначе immediate:true
+// дёргает getter в TDZ (ReferenceError: Cannot access 'wishForm' before initialization)
+watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
+
+watch(() => wishForm.value.subsidy_id, async (sid) => {
+  if (!sid) { feoLeaves.value = []; return }
+  try {
+    feoLeaves.value = await apiFetch<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>(`/feo-categories/leaves?subsidy_id=${sid}`)
+  } catch { feoLeaves.value = [] }
+}, { immediate: true })
 
 // Items computed total
 const totalNmck = computed(() =>
@@ -2129,11 +2169,11 @@ async function downloadServiceNote(wish: Wish) {
   }
 }
 
-async function downloadWishExcel(wish: Wish) {
+async function downloadWishExcel(wish: Wish, withPhotos: boolean = true) {
   downloadingExcelId.value = wish.id
   try {
     const token = localStorage.getItem('auth_token') || ''
-    const resp = await fetch(`/api/wishes/${wish.id}/export.xlsx`, {
+    const resp = await fetch(`/api/wishes/${wish.id}/export.xlsx?with_photos=${withPhotos}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -2141,7 +2181,7 @@ async function downloadWishExcel(wish: Wish) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `zayavka_${wish.id}.xlsx`
+    a.download = `zayavka_${wish.id}${withPhotos ? '' : '_bez_foto'}.xlsx`
     document.body.appendChild(a)
     a.click()
     a.remove()

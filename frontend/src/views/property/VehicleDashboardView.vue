@@ -382,7 +382,7 @@
 
       <div class="fleet-filters__spacer"></div>
 
-      <div class="fleet-view-toggle">
+      <div v-if="!mobile" class="fleet-view-toggle">
         <button
           :class="{ active: viewMode === 'cards' }"
           @click="viewMode = 'cards'"
@@ -399,7 +399,7 @@
     </div>
 
     <!-- ── Cards view ── -->
-    <section class="fleet-grid" v-if="viewMode === 'cards'">
+    <section class="fleet-grid" v-if="effectiveViewMode === 'cards'">
       <VehicleCard
         v-for="v in filteredVehicles"
         :key="v.vehicle_id"
@@ -416,7 +416,7 @@
     </section>
 
     <!-- ── Table view (existing functionality) ── -->
-    <section v-else-if="viewMode === 'table'">
+    <section v-else-if="effectiveViewMode === 'table'">
       <v-card class="fleet-table-card" elevation="0">
         <v-card-text class="pa-0">
           <v-data-table
@@ -448,7 +448,7 @@
     </section>
 
     <!-- ── Regions view ── -->
-    <section v-else-if="viewMode === 'regions'">
+    <section v-else-if="effectiveViewMode === 'regions'">
       <div v-for="region in regionGroups" :key="region.name" class="fleet-region-group">
         <div class="fleet-region-group__header">
           <span class="fleet-region-group__name">{{ region.name }}</span>
@@ -468,7 +468,12 @@
 
     <!-- ── Fine Leaders Widget ── -->
     <section class="fleet-fine-leaders-section">
-      <FineLeadersPodiumWidget />
+      <FineLeadersPodiumWidget @leader-click="onLeaderClick" />
+      <DriverFinesDrill
+        v-if="selectedDriver"
+        :driver="selectedDriver"
+        @close="selectedDriver = null"
+      />
     </section>
 
     <!-- Phase 29.3-drill-inline: клик KPI/региона → activeFilter/selectedRegions inline -->
@@ -478,15 +483,23 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useTheme } from 'vuetify'
+import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import VehicleCard from '@/components/vehicles/VehicleCard.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
+import DriverFinesDrill from '@/components/fleet/DriverFinesDrill.vue'
 
 const router = useRouter()
 const theme = useTheme()
+const { mobile } = useDisplay()
 const isDark = computed(() => theme.global.current.value.dark)
+
+// Клик по рекордсмену → список штрафов прямо на дашборде (без перехода)
+const selectedDriver = ref<{ driver_key: string; driver_name: string | null; driver_kind: string } | null>(null)
+function onLeaderClick(payload: { key: string; name: string | null; kind: string; id: number | null }): void {
+  selectedDriver.value = { driver_key: payload.key, driver_name: payload.name, driver_kind: payload.kind }
+}
 
 // ── Vehicle type options ─────────────────────────────────────────────────────
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
@@ -521,6 +534,10 @@ const STATE_LABELS: Record<string, string> = {
 
 // ── State ────────────────────────────────────────────────────────────────────
 const viewMode = ref<'cards' | 'table' | 'regions'>('cards')
+// On mobile always force 'cards' view (table is unreadable on small screens)
+const effectiveViewMode = computed<'cards' | 'table' | 'regions'>(() =>
+  mobile.value ? 'cards' : viewMode.value
+)
 const searchQuery = ref('')
 const activeFilter = ref<string>('all')
 const selectedTypes = ref<string[]>([])

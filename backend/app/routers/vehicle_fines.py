@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.permissions import require_tab
+from app.auth.jwt import get_org_filter
 from app.models.user import User
 from app.models.vehicle_fine import VehicleFine
 from app.models.trip import Trip
@@ -146,8 +147,13 @@ async def list_fines(
         q = q.where(VehicleFine.driver_user_id == driver_user_id)
     if driver_external_id is not None:
         q = q.where(VehicleFine.driver_external_id == driver_external_id)
-    if org_id is not None:
-        q = q.join(Vehicle, Vehicle.id == VehicleFine.vehicle_id).where(Vehicle.owner_org_id == org_id)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None or org_id is not None:
+        q = q.join(Vehicle, Vehicle.id == VehicleFine.vehicle_id)
+        if org_ids is not None:
+            q = q.where(Vehicle.owner_org_id.in_(org_ids))
+        if org_id is not None:
+            q = q.where(Vehicle.owner_org_id == org_id)
     if status:
         q = q.where(VehicleFine.status == status)
     q = q.order_by(VehicleFine.issued_at.desc()).limit(limit)

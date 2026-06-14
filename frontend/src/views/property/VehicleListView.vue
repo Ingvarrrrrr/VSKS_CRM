@@ -19,7 +19,18 @@
         <h1 class="text-h5 font-weight-bold">Автотранспорт</h1>
         <span class="text-body-2 text-medium-emphasis">{{ total }} записей</span>
       </div>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-center">
+        <v-btn-toggle
+          v-if="!mobile"
+          v-model="vehicleViewMode"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+        >
+          <v-btn value="table" size="small" icon="mdi-table" />
+          <v-btn value="cards" size="small" icon="mdi-view-grid" />
+        </v-btn-toggle>
         <v-btn variant="outlined" size="small" prepend-icon="mdi-view-dashboard"
           @click="router.push('/property/vehicles/dashboard')">Дашборд</v-btn>
         <v-btn
@@ -167,8 +178,9 @@
       <v-btn variant="text" size="small" @click="selectedVehicles = []">Снять выделение</v-btn>
     </div>
 
-    <!-- Table -->
+    <!-- Table view -->
     <v-data-table-server
+      v-if="vehicleEffectiveView === 'table'"
       v-resizable-columns="'vehicle-list'"
       :headers="dtHeaders"
       :items="Array.isArray(vehicles) ? vehicles : []"
@@ -388,8 +400,78 @@
       </template>
     </v-data-table-server>
 
+    <!-- Cards view -->
+    <div v-else-if="vehicleEffectiveView === 'cards'">
+      <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
+      <div v-if="!loading && (!vehicles || vehicles.length === 0)" class="text-center py-10">
+        <v-icon icon="mdi-car-off" size="48" color="grey-lighten-1" class="mb-3" />
+        <div class="text-medium-emphasis">ТС не найдены</div>
+      </div>
+      <v-row dense>
+        <v-col
+          v-for="v in (Array.isArray(vehicles) ? vehicles : [])"
+          :key="v.id"
+          cols="12" sm="6" lg="4"
+        >
+          <v-card variant="outlined" class="h-100 d-flex flex-column" hover
+            @click="router.push(`/property/vehicles/${v.id}`)">
+            <v-card-item class="pb-1">
+              <v-card-title class="text-body-2 font-weight-bold">
+                <LicensePlate :model-value="v.plate" :readonly="true" size="sm" />
+              </v-card-title>
+              <template #append>
+                <v-chip size="x-small" variant="tonal" :color="stateColor(v.state)">
+                  {{ stateLabel(v.state) }}
+                </v-chip>
+              </template>
+            </v-card-item>
+            <v-card-text class="py-1 flex-grow-1">
+              <div class="text-body-2 font-weight-medium mb-1">
+                {{ [v.brand, v.model].filter(Boolean).join(' ') || '—' }}
+                <span v-if="v.color" class="text-caption text-medium-emphasis"> · {{ v.color }}</span>
+              </div>
+              <div class="d-flex flex-wrap gap-x-3 gap-y-1 text-caption text-medium-emphasis">
+                <span v-if="v.type">
+                  <v-chip size="x-small" variant="tonal" :color="typeColor(v.type)">{{ typeLabel(v.type) }}</v-chip>
+                </span>
+                <span v-if="v.owner_org_name">Владелец: <strong>{{ v.owner_org_name }}</strong></span>
+                <span v-if="v.assigned_org_name || v.assigned_text">
+                  Экспл.: <strong>{{ v.assigned_org_name || v.assigned_text }}</strong>
+                </span>
+              </div>
+              <div class="d-flex flex-wrap gap-x-3 gap-y-1 text-caption mt-1">
+                <span v-if="v.insurance_until">
+                  ОСАГО:
+                  <span :class="insuranceClass(v)">{{ formatDate(v.insurance_until) }}</span>
+                  <v-icon v-if="isInsuranceExpiring(v)" icon="mdi-alert-circle" size="x-small" color="warning" class="ml-1" />
+                </span>
+                <span v-if="v.current_odometer_km != null">Пробег: <strong>{{ v.current_odometer_km.toLocaleString('ru-RU') }} км</strong></span>
+                <span v-if="v.fuel_type" class="text-caption">{{ fuelTypeLabel(v.fuel_type) }}</span>
+              </div>
+            </v-card-text>
+            <v-divider />
+            <v-card-actions class="py-1" @click.stop>
+              <v-spacer />
+              <v-tooltip text="Открыть карточку" location="top">
+                <template #activator="{ props: tip }">
+                  <v-btn v-bind="tip" icon="mdi-open-in-new" size="x-small" variant="text" color="primary"
+                    :to="`/property/vehicles/${v.id}`" @click.stop />
+                </template>
+              </v-tooltip>
+            </v-card-actions>
+          </v-card>
+        </v-col>
+      </v-row>
+      <!-- Server-side pagination for cards: reuse same page/itemsPerPage -->
+      <div class="d-flex justify-center align-center pa-3 gap-2 mt-2">
+        <v-btn icon="mdi-chevron-left" variant="text" size="small" :disabled="page <= 1" @click="page -= 1" />
+        <span class="text-body-2">Стр. {{ page }} из {{ Math.max(1, Math.ceil(total / itemsPerPage)) }}</span>
+        <v-btn icon="mdi-chevron-right" variant="text" size="small" :disabled="page >= Math.ceil(total / itemsPerPage)" @click="page += 1" />
+      </div>
+    </div>
+
     <!-- ── Create dialog ── -->
-    <v-dialog v-model="createDialog.show" max-width="560" persistent>
+    <v-dialog v-model="createDialog.show" max-width="560" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-5 pb-2 d-flex align-center">
           <v-icon icon="mdi-car-plus" color="primary" class="mr-2" />
@@ -567,6 +649,7 @@ import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import VehicleImportDialog from '@/components/vehicles/VehicleImportDialog.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import { useCardView } from '@/composables/useCardView'
 
 // ─────────────── Types ───────────────
 
@@ -823,6 +906,17 @@ function applySort(key: string, dir: 'asc' | 'desc' | null) {
 // ─────────────── Column picker ───────────────
 
 const showColumnPicker = ref(false)
+
+// ─────────────── Card view (table ↔ cards toggle) ───────────────
+const {
+  mobile,
+  viewMode: vehicleViewMode,
+  effectiveView: vehicleEffectiveView,
+} = useCardView({
+  storageKey: 'vehicle_list_view_mode',
+  source: () => Array.isArray(vehicles.value) ? vehicles.value : [],
+  pageSize: 200, // server already paginates; use large size so useCardView doesn't re-paginate
+})
 
 // ─────────────── Data loading ───────────────
 

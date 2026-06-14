@@ -122,7 +122,7 @@
     </v-data-table>
 
     <!-- Add dialog -->
-    <v-dialog v-model="addDialog" max-width="560" persistent>
+    <v-dialog v-model="addDialog" max-width="560" persistent :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-5 pb-2 d-flex align-center">
           <v-icon icon="mdi-gas-station" class="mr-2" color="primary" />
@@ -311,8 +311,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+
+const { mobile } = useDisplay()
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 

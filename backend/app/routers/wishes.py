@@ -750,6 +750,9 @@ async def approve_distribution(
     Returns 400 if wish is already distributed.
     """
     wish = await _load_wish(wish_id, db)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Заявка не входит в ваши организации")
     if not _is_saas(current_user) and wish.status == "converted":
         raise HTTPException(status_code=400, detail="Заявка уже распределена")
     if not _is_saas(current_user) and wish.status not in ("draft", "submitted", "approved"):
@@ -782,14 +785,26 @@ async def approve_distribution(
 @router.get("/{wish_id}/export.xlsx")
 async def export_wish_xlsx(
     wish_id: int,
+    with_photos: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    import httpx
+    from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.comments import Comment
     from fastapi.responses import StreamingResponse
     import io
     from urllib.parse import quote
+    from PIL import Image as PILImage
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
     wish = await _load_wish(wish_id, db)
     org_ids = get_org_filter(current_user)
     if org_ids is not None and wish.org_id not in org_ids:
@@ -803,7 +818,35 @@ async def export_wish_xlsx(
     )
     items = res.scalars().all()
 
+    async def _image_bytes(p):
+        if p is not None and getattr(p, "photo_data", None):
+            return bytes(p.photo_data)
+        url = (p.photo_url or p.photo_link) if p is not None else None
+        if url and str(url).startswith("http"):
+            try:
+                async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as cl:
+                    resp = await cl.get(url)
+                    if resp.status_code == 200 and resp.content:
+                        return resp.content
+            except Exception:
+                return None
+        return None
+
+    def _thumb_png(raw: bytes):
+        try:
+            im = PILImage.open(BytesIO(raw))
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGB")
+            im.thumbnail((90, 90))
+            out = BytesIO()
+            im.save(out, format="PNG")
+            out.seek(0)
+            return out, im.width, im.height
+        except Exception:
+            return None
+
     from openpyxl.styles import Border, Side
+    from openpyxl.utils import get_column_letter
     wb = Workbook(); ws = wb.active; ws.title = "Заявка"
     thin = Side(style="thin", color="C0C0C0")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -813,18 +856,46 @@ async def export_wish_xlsx(
     left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
     link_font = Font(color="0563C1", underline="single")
 
-    headers = [
-        "№ п/п", "Наименование", "Фото", "Категория товара", "Вид",
-        "Описание", "Ссылка пример", "Количество", "Ед. изм.",
-        "Плановая Цена за ед", "Плановая Сумма",
-    ]
-    widths = [7, 34, 30, 20, 16, 50, 32, 12, 10, 16, 16]
+    if with_photos:
+        headers = [
+            "№ п/п", "Наименование", "Фото", "Категория товара", "Вид",
+            "Описание", "Ссылка пример", "Количество", "Ед. изм.",
+            "Плановая Цена за ед", "Плановая Сумма",
+        ]
+        widths = [7, 34, 14, 20, 16, 50, 32, 12, 10, 16, 16]
+    else:
+        headers = [
+            "№ п/п", "Наименование", "Категория товара", "Вид",
+            "Описание", "Ссылка пример", "Количество", "Ед. изм.",
+            "Плановая Цена за ед", "Плановая Сумма",
+        ]
+        widths = [7, 34, 20, 16, 50, 32, 12, 10, 16, 16]
+    ncols = len(headers)
     for c, (h, w) in enumerate(zip(headers, widths), start=1):
         cell = ws.cell(row=1, column=c, value=h)
         cell.font = header_font; cell.fill = header_fill
         cell.alignment = center; cell.border = border
         ws.column_dimensions[cell.column_letter].width = w
     ws.row_dimensions[1].height = 32
+
+    # Позиции колонок (без фото всё после "Наименование" сдвинуто влево)
+    col_name = 2
+    col_photo = 3 if with_photos else None
+    base = 4 if with_photos else 3  # "Категория товара" и далее
+    col_cat = base
+    col_kind = base + 1
+    col_descr = base + 2
+    col_example = base + 3
+    col_qty = base + 4
+    col_unit = base + 5
+    col_price = base + 6
+    col_total = base + 7
+
+    if with_photos:
+        ws.cell(row=1, column=col_photo).comment = Comment(
+            "Изображения встроены в файл и отображаются всегда — настройка безопасности Excel не требуется. "
+            "Оригинальные ссылки на фото — на скрытом листе «Ссылки» (правый клик по ярлыку листа → Показать).",
+            "GALA")
 
     def _photo_url(p):
         if not p:
@@ -842,6 +913,11 @@ async def export_wish_xlsx(
         cl = p.clarification_link or ""
         return cl if cl.startswith("http") else ""
 
+    # Скрытый лист со ссылками — только в режиме с фото
+    if with_photos:
+        ws_links = wb.create_sheet("Ссылки")
+        ws_links.append(["№ п/п", "Наименование", "Фото URL"])
+
     r = 2
     for i, it in enumerate(items, start=1):
         p = getattr(it, "product", None)
@@ -852,38 +928,55 @@ async def export_wish_xlsx(
         photo = _photo_url(p)
         example = _example_url(p)
         ws.cell(row=r, column=1, value=i)
-        ws.cell(row=r, column=2, value=name)
-        c3 = ws.cell(row=r, column=3, value=photo)
-        if photo.startswith("http"):
-            c3.hyperlink = photo; c3.font = link_font
-        ws.cell(row=r, column=4, value=category)
-        ws.cell(row=r, column=5, value=kind)
-        ws.cell(row=r, column=6, value=descr)
-        c7 = ws.cell(row=r, column=7, value=example)
+        ws.cell(row=r, column=col_name, value=name)
+        if with_photos:
+            raw = await _image_bytes(p)
+            if raw:
+                t = _thumb_png(raw)
+                if t:
+                    bio, w_px, h_px = t
+                    img = XLImage(bio)
+                    img.width = w_px; img.height = h_px
+                    ws.add_image(img, f"{get_column_letter(col_photo)}{r}")
+                    ws.row_dimensions[r].height = max(
+                        ws.row_dimensions[r].height or 0, h_px * 0.78 + 6
+                    )
+        ws.cell(row=r, column=col_cat, value=category)
+        ws.cell(row=r, column=col_kind, value=kind)
+        ws.cell(row=r, column=col_descr, value=descr)
+        cex = ws.cell(row=r, column=col_example, value=example)
         if example.startswith("http"):
-            c7.hyperlink = example; c7.font = link_font
+            cex.hyperlink = example; cex.font = link_font
         qty = float(it.quantity or 0)
         unit_price = float(it.unit_price or 0)
         sum_val = float(it.total_price or 0) or (qty * unit_price)
-        ws.cell(row=r, column=8, value=qty)
-        ws.cell(row=r, column=9, value=it.unit or "")
-        price = ws.cell(row=r, column=10, value=unit_price)
-        total = ws.cell(row=r, column=11, value=sum_val)
+        ws.cell(row=r, column=col_qty, value=qty)
+        ws.cell(row=r, column=col_unit, value=it.unit or "")
+        price = ws.cell(row=r, column=col_price, value=unit_price)
+        total = ws.cell(row=r, column=col_total, value=sum_val)
         price.number_format = '# ##0.00'
         total.number_format = '# ##0.00'
-        for c in range(1, 12):
+        left_cols = {col_name, col_descr}
+        leftcenter_cols = {col_example}
+        if with_photos:
+            leftcenter_cols.add(col_photo)
+        for c in range(1, ncols + 1):
             cell = ws.cell(row=r, column=c)
             cell.border = border
-            if c in (2, 6):
+            if c in left_cols:
                 cell.alignment = left_top
-            elif c in (3, 7):
+            elif c in leftcenter_cols:
                 cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        if with_photos:
+            ws_links.append([i, name, photo or ""])
         r += 1
 
+    if with_photos:
+        ws_links.sheet_state = "hidden"
     last_row = max(r - 1, 1)
-    ws.auto_filter.ref = f"A1:K{last_row}"
+    ws.auto_filter.ref = f"A1:{get_column_letter(ncols)}{last_row}"
     ws.freeze_panes = "A2"
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     fname = f"zayavka_{wish.id}.xlsx"

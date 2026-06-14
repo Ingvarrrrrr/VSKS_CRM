@@ -43,7 +43,8 @@
         <div class="podium-card podium-card--second podium-card--clickable" style="min-height:80px" @click="top3[1] && onLeaderClick(top3[1])">
           <div class="podium-rank podium-rank--second">2</div>
           <div v-if="top3[1]" class="podium-body">
-            <div class="podium-name">{{ displayName(top3[1]) }}</div>
+            <LicensePlate v-if="isVehicles" :model-value="displayName(top3[1])" size="sm" class="podium-plate" />
+            <div v-else class="podium-name">{{ displayName(top3[1]) }}</div>
             <div v-if="displaySub(top3[1])" class="podium-sub">{{ displaySub(top3[1]) }}</div>
             <div class="podium-fines">{{ top3[1].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--second">{{ fmtRub(top3[1].fines_total) }}</div>
@@ -59,7 +60,8 @@
         <div class="podium-card podium-card--first podium-card--clickable" style="min-height:108px" @click="top3[0] && onLeaderClick(top3[0])">
           <div class="podium-rank podium-rank--first">1</div>
           <div class="podium-body">
-            <div class="podium-name podium-name--first">{{ displayName(top3[0]) }}</div>
+            <LicensePlate v-if="isVehicles" :model-value="displayName(top3[0])" class="podium-plate" />
+            <div v-else class="podium-name podium-name--first">{{ displayName(top3[0]) }}</div>
             <div v-if="displaySub(top3[0])" class="podium-sub">{{ displaySub(top3[0]) }}</div>
             <div class="podium-fines">{{ top3[0].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--first">{{ fmtRub(top3[0].fines_total) }}</div>
@@ -74,7 +76,8 @@
         <div class="podium-card podium-card--third podium-card--clickable" style="min-height:64px" @click="top3[2] && onLeaderClick(top3[2])">
           <div class="podium-rank podium-rank--third">3</div>
           <div v-if="top3[2]" class="podium-body">
-            <div class="podium-name">{{ displayName(top3[2]) }}</div>
+            <LicensePlate v-if="isVehicles" :model-value="displayName(top3[2])" size="sm" class="podium-plate" />
+            <div v-else class="podium-name">{{ displayName(top3[2]) }}</div>
             <div v-if="displaySub(top3[2])" class="podium-sub">{{ displaySub(top3[2]) }}</div>
             <div class="podium-fines">{{ top3[2].fines_count }} шт.</div>
             <div class="podium-amount podium-amount--third">{{ fmtRub(top3[2].fines_total) }}</div>
@@ -109,7 +112,8 @@
             {{ initials(displayName(leader)) }}
           </div>
           <div class="other-row__info">
-            <div class="other-row__nm">{{ displayName(leader) }}</div>
+            <LicensePlate v-if="isVehicles" :model-value="displayName(leader)" size="sm" />
+            <div v-else class="other-row__nm">{{ displayName(leader) }}</div>
             <div v-if="displaySub(leader)" class="other-row__sb">{{ displaySub(leader) }}</div>
           </div>
           <span class="other-row__cnt">{{ leader.fines_count }} шт.</span>
@@ -131,8 +135,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 
 // ── Props ─────────────────────────────────────────────────────────────────
 const props = withDefaults(defineProps<{
@@ -190,7 +194,6 @@ const AVATAR_PALETTES: [string, string][] = [
 
 // ── State ──────────────────────────────────────────────────────────────────
 
-const router = useRouter()
 const selectedPeriod = ref<number | null>(null)
 const leaders = ref<FineLeaderItem[]>([])
 const loading = ref(false)
@@ -215,6 +218,7 @@ const kindDefaultTitle = computed(() => {
 
 const top3 = computed(() => leaders.value.slice(0, 3))
 const rest = computed(() => leaders.value.slice(3))
+const isVehicles = computed(() => props.kind === 'vehicles')
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -256,35 +260,23 @@ function avatarGradient(name: string): string {
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 
+// Виджет только сообщает о клике. Что делать дальше (drill на месте или
+// навигация-фильтр) решает родитель — слушает @leader-click. Сам виджет
+// никуда НЕ перекидывает.
 function onLeaderClick(item: FineLeaderItem): void {
   if (props.kind === 'drivers') {
     const d = item as FineLeaderDriver
-    const key = d.driver_key
-    const id = d.driver_id
-    emit('leader-click', { key, name: d.driver_name, kind: d.driver_kind, id })
-    if (d.driver_kind === 'user' && id) {
-      router.push({ path: '/fleet/fines', query: { driver_user_id: id } })
-    } else if (d.driver_kind === 'external' && id) {
-      router.push({ path: '/fleet/fines', query: { driver_external_id: id } })
-    }
+    emit('leader-click', { key: d.driver_key, name: d.driver_name, kind: d.driver_kind, id: d.driver_id })
     return
   }
-
   if (props.kind === 'vehicles') {
     const v = item as FineLeaderEntity
     emit('leader-click', { key: v.entity_key, name: v.entity_name, kind: 'vehicle', id: v.entity_id })
-    if (v.entity_id) {
-      router.push({ path: '/fleet/fines', query: { vehicle_id: v.entity_id } })
-    }
     return
   }
-
   if (props.kind === 'filials') {
     const f = item as FineLeaderEntity
     emit('leader-click', { key: f.entity_key, name: f.entity_name, kind: 'filial', id: f.entity_id })
-    if (f.entity_id) {
-      router.push({ path: '/fleet/fines', query: { org_id: f.entity_id } })
-    }
     return
   }
 }
@@ -342,6 +334,7 @@ onMounted(fetchLeaders)
   align-items: center;
   border: 1px solid transparent;
   transition: transform 0.2s ease;
+  min-width: 0;
 }
 .podium-card:hover { transform: translateY(-4px); }
 
@@ -422,6 +415,9 @@ onMounted(fetchLeaders)
 }
 .podium-name--first { font-size: 13px; }
 
+/* Гос-номер вместо текста для kind="vehicles" */
+.podium-plate { margin: 2px auto 0; }
+
 .podium-sub {
   font-size: 10px;
   color: var(--muted, #8a93a8);
@@ -436,6 +432,26 @@ onMounted(fetchLeaders)
   font-size: 11px;
   color: var(--muted, #8a93a8);
   margin-top: 2px;
+}
+
+/* Mobile: подиум помещается в 375px без обрезания 3-й карточки */
+@media (max-width: 599px) {
+  .podium-row { gap: 6px; padding-top: 16px; }
+  .podium-card { padding: 12px 5px; }
+  .podium-rank { width: 30px; height: 30px; font-size: 14px; top: -15px; }
+  .podium-rank--first { width: 36px; height: 36px; font-size: 17px; top: -18px; }
+  .podium-name { max-width: 100%; font-size: 11px; }
+  .podium-name--first { font-size: 12px; }
+  .podium-sub { max-width: 100%; }
+  .podium-amount { font-size: 12px; }
+  .podium-amount--first { font-size: 16px; }
+  .pod-badge { padding: 2px 6px; font-size: 9px; white-space: normal; }
+
+  .other-row { grid-template-columns: 16px 30px 1fr auto auto auto; gap: 6px; padding: 8px 8px; }
+  .other-row__av { width: 30px; height: 30px; }
+  .other-row__nm { font-size: 12px; word-break: break-word; line-height: 1.15; }
+  .other-row__cnt { font-size: 11px; }
+  .other-row__sum { font-size: 12px; }
 }
 
 .podium-amount {
@@ -531,6 +547,7 @@ onMounted(fetchLeaders)
   color: #fff;
   font-size: 11px;
 }
+.other-row__info { min-width: 0; }
 .other-row__nm { font-weight: 600; font-size: 13px; }
 .other-row__sb { font-size: 11px; color: var(--muted, #8a93a8); }
 .other-row__cnt { color: var(--muted, #8a93a8); font-size: 12px; font-weight: 600; white-space: nowrap; }

@@ -37,7 +37,7 @@
     </v-card>
 
     <!-- New checklist dialog -->
-    <v-dialog v-model="newDialog" max-width="700">
+    <v-dialog v-model="newDialog" max-width="700" :fullscreen="mobile">
       <v-card>
         <v-card-title>Новый чек-лист</v-card-title>
         <v-card-text>
@@ -73,7 +73,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+
+const { mobile } = useDisplay()
 
 const props = defineProps<{ vehicleId: number }>()
 

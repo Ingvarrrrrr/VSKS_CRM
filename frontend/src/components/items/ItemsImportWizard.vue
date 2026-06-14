@@ -7,7 +7,7 @@
        mutate (file inputs, drag mapping, toggles) is passed as a reactive
        `state` object and mutated in place, mirroring the v-model style used by
        the parent's refs. Extracted from PurchaseItemsEditor.vue (Layer 2). -->
-  <v-dialog :model-value="modelValue" max-width="1400" scrollable
+  <v-dialog :model-value="modelValue" max-width="1400" scrollable :fullscreen="mobile"
     @update:model-value="(v: boolean) => emit('update:modelValue', v)">
     <v-card>
       <v-card-title class="pa-4 d-flex align-center">
@@ -295,6 +295,9 @@
 
 <script setup lang="ts">
 import FileDropZone from '@/components/FileDropZone.vue'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 interface TargetField { value: string; title: string; required?: boolean; hint?: string }
 interface CrmFieldSelectItem { title: string; value: string }

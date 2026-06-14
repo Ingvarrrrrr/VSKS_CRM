@@ -4,7 +4,8 @@
       "Read(//c/Users/1/Documents/VAULT_for_LLM/Projects/VSKS_CRM/**)",
       "Read(//c/Users/1/Documents/VAULT_for_LLM/**)",
       "Read(//c/Users/1/.claude/**)",
-      "Read(//c/Users/1/Desktop/Cursor/VSKS_CRM/frontend/src/views/**)"
+      "Read(//c/Users/1/Desktop/Cursor/VSKS_CRM/frontend/src/views/**)",
+      "Read(//c/Users/1/Desktop/Cursor/VSKS_CRM/frontend/src/components/**)"
     ]
   },
   "hooks": {

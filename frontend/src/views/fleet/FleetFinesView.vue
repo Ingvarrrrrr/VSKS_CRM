@@ -622,10 +622,19 @@ function formatTime(val: string): string {
 
 // ── Leader click handler ──────────────────────────────────────────────────
 
-// onLeaderClick is now handled inside FineLeadersPodiumWidget (navigates to /fleet/fines?...)
-// This handler is kept as a no-op to satisfy the @leader-click emit binding
-function onLeaderClick(_payload: { key: string; name: string | null; kind: string; id: number | null }): void {
-  // Navigation is handled inside the widget; nothing extra needed here
+// Виджет больше сам не навигирует — фильтруем список штрафов прямо на этой
+// странице, проставляя query (watch на route.query применит фильтр).
+function onLeaderClick(payload: { key: string; name: string | null; kind: string; id: number | null }): void {
+  if (!payload.id) return
+  if (payload.kind === 'user') {
+    router.push({ path: '/fleet/fines', query: { driver_user_id: payload.id } })
+  } else if (payload.kind === 'external') {
+    router.push({ path: '/fleet/fines', query: { driver_external_id: payload.id } })
+  } else if (payload.kind === 'vehicle') {
+    router.push({ path: '/fleet/fines', query: { vehicle_id: payload.id } })
+  } else if (payload.kind === 'filial') {
+    router.push({ path: '/fleet/fines', query: { org_id: payload.id } })
+  }
 }
 
 // ── Query filter helpers ──────────────────────────────────────────────────

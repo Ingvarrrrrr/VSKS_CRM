@@ -1,13 +1,11 @@
 <template>
   <div class="chat-layout">
-    <!-- Sidebar: Chat list -->
-    <v-navigation-drawer
+    <!-- Sidebar: Chat list (плоская панель, без v-navigation-drawer — temporary-drawer
+         с односторонним :model-value залипал после первого закрытия на мобиле) -->
+    <div
       v-if="showSidebar"
-      :permanent="smAndUp"
-      :temporary="!smAndUp"
-      :model-value="showSidebar"
-      width="320"
       class="chat-sidebar"
+      :class="{ 'chat-sidebar--full': !smAndUp }"
     >
       <!-- Header -->
       <v-list-item class="py-3 px-4">
@@ -42,7 +40,7 @@
       </div>
 
       <!-- Room list -->
-      <v-list v-if="filteredRooms.length > 0" lines="two" nav class="pa-1">
+      <v-list v-if="filteredRooms.length > 0" lines="two" nav class="pa-1 chat-room-list">
         <v-list-item
           v-for="room in filteredRooms"
           :key="room.id"
@@ -121,10 +119,10 @@
         text="Нет чатов"
         class="mt-8"
       />
-    </v-navigation-drawer>
+    </div>
 
-    <!-- Main message area -->
-    <div class="chat-main flex-grow-1">
+    <!-- Main message area: на мобиле показываем только когда чат выбран -->
+    <div v-if="smAndUp || !showSidebar" class="chat-main flex-grow-1">
       <!-- No room selected placeholder -->
       <div v-if="!selectedRoom" class="d-flex flex-column align-center justify-center fill-height text-medium-emphasis">
         <v-icon icon="mdi-chat-outline" size="80" class="mb-4 opacity-30" />
@@ -1073,11 +1071,46 @@ onUnmounted(() => {
 <style scoped>
 .chat-layout {
   display: flex !important;
-  height: calc(100vh - 64px) !important;
-  height: calc(100dvh - 64px) !important;
+  /* compact app-bar = 48px */
+  height: calc(100vh - 48px) !important;
+  height: calc(100dvh - 48px) !important;
   overflow: hidden !important;
   width: 100%;
   position: relative;
+}
+/* На мобиле под чатом фиксированная bottom-nav (60px) + safe-area сверху/снизу */
+@media (max-width: 959.98px) {
+  .chat-layout {
+    height: calc(100dvh - 48px - 60px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Боковая панель списка чатов (плоский flex вместо v-navigation-drawer) */
+.chat-sidebar {
+  flex: 0 0 320px;
+  width: 320px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.chat-sidebar--full {
+  flex: 1 1 auto;
+  width: 100%;
+  border-right: none;
+}
+/* Шапка/поиск не сжимаются, список чатов скроллится */
+.chat-sidebar > .v-list-item,
+.chat-sidebar > .v-divider,
+.chat-sidebar > div {
+  flex: 0 0 auto;
+}
+.chat-sidebar .chat-room-list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .chat-main {
@@ -1270,10 +1303,6 @@ onUnmounted(() => {
   flex-shrink: 0 !important;
   flex-grow: 0 !important;
   z-index: 2;
-}
-
-.chat-sidebar {
-  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 .room-menu-btn {

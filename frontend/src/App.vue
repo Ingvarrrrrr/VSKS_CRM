@@ -135,6 +135,13 @@ onUnmounted(() => {
 </script>
 
 <style>
+/* iOS safe-area: к layout-отступу под app-bar добавляем высоту статус-бара,
+   чтобы верх контента (KPI дашборда и пр.) не прятался под часами. env()=0 на
+   desktop/Android → сводится к обычному var(--v-layout-top). */
+.v-main {
+  padding-top: calc(var(--v-layout-top) + env(safe-area-inset-top)) !important;
+}
+
 /* Mobile bottom-nav (AppBar.vue) фиксирован внизу — освобождаем место под него */
 @media (max-width: 959px) {
   .v-main {

@@ -65,6 +65,13 @@
         <v-btn value="table" size="small" icon="mdi-table" />
         <v-btn value="cards" size="small" icon="mdi-view-grid" />
       </v-btn-toggle>
+      <RegistryExportButton
+        title="Заявки"
+        :get-columns="getWishExportColumns"
+        :get-rows="getWishExportRows"
+        :get-capture-el="() => registryArea"
+        @error="(m) => showSnack(m, 'error')"
+      />
       <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="reloadActiveTab">
         Обновить
       </v-btn>
@@ -154,6 +161,7 @@
 
     <!-- ── MY WISHES TAB ── -->
     <div v-if="activeTab === 'my'">
+      <div ref="registryArea">
       <v-data-table
         v-if="effectiveView === 'table'"
         v-resizable-columns="'wishes-my'"
@@ -408,6 +416,8 @@
           total-visible="7"
           class="d-flex justify-center mt-4"
         />
+      </div>
+
       </div>
 
       <!-- FAB to create new wish -->
@@ -1298,8 +1308,10 @@ import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { useCardView } from '@/composables/useCardView'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 
 const router = useRouter()
+const registryArea = ref<HTMLElement | null>(null)
 
 interface WishItem {
   item_name: string
@@ -1426,6 +1438,18 @@ const wishHeaders = [
 ]
 
 const wishHeadersAll = wishHeaders
+
+const EXCLUDED_WISH_KEYS = new Set(['actions', 'data-table-expand'])
+function getWishExportColumns() {
+  return wishHeaders
+    .filter(h => !EXCLUDED_WISH_KEYS.has(h.key) && h.title)
+    .map(h => ({ key: h.key, title: h.title, align: (h as any).align }))
+}
+function getWishExportRows() {
+  if (activeTab.value === 'my') return myWishesFiltered.value
+  if (activeTab.value === 'incoming') return incomingWishesFiltered.value
+  return allWishesFiltered.value
+}
 
 // Filter state
 const filterCreatorId = ref<number | null>(null)

@@ -82,11 +82,21 @@
       </v-row>
 
       <!-- Sections -->
+      <div ref="registryArea">
       <v-expansion-panels v-model="openPanels" multiple>
         <v-expansion-panel v-if="data.overdue.length > 0" value="overdue">
           <v-expansion-panel-title>
             <v-icon icon="mdi-alert-circle" color="error" class="mr-2" />
             Просроченные ({{ data.overdue.length }})
+            <v-spacer />
+            <RegistryExportButton
+              title="Просроченные"
+              :get-columns="() => REPORT_COLUMNS_OVERDUE"
+              :get-rows="() => getReportRows('overdue')"
+              :get-capture-el="() => registryArea"
+              @click.stop
+              @error="(m) => console.error(m)"
+            />
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <v-table density="compact" hover>
@@ -113,6 +123,14 @@
           <v-expansion-panel-title>
             <v-icon icon="mdi-progress-wrench" color="teal" class="mr-2" />
             В работе ({{ data.active.length }})
+            <v-spacer />
+            <RegistryExportButton
+              title="В работе"
+              :get-columns="() => REPORT_COLUMNS_ACTIVE"
+              :get-rows="() => getReportRows('active')"
+              @click.stop
+              @error="(m) => console.error(m)"
+            />
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <v-table density="compact" hover>
@@ -140,6 +158,14 @@
           <v-expansion-panel-title>
             <v-icon icon="mdi-check-circle" color="success" class="mr-2" />
             Завершено за период ({{ data.completed.length }})
+            <v-spacer />
+            <RegistryExportButton
+              title="Завершено"
+              :get-columns="() => REPORT_COLUMNS_COMPLETED"
+              :get-rows="() => getReportRows('completed')"
+              @click.stop
+              @error="(m) => console.error(m)"
+            />
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <v-table density="compact" hover>
@@ -165,6 +191,14 @@
           <v-expansion-panel-title>
             <v-icon icon="mdi-clock-outline" color="blue" class="mr-2" />
             Запланировано ({{ data.planned.length }})
+            <v-spacer />
+            <RegistryExportButton
+              title="Запланировано"
+              :get-columns="() => REPORT_COLUMNS_PLANNED"
+              :get-rows="() => getReportRows('planned')"
+              @click.stop
+              @error="(m) => console.error(m)"
+            />
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <v-table density="compact" hover>
@@ -191,6 +225,14 @@
           <v-expansion-panel-title>
             <v-icon icon="mdi-calendar-arrow-right" color="warning" class="mr-2" />
             Предстоит ({{ data.upcoming.length }})
+            <v-spacer />
+            <RegistryExportButton
+              title="Предстоит"
+              :get-columns="() => REPORT_COLUMNS_UPCOMING"
+              :get-rows="() => getReportRows('upcoming')"
+              @click.stop
+              @error="(m) => console.error(m)"
+            />
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <v-table density="compact" hover>
@@ -211,6 +253,7 @@
           </v-expansion-panel-text>
         </v-expansion-panel>
       </v-expansion-panels>
+      </div>
     </template>
   </v-container>
 </template>
@@ -219,9 +262,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 
 const router = useRouter()
 const loading = ref(false)
+const registryArea = ref<HTMLElement | null>(null)
 const period = ref<'week' | 'month' | 'year'>('week')
 const refDate = ref(new Date().toISOString().slice(0, 10))
 const data = ref<any>(null)
@@ -304,4 +349,48 @@ onMounted(() => {
   load()
   loadFilters()
 })
+
+const REPORT_COLUMNS_OVERDUE = [
+  { key: 'subject', title: 'Название' },
+  { key: 'status', title: 'Статус' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'payment_amount', title: 'Сумма' },
+  { key: 'execution_term', title: 'Срок' },
+  { key: 'assigned_user_name', title: 'Исполнитель' },
+  { key: 'task_comment', title: 'Комментарий' },
+]
+const REPORT_COLUMNS_ACTIVE = [
+  { key: 'subject', title: 'Название' },
+  { key: 'status', title: 'Статус' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'contract_price', title: 'Сумма' },
+  { key: 'execution_term', title: 'Срок' },
+  { key: 'assigned_user_name', title: 'Исполнитель' },
+  { key: 'task_comment', title: 'Комментарий' },
+]
+const REPORT_COLUMNS_COMPLETED = [
+  { key: 'subject', title: 'Название' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'payment_amount', title: 'Оплачено' },
+  { key: 'assigned_user_name', title: 'Исполнитель' },
+  { key: 'task_comment', title: 'Комментарий' },
+]
+const REPORT_COLUMNS_PLANNED = [
+  { key: 'subject', title: 'Название' },
+  { key: 'status', title: 'Статус' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'planned_total_price', title: 'НМЦД' },
+  { key: 'execution_term', title: 'Срок' },
+  { key: 'subsidy_name', title: 'Субсидия' },
+]
+const REPORT_COLUMNS_UPCOMING = [
+  { key: 'subject', title: 'Название' },
+  { key: 'status', title: 'Статус' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'contract_price', title: 'Сумма' },
+  { key: 'execution_term', title: 'Срок' },
+]
+function getReportRows(section: 'overdue' | 'active' | 'completed' | 'planned' | 'upcoming') {
+  return data.value?.[section] ?? []
+}
 </script>

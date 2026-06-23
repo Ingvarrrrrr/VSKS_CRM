@@ -112,7 +112,22 @@ async def list_users(
             q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
     elif org_ids is not None:
         # Обычный режим (без явной цели) — ограничиваем контуром вызывающего.
-        q = q.where(User.org_id.in_(org_ids))
+        # Bugfix: членство в орг определяется не только primary User.org_id, но и
+        # записями user_organizations (отдел/иерархия) и user_org_access. Иначе
+        # сотрудник, состоящий в отделе через user_organizations (виден в Иерархии),
+        # но с другим/пустым User.org_id, пропадал из списка «Сотрудники».
+        from sqlalchemy import or_
+        from app.models.user_organization import UserOrganization
+        conds = [
+            User.org_id.in_(org_ids),
+            User.id.in_(select(UserOrganization.user_id).where(UserOrganization.org_id.in_(org_ids))),
+        ]
+        try:
+            from app.models.user_org_access import UserOrgAccess
+            conds.append(User.id.in_(select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(org_ids))))
+        except Exception:
+            pass
+        q = q.where(or_(*conds))
     # Phase 30.2: driver-only filter — can_drive=True OR fleet_role='driver'
     if can_drive is True:
         from sqlalchemy import or_

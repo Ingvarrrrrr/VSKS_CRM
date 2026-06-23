@@ -310,6 +310,48 @@ def export_pivot(result: Dict, config: Dict, meta: Dict) -> bytes:
     return bio.getvalue()
 
 
+def export_table(title: str, columns: list, rows: list, meta: dict) -> bytes:
+    """Generic «как на экране» экспорт. columns=[{key,title,align?}], rows=[{key:value}]."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Реестр'
+
+    n_cols = len(columns) or 1
+
+    # Row 1 — title
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
+    if n_cols > 1:
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+
+    # Row 3 — headers
+    _ALIGN_MAP = {'start': 'left', 'center': 'center', 'end': 'right'}
+    for idx, col in enumerate(columns, start=1):
+        _setup_header_cell(ws.cell(row=3, column=idx), col.get('title', col.get('key', '')))
+    ws.row_dimensions[3].height = 30
+
+    # Data rows from row 4
+    for r_idx, row in enumerate(rows, start=4):
+        for c_idx, col in enumerate(columns, start=1):
+            value = row.get(col.get('key', ''))
+            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+            if isinstance(value, (int, float)):
+                cell.number_format = '#,##0.##'
+            align_key = col.get('align', 'start')
+            cell.alignment = Alignment(horizontal=_ALIGN_MAP.get(align_key, 'left'), vertical='center')
+            cell.border = BORDER_THIN
+
+    # Autofilter + freeze + column widths
+    if columns:
+        ws.auto_filter.ref = f'A3:{get_column_letter(n_cols)}3'
+        ws.freeze_panes = 'A4'
+        for idx in range(1, n_cols + 1):
+            ws.column_dimensions[get_column_letter(idx)].width = 22
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
 async def export_dashboard(widget_results: List[Dict], config: Dict, meta: Dict) -> bytes:
     """Тип C — дашборд. Каждый виджет = свой лист.
 

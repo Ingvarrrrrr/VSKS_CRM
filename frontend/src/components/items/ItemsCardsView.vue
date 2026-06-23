@@ -88,37 +88,18 @@
                 :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                 item-title="title" item-value="value" density="compact" variant="outlined"
                 :label="feoPerItem ? 'Тип / ФЭО *' : 'Тип'"
-                hide-details :disabled="readonly" />
+                hide-details :disabled="readonly"
+                @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
               <template v-if="feoPerItem">
-                <v-autocomplete
-                  v-model="item.feo_category_id"
-                  :items="feoLeaves"
-                  item-title="path"
-                  item-value="id"
-                  label="ФЭО позиция"
-                  variant="outlined"
-                  density="compact"
-                  clearable
-                  hide-details="auto"
-                  class="mt-2"
-                  :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
+                <FeoCascadeSelect
+                  :model-value="item.feo_node_id ?? item.feo_category_id"
+                  :nodes="feoNodes"
+                  :leaves="feoLeaves"
+                  :readonly="readonly"
                   :error="isFeoMissing(item)"
-                  :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
-                  :disabled="readonly"
-                  @update:model-value="emit('items-changed')"
-                >
-                  <template #item="{ props: itemProps, item: feoItem }">
-                    <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                      <template #subtitle>
-                        <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
-                        <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
-                      </template>
-                    </v-list-item>
-                  </template>
-                  <template #selection="{ item: feoItem }">
-                    <span style="font-size:12px">{{ feoItem.raw.name }}</span>
-                  </template>
-                </v-autocomplete>
+                  class="mt-2"
+                  @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                />
                 <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1 mt-1">
                   <v-icon icon="mdi-alert-outline" size="12" />
                   <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
@@ -224,8 +205,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
+import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor, ProductLike } from '@/components/items/types'
+import type { FeoNode } from '@/composables/useFeoLeaves'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -248,6 +231,7 @@ const props = defineProps<{
   allItemsSelected: boolean
   totalNmck: number
   feoLeaves: any[]
+  feoNodes: FeoNode[]
   unitOptions: string[]
   vatRateOptions: any[]
   // Pure helper / computed-bound function props supplied by the parent:
@@ -279,6 +263,8 @@ const emit = defineEmits<{
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
+  'item-feo-change': [idx: number, val: number | null]
+  'item-type-change': [idx: number, val: string]
   'items-changed': []
 }>()
 </script>

@@ -20,6 +20,13 @@ except ImportError:
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
 
+def _content_disposition(filename: str) -> str:
+    """RFC 5987 — кириллица в имени файла недопустима в latin-1 заголовке."""
+    from urllib.parse import quote
+    ascii_fallback = filename.encode('ascii', 'ignore').decode('ascii').strip() or 'export'
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
 @router.get("/purchase-totals")
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
@@ -144,13 +151,13 @@ async def feo_budget_residuals(
     category_ids: str = Query("", description="comma-separated leaf FeoCategory ids"),
     exclude_purchase_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Остатки бюджета по ФЭО для формы закупки.
 
-    Всегда возвращает направления (ур.1) субсидии — чтобы при формировании заказа
-    было видно, вылезли ли за бюджет по направлению. Дополнительно, если переданы
-    category_ids (выбранные листовые ФЭО), возвращает их остатки + остатки предков.
+    Для пользователей с feo_budget.view_all_levels возвращает направления (ур.1)
+    и ancestors предков в каждом листе. Без этого права: directions=[],
+    ancestors=[] — только сам листовой остаток.
 
     budget листа = FeoCategory.budget; used = SUM(PurchaseItem.total_price) по feo_category_id листа.
     Узел выше: budget = собственный .budget если задан, иначе сумма budget детей;
@@ -159,6 +166,9 @@ async def feo_budget_residuals(
             leaves:[{id,name,level,path,budget,used,residual,ancestors:[...]}]}
     (ancestors — сверху вниз: ур.1 первым).
     """
+    from app.auth.permissions import _get_effective, _active_org
+    effective = await _get_effective(current_user, db, _active_org(current_user))
+    can_view_all_levels = (current_user.role == "superadmin") or ("feo_budget.view_all_levels" in effective)
     from sqlalchemy import select as _sel, func as _f, case as _case
     from app.models.purchase_item import PurchaseItem
     from app.models.purchase import Purchase as _Purchase
@@ -249,14 +259,15 @@ async def feo_budget_residuals(
             cur = cat_by_id.get(cur.parent_id) if cur.parent_id else None
         return " \u203a ".join(reversed(names))
 
-    # Направления (ур.1) субсидии — всегда, для контроля бюджета при формировании.
+    # Направления (ур.1) субсидии — только для пользователей с view_all_levels.
     directions = []
-    for c in all_cats:
-        if c.level == 1 or c.parent_id is None:
-            d = node_info(c.id)
-            d["path"] = path_of(c.id)
-            directions.append(d)
-    directions.sort(key=lambda d: d["name"] or "")
+    if can_view_all_levels:
+        for c in all_cats:
+            if c.level == 1 or c.parent_id is None:
+                d = node_info(c.id)
+                d["path"] = path_of(c.id)
+                directions.append(d)
+        directions.sort(key=lambda d: d["name"] or "")
 
     leaves = []
     for lid in ids:
@@ -264,12 +275,16 @@ async def feo_budget_residuals(
             continue
         leaf = node_info(lid)
         leaf["path"] = path_of(lid)
-        ancestors = []
-        cur = cat_by_id[lid]
-        while cur.parent_id and cur.parent_id in cat_by_id:
-            cur = cat_by_id[cur.parent_id]
-            ancestors.append(node_info(cur.id))
-        leaf["ancestors"] = list(reversed(ancestors))
+        # ancestors только для пользователей с view_all_levels
+        if can_view_all_levels:
+            ancestors = []
+            cur = cat_by_id[lid]
+            while cur.parent_id and cur.parent_id in cat_by_id:
+                cur = cat_by_id[cur.parent_id]
+                ancestors.append(node_info(cur.id))
+            leaf["ancestors"] = list(reversed(ancestors))
+        else:
+            leaf["ancestors"] = []
         leaves.append(leaf)
     return {"directions": directions, "leaves": leaves}
 
@@ -301,6 +316,45 @@ async def list_categories(
         q = q.where(FeoCategory.is_active == is_active)
     result = await db.execute(q.order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id))
     return result.scalars().all()
+
+
+@router.get("/flat")
+async def get_feo_flat(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Returns all FeoCategory nodes for a subsidy as a flat list with is_leaf flag.
+
+    Response: [{id, name, parent_id, level, is_leaf}]
+    is_leaf = True if the node has no children within the same subsidy.
+    Sorted by level, then sort_order, then id.
+    """
+    cats_q = (
+        select(FeoCategory)
+        .where(FeoCategory.subsidy_id == subsidy_id)
+        .order_by(FeoCategory.level, FeoCategory.sort_order.nulls_last(), FeoCategory.id)
+    )
+    all_cats = (await db.execute(cats_q)).scalars().all()
+    if not all_cats:
+        return []
+
+    # Determine which nodes have children
+    has_children: set[int] = set()
+    for c in all_cats:
+        if c.parent_id is not None:
+            has_children.add(c.parent_id)
+
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "parent_id": c.parent_id,
+            "level": c.level,
+            "is_leaf": c.id not in has_children,
+        }
+        for c in all_cats
+    ]
 
 
 @router.get("/tree")
@@ -1046,12 +1100,12 @@ async def export_feo_to_excel(
 
     # purchase totals
     pt_rows = (await db.execute(
-        select(Purchase.feo_category_id, func.coalesce(func.sum(Purchase.planned_total_price), 0).label("t"))
+        select(Purchase.feo_category_id, func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total"))
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.feo_category_id.isnot(None))
         .group_by(Purchase.feo_category_id)
     )).all()
-    purchase_totals = {r.feo_category_id: float(r.t) for r in pt_rows}
+    purchase_totals = {r.feo_category_id: float(r.total) for r in pt_rows}
 
     # Build tree
     by_id = {c.id: {"cat": c, "children": []} for c in cats}
@@ -1138,7 +1192,7 @@ async def export_feo_to_excel(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=feo_{safe_name}.xlsx"},
+        headers={"Content-Disposition": _content_disposition(f"feo_{safe_name}.xlsx")},
     )
 
 

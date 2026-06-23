@@ -736,6 +736,7 @@
             :level2-id="selectedFeo2"
             :subsidy-id="form.subsidy_id"
             :purchase-id-feo="purchaseId"
+            :default-feo-category-id="form.feo_category_id"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
@@ -5538,7 +5539,16 @@ const updateFeoId = () => {
 const onFeo1Change = () => { selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId() }
 const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
 const onFeo3Change = () => { updateFeoId() }
-const onFeoPerItemChange = () => { /* режим переключён — selectedFeo3 остаётся для режима single */ }
+const onFeoPerItemChange = (val: boolean | null) => {
+  // ISSUE-3 PART A: при включении per-item режима уровень 3 в шапке отключается,
+  // поэтому самым глубоким выбранным уровнем шапки становится selectedFeo2.
+  // Обновляем form.feo_category_id, чтобы он стал дефолтом для позиций.
+  if (val) {
+    form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
+  }
+  // Заполнение пустых позиций дефолтом выполняется внутри PurchaseItemsEditor
+  // (watch на feoPerItem + defaultFeoCategoryId). При выключении ничего не делаем.
+}
 
 // SN-UX: при выборе адресата СЗ — автоматически ставим его как ответственного, если пуст
 const onServiceNoteToUserChange = (userId: number | null) => {
@@ -6668,7 +6678,7 @@ const doSave = async (adminOverride: boolean) => {
   try {
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, feo_node_id: _feoNodeId, ...rest }) => ({
         ...rest,
         unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
         quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,

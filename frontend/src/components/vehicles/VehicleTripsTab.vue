@@ -642,7 +642,7 @@ async function doDelete() {
 async function downloadDocx(trip: Trip) {
   renderingId.value = trip.id
   try {
-    const token = localStorage.getItem('token') ?? ''
+    const token = localStorage.getItem('auth_token') ?? ''
     const response = await fetch(`/api/trips/${trip.id}/render`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },

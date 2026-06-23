@@ -7,6 +7,13 @@
       </div>
       <div class="d-flex gap-2 align-center">
         <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+        <RegistryExportButton
+          title="Авансовые отчёты"
+          :get-columns="() => visibleHeaders.filter(h => !['actions','avatar','data-table-expand','data-table-select'].includes(h.key) && !!h.title).map(h => ({ key: h.key, title: h.title, align: h.align }))"
+          :get-rows="() => filteredItems"
+          :get-capture-el="() => registryArea"
+          @error="(msg) => { snack.text = msg; snack.color = 'error'; snack.show = true }"
+        />
         <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
         <v-btn-toggle v-if="!arMobile" v-model="arViewMode" mandatory density="comfortable" variant="outlined" divided class="ml-1">
           <v-btn value="table" size="small" icon="mdi-table" />
@@ -112,6 +119,7 @@
       </v-chip>
     </v-chip-group>
 
+    <div ref="registryArea">
     <v-data-table
         v-if="arEffectiveView === 'table'"
         v-resizable-columns="'advance-reports'"
@@ -485,6 +493,7 @@
       </div>
       <v-pagination v-if="arTotalPages > 1" v-model="arPage" :length="arTotalPages" density="compact" total-visible="7" class="d-flex justify-center mt-4" />
     </div>
+    </div>
 
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
       {{ snack.text }}
@@ -510,11 +519,13 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { useCardView } from '@/composables/useCardView'
 
 const router = useRouter()
+const registryArea = ref<HTMLElement | null>(null)
 
 function onRowClick(_e: MouseEvent | undefined, ctx: any) {
   // Не реагируем если клик пришёл по чекбоксу/expand-кнопке (Vuetify сам обрабатывает)

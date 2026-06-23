@@ -53,6 +53,18 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         org_phone=getattr(c, 'org_phone', None) if c else None,
         org_email=getattr(c, 'org_email', None) if c else None,
         color=org.color,
+        # Extended contractor requisites
+        postal_address=getattr(c, 'postal_address', None) if c else None,
+        okpo=getattr(c, 'okpo', None) if c else None,
+        okved=getattr(c, 'okved', None) if c else None,
+        bank_name=getattr(c, 'bank_name', None) if c else None,
+        treasury_account=getattr(c, 'treasury_account', None) if c else None,
+        bik=getattr(c, 'bik', None) if c else None,
+        single_treasury_account=getattr(c, 'single_treasury_account', None) if c else None,
+        registration_date=str(c.registration_date) if c and getattr(c, 'registration_date', None) else None,
+        signatory_position=getattr(c, 'signatory_position', None) if c else None,
+        signatory_basis=getattr(c, 'signatory_basis', None) if c else None,
+        website=getattr(c, 'website', None) if c else None,
     )
 
 

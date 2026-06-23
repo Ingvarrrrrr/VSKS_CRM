@@ -30,8 +30,16 @@
         <v-btn value="cards" size="small" icon="mdi-view-grid" />
       </v-btn-toggle>
       <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+      <RegistryExportButton
+        title="Организации"
+        :get-columns="() => visibleHeaders.filter(h => !['actions','avatar','data-table-expand','data-table-select'].includes(h.key) && !!h.title).map(h => ({ key: h.key, title: h.title, align: h.align }))"
+        :get-rows="() => orgs"
+        :get-capture-el="() => registryArea"
+        @error="(msg) => showSnack(msg, 'error')"
+      />
     </div>
 
+    <div ref="registryArea">
     <v-data-table
         v-if="effectiveView === 'table'"
         v-resizable-columns="'organizations'"
@@ -138,6 +146,7 @@
         class="d-flex justify-center mt-4"
       />
     </div>
+    </div>
 
     <!-- Edit org dialog -->
     <v-dialog v-model="editOrgDialog" max-width="640" scrollable :fullscreen="mobile">
@@ -151,17 +160,30 @@
           >
             <div class="d-flex align-center flex-wrap" style="gap:8px">
               <span class="text-caption">
-                Данные автоматически берутся из карточки контрагента.
-                Редактируйте реквизиты в разделе «Контрагенты».
+                Полные реквизиты хранятся в карточке контрагента.
               </span>
               <v-btn
-                size="x-small" variant="tonal" color="primary"
+                size="x-small" variant="flat" color="primary"
+                prepend-icon="mdi-pencil-outline"
+                @click="openContractorEdit(editOrgItem.contractor_id!)"
+              >
+                Редактировать реквизиты
+              </v-btn>
+              <v-btn
+                size="x-small" variant="text" color="primary"
                 prepend-icon="mdi-open-in-new"
-                @click="goToContractor(editOrgItem.contractor_id)"
+                @click="goToContractor(editOrgItem.contractor_id!)"
               >
                 Открыть контрагента
               </v-btn>
             </div>
+          </v-alert>
+          <v-alert
+            v-if="!editOrgItem.contractor_id"
+            type="info" density="compact" variant="tonal" class="mb-3"
+            icon="mdi-information-outline"
+          >
+            <span class="text-caption">Укажите ИНН — будет создана карточка контрагента с полными реквизитами.</span>
           </v-alert>
 
           <v-text-field
@@ -257,6 +279,13 @@
       </v-card>
     </v-dialog>
 
+    <!-- ContractorEditDialog — редактирование реквизитов контрагента из карточки org -->
+    <ContractorEditDialog
+      v-model="contractorEditDialog"
+      :contractor-id="contractorEditId"
+      @saved="onContractorSaved"
+    />
+
     <!-- Delete confirm -->
     <v-dialog v-model="deleteDialog.show" max-width="360">
       <v-card>
@@ -295,6 +324,8 @@ import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
+import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 
 interface Org {
   id: number
@@ -321,6 +352,7 @@ const EGRUL_FIELDS = [
 ]
 
 const router = useRouter()
+const registryArea = ref<HTMLElement | null>(null)
 const orgs = ref<Org[]>([])
 const loading = ref(false)
 const search = ref('')
@@ -355,6 +387,21 @@ const egrulMessageType = ref<'success' | 'info' | 'error'>('info')
 const egrulDiffDialog = ref(false)
 const egrulDiffItems = ref<{ label: string; old: string; new: string }[]>([])
 const egrulDiffPending = ref<Record<string, string>>({})
+
+// ContractorEditDialog — открытие из карточки организации
+const contractorEditDialog = ref(false)
+const contractorEditId = ref<number | null>(null)
+
+function openContractorEdit(contractorId: number) {
+  contractorEditId.value = contractorId
+  contractorEditDialog.value = true
+}
+
+async function onContractorSaved() {
+  contractorEditDialog.value = false
+  await loadOrgs()
+  showSnack('Реквизиты контрагента обновлены')
+}
 
 async function enrichFromEgrul() {
   const inn = editOrgItem.value.inn?.trim()

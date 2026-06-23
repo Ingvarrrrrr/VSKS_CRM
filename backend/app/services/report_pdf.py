@@ -302,6 +302,158 @@ def export_pivot(result: Dict, config: Dict, meta: Dict) -> bytes:
     return bio.getvalue()
 
 
+def export_table(title: str, columns: list, rows: list, meta: dict) -> bytes:
+    """Generic «как на экране» экспорт в PDF. columns=[{key,title,align?}], rows=[{key:value}]."""
+    _register_fonts()
+    styles = _get_styles()
+    bio = io.BytesIO()
+    doc = SimpleDocTemplate(bio, pagesize=landscape(A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm)
+
+    elements = []
+
+    # Title + meta
+    elements.append(Paragraph(title, styles['title']))
+    meta_text = (
+        f"Автор: {meta.get('author', '—')} &nbsp;&nbsp; "
+        f"Сформирован: {meta.get('generated_at', datetime.utcnow().strftime('%d.%m.%Y %H:%M'))}"
+    )
+    elements.append(Paragraph(meta_text, styles['small']))
+    elements.append(Spacer(1, 6))
+
+    if not columns:
+        elements.append(Paragraph('Нет данных', styles['normal']))
+        doc.build(elements)
+        return bio.getvalue()
+
+    _ALIGN_MAP = {'start': TA_LEFT, 'center': TA_CENTER, 'end': TA_RIGHT}
+
+    # Header row
+    header_row = [Paragraph(col.get('title', col.get('key', '')), styles['header_cell']) for col in columns]
+    data = [header_row]
+
+    # Data rows
+    for row in rows:
+        cells = []
+        for col in columns:
+            key = col.get('key', '')
+            val = row.get(key)
+            align_key = col.get('align', 'start')
+            ta = _ALIGN_MAP.get(align_key, TA_LEFT)
+            cell_style = ParagraphStyle('GenCell', parent=styles['cell'], alignment=ta)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                cell_style = ParagraphStyle('GenCellR', parent=styles['cell_right'], alignment=ta if align_key != 'start' else TA_RIGHT)
+            cells.append(Paragraph(_fmt_value(val), cell_style))
+        data.append(cells)
+
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#4472C4')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), white),
+        ('FONTNAME', (0, 0), (-1, 0), styles['bold_font_name']),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#BFBFBF')),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(table)
+
+    doc.build(elements)
+    return bio.getvalue()
+
+
+def export_kanban(title: str, columns: List[Dict], meta: dict) -> bytes:
+    """Канбан в PDF. columns=[{status_title, cards:[{title, subtitle?, fields?:[{label,value}]}]}]"""
+    _register_fonts()
+    styles = _get_styles()
+    bio = io.BytesIO()
+    doc = SimpleDocTemplate(
+        bio, pagesize=landscape(A4),
+        leftMargin=10*mm, rightMargin=10*mm, topMargin=12*mm, bottomMargin=10*mm,
+    )
+    elements = []
+    elements.append(Paragraph(title, styles['title']))
+    meta_text = (
+        f"Автор: {meta.get('author', '—')} &nbsp;&nbsp; "
+        f"Сформирован: {meta.get('generated_at', datetime.utcnow().strftime('%d.%m.%Y %H:%M'))}"
+    )
+    elements.append(Paragraph(meta_text, styles['small']))
+    elements.append(Spacer(1, 8))
+
+    if not columns:
+        elements.append(Paragraph('Нет данных', styles['normal']))
+        doc.build(elements)
+        return bio.getvalue()
+
+    font = styles['font_name']
+    bold_font = styles['bold_font_name']
+
+    # Распределяем колонки по ширине страницы landscape A4 ~ 277мм − 20мм margins = 257мм
+    page_w = landscape(A4)[0] - 20*mm
+    n_cols = len(columns)
+    col_w = page_w / n_cols
+
+    # Строим таблицу: 1 ряд заголовков + максимальное кол-во карточек
+    max_cards = max((len(c.get('cards', [])) for c in columns), default=0)
+
+    header_row = []
+    for col in columns:
+        p = Paragraph(col.get('status_title', ''), ParagraphStyle(
+            'KanbanHeader', fontName=bold_font, fontSize=10, alignment=TA_CENTER,
+            textColor=white, leading=13,
+        ))
+        header_row.append(p)
+
+    data = [header_row]
+    for card_i in range(max_cards):
+        row = []
+        for col in columns:
+            cards = col.get('cards', [])
+            if card_i < len(cards):
+                card = cards[card_i]
+                card_title = card.get('title', '')
+                card_subtitle = card.get('subtitle', '')
+                fields = card.get('fields') or []
+                parts = [f'<b>{card_title}</b>']
+                if card_subtitle:
+                    parts.append(f'<font size="7" color="grey">{card_subtitle}</font>')
+                for f in fields:
+                    parts.append(f'<font size="7"><b>{f.get("label","")}</b>: {f.get("value","")}</font>')
+                cell_text = '<br/>'.join(parts)
+                p = Paragraph(cell_text, ParagraphStyle(
+                    'KanbanCard', fontName=font, fontSize=8, leading=11, spaceAfter=2,
+                ))
+                row.append(p)
+            else:
+                row.append('')
+        data.append(row)
+
+    col_widths = [col_w] * n_cols
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+
+    # Стиль: header синий, строки с отступами, сетка
+    ts = [
+        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#4472C4')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), white),
+        ('FONTNAME', (0, 0), (-1, 0), bold_font),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#BFBFBF')),
+        ('TOPPADDING', (0, 1), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]
+    # Чередование фонов строк
+    for i in range(1, len(data)):
+        if i % 2 == 0:
+            ts.append(('BACKGROUND', (0, i), (-1, i), HexColor('#F7F9FC')))
+
+    table.setStyle(TableStyle(ts))
+    elements.append(table)
+
+    doc.build(elements)
+    return bio.getvalue()
+
+
 async def export_dashboard(widget_results: List[Dict], config: Dict, meta: Dict) -> bytes:
     """Тип C — дашборд в PDF. Каждый виджет = таблица."""
     styles = _get_styles()

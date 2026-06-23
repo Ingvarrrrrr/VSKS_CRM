@@ -166,6 +166,18 @@ class OrganizationOut(BaseModel):
     lon: Optional[float] = None
     region: Optional[str] = None
     head_user_id: Optional[int] = None
+    # Extended contractor requisites (populated when contractor_id is set)
+    postal_address: Optional[str] = None
+    okpo: Optional[str] = None
+    okved: Optional[str] = None
+    bank_name: Optional[str] = None
+    treasury_account: Optional[str] = None
+    bik: Optional[str] = None
+    single_treasury_account: Optional[str] = None
+    registration_date: Optional[str] = None
+    signatory_position: Optional[str] = None
+    signatory_basis: Optional[str] = None
+    website: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):

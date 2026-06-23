@@ -24,6 +24,12 @@
           @click="removeSelectedItems">
           Удалить ({{ selectedItemIdxs.length }})
         </v-btn>
+        <!-- ISSUE-3 PART B: bulk-assign FEO level to selected items -->
+        <v-btn v-if="props.feoPerItem && selectedItemIdxs.length > 0 && !props.readonly"
+          variant="tonal" prepend-icon="mdi-format-list-bulleted-type" size="small" color="primary"
+          @click="openBulkFeoDialog">
+          Назначить ФЭО для выбранных ({{ selectedItemIdxs.length }})
+        </v-btn>
         <v-btn
           v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
           size="small" variant="tonal" color="teal"
@@ -88,6 +94,7 @@
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :feo-leaves="feoLeaves"
+          :feo-nodes="feoNodes"
           :feo-per-item="props.feoPerItem"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
           :show-contractor-column="showContractorColumn"
@@ -132,6 +139,8 @@
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
+          @item-feo-change="onItemFeoChange"
+          @item-type-change="onItemTypeChange"
           @update-contract-field="updateContractField"
           @contract-vat-change="onContractVatRateChange"
         />
@@ -155,6 +164,7 @@
           :all-items-selected="allItemsSelected"
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
+          :feo-nodes="feoNodes"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :is-over-budget="isOverBudget"
@@ -178,6 +188,8 @@
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
+          @item-feo-change="onItemFeoChange"
+          @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
         />
         <ItemsTableFlat
@@ -194,6 +206,7 @@
           :all-items-selected="allItemsSelected"
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
+          :feo-nodes="feoNodes"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :resize-style="resizeStyle"
@@ -219,6 +232,8 @@
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
+          @item-feo-change="onItemFeoChange"
+          @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
         />
       </template>
@@ -241,6 +256,7 @@
         :all-items-selected="allItemsSelected"
         :total-nmck="internalTotalNmck"
         :feo-leaves="feoLeaves"
+        :feo-nodes="feoNodes"
         :unit-options="UNIT_OPTIONS"
         :vat-rate-options="VAT_RATE_OPTIONS"
         :is-over-budget="isOverBudget"
@@ -412,6 +428,29 @@
       @pick="onRepickPick"
     />
 
+    <!-- ===== ISSUE-3 PART B: Bulk FEO assignment dialog ===== -->
+    <v-dialog v-model="bulkFeoDialog" max-width="520">
+      <v-card>
+        <v-card-title class="text-subtitle-1">
+          Назначить ФЭО для выбранных ({{ selectedItemIdxs.length }})
+        </v-card-title>
+        <v-card-text>
+          <FeoCascadeSelect
+            v-model="bulkFeoId"
+            :nodes="feoNodes"
+            :leaves="feoLeaves"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeBulkFeoDialog">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="bulkFeoId == null" @click="applyBulkFeo">
+            Применить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ===== Snackbar ===== -->
     <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
       {{ snack.text }}
@@ -439,6 +478,7 @@ import ItemsTableFlat from '@/components/items/ItemsTableFlat.vue'
 import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
 import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
 import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
+import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { ContractItem } from '@/types/contractItem'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
@@ -484,6 +524,7 @@ interface EditorItem {
   final_total?: number | null
   feo_planned_item_id?: number | null
   feo_category_id?: number | null  // FCAT-F1: per-item привязка к leaf FeoCategory
+  feo_node_id?: number | null      // UI-only: позиция каскада ФЭО (любой узел, не только лист)
   // UI-local state (stripped by parent before save):
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -613,6 +654,8 @@ const props = withDefaults(defineProps<{
   level2Id?: number | null
   subsidyId?: number | null
   purchaseIdFeo?: number | null
+  // ISSUE-3: header-selected deepest FEO level — used to default per-item values
+  defaultFeoCategoryId?: number | null
   // SN-UX: кастомный заголовок секции позиций
   itemsTitle?: string
 }>(), {
@@ -637,6 +680,7 @@ const props = withDefaults(defineProps<{
   level2Id: null,
   subsidyId: null,
   purchaseIdFeo: null,
+  defaultFeoCategoryId: null,
   itemsTitle: undefined,
 })
 
@@ -648,6 +692,7 @@ const stagesEnabled = computed(() => props.unifiedStagesView || props.showContra
 // FeoLeaf type imported above.
 const {
   feoLeaves,
+  feoNodes,
   isOverBudget: feoIsOverBudget,
   overBudgetDelta: feoOverBudgetDelta,
 } = useFeoLeaves({
@@ -667,6 +712,29 @@ function overBudgetDelta(row: EditorItem): number {
 function isFeoMissing(row: EditorItem): boolean {
   return props.feoPerItem && !row.feo_category_id
 }
+
+// ISSUE-3 PART A: when per-item mode is turned ON (or the header's deepest level
+// changes while in per-item mode), fill ONLY items whose feo_category_id is empty
+// with the header-selected default. Never overwrite user-picked per-item values.
+function fillEmptyItemsWithDefaultFeo(): boolean {
+  if (!props.feoPerItem) return false
+  if (props.defaultFeoCategoryId == null) return false
+  let changed = false
+  for (const it of localItems.value) {
+    if (it.feo_category_id == null) {
+      it.feo_category_id = props.defaultFeoCategoryId
+      changed = true
+    }
+  }
+  return changed
+}
+
+watch(
+  () => [props.feoPerItem, props.defaultFeoCategoryId] as const,
+  () => {
+    if (fillEmptyItemsWithDefaultFeo()) emitUpdate()
+  }
+)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const emit = defineEmits<{
@@ -1355,6 +1423,10 @@ function addItem() {
     newItem.final_unit_price = null
     newItem.final_total = null
     newItem.feo_planned_item_id = null
+    // ISSUE-3 PART A: inherit header-selected deepest FEO level by default
+    if (props.feoPerItem && newItem.feo_category_id == null && props.defaultFeoCategoryId != null) {
+      newItem.feo_category_id = props.defaultFeoCategoryId
+    }
   }
   localItems.value.push(newItem)
   emit('item-added', newItem)
@@ -1422,6 +1494,61 @@ function removeSelectedItems() {
   localItems.value = localItems.value.filter((_, i) => !toRemove.has(i))
   selectedItemIdxs.value = []
   emitUpdate()
+}
+
+// ── ISSUE-3 PART B: bulk-assign FEO level to selected items ───────────────────
+const bulkFeoDialog = ref(false)
+const bulkFeoId = ref<number | null>(null)
+
+function openBulkFeoDialog() {
+  bulkFeoId.value = null
+  bulkFeoDialog.value = true
+}
+
+function closeBulkFeoDialog() {
+  bulkFeoDialog.value = false
+  bulkFeoId.value = null
+}
+
+function applyBulkFeo() {
+  if (bulkFeoId.value == null) return
+  for (const idx of selectedItemIdxs.value) {
+    const item = localItems.value[idx]
+    if (item) item.feo_category_id = bulkFeoId.value
+  }
+  bulkFeoDialog.value = false
+  bulkFeoId.value = null
+  selectedItemIdxs.value = []
+  emitUpdate()
+}
+
+// Inline-пропагация на выбранные: при мультивыборе изменение ФЭО/Тип в одной
+// позиции применяется ко всем выбранным. Если строка не входит в выделение
+// (или выделена одна) — меняется только она.
+function _propagateToSelected(idx: number, apply: (it: any) => void) {
+  const sel = selectedItemIdxs.value
+  const targets = sel.length > 1 && sel.includes(idx) ? sel : [idx]
+  for (const i of targets) {
+    const it = localItems.value[i]
+    if (it) apply(it)
+  }
+  emitUpdate()
+}
+
+function onItemFeoChange(idx: number, nodeId: number | null) {
+  // FeoCascadeSelect эмитит выбранный УЗЕЛ на каждом уровне (а не только лист).
+  // feo_node_id — позиция каскада (любой узел); пропагируем её на все выбранные
+  // строки, чтобы смена ЛЮБОГО уровня в одной позиции отражалась во всех сразу.
+  // feo_category_id (сохраняемый лист) выставляем только когда узел — лист.
+  const isLeaf = nodeId != null && (feoNodes.value.find(n => n.id === nodeId)?.is_leaf ?? false)
+  _propagateToSelected(idx, it => {
+    it.feo_node_id = nodeId
+    it.feo_category_id = isLeaf ? nodeId : null
+  })
+}
+
+function onItemTypeChange(idx: number, val: string) {
+  _propagateToSelected(idx, it => { it.item_type = val })
 }
 
 // import-no-clutter: bulk-add несвязанных позиций в каталог

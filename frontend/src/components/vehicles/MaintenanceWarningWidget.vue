@@ -174,7 +174,7 @@ async function fetchWarnings(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const token = localStorage.getItem('token') ?? ''
+    const token = localStorage.getItem('auth_token') ?? ''
     const res = await fetch('/api/vehicles-dashboard/maintenance-warning', {
       headers: { Authorization: `Bearer ${token}` },
     })

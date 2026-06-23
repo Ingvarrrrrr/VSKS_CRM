@@ -16,6 +16,13 @@
         <v-btn prepend-icon="mdi-view-column" variant="outlined" color="primary" @click="showColumnPicker = true">
           Колонки
         </v-btn>
+        <RegistryExportButton
+          title="Реестр платежей"
+          :get-columns="() => visibleColumnHeaders.filter(h => !['actions','avatar','data-table-expand','data-table-select'].includes(h.key) && !!h.title).map(h => ({ key: h.key, title: h.title, align: h.align }))"
+          :get-rows="() => searchedItems"
+          :get-capture-el="() => registryArea"
+          @error="(msg) => error(msg)"
+        />
         <v-btn-toggle
           v-if="!prMobile"
           v-model="prViewMode"
@@ -282,6 +289,7 @@
     </v-card>
 
     <!-- Table -->
+    <div ref="registryArea">
     <v-data-table
       v-if="prEffectiveView === 'table'"
       v-resizable-columns="'payment-registry'"
@@ -758,6 +766,7 @@
         class="d-flex justify-center mt-4"
       />
     </div>
+    </div>
 
     <!-- Column picker dialog -->
     <ColumnConfigDialog
@@ -808,6 +817,7 @@ import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { SCROLLERHASH_MASTER_KEYS } from '@/constants/scrollerhash_columns'
@@ -992,6 +1002,7 @@ interface BankPayment {
 
 const payments = ref<BankPayment[]>([])
 const loading = ref(false)
+const registryArea = ref<HTMLElement | null>(null)
 const totalCount = ref(0)
 const page = ref(1)
 const expanded = ref<number[]>([])

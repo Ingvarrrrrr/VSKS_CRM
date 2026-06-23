@@ -21,6 +21,14 @@
           <v-btn value="table" size="small" icon="mdi-table" title="Таблица" />
           <v-btn value="cards" size="small" icon="mdi-view-grid" title="Карточки" />
         </v-btn-toggle>
+        <RegistryExportButton
+          title="Реестр субсидий"
+          :get-columns="getSubsidyExportColumns"
+          :get-rows="getSubsidyExportRows"
+          :get-capture-el="() => registryArea"
+          class="mr-2"
+          @error="(m) => showSnack(m, 'error')"
+        />
         <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
           Добавить
         </v-btn>
@@ -43,6 +51,7 @@
       </div>
 
       <template v-else>
+       <div ref="registryArea">
         <!-- ── Table view ── -->
         <v-data-table
           v-if="effectiveView === 'table'"
@@ -177,6 +186,7 @@
             </div>
           </div>
         </div>
+       </div>
         <!-- cards pagination -->
         <div v-if="subTotalPages > 1" class="d-flex justify-center mt-3">
           <v-pagination v-model="subPage" :length="subTotalPages" density="comfortable" />
@@ -302,6 +312,9 @@
                     <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
                       <v-list-item-title>Word (шаблон)</v-list-item-title>
                     </v-list-item>
+                    <v-list-item prepend-icon="mdi-file-pdf-box" @click="exportFeoPdf">
+                      <v-list-item-title>PDF (как на экране)</v-list-item-title>
+                    </v-list-item>
                     <v-divider />
                     <v-list-item prepend-icon="mdi-upload-outline">
                       <v-list-item-title>
@@ -324,7 +337,7 @@
             </div>
 
             <!-- FEO table with D&D, inline edit, total row -->
-            <div v-else class="feo-table-wrap">
+            <div v-else ref="feoTableArea" class="feo-table-wrap">
               <table class="feo-table">
                 <thead>
                   <tr>
@@ -2314,6 +2327,8 @@ import { useCardView } from '@/composables/useCardView'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
+import { useRegistryExport } from '@/composables/useRegistryExport'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -2383,6 +2398,9 @@ const approversHeaders = [
 ]
 
 // ── State ─────────────────────────────────────────
+const registryArea = ref<HTMLElement | null>(null)
+const feoTableArea = ref<HTMLElement | null>(null)
+const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 const loading    = ref(false)
 const saving     = ref(false)
 const savingFeo  = ref(false)
@@ -3056,6 +3074,15 @@ const subsidyTableHeaders = [
   { title: '', key: 'actions', sortable: false, align: 'end' as const },
 ]
 
+function getSubsidyExportColumns() {
+  return subsidyTableHeaders
+    .filter(h => h.key !== 'actions' && h.title)
+    .map(h => ({ key: h.key, title: h.title, align: h.align }))
+}
+function getSubsidyExportRows() {
+  return filteredSubsidies.value
+}
+
 const selectedSubsidy = computed(() =>
   allSubsidies.value.find(s => s.id === selectedId.value) ?? null
 )
@@ -3426,6 +3453,23 @@ async function loadAll() {
   }
 }
 
+async function exportFeoPdf() {
+  if (!feoTableArea.value) { showSnack('Таблица ФЭО не готова', 'error'); return }
+  try {
+    const name = `ФЭО_${selectedSubsidy.value?.name ?? ''}`.trim()
+    await _exportFeoScreenshotPdf(feoTableArea.value, name, undefined, {
+      // Колонка «Действия» нефункциональна в PDF и съедает место — скрыть.
+      hideSelectors: ['.feo-th-actions', '.feo-td-actions'],
+      // С table-layout:fixed «Наименование» ужимается в столбик; auto + перенос по словам.
+      extraCss: '.feo-table{table-layout:auto!important;width:100%!important}'
+        + '.feo-th-name,.feo-td-name{min-width:280px!important;white-space:normal!important}'
+        + '.feo-name{word-break:normal!important;overflow-wrap:anywhere!important}',
+    })
+  } catch (e: any) {
+    showSnack(e?.message ?? 'Ошибка экспорта PDF', 'error')
+  }
+}
+
 async function exportFeoToExcel() {
   if (!selectedId.value) return
   const token = localStorage.getItem('auth_token')
@@ -3437,8 +3481,14 @@ async function exportFeoToExcel() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   const cd = res.headers.get('Content-Disposition') || ''
-  const match = cd.match(/filename=([^;]+)/)
-  a.href = url; a.download = match ? match[1] : 'feo_export.xlsx'; a.click()
+  // Парсим RFC 5987: предпочитаем filename*=UTF-8'' (кириллица), иначе filename="...".
+  // Голый /filename=([^;]+)/ захватывал кавычки → браузер превращал их в «_» → битый «.xlsx_».
+  let name = 'feo_export.xlsx'
+  const star = cd.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i)
+  const plain = cd.match(/filename\s*=\s*(?:"([^"]+)"|([^;\n]+))/i)
+  if (star) name = decodeURIComponent(star[1].trim())
+  else if (plain) name = (plain[1] ?? plain[2] ?? name).trim()
+  a.href = url; a.download = name; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -3750,7 +3800,7 @@ async function saveVersion() {
 }
 
 function exportPlanGraphExcel() {
-  const token = localStorage.getItem('token') || ''
+  const token = localStorage.getItem('auth_token') || ''
   const url = `/api/subsidies/${selectedId.value}/plan-graph/export`
   fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     .then(r => r.blob())
@@ -3764,7 +3814,7 @@ function exportPlanGraphExcel() {
 }
 
 async function exportPlanGraphDocx() {
-  const token = localStorage.getItem('token') || ''
+  const token = localStorage.getItem('auth_token') || ''
   const url = `/api/subsidies/${selectedId.value}/plan-graph/export-docx`
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!r.ok) {
@@ -3783,7 +3833,7 @@ async function exportPlanGraphDocx() {
 async function uploadTemplate(file: File) {
   const fd = new FormData()
   fd.append('file', file)
-  const token = localStorage.getItem('token') || ''
+  const token = localStorage.getItem('auth_token') || ''
   const r = await fetch(`/api/subsidies/${selectedId.value}/plan-graph/template`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

@@ -79,13 +79,32 @@
         />
 
         <!-- List View -->
-        <PurchasesTable
-          v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'"
-          :purchases="filteredTasks"
-          :selected-org-id="selectedOrgId"
-          :loading="loading"
-          @open-purchase="openTask"
-        />
+        <div v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'" class="d-flex justify-end mb-2 ga-2">
+          <RegistryExportButton
+            title="Закупки"
+            :get-columns="getPurchasesExportColumns"
+            :get-rows="getPurchasesExportRows"
+            :get-capture-el="() => registryArea"
+            @error="(m) => console.error(m)"
+          />
+          <v-btn
+            size="small"
+            variant="outlined"
+            color="teal"
+            prepend-icon="mdi-folder-zip-outline"
+            :loading="exportingZip"
+            @click="handlePurchasesZipExport"
+          >Excel + вложения (ZIP)</v-btn>
+        </div>
+        <div ref="registryArea">
+          <PurchasesTable
+            v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'list'"
+            :purchases="filteredTasks"
+            :selected-org-id="selectedOrgId"
+            :loading="loading"
+            @open-purchase="openTask"
+          />
+        </div>
       </template>
 
       <!-- ═══ GENERAL TASKS TAB ═══ -->
@@ -111,21 +130,57 @@
         </div>
 
         <!-- LIST VIEW -->
-        <TasksTable
-          v-else-if="taskViewMode === 'list'"
-          :tasks="filteredGeneralTasks"
-          :current-user-id="currentUserId"
-          :link-purchase-id="linkPurchaseId"
-          @open-task="editGeneralTask"
-          @link-purchase="doLinkPurchase"
-          @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
-          @confirm-done="confirmTaskDone"
-          @reject-done="rejectTaskDone"
-        />
+        <template v-if="taskViewMode === 'list'">
+          <div v-if="filteredGeneralTasks.length > 0" class="d-flex justify-end mb-2 ga-2 flex-wrap">
+            <RegistryExportButton
+              title="Задачи"
+              :get-columns="getGeneralTasksExportColumns"
+              :get-rows="getGeneralTasksExportRows"
+              @error="(m) => console.error(m)"
+            />
+            <v-btn
+              size="small"
+              variant="outlined"
+              color="teal"
+              prepend-icon="mdi-folder-zip-outline"
+              :loading="exportingZip"
+              @click="handleTasksZipExport"
+            >Excel + вложения (ZIP)</v-btn>
+            <v-btn
+              size="small"
+              variant="outlined"
+              color="deep-purple"
+              prepend-icon="mdi-upload"
+              :loading="importingTasks"
+              @click="triggerTasksImport"
+            >Импорт из Excel</v-btn>
+            <input ref="tasksImportInput" type="file" accept=".xlsx,.xls" style="display:none" @change="handleTasksImportFile" />
+          </div>
+          <TasksTable
+            :tasks="filteredGeneralTasks"
+            :current-user-id="currentUserId"
+            :link-purchase-id="linkPurchaseId"
+            @open-task="editGeneralTask"
+            @link-purchase="doLinkPurchase"
+            @navigate-purchase="(id) => router.push(`/orders/${id}/edit`)"
+            @confirm-done="confirmTaskDone"
+            @reject-done="rejectTaskDone"
+          />
+        </template>
 
         <!-- KANBAN VIEW -->
+        <div v-if="taskViewMode !== 'list' && filteredGeneralTasks.length > 0" class="d-flex justify-end mb-2">
+          <v-btn
+            size="small"
+            variant="outlined"
+            color="deep-purple"
+            prepend-icon="mdi-file-pdf-box"
+            :loading="exportingKanban"
+            @click="handleKanbanPdfExport"
+          >Канбан PDF</v-btn>
+        </div>
         <TasksKanban
-          v-else
+          v-if="taskViewMode !== 'list'"
           :tasks="filteredGeneralTasks"
           :current-user-id="currentUserId"
           :link-purchase-id="linkPurchaseId"
@@ -183,6 +238,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useRegistryExport } from '@/composables/useRegistryExport'
 
 const { mobile } = useDisplay()
 import { useAuthStore } from '@/stores/auth'
@@ -194,10 +250,16 @@ import PurchasesTable from '@/components/my-tasks/PurchasesTable.vue'
 import PurchasesKanban from '@/components/my-tasks/PurchasesKanban.vue'
 import TaskEditDialog from '@/components/my-tasks/TaskEditDialog.vue'
 import TasksReport from '@/components/my-tasks/TasksReport.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
+const registryArea = ref<HTMLElement | null>(null)
+const { exportZip, exportKanban, exporting: exportingZip } = useRegistryExport()
+const exportingKanban = ref(false)
+const importingTasks = ref(false)
+const tasksImportInput = ref<HTMLInputElement | null>(null)
 const selectedOrgId = ref<number | null>(null)
 const orgCardsOpen = ref<boolean>(true)
 const orgSummary = ref<{org_id: number | null, org_name: string, task_count: number, purchase_count: number, unseen_count: number}[]>([])
@@ -227,6 +289,28 @@ const filteredGeneralTasks = computed(() =>
 const visibleActiveTasksCount = computed(() =>
   filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length
 )
+
+const PURCHASES_EXPORT_COLUMNS = [
+  { key: 'status', title: 'Статус' },
+  { key: 'subject', title: 'Название' },
+  { key: 'contractor_name', title: 'Контрагент' },
+  { key: 'contract_price', title: 'Сумма' },
+  { key: 'execution_term', title: 'Срок' },
+  { key: 'task_comment', title: 'Комментарий' },
+]
+function getPurchasesExportColumns() { return PURCHASES_EXPORT_COLUMNS }
+function getPurchasesExportRows() { return filteredTasks.value }
+
+const GENERAL_TASKS_EXPORT_COLUMNS = [
+  { key: 'task_number', title: '№' },
+  { key: 'title', title: 'Название' },
+  { key: 'priority', title: 'Приоритет' },
+  { key: 'status', title: 'Статус' },
+  { key: 'due_date', title: 'Срок' },
+  { key: 'purchase_subject', title: 'Закупка' },
+]
+function getGeneralTasksExportColumns() { return GENERAL_TASKS_EXPORT_COLUMNS }
+function getGeneralTasksExportRows() { return filteredGeneralTasks.value }
 const pageTitle = computed(() => {
   const BASE = { general: 'Мои задачи', purchases: 'Мои закупки', report: 'Мои задачи и закупки' }
   const base = BASE[activeTab.value] ?? 'Мои задачи'
@@ -386,6 +470,112 @@ async function respondConsent(taskId: number, accept: boolean) {
     alert(e?.detail || 'Ошибка')
   } finally {
     consentLoading.value = null
+  }
+}
+
+// ── Export / Import ──
+const GT_COLUMNS_FOR_KANBAN = [
+  { status: 'todo', label: 'К выполнению' },
+  { status: 'in_progress', label: 'В работе' },
+  { status: 'review', label: 'На проверке' },
+  { status: 'done', label: 'Архив' },
+]
+
+async function handlePurchasesZipExport() {
+  try {
+    await exportZip({
+      title: 'Закупки',
+      columns: getPurchasesExportColumns(),
+      rows: getPurchasesExportRows(),
+      kind: 'purchases',
+    })
+  } catch (e: any) {
+    console.error('ZIP export error:', e?.message)
+  }
+}
+
+async function handleTasksZipExport() {
+  try {
+    await exportZip({
+      title: 'Задачи',
+      columns: getGeneralTasksExportColumns(),
+      rows: getGeneralTasksExportRows(),
+      kind: 'tasks',
+    })
+  } catch (e: any) {
+    console.error('ZIP export error:', e?.message)
+  }
+}
+
+async function handleKanbanPdfExport() {
+  exportingKanban.value = true
+  try {
+    const cols = GT_COLUMNS_FOR_KANBAN.map(col => ({
+      status_title: col.label,
+      cards: filteredGeneralTasks.value
+        .filter((t: any) => t.status === col.status)
+        .map((t: any) => ({
+          title: `#${t.task_number ?? t.id} ${t.title}`,
+          subtitle: t.due_date ? `Срок: ${t.due_date.split('T')[0]}` : undefined,
+          fields: [
+            ...(t.priority ? [{ label: 'Приоритет', value: t.priority }] : []),
+            ...(t.category ? [{ label: 'Категория', value: t.category }] : []),
+            ...(t.assignees?.length ? [{ label: 'Исполнитель', value: t.assignees.map((a: any) => a.user_name || '?').join(', ') }] : []),
+          ],
+        })),
+    }))
+    await exportKanban({ title: 'Канбан задач', columns: cols })
+  } catch (e: any) {
+    console.error('Kanban PDF error:', e?.message)
+  } finally {
+    exportingKanban.value = false
+  }
+}
+
+function triggerTasksImport() {
+  // Предлагаем скачать шаблон или загрузить файл через confirm
+  const choice = confirm('Нажмите OK, чтобы скачать шаблон Excel.\nНажмите Отмена, чтобы загрузить файл с задачами.')
+  if (choice) {
+    const token = localStorage.getItem('auth_token')
+    const a = document.createElement('a')
+    a.href = '/api/tasks/import-template.xlsx'
+    // Передаём токен через запрос — используем fetch+blob
+    fetch('/api/tasks/import-template.xlsx', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(r => r.blob()).then(blob => {
+      a.href = URL.createObjectURL(blob)
+      a.download = 'tasks_import_template.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    })
+  } else {
+    tasksImportInput.value?.click()
+  }
+}
+
+async function handleTasksImportFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  importingTasks.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/tasks/import.xlsx', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
+    alert(`Импорт завершён: создано ${data.created}, пропущено ${data.skipped}${data.errors?.length ? '\nОшибки:\n' + data.errors.join('\n') : ''}`)
+    await load()
+  } catch (e: any) {
+    alert(`Ошибка импорта: ${e?.message}`)
+  } finally {
+    importingTasks.value = false
+    if (tasksImportInput.value) tasksImportInput.value.value = ''
   }
 }
 

@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
+from app.models.user_organization import UserOrganization
 from app.models.permission import (
     PermissionTab, PermissionAction, RolePermission, UserOrgPermissionOverride,
 )
 from app.auth.jwt import get_current_user
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, ensure_user_org_access
 from app.schemas.schemas import (
     PermissionTabOut, PermissionActionOut, RoleMatrixRow,
     PermissionUpdate, OverrideOut, RoleUpdate,
@@ -160,7 +161,26 @@ async def update_overrides(
     )
     uoa_obj = uoa.scalar_one_or_none()
     if uoa_obj is None:
-        raise HTTPException(404, "Пользователь не привязан к организации")
+        # Self-heal: проверяем членство в user_organizations. Если есть —
+        # создаём запись user_org_access (идемпотентно), иначе — 404.
+        membership = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == user_id,
+                UserOrganization.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if membership is None:
+            raise HTTPException(
+                404,
+                f"Пользователь не состоит в организации id={org_id} — "
+                "сначала добавьте его в организацию",
+            )
+        # Берём роль из User.role как fallback
+        user_obj = await db.get(User, user_id)
+        role = user_obj.role if user_obj else None
+        uoa_id = await ensure_user_org_access(user_id, org_id, role, db)
+        # После flush uoa_obj уже доступен через uoa_id
+        uoa_obj = await db.get(UserOrgAccess, uoa_id)
 
     for upd in updates:
         res = await db.execute(
@@ -234,7 +254,22 @@ async def update_user_org_role(
         )
     )).scalar_one_or_none()
     if uoa is None:
-        raise HTTPException(404, "Пользователь не привязан к организации")
+        # Self-heal: если членство есть — создаём user_org_access с новой ролью
+        membership = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == user_id,
+                UserOrganization.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if membership is None:
+            raise HTTPException(
+                404,
+                f"Пользователь не состоит в организации id={org_id} — "
+                "сначала добавьте его в организацию",
+            )
+        uoa_id = await ensure_user_org_access(user_id, org_id, body.role, db)
+        await db.commit()
+        return {"status": "ok", "role": body.role}
 
     uoa.role = body.role
     await db.commit()

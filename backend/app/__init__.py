@@ -1809,6 +1809,8 @@ app.include_router(vehicle_fines.router)               # /api/vehicle-fines
 app.include_router(fleet_documents_router.router)      # /api/fleet-documents
 app.include_router(checklists_router.router)           # /api/checklists
 app.include_router(incidents_router.router)            # /api/incidents
+from .routers import exports as exports_router
+app.include_router(exports_router.router)              # /api/exports
 
 
 @app.get("/api/diag/version")

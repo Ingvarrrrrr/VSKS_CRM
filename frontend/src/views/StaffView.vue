@@ -55,6 +55,13 @@
             style="max-width:220px" hide-details
           />
           <v-spacer />
+          <RegistryExportButton
+            title="Отделы"
+            :get-columns="getDeptExportColumns"
+            :get-rows="getDeptExportRows"
+            :get-capture-el="() => deptArea"
+            @error="(msg) => showSnack(msg, 'error')"
+          />
           <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadDeptTemplate">
             Шаблон
           </v-btn>
@@ -66,6 +73,7 @@
           </v-btn>
         </div>
 
+        <div ref="deptArea">
         <v-row>
           <!-- Left: Department tree -->
           <v-col cols="12" md="7">
@@ -194,6 +202,7 @@
             </v-card>
           </v-col>
         </v-row>
+        </div>
       </v-window-item>
 
       <!-- ═══════════════════════════════════════════════════════ -->
@@ -216,6 +225,13 @@
             label="Роль" variant="outlined" density="compact" clearable
             style="max-width:160px" hide-details
           />
+          <v-text-field
+            v-model="filterUserSearch"
+            label="Поиск по ФИО / логину / ИНН"
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined" density="compact" clearable hide-details
+            style="max-width:280px"
+          />
           <v-spacer />
           <v-btn v-if="isAdmin" variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadUserTemplate">
             Шаблон
@@ -224,6 +240,13 @@
             Импорт из Excel
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <RegistryExportButton
+            title="Персонал"
+            :get-columns="() => visibleHeaders.filter(h => !['actions','avatar','data-table-expand','data-table-select'].includes(h.key) && !!h.title).map(h => ({ key: h.key, title: h.title, align: h.align }))"
+            :get-rows="() => filteredUsers"
+            :get-capture-el="() => registryArea"
+            @error="(msg) => showSnack(msg, 'error')"
+          />
           <v-btn-toggle
             v-if="!staffMobile"
             v-model="staffViewMode"
@@ -255,6 +278,7 @@
           </div>
         </v-alert>
 
+        <div ref="registryArea">
         <v-data-table
             v-if="staffEffectiveView === 'table'"
             v-resizable-columns="'staff'"
@@ -415,13 +439,26 @@
             class="d-flex justify-center mt-4"
           />
         </div>
+        </div>
       </v-window-item>
 
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- TAB 3: Hierarchy                                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
       <v-window-item value="hierarchy">
-        <HierarchyView ref="hierarchyRef" :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" @create-user="openCreateUser" @data-changed="onHierarchyDataChanged" />
+        <div class="d-flex align-center mb-3">
+          <v-spacer />
+          <RegistryExportButton
+            title="Иерархия"
+            :get-columns="getHierarchyExportColumns"
+            :get-rows="getHierarchyExportRows"
+            :get-capture-el="() => hierarchyArea"
+            @error="(msg) => showSnack(msg, 'error')"
+          />
+        </div>
+        <div ref="hierarchyArea">
+          <HierarchyView ref="hierarchyRef" :embedded="true" @edit-user="openEditUserById" @edit-dept="openEditDeptById" @create-user="openCreateUser" @data-changed="onHierarchyDataChanged" />
+        </div>
       </v-window-item>
     </v-window>
 
@@ -1205,11 +1242,60 @@ import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useCardView } from '@/composables/useCardView'
 import { useDisplay } from 'vuetify'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
+const registryArea = ref<HTMLElement | null>(null)
+const deptArea = ref<HTMLElement | null>(null)
+const hierarchyArea = ref<HTMLElement | null>(null)
+
+function getDeptExportColumns() {
+  return [
+    { key: 'dept', title: 'Отдел' },
+    { key: 'head', title: 'Начальник отдела' },
+    { key: 'employee', title: 'Сотрудник' },
+    { key: 'position', title: 'Должность' },
+  ]
+}
+function getDeptExportRows() {
+  const rows: Array<Record<string, any>> = []
+  for (const d of flatDepts(deptTree.value)) {
+    const members = d.members || []
+    if (members.length === 0) {
+      rows.push({ dept: d.name, head: d.head_user_name || '', employee: '', position: '' })
+    } else {
+      for (const m of members) {
+        rows.push({
+          dept: d.name,
+          head: d.head_user_name || '',
+          employee: m.user_name || '',
+          position: m.position || m.user_role || '',
+        })
+      }
+    }
+  }
+  return rows
+}
+
+function getHierarchyExportColumns() {
+  return [
+    { key: 'full_name', title: 'ФИО' },
+    { key: 'role', title: 'Роль' },
+    { key: 'position', title: 'Должность' },
+    { key: 'department', title: 'Отдел' },
+  ]
+}
+function getHierarchyExportRows() {
+  return users.value.map((u: any) => ({
+    full_name: u.full_name || u.username,
+    role: ROLE_LABELS[u.role] || u.role,
+    position: u.position || '',
+    department: u.department || '',
+  }))
+}
 
 // ── Types ──
 interface UserItem {
@@ -1333,6 +1419,20 @@ const filteredUsers = computed(() => {
   if (currentRole !== 'superadmin') list = list.filter(u => u.role !== 'superadmin')
   if (filterUserRole.value) list = list.filter(u => u.role === filterUserRole.value)
   if (filterUserOrgId.value) list = list.filter(u => (u as any).org_id === filterUserOrgId.value)
+  const q = filterUserSearch.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(u => {
+      const fields = [
+        u.full_name,
+        u.username,
+        (u as any).position,
+        (u as any).email,
+        (u as any).phone,
+        (u as any).inn != null ? String((u as any).inn) : '',
+      ]
+      return fields.some(f => (f || '').toLowerCase().includes(q))
+    })
+  }
   return list
 })
 
@@ -1540,9 +1640,12 @@ watch(
 
 // Фикс: дедуп по org_id — при multi-dept (напр. Цыганов с 4 отделами в ВСКС) не дублируем орг в селекте Доступа
 // Используем Number() чтобы избежать несовпадения number vs string при Map.has()
+// Фикс-2: записи с id===null — несохранённые членства (optimistic push из watch extraOrgIds).
+// Их НЕ включаем в список для секции допусков: PUT overrides вернёт 404 до реального сохранения.
 function dedupOrgAccess(entries: typeof allOrgEntries.value) {
   const map = new Map<number, { org_id: number; org_name: string; role: string }>()
   for (const e of entries) {
+    if (e.id === null) continue  // несохранённая org — допуски настраивать рано
     const key = Number(e.org_id)
     if (!map.has(key)) {
       map.set(key, {
@@ -1662,6 +1765,7 @@ const filterDeptUserId = ref<number | null>(null)
 const canChangePassword = computed(() => ['superadmin', 'account_owner'].includes(localStorage.getItem('user_role') || ''))
 const filterUserRole = ref<string | null>(null)
 const filterUserOrgId = ref<number | null>(null)
+const filterUserSearch = ref('')
 
 // Dept dialog
 const deptDialog = ref(false)

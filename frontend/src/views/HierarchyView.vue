@@ -10,13 +10,40 @@
       <v-btn size="small" variant="text" prepend-icon="mdi-refresh" @click="loadGraph" :loading="loading">
         Обновить
       </v-btn>
+      <v-text-field
+        v-model="searchQuery"
+        density="compact"
+        variant="solo"
+        rounded="pill"
+        hide-details
+        clearable
+        prepend-inner-icon="mdi-magnify"
+        placeholder="Найти сотрудника, отдел, организацию…"
+        class="hv-search ml-3"
+        style="min-width:300px;max-width:340px"
+        @update:model-value="applySearch"
+        @click:clear="applySearch"
+      >
+        <template #append-inner>
+          <v-chip
+            v-if="searchQuery"
+            size="x-small"
+            label
+            :color="searchMatchCount ? 'success' : 'error'"
+            variant="flat"
+            class="font-weight-bold"
+          >
+            {{ searchMatchCount ? `${searchMatchCount} ✓` : '0' }}
+          </v-chip>
+        </template>
+      </v-text-field>
       <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="newDeptDialog.show = true" class="ml-2">
         Добавить отдел
       </v-btn>
-      <v-btn size="small" variant="tonal" color="indigo" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
+      <v-btn size="small" variant="tonal" color="blue" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
         Добавить сотрудника
       </v-btn>
-      <v-btn v-if="isSuperadmin || isAccountOwner" size="small" variant="tonal" color="deep-purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
+      <v-btn v-if="isSuperadmin || isAccountOwner" size="small" variant="tonal" color="purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
         Организация
       </v-btn>
       <v-spacer />
@@ -807,6 +834,13 @@ const addMemberLoading = ref(false)
 
 // ── Custom node components ─────────────────────────────────────────────────────
 
+// «Вьющаяся» стрелка-указатель: рендерится над совпавшим при поиске узлом.
+function matchPointer(matched: boolean) {
+  return matched
+    ? h('div', { class: 'hv-pointer' }, [h('span', { class: 'mdi mdi-arrow-down-bold' })])
+    : null
+}
+
 const OrgNode = markRaw({
   name: 'OrgNode',
   props: ['data'],
@@ -835,6 +869,7 @@ const OrgNode = markRaw({
         }) : null,
       ]),
       p.data.inn ? h('div', { class: 'hnode-org-inn' }, `ИНН: ${p.data.inn}`) : null,
+      matchPointer(p.data.matched),
     ])
   },
 })
@@ -879,6 +914,7 @@ const DeptNode = markRaw({
         type: 'target', position: Position.Left, id: 'tgt',
         style: 'background:#ff9800;width:12px;height:12px;border:2px solid white;left:-6px;top:18px',
       }),
+      matchPointer(p.data.matched),
     ])
   },
 })
@@ -966,6 +1002,7 @@ const UserNode = markRaw({
         title: 'Удалить сотрудника',
         onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-delete-user', { detail: { id: p.data.userId, name: p.data.label } })) },
       }) : null,
+      matchPointer(p.data.matched),
     ])
   },
 })
@@ -975,6 +1012,46 @@ const defaultEdgeOptions = { type: 'smoothstep' }
 
 // ── VueFlow composable ─────────────────────────────────────────────────────────
 const { addEdges, removeEdges, fitView, onEdgeClick, onNodeDragStop, onNodeDoubleClick, onNodesInitialized } = useVueFlow()
+
+// ── Поиск по графу: сотрудники / отделы / организации ──────────────────────────
+// Подсвечивает совпавшие узлы, гасит остальные, цепляет «вьющуюся» стрелку-указатель
+// (data.matched → рендерится анимированный pointer в каждом узле) и центрирует вид.
+const searchQuery = ref('')
+const searchMatchCount = ref(0)
+
+function applySearch() {
+  const q = (searchQuery.value || '').trim().toLowerCase()
+  const matchedIds: string[] = []
+  for (const n of nodes.value) {
+    const d: any = n.data || {}
+    let hit = false
+    if (q) {
+      const hay: string[] = [String(d.label ?? '')]
+      if (n.type === 'user') {
+        if (d.position) hay.push(String(d.position))
+        if (d.deptOrgName) hay.push(String(d.deptOrgName))
+        for (const o of (d.userOrgs || [])) {
+          if (o.org) hay.push(String(o.org))
+          if (o.pos) hay.push(String(o.pos))
+          if (o.dept) hay.push(String(o.dept))
+        }
+      } else if (n.type === 'org') {
+        if (d.inn) hay.push(String(d.inn))
+      } else if (n.type === 'dept') {
+        if (d.orgName) hay.push(String(d.orgName))
+      }
+      hit = hay.some(s => s.toLowerCase().includes(q))
+    }
+    d.matched = hit
+    n.data = d
+    n.class = q ? (hit ? 'hv-node-match' : 'hv-node-dim') : ''
+    if (hit) matchedIds.push(n.id)
+  }
+  searchMatchCount.value = matchedIds.length
+  if (matchedIds.length) {
+    fitView({ nodes: matchedIds, padding: 0.45, duration: 500, maxZoom: 1.3 })
+  }
+}
 
 const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', contractor_id: null as number | null })
 // Единая карточка контрагента (для организаций, привязанных к контрагенту)
@@ -2102,6 +2179,75 @@ defineExpose({ refresh: loadGraph })
 .v-theme--dark .vue-flow__controls { background: var(--crm-surface) !important; border-color: var(--crm-border) !important; }
 .v-theme--dark .vue-flow__controls-button { background: var(--crm-surface) !important; border-color: var(--crm-border) !important; fill: var(--crm-text) !important; }
 .v-theme--dark .vue-flow__minimap { background: var(--crm-surface) !important; }
+
+/* ── Поиск: заметная строка ── */
+.hv-search .v-field {
+  background: #ffffff !important;
+  border: 2px solid #fb923c !important;
+  box-shadow: 0 2px 10px rgba(251,146,60,0.30) !important;
+  transition: box-shadow .2s, border-color .2s;
+}
+.hv-search .v-field:hover { box-shadow: 0 2px 14px rgba(251,146,60,0.45) !important; }
+.hv-search .v-field--focused {
+  border-color: #ea7c1c !important;
+  box-shadow: 0 0 0 4px rgba(251,146,60,0.25) !important;
+}
+.hv-search .v-field__prepend-inner .mdi { color: #ea7c1c !important; opacity: 1; }
+/* Светлая тема — тёмный текст на белом */
+.hv-search input { color: #1f2937 !important; }
+.hv-search input::placeholder { color: #8a6d4f !important; opacity: 0.9; }
+
+/* Тёмная тема — светлая подложка-поверхность и СВЕТЛЫЙ текст (не чёрный) */
+.v-theme--dark .hv-search .v-field { background: var(--crm-surface) !important; }
+.v-theme--dark .hv-search input { color: var(--crm-text, #e5e7eb) !important; }
+.v-theme--dark .hv-search input::placeholder { color: #d8a87a !important; }
+.v-theme--dark .hv-search .v-field__clearable .mdi { color: var(--crm-text, #e5e7eb) !important; }
+
+/* ── Поиск: подсветка совпавших узлов и гашение остальных ── */
+.vue-flow__node.hv-node-dim { opacity: 0.18; filter: grayscale(0.6); transition: opacity .3s, filter .3s; }
+.vue-flow__node.hv-node-match { z-index: 20 !important; transition: filter .3s; }
+.vue-flow__node.hv-node-match .hnode,
+.vue-flow__node.hv-node-match .hnode-dept-header-bar {
+  outline: 3px solid #fb923c;
+  outline-offset: 2px;
+  border-radius: 12px;
+  overflow: visible !important;
+  box-shadow: 0 0 0 4px rgba(251,146,60,0.25), 0 0 22px 4px rgba(251,146,60,0.55) !important;
+  animation: hv-match-glow 1.3s ease-in-out infinite;
+}
+@keyframes hv-match-glow {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(251,146,60,0.20), 0 0 16px 2px rgba(251,146,60,0.45) !important; }
+  50%      { box-shadow: 0 0 0 6px rgba(251,146,60,0.35), 0 0 30px 8px rgba(251,146,60,0.75) !important; }
+}
+
+/* «Вьющаяся» стрелка-указатель над совпавшим узлом */
+.hv-pointer {
+  position: absolute;
+  top: -42px;
+  left: 50%;
+  margin-left: -16px;
+  width: 32px;
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 30;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
+  animation: hv-pointer-wiggle 0.9s ease-in-out infinite;
+}
+.hv-pointer .mdi {
+  font-size: 30px;
+  color: #fb923c;
+  line-height: 1;
+}
+@keyframes hv-pointer-wiggle {
+  0%   { transform: translateY(0)    rotate(-10deg); }
+  25%  { transform: translateY(-6px) rotate(10deg); }
+  50%  { transform: translateY(0)    rotate(-8deg); }
+  75%  { transform: translateY(-4px) rotate(8deg); }
+  100% { transform: translateY(0)    rotate(-10deg); }
+}
 </style>
 
 <style scoped>

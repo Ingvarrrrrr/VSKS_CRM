@@ -51,7 +51,7 @@
                   <img :src="item._photo_url" style="width:160px;height:160px;object-fit:cover;border-radius:8px;display:block" />
                 </v-tooltip>
                 <v-icon v-else size="20" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
-                <span class="text-body-2" style="max-width:300px;white-space:normal;line-height:1.3">{{ summaryName(idx) || '—' }}</span>
+                <span class="text-body-2" style="white-space:normal;line-height:1.3;word-break:break-word">{{ summaryName(idx) || '—' }}</span>
               </div>
             </td>
             <td>
@@ -105,15 +105,14 @@
                 <thead>
                   <tr>
                     <th style="width:90px">Стадия</th>
-                    <th style="min-width:280px">Наименование</th>
-                    <th style="min-width:90px">Кол-во</th>
-                    <th style="min-width:80px">Ед.</th>
+                    <th style="min-width:220px">Наименование</th>
+                    <th style="width:90px">Кол-во</th>
+                    <th style="width:80px">Ед.</th>
                     <th style="min-width:110px">Цена ед., ₽</th>
-                    <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС %</th>
-                    <th v-if="showVatColumnsInExpandRow" style="min-width:110px">НДС сумма, ₽</th>
-                    <th style="min-width:120px">{{ showVatColumnsInExpandRow ? 'Сумма с НДС, ₽' : 'Сумма, ₽' }}</th>
-                    <th v-if="feoPerItem" style="min-width:240px">ФЭО позиция *</th>
-                    <th style="min-width:200px">Действия</th>
+                    <th v-if="showVatColumnsInExpandRow" style="width:90px">НДС %</th>
+                    <th v-if="showVatColumnsInExpandRow" style="min-width:100px">НДС сумма, ₽</th>
+                    <th style="min-width:110px">{{ showVatColumnsInExpandRow ? 'Сумма с НДС, ₽' : 'Сумма, ₽' }}</th>
+                    <th style="min-width:180px">Контрагент</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -122,15 +121,14 @@
                     <td><v-chip color="info" size="x-small" variant="tonal">ТЗ</v-chip></td>
                     <td>
                       <div class="d-flex align-center gap-1">
-                        <v-textarea
-                          v-model="item.item_name"
-                          density="compact" variant="outlined" hide-details clearable readonly
-                          rows="1" auto-grow class="my-1 flex-grow-1" style="cursor:pointer;min-width:200px"
-                          placeholder="Нажмите для выбора..."
-                          :disabled="readonly"
-                          @click="emit('open-product-picker', idx)"
-                          @click:clear.stop="emit('clear-item', idx)"
-                        />
+                        <div
+                          class="feo-name-display flex-grow-1"
+                          :class="{ 'is-empty': !item.item_name, 'is-readonly': readonly }"
+                          :title="item.item_name || ''"
+                          @click="!readonly && emit('open-product-picker', idx)"
+                        >{{ item.item_name || 'Нажмите для выбора...' }}</div>
+                        <v-btn v-if="item.item_name && !readonly" icon="mdi-close" size="x-small" variant="text"
+                          class="flex-shrink-0" @click.stop="emit('clear-item', idx)" />
                         <v-tooltip v-if="item.item_name" :text="item.product_id ? 'Редактировать товар в каталоге' : 'Создать товар в каталоге из этой позиции'" location="top">
                           <template #activator="{ props: tip }">
                             <v-btn v-bind="tip" icon="mdi-pencil-outline" size="x-small" variant="tonal"
@@ -173,80 +171,72 @@
                     <td v-if="showVatColumnsInExpandRow" class="text-caption">{{ fmtRub(vatAmount(item)) }}</td>
                     <!-- Fix 4/5: Сумма с НДС column -->
                     <td class="text-caption font-weight-medium">{{ fmtRub(totalWithVat(item)) }}</td>
-                    <!-- F-PIF2/FCAT-F1: ФЭО позиция — отдельная колонка в expand-row table -->
-                    <td v-if="feoPerItem">
-                      <v-autocomplete
-                        v-model="item.feo_category_id"
-                        :items="feoLeaves"
-                        item-title="path"
-                        item-value="id"
-                        label="ФЭО позиция"
-                        variant="outlined"
-                        density="compact"
-                        clearable
-                        hide-details
-                        class="my-1"
-                        style="min-width:200px"
-                        :class="{ 'feo-over-budget': isOverBudget(item), 'feo-missing': isFeoMissing(item) }"
-                        :error="isFeoMissing(item)"
-                        :error-messages="isFeoMissing(item) ? 'Обязательно' : ''"
-                        :disabled="readonly"
-                        @update:model-value="emit('items-changed')"
-                      >
-                        <template #item="{ props: itemProps, item: feoItem }">
-                          <v-list-item v-bind="itemProps" :title="feoItem.raw.name">
-                            <template #subtitle>
-                              <div style="font-size:11px;color:#666">{{ feoItem.raw.path }}</div>
-                              <div>План: {{ fmtRub(feoItem.raw.budget) }} • Ост.: {{ fmtRub(feoItem.raw.residual) }}</div>
-                            </template>
-                          </v-list-item>
-                        </template>
-                        <template #selection="{ item: feoItem }">
-                          <span style="font-size:12px">{{ feoItem.raw.name }}</span>
-                        </template>
-                      </v-autocomplete>
-                      <div v-if="isOverBudget(item)" class="text-caption text-warning my-1 d-flex align-center ga-1">
-                        <v-icon icon="mdi-alert-outline" size="14" />
-                        Превышение: {{ fmtRub(overBudgetDelta(item)) }}
-                      </div>
-                    </td>
+                    <!-- Контрагент column -->
                     <td>
-                      <div class="d-flex align-center ga-1 flex-wrap">
+                      <!-- Контрагент (advance_report column mode) -->
+                      <template v-if="showContractorColumn">
+                        <v-autocomplete
+                          :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
+                          :items="contractors" item-title="name" item-value="id" return-object
+                          variant="outlined" density="compact" clearable auto-select-first hide-details
+                          class="my-1" style="min-width:160px"
+                          :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
+                          placeholder="Поставщик..." :disabled="readonly"
+                          @update:search="(s: string) => emit('contractor-search-input', idx, s)"
+                          @update:model-value="(v: Contractor | null) => emit('item-contractor-select', idx, v)"
+                        >
+                          <template #append-inner>
+                            <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                              :disabled="readonly" @click.stop="emit('open-contractor-quick-create', idx)" />
+                          </template>
+                        </v-autocomplete>
+                      </template>
+                      <!-- ТЗ contractor chip (non-advance mode, if contractor set from Phase 24 D-05) -->
+                      <v-chip
+                        v-else-if="item.contractor_id && contractorNameById(item.contractor_id)"
+                        size="x-small" color="info" variant="tonal"
+                        prepend-icon="mdi-store" style="max-width:170px;white-space:normal;height:auto"
+                        :title="contractorNameById(item.contractor_id)"
+                      >
+                        {{ contractorNameById(item.contractor_id) }}
+                      </v-chip>
+                      <span v-else class="text-medium-emphasis text-caption">—</span>
+                    </td>
+                  </tr>
+                  <!-- ТЗ attributes row (full width): ФЭО каскад + Тип + Страна.
+                       Вынесено из узких колонок, чтобы числовая таблица влезала без горизонтального скролла. -->
+                  <tr class="stage-tz-row stage-attrs-row">
+                    <td></td>
+                    <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1">
+                      <div class="d-flex align-start ga-4 flex-wrap py-1">
+                        <!-- ФЭО позиция — горизонтальный каскад по уровням -->
+                        <div v-if="feoPerItem" class="d-flex align-start ga-2 flex-wrap" style="flex:1 1 460px;min-width:300px">
+                          <span class="text-caption text-medium-emphasis mt-2" style="white-space:nowrap">ФЭО позиция *</span>
+                          <FeoCascadeSelect
+                            :model-value="item.feo_node_id ?? item.feo_category_id"
+                            :nodes="feoNodes"
+                            :leaves="feoLeaves"
+                            :readonly="readonly"
+                            :error="isFeoMissing(item)"
+                            horizontal
+                            style="flex:1 1 auto;min-width:240px"
+                            @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                          />
+                          <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
+                            <v-icon icon="mdi-alert-outline" size="14" />
+                            Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+                          </div>
+                        </div>
                         <!-- Тип -->
                         <v-select v-model="item.item_type"
                           :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                           item-title="title" item-value="value" density="compact" variant="outlined"
-                          hide-details style="min-width:100px" class="my-1" :disabled="readonly" />
+                          label="Тип" hide-details style="min-width:140px;max-width:180px" class="my-1" :disabled="readonly"
+                          @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
                         <!-- Страна -->
                         <v-text-field v-model="item.country_origin" density="compact"
-                          variant="outlined" hide-details class="my-1" placeholder="РФ"
-                          style="min-width:120px" :disabled="readonly" />
-                        <!-- Контрагент (advance_report column mode) -->
-                        <template v-if="showContractorColumn">
-                          <v-autocomplete
-                            :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
-                            :items="contractors" item-title="name" item-value="id" return-object
-                            variant="outlined" density="compact" clearable auto-select-first hide-details
-                            class="my-1" style="min-width:180px"
-                            :custom-filter="contractorFilter" :loading="contractorLookupLoading[idx] === true"
-                            placeholder="Поставщик..." :disabled="readonly"
-                            @update:search="(s: string) => emit('contractor-search-input', idx, s)"
-                            @update:model-value="(v: Contractor | null) => emit('item-contractor-select', idx, v)"
-                          >
-                            <template #append-inner>
-                              <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
-                                :disabled="readonly" @click.stop="emit('open-contractor-quick-create', idx)" />
-                            </template>
-                          </v-autocomplete>
-                        </template>
-                        <!-- ТЗ contractor chip (non-advance mode, if contractor set from Phase 24 D-05) -->
-                        <v-chip
-                          v-if="!showContractorColumn && item.contractor_id && contractorNameById(item.contractor_id)"
-                          size="x-small" color="info" variant="tonal"
-                          prepend-icon="mdi-store" class="text-truncate" style="max-width:160px"
-                        >
-                          {{ contractorNameById(item.contractor_id) }}
-                        </v-chip>
+                          variant="outlined" hide-details class="my-1" label="Страна" placeholder="РФ"
+                          style="min-width:120px;max-width:160px" :disabled="readonly" />
                       </div>
                     </td>
                   </tr>
@@ -257,7 +247,7 @@
                       <v-textarea
                         :model-value="getContractItemFor(idx)?.name ?? (isAdvance ? (items[idx] as any)?.item_name ?? '' : '')"
                         density="compact" variant="outlined" hide-details placeholder="Наименование по договору"
-                        rows="1" auto-grow class="my-1 flex-grow-1" style="min-width:200px"
+                        rows="2" :max-rows="6" auto-grow class="my-1 flex-grow-1" style="min-width:260px"
                         :disabled="readonly"
                         @update:model-value="(v: string) => emit('update-contract-field', idx, 'name', v)"
                       />
@@ -308,7 +298,8 @@
                           v-if="contractStageContractorName(idx)"
                           size="x-small" color="success" variant="tonal"
                           prepend-icon="mdi-store"
-                          class="text-truncate" style="max-width:180px"
+                          style="max-width:260px;white-space:normal;height:auto"
+                          :title="contractStageContractorName(idx)"
                         >
                           {{ contractStageContractorName(idx) }}
                         </v-chip>
@@ -322,12 +313,10 @@
                     <template v-if="isDelivered(idx) && getContractItemFor(idx)">
                       <!-- delivered/paid: копия Договор, readonly textarea (унифицировано с ТЗ/Договор) -->
                       <td>
-                        <v-textarea
-                          :model-value="getContractItemFor(idx)?.name || '—'"
-                          density="compact" variant="outlined" hide-details readonly
-                          rows="1" auto-grow class="my-1" style="min-width:200px"
-                          bg-color="grey-lighten-4"
-                        />
+                        <div
+                          class="feo-name-display is-static"
+                          :title="getContractItemFor(idx)?.name || ''"
+                        >{{ getContractItemFor(idx)?.name || '—' }}</div>
                       </td>
                       <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
                       <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
@@ -345,7 +334,8 @@
                           <v-chip
                             v-if="deliveryStageContractorName(idx)"
                             size="x-small" color="purple" variant="tonal"
-                            prepend-icon="mdi-truck-delivery" class="text-truncate" style="max-width:140px"
+                            prepend-icon="mdi-truck-delivery" style="max-width:260px;white-space:normal;height:auto"
+                            :title="deliveryStageContractorName(idx)"
                           >
                             {{ deliveryStageContractorName(idx) }}
                           </v-chip>
@@ -361,12 +351,10 @@
                     <template v-else-if="isAdvance">
                       <!-- advance: показываем данные из ТЗ вместо заглушки -->
                       <td>
-                        <v-textarea
-                          :model-value="(items[idx] as any)?.item_name ?? ''"
-                          density="compact" variant="outlined" hide-details readonly
-                          rows="1" auto-grow class="my-1" style="min-width:200px"
-                          bg-color="grey-lighten-4"
-                        />
+                        <div
+                          class="feo-name-display is-static"
+                          :title="(items[idx] as any)?.item_name || ''"
+                        >{{ (items[idx] as any)?.item_name || '—' }}</div>
                       </td>
                       <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.quantity ?? '—' }}</td>
                       <td class="text-caption text-grey-darken-1">{{ (items[idx] as any)?.unit ?? '—' }}</td>
@@ -377,7 +365,7 @@
                       <td></td>
                     </template>
                     <template v-else>
-                      <td colspan="9" class="text-caption text-grey-lighten-1 text-center py-1">
+                      <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1" class="text-caption text-grey-lighten-1 text-center py-1">
                         Поставок ещё нет — появятся в Phase 27 (delivery_items)
                       </td>
                     </template>
@@ -423,7 +411,9 @@
 </template>
 
 <script setup lang="ts">
+import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { Contractor } from '@/components/items/types'
+import type { FeoNode } from '@/composables/useFeoLeaves'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -440,6 +430,7 @@ defineProps<{
   unitOptions: string[]
   vatRateOptions: any[]
   feoLeaves: any[]
+  feoNodes: FeoNode[]
   feoPerItem?: boolean
   // mode flags (computed in parent)
   showVatColumnsInExpandRow: boolean
@@ -487,6 +478,8 @@ const emit = defineEmits<{
   'open-quick-product-edit': [item: EditorItem]
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, val: any]
+  'item-feo-change': [idx: number, val: number | null]
+  'item-type-change': [idx: number, val: string]
   'items-changed': []
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
@@ -497,6 +490,30 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
+/* ISSUE-4: full-name display field (replaces clipping readonly v-textarea) */
+.feo-name-display {
+  border: 1px solid rgba(0, 0, 0, 0.23);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-width: 260px;
+  cursor: pointer;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.3;
+  font-size: 12px;
+  min-height: 32px;
+}
+.feo-name-display.is-empty {
+  color: rgba(0, 0, 0, 0.45);
+}
+.feo-name-display.is-readonly,
+.feo-name-display.is-static {
+  cursor: default;
+}
+.feo-name-display.is-static {
+  background: #f5f5f5;
+}
+
 /* Phase 27.1.1: expand-row layout (moved from PurchaseItemsEditor.vue during Layer 3 extraction) */
 .summary-row:hover {
   background: rgba(0, 0, 0, 0.02);

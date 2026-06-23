@@ -3,8 +3,15 @@ import os
 import re
 import shutil
 import logging
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse, StreamingResponse
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 5987 — кириллица в имени файла недопустима в latin-1 заголовке."""
+    ascii_fallback = filename.encode('ascii', 'ignore').decode('ascii').strip() or 'export'
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 try:
     import openpyxl
@@ -1559,6 +1566,29 @@ async def export_plan_graph_excel(
         )).all()
         used_map = {r.feo_planned_item_id: float(r.used) for r in used_rows}
 
+    # Status breakdown: sum(PurchaseItem.total_price) per (feo_planned_item_id, Purchase.status)
+    # статусы: plan_schedule, confirmed, work_in_progress → «Запланировано»;
+    #          contracted → «Договор»; ordered → «Заказано»;
+    #          delivered → «Поставлено»; paid → «Оплачено»
+    status_sums_map: dict[int, dict[str, float]] = {}
+    if item_ids:
+        st_rows = (await db.execute(
+            select(
+                _PI.feo_planned_item_id,
+                _P.status,
+                func.coalesce(func.sum(_PI.total_price), 0).label("s"),
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(_PI.feo_planned_item_id.in_(item_ids))
+            .group_by(_PI.feo_planned_item_id, _P.status)
+        )).all()
+        for r in st_rows:
+            status_sums_map.setdefault(r.feo_planned_item_id, {})[r.status] = float(r.s)
+
+    def _st(item_id: int, *statuses: str) -> float:
+        d = status_sums_map.get(item_id, {})
+        return sum(d.get(s, 0.0) for s in statuses)
+
     contractor_map: dict[int, str] = {}
     if item_ids:
         c_rows = (await db.execute(
@@ -1636,11 +1666,12 @@ async def export_plan_graph_excel(
 
     HEADERS = [
         "№", "Направление расходов", "Тип расходов", "Наименование",
-        "Ед.", "Кол-во план", "Плановая сумма, ₽",
-        "Фактическая сумма, ₽", "Остаток, ₽",
+        "Ед.", "Кол-во план", "Бюджет ФЭО, ₽", "Запланировано, ₽",
+        "Договор, ₽", "Заказано, ₽", "Поставлено, ₽", "Оплачено, ₽",
+        "Фактически (итого), ₽", "Остаток, ₽",
         "% исполнения", "Исполнитель", "Статус",
     ]
-    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 12, 30, 15]
+    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 18, 18, 18, 20, 18, 12, 30, 15]
 
     cats_by_parent: dict = {}
     for c in cats:
@@ -1677,37 +1708,46 @@ async def export_plan_graph_excel(
 
     def _traverse(cat, direction_name="", type_name=""):
         nonlocal seq
+        E = ""  # пустая ячейка
         if cat.level == 1:
             direction_name = cat.name
             _write_row(
-                [cat.code or "", cat.name, "", "", "", "", "", "", "", "", "", ""],
+                [cat.code or "", cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E],
                 L1_FILL, L1_FONT, height=22
             )
         elif cat.level == 2:
             type_name = cat.name
             _write_row(
-                ["", direction_name, cat.name, "", "", "", "", "", "", "", "", ""],
+                [E, direction_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E, E],
                 L2_FILL, L2_FONT
             )
         elif cat.level == 3:
             _write_row(
-                ["", direction_name, type_name, cat.name, "", "", "", "", "", "", "", ""],
+                [E, direction_name, type_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E],
                 L3_FILL, L3_FONT
             )
             for item in items_by_cat.get(cat.id, []):
                 seq += 1
-                planned = float(item.amount or 0)
+                feo_budget = float(item.amount or 0)
+                plan_sum = _st(item.id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
+                contract_sum = _st(item.id, "contracted")
+                ordered_sum = _st(item.id, "ordered")
+                delivered_sum = _st(item.id, "delivered")
+                paid_sum = _st(item.id, "paid")
                 used = used_map.get(item.id, 0.0)
-                residual = planned - used
-                pct = round(used / planned * 100) if planned > 0 else 0
+                residual = feo_budget - used
+                pct = round(used / feo_budget * 100) if feo_budget > 0 else 0
                 contractor = contractor_map.get(item.id, "")
                 status = "Выполнено" if pct >= 100 else ("В работе" if used > 0 else "Не начато")
-                font = RED_FONT if used > planned else ITEM_FONT
+                font = RED_FONT if used > feo_budget else ITEM_FONT
                 _write_row(
                     [
                         seq, direction_name, type_name, item.name,
                         item.unit or "", float(item.quantity or 0),
-                        round(planned, 2), round(used, 2), round(residual, 2),
+                        round(feo_budget, 2), round(plan_sum, 2),
+                        round(contract_sum, 2), round(ordered_sum, 2),
+                        round(delivered_sum, 2), round(paid_sum, 2),
+                        round(used, 2), round(residual, 2),
                         f"{pct}%", contractor, status,
                     ],
                     PatternFill(), font
@@ -1736,7 +1776,7 @@ async def export_plan_graph_excel(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
@@ -1802,7 +1842,7 @@ async def export_plan_graph_version_excel(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
@@ -2248,7 +2288,7 @@ async def compare_plan_graph_versions_excel(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
@@ -2340,5 +2380,5 @@ async def export_plan_graph_docx(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )

@@ -1,5 +1,7 @@
+import io
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -571,6 +573,150 @@ async def review_complete(
 
     result = await _enrich_tasks([db_task], db)
     return result[0]
+
+
+@router.get("/import-template.xlsx")
+async def download_tasks_import_template(
+    current_user: User = Depends(get_current_user),
+):
+    """Скачать шаблон Excel для импорта задач."""
+    try:
+        from openpyxl import Workbook as _WB
+        from openpyxl.styles import PatternFill as _PF, Font as _Fnt, Alignment as _Aln
+    except ImportError:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    wb = _WB()
+    ws = wb.active
+    ws.title = "Задачи"
+    headers = ["Название", "Описание", "Приоритет", "Срок (YYYY-MM-DD)", "Категория"]
+    ws.append(headers)
+    hfill = _PF(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    hfont = _Fnt(color="FFFFFF", bold=True, size=11)
+    for cell in ws[1]:
+        cell.fill = hfill
+        cell.font = hfont
+        cell.alignment = _Aln(horizontal="center", vertical="center")
+    ws.append(["Починить принтер", "Сломался принтер в офисе 3", "medium", "2026-07-01", "Техника"])
+    for i, w in enumerate([40, 50, 12, 18, 20], 1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=tasks_import_template.xlsx"},
+    )
+
+
+@router.post("/import.xlsx")
+async def import_tasks_from_excel(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Импорт задач из Excel. Возвращает {created, skipped, errors}."""
+    try:
+        from openpyxl import load_workbook as _lw
+    except ImportError:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Поддерживаются только .xlsx и .xls")
+
+    content = await file.read()
+    wb = _lw(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < 2:
+        raise HTTPException(400, "Файл пустой или содержит только заголовки")
+
+    raw_headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+    COL_MAP = {
+        "название": "title",
+        "описание": "description",
+        "приоритет": "priority",
+        "срок (yyyy-mm-dd)": "due_date",
+        "срок": "due_date",
+        "категория": "category",
+    }
+    col_idx: dict[str, int] = {}
+    for h_raw, field in COL_MAP.items():
+        for i, h in enumerate(raw_headers):
+            if h == h_raw:
+                col_idx[field] = i
+                break
+
+    if "title" not in col_idx:
+        raise HTTPException(400, "В шаблоне не найден столбец «Название»")
+
+    PRIORITY_VALUES = {"low", "medium", "high", "urgent"}
+    from app.auth.jwt import get_single_org_id
+
+    created = 0
+    skipped = 0
+    errors: list[str] = []
+
+    max_num_row = await db.execute(select(func.coalesce(func.max(Task.task_number), 0)))
+    next_num = (max_num_row.scalar() or 0) + 1
+
+    org_id = get_single_org_id(current_user)
+
+    for row_i, row in enumerate(rows[1:], start=2):
+        title = str(row[col_idx["title"]]).strip() if row[col_idx["title"]] is not None else ""
+        if not title:
+            skipped += 1
+            continue
+
+        due_date_val = None
+        if "due_date" in col_idx and row[col_idx["due_date"]]:
+            raw_d = row[col_idx["due_date"]]
+            try:
+                if isinstance(raw_d, (date, datetime)):
+                    due_date_val = raw_d if isinstance(raw_d, datetime) else datetime(raw_d.year, raw_d.month, raw_d.day)
+                else:
+                    due_date_val = datetime.strptime(str(raw_d).strip()[:10], "%Y-%m-%d")
+            except Exception:
+                errors.append(f"Строка {row_i}: неверный формат даты «{raw_d}», пропущена")
+                skipped += 1
+                continue
+
+        priority = "medium"
+        if "priority" in col_idx and row[col_idx["priority"]]:
+            p_raw = str(row[col_idx["priority"]]).strip().lower()
+            if p_raw in PRIORITY_VALUES:
+                priority = p_raw
+
+        category = None
+        if "category" in col_idx and row[col_idx.get("category", -1)] is not None:
+            category = str(row[col_idx["category"]]).strip() or None
+
+        description = None
+        if "description" in col_idx and row[col_idx["description"]]:
+            description = str(row[col_idx["description"]]).strip() or None
+
+        db_task = Task(
+            task_number=next_num,
+            title=title,
+            description=description,
+            status=TaskStatus.todo,
+            priority=priority,
+            due_date=due_date_val,
+            assigned_user_id=current_user.id,
+            created_by_id=current_user.id,
+            org_id=org_id,
+            category=category,
+        )
+        db.add(db_task)
+        await db.flush()
+        db.add(TaskAssignee(task_id=db_task.id, user_id=current_user.id, consent_pending=False))
+        next_num += 1
+        created += 1
+
+    await db.commit()
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
 @router.get("/{task_id}", response_model=TaskOut)

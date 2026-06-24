@@ -145,7 +145,7 @@
       </template>
 
       <template #item.assigned_user_name="{ item }">
-        {{ resolveUserName(item.assigned_user_id) }}
+        {{ resolveUserName(item.service_note_to_user_id) }}
       </template>
 
       <template #item.subject="{ item }">
@@ -204,7 +204,7 @@
               <div class="text-caption text-medium-emphasis">От кого</div>
               <div class="text-body-2 mb-1">{{ resolveUserName(item.service_note_by) }}</div>
               <div class="text-caption text-medium-emphasis">Кому</div>
-              <div class="text-body-2 mb-1">{{ resolveUserName(item.assigned_user_id) }}</div>
+              <div class="text-body-2 mb-1">{{ resolveUserName(item.service_note_to_user_id) }}</div>
               <div class="text-caption text-medium-emphasis">Дата СЗ</div>
               <div class="text-body-2">{{ item.service_note_at ? new Date(item.service_note_at).toLocaleDateString('ru-RU') : '—' }}</div>
             </v-card-text>
@@ -273,6 +273,7 @@ interface Purchase {
   purchase_contract_type?: string
   assigned_user_id?: number | null
   service_note_by?: number | null
+  service_note_to_user_id?: number | null
   service_note_at?: string | null
   service_note_text?: string | null
 }
@@ -354,7 +355,7 @@ const filteredItems = computed(() => {
   if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
   if (filterSubsidyId.value) r = r.filter(p => p.subsidy_id === filterSubsidyId.value)
   if (filterCreatorId.value) r = r.filter(p => p.service_note_by === filterCreatorId.value)
-  if (filterAssignedUserId.value) r = r.filter(p => p.assigned_user_id === filterAssignedUserId.value)
+  if (filterAssignedUserId.value) r = r.filter(p => p.service_note_to_user_id === filterAssignedUserId.value)
   if (filterServiceNoteFrom.value) {
     const from = new Date(filterServiceNoteFrom.value).getTime()
     r = r.filter(p => p.service_note_at ? new Date(p.service_note_at).getTime() >= from : false)
@@ -377,7 +378,7 @@ const {
   storageKey: 'service_notes_view_mode',
   source: () => filteredItems.value,
   search: () => search.value,
-  searchFields: (n: Purchase) => [n.purchase_number, n.subject, n.item_name, resolveUserName(n.service_note_by), resolveUserName(n.assigned_user_id), n.status],
+  searchFields: (n: Purchase) => [n.purchase_number, n.subject, n.item_name, resolveUserName(n.service_note_by), resolveUserName(n.service_note_to_user_id), n.status],
   pageSize: 24,
 })
 

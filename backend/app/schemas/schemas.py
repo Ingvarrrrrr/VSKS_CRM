@@ -654,6 +654,8 @@ class PurchaseCreate(BaseModel):
     is_retroactive: Optional[bool] = False
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
+    # ЭТП: ссылка на конкурсную процедуру
+    etp_url: Optional[str] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -767,6 +769,8 @@ class PurchaseUpdate(BaseModel):
     is_retroactive: Optional[bool] = None
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
+    # ЭТП: ссылка на конкурсную процедуру
+    etp_url: Optional[str] = None
 
 
 class PurchaseOut(PurchaseCreate):

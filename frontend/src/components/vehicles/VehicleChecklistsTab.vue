@@ -131,9 +131,21 @@ function typeColor(t: string) { return t.includes('pre') || t.includes('post') ?
 function stateLabel(s: string) { return stateOptions.find(o => o.value === s)?.label || s }
 function stateColor(s: string) { return s === 'ok' ? 'success' : s === 'with_remarks' ? 'warning' : 'error' }
 function fuelLabel(f: string) { return fuelOptions.find(o => o.value === f)?.label || f }
-function itemKeyLabel(k: string) { return KEY_LABELS[k] || k }
-function itemStatusLabel(s: string) { return ({ ok: 'OK', issue: 'Проблема', missing: 'Нет' }[s] || s) }
-function itemStatusColor(s: string) { return ({ ok: 'success', issue: 'warning', missing: 'error' }[s] || 'grey') }
+const EXTRA_KEY_LABELS: Record<string, string> = {
+  battery: 'АКБ', tires: 'Резина', mirrors: 'Зеркала', radio: 'Радиостанция',
+  first_aid: 'Аптечка', fire_ext: 'Огнетушитель', spare_wheel: 'Запаска',
+  tools: 'Ключи', branding: 'Брендирование',
+  tires_season: 'Тип резины', radio_working: 'Радио (рабочая)',
+}
+function itemKeyLabel(k: string) { return EXTRA_KEY_LABELS[k] || KEY_LABELS[k] || k }
+function itemStatusLabel(s: string) {
+  return ({ ok: 'Хорошее', warn: 'Удовл.', fail: 'Отсутствует', issue: 'Проблема', missing: 'Нет',
+            summer: 'Летняя', winter: 'Зимняя' }[s] || s)
+}
+function itemStatusColor(s: string) {
+  return ({ ok: 'success', warn: 'warning', fail: 'error', issue: 'warning', missing: 'error',
+            summer: 'orange', winter: 'blue' }[s] || 'grey')
+}
 function formatDate(iso: string) { return new Date(iso).toLocaleString('ru-RU') }
 
 async function loadChecklists() {

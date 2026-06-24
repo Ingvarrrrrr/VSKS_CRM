@@ -1001,7 +1001,7 @@ interface Contract {
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface PurchaseItem { item_name: string; quantity?: number; unit_price?: number; total_price?: number }
-interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; items?: PurchaseItem[] }
+interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; etp_url?: string | null; items?: PurchaseItem[] }
 
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
@@ -1030,6 +1030,7 @@ const exportColumns = reactive([
   { key: 'remaining_paid', title: 'Не оплачено', selected: true },
   { key: 'start_date', title: 'Дата начала', selected: true },
   { key: 'end_date', title: 'Дата окончания', selected: true },
+  { key: 'etp_url', title: 'Ссылка ЭТП', selected: false },
   { key: 'notes', title: 'Примечания', selected: false },
   { key: 'closing_docs', title: 'Закрывающие документы', selected: true },
   { key: 'payment_docs', title: 'Платёжные документы', selected: true },
@@ -1115,6 +1116,14 @@ async function doExport() {
     // Build data rows — one row per file (or at least one row per contract)
     const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = []
 
+    // Collect etp_urls per contract from loaded purchases
+    const etpUrlsByContract = new Map<number, string>()
+    for (const contract of filtered.value) {
+      const ps = purchasesByContract.value[contract.id] || []
+      const urls = [...new Set(ps.map((p: Purchase) => p.etp_url).filter(Boolean))]
+      etpUrlsByContract.set(contract.id, urls.join('\n'))
+    }
+
     for (const contract of filtered.value) {
       const cats = contractFiles.get(contract.id) || { closing: [], payment: [], other: [] }
       const maxFiles = Math.max(1, cats.closing.length, cats.payment.length, cats.other.length)
@@ -1137,6 +1146,7 @@ async function doExport() {
             // Contract data only on first row
             if (col.key === 'contract_type') row.push(contractTypeLabel(contract.contract_type))
             else if (col.key === 'purchase_method') row.push(purchaseMethodLabel(contract.purchase_method))
+            else if (col.key === 'etp_url') row.push(etpUrlsByContract.get(contract.id) || '')
             else if (['max_amount', 'total_ordered', 'total_delivered', 'total_paid', 'remaining_ordered', 'remaining_delivered', 'remaining_paid'].includes(col.key)) {
               const v = (contract as any)[col.key]; row.push(v != null ? Number(v) : '')
             } else if (['date', 'start_date', 'end_date'].includes(col.key)) row.push(fmtDate((contract as any)[col.key]))

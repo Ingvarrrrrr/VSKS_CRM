@@ -95,27 +95,55 @@
 
       <!-- Комплектность -->
       <div class="checklist__section">
-        <div class="checklist__field-label">Комплектность · нажми статус</div>
+        <div class="checklist__field-label">Комплектность</div>
         <div class="d-flex flex-column gap-2 mt-2">
           <div
             v-for="item in checkItems"
             :key="item.key"
-            class="checklist__item rounded-xl pa-3 d-flex align-center"
-            style="gap: 10px"
+            class="checklist__item rounded-xl pa-3"
           >
-            <div class="text-body-2 font-weight-semibold" style="flex: 1">{{ item.label }}</div>
-            <div class="d-flex gap-1">
-              <button
-                v-for="pip in pips"
-                :key="pip.value"
-                class="checklist__pip rounded-lg"
-                :class="[
-                  form.items[item.key] === pip.value
-                    ? `checklist__pip--${pip.color}`
-                    : ''
-                ]"
-                @click="form.items[item.key] = pip.value"
-              >{{ pip.label }}</button>
+            <!-- Строка: название + три состояния -->
+            <div class="d-flex align-center" style="gap: 10px">
+              <div class="text-body-2 font-weight-semibold" style="flex: 1">{{ item.label }}</div>
+              <div class="checklist__pip-row">
+                <button
+                  v-for="pip in pips"
+                  :key="pip.value"
+                  class="checklist__pip rounded-lg"
+                  :class="[
+                    form.items[item.key] === pip.value
+                      ? `checklist__pip--${pip.color}`
+                      : ''
+                  ]"
+                  @click="form.items[item.key] = pip.value"
+                >{{ pip.label }}</button>
+              </div>
+            </div>
+
+            <!-- Резина: сезон -->
+            <div v-if="item.extra === 'tires_season'" class="checklist__extra mt-2">
+              <div class="checklist__extra-label">Тип резины</div>
+              <div class="checklist__seg checklist__seg--2 mt-1">
+                <button
+                  v-for="opt in tireSeasonOptions"
+                  :key="opt.value"
+                  class="checklist__seg__opt"
+                  :class="{ 'checklist__seg__opt--active': form.items['tires_season'] === opt.value }"
+                  @click="setTireSeason(opt.value)"
+                >{{ opt.label }}</button>
+              </div>
+            </div>
+
+            <!-- Радиостанция: рабочее -->
+            <div v-if="item.extra === 'radio_working'" class="checklist__extra mt-2 d-flex align-center" style="gap: 8px">
+              <div class="checklist__extra-label" style="flex: 1">Рабочая</div>
+              <v-switch
+                :model-value="form.items['radio_working'] === 'ok'"
+                color="success"
+                density="compact"
+                hide-details
+                @update:model-value="(v: boolean) => form.items['radio_working'] = v ? 'ok' : 'fail'"
+              />
             </div>
           </div>
         </div>
@@ -267,16 +295,16 @@ const paintOptions = [
 ]
 
 const pips = [
-  { value: 'ok', label: '✓', color: 'ok' },
-  { value: 'unknown', label: '?', color: 'warn' },
-  { value: 'fail', label: '✕', color: 'alert' },
+  { value: 'ok', label: 'Хорошее', color: 'ok' },
+  { value: 'warn', label: 'Удовл.', color: 'warn' },
+  { value: 'fail', label: 'Отсутствует', color: 'alert' },
 ]
 
-const checkItems = [
+const checkItems: { key: string; label: string; extra?: string }[] = [
   { key: 'battery', label: 'АКБ' },
-  { key: 'tires', label: 'Авторезина (летняя)' },
+  { key: 'tires', label: 'Резина', extra: 'tires_season' },
   { key: 'mirrors', label: 'Зеркала' },
-  { key: 'radio', label: 'Радиостанция' },
+  { key: 'radio', label: 'Радиостанция', extra: 'radio_working' },
   { key: 'first_aid', label: 'Аптечка' },
   { key: 'fire_ext', label: 'Огнетушитель' },
   { key: 'spare_wheel', label: 'Запасное колесо' },
@@ -284,10 +312,27 @@ const checkItems = [
   { key: 'branding', label: 'Брендирование' },
 ]
 
-// Init default item statuses
+const tireSeasonOptions = [
+  { value: 'summer', label: 'Летняя' },
+  { value: 'winter', label: 'Зимняя' },
+]
+
+// Init default item statuses + extras
 checkItems.forEach((item) => {
   form.items[item.key] = 'ok'
 })
+
+// Резина: тип сезона (сохраняется в localStorage)
+const savedTireSeason = localStorage.getItem('checklist_tires_season') || 'summer'
+form.items['tires_season'] = savedTireSeason
+
+function setTireSeason(val: string) {
+  form.items['tires_season'] = val
+  localStorage.setItem('checklist_tires_season', val)
+}
+
+// Радиостанция: рабочее/нет
+form.items['radio_working'] = 'ok'
 
 // ---- Progress ----
 const progressPct = computed<number>(() => {
@@ -347,11 +392,13 @@ async function submitChecklist() {
   try {
     const token = localStorage.getItem('auth_token')
 
-    // Build items array
+    // Build items array (основные + extra-поля для резины и радиостанции)
     const itemsArr = checkItems.map((ci) => ({
       key: ci.key,
-      status: form.items[ci.key] || 'unknown',
+      status: form.items[ci.key] || 'ok',
     }))
+    itemsArr.push({ key: 'tires_season', status: form.items['tires_season'] || 'summer' })
+    itemsArr.push({ key: 'radio_working', status: form.items['radio_working'] || 'ok' })
 
     const body = {
       vehicle_id: vehicleId,
@@ -508,39 +555,64 @@ onMounted(loadVehicle)
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
-/* 3-state pips */
+/* 3-state pips row */
+.checklist__pip-row {
+  display: flex;
+  gap: 4px;
+}
+
 .checklist__pip {
-  width: 28px;
-  height: 28px;
+  padding: 6px 8px;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
-  color: rgba(var(--v-theme-on-surface), 0.4);
+  color: rgba(var(--v-theme-on-surface), 0.45);
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: rgba(var(--v-theme-surface-variant), 0.3);
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
+  white-space: nowrap;
 }
 
 .checklist__pip--ok {
-  background: rgba(34, 201, 151, 0.2);
+  background: rgba(34, 201, 151, 0.18);
   color: #22c997;
   border-color: rgba(34, 201, 151, 0.4);
 }
 
 .checklist__pip--warn {
-  background: rgba(246, 179, 74, 0.2);
+  background: rgba(246, 179, 74, 0.18);
   color: #f6b34a;
   border-color: rgba(246, 179, 74, 0.4);
 }
 
 .checklist__pip--alert {
-  background: rgba(255, 91, 106, 0.2);
+  background: rgba(255, 91, 106, 0.18);
   color: #ff5b6a;
   border-color: rgba(255, 91, 106, 0.4);
+}
+
+/* Extra controls (сезон резины, рабочая) */
+.checklist__extra {
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  padding-top: 8px;
+}
+
+.checklist__extra-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  opacity: 0.5;
+}
+
+/* Двухколонный сегментный контрол для сезона резины */
+.checklist__seg--2 {
+  grid-template-columns: repeat(2, 1fr);
 }
 
 /* Photo grid */

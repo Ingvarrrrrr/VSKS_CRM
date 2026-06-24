@@ -413,6 +413,7 @@ const EGRUL_FIELDS: { key: string; label: string }[] = [
   { key: 'address',   label: 'Адрес' },
   { key: 'org_type',  label: 'Форма организации' },
   { key: 'signatory', label: 'Подписант' },
+  { key: 'signatory_position', label: 'Должность подписанта' },
 ]
 
 const contractorCardFile = ref<File | null>(null)

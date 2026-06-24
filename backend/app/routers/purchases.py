@@ -1200,6 +1200,8 @@ PATCHABLE_FIELDS = {
     'vehicle_id',
     # SN-UX: адресат служебной записки
     'service_note_to_user_id',
+    # ЭТП: ссылка на конкурсную процедуру
+    'etp_url',
 }
 
 

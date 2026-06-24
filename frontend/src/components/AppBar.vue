@@ -288,7 +288,7 @@
   </v-dialog>
 
   <v-navigation-drawer v-model="drawerOpen" :permanent="mdAndUp" width="280" color="surface">
-    <v-list nav density="compact" class="mt-4">
+    <v-list nav density="compact" class="mt-4" v-model:opened="openedNavGroups" open-strategy="multiple">
       <template v-for="(item, idx) in orderedMenuItems" :key="item.route">
         <v-list-item
           :to="item.route"
@@ -325,14 +325,13 @@
       <v-list-group
         v-if="authStore.hasTab('vehicles')"
         value="fleet"
-        :model-value="isFleetGroupOpen ? 'fleet' : undefined"
       >
         <template #activator="{ props: gProps }">
           <v-list-item
             v-bind="gProps"
             prepend-icon="mdi-car-multiple"
             title="Автопарк"
-            :active="isFleetGroupOpen"
+            :active="isFleetRouteActive"
             active-class="bg-primary text-white"
           />
         </template>
@@ -575,8 +574,18 @@ const orgSummary = computed(() => {
   return userOrgName.value || ''
 })
 
-// Phase 30.2: fleet group auto-expand when on /fleet/* or /m/driver
-const isFleetGroupOpen = computed(() =>
+// Phase 30.2: fleet group — состояние раскрытия держит родительский v-list
+// через opened. Открываем при переходе на /fleet/* или /m/, но НЕ убираем при
+// уходе на другой раздел — схлопывается только когда пользователь сам свернул.
+const openedNavGroups = ref<string[]>(
+  ($route.path.startsWith('/fleet') || $route.path.startsWith('/m/')) ? ['fleet'] : []
+)
+watch(() => $route.path, (path) => {
+  if ((path.startsWith('/fleet') || path.startsWith('/m/')) && !openedNavGroups.value.includes('fleet')) {
+    openedNavGroups.value = [...openedNavGroups.value, 'fleet']
+  }
+})
+const isFleetRouteActive = computed(() =>
   $route.path.startsWith('/fleet') || $route.path.startsWith('/m/')
 )
 

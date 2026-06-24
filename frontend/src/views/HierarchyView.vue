@@ -652,7 +652,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, markRaw, h, onMounted, nextTick } from 'vue'
+import { ref, markRaw, h, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   VueFlow, useVueFlow, Handle, Position,
   type Node, type Edge, type Connection,
@@ -1728,8 +1728,38 @@ function restackDeptUsers() {
   }
 }
 
+// Дебаунс пересадки для ResizeObserver (шапка растёт после загрузки шрифта/переноса строк).
+let _restackDebounce: ReturnType<typeof setTimeout> | null = null
+function restackDeptUsersDebounced() {
+  if (_restackDebounce) clearTimeout(_restackDebounce)
+  _restackDebounce = setTimeout(() => restackDeptUsers(), 120)
+}
+
+const deptHeaderResizeObserver = ref<ResizeObserver | null>(null)
+function observeDeptHeaders() {
+  if (deptHeaderResizeObserver.value) return // не пересоздаём
+  const ro = new ResizeObserver(() => restackDeptUsersDebounced())
+  document.querySelectorAll('.hnode-dept-header-bar').forEach(el => ro.observe(el))
+  deptHeaderResizeObserver.value = ro
+}
+
 onNodesInitialized(() => {
   nextTick(() => restackDeptUsers())
+  // Шапка отдела может вырасти после загрузки веб-шрифта / переноса длинного
+  // названия → измеренная высота на первом nextTick слишком мала и карточки
+  // налезают. Перезапускаем пересадку после fonts.ready и двойного rAF.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => restackDeptUsers())
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => restackDeptUsers()))
+  // И продолжаем реагировать на любые изменения высоты шапок.
+  nextTick(() => observeDeptHeaders())
+})
+
+onUnmounted(() => {
+  if (_restackDebounce) clearTimeout(_restackDebounce)
+  deptHeaderResizeObserver.value?.disconnect()
+  deptHeaderResizeObserver.value = null
 })
 
 // ── Drag in/out of dept ────────────────────────────────────────────────────────

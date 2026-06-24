@@ -78,6 +78,7 @@ ALL_EXPORT_COLUMNS = {
     "vat_applicable":         {"label": "НДС применяется",       "group": "НДС"},
     "vat_rate":               {"label": "Ставка НДС",            "group": "НДС"},
     "vat_exemption_article":  {"label": "Статья НК РФ",          "group": "НДС"},
+    "etp_url":                {"label": "Ссылка ЭТП",            "group": "Закупка"},
 }
 
 DEFAULT_EXPORT_COLUMNS = [
@@ -158,6 +159,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "vat_applicable":          return "Да" if p.vat_applicable else ""
     if key == "vat_rate":                return p.vat_rate if p.vat_rate is not None else ""
     if key == "vat_exemption_article":   return p.vat_exemption_article or ""
+    if key == "etp_url":                 return p.etp_url or ""
     return ""
 
 
@@ -344,6 +346,7 @@ async def import_purchases_from_excel(
         "пп дата": "payment_doc_date",
         "оплачено": "payment_amount",
         "статус": "status",
+        "ссылка этп": "etp_url", "этп": "etp_url", "процедура этп": "etp_url",
         "год": "year",
         "№ п/п": "purchase_number",
     }

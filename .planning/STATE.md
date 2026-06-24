@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 29 executed (UAT pending)
-last_updated: "2026-05-19T23:30:00.000Z"
+status: Фидбек-кластер 2026-06-24 pushed (UAT pending)
+last_updated: "2026-06-24T00:00:00.000Z"
 progress:
   total_phases: 21
   completed_phases: 13
@@ -16,11 +16,22 @@ progress:
 
 ## Current Position
 
-Phase: 29 (Vehicle Fleet) — **EXECUTED ✅** (21/21 plans, 25 atomic commits ac982c9..be45939)
-Plan: VERIFICATION pending — backend autodeploy applies migrations, frontend bundle rebuilds
-Next action: UAT Phase 29 + параллельно UAT остальных pending фаз (27.1.x / 26-I / 25 Report Builder)
-Resume file: .planning/phases/29-vehicle-fleet/PLAN.md
-Plan review: .planning/phases/29-vehicle-fleet/PLAN-REVIEW.md (avg 11.71/12)
+Режим: LOCAL-dev → push в `claude` (autodeploy). Итеративный фидбек тестировщика.
+Last push: `8c340b0` (фидбек-кластер 22-24 июня, 35 файлов) + `30792a1` (mobile nav).
+Next action: UAT фидбек-кластера на проде (см. 04_TODO) + pending фазы (29 / 27.1.x / 26-I / 25).
+
+## 2026-06-24 — Фидбек-кластер 22-24 июня PUSHED ✅
+
+Один пакет `8c340b0` (+2538/−486, 35 файлов) → autodeploy. 5 задач от тестировщика Лягина:
+- **Филиппов в Сотрудниках** — `users.py` `or_()`-union (org_id + user_organizations + user_org_access).
+- **По-уровневая пропагация ФЭО** — `FeoCascadeSelect` эмитит узел на КАЖДОМ уровне; UI-only `feo_node_id` отдельно от листового `feo_category_id`; пропагация позиции на все выбранные строки (3 view).
+- **Ширина expand-row** — per-item атрибуты в full-width sub-row, каскад горизонтальный (no-scroll).
+- **Поиск по графу иерархии** — pill-поиск (#fb923c), подсветка + вьющаяся стрелка `matchPointer()` + `fitView`; тёмная тема (убран `bg-color="white"`), кнопки blue/purple.
+- **Экспорт реестров** — generic `report_excel/pdf` + `exports.py` (`/api/exports/*`), `useRegistryExport.ts` + `RegistryExportButton.vue` в 8 реестрах; фикс 401 (токен `auth_token`).
+
+Проверки: vue-tsc EXIT=0, Python AST OK, пересборка фронта, рестарт backend. Pre-push: новых миграций/колонок нет → 502-риска нет.
+
+## 2026-05-19 — Phase 29 EXECUTED ✅ Vehicle Fleet (21/21 plans, 25 коммитов)
 
 ## 2026-05-19 — Phase 29 EXECUTED ✅ Vehicle Fleet (21/21 plans, 25 коммитов)
 

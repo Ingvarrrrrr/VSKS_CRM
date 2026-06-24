@@ -201,6 +201,7 @@ interface Purchase {
   contract_date?: string | null
   procurement_planned_date?: string | null
   status: string
+  etp_url?: string | null
 }
 
 interface SubsidyMeta { id: number; name: string; year: number }
@@ -320,7 +321,7 @@ const exportExcel = () => {
       '№ п/п', 'Реестровый №', 'Предмет закупки', 'Категория ФЭО', 'Субсидия',
       'НМЦД (руб.)', 'Способ закупки', 'Контрагент', '№ договора', 'Дата договора',
       'Цена договора (руб.)', 'Оплачено (руб.)', 'Экономия (руб.)',
-      'Плановая дата закупки', 'Срок исполнения', 'Статус',
+      'Плановая дата закупки', 'Срок исполнения', 'Статус', 'Ссылка ЭТП',
     ]
 
     const rows = filtered.value.map((p, idx) => [
@@ -340,6 +341,7 @@ const exportExcel = () => {
       p.procurement_planned_date ?? '',
       p.execution_term ?? '',
       statusLabel(p.status),
+      p.etp_url ?? '',
     ])
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
@@ -348,14 +350,14 @@ const exportExcel = () => {
     ws['!cols'] = [
       { wch: 5 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 20 },
       { wch: 16 }, { wch: 26 }, { wch: 28 }, { wch: 14 }, { wch: 14 },
-      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
+      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 40 },
     ]
 
     // Totals row
     const totalRow = [
       'ИТОГО', '', '', '', '',
       totalNmck.value, '', '', '', '',
-      totalContracted.value, totalPaid.value, totalEconomy.value, '', '', '',
+      totalContracted.value, totalPaid.value, totalEconomy.value, '', '', '', '',
     ]
     XLSX.utils.sheet_add_aoa(ws, [totalRow], { origin: -1 })
 

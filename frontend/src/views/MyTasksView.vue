@@ -32,6 +32,21 @@
 
     <div v-show="!orgCardsOpen || orgSummary.length <= 1">
 
+      <!-- Интерактивный поиск (общий для таблицы и канбана, обеих вкладок) -->
+      <div v-if="activeTab === 'purchases' || activeTab === 'general'" class="mb-3">
+        <v-text-field
+          v-model="taskSearch"
+          density="compact"
+          variant="solo"
+          rounded="pill"
+          hide-details
+          clearable
+          prepend-inner-icon="mdi-magnify"
+          placeholder="Поиск по названию задачи/закупки…"
+          style="max-width:320px"
+        />
+      </div>
+
       <!-- ═══ PURCHASES TAB ═══ -->
       <template v-if="activeTab === 'purchases'">
         <!-- Pending approvals -->
@@ -70,8 +85,8 @@
         <!-- Kanban View -->
         <PurchasesKanban
           v-if="!loading && (tasks.length > 0 || showArchive) && viewMode === 'kanban'"
-          :purchases="tasks"
-          :archive-purchases="archiveTasks"
+          :purchases="kanbanTasks"
+          :archive-purchases="kanbanArchiveTasks"
           :selected-org-id="selectedOrgId"
           :show-archive="showArchive"
           @open-purchase="openTask"
@@ -269,12 +284,26 @@ const viewMode = ref<'kanban' | 'list'>('kanban')
 const taskViewMode = ref<'kanban' | 'list'>('kanban')
 const showArchive = ref(false)
 const linkPurchaseId = ref<number | null>(null)
+const taskSearch = ref('')
+
+// Интерактивный поиск: case-insensitive substring по набору полей.
+function matchSearch(hay: (string | number | null | undefined)[]) {
+  const q = taskSearch.value.trim().toLowerCase()
+  return !q || hay.some(s => (s ?? '').toString().toLowerCase().includes(q))
+}
 
 // ── Purchases state ──
 const tasks = ref<any[]>([])
 const archiveTasks = ref<any[]>([])
 const pendingApprovals = ref<any[]>([])
-const filteredTasks = computed(() => [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])])
+const filteredTasks = computed(() =>
+  [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])]
+    .filter((t: any) => matchSearch([t.subject, t.contractor_name, t.registry_number]))
+)
+// Поиск также применяется к канбану закупок (сохраняя разделение архива).
+const purchaseSearchFilter = (t: any) => matchSearch([t.subject, t.contractor_name, t.registry_number])
+const kanbanTasks = computed(() => tasks.value.filter(purchaseSearchFilter))
+const kanbanArchiveTasks = computed(() => archiveTasks.value.filter(purchaseSearchFilter))
 
 const activeTab = ref<'purchases' | 'general' | 'report'>('general')
 const commentDialog = ref(false)
@@ -284,7 +313,8 @@ const commentTaskId = ref<number | null>(null)
 // ── General tasks ──
 const generalTasks = ref<any[]>([])
 const filteredGeneralTasks = computed(() =>
-  selectedOrgId.value === null ? generalTasks.value : generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value)
+  (selectedOrgId.value === null ? generalTasks.value : generalTasks.value.filter((t: any) => t.org_id === selectedOrgId.value))
+    .filter((t: any) => matchSearch([t.title, t.task_number]))
 )
 const visibleActiveTasksCount = computed(() =>
   filteredGeneralTasks.value.filter((t: any) => !['done', 'cancelled'].includes(t.status)).length

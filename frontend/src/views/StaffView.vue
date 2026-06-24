@@ -7,6 +7,12 @@
         <span class="text-body-2 text-medium-emphasis">Отделы, сотрудники и иерархия</span>
       </div>
       <v-spacer />
+      <v-btn v-if="isAdmin" color="primary" size="small" variant="outlined" prepend-icon="mdi-domain-plus" @click="router.push({ path: '/organizations', query: { create: '1' } })">
+        Добавить организацию
+      </v-btn>
+      <v-btn v-if="isAdmin" color="primary" size="small" variant="outlined" prepend-icon="mdi-folder-plus" @click="openCreateDeptFromHeader">
+        Добавить отдел
+      </v-btn>
       <v-btn v-if="isAdmin" color="primary" size="small" prepend-icon="mdi-account-plus" @click="openCreateUser">
         Добавить сотрудника
       </v-btn>
@@ -261,6 +267,17 @@
           </v-btn-toggle>
         </div>
 
+        <!-- Bulk actions bar -->
+        <div v-if="isAdmin && selectedUsers.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
+          <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
+          <span class="text-body-2 font-weight-medium">Выбрано: {{ selectedUsers.length }}</span>
+          <v-spacer />
+          <v-btn color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDeleteUsers">
+            Удалить выбранных
+          </v-btn>
+          <v-btn variant="text" size="small" @click="selectedUsers = []">Снять выделение</v-btn>
+        </div>
+
         <!-- B6: кнопка дубликатов по ИНН -->
         <v-alert
           v-if="isAdmin && duplicateInnGroups.length > 0"
@@ -291,6 +308,8 @@
             item-value="id"
             v-model:expanded="expandedUsers"
             @update:expanded="onUserExpanded"
+            v-model:selected="selectedUsers"
+            :show-select="isAdmin"
           >
             <template v-slot:item.avatar="{ item }">
               <UserAvatar :photo-url="item.photo_url" :avatar="item.avatar" :size="32" square />
@@ -383,6 +402,14 @@
               >
                 <v-card-text class="pa-3">
                   <div class="d-flex align-center mb-2">
+                    <v-checkbox-btn
+                      v-if="isAdmin"
+                      :model-value="selectedUsers.some(s => (s as any).id === u.id || s === u.id)"
+                      density="compact"
+                      class="mr-1 flex-shrink-0"
+                      @click.stop
+                      @update:model-value="toggleUserSelection(u)"
+                    />
                     <v-avatar size="38" class="mr-3 flex-shrink-0" color="primary" variant="tonal">
                       <UserAvatar
                         v-if="u.photo_url || u.avatar"
@@ -889,6 +916,31 @@
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog.show = false">Отмена</v-btn>
           <v-btn color="error" variant="flat" :loading="deleteDialog.deleting" @click="doDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- 3b. Bulk delete users confirm dialog -->
+    <v-dialog v-model="bulkDeleteUsersDialog" max-width="440" persistent>
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
+          Удалить сотрудников?
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4 pa-4">
+          <p class="mb-2">
+            Вы собираетесь удалить <strong>{{ selectedUsers.length }}</strong> сотрудников.
+            Это действие <strong>нельзя отменить</strong>.
+          </p>
+          <p class="text-caption text-medium-emphasis">
+            Все данные, задачи и права доступа удалённых сотрудников будут потеряны.
+          </p>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" :disabled="bulkDeleteUsersLoading" @click="bulkDeleteUsersDialog = false">Отмена</v-btn>
+          <v-btn color="error" variant="flat" :loading="bulkDeleteUsersLoading" @click="doBulkDeleteUsers">Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1590,6 +1642,9 @@ const editDialog = reactive({
 })
 
 const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
+const selectedUsers = ref<any[]>([])
+const bulkDeleteUsersDialog = ref(false)
+const bulkDeleteUsersLoading = ref(false)
 
 const staffPhotoUploadRef = ref<InstanceType<typeof ProfilePhotoUpload> | null>(null)
 function openStaffPhotoUpload() { staffPhotoUploadRef.value?.open() }
@@ -2375,6 +2430,46 @@ async function doDelete() {
   }
 }
 
+function confirmBulkDeleteUsers() {
+  bulkDeleteUsersDialog.value = true
+}
+
+function toggleUserSelection(u: UserItem) {
+  const idx = selectedUsers.value.findIndex((s: any) => (s?.id ?? s) === u.id)
+  if (idx >= 0) {
+    selectedUsers.value = selectedUsers.value.filter((_: any, i: number) => i !== idx)
+  } else {
+    selectedUsers.value = [...selectedUsers.value, u]
+  }
+}
+
+async function doBulkDeleteUsers() {
+  bulkDeleteUsersLoading.value = true
+  const toDelete = [...selectedUsers.value]
+  let deleted = 0
+  const errors: string[] = []
+  for (const item of toDelete) {
+    const id = typeof item === 'object' ? item.id : item
+    const name = typeof item === 'object' ? (item.full_name || item.username || String(id)) : String(id)
+    try {
+      await apiFetch(`/users/${id}`, { method: 'DELETE' })
+      users.value = users.value.filter(u => u.id !== id)
+      deleted++
+    } catch (e: any) {
+      const msg = e?.payload?.message || e?.message || 'Ошибка'
+      errors.push(`${name}: ${msg}`)
+    }
+  }
+  selectedUsers.value = []
+  bulkDeleteUsersDialog.value = false
+  bulkDeleteUsersLoading.value = false
+  if (errors.length) {
+    showSnack(`Удалено: ${deleted}. Ошибки (${errors.length}): ${errors.slice(0, 3).join('; ')}`, 'error')
+  } else {
+    showSnack(`Удалено сотрудников: ${deleted}`, 'success')
+  }
+}
+
 async function downloadUserTemplate() {
   const token = localStorage.getItem('auth_token')
   const resp = await fetch('/api/users/import/template', {
@@ -2501,6 +2596,13 @@ function openCreateDept() {
   editingDept.value = null
   deptForm.value = { name: '', subsidy_id: filterSubsidyId.value, head_user_id: null, parent_id: null }
   deptDialog.value = true
+}
+
+// Top-level «Добавить отдел» из шапки (доступно на всех вкладках):
+// переключаемся на вкладку «Отделы» и открываем тот же диалог.
+function openCreateDeptFromHeader() {
+  activeTab.value = 'departments'
+  openCreateDept()
 }
 
 async function openEditDept(node: any) {

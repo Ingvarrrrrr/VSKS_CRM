@@ -221,19 +221,18 @@
                 item-title="title" item-value="value" label="Тип закупки" variant="outlined" density="compact"
                 hint="Выберите тип закупки" persistent-hint />
             </v-col>
-            <!-- Phase 28: форма договора — определяет шаблон при скачивании -->
-            <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method !== 'advance'" cols="12" md="3">
-              <v-select
-                v-model="form.contract_form"
-                :items="contractFormOptions"
-                item-title="title"
-                item-value="value"
-                label="Форма договора"
+            <!-- ЭТП: ссылка на конкурсную процедуру — скрыто для единственного поставщика -->
+            <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method !== 'single'" cols="12" md="4">
+              <v-text-field
+                v-model="form.etp_url"
+                label="Ссылка на процедуру ЭТП"
                 variant="outlined"
                 density="compact"
                 clearable
-                hint="Определяет какой шаблон используется при скачивании «Договор» и «Договор+ТЗ»"
+                placeholder="https://zakupki.gov.ru/..."
+                hint="Если закупка проводилась через электронную торговую площадку"
                 persistent-hint
+                @blur="flushAutosaveOnBlur"
               />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
@@ -428,7 +427,7 @@
             <v-col v-if="!(formMode === 'advance_report' && isNew)" cols="12" md="4">
               <v-text-field :model-value="form.registry_number || (isNew ? '—' : '')" label="Реестровый номер"
                 variant="outlined" density="compact"
-                :readonly="!isAdminLevel || isNew"
+                :readonly="!isSuperadmin || isNew"
                 bg-color="grey-lighten-4"
                 :hint="isNew ? 'Присвоится после сохранения' : 'Генерируется автоматически'" persistent-hint
                 @update:model-value="onAutoFieldChange('registry_number', 'Реестровый номер', $event)" />
@@ -446,79 +445,7 @@
               />
             </v-col>
           </v-row>
-          <!-- Phase 28: Условия конкретного договора — видно только если выбрана форма договора -->
-          <template v-if="form.contract_form">
-            <!-- Срок приёмки + неустойка — для поставки и услуг -->
-            <v-row v-if="['goods_single', 'services_large', 'services_small', 'services_food'].includes(form.contract_form)" class="mt-1">
-              <v-col cols="12" class="pb-0">
-                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.acceptance_term_days" type="number" label="Срок приёмки (раб. дней)" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field
-                  v-model.number="form.warranty_period_days"
-                  type="number"
-                  label="Срок гарантии (раб.дней)"
-                  hint="{{warranty_period_days}} в шаблонах. По умолчанию 15."
-                  persistent-hint
-                  density="compact"
-                  variant="outlined"
-                  @blur="flushAutosaveOnBlur"
-                />
-              </v-col>
-            </v-row>
-            <!-- Договор задним числом — для всех форм договора -->
-            <v-row v-if="form.contract_form" class="mt-1">
-              <v-col cols="12" md="6">
-                <v-checkbox
-                  v-model="form.is_retroactive"
-                  label="Договор задним числом (ст. 425 ГК РФ)"
-                  hint="Если включено, в шаблон добавляется пункт о применении условий с даты начала услуг до подписания договора. {{is_retroactive}}"
-                  persistent-hint
-                  density="compact"
-                />
-              </v-col>
-            </v-row>
-            <!-- Ремонт ТС: дата ОГРНИП + номер заявки -->
-            <v-row v-if="['repair_vehicle', 'repair_framework'].includes(form.contract_form)" class="mt-1">
-              <v-col cols="12" class="pb-0">
-                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field v-model="form.contractor_ogrnip_date" type="date" label="Дата ОГРНИП подрядчика" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col v-if="form.contract_form === 'repair_framework'" cols="6" md="3">
-                <v-text-field v-model="form.repair_request_number" label="Номер заявки на ремонт" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-            </v-row>
-            <!-- Сумма аванса — только для большой отчётности -->
-            <v-row v-if="form.contract_form === 'services_large'" class="mt-1">
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-            </v-row>
-            <!-- Закупочная комиссия — для всех форм (нужна в Протоколе) -->
-            <v-row class="mt-1">
-              <v-col cols="12" class="pb-0">
-                <div class="text-subtitle-2 text-medium-emphasis">Закупочная комиссия (для протокола)</div>
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_1_name" label="ФИО члена комиссии 1" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_2_name" label="ФИО члена комиссии 2" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_3_name" label="ФИО члена комиссии 3" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-            </v-row>
-          </template>
-          <!-- Тип договора (перенесён из финансовых показателей) -->
+          <!-- Тип договора: определяет предельную сумму (Разовый/Рамочный) -->
           <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
             <v-col cols="12" md="3">
               <v-select v-model="form.purchase_contract_type" :items="CONTRACT_TYPES"
@@ -602,6 +529,78 @@
               </v-table>
             </v-col>
           </v-row>
+          <!-- Phase 28: Условия конкретного договора — видно только если выбрана форма договора -->
+          <template v-if="form.contract_form">
+            <!-- Срок приёмки + неустойка — для поставки и услуг -->
+            <v-row v-if="['goods_single', 'services_large', 'services_small', 'services_food'].includes(form.contract_form)" class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.acceptance_term_days" type="number" label="Срок приёмки (раб. дней)" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field
+                  v-model.number="form.warranty_period_days"
+                  type="number"
+                  label="Срок гарантии (раб.дней)"
+                  hint="{{warranty_period_days}} в шаблонах. По умолчанию 15."
+                  persistent-hint
+                  density="compact"
+                  variant="outlined"
+                  @blur="flushAutosaveOnBlur"
+                />
+              </v-col>
+            </v-row>
+            <!-- Договор задним числом — для всех форм договора -->
+            <v-row v-if="form.contract_form" class="mt-1">
+              <v-col cols="12" md="6">
+                <v-checkbox
+                  v-model="form.is_retroactive"
+                  label="Договор задним числом (ст. 425 ГК РФ)"
+                  hint="Если включено, в шаблон добавляется пункт о применении условий с даты начала услуг до подписания договора. {{is_retroactive}}"
+                  persistent-hint
+                  density="compact"
+                />
+              </v-col>
+            </v-row>
+            <!-- Ремонт ТС: дата ОГРНИП + номер заявки -->
+            <v-row v-if="['repair_vehicle', 'repair_framework'].includes(form.contract_form)" class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
+              </v-col>
+              <v-col cols="6" md="3">
+                <v-text-field v-model="form.contractor_ogrnip_date" type="date" label="Дата ОГРНИП подрядчика" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col v-if="form.contract_form === 'repair_framework'" cols="6" md="3">
+                <v-text-field v-model="form.repair_request_number" label="Номер заявки на ремонт" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+            <!-- Сумма аванса — только для большой отчётности -->
+            <v-row v-if="form.contract_form === 'services_large'" class="mt-1">
+              <v-col cols="6" md="3">
+                <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+            <!-- Закупочная комиссия — для всех форм (нужна в Протоколе) -->
+            <v-row class="mt-1">
+              <v-col cols="12" class="pb-0">
+                <div class="text-subtitle-2 text-medium-emphasis">Закупочная комиссия (для протокола)</div>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_1_name" label="ФИО члена комиссии 1" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_2_name" label="ФИО члена комиссии 2" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field v-model="form.commission_member_3_name" label="ФИО члена комиссии 3" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+            </v-row>
+          </template>
         </v-card-text>
       </v-card>
 
@@ -1426,26 +1425,26 @@
           </v-row>
 
           <!-- Phase 23: customer requisites preview -->
-          <v-card variant="tonal" color="purple-lighten-5" class="mb-3">
+          <v-card variant="outlined" class="mb-3" style="border-color:#9c6ade; background:transparent">
             <v-card-text class="pa-3">
               <div class="d-flex align-center mb-2">
-                <v-icon icon="mdi-domain" size="18" color="purple" class="mr-2" />
-                <span class="text-body-2 font-weight-medium">Реквизиты Заказчика (подставятся в шаблон)</span>
+                <v-icon icon="mdi-domain" size="18" color="purple-darken-2" class="mr-2" />
+                <span class="text-body-1 font-weight-bold">Реквизиты Заказчика (подставятся в шаблон)</span>
                 <v-spacer />
-                <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-information-outline" @click="showPlaceholdersDialog = true">
+                <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-information-outline" @click="showPlaceholdersDialog = true">
                   Доступные переменные
                 </v-btn>
               </div>
-              <div v-if="customerPreview" class="text-caption" style="line-height:1.5">
+              <div v-if="customerPreview" class="text-body-2 text-high-emphasis" style="line-height:1.7">
                 <div><strong>{{ customerPreview.full_name || customerPreview.name }}</strong></div>
                 <div>ИНН/КПП: {{ customerPreview.inn || '—' }} / {{ customerPreview.kpp || '—' }}</div>
                 <div v-if="customerPreview.address">Адрес: {{ customerPreview.address }}</div>
                 <div v-if="customerPreview.signatory">Подписант: {{ customerPreview.signatory }}</div>
               </div>
-              <div v-else class="text-caption text-medium-emphasis">
+              <div v-else class="text-body-2 text-medium-emphasis">
                 Сначала выберите субсидию — реквизиты возьмутся из её организации.
               </div>
-              <div class="text-caption text-medium-emphasis mt-2">
+              <div class="text-caption text-high-emphasis mt-2">
                 Изменить реквизиты можно в карточке организации (Иерархия → клик на организацию).
               </div>
             </v-card-text>
@@ -1453,11 +1452,29 @@
 
           <!-- Phase 19: template-specific fields (submission deadline, delivery location, service term) -->
           <v-divider class="my-3" />
-          <div class="text-caption text-medium-emphasis mb-2">
-            Дополнительные поля для шаблонов (приём заявок, место и срок оказания услуг)
+          <div class="text-subtitle-2 font-weight-bold mb-1">Для формирования договора</div>
+          <div class="text-caption text-high-emphasis mb-2">
+            Переменные, которые не были определены ранее (форма договора, приём заявок, место и срок оказания услуг)
           </div>
+          <!-- Форма договора: выбор текста договора (малая / большая отчётность) -->
+          <v-row v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method !== 'advance'">
+            <v-col cols="12">
+              <v-select
+                v-model="form.contract_form"
+                :items="contractFormOptions"
+                item-title="title"
+                item-value="value"
+                label="Форма договора (текст: малая / большая отчётность)"
+                variant="outlined"
+                density="compact"
+                clearable
+                hint="Определяет какой шаблон используется при скачивании «Договор» и «Договор+ТЗ»"
+                persistent-hint
+              />
+            </v-col>
+          </v-row>
           <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12">
               <v-text-field
                 v-model="form.submission_deadline"
                 label="Дата и время завершения приёма заявок"
@@ -1467,7 +1484,7 @@
                 persistent-hint
               />
             </v-col>
-            <v-col cols="12" md="8">
+            <v-col cols="12">
               <div class="mb-1">
                 <v-btn-toggle
                   v-model="form.delivery_location_kind"
@@ -1487,7 +1504,7 @@
             </v-col>
           </v-row>
           <v-row>
-            <v-col cols="12" md="6">
+            <v-col cols="12">
               <v-autocomplete
                 v-model="form.region"
                 :items="RUSSIAN_REGIONS"
@@ -3452,6 +3469,7 @@ const userRole = localStorage.getItem('user_role') || 'employee'
 const isEmployee = computed(() => userRole === 'employee')
 const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
+const isSuperadmin = computed(() => userRole === 'superadmin')
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
 const canPublish = ref(localStorage.getItem('can_publish') === 'true' || isAdminLevel.value)
 
@@ -3712,6 +3730,8 @@ const form = reactive({
   is_retroactive: false as boolean,
   // Phase 29: связь с ТС
   vehicle_id: null as number | null,
+  // ЭТП: ссылка на конкурсную процедуру
+  etp_url: null as string | null,
   // B-PIF1/F-PIF1: per-item FEO (UI-only, not persisted)
   feo_per_item: false as boolean,
 })
@@ -3819,6 +3839,8 @@ function serializeFormForAutosave() {
     advance_amount: f.advance_amount ?? null,
     warranty_period_days: f.warranty_period_days ?? null,
     is_retroactive: f.is_retroactive ?? false,
+    // ЭТП
+    etp_url: f.etp_url || null,
   })
 }
 
@@ -6008,6 +6030,8 @@ const loadPurchase = async () => {
     is_retroactive: data.is_retroactive ?? false,
     // Phase 29: связь с ТС
     vehicle_id: data.vehicle_id ?? null,
+    // ЭТП
+    etp_url: data.etp_url ?? null,
   })
 
   // Save frozen НМЦД from DB

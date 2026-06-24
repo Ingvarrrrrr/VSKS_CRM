@@ -6,6 +6,14 @@
         <span class="text-body-2 text-medium-emphasis">{{ orgs.length }} организаций</span>
       </div>
       <v-spacer />
+      <v-btn
+        v-if="canCreateOrg"
+        color="primary"
+        prepend-icon="mdi-domain-plus"
+        @click="openCreateOrg"
+      >
+        Добавить организацию
+      </v-btn>
       <v-text-field
         v-model="search"
         placeholder="Поиск по названию или ИНН..."
@@ -151,7 +159,7 @@
     <!-- Edit org dialog -->
     <v-dialog v-model="editOrgDialog" max-width="640" scrollable :fullscreen="mobile">
       <v-card class="org-dialog-card">
-        <v-card-title class="pa-4">Реквизиты организации</v-card-title>
+        <v-card-title class="pa-4">{{ editOrgItem.id ? 'Реквизиты организации' : 'Новая организация' }}</v-card-title>
         <v-card-text class="pa-4 pt-0" style="max-height:75vh">
           <v-alert
             v-if="editOrgItem.contractor_id"
@@ -318,8 +326,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
@@ -352,6 +360,12 @@ const EGRUL_FIELDS = [
 ]
 
 const router = useRouter()
+const route = useRoute()
+// Создавать организации могут только владельцы контура (superadmin / account_owner) —
+// бэкенд POST /organizations требует OWNER_ROLES.
+const canCreateOrg = computed(() =>
+  ['superadmin', 'account_owner'].includes(localStorage.getItem('user_role') || '')
+)
 const registryArea = ref<HTMLElement | null>(null)
 const orgs = ref<Org[]>([])
 const loading = ref(false)
@@ -457,6 +471,22 @@ function applyEgrulDiff() {
   egrulMessageType.value = 'success'
 }
 
+function openCreateOrg() {
+  editOrgItem.value = {
+    id: 0,
+    name: '',
+    full_name: '',
+    inn: '',
+    kpp: '',
+    ogrn: '',
+    address: '',
+    signatory: '',
+    contractor_id: null,
+  }
+  egrulMessage.value = ''
+  editOrgDialog.value = true
+}
+
 async function openEditOrg(org: Org) {
   editOrgItem.value = {
     id: org.id,
@@ -500,26 +530,33 @@ function goToContractor(contractorId: number) {
 }
 
 async function saveOrg() {
+  if (!editOrgItem.value.name?.trim()) {
+    showSnack('Укажите краткое название организации', 'error')
+    return
+  }
+  const isCreate = !editOrgItem.value.id
   editOrgSaving.value = true
   try {
-    await apiFetch(`/organizations/${editOrgItem.value.id}`, {
-      method: 'PUT',
-      body: {
-        name: editOrgItem.value.name,
-        full_name: editOrgItem.value.full_name || null,
-        inn: editOrgItem.value.inn || null,
-        kpp: editOrgItem.value.kpp || null,
-        ogrn: editOrgItem.value.ogrn || null,
-        address: editOrgItem.value.address || null,
-        signatory: editOrgItem.value.signatory || null,
-        contractor_id: editOrgItem.value.contractor_id ?? null,
-      }
-    })
+    const body = {
+      name: editOrgItem.value.name,
+      full_name: editOrgItem.value.full_name || null,
+      inn: editOrgItem.value.inn || null,
+      kpp: editOrgItem.value.kpp || null,
+      ogrn: editOrgItem.value.ogrn || null,
+      address: editOrgItem.value.address || null,
+      signatory: editOrgItem.value.signatory || null,
+      contractor_id: editOrgItem.value.contractor_id ?? null,
+    }
+    if (isCreate) {
+      await apiFetch(`/organizations/`, { method: 'POST', body })
+    } else {
+      await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })
+    }
     editOrgDialog.value = false
     await loadOrgs()
-    showSnack('Реквизиты сохранены')
+    showSnack(isCreate ? 'Организация создана' : 'Реквизиты сохранены')
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка сохранения', 'error')
+    showSnack(e?.payload?.message || e?.message || 'Ошибка сохранения', 'error')
   } finally {
     editOrgSaving.value = false
   }
@@ -599,7 +636,14 @@ async function doDelete() {
   }
 }
 
-onMounted(loadOrgs)
+onMounted(async () => {
+  await loadOrgs()
+  // Открыть форму создания, если перешли сюда с ?create=1 (напр. из «Персонала»)
+  if (route.query.create && canCreateOrg.value) {
+    openCreateOrg()
+    router.replace({ query: {} })
+  }
+})
 </script>
 
 <style scoped>

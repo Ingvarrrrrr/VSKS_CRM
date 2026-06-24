@@ -603,6 +603,18 @@ async def list_contractors_with_stats(
     return {"items": result, "total": total}
 
 
+def _split_signatory(raw, position=None):
+    """ЕГРЮЛ/локальная карточка иногда хранит руководителя как "ДОЛЖНОСТЬ: ФИО".
+    Возвращает (signatory_fio, signatory_position). Если position уже задан —
+    не трогаем. Если raw содержит ":" — режем по первому двоеточию."""
+    if position:
+        return (raw, position)
+    if raw and ":" in raw:
+        _pos, _fio = raw.split(":", 1)
+        return (_fio.strip() or None, _pos.strip() or None)
+    return (raw, None)
+
+
 @router.get("/lookup-inn/{inn}")
 async def lookup_inn(
     inn: str,
@@ -639,6 +651,9 @@ async def lookup_inn(
         ):
             raw_phone = None
             logger.warning("lookup_inn: phone field contained INN for contractor %s, suppressed", inn)
+        _lc_sig, _lc_pos = _split_signatory(
+            local_contractor.signatory, getattr(local_contractor, "signatory_position", None)
+        )
         return {
             "id": local_contractor.id,
             "name": local_contractor.name,
@@ -648,7 +663,8 @@ async def lookup_inn(
             "address": local_contractor.address,
             "postal_address": local_contractor.postal_address,
             "org_type": local_contractor.org_type,
-            "signatory": local_contractor.signatory,
+            "signatory": _lc_sig,
+            "signatory_position": _lc_pos,
             "signatory_basis": local_contractor.signatory_basis,
             "contact_person": local_contractor.contact_person,
             "phone": raw_phone,
@@ -696,6 +712,9 @@ async def lookup_inn(
                 )
 
             row = rows[0]  # first match
+            # ЕГРЮЛ возвращает руководителя как "ДОЛЖНОСТЬ: ФИО"
+            # (например "ПРЕДСЕДАТЕЛЬ: Девлишева Максим Махмович").
+            _signatory, _signatory_position = _split_signatory(row.get("g"))
             result = {
                 "name": row.get("c") or row.get("n"),  # c=short name, n=full name
                 "full_name": row.get("n"),              # n=full legal name
@@ -714,7 +733,8 @@ async def lookup_inn(
                         "Юр.лицо" if row.get("o") else None
                     )
                 ),
-                "signatory": row.get("g"),  # director/head name
+                "signatory": _signatory,  # director/head ФИО (без должности)
+                "signatory_position": _signatory_position,  # должность подписанта
                 "status": row.get("s"),  # status text
                 "registration_date": row.get("r"),
             }

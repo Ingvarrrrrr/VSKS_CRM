@@ -14,6 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if 'user_subsidy_permission_overrides' in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         'user_subsidy_permission_overrides',
         sa.Column('id', sa.Integer(), primary_key=True, index=True),

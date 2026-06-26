@@ -17,8 +17,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('purchases', sa.Column('etp_url', sa.Text(), nullable=True))
+    # Idempotent: prod-схему строит check_schema (runtime-DDL), колонка могла
+    # появиться раньше. Plain ADD COLUMN падал бы DuplicateColumnError и валил старт.
+    op.execute(sa.text("ALTER TABLE purchases ADD COLUMN IF NOT EXISTS etp_url TEXT"))
 
 
 def downgrade() -> None:
-    op.drop_column('purchases', 'etp_url')
+    op.execute(sa.text("ALTER TABLE purchases DROP COLUMN IF EXISTS etp_url"))

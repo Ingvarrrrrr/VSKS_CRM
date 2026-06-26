@@ -1366,6 +1366,13 @@ async def _ensure_plan_graph_versions_effective_date_column(conn) -> None:
 
 async def main(apply: bool = False) -> int:
     async with engine.begin() as conn:
+        # Create any tables present in metadata but missing in DB (idempotent,
+        # checkfirst). ADD COLUMN can't create a table — без этого новая модель
+        # приводила к UndefinedTableError, который обрывал всю транзакцию и
+        # откатывал даже успешные ALTER (одна отсутствующая таблица → 502).
+        if apply:
+            await conn.run_sync(Base.metadata.create_all)
+
         # Phase 23.5: ensure critical FK cascades (idempotent)
         if apply:
             print("Fixing cascade FK constraints...")

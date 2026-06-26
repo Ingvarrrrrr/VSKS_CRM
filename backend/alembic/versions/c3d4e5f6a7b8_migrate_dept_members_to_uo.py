@@ -20,11 +20,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Step 1: Add hired_at column
-    op.add_column(
-        'user_organizations',
-        sa.Column('hired_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    )
+    # Step 1: Add hired_at column (idempotent — check_schema мог добавить раньше)
+    op.execute(sa.text(
+        "ALTER TABLE user_organizations ADD COLUMN IF NOT EXISTS hired_at TIMESTAMPTZ DEFAULT now()"
+    ))
+
+    # Steps 2-4 завязаны на department_members. На свежей/уже-мигрированной БД
+    # таблицы может не быть — тогда бэкфилл/дроп пропускаем.
+    if 'department_members' not in sa.inspect(op.get_bind()).get_table_names():
+        return
 
     # Step 2: Backfill hired_at on existing matched UO rows from DM.created_at
     op.execute(sa.text(
@@ -52,7 +56,7 @@ def upgrade() -> None:
     ))
 
     # Step 4: Drop department_members table (now superseded by user_organizations)
-    op.drop_table('department_members')
+    op.execute(sa.text("DROP TABLE IF EXISTS department_members"))
 
 
 def downgrade() -> None:

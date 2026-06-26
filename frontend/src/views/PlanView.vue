@@ -269,13 +269,13 @@ const loadData = async () => {
   try {
     const [subs, charts] = await Promise.all([
       apiFetch<SubsidyMeta[]>('/subsidies/'),
-      apiFetch<any>('/dashboard/charts'),
+      apiFetch<any>('/dashboard/charts?scope=plan'),
     ])
     subsidies.value = subs
     if (availableYears.value.length) selectedYear.value = availableYears.value[0]
 
     // Load all confirmed+ purchases
-    purchases.value = await apiFetch<Purchase[]>('/purchases/')
+    purchases.value = await apiFetch<Purchase[]>('/purchases/?scope=plan')
   } finally {
     loading.value = false
   }

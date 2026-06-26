@@ -46,7 +46,9 @@
             />
             <v-text-field
               v-model="password" label="Пароль" prepend-inner-icon="mdi-lock"
-              variant="outlined" type="password" class="mb-2"
+              variant="outlined" :type="showPassword ? 'text' : 'password'" class="mb-2"
+              :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showPassword = !showPassword"
               :error-messages="errors.password" autocomplete="current-password"
             />
 
@@ -91,6 +93,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const username = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
 const verifiedSnack = ref(false)

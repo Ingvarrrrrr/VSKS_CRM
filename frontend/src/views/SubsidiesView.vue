@@ -3419,7 +3419,7 @@ function onDragEnd() { dragNodeId.value = null; dragOverId.value = null }
 async function loadAll() {
   loading.value = true
   try {
-    const charts = await apiFetch<any>('/dashboard/charts')
+    const charts = await apiFetch<any>('/dashboard/charts?scope=managed')
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
       calculated_budget: s.calculated_budget ?? 0,

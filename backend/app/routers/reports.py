@@ -12,7 +12,8 @@ from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.user import User
-from app.auth.jwt import get_current_user, get_org_filter
+from app.auth.jwt import get_current_user
+from app.auth.visibility import get_visible_subsidy_ids
 from typing import Optional
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -39,12 +40,10 @@ def _get_period_dates(period: str, ref_date: date):
     return start, end
 
 
-def _apply_org_filter(q, user: User):
-    org_ids = get_org_filter(user)
-    if org_ids is not None:
-        q = q.where(Purchase.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
+def _apply_vis_filter(q, vis):
+    """Apply subsidy visibility gate. vis=None means no filter (SaaS), vis=set → filter by subsidy_id."""
+    if vis is not None:
+        q = q.where(Purchase.subsidy_id.in_(vis))
     return q
 
 
@@ -79,6 +78,9 @@ async def report_summary(
     today = date.fromisoformat(ref_date) if ref_date else date.today()
     start, end = _get_period_dates(period, today)
 
+    # Reports tab: двухуровневая видимость по вкладке «Отчёты».
+    _vis = await get_visible_subsidy_ids(current_user, db, "reports")
+
     # Load lookup tables
     contractors_r = await db.execute(select(Contractor.id, Contractor.name))
     contractors = {r.id: r.name for r in contractors_r}
@@ -101,49 +103,49 @@ async def report_summary(
         return q
 
     # Active purchases (in_progress, contracted)
-    active_q = _extra_filters(_apply_org_filter(
+    active_q = _extra_filters(_apply_vis_filter(
         select(Purchase).where(Purchase.status.in_(["in_progress", "contracted"])),
-        current_user
+        _vis
     ))
     active_result = await db.execute(active_q)
     active = [_purchase_to_dict(p, contractors, subsidies, users) for p in active_result.scalars().all()]
 
     # Completed in period (status=paid, payment_date in range)
-    completed_q = _extra_filters(_apply_org_filter(
+    completed_q = _extra_filters(_apply_vis_filter(
         select(Purchase)
         .where(Purchase.status == "paid")
         .where(Purchase.payment_doc_date.between(start, end)),
-        current_user
+        _vis
     ))
     completed_result = await db.execute(completed_q)
     completed = [_purchase_to_dict(p, contractors, subsidies, users) for p in completed_result.scalars().all()]
 
     # Planned (status=planned or confirmed, created/updated in period — use id proxy)
-    planned_q = _extra_filters(_apply_org_filter(
+    planned_q = _extra_filters(_apply_vis_filter(
         select(Purchase)
         .where(Purchase.status.in_(["planned", "confirmed"])),
-        current_user
+        _vis
     ))
     planned_result = await db.execute(planned_q)
     planned = [_purchase_to_dict(p, contractors, subsidies, users) for p in planned_result.scalars().all()]
 
     # Upcoming deadlines (execution_term in next period)
     next_start, next_end = _get_period_dates(period, end + timedelta(days=1))
-    upcoming_q = _extra_filters(_apply_org_filter(
+    upcoming_q = _extra_filters(_apply_vis_filter(
         select(Purchase)
         .where(Purchase.execution_term.between(next_start, next_end))
         .where(Purchase.status.notin_(["paid", "delivered"])),
-        current_user
+        _vis
     ))
     upcoming_result = await db.execute(upcoming_q)
     upcoming = [_purchase_to_dict(p, contractors, subsidies, users) for p in upcoming_result.scalars().all()]
 
     # Overdue
-    overdue_q = _extra_filters(_apply_org_filter(
+    overdue_q = _extra_filters(_apply_vis_filter(
         select(Purchase)
         .where(Purchase.execution_term < today)
         .where(Purchase.status.notin_(["paid", "delivered"])),
-        current_user
+        _vis
     ))
     overdue_result = await db.execute(overdue_q)
     overdue = [_purchase_to_dict(p, contractors, subsidies, users) for p in overdue_result.scalars().all()]

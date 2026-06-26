@@ -15,7 +15,7 @@ from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
-from app.auth.visibility import build_visibility_clause, get_visible_user_ids
+from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
@@ -431,6 +431,7 @@ async def list_purchases(
     framework_seq: Optional[int] = Query(None),
     vehicle_id: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
+    scope: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -443,16 +444,30 @@ async def list_purchases(
         selectinload(Purchase.event),
     )
     org_ids = get_org_filter(current_user)
+    # #8: явный grant субсидии (user_subsidy_access) расширяет org-фильтр —
+    # пользователь видит закупки субсидии вне своего контура.
+    from app.models.user_subsidy_access import UserSubsidyAccess
+    granted_ids = set((await db.execute(
+        select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == current_user.id)
+    )).scalars().all())
+    _SCOPED_TABS = {"purchases", "advance_reports", "service_notes"}
     needs_subsidy_join = org_ids is not None or org_id is not None
-    if needs_subsidy_join:
-        q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
-        if org_id is not None:
-            # Explicit org filter takes precedence; still validate user has access to this org
-            if org_ids is not None and org_id not in org_ids:
-                return []
-            q = q.where(Subsidy.org_id == org_id)
-        elif org_ids is not None:
-            q = q.where(Subsidy.org_id.in_(org_ids))
+    if scope is not None and scope in _SCOPED_TABS and org_id is None:
+        # Двухуровневая видимость по конкретной вкладке (purchases / advance_reports / service_notes).
+        vis = await get_visible_subsidy_ids(current_user, db, scope)
+        if vis is not None:
+            q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
+            q = q.where(Subsidy.id.in_(vis))
+    else:
+        if needs_subsidy_join:
+            q = q.join(Subsidy, Purchase.subsidy_id == Subsidy.id)
+            if org_id is not None:
+                # Explicit org filter takes precedence; still validate user has access to this org
+                if org_ids is not None and org_id not in org_ids:
+                    return []
+                q = q.where(Subsidy.org_id == org_id)
+            elif org_ids is not None:
+                q = q.where(or_(Subsidy.org_id.in_(org_ids), Subsidy.id.in_(granted_ids)))
     # Phase 28: unified visibility helper.
     # — build_visibility_clause возвращает None для SaaS-ролей (фильтр не нужен),
     #   иначе or_() с правилами 1-5 (иерархия + участие).
@@ -1674,7 +1689,8 @@ async def broadcast_from_purchase(
 ):
     """Broadcast from purchase context."""
     from app.models.organization import Organization
-    from app.models.department import Department, DepartmentMember
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization as _UO_broadcast
     from app.models.purchase_comment import PurchaseComment
     from app.notifications import notify_user, _esc, _purchase_url
 
@@ -1695,7 +1711,7 @@ async def broadcast_from_purchase(
 
     q = select(User).where(User.id != current_user.id)  # superadmin-bypass-ok: broadcast notifications, not a user-list endpoint returned to client
     if scope == "department" and scope_id:
-        member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))
+        member_uids = select(_UO_broadcast.user_id).where(_UO_broadcast.dept_id == int(scope_id))
         q = q.where(User.id.in_(member_uids))
     elif scope == "organization" and scope_id:
         q = q.where(User.org_id == int(scope_id))

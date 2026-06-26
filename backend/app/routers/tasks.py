@@ -199,7 +199,7 @@ async def create_task(
 
             # Load depts managed by current user
             from app.models.manager_department import ManagerDepartment
-            from app.models.department import DepartmentMember
+            from app.models.user_organization import UserOrganization as _UO_tasks
             md_res = await db.execute(
                 select(ManagerDepartment.dept_id).where(
                     ManagerDepartment.manager_user_id == current_user.id
@@ -210,7 +210,7 @@ async def create_task(
             managed_dept_user_ids: set[int] = set()
             if managed_dept_ids:
                 dm_res = await db.execute(
-                    select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
+                    select(_UO_tasks.user_id).where(_UO_tasks.dept_id.in_(managed_dept_ids))
                 )
                 managed_dept_user_ids = {r[0] for r in dm_res.all()}
 

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
+from app.models.user_subsidy_access import UserSubsidyAccess, UserSubsidyPermissionOverride
+from app.models.subsidy import Subsidy
 from app.models.user_organization import UserOrganization
 from app.models.permission import (
     PermissionTab, PermissionAction, RolePermission, UserOrgPermissionOverride,
@@ -298,6 +300,154 @@ async def delete_override(
         delete(UserOrgPermissionOverride).where(
             UserOrgPermissionOverride.user_org_access_id == uoa_obj.id,
             UserOrgPermissionOverride.key == key,
+        )
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
+# --- Per-user subsidy access ---
+
+@router.get("/users/{user_id}/subsidy-access")
+async def get_user_subsidy_access(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    rows = (await db.execute(
+        select(UserSubsidyAccess.subsidy_id, UserSubsidyAccess.role, Subsidy.name)
+        .join(Subsidy, Subsidy.id == UserSubsidyAccess.subsidy_id)
+        .where(UserSubsidyAccess.user_id == user_id)
+    )).all()
+    return [{"subsidy_id": sid, "role": role, "subsidy_name": name} for (sid, role, name) in rows]
+
+
+@router.put("/users/{user_id}/subsidy-access")
+async def upsert_user_subsidy_access(
+    user_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    subsidy_id = body.get("subsidy_id")
+    role = body.get("role") or "employee"
+    if not subsidy_id:
+        raise HTTPException(400, "subsidy_id обязателен")
+    if role not in ("org_admin", "manager", "employee"):
+        raise HTTPException(400, f"Недопустимая роль: {role}")
+    existing = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        existing.role = role
+    else:
+        db.add(UserSubsidyAccess(user_id=user_id, subsidy_id=subsidy_id, role=role))
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/users/{user_id}/subsidy-access/{subsidy_id}")
+async def delete_user_subsidy_access(
+    user_id: int,
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    row = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if row:
+        await db.delete(row)
+        await db.commit()
+    return {"status": "ok"}
+
+
+# --- Per-subsidy permission overrides (зеркало орг-оверрайдов) ---
+
+@router.get("/users/{user_id}/subsidy-access/{subsidy_id}/overrides", response_model=List[OverrideOut])
+async def list_subsidy_overrides(
+    user_id: int,
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    grant = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if grant is None:
+        return []
+    rows = (await db.execute(
+        select(UserSubsidyPermissionOverride).where(
+            UserSubsidyPermissionOverride.user_subsidy_access_id == grant.id
+        )
+    )).scalars().all()
+    return rows
+
+
+@router.put("/users/{user_id}/subsidy-access/{subsidy_id}/overrides")
+async def update_subsidy_overrides(
+    user_id: int,
+    subsidy_id: int,
+    updates: List[PermissionUpdate],
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    grant = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if grant is None:
+        raise HTTPException(404, "Сначала выдайте пользователю доступ к этой субсидии")
+    for upd in updates:
+        existing = (await db.execute(
+            select(UserSubsidyPermissionOverride).where(
+                UserSubsidyPermissionOverride.user_subsidy_access_id == grant.id,
+                UserSubsidyPermissionOverride.key == upd.key,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            existing.granted = upd.granted
+        else:
+            db.add(UserSubsidyPermissionOverride(
+                user_subsidy_access_id=grant.id,
+                key=upd.key,
+                granted=upd.granted,
+            ))
+    await db.commit()
+    return {"status": "ok", "updated": len(updates)}
+
+
+@router.delete("/users/{user_id}/subsidy-access/{subsidy_id}/overrides/{key}")
+async def delete_subsidy_override(
+    user_id: int,
+    subsidy_id: int,
+    key: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_tab("staff")),
+):
+    grant = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if grant is None:
+        raise HTTPException(404, "Грант не найден")
+    await db.execute(
+        delete(UserSubsidyPermissionOverride).where(
+            UserSubsidyPermissionOverride.user_subsidy_access_id == grant.id,
+            UserSubsidyPermissionOverride.key == key,
         )
     )
     await db.commit()

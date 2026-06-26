@@ -7,6 +7,7 @@ from app.models.feo_category import FeoCategory
 from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab
+from app.auth.visibility import get_visible_subsidy_ids
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -299,11 +300,10 @@ async def list_categories(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    from app.models.subsidy import Subsidy
     q = select(FeoCategory)
-    org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.join(Subsidy, FeoCategory.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+    vis = await get_visible_subsidy_ids(current_user, db, "feo_categories")
+    if vis is not None:
+        q = q.where(FeoCategory.subsidy_id.in_(vis))
     if parent_id is not None:
         q = q.where(FeoCategory.parent_id == parent_id)
     if level is not None:

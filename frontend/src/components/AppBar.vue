@@ -946,6 +946,11 @@ const loadSubsidies = async () => {
     const response = await fetch('/api/subsidies/', { headers })
     if (response.ok) {
       allSubsidies.value = await response.json()
+      // Сбросить глобальный выбор, если субсидия стала недоступна (доступ отозван/
+      // удалена) — иначе в селекторе залипал сырой id.
+      if (globalSubsidyId.value && !allSubsidies.value.some((s: any) => s.id === globalSubsidyId.value)) {
+        globalSubsidyId.value = null
+      }
       if (pinnedIds.value.length === 0 && allSubsidies.value.length > 0) {
         pinnedIds.value = allSubsidies.value.slice(0, 3).map((s: any) => s.id)
         savePinned()

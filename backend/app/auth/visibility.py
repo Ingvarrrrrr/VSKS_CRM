@@ -34,7 +34,8 @@ from app.models.wish import Wish
 from app.models.purchase_event import PurchaseMember
 from app.models.chat_room import ChatRoom, ChatParticipant
 from app.models.subsidy import Subsidy
-from app.models.department import Department, DepartmentMember
+from app.models.department import Department
+from app.models.user_organization import UserOrganization
 from app.models.manager_department import ManagerDepartment
 from app.models.manager_organization import ManagerOrganization
 from app.models.user_org_access import UserOrgAccess
@@ -88,8 +89,8 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
         headed_dept_ids = [r[0] for r in headed_dept_res.all()]
         if headed_dept_ids:
             dm_res = await db.execute(
-                select(DepartmentMember.user_id).where(
-                    DepartmentMember.department_id.in_(headed_dept_ids)
+                select(UserOrganization.user_id).where(
+                    UserOrganization.dept_id.in_(headed_dept_ids)
                 )
             )
             new_ids.update(r[0] for r in dm_res.all())
@@ -103,8 +104,8 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
         managed_dept_ids = [r[0] for r in md_res.all()]
         if managed_dept_ids:
             dm2_res = await db.execute(
-                select(DepartmentMember.user_id).where(
-                    DepartmentMember.department_id.in_(managed_dept_ids)
+                select(UserOrganization.user_id).where(
+                    UserOrganization.dept_id.in_(managed_dept_ids)
                 )
             )
             new_ids.update(r[0] for r in dm2_res.all())
@@ -204,6 +205,166 @@ async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:
     return result
 
 
+async def get_role_scoped_org_ids(
+    user: User, db: AsyncSession, min_role: str
+) -> Optional[list[int]]:
+    """Орг, где эффективная роль пользователя >= min_role (по _ROLE_PRIORITY).
+
+    Per-org эффективная роль = user_org_access.role при реальном членстве
+    (user_organizations ∪ primary), иначе контурная user.role. Это та же логика,
+    что Step 0 в _get_effective_simple, но возвращает множество орг по порогу роли.
+
+    Семантика возврата:
+      - None  → фильтр не накладывается (SaaS: superadmin/account_owner видят всё).
+      - [..]  → Model.org_id.in_(list).
+      - []    → ни одной подходящей орг → данные пусты (.in_([])).
+                ВАЖНО: вызывающий эндпоинт НЕ должен схлопывать [] в «всё» —
+                различать None и [] через `if org_ids is not None`.
+
+    Используется для орг-админ/менеджер-эксклюзивных вкладок: данные показываем
+    только из орг, где роль пользователя соответствует порогу вкладки. Так
+    employee, повышенный до org_admin в одной орг, не видит в орг-админ-вкладке
+    данные орг, где он рядовой сотрудник.
+    """
+    if user.role in _SAAS_ROLES:
+        return None
+
+    from app.auth.permissions import _ROLE_PRIORITY
+    from app.models.user_organization import UserOrganization
+
+    threshold = _ROLE_PRIORITY.get(min_role, 0)
+
+    member: set[int] = {int(x) for x in (await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+    )).scalars().all() if x}
+    if user.org_id:
+        member.add(int(user.org_id))
+
+    uoa_rows = (await db.execute(
+        select(UserOrgAccess.org_id, UserOrgAccess.role).where(
+            UserOrgAccess.user_id == user.id,
+            UserOrgAccess.role.isnot(None),
+        )
+    )).all()
+    uoa_role_map = {int(oid): r for (oid, r) in uoa_rows if oid is not None}
+
+    # Кандидаты = членство (user_organizations ∪ primary) ∪ орг из user_org_access.
+    # UOA даёт доступ к орг даже без строки в user_organizations (как get_org_filter),
+    # поэтому такие орг тоже учитываем — иначе org_admin-через-UOA орг теряются.
+    candidates = member | set(uoa_role_map.keys())
+
+    result: list[int] = []
+    for org_id in candidates:
+        role = uoa_role_map.get(org_id) or user.role
+        if _ROLE_PRIORITY.get(role, 0) >= threshold:
+            result.append(org_id)
+    return result
+
+
+async def get_tab_scoped_org_ids(
+    user: User, db: AsyncSession, tab_key: str
+) -> Optional[list[int]]:
+    """Орги, где у пользователя эффективный таб tab_key включён (True).
+
+    Семантика возврата (ВАЖНО для caller'а — различать None и []):
+      - None  → SaaS-роль (superadmin/account_owner): фильтр не накладывать.
+      - [..]  → список org_id где таб разрешён → использовать .in_(list).
+      - []    → ни одной орги с разрешённым табом → данных быть не должно (.in_([])).
+
+    Кандидаты-орги: membership (user_organizations ∪ primary) ∪ user_org_access,
+    как в get_visible_subsidy_ids. Для каждой орги вызывает _get_effective_simple
+    и проверяет наличие tab_key в эффективных правах.
+    """
+    if user.role in _SAAS_ROLES:
+        return None
+
+    from app.auth.permissions import _get_effective_simple
+
+    # Кандидаты-орги: те же три источника, что в get_visible_subsidy_ids.
+    org_ids: set[int] = {int(x) for x in (await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+    )).scalars().all() if x}
+    if user.org_id:
+        org_ids.add(int(user.org_id))
+    org_ids |= {int(x) for x in (await db.execute(
+        select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
+    )).scalars().all() if x}
+
+    result: list[int] = []
+    for oid in org_ids:
+        eff = await _get_effective_simple(user, db, oid, include_subsidy_grants=False)
+        if tab_key in eff:
+            result.append(oid)
+    return result
+
+
+async def get_visible_subsidy_ids(
+    user: User, db: AsyncSession, tab_key: str = "subsidies"
+) -> Optional[set[int]]:
+    """Двухуровневая видимость субсидий по вкладке tab_key.
+
+    Орг-уровень: ключ tab_key в эффективных правах юзера для орг X
+    (роль + орг-overrides) → по умолчанию видны ВСЕ субсидии орг X.
+    Пер-субсидийный override (get_subsidy_effective) перебивает орг-дефолт для
+    конкретной субсидии: tab_key∈eff → показать, иначе → скрыть (даже если
+    орг-дефолт ON). Субсидии чужих орг видны только при индивидуальном грант-ON.
+
+    tab_key="subsidies" → видимость на странице «Субсидии».
+    tab_key="dashboard" → данные субсидии на Дашборде: пер-субсидийная галочка
+    «Дашборд» превалирует над орг-дефолтом (напр. ВСКС dashboard=OFF на уровне орг,
+    но грант на ДНР с dashboard=ON → ДНР показывается на дашборде).
+
+    None → SaaS (superadmin/account_owner): фильтр не накладывать, видит всё.
+    """
+    from app.auth.permissions import _get_effective_simple, get_subsidy_effective
+    from app.models.subsidy import Subsidy
+    from app.models.user_organization import UserOrganization
+    from app.models.user_subsidy_access import UserSubsidyAccess
+
+    if user.role in _SAAS_ROLES:
+        return None
+
+    # Кандидаты-орг: членство (user_organizations ∪ primary) ∪ user_org_access.
+    org_ids: set[int] = {int(x) for x in (await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+    )).scalars().all() if x}
+    if user.org_id:
+        org_ids.add(int(user.org_id))
+    org_ids |= {int(x) for x in (await db.execute(
+        select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
+    )).scalars().all() if x}
+
+    visible: set[int] = set()
+    # Орг-дефолт: орг с эффективным ключом tab_key → все её субсидии.
+    # include_subsidy_grants=False: орг-дефолт = чисто орг-уровень (роль+орг-override);
+    # пер-субсидийные гранты учитываются отдельно ниже, иначе грант tab_key по
+    # одной субсидии ошибочно открыл бы ВСЕ субсидии орг.
+    for oid in org_ids:
+        eff = await _get_effective_simple(user, db, oid, include_subsidy_grants=False)
+        if tab_key in eff:
+            sub_ids = (await db.execute(
+                select(Subsidy.id).where(Subsidy.org_id == oid)
+            )).scalars().all()
+            visible.update(int(s) for s in sub_ids)
+
+    # Пер-субсидийный override перебивает орг-дефолт.
+    grant_subs = (await db.execute(
+        select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == user.id)
+    )).scalars().all()
+    for sid in grant_subs:
+        if sid is None:
+            continue
+        eff = await get_subsidy_effective(user.id, int(sid), db)
+        if eff is None:
+            continue
+        if tab_key in eff:
+            visible.add(int(sid))
+        else:
+            visible.discard(int(sid))
+
+    return visible
+
+
 async def build_visibility_clause(user: User, db: AsyncSession, doc_type: str):
     """Возвращает SQLAlchemy or_() clause или None.
 
@@ -267,8 +428,18 @@ async def build_visibility_clause(user: User, db: AsyncSession, doc_type: str):
     visible_uids = await get_visible_user_ids(user, db)
     view_all_orgs = await get_view_all_org_ids(user, db)
 
+    # #8: per-user subsidy grant расширяет видимость — пользователь видит ВСЕ
+    # закупки субсидии, к которой ему явно выдан доступ (user_subsidy_access),
+    # даже если её орг вне его контура. Additive к правилам 0-5.
+    granted_subsidy_ids: set[int] = set()
+    if doc_type in ("purchase", "contract"):
+        from app.models.user_subsidy_access import UserSubsidyAccess
+        granted_subsidy_ids = {int(x) for x in (await db.execute(
+            select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == user.id)
+        )).scalars().all() if x}
+
     if doc_type == "purchase":
-        return _build_purchase_clause(user, visible_uids, view_all_orgs)
+        return _build_purchase_clause(user, visible_uids, view_all_orgs, granted_subsidy_ids)
     elif doc_type == "task":
         return _build_task_clause(user, visible_uids, view_all_orgs)
     elif doc_type == "wish":
@@ -311,7 +482,7 @@ def _purchase_participation_clauses(user_id: int):
     ]
 
 
-def _build_purchase_clause(user: User, visible_uids: Optional[set[int]], view_all_orgs: set[int]):
+def _build_purchase_clause(user: User, visible_uids: Optional[set[int]], view_all_orgs: set[int], granted_subsidy_ids: Optional[set[int]] = None):
     """Build or_() clause for Purchase."""
     clauses = []
 
@@ -322,6 +493,10 @@ def _build_purchase_clause(user: User, visible_uids: Optional[set[int]], view_al
                 select(Subsidy.id).where(Subsidy.org_id.in_(view_all_orgs))
             )
         )
+
+    # #8: явный grant субсидии → видны все её закупки
+    if granted_subsidy_ids:
+        clauses.append(Purchase.subsidy_id.in_(granted_subsidy_ids))
 
     # Rules 0,1,2,4: responsible column
     if visible_uids is not None:

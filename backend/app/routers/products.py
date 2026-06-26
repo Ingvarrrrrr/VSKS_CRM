@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, get_org_filter, get_single_org_id, require_role, ADMIN_ROLES
+from app.auth.visibility import get_visible_subsidy_ids
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.product import Product
@@ -172,22 +173,12 @@ async def product_summary(
     if quarter is not None:
         q = q.where(extract("quarter", Purchase.delivery_date) == quarter)
 
-    # Org-scope: не-SaaS видят только свои организации — применяется ВСЕГДА,
-    # даже при явном org_id (иначе можно подсунуть чужой org_id и увидеть чужое).
-    # explicit org_id выше лишь сужает внутри scope.
-    if current_user.role not in ('superadmin', 'account_owner'):
-        from app.auth.jwt import get_org_filter
-        from app.models.user_organization import UserOrganization
-        scope_ids = get_org_filter(current_user)
-        if not scope_ids:
-            scope_ids = (await db.execute(
-                select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
-            )).scalars().all()
-            scope_ids = list({s for s in scope_ids if s}) or ([current_user.org_id] if current_user.org_id else [])
-        if scope_ids:
-            q = q.where(Subsidy.org_id.in_(scope_ids))
-        else:
+    # Двухуровневая видимость по вкладке «Сводная по продукции».
+    vis = await get_visible_subsidy_ids(current_user, db, "products.summary")
+    if vis is not None:
+        if not vis:
             return []
+        q = q.where(Purchase.subsidy_id.in_(vis))
 
     # Also need subsidy name, org name, org_id — use add_columns
     q = q.add_columns(

@@ -15,13 +15,14 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.permissions import require_action, require_tab
 from app.auth.jwt import get_current_user
+from app.auth.visibility import get_visible_subsidy_ids
 from app.models.bank_statement import BankStatementImport, BankPayment
 from app.models.payment import Payment
 from app.services.bank_statement_parser import parse_workbook
@@ -246,6 +247,7 @@ async def list_bank_payment_registry(
     import_id: Optional[int] = Query(None, description="Фильтр по ID прогона импорта"),
     limit: int = Query(200, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
     _=Depends(require_tab("payment_registry")),
 ):
     from app.models.organization import Organization
@@ -276,6 +278,16 @@ async def list_bank_payment_registry(
     q = select(BankPayment)
     if filters:
         q = q.where(and_(*filters))
+    # Двухуровневая видимость по вкладке «Реестр платежей».
+    # Unmatched (matched_subsidy_id IS NULL) всегда видны — привязки к орг нет.
+    vis = await get_visible_subsidy_ids(current_user, db, "payment_registry")
+    if vis is not None:
+        q = q.where(
+            or_(
+                BankPayment.matched_subsidy_id.is_(None),
+                BankPayment.matched_subsidy_id.in_(vis),
+            )
+        )
     q = q.order_by(BankPayment.payment_date.desc()).limit(limit)
 
     result = await db.execute(q)

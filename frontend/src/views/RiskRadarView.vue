@@ -298,7 +298,7 @@ watch(() => loading.value, (val, prev) => {
 // ─── Load subsidies list (for filter dropdown) ─────────────────────
 async function loadSubsidiesCatalog() {
   try {
-    const charts = await apiFetch<any>('/dashboard/charts')
+    const charts = await apiFetch<any>('/dashboard/charts?scope=dashboard.radar')
     allSubsidies.value = (charts?.subsidy_stats || []).map((s: any) => ({
       id: s.id,
       name: s.name,

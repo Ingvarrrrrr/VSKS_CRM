@@ -148,7 +148,8 @@ async def broadcast_from_task(
     """Send a message from task context to selected scope: department / org / all.
     Requires admin+ role. 'all' scope requires superadmin."""
     from app.models.organization import Organization
-    from app.models.department import Department, DepartmentMember
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization as _UO_broadcast
     from app.notifications import notify_user, _task_url
 
     BROADCAST_ROLES = ("superadmin", "org_admin", "admin", "manager")
@@ -170,7 +171,7 @@ async def broadcast_from_task(
     q = select(User).where(User.id != current_user.id)  # superadmin-bypass-ok: broadcast notifications, not a user-list endpoint returned to client
 
     if scope == "department" and scope_id:
-        member_uids = select(DepartmentMember.user_id).where(DepartmentMember.department_id == int(scope_id))
+        member_uids = select(_UO_broadcast.user_id).where(_UO_broadcast.dept_id == int(scope_id))
         q = q.where(User.id.in_(member_uids))
     elif scope == "organization" and scope_id:
         q = q.where(User.org_id == int(scope_id))

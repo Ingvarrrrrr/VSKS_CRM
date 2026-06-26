@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, extract, and_
+from sqlalchemy import select, func, case, extract, and_, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -12,6 +12,7 @@ from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
 from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
+from app.auth.visibility import get_visible_subsidy_ids
 from app.routers.subsidies import calculate_budget_from_categories
 from app.config import settings
 from decimal import Decimal
@@ -51,17 +52,39 @@ def obligation_date(p: Purchase) -> Optional[date]:
     return None
 
 
-def _apply_subsidy_org_filter(query, user: User):
-    """Filter subsidies by org_ids."""
-    org_ids = get_org_filter(user)
+_UNSET = object()
+
+
+def _apply_subsidy_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET):
+    """Filter subsidies by org_ids — или напрямую по subsidy_ids (приоритет).
+
+    subsidy_ids передаётся для scope=dashboard (двухуровневая видимость по вкладке
+    «Дашборд»): None → не фильтровать (SaaS), set → Subsidy.id.in_(set).
+    Иначе org_ids (или get_org_filter при _UNSET). Caller различает None и [].
+    """
+    if subsidy_ids is not _UNSET:
+        if subsidy_ids is not None:
+            query = query.where(Subsidy.id.in_(subsidy_ids))
+        return query
+    if org_ids is _UNSET:
+        org_ids = get_org_filter(user)
     if org_ids is not None:
         query = query.where(Subsidy.org_id.in_(org_ids))
     return query
 
 
-def _apply_purchase_org_filter(query, user: User):
-    """Filter purchases via subsidy.org_id."""
-    org_ids = get_org_filter(user)
+def _apply_purchase_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET):
+    """Filter purchases via subsidy.org_id — или напрямую по subsidy_ids (приоритет).
+
+    subsidy_ids для scope=dashboard: None → не фильтровать, set →
+    Purchase.subsidy_id.in_(set). Иначе org_ids (или get_org_filter при _UNSET).
+    """
+    if subsidy_ids is not _UNSET:
+        if subsidy_ids is not None:
+            query = query.where(Purchase.subsidy_id.in_(subsidy_ids))
+        return query
+    if org_ids is _UNSET:
+        org_ids = get_org_filter(user)
     if org_ids is not None:
         query = query.where(Purchase.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
@@ -73,12 +96,21 @@ def _apply_purchase_org_filter(query, user: User):
 async def dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     org_ids = get_org_filter(current_user)
+    # scope=dashboard → двухуровневая видимость субсидий по вкладке «Дашборд»
+    # (пер-субсидийная галочка перебивает орг-дефолт). Гейтим данные по subsidy_id.
+    dash_sids = _UNSET
+    if scope == "dashboard":
+        dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
 
-    # Get categories filtered by org
+    # Get categories filtered by org / dashboard-subsidies
     cat_q = select(FeoCategory).order_by(FeoCategory.level, FeoCategory.id)
-    if org_ids is not None:
+    if dash_sids is not _UNSET:
+        if dash_sids is not None:
+            cat_q = cat_q.where(FeoCategory.subsidy_id.in_(dash_sids))
+    elif org_ids is not None:
         cat_q = cat_q.where(FeoCategory.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
@@ -94,7 +126,10 @@ async def dashboard(
         ), 0).label("confirmed"),
         func.coalesce(func.sum(Purchase.delivery_payment_amount), 0).label("payment"),
     ).group_by(Purchase.feo_category_id)
-    agg_q = _apply_purchase_org_filter(agg_q, current_user)
+    if dash_sids is not _UNSET:
+        agg_q = _apply_purchase_org_filter(agg_q, current_user, subsidy_ids=dash_sids)
+    else:
+        agg_q = _apply_purchase_org_filter(agg_q, current_user, org_ids)
     agg = await db.execute(agg_q)
 
     agg_map = {}
@@ -137,11 +172,11 @@ async def dashboard(
 
     # Global totals (filtered by org)
     total_obl_q = select(func.coalesce(func.sum(Purchase.final_total_amount), 0)).where(Purchase.confirmed == True)
-    total_obl_q = _apply_purchase_org_filter(total_obl_q, current_user)
+    total_obl_q = _apply_purchase_org_filter(total_obl_q, current_user, org_ids, subsidy_ids=dash_sids)
     total_obligations = float((await db.execute(total_obl_q)).scalar() or 0)
 
     total_pay_q = select(func.coalesce(func.sum(Purchase.delivery_payment_amount), 0))
-    total_pay_q = _apply_purchase_org_filter(total_pay_q, current_user)
+    total_pay_q = _apply_purchase_org_filter(total_pay_q, current_user, org_ids, subsidy_ids=dash_sids)
     total_payments = float((await db.execute(total_pay_q)).scalar() or 0)
 
     return {
@@ -157,12 +192,25 @@ async def dashboard(
 async def dashboard_charts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     org_ids = get_org_filter(current_user)
+    # «Субсидии»: орг-админ-роль + гранты. «Дашборд»: двухуровневая видимость по вкладке dashboard.
+    managed = scope == "managed"
+    dashboard = scope in ("dashboard", "dashboard.radar", "plan")
+    visible_subsidy_ids = None
+    if managed:
+        visible_subsidy_ids = await get_visible_subsidy_ids(current_user, db)
+    elif dashboard:
+        visible_subsidy_ids = await get_visible_subsidy_ids(current_user, db, scope)
+    use_sids = managed or dashboard
 
     # Status counts for pie chart (filtered)
     status_q = select(Purchase.status, func.count(Purchase.id).label("cnt")).group_by(Purchase.status)
-    status_q = _apply_purchase_org_filter(status_q, current_user)
+    if use_sids:
+        status_q = _apply_purchase_org_filter(status_q, current_user, subsidy_ids=visible_subsidy_ids)
+    else:
+        status_q = _apply_purchase_org_filter(status_q, current_user, org_ids)
     status_result = await db.execute(status_q)
     status_counts = {row.status: row.cnt for row in status_result}
 
@@ -205,7 +253,11 @@ async def dashboard_charts(
         .group_by(Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget)
         .order_by(Subsidy.year.desc(), Subsidy.name)
     )
-    if org_ids is not None:
+    if use_sids:
+        # Двухуровневая видимость: орг-дефолт + пер-субсидийный override (managed=«Субсидии», dashboard=«Дашборд»).
+        if visible_subsidy_ids is not None:
+            subsidy_q = subsidy_q.where(Subsidy.id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
         subsidy_q = subsidy_q.where(Subsidy.org_id.in_(org_ids))
     subsidy_result = await db.execute(subsidy_q)
 
@@ -219,7 +271,10 @@ async def dashboard_charts(
         .where(FeoPlannedItem.is_active == True)
         .group_by(FeoCategory.subsidy_id)
     )
-    if org_ids is not None:
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
         feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
@@ -271,14 +326,21 @@ async def analytics(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     subsidy_ids: Optional[str] = Query(None),
+    scope: Optional[str] = Query(None),
 ):
     today = date.today()
     org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope == "dashboard":
+        dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
     sid_filter = [int(x) for x in subsidy_ids.split(",") if x.strip()] if subsidy_ids else None
 
     def _pf(q):
-        """Apply purchase org + subsidy filter inline."""
-        if org_ids is not None:
+        """Apply purchase org/dashboard + subsidy filter inline."""
+        if dash_sids is not _UNSET:
+            if dash_sids is not None:
+                q = q.where(Purchase.subsidy_id.in_(dash_sids))
+        elif org_ids is not None:
             q = q.where(Purchase.subsidy_id.in_(
                 select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
             ))
@@ -387,7 +449,10 @@ async def analytics(
         .group_by(Subsidy.id, Subsidy.name)
         .order_by(Subsidy.name)
     )
-    if org_ids is not None:
+    if dash_sids is not _UNSET:
+        if dash_sids is not None:
+            pf_q = pf_q.where(Subsidy.id.in_(dash_sids))
+    elif org_ids is not None:
         pf_q = pf_q.where(Subsidy.org_id.in_(org_ids))
     if sid_filter:
         pf_q = pf_q.where(Subsidy.id.in_(sid_filter))
@@ -415,6 +480,7 @@ async def get_financial_plan(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     """Возвращает помесячную и поквартальную разбивку ожидаемых выплат.
 
@@ -424,8 +490,12 @@ async def get_financial_plan(
       добавляется в каждый месяц от (obligation_month+1) до текущего включительно
     - no_deadline — закупки без obligation_date (не оплачены)
     """
+    org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope in ("dashboard", "plan"):
+        dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
     q = select(Purchase)
-    q = _apply_purchase_org_filter(q, current_user)
+    q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
     rows = (await db.execute(q)).scalars().all()
@@ -562,6 +632,7 @@ async def get_financial_plan_details(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     """Список закупок попавших в указанный период+категорию.
 
@@ -574,6 +645,10 @@ async def get_financial_plan_details(
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
 
     today = date.today()
+    org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope in ("dashboard", "plan"):
+        dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
 
     # period обязателен для всех категорий кроме no_deadline
     if category != "no_deadline" and not period:
@@ -585,7 +660,7 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status != "paid")
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user)
+        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 
@@ -624,7 +699,7 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status != "paid")
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user)
+        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 
@@ -685,7 +760,7 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status.in_(target_statuses))
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user)
+        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 
@@ -740,6 +815,7 @@ async def export_financial_plan_xlsx(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     """Полная выгрузка всех закупок с группировкой по периоду и категории plan/committed."""
     from openpyxl import Workbook
@@ -748,13 +824,18 @@ async def export_financial_plan_xlsx(
     from fastapi.responses import StreamingResponse
     from datetime import datetime as dt
 
+    org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope in ("dashboard", "plan"):
+        dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
+
     PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
 
     q = select(Purchase).where(Purchase.status.in_(PLAN_STATUSES | COMMITTED_STATUSES))
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
-    q = _apply_purchase_org_filter(q, current_user)
+    q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
     q = q.options(selectinload(Purchase.contractor))
 
     rows = (await db.execute(q)).scalars().all()
@@ -876,12 +957,18 @@ async def export_financial_plan_details_xlsx(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None),
 ):
     """Excel выгрузка одной группы (период+категория) — содержимое drill-down диалога."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from io import BytesIO
     from fastapi.responses import StreamingResponse
+
+    org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope in ("dashboard", "plan"):
+        dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
 
     PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
@@ -890,7 +977,7 @@ async def export_financial_plan_details_xlsx(
     q = select(Purchase).where(Purchase.status.in_(target_statuses))
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
-    q = _apply_purchase_org_filter(q, current_user)
+    q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
     q = q.options(selectinload(Purchase.contractor))
 
     rows = (await db.execute(q)).scalars().all()

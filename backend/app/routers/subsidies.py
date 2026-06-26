@@ -25,7 +25,7 @@ except ImportError:
     DocxTemplate = None
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import select, delete, func, text
+from sqlalchemy import select, delete, func, text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from app.database import get_db, engine
@@ -109,24 +109,33 @@ async def list_subsidies(
     # limits visible subsidies to the user's own organisations. Write operations
     # (POST/PUT/DELETE/templates) remain gated by require_tab('subsidies').
     q = select(Subsidy).order_by(Subsidy.year.desc(), Subsidy.name)
+    # Shared picker endpoint (orders/wishes/etc): member-union scope, NOT role-scoped.
+    # Сужение до орг-админ-орг ломало бы выбор субсидии у сотрудника в /orders.
     org_ids = get_org_filter(current_user)
     # 27.4-06: hard fallback для не-SaaS-ролей. Если JWT не содержит org_id/org_ids
     # И users.org_id = NULL — get_org_filter вернёт None → раньше employee видел ВСЕ
-    # субсидии. Теперь подтягиваем все его memberships из user_organizations; если
-    # их тоже нет — возвращаем пустой список (не привязан → ничего не видит).
+    # субсидии. Подтягиваем memberships из user_organizations.
     if org_ids is None and current_user.role not in ('superadmin', 'account_owner'):
         from app.models.user_organization import UserOrganization
         uo_rows = (await db.execute(
             select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
         )).all()
         org_ids = list({r[0] for r in uo_rows if r[0]})
-        # Fallback на legacy users.org_id (Багаутдинов и другие до backfill 26-G)
         if not org_ids and current_user.org_id:
             org_ids = [current_user.org_id]
-        if not org_ids:
-            return []
+    # Per-user explicit subsidy grants (expand visibility regardless of org)
+    from app.models.user_subsidy_access import UserSubsidyAccess
+    granted_ids = set((await db.execute(
+        select(UserSubsidyAccess.subsidy_id).where(UserSubsidyAccess.user_id == current_user.id)
+    )).scalars().all())
+    # Пикер (orders/wishes): пермиссивный member-union scope + кросс-орг гранты.
+    # Управление ВИДИМОСТЬЮ субсидий (страница «Субсидии») — отдельно, в dashboard
+    # charts через get_visible_subsidy_ids. Здесь НЕ сужаем до грантов, иначе ломается
+    # выбор субсидии у рядового сотрудника.
     if org_ids is not None:
-        q = q.where(Subsidy.org_id.in_(org_ids))
+        if not org_ids and not granted_ids:
+            return []
+        q = q.where(or_(Subsidy.org_id.in_(org_ids), Subsidy.id.in_(granted_ids)))
     result = await db.execute(q)
     subsidies = result.scalars().all()
 

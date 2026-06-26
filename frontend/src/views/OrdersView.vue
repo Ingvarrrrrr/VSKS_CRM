@@ -1553,7 +1553,7 @@ const filteredSum = computed(() =>
 const loadOrders = async () => {
   loading.value = true
   try {
-    orders.value = await apiFetch<Purchase[]>('/purchases/')
+    orders.value = await apiFetch<Purchase[]>('/purchases/?scope=purchases')
   } catch {
     showSnack('Ошибка загрузки закупок', 'error')
   } finally {
@@ -1562,7 +1562,15 @@ const loadOrders = async () => {
 }
 
 const loadSubsidies = async () => {
-  try { subsidies.value = await apiFetch<Subsidy[]>('/subsidies/') } catch {}
+  try {
+    subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
+    // Если ранее выбранная субсидия больше недоступна (доступ отозван) —
+    // сбросить выбор на «все доступные», иначе в селекторе залипал сырой id.
+    if (filterSubsidyId.value && !subsidies.value.some(s => s.id === filterSubsidyId.value)) {
+      filterSubsidyId.value = null
+      globalSubsidyId.value = null
+    }
+  } catch {}
 }
 
 const ordersTableRef = ref<any>(null)

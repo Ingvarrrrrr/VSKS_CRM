@@ -32,7 +32,7 @@ async def compute_assignable_user_ids(
 
     For everyone else the set is: self + direct subordinates (UserHierarchy) +
     members of orgs they manage (ManagerOrganization, primary org_id + M2M) +
-    members of departments they manage (ManagerDepartment → DepartmentMember).
+    members of departments they manage (ManagerDepartment → user_organizations.dept_id).
     Members may belong to other organizations — that is intentional.
     """
     if current_user.role in SUPER_ROLES:
@@ -72,7 +72,7 @@ async def compute_assignable_user_ids(
 
     # Departments managed by current user → their members
     from app.models.manager_department import ManagerDepartment
-    from app.models.department import DepartmentMember
+    from app.models.user_organization import UserOrganization as _UO_consent
     md_res = await db.execute(
         select(ManagerDepartment.dept_id).where(
             ManagerDepartment.manager_user_id == current_user.id
@@ -81,8 +81,8 @@ async def compute_assignable_user_ids(
     managed_dept_ids = {r[0] for r in md_res.all()}
     if managed_dept_ids:
         dm_res = await db.execute(
-            select(DepartmentMember.user_id).where(
-                DepartmentMember.department_id.in_(list(managed_dept_ids))
+            select(_UO_consent.user_id).where(
+                _UO_consent.dept_id.in_(list(managed_dept_ids))
             )
         )
         assignable.update(r[0] for r in dm_res.all())

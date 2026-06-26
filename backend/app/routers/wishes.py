@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import select, delete, func, or_
+from sqlalchemy import select, delete, func, or_, and_
 from datetime import date
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.auth.jwt import (
     ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES, OWNER_ROLES,
 )
 from app.auth.permissions import require_tab
-from app.auth.visibility import build_visibility_clause, get_visible_user_ids
+from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
@@ -224,6 +224,7 @@ async def list_wishes(
     mine_only=true / role==employee: show only own wishes (shortcut filters).
     """
     org_ids = get_org_filter(current_user)
+    vis = await get_visible_subsidy_ids(current_user, db, "wishes")
     q = select(Wish).options(
         selectinload(Wish.creator),
         selectinload(Wish.approver),
@@ -233,7 +234,16 @@ async def list_wishes(
         selectinload(Wish.executor),
         selectinload(Wish.items),
     )
-    if org_ids is not None:
+    if vis is not None:
+        # Two-level gate: rows WITH subsidy → gate by vis; rows WITHOUT subsidy → org gate
+        null_branch = (
+            and_(Wish.subsidy_id.is_(None), Wish.org_id.in_(org_ids))
+            if org_ids is not None
+            else Wish.subsidy_id.is_(None)
+        )
+        q = q.where(or_(Wish.subsidy_id.in_(vis), null_branch))
+    elif org_ids is not None:
+        # SaaS role but org restriction still applies (e.g. account_owner with org_id set)
         q = q.where(Wish.org_id.in_(org_ids))
 
     # Preload wish_ids where current user is a participant (for visibility extension)

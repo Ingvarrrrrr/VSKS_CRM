@@ -716,6 +716,9 @@
                     <v-col cols="6">
                       <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
                     </v-col>
+                    <v-col cols="6">
+                      <v-text-field v-model="entry.hired_at" label="Дата трудоустройства" variant="outlined" density="compact" type="date" hide-details />
+                    </v-col>
                   </v-row>
                 </div>
                 <!-- Кнопка «+ ещё отдел в этой организации» -->
@@ -879,6 +882,11 @@
             :current-user-id="currentUserId"
             :user-role="editDialog.role"
             :org-access-list="dedupOrgAccess(allOrgEntries)"
+          />
+          <UserSubsidyAccessSection
+            v-if="editDialog.userId"
+            :user-id="editDialog.userId"
+            :user-role="editDialog.role"
           />
 
           <!-- Диагностика видимости: отделы, которые возглавляет сотрудник -->
@@ -1291,6 +1299,7 @@ import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
 import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
+import UserSubsidyAccessSection from '@/components/UserSubsidyAccessSection.vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
@@ -1685,7 +1694,7 @@ const userImportDialog = reactive({
 })
 
 // All org entries from salary API (one per dept membership)
-const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; _idx: number }[]>([])
+const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; hired_at: string | null; _idx: number }[]>([])
 // Pre-load dicts whenever allOrgEntries changes (new orgs may appear in editDialog)
 watch(
   () => allOrgEntries.value.map(e => e.org_id),
@@ -1747,6 +1756,7 @@ function addDeptToOrg(org_id: number) {
     position: '',
     salary_amount: null,
     employment_percent: 100,
+    hired_at: null,
     _idx: allOrgEntries.value.length,
     is_new: true,
   } as any)
@@ -1771,6 +1781,7 @@ watch(
           position: '',
           salary_amount: null,
           employment_percent: 100,
+          hired_at: null,
           _idx: allOrgEntries.value.length,
         })
       }
@@ -2168,7 +2179,7 @@ async function openEditUser(item: UserItem) {
     allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
       id: s.id ?? null, dept_id: s.dept_id ?? null,
       org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null, _idx: i,
     }))
     editDialog.orgDepts = {}
     for (const s of (salaryRes || [])) {
@@ -2245,7 +2256,7 @@ async function confirmDeleteOrgEntry(entry: any) {
     allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
       id: s.id ?? null, dept_id: s.dept_id ?? null,
       org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, _idx: i,
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null, _idx: i,
     }))
     // Also update extraOrgIds list to drop this org if no entries left
     if (!allOrgEntries.value.some(e => e.org_id === entry.org_id)) {
@@ -2356,6 +2367,7 @@ async function saveEditUser() {
               position: entry.position || null,
               salary_amount: entry.salary_amount ?? null,
               employment_percent: entry.employment_percent ?? null,
+              hired_at: entry.hired_at || null,
             },
           })
         } catch { /* non-critical */ }

@@ -3,6 +3,7 @@
 Boolean-flip model (D-02): effective = overrides.get(key, role_permissions[role][key])
 Superadmin bypass (D-05.3): always True, no DB queries.
 Per-org (D-08): FK via user_org_access.id.
+Per-subsidy (D-09): FK via user_subsidy_access.id.
 """
 from typing import Optional
 from fastapi import Depends, HTTPException
@@ -68,7 +69,7 @@ _ROLE_PRIORITY = {
 }
 
 
-async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[int]) -> set:
+async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[int], include_subsidy_grants: bool = True) -> set:
     """Return effective key set for a single user WITHOUT hierarchy inheritance.
 
     Role resolution: if user_org_access.role is set for (user_id, org_id) it takes
@@ -82,9 +83,20 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
 
     NOTE: Does NOT call get_visible_user_ids — safe to call from _get_effective loop.
     """
+    # 24.06-fix: UOA-роль повышает вкладки/действия ТОЛЬКО по орг с реальным
+    # членством (user_organizations ∪ primary). Осиротевшие UOA-строки (роль выдана,
+    # членство удалено без каскада) иначе поднимали employee до org_admin → Филиппов
+    # видел admin.billing/roles/settings. Тот же принцип в jwt.py.
+    from app.models.user_organization import UserOrganization
+    _member_org_ids = {int(x) for x in (await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+    )).scalars().all() if x}
+    if user.org_id:
+        _member_org_ids.add(int(user.org_id))
+
     # Step 0: resolve effective role (per-org override takes precedence)
     effective_role = user.role
-    if org_id:
+    if org_id and int(org_id) in _member_org_ids:
         uoa = (await db.execute(
             select(UserOrgAccess).where(
                 UserOrgAccess.user_id == user.id,
@@ -97,12 +109,13 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     # Step 0b: elevate to best per-org role if it outranks the contour role.
     # Модель: вкладки/действия — по max-роли (глоб. ИЛИ лучшая per-org).
     # Данные при этом скоупятся отдельно через get_org_filter в эндпоинтах.
-    all_uoa_rows = (await db.execute(
-        select(UserOrgAccess.role).where(
+    _uoa_role_rows = (await db.execute(
+        select(UserOrgAccess.org_id, UserOrgAccess.role).where(
             UserOrgAccess.user_id == user.id,
             UserOrgAccess.role.isnot(None),
         )
-    )).scalars().all()
+    )).all()
+    all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid and int(oid) in _member_org_ids]
     if all_uoa_rows:
         best_per_org = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
         if _ROLE_PRIORITY.get(best_per_org, 0) > _ROLE_PRIORITY.get(effective_role, 0):
@@ -134,7 +147,89 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
             else:
                 effective.discard(ov.key)
 
+    # Step 2b: union per-subsidy grant keys (поглощение по выданным субсидиям).
+    # Применяется ДО потолка employee, чтобы admin.* из гранта тоже срезался.
+    # include_subsidy_grants=False — для ОРГ-УРОВНЕВОГО гейтинга данных по вкладке
+    # (get_tab_scoped_org_ids / org-default субсидий): субсидия-грант даёт доступ к
+    # ДАННЫМ субсидии, а не к данным всей орг по вкладке, и не должен перекрывать
+    # орг-override (revoke вкладки для орг). Per-субсидийный scope считается отдельно.
+    if include_subsidy_grants:
+        effective |= await _subsidy_grant_keys(user.id, db)
+
+    # Жёсткий потолок: genuine employee (роль не повышена членским UOA) НЕ может
+    # получить орг-админ вкладки admin.* (billing/roles/settings) даже через
+    # персональные галки «Доступ». Требование: сотрудник = строго свой scope.
+    if effective_role == 'employee':
+        effective = {k for k in effective if not k.startswith('admin.')}
+
     return effective
+
+
+async def _subsidy_grant_keys(user_id: int, db: AsyncSession) -> set:
+    """UNION эффективных ключей по всем субсидия-грантам пользователя.
+    Для каждого user_subsidy_access: base = role matrix грантовой роли,
+    затем применяются user_subsidy_permission_overrides (grant→add, revoke→discard)."""
+    from app.models.user_subsidy_access import UserSubsidyAccess, UserSubsidyPermissionOverride
+    grants = (await db.execute(
+        select(UserSubsidyAccess.id, UserSubsidyAccess.role).where(
+            UserSubsidyAccess.user_id == user_id
+        )
+    )).all()
+    if not grants:
+        return set()
+    keys: set = set()
+    for (usa_id, grole) in grants:
+        rp = (await db.execute(
+            select(RolePermission.key).where(
+                RolePermission.role_name == (grole or "employee"),
+                RolePermission.granted == True,  # noqa: E712
+            )
+        )).scalars().all()
+        eff = set(rp)
+        ov = (await db.execute(
+            select(UserSubsidyPermissionOverride.key, UserSubsidyPermissionOverride.granted).where(
+                UserSubsidyPermissionOverride.user_subsidy_access_id == usa_id
+            )
+        )).all()
+        for (k, g) in ov:
+            if g:
+                eff.add(k)
+            else:
+                eff.discard(k)
+        keys |= eff
+    return keys
+
+
+async def get_subsidy_effective(user_id: int, subsidy_id: int, db: AsyncSession) -> Optional[set]:
+    """Эффективный набор ключей (листы+действия) для одной субсидии-гранта.
+    None если у пользователя нет гранта на эту субсидию."""
+    from app.models.user_subsidy_access import UserSubsidyAccess, UserSubsidyPermissionOverride
+    grant = (await db.execute(
+        select(UserSubsidyAccess).where(
+            UserSubsidyAccess.user_id == user_id,
+            UserSubsidyAccess.subsidy_id == subsidy_id,
+        )
+    )).scalar_one_or_none()
+    if grant is None:
+        return None
+    rp = (await db.execute(
+        select(RolePermission.key).where(
+            RolePermission.role_name == (grant.role or "employee"),
+            RolePermission.granted == True,  # noqa: E712
+        )
+    )).scalars().all()
+    eff = set(rp)
+    ov = (await db.execute(
+        select(UserSubsidyPermissionOverride.key, UserSubsidyPermissionOverride.granted).where(
+            UserSubsidyPermissionOverride.user_subsidy_access_id == grant.id
+        )
+    )).all()
+    for (k, g) in ov:
+        if g:
+            eff.add(k)
+        else:
+            eff.discard(k)
+    return eff
 
 
 async def _get_effective(user: User, db: AsyncSession, org_id: Optional[int]) -> set:

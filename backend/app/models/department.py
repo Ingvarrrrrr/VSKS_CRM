@@ -16,18 +16,6 @@ class Department(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class DepartmentMember(Base):
-    """Привязка сотрудника к отделу."""
-    __tablename__ = "department_members"
-    __table_args__ = (UniqueConstraint("department_id", "user_id", name="uq_dept_user"),)
-
-    id = Column(Integer, primary_key=True, index=True)
-    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    position = Column(String(300), nullable=True)  # Должность в отделе
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
 class TaskEditDelegate(Base):
     """Кастомное право: delegate_user_id может редактировать задачи target_user_id."""
     __tablename__ = "task_edit_delegates"

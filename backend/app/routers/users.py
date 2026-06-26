@@ -366,16 +366,9 @@ async def get_me(
             candidate_org_ids.update(r[0] for r in res.all() if r[0])
         except Exception:
             pass
-        try:
-            from app.models.user_org_access import UserOrgAccess
-            res = await db.execute(
-                select(UserOrgAccess.org_id).where(
-                    UserOrgAccess.user_id == current_user.id
-                )
-            )
-            candidate_org_ids.update(r[0] for r in res.all() if r[0])
-        except Exception:
-            pass
+        # 24.06-fix: кандидаты — ТОЛЬКО орг с реальным членством. Осиротевшие UOA-орг
+        # (org_admin без членства) иначе подсовывали employee admin-набор вкладок
+        # (Филиппов получал admin.billing). Скоуп прав = членство, как в jwt.py.
         if current_user.org_id:
             candidate_org_ids.add(current_user.org_id)
         candidate_org_ids.discard(effective_org_id)  # уже пробовали
@@ -469,8 +462,9 @@ async def update_user(
 
 
 async def _sync_user_department(user: User, db: AsyncSession):
-    """Sync user.department to DepartmentMember table and auto-set hierarchy."""
-    from app.models.department import Department, DepartmentMember
+    """Sync user.department to user_organizations table and auto-set hierarchy."""
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization as _UO_sync
     from app.models.user_hierarchy import UserHierarchy
 
     if not user.department or not user.org_id:
@@ -488,17 +482,18 @@ async def _sync_user_department(user: User, db: AsyncSession):
         db.add(dept)
         await db.flush()
 
-    # Ensure membership
+    # Ensure UO membership (single source of truth)
     existing = (await db.execute(
-        select(DepartmentMember).where(
-            DepartmentMember.department_id == dept.id,
-            DepartmentMember.user_id == user.id,
+        select(_UO_sync).where(
+            _UO_sync.user_id == user.id,
+            _UO_sync.org_id == user.org_id,
+            _UO_sync.dept_id == dept.id,
         )
     )).scalar_one_or_none()
     if existing:
         existing.position = user.position
     else:
-        db.add(DepartmentMember(department_id=dept.id, user_id=user.id, position=user.position))
+        db.add(_UO_sync(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=user.position))
 
     # If user is head of this dept — auto-create hierarchy for all members
     if dept.head_user_id == user.id:
@@ -509,15 +504,15 @@ async def _sync_user_department(user: User, db: AsyncSession):
 
 async def _sync_head_hierarchy(dept, db: AsyncSession):
     """Make all department members subordinates of the head."""
-    from app.models.department import DepartmentMember
+    from app.models.user_organization import UserOrganization as _UO_hier
     from app.models.user_hierarchy import UserHierarchy
 
     if not dept.head_user_id:
         return
     members = (await db.execute(
-        select(DepartmentMember.user_id).where(
-            DepartmentMember.department_id == dept.id,
-            DepartmentMember.user_id != dept.head_user_id,
+        select(_UO_hier.user_id).where(
+            _UO_hier.dept_id == dept.id,
+            _UO_hier.user_id != dept.head_user_id,
         )
     )).scalars().all()
 

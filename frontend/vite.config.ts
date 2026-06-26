@@ -74,17 +74,12 @@ export default defineConfig({
             },
           },
           {
+            // CRM-данные и права ВСЕГДА живые: никакого SW-кэша на /api/.
+            // Раньше NetworkFirst с api-cache (до 12ч) отдавал stale GET-ответы —
+            // пользователь видел старые субсидии/права после отзыва доступа.
+            // NetworkOnly = всегда сеть, кэш по API физически не создаётся.
             urlPattern: /^\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 3,
-              cacheableResponse: { statuses: [0, 200] },
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 12, // 12 часов max
-              },
-            },
+            handler: 'NetworkOnly',
           },
         ],
       },

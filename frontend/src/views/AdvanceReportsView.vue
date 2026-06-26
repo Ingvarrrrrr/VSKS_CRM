@@ -849,7 +849,7 @@ async function load() {
   try {
     // Phase 26-ZZ: bulk-load контрагентов убран — usedContractors берёт имена из items
     const [purchasesData, subsidiesData, usersData] = await Promise.all([
-      apiFetch<Purchase[]>('/purchases/?purchase_method=advance'),
+      apiFetch<Purchase[]>('/purchases/?purchase_method=advance&scope=advance_reports'),
       apiFetch<Subsidy[]>('/subsidies/'),
       apiFetch<any[]>('/users/').catch(() => []),
     ])

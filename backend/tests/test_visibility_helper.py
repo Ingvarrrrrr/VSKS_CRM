@@ -49,7 +49,8 @@ async def test_transitive_hierarchy_3_levels(db_session, test_org, make_user):
 @pytest.mark.asyncio
 async def test_dept_head_sees_dept_members(db_session, test_org, make_user):
     """Department.head_user_id видит всех членов отдела."""
-    from app.models.department import Department, DepartmentMember
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization
     head = await make_user(role="manager")
     member1 = await make_user(role="employee")
     member2 = await make_user(role="employee")
@@ -57,12 +58,32 @@ async def test_dept_head_sees_dept_members(db_session, test_org, make_user):
     db_session.add(dept)
     await db_session.commit()
     await db_session.refresh(dept)
-    db_session.add(DepartmentMember(department_id=dept.id, user_id=member1.id))
-    db_session.add(DepartmentMember(department_id=dept.id, user_id=member2.id))
+    db_session.add(UserOrganization(user_id=member1.id, org_id=test_org.id, dept_id=dept.id))
+    db_session.add(UserOrganization(user_id=member2.id, org_id=test_org.id, dept_id=dept.id))
     await db_session.commit()
 
     visible = await get_visible_user_ids(head, db_session)
     assert {head.id, member1.id, member2.id} <= visible
+
+
+@pytest.mark.asyncio
+async def test_dept_manager_sees_uo_only_members(db_session, test_org, make_user):
+    """ManagerDepartment видит члена отдела, заведённого ТОЛЬКО через UserOrganization.dept_id."""
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization
+    from app.models.manager_department import ManagerDepartment
+    manager = await make_user(role="manager")
+    member = await make_user(role="employee")
+    dept = Department(name="ManagedDept", org_id=test_org.id)
+    db_session.add(dept)
+    await db_session.commit()
+    await db_session.refresh(dept)
+    db_session.add(ManagerDepartment(manager_user_id=manager.id, dept_id=dept.id))
+    db_session.add(UserOrganization(user_id=member.id, org_id=test_org.id, dept_id=dept.id))
+    await db_session.commit()
+
+    visible = await get_visible_user_ids(manager, db_session)
+    assert member.id in visible
 
 
 @pytest.mark.asyncio

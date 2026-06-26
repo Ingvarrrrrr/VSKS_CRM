@@ -61,7 +61,8 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
 
     from app.models.manager_department import ManagerDepartment
     from app.models.manager_organization import ManagerOrganization
-    from app.models.department import Department, DepartmentMember
+    from app.models.department import Department
+    from app.models.user_organization import UserOrganization as _UO_vis
     from app.routers.user_hierarchy import get_all_subordinate_ids
 
     visible = {current_user.id}
@@ -78,7 +79,7 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
     headed_dept_ids = [r[0] for r in headed_dept_res.all()]
     if headed_dept_ids:
         head_dm_res = await db.execute(
-            select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(headed_dept_ids))
+            select(_UO_vis.user_id).where(_UO_vis.dept_id.in_(headed_dept_ids))
         )
         visible.update(r[0] for r in head_dm_res.all())
 
@@ -89,7 +90,7 @@ async def _get_visible_user_ids(current_user, db) -> Optional[set]:
     managed_dept_ids = [r[0] for r in md_res.all()]
     if managed_dept_ids:
         dm_res = await db.execute(
-            select(DepartmentMember.user_id).where(DepartmentMember.department_id.in_(managed_dept_ids))
+            select(_UO_vis.user_id).where(_UO_vis.dept_id.in_(managed_dept_ids))
         )
         visible.update(r[0] for r in dm_res.all())
 

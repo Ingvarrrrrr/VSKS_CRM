@@ -13,7 +13,7 @@ from app.auth.jwt import (
 )
 from app.auth.permissions import require_tab
 from app.database import get_db
-from app.models.department import Department, DepartmentMember, TaskEditDelegate
+from app.models.department import Department, TaskEditDelegate
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_organization import UserOrganization
@@ -84,7 +84,7 @@ async def _enrich_dept(d: Department, db: AsyncSession) -> DepartmentOut:
         u = await db.get(User, d.head_user_id)
         head_name = (u.full_name or u.username) if u else None
     count_res = await db.execute(
-        select(func.count(DepartmentMember.id)).where(DepartmentMember.department_id == d.id)
+        select(func.count(UserOrganization.id)).where(UserOrganization.dept_id == d.id)
     )
     member_count = count_res.scalar() or 0
     return DepartmentOut(
@@ -131,14 +131,7 @@ async def department_tree(
     depts = (await db.execute(q)).scalars().all()
 
     dept_ids = [d.id for d in depts]
-    # Load all members from DepartmentMember
-    members = []
-    if dept_ids:
-        members = (await db.execute(
-            select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
-        )).scalars().all()
-
-    # 7g: Also load users linked via user_organizations.dept_id (UNION source)
+    # Load all members from user_organizations.dept_id (single source of truth)
     uo_dept_rows = []
     if dept_ids:
         uo_dept_rows = (await db.execute(
@@ -148,9 +141,7 @@ async def department_tree(
         )).scalars().all()
 
     # Load user names + positions
-    user_ids = {m.user_id for m in members}
-    for uo in uo_dept_rows:
-        user_ids.add(uo.user_id)
+    user_ids = {uo.user_id for uo in uo_dept_rows}
     for d in depts:
         if d.head_user_id:
             user_ids.add(d.head_user_id)
@@ -180,21 +171,9 @@ async def department_tree(
             "children": [],
         }
 
-    # Track which (dept_id, user_id) pairs already added to avoid duplicates
+    # Build members list from user_organizations (single source of truth)
     added_pairs: set = set()
 
-    for m in members:
-        u = users_map.get(m.user_id, {})
-        entry = {
-            "member_id": m.id, "user_id": m.user_id,
-            "name": u.get("name", "?"), "role": u.get("role"),
-            "position": m.position or u.get("position"),
-        }
-        if m.department_id in by_id:
-            by_id[m.department_id]["members"].append(entry)
-            added_pairs.add((m.department_id, m.user_id))
-
-    # 7g: Add users from user_organizations.dept_id if not already present
     for uo in uo_dept_rows:
         if uo.dept_id not in by_id:
             continue
@@ -202,7 +181,7 @@ async def department_tree(
             continue
         u = users_map.get(uo.user_id, {})
         entry = {
-            "member_id": None, "user_id": uo.user_id,
+            "member_id": uo.id, "user_id": uo.user_id,
             "name": u.get("name", "?"), "role": u.get("role"),
             "position": uo.position or u.get("position"),
         }
@@ -265,7 +244,7 @@ async def update_department(
     await db.refresh(dept)
     # If name changed, sync users.department for all members
     if "name" in update and dept.name != old_name:
-        member_ids_q = select(DepartmentMember.user_id).where(DepartmentMember.department_id == dept_id)
+        member_ids_q = select(UserOrganization.user_id).where(UserOrganization.dept_id == dept_id)
         await db.execute(
             sa_update(User).where(User.id.in_(member_ids_q)).values(department=dept.name)
         )
@@ -289,7 +268,7 @@ async def delete_department(
         raise HTTPException(404, "Отдел не найден")
     # Check for members
     member_count = (await db.execute(
-        select(func.count()).select_from(DepartmentMember).where(DepartmentMember.department_id == dept_id)
+        select(func.count()).select_from(UserOrganization).where(UserOrganization.dept_id == dept_id)
     )).scalar() or 0
     if member_count > 0:
         raise HTTPException(400, f"Нельзя удалить отдел с сотрудниками ({member_count} чел.). Сначала уберите всех сотрудников из отдела.")
@@ -312,19 +291,12 @@ async def list_members(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # UNION department_members + user_organizations.dept_id — отдел может быть
-    # привязан к сотруднику и через multi-org membership (UserOrganization.dept_id),
-    # без явной строки в department_members. Раньше второй источник игнорировался,
-    # из-за чего Цыганов в отделах 3/18 ВСКС не показывался в карточке отдела,
-    # хотя в hierarchy graph и StaffView edit-dialog был.
-    members = (await db.execute(
-        select(DepartmentMember).where(DepartmentMember.department_id == dept_id)
-    )).scalars().all()
+    # user_organizations is now the single source of truth for dept membership.
     uo_rows = (await db.execute(
         select(UserOrganization).where(UserOrganization.dept_id == dept_id)
     )).scalars().all()
 
-    user_ids = {m.user_id for m in members} | {r.user_id for r in uo_rows}
+    user_ids = {r.user_id for r in uo_rows}
     users_map: dict[int, User] = {}
     if user_ids:
         for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for department member enrichment
@@ -332,26 +304,13 @@ async def list_members(
 
     out: list[MemberOut] = []
     seen_users: set[int] = set()
-    for m in members:
-        if m.user_id in seen_users:
-            continue
-        seen_users.add(m.user_id)
-        u = users_map.get(m.user_id)
-        out.append(MemberOut(
-            id=m.id, department_id=m.department_id, user_id=m.user_id,
-            user_name=(u.full_name or u.username) if u else None,
-            user_role=u.role if u else None,
-            position=m.position or (u.position if u else None),
-        ))
-    # negative ID для виртуальных строк из user_organizations — фронт их не редактирует
-    # как dept-member; для удаления нужен endpoint org-membership.
     for r in uo_rows:
         if r.user_id in seen_users:
             continue
         seen_users.add(r.user_id)
         u = users_map.get(r.user_id)
         out.append(MemberOut(
-            id=-r.id, department_id=dept_id, user_id=r.user_id,
+            id=r.id, department_id=dept_id, user_id=r.user_id,
             user_name=(u.full_name or u.username) if u else None,
             user_role=u.role if u else None,
             position=r.position or (u.position if u else None),
@@ -371,47 +330,33 @@ async def add_member(
         raise HTTPException(404, "Отдел не найден")
     # Multi-dept-per-org разрешён: сотрудник может состоять одновременно в нескольких
     # отделах одной и той же организации (Цыганов в Бухгалтерии+Отделе МТО+«1»).
-    # Раньше тут было «удалить все остальные dept того же org» — это противоречило
-    # пользовательскому требованию multi-dept (см. фидбек 5 мая) и удаляло видимые
-    # в карточке сотрудника отделы.
-    existing = (await db.execute(
-        select(DepartmentMember).where(
-            DepartmentMember.department_id == dept_id,
-            DepartmentMember.user_id == data.user_id,
+    # user_organizations is the single source of truth — look for an existing row
+    # for this exact (user, org, dept) triple.
+    user = await db.get(User, data.user_id)
+    uo_exact = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == data.user_id,
+            UserOrganization.org_id == dept.org_id,
+            UserOrganization.dept_id == dept_id,
         )
     )).scalar_one_or_none()
-    if existing:
-        existing.position = data.position
+    if uo_exact:
+        # Row already correct — just sync position if needed
+        if data.position:
+            uo_exact.position = data.position
         await db.commit()
-        await db.refresh(existing)
-        m = existing
+        m = uo_exact
     else:
-        m = DepartmentMember(department_id=dept_id, user_id=data.user_id, position=data.position)
+        # No row for this dept yet — insert a new one (multi-dept allowed)
+        new_pos = data.position or (user.position if user else None)
+        m = UserOrganization(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos)
         db.add(m)
         await db.commit()
         await db.refresh(m)
     # Also update user.department string
-    user = await db.get(User, data.user_id)
     if user:
         user.department = dept.name
         await db.commit()
-    # Sync UserOrganization: ensure user has org record with this dept_id.
-    # User may have multiple UO rows for the same org (multi-dept) — first look
-    # for a row that already targets this exact dept_id, then fall back to any
-    # existing row for UPSERT (avoids scalar_one_or_none MultipleResultsFound).
-    from app.models.user_organization import UserOrganization as _UO
-    uo_exact = (await db.execute(
-        select(_UO).where(_UO.user_id == data.user_id, _UO.org_id == dept.org_id, _UO.dept_id == dept_id)
-    )).scalar_one_or_none()
-    if uo_exact:
-        # Row already correct — just sync position if needed
-        if not uo_exact.position and data.position:
-            uo_exact.position = data.position
-    else:
-        # No row for this dept yet — insert a new one (multi-dept allowed)
-        new_pos = data.position or (user.position if user else None)
-        db.add(_UO(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos))
-    await db.commit()
     # Auto-create hierarchy: new member becomes subordinate of dept head
     if dept.head_user_id and dept.head_user_id != data.user_id:
         from app.models.user_hierarchy import UserHierarchy
@@ -426,7 +371,7 @@ async def add_member(
             await db.commit()
     u = await db.get(User, m.user_id)
     return MemberOut(
-        id=m.id, department_id=m.department_id, user_id=m.user_id,
+        id=m.id, department_id=dept_id, user_id=m.user_id,
         user_name=(u.full_name or u.username) if u else None,
         user_role=u.role if u else None,
         position=m.position or (u.position if u else None),
@@ -442,9 +387,9 @@ async def update_member(
     current_user: User = Depends(require_tab('staff')),
 ):
     m = (await db.execute(
-        select(DepartmentMember).where(
-            DepartmentMember.department_id == dept_id,
-            DepartmentMember.user_id == user_id,
+        select(UserOrganization).where(
+            UserOrganization.dept_id == dept_id,
+            UserOrganization.user_id == user_id,
         )
     )).scalar_one_or_none()
     if not m:
@@ -462,16 +407,6 @@ async def remove_member(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    from app.models.user_organization import UserOrganization
-    dm_row = (await db.execute(
-        select(DepartmentMember).where(
-            DepartmentMember.department_id == dept_id,
-            DepartmentMember.user_id == user_id,
-        )
-    )).scalar_one_or_none()
-
-    # Phase 23.3: graph endpoint UNIONs department_members + user_organizations.dept_id;
-    # user may only be present via user_organizations (e.g. Цыганов with 4 dept_id rows)
     uo_rows = (await db.execute(
         select(UserOrganization).where(
             UserOrganization.user_id == user_id,
@@ -479,7 +414,7 @@ async def remove_member(
         )
     )).scalars().all()
 
-    if not dm_row and not uo_rows:
+    if not uo_rows:
         raise HTTPException(404, "Сотрудник не найден в отделе")
 
     # Phase 30 fix: учитываем закупки ТОЛЬКО в той же организации, что и отдел.
@@ -505,8 +440,6 @@ async def remove_member(
         )).scalar() if dept_org_id else 'этой организации'
         raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок) в «{org_name}». Сначала перераспределите задачи.")
 
-    if dm_row:
-        await db.delete(dm_row)
     for uo in uo_rows:
         # Check whether a dept_id=NULL row for (user, org) already exists.
         # If it does, a simple SET dept_id=NULL would violate ux_user_org_dept —
@@ -528,9 +461,10 @@ async def remove_member(
     await db.commit()
     # Clear user.department — check if user still has other dept memberships
     other = (await db.execute(
-        select(DepartmentMember).where(
-            DepartmentMember.user_id == user_id,
-            DepartmentMember.department_id != dept_id,
+        select(UserOrganization).where(
+            UserOrganization.user_id == user_id,
+            UserOrganization.dept_id.isnot(None),
+            UserOrganization.dept_id != dept_id,
         ).limit(1)
     )).scalar_one_or_none()
     if not other:
@@ -642,10 +576,10 @@ async def can_edit_task_of_user(
     # Department head?
     head_check = await db.execute(
         select(Department.id).join(
-            DepartmentMember, DepartmentMember.department_id == Department.id
+            UserOrganization, UserOrganization.dept_id == Department.id
         ).where(
             Department.head_user_id == editor.id,
-            DepartmentMember.user_id == task_owner_id,
+            UserOrganization.user_id == task_owner_id,
         )
     )
     if head_check.first():
@@ -663,10 +597,10 @@ async def can_edit_task_of_user(
     from app.models.manager_department import ManagerDepartment
     md_check = await db.execute(
         select(ManagerDepartment.id).join(
-            DepartmentMember, DepartmentMember.department_id == ManagerDepartment.dept_id
+            UserOrganization, UserOrganization.dept_id == ManagerDepartment.dept_id
         ).where(
             ManagerDepartment.manager_user_id == editor.id,
-            DepartmentMember.user_id == task_owner_id,
+            UserOrganization.user_id == task_owner_id,
         )
     )
     if md_check.first():
@@ -878,15 +812,16 @@ async def import_departments_excel(
         is_head = _cell(row, 'head')
         is_head_bool = is_head and is_head.lower() in ('да', 'yes', '1', 'true', 'head', 'начальник')
 
-        # Add member
+        # Add member via user_organizations (single source of truth)
         existing_m = (await db.execute(
-            select(DepartmentMember).where(
-                DepartmentMember.department_id == dept.id,
-                DepartmentMember.user_id == user.id,
+            select(UserOrganization).where(
+                UserOrganization.user_id == user.id,
+                UserOrganization.org_id == dept.org_id,
+                UserOrganization.dept_id == dept.id,
             )
         )).scalar_one_or_none()
         if not existing_m:
-            db.add(DepartmentMember(department_id=dept.id, user_id=user.id, position=position))
+            db.add(UserOrganization(user_id=user.id, org_id=dept.org_id, dept_id=dept.id, position=position))
             created_members += 1
         elif position:
             existing_m.position = position

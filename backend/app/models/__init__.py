@@ -18,13 +18,14 @@ from app.models.system_incident import SystemIncident
 from app.models.purchase_event import PurchaseMember, PurchaseEvent
 from app.models.user_hierarchy import UserHierarchy
 from app.models.user_org_access import UserOrgAccess
+from app.models.user_subsidy_access import UserSubsidyAccess, UserSubsidyPermissionOverride  # noqa: F401
 from app.models.subsidy_contractor_override import SubsidyContractorOverride
 from app.models.event import Event
 from app.models.purchase_approval import PurchaseApproval
 from app.models.approval_signature_key import ApprovalSignatureKey
 from app.models.task import Task
 from app.models.task_comment import TaskComment
-from app.models.department import Department, DepartmentMember, TaskEditDelegate
+from app.models.department import Department, TaskEditDelegate
 from app.models.org_section_config import OrgSectionConfig
 from app.models.delivery_address import DeliveryAddress
 from app.models.feo_planned_item import FeoPlannedItem

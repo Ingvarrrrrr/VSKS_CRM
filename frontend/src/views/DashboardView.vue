@@ -1627,7 +1627,7 @@ async function loadAll() {
   loadingPurchases.value = true
   try {
     const [chartsData, purchasesData] = await Promise.all([
-      apiFetch<any>('/dashboard/charts'),
+      apiFetch<any>('/dashboard/charts?scope=dashboard'),
       apiFetch<any[]>('/purchases/')
     ])
 
@@ -1859,7 +1859,7 @@ async function loadAnalytics() {
   try {
     const ids = selectedSubsidyIds.value
     const qs = ids.length > 0 ? `?subsidy_ids=${ids.join(',')}` : ''
-    analyticsData.value = await apiFetch<AnalyticsData>(`/dashboard/analytics${qs}`)
+    analyticsData.value = await apiFetch<AnalyticsData>(`/dashboard/analytics${qs}${qs ? '&' : '?'}scope=dashboard`)
   } finally {
     analyticsLoading.value = false
   }
@@ -1901,7 +1901,7 @@ async function openFinplanDrilldown(period: string, category: 'plan' | 'committe
   try {
     const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
     const periodParam = period ? `&period=${period}` : ''
-    const data = await apiFetch<any>(`/dashboard/financial-plan/details?category=${category}&granularity=${finplanGranularity.value}${periodParam}${sidParam}`)
+    const data = await apiFetch<any>(`/dashboard/financial-plan/details?category=${category}&granularity=${finplanGranularity.value}${periodParam}${sidParam}&scope=dashboard`)
     finplanDrilldown.value.items = data.items || []
   } catch (e) {
     finplanDrilldown.value.items = []
@@ -1975,7 +1975,7 @@ function goToOrder(id: number) {
 async function exportFinplanXlsx() {
   const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
   const token = localStorage.getItem('auth_token')
-  const url = `/api/dashboard/financial-plan/export.xlsx?granularity=${finplanGranularity.value}${sidParam}`
+  const url = `/api/dashboard/financial-plan/export.xlsx?granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) return
   const blob = await res.blob()
@@ -1988,7 +1988,7 @@ async function exportFinplanXlsx() {
 
 async function exportFinplanDrilldownXlsx() {
   const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-  const params = `period=${encodeURIComponent(finplanDrilldown.value.period)}&category=${finplanDrilldown.value.category}&granularity=${finplanGranularity.value}${sidParam}`
+  const params = `period=${encodeURIComponent(finplanDrilldown.value.period)}&category=${finplanDrilldown.value.category}&granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
   const token = localStorage.getItem('auth_token')
   const res = await fetch(`/api/dashboard/financial-plan/details/export.xlsx?${params}`, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) return
@@ -2016,7 +2016,8 @@ const STATUS_LABELS_FINPLAN: Record<string, string> = {
 async function loadFinplan() {
   try {
     const sidParam = selectedSubsidyIds.value.length === 1 ? `?subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-    finplanData.value = await apiFetch<any>(`/dashboard/financial-plan${sidParam}`)
+    const finplanScopeParam = sidParam ? '&scope=dashboard' : '?scope=dashboard'
+    finplanData.value = await apiFetch<any>(`/dashboard/financial-plan${sidParam}${finplanScopeParam}`)
   } catch {
     finplanData.value = null
   }

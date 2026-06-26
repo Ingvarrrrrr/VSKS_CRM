@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES
 from app.auth.permissions import require_tab, ensure_user_org_access, remove_user_org_access
 from app.database import get_db
-from app.models.department import Department, DepartmentMember
+from app.models.department import Department
 from app.models.manager_department import ManagerDepartment
 from app.models.manager_organization import ManagerOrganization
 from app.models.organization import Organization
@@ -157,19 +157,9 @@ async def get_hierarchy_graph(
     depts = (await db.execute(q_depts)).scalars().all()
     dept_ids = [d.id for d in depts]
 
-    # Load dept members
+    # Load dept members from user_organizations (single source of truth)
     members_map: dict[int, list[int]] = {d.id: [] for d in depts}
-    user_position_map: dict[int, str] = {}  # user_id -> position from DepartmentMember
-    if dept_ids:
-        members = (await db.execute(
-            select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
-        )).scalars().all()
-        for m in members:
-            if m.department_id in members_map:
-                members_map[m.department_id].append(m.user_id)
-            if m.position:
-                user_position_map[m.user_id] = m.position
-    # Also include dept memberships from user_organizations.dept_id (mirror with department_members)
+    user_position_map: dict[int, str] = {}  # user_id -> position from UserOrganization
     if dept_ids:
         uo_dept_rows = (await db.execute(
             select(UserOrganization).where(
@@ -190,7 +180,7 @@ async def get_hierarchy_graph(
     # Load users
     # Phase 30.6 fix: cross-org membership — пользователь может числиться primary
     # в одной орг (User.org_id), но быть членом отдела в другой (через
-    # DepartmentMember или user_organizations.dept_id). Без этого fix'а counter
+    # user_organizations.dept_id). Без этого fix'а counter
     # «1 чел.» в отделе показывал, а карточка не рендерилась.
     extra_user_ids: set[int] = set()
     for ids in members_map.values():
@@ -616,6 +606,7 @@ async def get_user_salary(
             "position": r.position,
             "salary_amount": float(r.salary_amount) if r.salary_amount else None,
             "employment_percent": r.employment_percent,
+            "hired_at": r.hired_at.isoformat() if r.hired_at else None,
         }
         for r in rows
     ]
@@ -632,6 +623,7 @@ async def get_user_salary(
             "position": user.position or "",
             "salary_amount": None,
             "employment_percent": None,
+            "hired_at": None,
         })
     return result
 
@@ -644,10 +636,8 @@ async def remove_user_from_organization(
     current_user: User = Depends(require_tab('staff')),
 ):
     """Remove user from an organization (extra or primary).
-    7c: Cascade — удаляет ВСЕ строки user_organizations с этим org_id,
-    а также все связанные DepartmentMember записи.
+    7c: Cascade — удаляет ВСЕ строки user_organizations с этим org_id.
     """
-    from app.models.department import DepartmentMember
     user = await db.get(User, uid)
     is_primary = user and user.org_id == org_id
 
@@ -662,24 +652,10 @@ async def remove_user_from_organization(
     if not all_rows and not is_primary:
         raise HTTPException(404, "Членство не найдено")
 
-    # 7c: Collect dept_ids to clean up DepartmentMember records
-    dept_ids_to_clean = {row.dept_id for row in all_rows if row.dept_id is not None}
-
     # Delete all user_organizations rows for this org
     for row in all_rows:
         await db.delete(row)
     await db.flush()
-
-    # 7c: Delete DepartmentMember for each dept that was linked to this org
-    for dept_id in dept_ids_to_clean:
-        dm = (await db.execute(
-            select(DepartmentMember).where(
-                DepartmentMember.user_id == uid,
-                DepartmentMember.department_id == dept_id,
-            )
-        )).scalar_one_or_none()
-        if dm:
-            await db.delete(dm)
 
     if is_primary:
         user.org_id = None
@@ -710,6 +686,10 @@ async def patch_user_org_membership_row(
         row.salary_amount = body["salary_amount"]
     if "employment_percent" in body:
         row.employment_percent = body["employment_percent"]
+    if "hired_at" in body:
+        from datetime import datetime
+        v = body["hired_at"]
+        row.hired_at = datetime.fromisoformat(v) if v else None
     await db.commit()
     return {"ok": True}
 
@@ -721,37 +701,14 @@ async def remove_user_org_membership_row(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    """Удалить конкретную строку user_organizations (адресуется по PK).
-    Mirror: если у строки задан dept_id — удалить и DepartmentMember(dept_id,user_id),
-    если у user'а в этом dept'е больше нет других строк user_organizations.
-    """
+    """Удалить конкретную строку user_organizations (адресуется по PK)."""
     row = await db.get(UserOrganization, row_id)
     if not row or row.user_id != uid:
         raise HTTPException(404, "Запись не найдена")
 
-    dept_id = row.dept_id
     org_id = row.org_id
     await db.delete(row)
     await db.flush()
-
-    # Mirror в department_members: удалить если в user_organizations не осталось этого юзера в этом dept'е
-    if dept_id is not None:
-        from app.models.department import DepartmentMember
-        remaining = (await db.execute(
-            select(UserOrganization).where(
-                UserOrganization.user_id == uid,
-                UserOrganization.dept_id == dept_id,
-            )
-        )).scalar_one_or_none()
-        if remaining is None:
-            dm = (await db.execute(
-                select(DepartmentMember).where(
-                    DepartmentMember.user_id == uid,
-                    DepartmentMember.department_id == dept_id,
-                )
-            )).scalar_one_or_none()
-            if dm:
-                await db.delete(dm)
 
     # Если у юзера больше нет привязок к этой org — снять primary org_id
     user = await db.get(User, uid)
@@ -796,7 +753,7 @@ async def get_task_authority(
     if ud_rows:
         dept_ids = [r.dept_id for r in ud_rows]
         dept_members = (await db.execute(
-            select(DepartmentMember).where(DepartmentMember.department_id.in_(dept_ids))
+            select(UserOrganization).where(UserOrganization.dept_id.in_(dept_ids))
         )).scalars().all()
         for m in dept_members:
             if m.user_id != uid:

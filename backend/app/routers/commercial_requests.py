@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES, ALL_ROLES, get_org_filter
 from app.auth.permissions import require_tab
+from app.auth.visibility import get_visible_subsidy_ids
 from app.database import get_db
 from app.models.commercial_request import CommercialRequest, CommercialRequestRecipient
 from app.models.contractor import Contractor
@@ -92,15 +93,17 @@ async def list_commercial_requests(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    from app.models.subsidy import Subsidy
     q = (select(CommercialRequest)
          .options(selectinload(CommercialRequest.recipients))
          .order_by(CommercialRequest.id.desc()))
     if purchase_id is not None:
         q = q.where(CommercialRequest.purchase_id == purchase_id)
-    org_ids = get_org_filter(current_user)
-    if org_ids is not None:
-        q = q.join(Purchase, CommercialRequest.purchase_id == Purchase.id).join(Subsidy, Purchase.subsidy_id == Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+    # Двухуровневая видимость по вкладке «Запросы КП».
+    vis = await get_visible_subsidy_ids(current_user, db, "commercial_requests")
+    if vis is not None:
+        q = q.where(CommercialRequest.purchase_id.in_(
+            select(Purchase.id).where(Purchase.subsidy_id.in_(vis))
+        ))
     rows = (await db.execute(q)).scalars().all()
     return [_to_out(r) for r in rows]
 

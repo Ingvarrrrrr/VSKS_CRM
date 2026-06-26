@@ -64,10 +64,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     user._uoa_org_ids = []
     if user.role not in ('superadmin', 'account_owner'):
         from app.models.user_org_access import UserOrgAccess
+        from app.models.user_organization import UserOrganization
         _uoa_ids = (await db.execute(
             select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
         )).scalars().all()
-        user._uoa_org_ids = list({int(x) for x in _uoa_ids if x})
+        # 24.06-fix: учитываем UOA-орг ТОЛЬКО при реальном членстве
+        # (user_organizations) либо если это primary-орг. Осиротевшие UOA-строки
+        # (роль выдана, потом членство удалено без каскада) иначе открывали
+        # employee доступ к чужим субсидиям/договорам — баг: Филиппов видел ДНР.
+        _member_ids = {int(x) for x in (await db.execute(
+            select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+        )).scalars().all() if x}
+        if user.org_id:
+            _member_ids.add(int(user.org_id))
+        user._uoa_org_ids = list({int(x) for x in _uoa_ids if x and int(x) in _member_ids})
     return user
 
 async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> bool:
@@ -85,12 +95,22 @@ async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> b
     # require_role того же уровня (вкладки/действия по max-роли; данные скоупятся
     # отдельно). Не затрагивает require_superadmin: org_admin не равен superadmin.
     from app.models.user_org_access import UserOrgAccess
-    uoa_roles = (await db.execute(
-        select(UserOrgAccess.role).where(
+    from app.models.user_organization import UserOrganization
+    # 24.06-fix: UOA-роль повышает права только при реальном членстве в той же
+    # орг. Иначе осиротевшие UOA-строки давали employee чужой org_admin (вкладки/
+    # действия) — Филиппов с org_admin на орг 1 без членства.
+    _member_org_ids = {int(x) for x in (await db.execute(
+        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
+    )).scalars().all() if x}
+    if user.org_id:
+        _member_org_ids.add(int(user.org_id))
+    uoa_rows = (await db.execute(
+        select(UserOrgAccess.org_id, UserOrgAccess.role).where(
             UserOrgAccess.user_id == user.id,
             UserOrgAccess.role.isnot(None),
         )
-    )).scalars().all()
+    )).all()
+    uoa_roles = [r for (oid, r) in uoa_rows if oid in _member_org_ids]
     if any(r in roles for r in uoa_roles):
         return True
 

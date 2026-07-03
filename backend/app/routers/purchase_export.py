@@ -14,6 +14,7 @@ from io import BytesIO
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime
+from urllib.parse import quote
 
 from app.database import get_db
 from app.models.purchase import Purchase
@@ -145,7 +146,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "execution_term_changed":  return str(p.execution_term_changed) if p.execution_term_changed else ""
     if key == "delivery_date":           return str(p.delivery_date) if p.delivery_date else ""
     if key == "contractor":              return ctx["contractors"].get(p.contractor_id, "")
-    if key == "contractor_inn":          return p.contractor.inn if p.contractor else ""
+    if key == "contractor_inn":          return ctx["contractor_inns"].get(p.contractor_id, "")
     if key == "responsible_person":      return p.responsible_person or ""
     if key == "acceptance_doc_name":     return p.acceptance_doc_name or ""
     if key == "acceptance_doc_number":   return p.acceptance_doc_number or ""
@@ -201,10 +202,12 @@ async def export_purchases_to_excel(
         q = q.where(Purchase.status == status)
     purchases = (await db.execute(q)).scalars().all()
 
-    contractors = {c.id: c.name for c in (await db.execute(select(Contractor))).scalars().all()}
+    contractor_rows = (await db.execute(select(Contractor))).scalars().all()
+    contractors = {c.id: c.name for c in contractor_rows}
+    contractor_inns = {c.id: (c.inn or "") for c in contractor_rows}
     subsidies_map = {s.id: s.name for s in (await db.execute(select(Subsidy))).scalars().all()}
     feo_map = {f.id: f.name for f in (await db.execute(select(FeoCategory))).scalars().all()}
-    ctx = {"contractors": contractors, "subsidies": subsidies_map, "feo_categories": feo_map}
+    ctx = {"contractors": contractors, "contractor_inns": contractor_inns, "subsidies": subsidies_map, "feo_categories": feo_map}
 
     wb = Workbook()
     ws = wb.active
@@ -249,7 +252,8 @@ async def export_purchases_to_excel(
         "Access-Control-Expose-Headers": "X-Missing-Columns",
     }
     if missing:
-        resp_headers["X-Missing-Columns"] = ",".join(missing[:5])
+        # HTTP-заголовки кодируются latin-1; кириллица в названиях колонок → percent-encode.
+        resp_headers["X-Missing-Columns"] = quote(",".join(missing[:5]))
 
     return StreamingResponse(
         buffer,

@@ -16,7 +16,7 @@ export default defineConfig({
       manifest: {
         name: 'GALA',
         short_name: 'GALA',
-        description: 'Procurement & Budget Control Platform',
+        description: 'Управление закупками и бюджетным контролем',
         theme_color: '#fb923c',
         background_color: '#0f0e0c',
         display: 'standalone',

@@ -1891,8 +1891,13 @@ async function doExport() {
     const response = await fetch(`/api/purchases/export/excel?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-    if (!response.ok) throw new Error('Ошибка экспорта')
-    const missing = response.headers.get('X-Missing-Columns')
+    if (!response.ok) {
+      let msg = `Ошибка экспорта (HTTP ${response.status})`
+      try { const j = await response.json(); if (j?.message) msg = j.message } catch { /* not json */ }
+      throw new Error(msg)
+    }
+    const missingRaw = response.headers.get('X-Missing-Columns')
+    const missing = missingRaw ? decodeURIComponent(missingRaw) : null
     const blob = await response.blob()
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1906,8 +1911,8 @@ async function doExport() {
     if (missing) {
       showSnack(`Предупреждение: мало данных в колонках: ${missing}`, 'warning')
     }
-  } catch {
-    showSnack('Ошибка экспорта', 'error')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка экспорта', 'error')
   } finally {
     exportDialog.exporting = false
   }

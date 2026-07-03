@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
-BASE_URL = os.getenv("BASE_URL", "http://85.239.53.155")
+BASE_URL = os.getenv("BASE_URL", "https://gaaala.duckdns.org")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 MAX_API = "https://botapi.max.ru/messages/send?access_token={token}"

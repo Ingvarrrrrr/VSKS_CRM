@@ -15,7 +15,6 @@ from app.models.user_org_access import UserOrgAccess
 from app.models.permission import RolePermission, UserOrgPermissionOverride
 from app.auth.jwt import get_current_user
 
-
 async def ensure_user_org_access(
     user_id: int, org_id: int, role: Optional[str], db: AsyncSession
 ) -> int:
@@ -83,20 +82,12 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
 
     NOTE: Does NOT call get_visible_user_ids — safe to call from _get_effective loop.
     """
-    # 24.06-fix: UOA-роль повышает вкладки/действия ТОЛЬКО по орг с реальным
-    # членством (user_organizations ∪ primary). Осиротевшие UOA-строки (роль выдана,
-    # членство удалено без каскада) иначе поднимали employee до org_admin → Филиппов
-    # видел admin.billing/roles/settings. Тот же принцип в jwt.py.
-    from app.models.user_organization import UserOrganization
-    _member_org_ids = {int(x) for x in (await db.execute(
-        select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
-    )).scalars().all() if x}
-    if user.org_id:
-        _member_org_ids.add(int(user.org_id))
+    # Модель A: UOA-роль — самодостаточный источник полномочий по орг, членство
+    # (user_organizations) НЕ требуется. Полномочия ≠ трудоустройство.
 
     # Step 0: resolve effective role (per-org override takes precedence)
     effective_role = user.role
-    if org_id and int(org_id) in _member_org_ids:
+    if org_id:
         uoa = (await db.execute(
             select(UserOrgAccess).where(
                 UserOrgAccess.user_id == user.id,
@@ -107,7 +98,7 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
             effective_role = uoa.role
 
     # Step 0b: elevate to best per-org role if it outranks the contour role.
-    # Модель: вкладки/действия — по max-роли (глоб. ИЛИ лучшая per-org).
+    # Вкладки/действия — по max-роли (глоб. ИЛИ лучшая per-org).
     # Данные при этом скоупятся отдельно через get_org_filter в эндпоинтах.
     _uoa_role_rows = (await db.execute(
         select(UserOrgAccess.org_id, UserOrgAccess.role).where(
@@ -115,7 +106,7 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
             UserOrgAccess.role.isnot(None),
         )
     )).all()
-    all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid and int(oid) in _member_org_ids]
+    all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid]
     if all_uoa_rows:
         best_per_org = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
         if _ROLE_PRIORITY.get(best_per_org, 0) > _ROLE_PRIORITY.get(effective_role, 0):

@@ -249,31 +249,11 @@ async def update_user_org_role(
                 "Нельзя понизить себе роль в этой организации (самоблокировка)",
             )
 
-    uoa = (await db.execute(
-        select(UserOrgAccess).where(
-            UserOrgAccess.user_id == user_id,
-            UserOrgAccess.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    if uoa is None:
-        # Self-heal: если членство есть — создаём user_org_access с новой ролью
-        membership = (await db.execute(
-            select(UserOrganization).where(
-                UserOrganization.user_id == user_id,
-                UserOrganization.org_id == org_id,
-            )
-        )).scalar_one_or_none()
-        if membership is None:
-            raise HTTPException(
-                404,
-                f"Пользователь не состоит в организации id={org_id} — "
-                "сначала добавьте его в организацию",
-            )
-        uoa_id = await ensure_user_org_access(user_id, org_id, body.role, db)
-        await db.commit()
-        return {"status": "ok", "role": body.role}
-
-    uoa.role = body.role
+    # Модель A: ensure_user_org_access идемпотентно создаёт/обновляет UOA-роль —
+    # самодостаточный источник полномочий. Членство (user_organizations) НЕ требуется
+    # и НЕ создаётся: полномочия ≠ трудоустройство. Нет 404 «сначала добавьте
+    # в организацию» — org_admin назначается сразу, видимость даёт сама UOA-роль.
+    await ensure_user_org_access(user_id, org_id, body.role, db)
     await db.commit()
     return {"status": "ok", "role": body.role}
 
@@ -452,3 +432,5 @@ async def delete_subsidy_override(
     )
     await db.commit()
     return {"status": "ok"}
+
+

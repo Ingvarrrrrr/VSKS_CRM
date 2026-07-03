@@ -12,6 +12,6 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "noreply@vsks.ru"
-    BASE_URL: str = "http://localhost:80"
+    BASE_URL: str = "https://gaaala.duckdns.org"
 
 settings = Settings()

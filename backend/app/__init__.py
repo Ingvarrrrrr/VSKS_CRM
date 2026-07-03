@@ -2212,3 +2212,87 @@ async def diag_purchase(pid: int, current_user=Depends(get_current_user)):
             "items": items_out,
             "receipts": receipts_out,
         }
+
+
+@app.get("/api/diag/_tmp_access_probe")
+async def _tmp_access_probe(token: str = "", who: str = "артеева"):
+    """TEMP diag (token-gated, read-only): подтверждает деплой Model A и дампит
+    структуру доступа пользователя. УДАЛИТЬ после диагностики."""
+    if token != "gala_probe_7x2k9":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    import inspect as _inspect
+    from sqlalchemy import select as _sel
+    from app.auth import jwt as _jwtmod
+    from app.auth.visibility import get_visible_subsidy_ids as _gvs
+    from .models.user import User as _User
+    from .models.user_org_access import UserOrgAccess as _UOA
+    from .models.user_organization import UserOrganization as _UO
+    from .models.organization import Organization as _Org
+    from .models.subsidy import Subsidy as _Sub
+    from .models.user_subsidy_access import UserSubsidyAccess as _USA
+
+    out = {}
+    try:
+        out["model_a_deployed"] = "Модель A" in _inspect.getsource(_jwtmod.get_current_user)
+    except Exception as e:
+        out["model_a_deployed"] = f"err:{e}"
+
+    async with async_session() as db:
+        users = (await db.execute(
+            _sel(_User).where(_User.full_name.ilike(f"%{who}%"))
+        )).scalars().all()
+        out["users"] = [
+            {"id": u.id, "username": u.username, "full_name": u.full_name,
+             "role": u.role, "org_id": u.org_id} for u in users
+        ]
+        uids = [u.id for u in users]
+        orgname = {o.id: o.name for o in (await db.execute(_sel(_Org))).scalars().all()}
+
+        if uids:
+            uoa = (await db.execute(_sel(_UOA).where(_UOA.user_id.in_(uids)))).scalars().all()
+            out["user_org_access"] = [
+                {"user_id": r.user_id, "org_id": r.org_id,
+                 "org": orgname.get(r.org_id), "role": r.role} for r in uoa
+            ]
+            mem = (await db.execute(_sel(_UO).where(_UO.user_id.in_(uids)))).scalars().all()
+            out["memberships"] = [
+                {"user_id": r.user_id, "org_id": r.org_id, "org": orgname.get(r.org_id),
+                 "dept_id": r.dept_id, "position": r.position} for r in mem
+            ]
+            grants = (await db.execute(_sel(_USA).where(_USA.user_id.in_(uids)))).scalars().all()
+            out["subsidy_grants"] = [
+                {"user_id": r.user_id, "subsidy_id": r.subsidy_id} for r in grants
+            ]
+
+        don = (await db.execute(_sel(_Org).where(_Org.name.ilike("%донецк%")))).scalars().all()
+        out["donetsk_orgs"] = [{"id": o.id, "name": o.name} for o in don]
+        don_ids = [o.id for o in don]
+        if don_ids:
+            subs = (await db.execute(_sel(_Sub).where(_Sub.org_id.in_(don_ids)))).scalars().all()
+            out["donetsk_subsidies"] = [
+                {"id": s.id, "name": s.name, "org_id": s.org_id} for s in subs
+            ]
+
+        # Симулируем видимость для каждого найденного пользователя (как в проде).
+        out["simulated_visibility"] = []
+        for u in users:
+            u._active_org_ids = None
+            u._active_org_id = u.org_id
+            if u.role not in ("superadmin", "account_owner"):
+                _ids = (await db.execute(
+                    _sel(_UOA.org_id).where(_UOA.user_id == u.id)
+                )).scalars().all()
+                u._uoa_org_ids = list({int(x) for x in _ids if x})
+            else:
+                u._uoa_org_ids = []
+            try:
+                vis = await _gvs(u, db, tab_key="subsidies")
+                out["simulated_visibility"].append(
+                    {"user_id": u.id, "role": u.role,
+                     "uoa_org_ids": u._uoa_org_ids, "visible_subsidy_count": len(vis)}
+                )
+            except Exception as e:
+                out["simulated_visibility"].append({"user_id": u.id, "error": str(e)[:200]})
+
+    return out

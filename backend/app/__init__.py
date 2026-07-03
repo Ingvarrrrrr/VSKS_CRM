@@ -2266,13 +2266,32 @@ async def _tmp_access_probe(token: str = "", who: str = "артеева"):
             ]
 
         don = (await db.execute(_sel(_Org).where(_Org.name.ilike("%донецк%")))).scalars().all()
-        out["donetsk_orgs"] = [{"id": o.id, "name": o.name} for o in don]
+        out["donetsk_orgs"] = [
+            {"id": o.id, "name": o.name, "root_org_id": o.root_org_id} for o in don
+        ]
         don_ids = [o.id for o in don]
         if don_ids:
             subs = (await db.execute(_sel(_Sub).where(_Sub.org_id.in_(don_ids)))).scalars().all()
             out["donetsk_subsidies"] = [
                 {"id": s.id, "name": s.name, "org_id": s.org_id} for s in subs
             ]
+
+        # Все орги с числом субсидий (где реально лежат субсидии).
+        from sqlalchemy import func as _func
+        rows = (await db.execute(
+            _sel(_Sub.org_id, _func.count(_Sub.id)).group_by(_Sub.org_id)
+        )).all()
+        out["subsidy_org_counts"] = [
+            {"org_id": oid, "org": orgname.get(oid), "count": int(c)} for (oid, c) in rows
+        ]
+        # Субсидии с «Донецк» в названии независимо от org_id.
+        subs_by_name = (await db.execute(
+            _sel(_Sub).where(_Sub.name.ilike("%донецк%"))
+        )).scalars().all()
+        out["subsidies_named_donetsk"] = [
+            {"id": s.id, "name": s.name, "org_id": s.org_id, "org": orgname.get(s.org_id)}
+            for s in subs_by_name
+        ]
 
         # Симулируем видимость для каждого найденного пользователя (как в проде).
         out["simulated_visibility"] = []

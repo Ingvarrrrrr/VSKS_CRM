@@ -26,7 +26,7 @@ services:
       SMTP_USER: z@vsks.ru
       SMTP_PASSWORD: szbgaktpqomcwdou
       SMTP_FROM: z@vsks.ru
-      BASE_URL: http://localhost:80
+      BASE_URL: ${BASE_URL:-https://gaaala.duckdns.org}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}

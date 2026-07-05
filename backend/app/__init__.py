@@ -2284,13 +2284,18 @@ async def _tmp_access_probe(token: str = "", who: str = "артеева"):
         out["subsidy_org_counts"] = [
             {"org_id": oid, "org": orgname.get(oid), "count": int(c)} for (oid, c) in rows
         ]
-        # Субсидии с «Донецк» в названии независимо от org_id.
-        subs_by_name = (await db.execute(
-            _sel(_Sub).where(_Sub.name.ilike("%донецк%"))
-        )).scalars().all()
-        out["subsidies_named_donetsk"] = [
+        # Все субсидии с их org_id (encoding-независимо; ищем где реально ДНР_2026).
+        all_subs = (await db.execute(_sel(_Sub))).scalars().all()
+        out["all_subsidies"] = [
             {"id": s.id, "name": s.name, "org_id": s.org_id, "org": orgname.get(s.org_id)}
-            for s in subs_by_name
+            for s in all_subs
+        ]
+        # Полный дамп орг с ИНН — ищем дубли Донецкого по ИНН (name-dedup ломается
+        # из-за двойного кодирования, поэтому сравниваем по ИНН/КПП/ОГРН).
+        all_orgs = (await db.execute(_sel(_Org))).scalars().all()
+        out["all_orgs"] = [
+            {"id": o.id, "name": o.name, "inn": o.inn, "kpp": o.kpp,
+             "ogrn": o.ogrn, "root_org_id": o.root_org_id} for o in all_orgs
         ]
 
         # Симулируем видимость для каждого найденного пользователя (как в проде).

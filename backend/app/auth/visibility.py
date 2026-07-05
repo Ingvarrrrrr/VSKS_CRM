@@ -154,20 +154,45 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
             user.role,
         )
 
-    # Phase 26-AA: «поглощение» — если в подчинённых есть SaaS-юзер, наследуем
+    # Phase 26-AA: «поглощение» — если в подчинённых есть account_owner, наследуем
     # SaaS-видимость (None = без фильтра). Бизнес-правило: «ты ставишь задачи
-    # superadmin'у → ты видишь то же что и он».
+    # account_owner'у → ты видишь то же что и он».
+    # superadmin намеренно исключён из этой проверки: он невидим для не-суперадминов,
+    # поэтому подчинённый-суперадмин не должен давать вызывающему SaaS-видимость.
     if visible - {user.id}:
         saas_check = await db.execute(
             select(User.id).where(
                 User.id.in_(visible - {user.id}),
-                User.role.in_(_SAAS_ROLES),
+                User.role == "account_owner",
             )
         )
         if saas_check.first() is not None:
-            return None  # bypass фильтра — наследовал SaaS
+            return None  # bypass фильтра — наследовал SaaS от account_owner
 
     return visible
+
+
+async def get_account_contour_org_ids(user: User, db: AsyncSession) -> set[int]:
+    """Орги аккаунта пользователя: корневая орга его primary-орги + все дочерние.
+
+    Wave 3: глобальная роль (user.role) действует на весь аккаунт, поэтому
+    контурные орги входят в кандидаты org-scoped гейтинга (эффективная роль в
+    каждой = UOA-роль этой орги или глобальная). Использует кэш из
+    get_current_user (_contour_org_ids), иначе считает по Organization."""
+    cached = getattr(user, "_contour_org_ids", None)
+    if cached is not None:
+        return {int(x) for x in cached}
+    if not user.org_id:
+        return set()
+    from app.models.organization import Organization
+    org = await db.get(Organization, user.org_id)
+    if not org:
+        return set()
+    root_id = int(org.root_org_id or org.id)
+    kid_ids = (await db.execute(
+        select(Organization.id).where(Organization.root_org_id == root_id)
+    )).scalars().all()
+    return {root_id, *(int(x) for x in kid_ids)}
 
 
 async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:
@@ -248,10 +273,11 @@ async def get_role_scoped_org_ids(
     )).all()
     uoa_role_map = {int(oid): r for (oid, r) in uoa_rows if oid is not None}
 
-    # Кандидаты = членство (user_organizations ∪ primary) ∪ орг из user_org_access.
+    # Кандидаты = членство (user_organizations ∪ primary) ∪ орг из user_org_access
+    # ∪ контур аккаунта (Wave 3: глобальная роль действует на весь аккаунт).
     # UOA даёт доступ к орг даже без строки в user_organizations (как get_org_filter),
     # поэтому такие орг тоже учитываем — иначе org_admin-через-UOA орг теряются.
-    candidates = member | set(uoa_role_map.keys())
+    candidates = member | set(uoa_role_map.keys()) | await get_account_contour_org_ids(user, db)
 
     result: list[int] = []
     for org_id in candidates:
@@ -280,7 +306,8 @@ async def get_tab_scoped_org_ids(
 
     from app.auth.permissions import _get_effective_simple
 
-    # Кандидаты-орги: те же три источника, что в get_visible_subsidy_ids.
+    # Кандидаты-орги: те же источники, что в get_visible_subsidy_ids
+    # (членство ∪ primary ∪ UOA ∪ контур аккаунта).
     org_ids: set[int] = {int(x) for x in (await db.execute(
         select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
     )).scalars().all() if x}
@@ -289,6 +316,7 @@ async def get_tab_scoped_org_ids(
     org_ids |= {int(x) for x in (await db.execute(
         select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
     )).scalars().all() if x}
+    org_ids |= await get_account_contour_org_ids(user, db)
 
     result: list[int] = []
     for oid in org_ids:
@@ -324,7 +352,9 @@ async def get_visible_subsidy_ids(
     if user.role in _SAAS_ROLES:
         return None
 
-    # Кандидаты-орг: членство (user_organizations ∪ primary) ∪ user_org_access.
+    # Кандидаты-орг: членство (user_organizations ∪ primary) ∪ user_org_access
+    # ∪ контур аккаунта (Wave 3: глобальная роль действует на весь аккаунт —
+    # без этого сотрудники корня теряют субсидии, перепривязанные к дочерним оргам).
     org_ids: set[int] = {int(x) for x in (await db.execute(
         select(UserOrganization.org_id).where(UserOrganization.user_id == user.id)
     )).scalars().all() if x}
@@ -333,6 +363,7 @@ async def get_visible_subsidy_ids(
     org_ids |= {int(x) for x in (await db.execute(
         select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
     )).scalars().all() if x}
+    org_ids |= await get_account_contour_org_ids(user, db)
 
     visible: set[int] = set()
     # Орг-дефолт: орг с эффективным ключом tab_key → все её субсидии.

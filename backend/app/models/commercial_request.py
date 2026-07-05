@@ -13,7 +13,7 @@ class CommercialRequest(Base):
     intro_text = Column(Text, nullable=True)
     delivery_date = Column(String(100), nullable=True)
     status = Column(String(50), default="draft", nullable=False)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     recipients = relationship(

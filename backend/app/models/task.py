@@ -30,8 +30,8 @@ class Task(Base):
     status = Column(SAEnum(TaskStatus), default=TaskStatus.todo, nullable=False)
     priority = Column(SAEnum(TaskPriority), default=TaskPriority.medium, nullable=False)
     due_date = Column(DateTime(timezone=True), nullable=True)
-    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    assigned_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     category = Column(String(200), nullable=True)  # "Склад", "Документы", "Строительство" и т.д.
     parent_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)

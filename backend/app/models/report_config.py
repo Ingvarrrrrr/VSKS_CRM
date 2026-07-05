@@ -16,7 +16,7 @@ class ReportConfig(Base):
     description = Column(String(1000), nullable=True)
     config_json = Column(JSONB, nullable=False, default=dict)
     parameters_json = Column(JSONB, nullable=False, default=list)  # [{key, label, type, default, required}]
-    created_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     is_default = Column(Boolean, nullable=False, default=False)

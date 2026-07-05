@@ -231,8 +231,7 @@ async def list_users_in_my_orgs(
       2. users.org_id (primary org — legacy для юзеров без user_organizations row)
       3. user_org_access.user_id == current_user.id (per-org role/permissions)
     Если ни одного орг не нашлось — возвращаем всех (fallback, ранний бутстрап).
-    superadmin'ы всегда включаются (могут быть назначаемыми задачами от owner'ов
-    отделов, как в кейсе Цыганова который должен мочь поставить задачу СУПЕРАДМИНУ).
+    Суперадмины скрыты от не-суперадминов (бизнес-правило: суперадмин невидим).
     """
     from app.models.user_organization import UserOrganization
     own_orgs: set[int] = set()
@@ -272,11 +271,16 @@ async def list_users_in_my_orgs(
         user_ids.add(current_user.id)
         if user_ids:
             q = select(User).where(User.id.in_(user_ids)).order_by(User.full_name)
+            if current_user.role != "superadmin":
+                q = q.where(User.role != "superadmin")
             res = await db.execute(q)
             return res.scalars().all()
 
     # Fallback: ни одной орг не нашлось — вернуть всех (ранний бутстрап / data-issue)
-    res = await db.execute(select(User).order_by(User.full_name))
+    q_fallback = select(User).order_by(User.full_name)
+    if current_user.role != "superadmin":
+        q_fallback = q_fallback.where(User.role != "superadmin")
+    res = await db.execute(q_fallback)
     return res.scalars().all()
 
 
@@ -292,17 +296,21 @@ async def list_users_i_can_act_for(
     from app.routers.task_visibility import _get_visible_user_ids
     visible = await _get_visible_user_ids(current_user, db)
     if visible is None:
-        # SaaS-wide (superadmin) — отдаём всех
-        res = await db.execute(select(User).order_by(User.full_name))
+        # SaaS-wide — отдаём всех; суперадмины скрыты от не-суперадминов
+        q_all = select(User).order_by(User.full_name)
+        if current_user.role != "superadmin":
+            q_all = q_all.where(User.role != "superadmin")
+        res = await db.execute(q_all)
         return res.scalars().all()
     # Самого себя гарантированно включаем
     visible = set(visible)
     visible.add(current_user.id)
     if not visible:
         return [current_user]
-    res = await db.execute(
-        select(User).where(User.id.in_(visible)).order_by(User.full_name)
-    )
+    q_vis = select(User).where(User.id.in_(visible)).order_by(User.full_name)
+    if current_user.role != "superadmin":
+        q_vis = q_vis.where(User.role != "superadmin")
+    res = await db.execute(q_vis)
     return res.scalars().all()
 
 

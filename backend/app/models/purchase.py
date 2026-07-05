@@ -78,12 +78,12 @@ class Purchase(Base):
     approval_sign_type = Column(String(20), nullable=True, default="electronic")  # electronic / paper
 
     # Kanban / task assignment
-    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assigned_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     task_comment = Column(Text, nullable=True)
 
     # Служебка (service note) — D-22
     service_note_text = Column(Text, nullable=True)
-    service_note_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    service_note_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     service_note_at = Column(DateTime(timezone=True), nullable=True)
 
     # Приложение №3 fields

@@ -72,31 +72,56 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
             select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
         )).scalars().all()
         user._uoa_org_ids = list({int(x) for x in _uoa_ids if x})
+    # Контур аккаунта: глобальная роль (user.role) действует на ВЕСЬ аккаунт
+    # (корневая орга + все её дочерние), а не только на primary-оргу. Без этого
+    # сотрудники корня теряют субсидии, перепривязанные к дочерним оргам
+    # (Wave 2: org_id = грантополучатель), а орг-роли остаются per-org через UOA.
+    user._contour_org_ids = []
+    if user.role not in ('superadmin', 'account_owner') and user.org_id:
+        from app.models.organization import Organization
+        _org = await db.get(Organization, user.org_id)
+        if _org:
+            _root_id = int(_org.root_org_id or _org.id)
+            _kid_ids = (await db.execute(
+                select(Organization.id).where(Organization.root_org_id == _root_id)
+            )).scalars().all()
+            user._contour_org_ids = list({_root_id, *(int(x) for x in _kid_ids)})
     return user
 
-async def has_role_via_hierarchy(user: User, db: AsyncSession, *roles: str) -> bool:
+async def has_role_via_hierarchy(
+    user: User, db: AsyncSession, *roles: str, org_id: Optional[int] = None
+) -> bool:
     """True если у current user role в roles ИЛИ в его visible_user_ids
     есть юзер с одной из этих ролей.
 
     Принцип «иерархия > роли»: кто может ставить задачи юзеру X —
     наследует его роль/доступ. Используется в require_role и
     require_superadmin для проверки иерархического старшинства.
+
+    org_id — орг-осознанный режим: UOA-роль засчитывается только если выдана
+    для этой орги (орг-роль даёт власть только в своей орге). Без org_id —
+    гейт-режим: любая UOA-роль проходит (данные скоупятся отдельно).
+
+    'superadmin' НЕ достижим через UOA или иерархию: суперадмин невидим для
+    не-суперадминов, его роль не наследуется (только сам user.role).
     """
     if user.role in roles:
         return True
 
-    # Per-org elevation: org_admin/manager в любой орг должен удовлетворять
-    # require_role того же уровня (вкладки/действия по max-роли; данные скоупятся
-    # отдельно). Не затрагивает require_superadmin: org_admin не равен superadmin.
+    roles = tuple(r for r in roles if r != 'superadmin')
+    if not roles:
+        return False
+
     from app.models.user_org_access import UserOrgAccess
-    # Модель A: любая UOA-роль повышает права (вкладки/действия), без требования
+    # Модель A: UOA-роль повышает права (вкладки/действия), без требования
     # членства. user_org_access — источник полномочий; членство — только HR.
-    uoa_rows = (await db.execute(
-        select(UserOrgAccess.role).where(
-            UserOrgAccess.user_id == user.id,
-            UserOrgAccess.role.isnot(None),
-        )
-    )).all()
+    uoa_q = select(UserOrgAccess.role).where(
+        UserOrgAccess.user_id == user.id,
+        UserOrgAccess.role.isnot(None),
+    )
+    if org_id is not None:
+        uoa_q = uoa_q.where(UserOrgAccess.org_id == org_id)
+    uoa_rows = (await db.execute(uoa_q)).all()
     uoa_roles = [r for (r,) in uoa_rows]
     if any(r in roles for r in uoa_roles):
         return True
@@ -143,15 +168,17 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     if current_user.role in ('superadmin', 'account_owner'):
         org_ids = getattr(current_user, '_active_org_ids', None)
         return org_ids  # None = no filter (all), list = selected orgs
-    # For all other roles: contour org_ids from JWT + per-org access (UOA).
+    # For all other roles: account contour (глобальная роль действует на весь
+    # аккаунт) + JWT-выборка + per-org access (UOA).
     uoa_ids = getattr(current_user, '_uoa_org_ids', None) or []
+    contour_ids = getattr(current_user, '_contour_org_ids', None) or []
     org_ids = getattr(current_user, '_active_org_ids', None)
     base = list(org_ids) if org_ids else []
     if not base:
         active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
         if active_org_id:
             base = [active_org_id]
-    merged = list({*base, *uoa_ids})
+    merged = list({*base, *uoa_ids, *contour_ids})
     return merged or None
 
 def get_single_org_id(current_user: User) -> Optional[int]:

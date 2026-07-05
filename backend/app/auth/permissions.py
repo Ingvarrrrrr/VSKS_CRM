@@ -97,20 +97,21 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
         if uoa and uoa.role:
             effective_role = uoa.role
 
-    # Step 0b: elevate to best per-org role if it outranks the contour role.
-    # Вкладки/действия — по max-роли (глоб. ИЛИ лучшая per-org).
-    # Данные при этом скоупятся отдельно через get_org_filter в эндпоинтах.
-    _uoa_role_rows = (await db.execute(
-        select(UserOrgAccess.org_id, UserOrgAccess.role).where(
-            UserOrgAccess.user_id == user.id,
-            UserOrgAccess.role.isnot(None),
-        )
-    )).all()
-    all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid]
-    if all_uoa_rows:
-        best_per_org = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
-        if _ROLE_PRIORITY.get(best_per_org, 0) > _ROLE_PRIORITY.get(effective_role, 0):
-            effective_role = best_per_org
+    # Step 0b (N-10 fallback ONLY): если у пользователя вовсе нет глобальной
+    # роли (user.role NULL) и нет UOA для этой орги — берём лучшую per-org роль.
+    # Cross-org elevation при НАЛИЧИИ глобальной роли убран (Wave 3): орг-роль
+    # даёт власть только в своей орге; в чужих оргах действует глобальная роль.
+    # Гейты вкладок/действий компенсируют это перебором орг (см. require_tab).
+    if not effective_role:
+        _uoa_role_rows = (await db.execute(
+            select(UserOrgAccess.org_id, UserOrgAccess.role).where(
+                UserOrgAccess.user_id == user.id,
+                UserOrgAccess.role.isnot(None),
+            )
+        )).all()
+        all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid]
+        if all_uoa_rows:
+            effective_role = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
 
     # Step 1: base from role matrix with resolved role
     rp_rows = await db.execute(
@@ -275,6 +276,56 @@ def _active_org(user: User) -> Optional[int]:
     return getattr(user, "_active_org_id", None) or user.org_id
 
 
+async def _has_key_in_any_org(user: User, db: AsyncSession, key: str) -> bool:
+    """Гейт-проверка: ключ есть в эффективных правах хотя бы одной доступной орги
+    (активная + все UOA-орги). Пер-орг роль без cross-org elevation (Wave 3) —
+    поэтому гейт перебирает орги, а данные скоупятся per-org в эндпоинтах."""
+    candidates: list = []
+    active = _active_org(user)
+    if active:
+        candidates.append(active)
+    for oid in (getattr(user, "_uoa_org_ids", None) or []):
+        if oid not in candidates:
+            candidates.append(oid)
+    if not candidates:
+        candidates = [None]
+    for oid in candidates:
+        if key in await _get_effective(user, db, oid):
+            return True
+    return False
+
+
+async def has_org_key(
+    user: User, db: AsyncSession, org_id: Optional[int], key: str,
+    subsidy_id: Optional[int] = None,
+) -> bool:
+    """Орг-осознанная проверка права для КОНКРЕТНОЙ орги операции (Wave 3).
+
+    Орг-роль даёт власть только в своей орге: ключ должен быть эффективен именно
+    для org_id (UOA-роль этой орги или глобальная роль + орг-overrides), с учётом
+    иерархического поглощения. Кросс-субсидийные гранты исключены; при переданном
+    subsidy_id точечно учитывается грант на ЭТУ субсидию."""
+    if user.role == "superadmin":
+        return True
+    if key in await _get_effective_simple(user, db, org_id, include_subsidy_grants=False):
+        return True
+    from app.auth.visibility import get_visible_user_ids
+    visible = await get_visible_user_ids(user, db)
+    if visible is None:
+        return True
+    for uid in visible - {user.id}:
+        sub_user = await db.get(User, uid)
+        if sub_user and key in await _get_effective_simple(
+            sub_user, db, org_id, include_subsidy_grants=False
+        ):
+            return True
+    if subsidy_id is not None:
+        sub_eff = await get_subsidy_effective(user.id, subsidy_id, db)
+        if sub_eff and key in sub_eff:
+            return True
+    return False
+
+
 def require_tab(tab_key: str):
     """FastAPI Depends factory. 403 if tab_key not in effective; bypass superadmin."""
     async def checker(
@@ -283,8 +334,7 @@ def require_tab(tab_key: str):
     ):
         if user.role == "superadmin":
             return user
-        effective = await _get_effective(user, db, _active_org(user))
-        if tab_key not in effective:
+        if not await _has_key_in_any_org(user, db, tab_key):
             raise HTTPException(status_code=403, detail="Доступ запрещён")
         return user
 
@@ -299,8 +349,7 @@ def require_action(action_key: str):
     ):
         if user.role == "superadmin":
             return user
-        effective = await _get_effective(user, db, _active_org(user))
-        if action_key not in effective:
+        if not await _has_key_in_any_org(user, db, action_key):
             raise HTTPException(status_code=403, detail="Действие запрещено")
         return user
 

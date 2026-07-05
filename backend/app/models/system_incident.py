@@ -13,5 +13,5 @@ class SystemIncident(Base):
     correlation_id = Column(String(64), nullable=False, index=True)
     path = Column(String(500), nullable=True)
     method = Column(String(16), nullable=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

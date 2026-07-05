@@ -201,12 +201,14 @@ async def get_subsidy(
         d["contractor_inn"] = None
     return d
 
-async def _materialize_org_from_contractor(db: AsyncSession, contractor) -> None:
+async def _materialize_org_from_contractor(db: AsyncSession, contractor):
     """Find-or-create Organization, зеркалящую контрагента (получатель субсидии),
     чтобы он попадал в контур (Персонал/Иерархия). Матч по contractor_id, затем по ИНН.
-    Идемпотентно. НЕ трогает subsidy.org_id (мультитенантность)."""
+    Идемпотентно. Возвращает Organization (или None) — вызывающие используют её как
+    org_id субсидии: субсидия принадлежит организации-грантополучателю, а не активной
+    орг из свитчера (кейс ДНР_2026: владелец был ЦЕНТРПОИСК вместо Донецкого)."""
     if contractor is None:
-        return
+        return None
     from app.models.organization import Organization
     org = (await db.execute(
         select(Organization).where(Organization.contractor_id == contractor.id)
@@ -232,6 +234,7 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor) -> None
     elif org.contractor_id is None:
         org.contractor_id = contractor.id
     await db.commit()
+    return org
 
 
 async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
@@ -389,7 +392,17 @@ async def create_subsidy(
     current_user: User = Depends(require_tab('subsidies')),
 ):
     data = subsidy.dict()
-    data['org_id'] = get_single_org_id(current_user) or current_user.org_id
+    # org_id субсидии = организация-грантополучатель (из контрагента), НЕ активная орг
+    # из свитчера: иначе субсидия «уезжает» под чужую орг (кейс ДНР_2026 → ЦЕНТРПОИСК).
+    _contractor = None
+    _grantee_org = None
+    if data.get('contractor_id'):
+        _contractor = await db.get(Contractor, data['contractor_id'])
+        _grantee_org = await _materialize_org_from_contractor(db, _contractor)
+    if _grantee_org is not None:
+        data['org_id'] = _grantee_org.id
+    else:
+        data['org_id'] = get_single_org_id(current_user) or current_user.org_id
     _new_name = (data.get('name') or '').strip()
     if _new_name:
         _dup = (await db.execute(
@@ -406,11 +419,9 @@ async def create_subsidy(
     d["calculated_budget"] = 0.0
     d["feo_filled"] = False
     d["feo_budget_total"] = 0.0
-    if db_subsidy.contractor_id:
-        contractor = await db.get(Contractor, db_subsidy.contractor_id)
-        d["contractor_name"] = contractor.name if contractor else None
-        d["contractor_inn"] = contractor.inn if contractor else None
-        await _materialize_org_from_contractor(db, contractor)
+    if _contractor is not None:
+        d["contractor_name"] = _contractor.name
+        d["contractor_inn"] = _contractor.inn
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
@@ -427,6 +438,15 @@ async def update_subsidy(
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    # Wave 3: орг-осознанная проверка — право subsidy.edit должно действовать
+    # именно в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
+    from app.auth.permissions import has_org_key
+    if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Нет права редактировать субсидии этой организации: право «Редактирование субсидий» не выдано для организации-грантополучателя",
+        )
 
     old_budget = db_subsidy.budget  # capture BEFORE setattr loop
 
@@ -532,7 +552,13 @@ async def update_subsidy(
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
         d["contractor_inn"] = contractor.inn if contractor else None
-        await _materialize_org_from_contractor(db, contractor)
+        grantee_org = await _materialize_org_from_contractor(db, contractor)
+        # Субсидия принадлежит организации-грантополучателю — перепривязываем
+        # владельца при смене контрагента (expire_on_commit=False, доступ безопасен).
+        if grantee_org is not None and db_subsidy.org_id != grantee_org.id:
+            db_subsidy.org_id = grantee_org.id
+            await db.commit()
+            d["org_id"] = grantee_org.id
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
@@ -580,16 +606,30 @@ async def delete_subsidy(
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
-    # Pre-check FK references to avoid 500 ForeignKeyViolationError
-    from app.models.purchase import Purchase
-    from app.models.contract import Contract
+    # Wave 3: удалять субсидию можно только при праве на вкладку «Субсидии»
+    # в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
+    from app.auth.permissions import has_org_key
+    if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidies', subsidy_id=subsidy_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Нет права удалить субсидию: доступ к субсидиям не выдан для организации-грантополучателя",
+        )
 
-    blocking_purchases = (await db.execute(
-        select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
-    )).all()
-    blocking_contracts = (await db.execute(
-        select(Contract.id).where(Contract.subsidy_id == subsidy_id)
-    )).all()
+    # Pre-check FK references to avoid 500 ForeignKeyViolationError
+    # Superadmin bypasses this check — DB will SET NULL automatically (b7e1 migration).
+    if current_user.role != 'superadmin':
+        from app.models.purchase import Purchase
+        from app.models.contract import Contract
+
+        blocking_purchases = (await db.execute(
+            select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
+        )).all()
+        blocking_contracts = (await db.execute(
+            select(Contract.id).where(Contract.subsidy_id == subsidy_id)
+        )).all()
+    else:
+        blocking_purchases = []
+        blocking_contracts = []
     if blocking_purchases or blocking_contracts:
         parts = []
         if blocking_purchases:

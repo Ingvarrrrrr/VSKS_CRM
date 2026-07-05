@@ -18,14 +18,18 @@ async def test_user_without_role_no_hierarchy(db_session, test_user):
 
 @pytest.mark.asyncio
 async def test_inherit_role_via_hierarchy(db_session, test_org, make_user):
-    """Manager наследует superadmin через прямую запись UserHierarchy."""
+    """Wave 3: superadmin НЕ наследуется через иерархию (невидим/недостижим),
+    но обычные роли (admin) — наследуются."""
     from app.models.user_hierarchy import UserHierarchy
     manager = await make_user(role="manager")
     super_sub = await make_user(role="superadmin")
+    admin_sub = await make_user(role="admin")
     db_session.add(UserHierarchy(manager_id=manager.id, subordinate_id=super_sub.id))
+    db_session.add(UserHierarchy(manager_id=manager.id, subordinate_id=admin_sub.id))
     await db_session.commit()
 
-    assert await has_role_via_hierarchy(manager, db_session, "superadmin")
+    assert not await has_role_via_hierarchy(manager, db_session, "superadmin")
+    assert await has_role_via_hierarchy(manager, db_session, "admin")
 
 
 @pytest.mark.asyncio
@@ -37,23 +41,16 @@ async def test_no_inherit_after_link_removed(db_session, test_org, make_user):
 
 
 @pytest.mark.asyncio
-async def test_superadmin_endpoint_accessible_via_hierarchy(client, db_session, test_org, make_user):
-    """Endpoint защищённый require_superadmin доступен для manager у которого в подчинении superadmin."""
+async def test_superadmin_not_inherited_via_hierarchy(db_session, test_org, make_user):
+    """Wave 3: require_superadmin-уровень НЕ достигается через подчинённого-суперадмина."""
     from app.models.user_hierarchy import UserHierarchy
-    from app.auth.jwt import create_access_token
 
     manager = await make_user(role="manager")
     super_sub = await make_user(role="superadmin")
     db_session.add(UserHierarchy(manager_id=manager.id, subordinate_id=super_sub.id))
     await db_session.commit()
 
-    token = create_access_token({"sub": manager.username, "org_id": manager.org_id})
-    resp = await client.get(
-        "/api/organizations/",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    # 200 OK или хотя бы НЕ 403 — manager унаследовал superadmin через иерархию
-    assert resp.status_code != 403, f"Expected access, got {resp.status_code}: {resp.json()}"
+    assert not await has_role_via_hierarchy(manager, db_session, "superadmin")
 
 
 @pytest.mark.asyncio

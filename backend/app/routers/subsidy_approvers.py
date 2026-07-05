@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.subsidy import Subsidy
 from app.models.subsidy_approver import SubsidyApprover
+from app.models.user import User
 from app.schemas.schemas import SubsidyApproverCreate, SubsidyApproverOut
 from app.auth.jwt import get_current_user, get_org_filter
 from typing import List
@@ -16,15 +17,31 @@ SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates/subsidies"
 router = APIRouter(prefix="/api/subsidies", tags=["subsidy-approvers"])
 
 
-async def _get_subsidy_or_404(sid: int, db: AsyncSession, current_user=None) -> Subsidy:
+async def _get_subsidy_or_404(
+    sid: int, db: AsyncSession, current_user=None, edit: bool = False
+) -> Subsidy:
     result = await db.execute(select(Subsidy).where(Subsidy.id == sid))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Субсидия не найдена")
     if current_user:
-        org_ids = get_org_filter(current_user)
-        if org_ids is not None and s.org_id not in org_ids:
-            raise HTTPException(403, "Нет доступа к этой субсидии")
+        if edit:
+            # Wave 3: управление согласующими/шаблонами = право subsidy.edit
+            # именно в орге ЭТОЙ субсидии (get_org_filter теперь контур всего
+            # аккаунта и для write-операций недостаточен).
+            from app.auth.permissions import has_org_key
+            if not await has_org_key(
+                current_user, db, s.org_id, 'subsidy.edit', subsidy_id=sid
+            ):
+                raise HTTPException(
+                    403,
+                    "Нет права управлять согласующими и шаблонами этой субсидии: "
+                    "право «Редактирование субсидий» не выдано для организации-грантополучателя",
+                )
+        else:
+            org_ids = get_org_filter(current_user)
+            if org_ids is not None and s.org_id not in org_ids:
+                raise HTTPException(403, "Нет доступа к этой субсидии")
     return s
 
 
@@ -50,7 +67,12 @@ async def create_approver(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
+    user_id = data.model_dump().get("user_id")
+    if user_id is not None:
+        target_user = await db.get(User, user_id)
+        if target_user and target_user.role == "superadmin":
+            raise HTTPException(400, "Суперадмина нельзя назначить согласующим")
     approver = SubsidyApprover(subsidy_id=sid, **data.model_dump())
     db.add(approver)
     await db.commit()
@@ -66,6 +88,7 @@ async def update_approver(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     result = await db.execute(
         select(SubsidyApprover).where(
             SubsidyApprover.id == aid, SubsidyApprover.subsidy_id == sid
@@ -74,6 +97,11 @@ async def update_approver(
     approver = result.scalar_one_or_none()
     if not approver:
         raise HTTPException(404, "Согласующий не найден")
+    user_id = data.model_dump().get("user_id")
+    if user_id is not None:
+        target_user = await db.get(User, user_id)
+        if target_user and target_user.role == "superadmin":
+            raise HTTPException(400, "Суперадмина нельзя назначить согласующим")
     for k, v in data.model_dump().items():
         setattr(approver, k, v)
     await db.commit()
@@ -88,6 +116,7 @@ async def delete_approver(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     result = await db.execute(
         select(SubsidyApprover).where(
             SubsidyApprover.id == aid, SubsidyApprover.subsidy_id == sid
@@ -121,7 +150,7 @@ async def upload_contract_template(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(400, "Разрешены только .docx файлы")
     folder = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid))
@@ -165,7 +194,7 @@ async def copy_approvers_from(
     """
     if sid == source_sid:
         raise HTTPException(400, "Целевая и источник — одна субсидия")
-    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     await _get_subsidy_or_404(source_sid, db, current_user)
 
     if replace:
@@ -228,7 +257,7 @@ async def copy_templates_from(
     """
     if sid == source_sid:
         raise HTTPException(400, "Целевая и источник — одна субсидия")
-    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     await _get_subsidy_or_404(source_sid, db, current_user)
 
     src_dir = os.path.join(SUBSIDY_TEMPLATES_DIR, str(source_sid))
@@ -265,7 +294,7 @@ async def delete_contract_template(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    await _get_subsidy_or_404(sid, db, current_user)
+    await _get_subsidy_or_404(sid, db, current_user, edit=True)
     path = os.path.join(SUBSIDY_TEMPLATES_DIR, str(sid), "contract.docx")
     if os.path.exists(path):
         os.remove(path)

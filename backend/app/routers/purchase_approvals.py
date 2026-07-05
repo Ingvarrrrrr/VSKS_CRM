@@ -513,6 +513,11 @@ async def add_approver(
     if not role_name or not full_name:
         raise HTTPException(422, "Укажите должность и ФИО согласующего")
 
+    if user_id is not None:
+        target_user = await db.get(User, user_id)
+        if target_user and target_user.role == "superadmin":
+            raise HTTPException(400, "Суперадмина нельзя назначить согласующим")
+
     # Determine order_num — append after current max
     existing = (await db.execute(
         select(PurchaseApproval).where(PurchaseApproval.purchase_id == pid)

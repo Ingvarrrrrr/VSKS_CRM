@@ -355,6 +355,7 @@ _нет активных блокеров_
 - Phase 16 added (2026-04-19): Refactor Monoliths — декомпозиция purchases.py (3200), tasks.py (1639), MyTasksView.vue (2155) в тематические модули ≤800 строк по принципу «один процесс — один модуль». Директория `.planning/phases/16-refactor-monoliths/`.
 - Phase 17 added (2026-04-21): Permission System — конфигурируемая матрица ролей + индивидуальные override'ы (галочки в карточке пользователя → роль `Индивидуально`). Триггер: Любарец видит «Персонал» но редактировать не может. Директория TBD.
 - Phase 18 added (2026-04-21): Staff Directory — read-only справочник коллег (ФИО, должность, телефон, email) фильтрованный по своим организациям, отдельно от админской вкладки «Персонал». Директория TBD.
+- Phase 31 added (2026-07-06): Feedback Backlog UX — 6 пунктов из «Pending from Feedback»: DnD закрывающих документов, diff-подсветка изменений, Undo/Redo (Ctrl+Z/Y), синхронизация договор↔закупка, пересмотр бюджетной логики План vs ФЭО, фикс слетающих шаблонов (лист согласования ФАДМ_26). Директория `.planning/phases/31-feedback-backlog-ux-dnd-diff-undo-redo-vs/`.
 
 ## Pending from Feedback
 

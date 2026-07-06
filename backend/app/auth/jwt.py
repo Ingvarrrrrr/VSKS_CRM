@@ -78,14 +78,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     # (Wave 2: org_id = грантополучатель), а орг-роли остаются per-org через UOA.
     user._contour_org_ids = []
     if user.role not in ('superadmin', 'account_owner') and user.org_id:
-        from app.models.organization import Organization
-        _org = await db.get(Organization, user.org_id)
-        if _org:
-            _root_id = int(_org.root_org_id or _org.id)
-            _kid_ids = (await db.execute(
-                select(Organization.id).where(Organization.root_org_id == _root_id)
-            )).scalars().all()
-            user._contour_org_ids = list({_root_id, *(int(x) for x in _kid_ids)})
+        # Канонический расчёт — visibility.compute_account_contour_org_ids
+        # (lazy import: visibility импортирует из jwt, прямой был бы циклом)
+        from app.auth.visibility import compute_account_contour_org_ids
+        user._contour_org_ids = list(
+            await compute_account_contour_org_ids(db, user.org_id)
+        )
     return user
 
 async def has_role_via_hierarchy(

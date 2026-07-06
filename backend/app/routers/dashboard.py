@@ -13,7 +13,7 @@ from app.models.contractor import Contractor
 from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
-from app.routers.subsidies import calculate_budget_from_categories
+from app.routers.subsidies import calculate_budgets_bulk
 from app.config import settings
 from decimal import Decimal
 
@@ -284,15 +284,33 @@ async def dashboard_charts(
         for row in feo_planned_result
     }
 
+    subsidy_rows = subsidy_result.all()
+    # Batch вместо N+1: бюджеты, субсидии и контрагенты одним IN-запросом каждый
+    budgets = await calculate_budgets_bulk(db, [row.id for row in subsidy_rows])
+    sub_objs = {}
+    if subsidy_rows:
+        sub_objs = {
+            s.id: s for s in (await db.execute(
+                select(Subsidy).where(Subsidy.id.in_([row.id for row in subsidy_rows]))
+            )).scalars().all()
+        }
+    contractor_ids = {s.contractor_id for s in sub_objs.values() if s.contractor_id}
+    contractors = {}
+    if contractor_ids:
+        contractors = {
+            c.id: c for c in (await db.execute(
+                select(Contractor).where(Contractor.id.in_(contractor_ids))
+            )).scalars().all()
+        }
+
     subsidy_stats = []
-    for row in subsidy_result:
-        calc = await calculate_budget_from_categories(db, row.id)
-        # Get contractor info
-        sub_obj = await db.get(Subsidy, row.id)
+    for row in subsidy_rows:
+        calc = budgets.get(row.id, 0.0)
+        sub_obj = sub_objs.get(row.id)
         contractor_name = None
         contractor_inn = None
         if sub_obj and sub_obj.contractor_id:
-            contractor = await db.get(Contractor, sub_obj.contractor_id)
+            contractor = contractors.get(sub_obj.contractor_id)
             if contractor:
                 contractor_name = contractor.name
                 contractor_inn = contractor.inn

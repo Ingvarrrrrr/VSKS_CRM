@@ -894,9 +894,50 @@ async def delete_user_license_scan(
     return {"ok": True}
 
 
+async def _count_user_references(user_id: int, db: AsyncSession) -> dict:
+    """Счётчики записей, которые ссылаются на пользователя (для предупреждения
+    перед удалением: при удалении исполнитель/автор станут пустыми)."""
+    from sqlalchemy import func
+    from app.models.purchase import Purchase
+    from app.models.task import Task
+    from app.models.subsidy_approver import SubsidyApprover
+    from app.models.user_subsidy_access import UserSubsidyAccess
+
+    async def _cnt(q):
+        return (await db.execute(q)).scalar() or 0
+
+    refs = {
+        "purchases": await _cnt(
+            select(func.count()).select_from(Purchase)
+            .where(Purchase.assigned_user_id == user_id)
+        ),
+        "active_purchases": await _cnt(
+            select(func.count()).select_from(Purchase).where(
+                Purchase.assigned_user_id == user_id,
+                Purchase.status.notin_(['paid', 'cancelled']),
+            )
+        ),
+        "tasks": await _cnt(
+            select(func.count()).select_from(Task).where(
+                (Task.assigned_user_id == user_id) | (Task.created_by_id == user_id)
+            )
+        ),
+        "subsidy_approver": await _cnt(
+            select(func.count()).select_from(SubsidyApprover)
+            .where(SubsidyApprover.user_id == user_id)
+        ),
+        "subsidy_access": await _cnt(
+            select(func.count()).select_from(UserSubsidyAccess)
+            .where(UserSubsidyAccess.user_id == user_id)
+        ),
+    }
+    return refs
+
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
+    confirm: bool = Query(False, description="true — подтверждённое удаление несмотря на связанные записи"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_action('user.manage')),
 ):
@@ -907,6 +948,30 @@ async def delete_user(
     # Org admin can only delete users from their org
     if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Удалять можно только сотрудников своей организации.")
+
+    refs = await _count_user_references(user_id, db)
+    if not confirm and any(refs.values()):
+        parts = []
+        if refs["purchases"]:
+            act = f" (из них активных: {refs['active_purchases']})" if refs["active_purchases"] else ""
+            parts.append(f"закупок (исполнитель): {refs['purchases']}{act}")
+        if refs["tasks"]:
+            parts.append(f"задач (исполнитель/автор): {refs['tasks']}")
+        if refs["subsidy_approver"]:
+            parts.append(f"согласующий в субсидиях: {refs['subsidy_approver']}")
+        if refs["subsidy_access"]:
+            parts.append(f"персональных доступов к субсидиям: {refs['subsidy_access']}")
+        raise HTTPException(409, detail={
+            "code": "CONFIRM_DELETE_USER",
+            "message": (
+                "С сотрудником связаны записи: " + "; ".join(parts) + ". "
+                "При удалении исполнитель/автор в закупках и задачах станет пустым, "
+                "согласующие потеряют привязку к пользователю, персональные доступы будут удалены. "
+                "Подтвердите удаление повторно."
+            ),
+            "references": refs,
+        })
+
     await db.delete(user)
     await db.commit()
     return {"ok": True}

@@ -6640,14 +6640,8 @@ const save = async () => {
     }
   }
   if (formMode.value === 'advance_report') {
-    const unlinked = items.value.filter(i => i.item_name?.trim() && !i.product_id)
-    if (unlinked.length) {
-      showSnack(
-        `Позиций не привязано к каталогу: ${unlinked.length}. Откройте позицию, выберите товар из каталога или создайте новый (с категорией и типом).`,
-        'error',
-      )
-      return
-    }
+    // Привязка к каталогу для авансовых НЕобязательна: названия позиций в чеках
+    // каждый раз чуть отличаются, форсировать каталог нельзя (решение 2026-07-06).
     const unconfirmed = items.value.filter(i => i.item_name?.trim() && i.match_confirmed === false)
     if (unconfirmed.length) {
       showSnack(

@@ -62,18 +62,14 @@ async def diag_columns(db: AsyncSession = Depends(get_db)):
     return {"table": "subsidies", "columns": columns}
 
 
-async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
+def _budget_from_tree(all_categories) -> float:
     """
-    Рекурсивный подсчёт бюджета из ФЭО-дерева:
+    Рекурсивный подсчёт бюджета из ФЭО-дерева одной субсидии:
     - Листовой узел (нет детей): берём его budget
-    - Родительский узел: если у детей есть бюджеты → сумма детей (рекурсивно)
-                         если ни у одного ребёнка нет → свой budget (ручной)
+    - Родительский узел: если budget задан вручную (not null) → берём его,
+                         иначе сумма детей (рекурсивно)
     Итог = сумма по всем корневым (level-1) узлам.
     """
-    stmt = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    result = await db.execute(stmt)
-    all_categories = result.scalars().all()
-
     if not all_categories:
         return 0.0
 
@@ -87,16 +83,33 @@ async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) ->
     def _calc_node(cat) -> float:
         kids = children_map.get(cat.id, [])
         if not kids:
-            # Leaf node: use its budget
             return float(cat.budget) if cat.budget is not None else 0.0
-        # Parent node: if budget is set manually (not null) → use it
         if cat.budget is not None:
             return float(cat.budget)
-        # Auto mode (budget is null) → sum of children
         return sum(_calc_node(k) for k in kids)
 
     roots = [c for c in all_categories if c.level == 1]
     return sum(_calc_node(r) for r in roots)
+
+
+async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
+    result = await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )
+    return _budget_from_tree(result.scalars().all())
+
+
+async def calculate_budgets_bulk(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, float]:
+    """Бюджеты для набора субсидий одним запросом (вместо N запросов в списках)."""
+    if not subsidy_ids:
+        return {}
+    result = await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id.in_(subsidy_ids))
+    )
+    by_subsidy: dict[int, list] = {}
+    for c in result.scalars().all():
+        by_subsidy.setdefault(c.subsidy_id, []).append(c)
+    return {sid: _budget_from_tree(by_subsidy.get(sid, [])) for sid in subsidy_ids}
 
 
 @router.get("/", response_model=List[SubsidyOut])
@@ -139,9 +152,27 @@ async def list_subsidies(
     result = await db.execute(q)
     subsidies = result.scalars().all()
 
+    # Batch-загрузка вместо N+1: бюджеты/контрагенты/орги одним IN-запросом каждый
+    from app.models.organization import Organization
+    budgets = await calculate_budgets_bulk(db, [s.id for s in subsidies])
+    contractor_ids = {s.contractor_id for s in subsidies if s.contractor_id}
+    contractors = {}
+    if contractor_ids:
+        rows = (await db.execute(
+            select(Contractor).where(Contractor.id.in_(contractor_ids))
+        )).scalars().all()
+        contractors = {c.id: c for c in rows}
+    subsidy_org_ids = {s.org_id for s in subsidies if s.org_id}
+    orgs = {}
+    if subsidy_org_ids:
+        rows = (await db.execute(
+            select(Organization).where(Organization.id.in_(subsidy_org_ids))
+        )).scalars().all()
+        orgs = {o.id: o for o in rows}
+
     out = []
     for s in subsidies:
-        calc = await calculate_budget_from_categories(db, s.id)
+        calc = budgets.get(s.id, 0.0)
         s.calculated_budget = calc
         # Синхронизируем budget с calculated_budget если ФЭО заполнено
         if calc > 0 and s.budget != calc:
@@ -151,22 +182,11 @@ async def list_subsidies(
         d["calculated_budget"] = calc
         d["feo_filled"] = calc > 0
         d["feo_budget_total"] = calc
-        # contractor info
-        if s.contractor_id:
-            from app.models.contractor import Contractor
-            contractor = await db.get(Contractor, s.contractor_id)
-            d["contractor_name"] = contractor.name if contractor else None
-            d["contractor_inn"] = contractor.inn if contractor else None
-        else:
-            d["contractor_name"] = None
-            d["contractor_inn"] = None
-        # org inn
-        if s.org_id:
-            from app.models.organization import Organization
-            org = await db.get(Organization, s.org_id)
-            d["org_inn"] = org.inn if org else None
-        else:
-            d["org_inn"] = None
+        contractor = contractors.get(s.contractor_id) if s.contractor_id else None
+        d["contractor_name"] = contractor.name if contractor else None
+        d["contractor_inn"] = contractor.inn if contractor else None
+        org = orgs.get(s.org_id) if s.org_id else None
+        d["org_inn"] = org.inn if org else None
         out.append(d)
 
     await db.commit()

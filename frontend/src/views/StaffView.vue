@@ -916,14 +916,21 @@
     </v-dialog>
 
     <!-- 3. Delete user confirm dialog -->
-    <v-dialog v-model="deleteDialog.show" max-width="340">
+    <v-dialog v-model="deleteDialog.show" :max-width="deleteDialog.warning ? 480 : 340">
       <v-card>
         <v-card-title class="pa-4">Удалить пользователя?</v-card-title>
-        <v-card-text>{{ deleteDialog.user?.full_name || deleteDialog.user?.username }}</v-card-text>
+        <v-card-text>
+          {{ deleteDialog.user?.full_name || deleteDialog.user?.username }}
+          <v-alert v-if="deleteDialog.warning" type="warning" variant="tonal" density="compact" class="mt-3 text-body-2">
+            {{ deleteDialog.warning }}
+          </v-alert>
+        </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog.show = false">Отмена</v-btn>
-          <v-btn color="error" variant="flat" :loading="deleteDialog.deleting" @click="doDelete">Удалить</v-btn>
+          <v-btn color="error" variant="flat" :loading="deleteDialog.deleting" @click="doDelete">
+            {{ deleteDialog.warning ? 'Удалить безвозвратно' : 'Удалить' }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -943,6 +950,7 @@
           </p>
           <p class="text-caption text-medium-emphasis">
             Все данные, задачи и права доступа удалённых сотрудников будут потеряны.
+            В связанных закупках и задачах исполнитель/автор станет пустым.
           </p>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -1650,7 +1658,7 @@ const editDialog = reactive({
   license_scan: '',
 })
 
-const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false })
+const deleteDialog = reactive({ show: false, user: null as UserItem | null, deleting: false, warning: '' as string })
 const selectedUsers = ref<any[]>([])
 const bulkDeleteUsersDialog = ref(false)
 const bulkDeleteUsersLoading = ref(false)
@@ -2424,6 +2432,7 @@ async function saveEditUser() {
 
 function confirmDelete(u: UserItem) {
   deleteDialog.user = u
+  deleteDialog.warning = ''
   deleteDialog.show = true
 }
 
@@ -2431,12 +2440,21 @@ async function doDelete() {
   if (!deleteDialog.user) return
   deleteDialog.deleting = true
   try {
-    await apiFetch(`/users/${deleteDialog.user.id}`, { method: 'DELETE' })
+    // Второй этап (warning уже показан) — удаляем с confirm=true
+    const url = deleteDialog.warning
+      ? `/users/${deleteDialog.user.id}?confirm=true`
+      : `/users/${deleteDialog.user.id}`
+    await apiFetch(url, { method: 'DELETE' })
     users.value = users.value.filter(u => u.id !== deleteDialog.user!.id)
     deleteDialog.show = false
     showSnack('Пользователь удален')
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
+    if (e?.status === 409 && e?.payload?.code === 'CONFIRM_DELETE_USER') {
+      // Показываем предупреждение о связанных записях, требуем повторного подтверждения
+      deleteDialog.warning = e.payload.message || e.message
+    } else {
+      showSnack(e?.payload?.message || e.message || 'Ошибка', 'error')
+    }
   } finally {
     deleteDialog.deleting = false
   }
@@ -2464,7 +2482,8 @@ async function doBulkDeleteUsers() {
     const id = typeof item === 'object' ? item.id : item
     const name = typeof item === 'object' ? (item.full_name || item.username || String(id)) : String(id)
     try {
-      await apiFetch(`/users/${id}`, { method: 'DELETE' })
+      // Диалог bulk-удаления — уже явное подтверждение, поэтому confirm=true
+      await apiFetch(`/users/${id}?confirm=true`, { method: 'DELETE' })
       users.value = users.value.filter(u => u.id !== id)
       deleted++
     } catch (e: any) {

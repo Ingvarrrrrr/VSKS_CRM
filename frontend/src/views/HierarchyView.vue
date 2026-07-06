@@ -537,11 +537,16 @@
             Будет удалена учётная запись и все связи. Действие необратимо.
             Доступно только при наличии права <code>user.manage</code>.
           </div>
+          <v-alert v-if="deleteUserConfirm.warning" type="warning" variant="tonal" density="compact" class="mt-3 text-body-2">
+            {{ deleteUserConfirm.warning }}
+          </v-alert>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="deleteUserConfirm.show = false">Отмена</v-btn>
-          <v-btn color="error" variant="flat" :loading="deleteUserConfirm.loading" @click="confirmDeleteUser">Удалить</v-btn>
+          <v-btn color="error" variant="flat" :loading="deleteUserConfirm.loading" @click="confirmDeleteUser">
+            {{ deleteUserConfirm.warning ? 'Удалить безвозвратно' : 'Удалить' }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1304,7 +1309,7 @@ onMounted(() => {
 
 // Phase 30 restore: delete org/user state + handlers
 const deleteOrgConfirm = ref<{ show: boolean; orgId: number | null; name: string; loading: boolean; impact: any | null; loadingImpact: boolean; forceAck: boolean }>({ show: false, orgId: null, name: '', loading: false, impact: null, loadingImpact: false, forceAck: false })
-const deleteUserConfirm = ref<{ show: boolean; userId: number | null; name: string; loading: boolean }>({ show: false, userId: null, name: '', loading: false })
+const deleteUserConfirm = ref<{ show: boolean; userId: number | null; name: string; loading: boolean; warning: string }>({ show: false, userId: null, name: '', loading: false, warning: '' })
 
 async function deleteOrgNode(orgId: number, name: string) {
   deleteOrgConfirm.value = { show: true, orgId, name, loading: false, impact: null, loadingImpact: true, forceAck: false }
@@ -1335,19 +1340,25 @@ async function confirmDeleteOrg() {
 }
 
 function deleteUserNode(userId: number, name: string) {
-  deleteUserConfirm.value = { show: true, userId, name, loading: false }
+  deleteUserConfirm.value = { show: true, userId, name, loading: false, warning: '' }
 }
 async function confirmDeleteUser() {
   const { userId } = deleteUserConfirm.value
   if (!userId) return
   deleteUserConfirm.value.loading = true
   try {
-    await apiFetch(`/users/${userId}`, { method: 'DELETE' })
+    // Второй этап (warning уже показан) — удаляем с confirm=true
+    const url = deleteUserConfirm.value.warning ? `/users/${userId}?confirm=true` : `/users/${userId}`
+    await apiFetch(url, { method: 'DELETE' })
     showSnack('Сотрудник удалён')
     deleteUserConfirm.value.show = false
     await loadGraph()
   } catch (e: any) {
-    showSnack(e?.message || 'Ошибка удаления сотрудника', 'error')
+    if (e?.status === 409 && e?.payload?.code === 'CONFIRM_DELETE_USER') {
+      deleteUserConfirm.value.warning = e.payload.message || e.message
+    } else {
+      showSnack(e?.payload?.message || e?.message || 'Ошибка удаления сотрудника', 'error')
+    }
   } finally {
     deleteUserConfirm.value.loading = false
   }

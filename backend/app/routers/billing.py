@@ -102,7 +102,11 @@ async def _get_org_or_403(org_id: int, current_user: User, db: AsyncSession) -> 
 
 
 async def _contour_org_ids(owner_user_id: int, db: AsyncSession) -> list[int]:
-    """All org ids belonging to this account_owner's contour."""
+    """Контур ПЛАТЕЛЬЩИКА: все орги с этим owner_user_id.
+
+    Намеренно НЕ visibility.compute_account_contour_org_ids (root_org_id-дерево):
+    биллинг считает по владельцу-плательщику, а не по дереву орг — у одного
+    account_owner могут быть несколько независимых корневых орг."""
     rows = await db.execute(
         select(Organization.id).where(Organization.owner_user_id == owner_user_id)
     )

@@ -172,6 +172,26 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
     return visible
 
 
+async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int]) -> set[int]:
+    """КАНОНИЧЕСКИЙ расчёт контура аккаунта: корневая орга + все её дочерние.
+
+    Единственная реализация алгоритма (root_org_id-дерево) — используется и в
+    jwt.get_current_user (кэш _contour_org_ids на логине), и здесь как fallback.
+    НЕ путать с billing._contour_org_ids: там контур ПЛАТЕЛЬЩИКА через
+    owner_user_id — другая семантика, намеренно отдельная."""
+    if not org_id:
+        return set()
+    from app.models.organization import Organization
+    org = await db.get(Organization, org_id)
+    if not org:
+        return set()
+    root_id = int(org.root_org_id or org.id)
+    kid_ids = (await db.execute(
+        select(Organization.id).where(Organization.root_org_id == root_id)
+    )).scalars().all()
+    return {root_id, *(int(x) for x in kid_ids)}
+
+
 async def get_account_contour_org_ids(user: User, db: AsyncSession) -> set[int]:
     """Орги аккаунта пользователя: корневая орга его primary-орги + все дочерние.
 
@@ -182,17 +202,7 @@ async def get_account_contour_org_ids(user: User, db: AsyncSession) -> set[int]:
     cached = getattr(user, "_contour_org_ids", None)
     if cached is not None:
         return {int(x) for x in cached}
-    if not user.org_id:
-        return set()
-    from app.models.organization import Organization
-    org = await db.get(Organization, user.org_id)
-    if not org:
-        return set()
-    root_id = int(org.root_org_id or org.id)
-    kid_ids = (await db.execute(
-        select(Organization.id).where(Organization.root_org_id == root_id)
-    )).scalars().all()
-    return {root_id, *(int(x) for x in kid_ids)}
+    return await compute_account_contour_org_ids(db, user.org_id)
 
 
 async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:

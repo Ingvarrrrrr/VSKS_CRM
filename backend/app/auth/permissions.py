@@ -302,23 +302,16 @@ async def has_org_key(
     """Орг-осознанная проверка права для КОНКРЕТНОЙ орги операции (Wave 3).
 
     Орг-роль даёт власть только в своей орге: ключ должен быть эффективен именно
-    для org_id (UOA-роль этой орги или глобальная роль + орг-overrides), с учётом
-    иерархического поглощения. Кросс-субсидийные гранты исключены; при переданном
-    subsidy_id точечно учитывается грант на ЭТУ субсидию."""
-    if user.role == "superadmin":
+    для org_id (UOA-роль этой орги или глобальная роль + орг-overrides).
+
+    Решение 2026-07-06: write-права НЕ наследуются по иерархии «ставлю задачи»
+    (в отличие от видимости/вкладок в _get_effective) — иерархическое поглощение
+    даёт только read. Менять можно лишь там, где есть собственная роль или
+    персональный грант на конкретную субсидию (subsidy_id)."""
+    if user.role in ("superadmin", "account_owner"):
         return True
     if key in await _get_effective_simple(user, db, org_id, include_subsidy_grants=False):
         return True
-    from app.auth.visibility import get_visible_user_ids
-    visible = await get_visible_user_ids(user, db)
-    if visible is None:
-        return True
-    for uid in visible - {user.id}:
-        sub_user = await db.get(User, uid)
-        if sub_user and key in await _get_effective_simple(
-            sub_user, db, org_id, include_subsidy_grants=False
-        ):
-            return True
     if subsidy_id is not None:
         sub_eff = await get_subsidy_effective(user.id, subsidy_id, db)
         if sub_eff and key in sub_eff:

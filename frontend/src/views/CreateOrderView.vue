@@ -1712,6 +1712,28 @@
             </v-row>
             <v-divider v-if="idx < acceptanceDocs.length - 1" class="mt-3" />
           </div>
+
+          <!-- DnD-загрузка закрывающих документов (Phase 31-03) -->
+          <FileDropZone
+            v-if="isEdit && purchaseId"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+            :multiple="true"
+            hint="Перетащите закрывающий документ (Акт/УПД/Прочее)"
+            @files="onAcceptanceDocFilesDropped"
+            class="mt-3"
+          >
+            <template #default="{ dragging, open }">
+              <div
+                class="d-flex align-center justify-center gap-2 pa-3"
+                style="min-height:50px; border:1px dashed var(--gala-accent, #fb923c); border-radius:6px"
+                :style="{ background: dragging ? 'rgba(251,146,60,0.08)' : 'transparent' }"
+              >
+                <v-icon :color="dragging ? '#fb923c' : 'grey'" size="20">mdi-file-upload-outline</v-icon>
+                <span class="text-body-2 text-medium-emphasis">Перетащите закрывающий документ или</span>
+                <v-btn variant="text" size="small" color="#fb923c" @click.stop="open()">выберите</v-btn>
+              </div>
+            </template>
+          </FileDropZone>
         </v-card-text>
       </v-card>
 
@@ -6954,6 +6976,39 @@ const uploadFile = async (event: Event) => {
 
 async function onDocFilesDropped(files: File[]) {
   if (!purchaseId.value || !files.length) return
+  uploading.value = true
+  try {
+    for (const file of files) {
+      const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('file_type', 'other')
+      fd.append('doc_format', resolvedFormat)
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      if (!res.ok) {
+        let detail = `Ошибка загрузки (${res.status})`
+        try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
+        showSnack(`${file.name}: ${detail}`, 'error')
+        continue
+      }
+      const uploaded = await res.json()
+      uploadedFiles.value.push(uploaded)
+    }
+    showSnack(`Загружено файлов: ${files.length}`)
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки файлов', 'error')
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function onAcceptanceDocFilesDropped(files: File[]) {
+  if (!isEdit.value || !purchaseId.value || !files.length) return
   uploading.value = true
   try {
     for (const file of files) {

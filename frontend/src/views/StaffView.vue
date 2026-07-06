@@ -918,9 +918,12 @@
     <!-- 3. Delete user confirm dialog -->
     <v-dialog v-model="deleteDialog.show" :max-width="deleteDialog.warning ? 480 : 340">
       <v-card>
-        <v-card-title class="pa-4">Удалить пользователя?</v-card-title>
+        <v-card-title class="pa-4">Убрать сотрудника из организации?</v-card-title>
         <v-card-text>
           {{ deleteDialog.user?.full_name || deleteDialog.user?.username }}
+          <div class="text-caption text-medium-emphasis mt-1">
+            Сотрудник будет откреплён от этой организации. Аккаунт удалится полностью, только если это его единственная организация (с отдельным подтверждением).
+          </div>
           <v-alert v-if="deleteDialog.warning" type="warning" variant="tonal" density="compact" class="mt-3 text-body-2">
             {{ deleteDialog.warning }}
           </v-alert>
@@ -2440,14 +2443,19 @@ async function doDelete() {
   if (!deleteDialog.user) return
   deleteDialog.deleting = true
   try {
+    // org-контекст: удаление карточки = открепление от ЭТОЙ орг; глобальное
+    // удаление аккаунта бэк делает только если это его последняя организация.
+    const orgId = deleteDialog.user.org_id ?? currentOrgId
+    const params = new URLSearchParams()
+    if (orgId) params.set('org_id', String(orgId))
     // Второй этап (warning уже показан) — удаляем с confirm=true
-    const url = deleteDialog.warning
-      ? `/users/${deleteDialog.user.id}?confirm=true`
-      : `/users/${deleteDialog.user.id}`
-    await apiFetch(url, { method: 'DELETE' })
+    if (deleteDialog.warning) params.set('confirm', 'true')
+    const qs = params.toString()
+    const url = `/users/${deleteDialog.user.id}${qs ? `?${qs}` : ''}`
+    const res = await apiFetch(url, { method: 'DELETE' })
     users.value = users.value.filter(u => u.id !== deleteDialog.user!.id)
     deleteDialog.show = false
-    showSnack('Пользователь удален')
+    showSnack(res?.detached ? 'Сотрудник убран из организации' : 'Пользователь удален')
   } catch (e: any) {
     if (e?.status === 409 && e?.payload?.code === 'CONFIRM_DELETE_USER') {
       // Показываем предупреждение о связанных записях, требуем повторного подтверждения
@@ -2482,8 +2490,10 @@ async function doBulkDeleteUsers() {
     const id = typeof item === 'object' ? item.id : item
     const name = typeof item === 'object' ? (item.full_name || item.username || String(id)) : String(id)
     try {
-      // Диалог bulk-удаления — уже явное подтверждение, поэтому confirm=true
-      await apiFetch(`/users/${id}?confirm=true`, { method: 'DELETE' })
+      // Диалог bulk-удаления — уже явное подтверждение, поэтому confirm=true.
+      // org_id — открепить от текущей орг, а не удалять аккаунт глобально.
+      const orgId = (typeof item === 'object' ? item.org_id : null) ?? currentOrgId
+      await apiFetch(`/users/${id}?confirm=true${orgId ? `&org_id=${orgId}` : ''}`, { method: 'DELETE' })
       users.value = users.value.filter(u => u.id !== id)
       deleted++
     } catch (e: any) {

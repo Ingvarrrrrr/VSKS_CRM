@@ -1005,7 +1005,7 @@ const UserNode = markRaw({
         class: 'mdi mdi-trash-can-outline',
         style: 'position:absolute;top:4px;right:22px;font-size:12px;cursor:pointer;opacity:0.6;color:#f44336',
         title: 'Удалить сотрудника',
-        onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-delete-user', { detail: { id: p.data.userId, name: p.data.label } })) },
+        onClick: (e: Event) => { e.stopPropagation(); document.dispatchEvent(new CustomEvent('hv-delete-user', { detail: { id: p.data.userId, name: p.data.label, orgId: p.data.orgId } })) },
       }) : null,
       matchPointer(p.data.matched),
     ])
@@ -1303,13 +1303,13 @@ onMounted(() => {
     deleteOrgNode(e.detail.id, e.detail.name)
   }) as EventListener)
   document.addEventListener('hv-delete-user', ((e: CustomEvent) => {
-    deleteUserNode(e.detail.id, e.detail.name)
+    deleteUserNode(e.detail.id, e.detail.name, e.detail.orgId ?? null)
   }) as EventListener)
 })
 
 // Phase 30 restore: delete org/user state + handlers
 const deleteOrgConfirm = ref<{ show: boolean; orgId: number | null; name: string; loading: boolean; impact: any | null; loadingImpact: boolean; forceAck: boolean }>({ show: false, orgId: null, name: '', loading: false, impact: null, loadingImpact: false, forceAck: false })
-const deleteUserConfirm = ref<{ show: boolean; userId: number | null; name: string; loading: boolean; warning: string }>({ show: false, userId: null, name: '', loading: false, warning: '' })
+const deleteUserConfirm = ref<{ show: boolean; userId: number | null; orgId: number | null; name: string; loading: boolean; warning: string }>({ show: false, userId: null, orgId: null, name: '', loading: false, warning: '' })
 
 async function deleteOrgNode(orgId: number, name: string) {
   deleteOrgConfirm.value = { show: true, orgId, name, loading: false, impact: null, loadingImpact: true, forceAck: false }
@@ -1339,18 +1339,23 @@ async function confirmDeleteOrg() {
   }
 }
 
-function deleteUserNode(userId: number, name: string) {
-  deleteUserConfirm.value = { show: true, userId, name, loading: false, warning: '' }
+function deleteUserNode(userId: number, name: string, orgId: number | null = null) {
+  deleteUserConfirm.value = { show: true, userId, orgId, name, loading: false, warning: '' }
 }
 async function confirmDeleteUser() {
-  const { userId } = deleteUserConfirm.value
+  const { userId, orgId } = deleteUserConfirm.value
   if (!userId) return
   deleteUserConfirm.value.loading = true
   try {
+    // org-контекст: удаление из иерархии = открепление от ЭТОЙ орг; глобальное
+    // удаление аккаунта бэк выполняет только для последней организации.
+    const params = new URLSearchParams()
+    if (orgId) params.set('org_id', String(orgId))
     // Второй этап (warning уже показан) — удаляем с confirm=true
-    const url = deleteUserConfirm.value.warning ? `/users/${userId}?confirm=true` : `/users/${userId}`
-    await apiFetch(url, { method: 'DELETE' })
-    showSnack('Сотрудник удалён')
+    if (deleteUserConfirm.value.warning) params.set('confirm', 'true')
+    const qs = params.toString()
+    const res = await apiFetch(`/users/${userId}${qs ? `?${qs}` : ''}`, { method: 'DELETE' })
+    showSnack(res?.detached ? 'Сотрудник убран из организации' : 'Сотрудник удалён')
     deleteUserConfirm.value.show = false
     await loadGraph()
   } catch (e: any) {
@@ -1502,7 +1507,7 @@ function buildGraph(data: GraphData) {
           id: nodeId, type: 'user',
           parentNode: `dept-${di.deptId}`,
           position: pos,
-          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
+          data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead, position: user.position, extraOrgNames, orgColor: uOrgColor, orgCount, userId: user.id, orgId: uOrgId, deptOrgName: dept ? (orgNameMap.get(dept.org_id) || '') : '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
           draggable: true,
           zIndex: 1000,
         })
@@ -1517,7 +1522,7 @@ function buildGraph(data: GraphData) {
       newNodes.push({
         id: freeId, type: 'user',
         position: savedPos[freeId] || { x: 80 + col * 240, y: 600 + row * 80 },
-        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
+        data: { label: user.full_name || user.username, role: user.role, initials: getInitials(user.full_name, user.username), isHead: false, position: user.position, extraOrgNames, orgColor: freeOrgColor, orgCount, userId: user.id, orgId: user.org_id, deptOrgName: orgNameMap.get(user.org_id) || '', userOrgs: (user as any).user_orgs || [], canDeleteUser, photoUrl: (user as any).photo_url || null },
         draggable: true,
       })
       freeIdx++

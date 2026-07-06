@@ -938,6 +938,7 @@ async def _count_user_references(user_id: int, db: AsyncSession) -> dict:
 async def delete_user(
     user_id: int,
     confirm: bool = Query(False, description="true — подтверждённое удаление несмотря на связанные записи"),
+    org_id: Optional[int] = Query(None, description="Контекст орг: если у пользователя есть другие орги — открепить только от этой, аккаунт НЕ удалять"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_action('user.manage')),
 ):
@@ -949,8 +950,45 @@ async def delete_user(
     if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Удалять можно только сотрудников своей организации.")
 
+    # Удаление карточки в контексте орг = открепление от этой орг, а не
+    # глобальное удаление аккаунта (инцидент с Филипповым 2026-07-06).
+    # Глобальный hard delete — только когда это его последняя организация.
+    if org_id is not None:
+        from app.models.user_organization import UserOrganization
+        from app.models.user_org_access import UserOrgAccess
+        from app.auth.permissions import remove_user_org_access
+
+        user_orgs: set[int] = set()
+        if user.org_id:
+            user_orgs.add(user.org_id)
+        uo_orgs = (await db.execute(
+            select(UserOrganization.org_id).where(UserOrganization.user_id == user_id)
+        )).scalars().all()
+        uoa_orgs = (await db.execute(
+            select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user_id)
+        )).scalars().all()
+        user_orgs.update(uo_orgs)
+        user_orgs.update(uoa_orgs)
+
+        remaining = user_orgs - {org_id}
+        if remaining:
+            uo_rows = (await db.execute(
+                select(UserOrganization).where(
+                    UserOrganization.user_id == user_id,
+                    UserOrganization.org_id == org_id,
+                )
+            )).scalars().all()
+            for row in uo_rows:
+                await db.delete(row)
+            await remove_user_org_access(user_id, org_id, db)
+            if user.org_id == org_id:
+                user.org_id = min(remaining)
+            await db.commit()
+            return {"ok": True, "detached": True, "org_id": org_id}
+        # Последняя орг — падаем в обычный confirm-flow глобального удаления.
+
     refs = await _count_user_references(user_id, db)
-    if not confirm and any(refs.values()):
+    if not confirm and (any(refs.values()) or org_id is not None):
         parts = []
         if refs["purchases"]:
             act = f" (из них активных: {refs['active_purchases']})" if refs["active_purchases"] else ""
@@ -961,14 +999,20 @@ async def delete_user(
             parts.append(f"согласующий в субсидиях: {refs['subsidy_approver']}")
         if refs["subsidy_access"]:
             parts.append(f"персональных доступов к субсидиям: {refs['subsidy_access']}")
-        raise HTTPException(409, detail={
-            "code": "CONFIRM_DELETE_USER",
-            "message": (
+        msg = ""
+        if org_id is not None:
+            msg += ("Это единственная организация сотрудника — аккаунт будет удалён "
+                    "ПОЛНОСТЬЮ из системы, а не только из этой организации. ")
+        if parts:
+            msg += (
                 "С сотрудником связаны записи: " + "; ".join(parts) + ". "
                 "При удалении исполнитель/автор в закупках и задачах станет пустым, "
                 "согласующие потеряют привязку к пользователю, персональные доступы будут удалены. "
-                "Подтвердите удаление повторно."
-            ),
+            )
+        msg += "Подтвердите удаление повторно."
+        raise HTTPException(409, detail={
+            "code": "CONFIRM_DELETE_USER",
+            "message": msg,
             "references": refs,
         })
 

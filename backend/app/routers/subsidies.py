@@ -811,6 +811,20 @@ SUPPORTED_DOC_TYPES = {
 }
 
 
+def _check_template_render_ok(path: str) -> bool:
+    """Try a trial render with empty context; return True if template is valid."""
+    if not os.path.exists(path):
+        return False
+    try:
+        if DocxTemplate is None:
+            return True  # docxtpl not installed — assume ok
+        tpl = DocxTemplate(path)
+        tpl.render({})
+        return True
+    except Exception:
+        return False
+
+
 @router.get("/{subsidy_id}/templates")
 async def list_subsidy_templates(
     subsidy_id: int,
@@ -822,11 +836,16 @@ async def list_subsidy_templates(
     for doc_type, label in SUPPORTED_DOC_TYPES.items():
         path = os.path.join(subsidy_dir, f"{doc_type}.docx")
         global_path = os.path.join(TEMPLATES_BASE, f"{doc_type}.docx")
+        has_custom = os.path.exists(path)
+        render_ok: bool | None = None
+        if has_custom:
+            render_ok = _check_template_render_ok(path)
         result.append({
             "doc_type": doc_type,
             "label": label,
-            "has_custom": os.path.exists(path),
+            "has_custom": has_custom,
             "has_global": os.path.exists(global_path),
+            "render_ok": render_ok,
         })
     return result
 
@@ -1033,6 +1052,22 @@ async def upload_subsidy_template(
 
     norm_stats = _normalize_docx_template(dest)
     repairs = _repair_docx_template(dest)
+
+    # Trial render: validate docxtpl syntax before confirming upload
+    if DocxTemplate is not None:
+        try:
+            tpl = DocxTemplate(dest)
+            tpl.render({})
+        except Exception as e:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"Шаблон некорректен: {type(e).__name__}: {str(e)[:200]}"
+            )
+
     return {
         "ok": True,
         "doc_type": doc_type,
@@ -1109,6 +1144,22 @@ async def upload_global_template(
 
     norm_stats = _normalize_docx_template(dest)
     repairs = _repair_docx_template(dest)
+
+    # Trial render: validate docxtpl syntax before confirming upload
+    if DocxTemplate is not None:
+        try:
+            tpl = DocxTemplate(dest)
+            tpl.render({})
+        except Exception as e:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"Шаблон некорректен: {type(e).__name__}: {str(e)[:200]}"
+            )
+
     return {"ok": True, "doc_type": doc_type, "repairs": repairs, "normalized": norm_stats}
 
 

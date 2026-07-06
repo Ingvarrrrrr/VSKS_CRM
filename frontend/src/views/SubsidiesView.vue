@@ -1544,6 +1544,15 @@
                 <v-chip v-if="t.has_custom" size="x-small" color="green" variant="tonal" class="ml-2">свой</v-chip>
                 <v-chip v-else-if="t.has_global" size="x-small" color="grey" variant="tonal" class="ml-2">глобальный</v-chip>
                 <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">нет шаблона</v-chip>
+                <v-tooltip v-if="t.has_custom && t.render_ok === false" location="top"
+                  text="Шаблон содержит синтаксическую ошибку docxtpl. Загрузите исправленную версию.">
+                  <template #activator="{ props: tipProps }">
+                    <v-chip v-bind="tipProps" size="x-small" variant="flat" prepend-icon="mdi-alert"
+                      class="ml-2" style="background-color:#fb923c; color:white; cursor:default">
+                      Шаблон не работает
+                    </v-chip>
+                  </template>
+                </v-tooltip>
               </template>
               <template #append>
                 <div class="d-flex gap-1">
@@ -2605,7 +2614,7 @@ async function copyVar(text: string) {
 const showTemplateDialog  = ref(false)
 const templateSubsidy     = ref<SubsidyRow | null>(null)
 const contractTemplates   = ref<Record<number, boolean>>({})
-const subsidyTemplatesList = ref<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean }>>([])
+const subsidyTemplatesList = ref<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean; render_ok?: boolean | null }>>([])
 const templateFileInputRef = ref<HTMLInputElement | null>(null)
 const uploadingDocType     = ref<string | null>(null)
 const deleteTarget       = ref<SubsidyRow | null>(null)
@@ -4263,7 +4272,7 @@ async function openTemplateDialog(s: SubsidyRow) {
   showTemplateDialog.value = true
   subsidyTemplatesList.value = []
   try {
-    const list = await apiFetch<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean }>>(
+    const list = await apiFetch<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean; render_ok?: boolean | null }>>(
       `/subsidies/${s.id}/templates`
     )
     subsidyTemplatesList.value = list
@@ -4292,7 +4301,8 @@ async function onTemplateFileSelected(event: Event) {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Ошибка загрузки')
+      const detail = err.detail || `Ошибка загрузки (HTTP ${res.status})`
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
     }
     showSnack('Шаблон загружен')
     await openTemplateDialog(templateSubsidy.value)

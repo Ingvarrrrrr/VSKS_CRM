@@ -1745,6 +1745,7 @@ async def generate_document(
             ),
         })
 
+    _fallback_info: dict | None = None  # phase31-02: track silent fallback for response header
     try:
         tpl.render(context)
     except Exception as render_err:
@@ -1757,10 +1758,16 @@ async def generate_document(
             base_path = os.path.join(TEMPLATES_DIR, f"{doc_type}.docx")
             if os.path.exists(base_path) and base_path != template_path:
                 import logging
+                _fallback_reason = f"{type(render_err).__name__}: {str(render_err)[:300]}"
                 logging.getLogger(__name__).warning(
-                    f"Custom template {template_path} render failed ({type(render_err).__name__}: {render_err}). "
+                    f"Custom template {template_path} render failed ({_fallback_reason}). "
                     f"Falling back to base template {base_path}."
                 )
+                _fallback_info = {
+                    "original": os.path.basename(template_path),
+                    "fallback": os.path.basename(base_path),
+                    "reason": _fallback_reason,
+                }
                 tpl = DocxTemplate(base_path)
                 template_path = base_path
                 tpl.render(context)
@@ -2103,10 +2110,16 @@ async def generate_document(
 
     safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
     encoded_name = quote(safe_name, safe="-_.~")
+    resp_headers: dict = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"}
+    # phase31-02: surface non-silent fallback via response headers
+    if _fallback_info:
+        resp_headers["X-Template-Fallback"] = "1"
+        resp_headers["X-Template-Fallback-Reason"] = quote(_fallback_info["reason"][:200], safe="")
+        resp_headers["X-Template-Fallback-Original"] = quote(_fallback_info["original"], safe="")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
+        headers=resp_headers,
     )
 
 

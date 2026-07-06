@@ -53,6 +53,7 @@ from .models.manager_department import ManagerDepartment  # ensure manager_depar
 from .models.org_billing import OrgBillingPaid  # ensure org_billing_paid table is created
 from .models.purchase_comment import PurchaseComment  # ensure purchase_comments table is created
 from .models import bank_statement  # ensure bank_statement_imports / bank_payments tables registered
+from .models.entity_change import EntityChange, EntityFieldSeen  # ensure entity_changes / entity_field_seen tables registered
 from .routers.documents import guide_router as documents_guide_router
 from .database import async_session
 
@@ -1762,6 +1763,8 @@ app.include_router(purchase_members.router)
 app.include_router(purchase_transitions.router)
 # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
 # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
+from .routers import entity_changes as entity_changes_router
+app.include_router(entity_changes_router.router)  # /api/entity-changes (Phase 31 diff-tracking)
 from .routers import task_badges, task_delegation, task_reports, task_comments
 app.include_router(task_badges.router)
 app.include_router(task_delegation.router)

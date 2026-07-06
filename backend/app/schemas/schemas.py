@@ -778,6 +778,9 @@ class PurchaseOut(PurchaseCreate):
     items: List[PurchaseItemOut] = []
     files: List[PurchaseFileOut] = []
     subsidy_allocations: Optional[List[SubsidyAllocationOut]] = None
+    # Phase 31: diff-tracking — unseen changes from other users
+    unseen_fields: List[str] = []
+    unseen_changes_count: int = 0
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

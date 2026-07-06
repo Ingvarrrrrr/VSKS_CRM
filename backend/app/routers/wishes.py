@@ -31,6 +31,12 @@ def _is_saas(user: User) -> bool:
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
+# Phase 31: fields tracked for diff-highlighting (D-05..D-09)
+# estimated_price is the wish amount proxy (Wish has no total_price column)
+WISH_TRACKED_FIELDS: set[str] = {
+    "title", "description", "status", "subsidy_id", "estimated_price",
+}
+
 
 def _enrich(w: Wish) -> WishOut:
     """Convert Wish ORM object to WishOut, filling computed name fields."""
@@ -307,7 +313,25 @@ async def list_wishes(
     q = q.order_by(Wish.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)
     wishes = result.scalars().all()
-    return [_enrich(w) for w in wishes]
+
+    # Phase 31: batch unseen_fields/unseen_changes_count (2 queries, no N+1) (D-05..D-09)
+    wish_ids = [w.id for w in wishes]
+    unseen_map: dict[int, list[str]] = {}
+    try:
+        from app.routers.entity_changes import get_unseen_map as _get_unseen_map
+        unseen_map = await _get_unseen_map(db, 'wish', wish_ids, current_user.id)
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("unseen wish map failed: %s", _exc)
+
+    out_list = []
+    for w in wishes:
+        enriched = _enrich(w)
+        _unseen = unseen_map.get(w.id, [])
+        enriched.unseen_fields = _unseen
+        enriched.unseen_changes_count = len(_unseen)
+        out_list.append(enriched)
+    return out_list
 
 
 @router.get("/{wish_id}", response_model=WishOut)
@@ -331,7 +355,21 @@ async def get_wish(
         )
         if member_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
-    return _enrich(wish)
+
+    enriched = _enrich(wish)
+
+    # Phase 31: unseen_fields for single wish GET (D-05..D-09)
+    try:
+        from app.routers.entity_changes import get_unseen_map as _get_unseen_map
+        _unseen_single = await _get_unseen_map(db, 'wish', [wish_id], current_user.id)
+        _unseen_fields = _unseen_single.get(wish_id, [])
+        enriched.unseen_fields = _unseen_fields
+        enriched.unseen_changes_count = len(_unseen_fields)
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("unseen wish single failed: %s", _exc)
+
+    return enriched
 
 
 @router.post("/", response_model=WishOut, status_code=201)
@@ -405,6 +443,9 @@ async def update_wish(
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Можно редактировать только черновик или отклонённую заявку")
 
+    # Phase 31: capture old values for diff-tracking BEFORE any mutation (D-05..D-09)
+    _old_wish_values = {f: getattr(wish, f, None) for f in WISH_TRACKED_FIELDS}
+
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():
         setattr(wish, field, value)
@@ -428,6 +469,35 @@ async def update_wish(
         await db.flush()
 
     await db.commit()
+
+    # Phase 31: record EntityChange for each TRACKED_FIELD that changed (D-05..D-09)
+    # Only record changes made by OTHER users (D-07: own changes are not highlighted)
+    try:
+        from app.models.entity_change import EntityChange as _EC
+        _changes = []
+        for _fname in WISH_TRACKED_FIELDS:
+            _old = _old_wish_values.get(_fname)
+            _new = getattr(wish, _fname, None)
+            _old_s = str(_old) if _old is not None else None
+            _new_s = str(_new) if _new is not None else None
+            if _old_s != _new_s:
+                _changes.append(_EC(
+                    entity_type='wish',
+                    entity_id=wish.id,
+                    field_name=_fname,
+                    old_value=_old_s,
+                    new_value=_new_s,
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                ))
+        if _changes:
+            for _c in _changes:
+                db.add(_c)
+            await db.commit()
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("entity_change record failed for wish: %s", _exc)
+
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
 

@@ -29,6 +29,12 @@ from datetime import datetime, date
 from app.models.user_hierarchy import UserHierarchy
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
+# Phase 31: fields tracked for diff-highlighting (D-05..D-09)
+PURCHASE_TRACKED_FIELDS: set[str] = {
+    "subject", "contractor_id", "planned_total_price",
+    "status", "subsidy_id", "contract_number", "contract_date",
+}
+
 
 async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
     """Когда установлен contract_id — копируем number/date/contract_type/contractor_id из contracts в purchases.
@@ -577,11 +583,24 @@ async def list_purchases(
                 )
                 display_total_by_contract[cid] = sum_r.scalar() or Decimal("0")
 
+    # Phase 31: batch unseen_fields/unseen_changes_count (2 queries, no N+1) (D-05..D-09)
+    purchase_ids = [p.id for p in purchases]
+    unseen_map: dict[int, list[str]] = {}
+    try:
+        from app.routers.entity_changes import get_unseen_map as _get_unseen_map
+        unseen_map = await _get_unseen_map(db, 'purchase', purchase_ids, current_user.id)
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("unseen purchase map failed: %s", _exc)
+
     result_rows = []
     for p in purchases:
         out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map)
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
+        _unseen = unseen_map.get(p.id, [])
+        out.unseen_fields = _unseen
+        out.unseen_changes_count = len(_unseen)
         result_rows.append(out)
     return result_rows
 
@@ -692,7 +711,7 @@ async def get_purchase_kp_items(pid: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{pid}", response_model=PurchaseOutFull)
-async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
+async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
     result = await db.execute(
         select(Purchase)
         .options(
@@ -814,6 +833,18 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db)):
                     )), Decimal("0"))).where(Purchase.contract_id == p.contract_id)
                 )
                 out.framework_contract_total = sum_r.scalar() or Decimal("0")
+
+    # Phase 31: unseen_fields for single purchase GET (D-05..D-09)
+    try:
+        from app.routers.entity_changes import get_unseen_map as _get_unseen_map
+        _unseen_single = await _get_unseen_map(db, 'purchase', [pid], current_user.id)
+        _unseen_fields = _unseen_single.get(pid, [])
+        out.unseen_fields = _unseen_fields
+        out.unseen_changes_count = len(_unseen_fields)
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("unseen purchase single failed: %s", _exc)
+
     return out
 
 
@@ -941,6 +972,8 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
+    # Phase 31: capture old values for diff-tracking BEFORE any mutation
+    _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
     if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
@@ -1136,6 +1169,35 @@ async def update_purchase(
 
     await db.commit()
     await db.refresh(p)
+
+    # Phase 31: record EntityChange for each TRACKED_FIELD that changed (D-05..D-09)
+    # Only record changes made by OTHER users (D-07: own changes are not highlighted)
+    try:
+        from app.models.entity_change import EntityChange as _EC
+        _changes = []
+        for _fname in PURCHASE_TRACKED_FIELDS:
+            _old = _old_purchase_values.get(_fname)
+            _new = getattr(p, _fname, None)
+            _old_s = str(_old) if _old is not None else None
+            _new_s = str(_new) if _new is not None else None
+            if _old_s != _new_s:
+                _changes.append(_EC(
+                    entity_type='purchase',
+                    entity_id=p.id,
+                    field_name=_fname,
+                    old_value=_old_s,
+                    new_value=_new_s,
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                ))
+        if _changes:
+            for _c in _changes:
+                db.add(_c)
+            await db.commit()
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("entity_change record failed: %s", _exc)
+
     # 12-02: Return suggestions if any
     if suggested_feo_matches:
         from app.schemas.schemas import PurchaseOut as _POut

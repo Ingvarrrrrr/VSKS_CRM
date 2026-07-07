@@ -571,7 +571,7 @@ Plans:
 5. **Бюджетная логика: Плановая vs ФЭО (пересмотр)** — ревизия расчёта остатков: приоритет ручного budget родителя vs сумма детей, расхождение planned_total_price и ФЭО-разбивки.
 6. **Шаблоны слетают (лист согласования ФАДМ_26)** — root-cause бага потери/сброса docx-шаблонов (persistent volume уже есть — искать логику перезаписи/выбора шаблона).
 
-**Requirements**: TBD (уточнить при планировании — часть пунктов может требовать discuss-phase)
+**Requirements**: SC-1, SC-2, SC-3, SC-4, SC-5, SC-6
 **Depends on:** Phase 30
 
 **Success Criteria:**
@@ -582,10 +582,16 @@ Plans:
 5. Остаток бюджета одинаков на дашборде, в карточке субсидии и в форме закупки (один источник расчёта).
 6. Лист согласования ФАДМ_26 стабильно рендерится из своего шаблона после перезагрузок/деплоев.
 
-**Plans:** 0 plans
+**Plans:** 7 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 31 to break down)
+- [ ] 31-01-PLAN.md — Diff-tracking backend: миграция entity_changes/entity_field_seen + запись в purchases/wishes + batch unseen + dismiss endpoint
+- [ ] 31-02-PLAN.md — Шаблоны ФАДМ_26: trial-render валидация при upload, X-Template-Fallback вместо тихого отката, badge «Шаблон не работает»
+- [ ] 31-03-PLAN.md — DnD закрывающих документов: FileDropZone в acceptance-card CreateOrderView, reuse onDocFilesDropped
+- [ ] 31-04-PLAN.md — Договор↔Закупка sync: n_updated_purchases + warnings в update_contract, contract_conflict + «Взять из договора»
+- [ ] 31-05-PLAN.md — Бюджет canonical: удалить клиентский calcBudget, budget-check endpoint, _check_budget через calculate_budget_from_categories, D-16 разграничение существующих/новых, discrepancy chip
+- [ ] 31-06-PLAN.md — Diff-подсветка frontend: useEntityChanges + оранжевая GALA-подсветка в CreateOrderView/WishDistributionCard + бейджи «+N» в реестрах
+- [ ] 31-07-PLAN.md — Undo/Redo: useUndoRedo composable + Ctrl+Z/Y в CreateOrderView (с autosave-flush D-12), TaskEditDialog, WishDistributionCard
 
 ---
 

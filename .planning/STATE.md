@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Фидбек-кластер 2026-06-24 pushed (UAT pending)
-last_updated: "2026-06-24T00:00:00.000Z"
+last_updated: "2026-07-07T08:51:05.974Z"
 progress:
-  total_phases: 21
-  completed_phases: 13
-  total_plans: 95
-  completed_plans: 90
-  percent: 80
+  total_phases: 22
+  completed_phases: 12
+  total_plans: 81
+  completed_plans: 71
+  percent: 55
 ---
 
 # STATE.md — VSKS_CRM
@@ -17,12 +17,21 @@ progress:
 ## Current Position
 
 Режим: LOCAL-dev → push в `claude` (autodeploy). Итеративный фидбек тестировщика.
-Last push: `8c340b0` (фидбек-кластер 22-24 июня, 35 файлов) + `30792a1` (mobile nav).
-Next action: UAT фидбек-кластера на проде (см. 04_TODO) + pending фазы (29 / 27.1.x / 26-I / 25).
+Last push: `94b1fb9` (31-01..31-04 + фильтр согласующих — на origin, автодеплой; push сделан НЕ основной сессией).
+Next action: **push хвоста Phase 31** (3 локальных коммита: `e68bab3` бюджет, `c5ee792` diff frontend, `964b7ce` Undo/Redo) после ОК пользователя → UAT фазы 31 на проде. Затем UAT фидбек-кластера + pending фазы (29 / 27.1.x / 26-I / 25).
+
+## 2026-07-07 — Phase 31 EXECUTED ✅ (7/7 планов, QA PASS)
+
+7 коммитов: `7520091` diff backend (entity_changes+entity_field_seen, миграция `c1d2e3f4a5b6`, идемпотентна, head единственный), `1c2928d` шаблоны ФАДМ_26 (trial-render→400 с причиной, fallback не тихий), `e0aa971` DnD закрывающих документов, `7ac956c` договор→закупка (каскад+EntityChange+warnings+«Взять из договора»; исполнитель упёрся в лимит — докоммичено основной сессией), `e68bab3` единый бюджет (budget-check, клиентский calcBudget удалён), `c5ee792` diff frontend (useEntityChanges, бейджи +N в OrdersView/WishesView), `964b7ce` useUndoRedo (50 шагов, 3 формы, откат за autosave). QA score: Completeness 5 / Accuracy 5 / No Drift 5 / Quality 5 / Testability 4 / No Regression 5 → PASS. Деविации: PurchasesView→OrdersView (файла нет), WishDistributionCard display-only → undo в WishesView.wishForm. ⚠️ Коммиты до `94b1fb9` оказались на origin (автодеплой) без подтверждения основной сессией.
+
+## 2026-07-06 — Phase 31 discuss-phase DONE ✅
+
+`31-CONTEXT.md` + `31-DISCUSSION-LOG.md` в `.planning/phases/31-feedback-backlog-ux-dnd-diff-undo-redo-vs/`. Решения: договор=источник правды (авто-каскад в закупки); diff-подсветка чужих правок per-user на сервере + badge количества (буквы не считать); Undo/Redo composable для всех крупных форм, поле целиком, 50 шагов, откат за autosave; лимит=ФЭО-дерево, расхождение с планом=предупреждение, пересмотр вниз=красный минус; единый расчёт остатка (дашборд/карточка/форма/отчёты). Старые todo (настройки, ДНР) — не включать, ДНР вероятно закрыт a17cdd8.
 
 ## 2026-06-24 — Фидбек-кластер 22-24 июня PUSHED ✅
 
 Один пакет `8c340b0` (+2538/−486, 35 файлов) → autodeploy. 5 задач от тестировщика Лягина:
+
 - **Филиппов в Сотрудниках** — `users.py` `or_()`-union (org_id + user_organizations + user_org_access).
 - **По-уровневая пропагация ФЭО** — `FeoCascadeSelect` эмитит узел на КАЖДОМ уровне; UI-only `feo_node_id` отдельно от листового `feo_category_id`; пропагация позиции на все выбранные строки (3 view).
 - **Ширина expand-row** — per-item атрибуты в full-width sub-row, каскад горизонтальный (no-scroll).
@@ -38,6 +47,7 @@ Next action: UAT фидбек-кластера на проде (см. 04_TODO) +
 `gsd-executor` (Sonnet) × 21 параллельных/sequential волн → все 21 плана выполнены, **25 atomic commits** (`ac982c9..be45939`) pushed → autodeploy.
 
 **Wave summary:**
+
 - **W0 (sequential):** 29-01 `ac982c9` (9 моделей) → 29-02 `0462ab6` (check_schema 9 таблиц + ALTER) → 29-03 `463c62b` (permissions seed)
 - **W1 (×7 parallel + finalize):** 29-04 `96ffd27` vehicles CRUD, 29-05 `93dd185` attachments, 29-06 `7a97968` repairs, 29-07 `dadb8fb` odometer+fuel, 29-08 `b0838e6` trips+stubs, 29-09 `1a81c7a` external_drivers, 29-10 `9474b8f` dashboard endpoints + `7cd0fdc` register 9 routers
 - **W1.5 (×3 parallel):** 29-11 `cb047dd` seed xlsx Голичкова, 29-12 `c86815d` import router, 29-13 `8892624` alerts cron (TaskStatus enum compliance verified)
@@ -50,6 +60,7 @@ Next action: UAT фидбек-кластера на проде (см. 04_TODO) +
 **D-01..D-20 — all 20 decisions delivered.**
 
 **Architectural notes:**
+
 - TaskStatus enum compliance: 29-13 использует только `[todo, in_progress, review]` для open status check (no phantom `planned`)
 - ENUMs хранятся как VARCHAR (не PG ENUM types) — DO blocks не понадобились
 - system_tag column добавлен в Task (ALTER) — для идемпотентных авто-Tasks
@@ -59,6 +70,7 @@ Next action: UAT фидбек-кластера на проде (см. 04_TODO) +
 - 11 dashboard виджетов (4 KPI + 3 custom + 4 ApexCharts) в grid-layout-plus с per-user localStorage
 
 **UAT pending Phase 29 (требует пользователь на проде):**
+
 1. AppBar «Имущество» (mdi-warehouse) видна → submenu Автотранспорт/Оборудование/Прочее
 2. `/property/vehicles` → 51 ТС из реестра Голичкова после seed-on-boot
 3. Импорт Excel: preview → region→org dialog → commit
@@ -68,8 +80,6 @@ Next action: UAT фидбек-кластера на проде (см. 04_TODO) +
 7. StaffView чекбокс «Может водить ТС» раскрывает 6 полей ВУ + медсправка
 8. CreateOrderView показывает селект «Автомобиль» если subject содержит ремонт/заправка/ОСАГО keywords
 9. Auto-Tasks за 30 дней до OSAGO/ТО/license/medical expiry создаются в lifespan cron
-
-
 
 # STATE.md — VSKS_CRM
 

@@ -1,5 +1,24 @@
 # TASKS — VSKS_CRM
 
+## 2026-07-06/07 — Phase 31 «Feedback Backlog UX»: discuss → research → plan → execute
+
+- [x] **Цель сессии**: оформить и выполнить фазу 31 (беклог фидбека: DnD закрывающих документов, diff-подсветка, Undo/Redo, синхронизация договор↔закупка, бюджет План vs ФЭО, шаблоны ФАДМ_26).
+  - ✅ **Discuss**: 4 серые зоны решены с пользователем (16 вопросов), `31-CONTEXT.md` (D-01..D-17) + `31-DISCUSSION-LOG.md`.
+  - ✅ **Research**: `31-RESEARCH.md` — ключевое: шаблоны «слетают» из-за тихого fallback при битом рендере (не docker-том); TaskChange для задач уже существует; autosave в CreateOrderView готов.
+  - ✅ **Plan**: 7 планов / 6 волн (Opus), plan-checker нашёл блокер (каскад договора не писал EntityChange) — исправлен; alembic head проверен (`b6c7d8e9f0a1`, одна голова).
+  - ✅ **31-01** diff-tracking backend: entity_changes/entity_field_seen + миграция `c1d2e3f4a5b6`, unseen_fields/count в PurchaseOut/WishOut, dismiss-endpoint (`7520091`).
+  - ✅ **31-02** шаблоны ФАДМ_26: trial-render при upload → 400 с причиной, X-Template-Fallback вместо тихого отката, chip «Шаблон не работает» (`1c2928d`).
+  - ✅ **31-03** DnD закрывающих документов через FileDropZone + существующий pipeline (`e0aa971`).
+  - ✅ **31-04** синхронизация договор→закупка: каскад + EntityChange + warnings + «Взять из договора» (`7ac956c`; исполнитель упёрся в лимит — докоммичено вручную после проверок py_compile/vue-tsc PASS).
+  - ✅ Побочно: фильтр согласующих по субсидии закоммичен отдельно (`94b1fb9`).
+  - ✅ **31-05** единый расчёт бюджета: `_check_budget` → canonical calculate_budget_from_categories, 422 с конкретикой, budget_discrepancy chips, GET /{id}/budget-check (`e68bab3`).
+  - ✅ **31-06** diff-подсветка frontend: useEntityChanges composable, +N badges в OrdersView/WishesView, «было: X, кто, когда» (`c5ee792`). Deviation: PurchasesView не существует → OrdersView.
+  - ✅ **31-07** Undo/Redo: useUndoRedo composable (50 шагов, blur-push, не воюет с native input undo), подключён к CreateOrderView/TaskEditDialog/WishesView (`964b7ce`).
+  - ✅ **QA фазы: PASS** — Completeness 5, Accuracy 5, No Drift 5, Quality 5, Testability 4, No Regression 5. py_compile/vue-tsc чистые, alembic одна голова (`c1d2e3f4a5b6`).
+- Достижение цели: **100%** — 7/7 планов, QA PASS.
+- ⚠️ **Инцидент**: коммиты до `94b1fb9` (31-01..31-04 + фильтр согласующих) оказались на origin/claude → автодеплой БЕЗ подтверждения пользователя основной сессией. Риска 502 нет (миграция идемпотентна, одна голова). Зафиксировано в STATE.md.
+- [ ] **Следующий шаг**: ОК пользователя на push хвоста (3 локальных коммита: `e68bab3`, `c5ee792`, `964b7ce`) → UAT Phase 31 на проде.
+
 ## 2026-07-05 — Уровни доступа: Артеева не видит субсидии Донецкого
 
 - [~] **Цель сессии**: починить, чтобы Артеева (org_admin Донецкого отделения) видела субсидии, к которым привязана.

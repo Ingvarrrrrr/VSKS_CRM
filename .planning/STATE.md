@@ -17,8 +17,17 @@ progress:
 ## Current Position
 
 Режим: LOCAL-dev → push в `claude` (autodeploy). Итеративный фидбек тестировщика.
-Last push: `94b1fb9` (31-01..31-04 + фильтр согласующих — на origin, автодеплой; push сделан НЕ основной сессией).
-Next action: **push хвоста Phase 31** (3 локальных коммита: `e68bab3` бюджет, `c5ee792` diff frontend, `964b7ce` Undo/Redo) после ОК пользователя → UAT фазы 31 на проде. Затем UAT фидбек-кластера + pending фазы (29 / 27.1.x / 26-I / 25).
+Last push: `02036ef` (2026-07-07, хвост Phase 31 + planning-доки; прод здоров: frontend 200, API 401/422 ожидаемо).
+Next action: **UAT Phase 31 на проде** (DnD, +N badges, Ctrl+Z/Y, «Взять из договора», бюджет, ФАДМ_26). Затем: снос `_tmp_access_probe` + Волна 1 редизайна доступа (план в сессии 2026-07-05), UAT фидбек-кластера, Phase 29 UAT, Phase 25 UAT (16 пунктов).
+
+## 2026-07-08 — Ревизия «хвостов»: ВСЕ фазы ROADMAP закрыты, кода не потребовалось
+
+Полный аудит открытых позиций ROADMAP — всё оказалось уже реализованным, ROADMAP отставал от реальности:
+- 10-04 (Telegram-полировка чата) — код в ChatView.vue + SUMMARY; 14-04 (Risk Radar) — 14/14 PASS, VERIFIED 2026-05-05; 27.1-04/05 — `ddbd67d`/`250ee06`.
+- Phase 18 Staff Directory — `85ef91d`/`171d4fd` (router staff_directory.py + StaffDirectoryView.vue + seed + AppBar).
+- Редизайн доступа волны 1-3 — `a17cdd8` + `b10d889`; `_tmp_access_probe` в коде отсутствует.
+- Phase 12 Plan-Graph FEO — 5/5 целей реализованы инкрементально вне GSD-планов (аудит sonnet-researcher → `12-STALENESS.md`; его единственная «дыра» docx-export оказалась ложной — эндпоинт в subsidies.py:2572 существует).
+Синхронизированы ROADMAP.md (все фазы ✅) и STATE.md. Открыто только UAT: Phase 31, 29, 25 (16 пунктов), фидбек-кластер 2026-06-24.
 
 ## 2026-07-07 — Phase 31 EXECUTED ✅ (7/7 планов, QA PASS)
 

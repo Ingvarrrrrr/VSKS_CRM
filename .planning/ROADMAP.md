@@ -4,10 +4,10 @@
 
 18 phases | 57+ requirements | Brownfield (existing codebase: auth, CRUD, dashboard, SubsidiesView, 390 purchases, 612 contractors)
 
-**Status snapshot (2026-04-23):**
-- ✅ Complete (13): 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 16
-- 🟡 In progress (2): 10 (3/4 plans), 14 (3/4 plans)
-- ⏳ Not started (3): 12 (4 plans ready), 17 (TBD), 18 (TBD)
+**Status snapshot (2026-07-08):**
+- ✅ Complete: ВСЕ фазы ROADMAP — 1–18, 21, 22, 25, 27.1, 29 (UAT pending), 30, 31
+- Редизайн доступа (волны 1-3) — ✅ закрыт `a17cdd8`/`b10d889`; `_tmp_access_probe` снесён из кода
+- Открыто только UAT: Phase 31 (деплой 2026-07-07), Phase 29, Phase 25 (16 пунктов), фидбек-кластер 2026-06-24
 
 ---
 
@@ -219,18 +219,18 @@ Plans:
 4. Список чатов показывает последнее сообщение, время и количество непрочитанных — аналогично Telegram.
 5. Медиафайлы: пользователь отправляет изображение или файл — оно отображается в чате, скачивается по клику.
 
-### Phase 10: Chat Telegram-style UI
+### Phase 10: Chat Telegram-style UI ✅ COMPLETED
 
 **Goal:** Telegram-like chat UX: fix real-time message delivery (WS still requires refresh), sticky chat header, dual-mode search (in-chat + across chats), overall UI polish.
 **Requirements**: CHAT-UI-01 (real-time delivery), CHAT-UI-02 (sticky header), CHAT-UI-03 (dual-mode search), CHAT-UI-04 (Telegram-like polish)
 **Depends on:** Phase 9
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — Real-time WS delivery fix (no refresh required)
 - [x] 10-02-PLAN.md — Sticky chat header
 - [x] 10-03-PLAN.md — Dual-mode search (in-chat + across chats)
-- [ ] 10-04-PLAN.md — AppBar chat integration (nav item + badge + WS/polling)
+- [x] 10-04-PLAN.md — Telegram-style polish: bubbles+tails, date separators, message grouping, sidebar highlight (SUMMARY есть; в коде ChatView.vue)
 
 ### Phase 11: Fix task display per-user org filtering — badges, org selector, task scoping
 
@@ -244,7 +244,7 @@ Plans:
 
 ---
 
-### Phase 12: Plan-Graph FEO Integration
+### Phase 12: Plan-Graph FEO Integration ✅ COMPLETED (реализовано инкрементально вне GSD-планов; аудит 2026-07-08)
 
 **Goal:** Connect FEO line items to the purchase plan-graph: FEO planned amounts become the "Plan-schedule" baseline in the pipeline dashboard, purchases are matched to FEO items when created, residual budget is tracked per FEO item, each plan-graph iteration is versioned with dates for export/signing, and a printable plan-graph form can be attached to each subsidy.
 
@@ -252,7 +252,13 @@ Plans:
 
 **Depends on:** Phase 2 (FEO model), Phase 11 (stable dashboard)
 
-**Plans:** 0/4 plans (not executed)
+**Plans:** 4 плана от апреля НЕ выполнялись — функциональность доставлена позже другими фазами/фиксами (аудит: `12-STALENESS.md`, 2026-07-08):
+- total_feo_planned в dashboard.py:265-284 + DashboardView (SC-1)
+- _auto_match_feo_item в purchases.py:80 + чипы в CreateOrderView (SC-2)
+- residuals в feo_planned_items.py:185 + SubsidiesView (SC-3)
+- лимиты через purchase_budget.py:139-179 / calculate_budget_from_categories, Phase 31 D-14 (SC-4)
+- PlanGraphVersion + версии/compare/reconciliation в subsidies.py:1381/2304/2372 (SC-5)
+- Excel export subsidies.py:1774 + docx export subsidies.py:2572 (SC-6)
 
 **Success Criteria:**
 1. Dashboard pipeline "План-график" bar shows the sum of FEO item planned costs even before any purchases exist.
@@ -324,13 +330,13 @@ Plans:
 **Goal:** Deliver a Neon Telemetry "mission control" variant of the Dashboard at /dashboard/radar — same data as classic DashboardView, reprojected as 6 weighted risk scores + polar radar + alerts ticker, both Vuetify themes first-class, without modifying DashboardView.vue.
 **Requirements**: RISK-RADAR-01..10 (informal — Phase 14 has no ROADMAP REQ-IDs; see 14-UI-SPEC.md + 14-CONTEXT.md for the authoritative contract)
 **Depends on:** None (Phase 14 is independent of Phase 12/13 — reuses existing /api/dashboard/charts)
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans executed — ✅ COMPLETED (14-04 VERIFIED 2026-05-05, human-checkpoint de-facto через прод-UAT)
 
 Plans:
 - [x] 14-01-PLAN.md — Foundation: router entry + useDashboardMode + useRiskScores composables (Wave 1, parallel with 14-02)
 - [x] 14-02-PLAN.md — Reusable components: RiskMetricCard + AlertsTicker (Wave 1, parallel with 14-01)
 - [x] 14-03-PLAN.md — RiskRadarView.vue assembly with polar + radial charts, 2×3 grid, ticker, dual-theme CSS tokens (Wave 2)
-- [ ] 14-04-PLAN.md — Polish + automated audit + human UAT on 4 theme×mode combos (Wave 3, checkpoint)
+- [x] 14-04-PLAN.md — Polish + automated audit (14/14 PASS) + human UAT defer→approved (Wave 3, checkpoint)
 
 ### Phase 15: Reusable Purchase Items Editor — унификация формы позиций в «Новом заказе» и «Заявке» ✅ COMPLETED (2026-04-19)
 
@@ -445,7 +451,7 @@ Plans:
 
 ---
 
-### Phase 18: Staff Directory — справочник сотрудников внутри своих организаций
+### Phase 18: Staff Directory — справочник сотрудников внутри своих организаций ✅ COMPLETED
 
 **Directory:** `.planning/phases/18-staff-directory/` (TBD)
 
@@ -466,12 +472,13 @@ Plans:
 3. Нет кнопок редактирования — только read-only
 4. Мобильная адаптация — карточный вид на XS
 
-**Plans:** TBD
-- [ ] TBD
+**Plans:** 2/2 complete
+- [x] phase18-01 — backend: work_phone column, router staff_directory.py (require_tab('staff_directory'), exclude_from_directory, superadmin скрыт), permission seed (`85ef91d`)
+- [x] phase18-02 — frontend: StaffDirectoryView.vue (поиск, фильтры отдел/орг, карточки, StaffMemberDialog) + роут /directory + AppBar «Справочник» (`171d4fd`)
 
 ---
 
-### Phase 27.1: contract_items — фактически заказанные позиции по подписанному договору
+### Phase 27.1: contract_items — фактически заказанные позиции по подписанному договору ✅ COMPLETED (2026-05-14)
 
 **Directory:** `.planning/phases/27.1-contract-items/`
 
@@ -511,8 +518,8 @@ Plans:
 - [x] 27.1-01-PLAN.md — ContractItem model + check_schema._ensure_contract_items_table + idempotent backfill SQL + Pydantic schemas + Wave 0 tests (Wave 0)
 - [x] 27.1-02-PLAN.md — CRUD router /api/purchases/{pid}/contract-items + copy-from-purchase + D-06 transition gate + D-07 auto-recalc contract_price (Wave 1, depends on 01)
 - [x] 27.1-03-PLAN.md — Frontend: TypeScript types + API client + PurchaseItemsEditor side-by-side D-04 + 2 toolbar кнопки D-01 + D-05 split + E2E spec (Wave 2, depends on 02)
-- [ ] 27.1-04-PLAN.md — Analytics: field_registry source contract_item + pivot_engine JOIN + calc_columns contract_savings (Wave 3, depends on 02)
-- [ ] 27.1-05-PLAN.md — Docxtpl: _build_contract_items_context helper + context update в documents.py + D-08 fallback на purchase_items (Wave 3, depends on 02)
+- [x] 27.1-04-PLAN.md — Analytics: field_registry source contract_item + pivot_engine JOIN + calc_columns contract_savings (`ddbd67d`, 2026-05-14)
+- [x] 27.1-05-PLAN.md — Docxtpl: _build_contract_items_context helper + context update в documents.py + D-08 fallback на purchase_items (`250ee06`, 2026-05-14)
 
 ---
 
@@ -559,7 +566,7 @@ Plans:
 
 **Plans:** 1/1 plans complete
 
-### Phase 31: Feedback Backlog UX
+### Phase 31: Feedback Backlog UX ✅ COMPLETED (2026-07-07, QA PASS)
 
 **Goal:** Закрыть накопленный беклог фидбека тестировщиков (STATE.md «Pending from Feedback»), висевший без фазы.
 
@@ -582,16 +589,16 @@ Plans:
 5. Остаток бюджета одинаков на дашборде, в карточке субсидии и в форме закупки (один источник расчёта).
 6. Лист согласования ФАДМ_26 стабильно рендерится из своего шаблона после перезагрузок/деплоев.
 
-**Plans:** 7 plans
+**Plans:** 7/7 plans complete (QA PASS; все на проде 2026-07-07)
 
 Plans:
-- [ ] 31-01-PLAN.md — Diff-tracking backend: миграция entity_changes/entity_field_seen + запись в purchases/wishes + batch unseen + dismiss endpoint
-- [ ] 31-02-PLAN.md — Шаблоны ФАДМ_26: trial-render валидация при upload, X-Template-Fallback вместо тихого отката, badge «Шаблон не работает»
-- [ ] 31-03-PLAN.md — DnD закрывающих документов: FileDropZone в acceptance-card CreateOrderView, reuse onDocFilesDropped
-- [ ] 31-04-PLAN.md — Договор↔Закупка sync: n_updated_purchases + warnings в update_contract, contract_conflict + «Взять из договора»
-- [ ] 31-05-PLAN.md — Бюджет canonical: удалить клиентский calcBudget, budget-check endpoint, _check_budget через calculate_budget_from_categories, D-16 разграничение существующих/новых, discrepancy chip
-- [ ] 31-06-PLAN.md — Diff-подсветка frontend: useEntityChanges + оранжевая GALA-подсветка в CreateOrderView/WishDistributionCard + бейджи «+N» в реестрах
-- [ ] 31-07-PLAN.md — Undo/Redo: useUndoRedo composable + Ctrl+Z/Y в CreateOrderView (с autosave-flush D-12), TaskEditDialog, WishDistributionCard
+- [x] 31-01-PLAN.md — Diff-tracking backend: миграция entity_changes/entity_field_seen + запись в purchases/wishes + batch unseen + dismiss endpoint (`7520091`)
+- [x] 31-02-PLAN.md — Шаблоны ФАДМ_26: trial-render валидация при upload, X-Template-Fallback вместо тихого отката, badge «Шаблон не работает» (`1c2928d`)
+- [x] 31-03-PLAN.md — DnD закрывающих документов: FileDropZone в acceptance-card CreateOrderView, reuse onDocFilesDropped (`e0aa971`)
+- [x] 31-04-PLAN.md — Договор↔Закупка sync: n_updated_purchases + warnings в update_contract, contract_conflict + «Взять из договора» (`7ac956c`)
+- [x] 31-05-PLAN.md — Бюджет canonical: удалить клиентский calcBudget, budget-check endpoint, _check_budget через calculate_budget_from_categories, D-16 разграничение существующих/новых, discrepancy chip (`e68bab3`)
+- [x] 31-06-PLAN.md — Diff-подсветка frontend: useEntityChanges + бейджи «+N» в OrdersView/WishesView (deviation: PurchasesView не существует → OrdersView) (`c5ee792`)
+- [x] 31-07-PLAN.md — Undo/Redo: useUndoRedo composable + Ctrl+Z/Y в CreateOrderView, TaskEditDialog, WishesView (`964b7ce`)
 
 ---
 

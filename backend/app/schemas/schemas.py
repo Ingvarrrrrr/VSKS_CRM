@@ -474,6 +474,16 @@ class ContractOut(ContractCreate):
     extra_subsidies: List[ContractSubsidyOut] = []
     model_config = {"from_attributes": True}
 
+# Phase 31-04: contract cascade response
+class ContractSyncWarnings(BaseModel):
+    amount_over_max: bool = False
+    date_out_of_validity: List[int] = []
+
+class ContractUpdateResponse(BaseModel):
+    contract: ContractOut
+    n_updated_purchases: int = 0
+    warnings: ContractSyncWarnings = ContractSyncWarnings()
+
 # PurchaseItem
 class PurchaseItemCreate(BaseModel):
     product_id: Optional[int] = None
@@ -781,6 +791,8 @@ class PurchaseOut(PurchaseCreate):
     # Phase 31: diff-tracking — unseen changes from other users
     unseen_fields: List[str] = []
     unseen_changes_count: int = 0
+    # Phase 31-04: contract sync — True when linked contract data differs from purchase copy
+    contract_conflict: bool = False
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

@@ -1014,6 +1014,22 @@
               <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
                 density="compact" type="date" :rules="contractDateRules" />
             </v-col>
+            <!-- Phase 31-04: contract_conflict chip + «Взять из договора» button -->
+            <v-col v-if="!isNew && purchaseData?.contract_conflict && form.contract_id" cols="12" class="d-flex align-center gap-2 pb-0">
+              <v-chip
+                color="warning"
+                size="small"
+                prepend-icon="mdi-alert"
+                :title="linkedContractTooltip"
+              >Расхождение с договором</v-chip>
+              <v-btn
+                variant="tonal"
+                size="small"
+                color="#fb923c"
+                :loading="takingFromContract"
+                @click="takeFromContract"
+              >Взять из договора</v-btn>
+            </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.agreement_number" label="№ доп.соглашения" variant="outlined"
                 density="compact" placeholder="При наличии" />
@@ -2141,6 +2157,7 @@
         :is-manager="isManagerLevel"
         :is-admin="isAdminLevel"
         :visible="isEdit && showApprovalSection"
+        :subsidy-id="form.subsidy_id"
         @update:approval-status="form.approval_status = $event"
         @snack="showSnack($event, arguments[1])"
       />
@@ -3452,9 +3469,12 @@ const route = useRoute()
 const router = useRouter()
 
 const isEdit = computed(() => !!route.params.id)
+const isNew = computed(() => !isEdit.value)
 const purchaseId = computed(() => Number(route.params.id) || null)
 // Phase 23.5: флаг загрузки данных закупки — скрывает заголовок до получения данных с сервера
 const purchaseLoaded = ref(false)
+// Phase 31-04: raw purchase data from last loadPurchase (for contract_conflict)
+const purchaseData = ref<any>(null)
 
 // 12-02: FEO auto-match suggestions
 const feoMatchSuggestions = ref<Array<{
@@ -4037,6 +4057,9 @@ watch(() => form.subsidy_id, async (sid) => {
   } catch { customerPreview.value = null }
 }, { immediate: true })
 
+// Смена субсидии меняет допустимый круг исполнителей/адресатов СЗ
+watch(() => form.subsidy_id, () => { loadOrgUsers() })
+
 // Phase 23: диалог «Доступные переменные»
 const showPlaceholdersDialog = ref(false)
 // Phase 23.2: диалог ошибки генерации документа
@@ -4285,7 +4308,10 @@ interface OrgUser { id: number; full_name: string; short_name: string; position?
 const orgUsersList = ref<OrgUser[]>([])
 async function loadOrgUsers() {
   try {
-    const users = await apiFetch<any[]>('/users/')
+    // При выбранной субсидии — только сотрудники её орг(а) и люди с персональным
+    // доступом к субсидии (иначе по документам не закрыться), не весь контур.
+    const qs = form.subsidy_id ? `?subsidy_id=${form.subsidy_id}` : ''
+    const users = await apiFetch<any[]>(`/users/${qs}`)
     orgUsersList.value = users
       .filter(u => u.full_name)
       .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
@@ -5937,6 +5963,8 @@ const onInnInput = (val: string) => {
 
 const loadPurchase = async () => {
   const data = await apiFetch<any>(`/purchases/${purchaseId.value}`)
+  // Phase 31-04: store raw response for contract_conflict detection
+  purchaseData.value = data
 
   // Phase 27.1.4: prefetch contractor СИНХРОННО до Object.assign
   // чтобы избежать race с editFrameworkSeq save (форма шлёт PUT до завершения fetch)

@@ -924,6 +924,35 @@
     </v-dialog>
 
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
+
+    <!-- Phase 31-04: contract sync warnings (shown after PUT /contracts/{id}) -->
+    <v-snackbar
+      v-if="syncWarnings.amount_over_max"
+      v-model="syncWarnings.amount_over_max"
+      color="warning"
+      :timeout="-1"
+      location="bottom right"
+    >
+      <v-icon start>mdi-alert</v-icon>
+      Сумма закупок превышает max_amount договора
+      <template #actions>
+        <v-btn variant="text" @click="syncWarnings.amount_over_max = false">Закрыть</v-btn>
+      </template>
+    </v-snackbar>
+
+    <v-snackbar
+      v-if="syncWarnings.date_out_of_validity.length > 0"
+      v-model="syncWarnDateShow"
+      color="warning"
+      :timeout="-1"
+      location="bottom right"
+    >
+      <v-icon start>mdi-calendar-alert</v-icon>
+      {{ syncWarnings.date_out_of_validity.length }} закупок за пределами срока действия договора
+      <template #actions>
+        <v-btn variant="text" @click="syncWarnings.date_out_of_validity = []">Закрыть</v-btn>
+      </template>
+    </v-snackbar>
   </v-container>
 </template>
 
@@ -1699,13 +1728,26 @@ const openEdit = async (c: Contract) => {
   dialog.show = true
 }
 
+// Phase 31-04: track last sync warnings for display in ContractsView
+const syncWarnings = reactive<{ amount_over_max: boolean; date_out_of_validity: number[] }>({
+  amount_over_max: false,
+  date_out_of_validity: [],
+})
+const syncWarnDateShow = computed(() => syncWarnings.date_out_of_validity.length > 0)
+
 const saveContract = async () => {
   dialog.saving = true
   try {
     const body = { ...dialog.form, date: dialog.form.date || null, start_date: dialog.form.start_date || null, end_date: dialog.form.end_date || null }
     if (dialog.id) {
-      await apiFetch(`/contracts/${dialog.id}`, { method: 'PUT', body: JSON.stringify(body) })
-      showSnack('Сохранено')
+      const res = await apiFetch<any>(`/contracts/${dialog.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      // Phase 31-04: response is now ContractUpdateResponse {contract, n_updated_purchases, warnings}
+      const n = res?.n_updated_purchases ?? 0
+      const warnMsg = n > 0 ? `Договор сохранён. Обновлено ${n} закупок` : 'Договор сохранён. Связанных закупок нет'
+      showSnack(warnMsg)
+      // Store warnings for chip display
+      syncWarnings.amount_over_max = res?.warnings?.amount_over_max ?? false
+      syncWarnings.date_out_of_validity = res?.warnings?.date_out_of_validity ?? []
     } else {
       await apiFetch('/contracts/', { method: 'POST', body: JSON.stringify(body) })
       showSnack('Создано')
@@ -1713,7 +1755,8 @@ const saveContract = async () => {
     dialog.show = false
     await loadContracts()
   } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка сохранения', 'error')
+    const msg = (e?.response?.data?.detail) || e?.detail || 'Ошибка сохранения'
+    showSnack(msg, 'error')
   } finally {
     dialog.saving = false
   }

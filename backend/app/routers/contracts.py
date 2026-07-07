@@ -7,7 +7,7 @@ from app.models.contract import Contract
 from app.models.contract_subsidy import ContractSubsidy
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
-from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut
+from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut, ContractUpdateResponse, ContractSyncWarnings
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab, require_action
 from app.auth.visibility import build_visibility_clause, get_visible_subsidy_ids
@@ -278,13 +278,15 @@ async def create_contract(
     ]
     return d
 
-@router.put("/{cid}", response_model=ContractOut)
+@router.put("/{cid}", response_model=ContractUpdateResponse)
 async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Depends(get_db), current_user=Depends(require_tab('contracts'))):
     result = await db.execute(select(Contract).where(Contract.id == cid))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
     old_number = c.number
+    old_date = c.date
+    old_contractor_id = c.contractor_id
     # Duplicate check on update (exclude self, same org)
     if data.contractor_id and data.number:
         dup_q = select(Contract).where(
@@ -306,16 +308,70 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     # Обнуляем max_amount даже если пользователь его прислал — иначе ложный «Превышен лимит».
     if c.contract_type == 'framework_cumulative':
         c.max_amount = None
-    # Sync changes to linked purchases
-    if data.number != old_number or data.date is not None:
-        linked = await db.execute(select(Purchase).where(Purchase.contract_id == cid))
-        for p in linked.scalars().all():
-            if data.number != old_number:
+
+    # Phase 31-04: cascade sync to linked purchases using model_fields_set
+    # (distinguishes «not sent» from «explicitly set to None» — pitfall 6)
+    set_fields = data.model_fields_set
+    cascade_number = 'number' in set_fields
+    cascade_date = 'date' in set_fields
+    cascade_contractor = 'contractor_id' in set_fields
+
+    n_updated_purchases = 0
+    warnings = ContractSyncWarnings()
+
+    if cascade_number or cascade_date or cascade_contractor:
+        linked_result = await db.execute(select(Purchase).where(Purchase.contract_id == cid))
+        linked_purchases = linked_result.scalars().all()
+        n_updated_purchases = len(linked_purchases)
+
+        # Import helper from plan 31-01 (entity change tracking, T-31-04-02)
+        from app.routers.entity_changes import record_entity_changes as _rec_changes
+
+        for p in linked_purchases:
+            old_vals: dict = {}
+            new_vals: dict = {}
+            if cascade_number and data.number != old_number:
+                old_vals['contract_number'] = p.contract_number
                 p.contract_number = data.number
-            if data.date is not None:
+                new_vals['contract_number'] = p.contract_number
+            if cascade_date:
+                # Always cascade date when in set_fields (includes explicit None = clear)
+                old_vals['contract_date'] = p.contract_date
                 p.contract_date = data.date
-            if data.contractor_id is not None:
+                new_vals['contract_date'] = p.contract_date
+            if cascade_contractor and data.contractor_id != old_contractor_id:
+                old_vals['contractor_id'] = p.contractor_id
                 p.contractor_id = data.contractor_id
+                new_vals['contractor_id'] = p.contractor_id
+
+            # Record entity changes for audit trail (batch, committed after main commit)
+            if old_vals:
+                await _rec_changes(
+                    db=db,
+                    entity_type='purchase',
+                    entity_id=p.id,
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, 'full_name', None) or getattr(current_user, 'username', None),
+                    old_values=old_vals,
+                    new_values=new_vals,
+                )
+
+        # Warnings: amount_over_max
+        if c.max_amount is not None and c.max_amount > 0:
+            total_purchases = sum(p.planned_total_price or 0 for p in linked_purchases)
+            if total_purchases > c.max_amount:
+                warnings.amount_over_max = True
+
+        # Warnings: date_out_of_validity (purchases with execution_term outside contract range)
+        out_of_validity: list[int] = []
+        for p in linked_purchases:
+            if p.execution_term:
+                if c.start_date and p.execution_term < c.start_date:
+                    out_of_validity.append(p.id)
+                elif c.end_date and p.execution_term > c.end_date:
+                    out_of_validity.append(p.id)
+        warnings.date_out_of_validity = out_of_validity
+
     # Replace extra subsidies
     old_extras = await db.execute(select(ContractSubsidy).where(ContractSubsidy.contract_id == cid))
     for es in old_extras.scalars().all():
@@ -338,7 +394,11 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
         ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
         for es in c.extra_subsidies
     ]
-    return d
+    return ContractUpdateResponse(
+        contract=d,
+        n_updated_purchases=n_updated_purchases,
+        warnings=warnings,
+    )
 
 @router.delete("/{cid}")
 async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_action('contract.delete'))):

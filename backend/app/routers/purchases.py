@@ -593,6 +593,15 @@ async def list_purchases(
         import logging as _log
         _log.getLogger(__name__).warning("unseen purchase map failed: %s", _exc)
 
+    # Phase 31-04: batch contract_conflict — 1 query for all linked contracts (no N+1)
+    linked_contract_ids = {p.contract_id for p in purchases if p.contract_id}
+    contract_data_map: dict[int, tuple] = {}  # contract_id -> (number, date)
+    if linked_contract_ids:
+        _cr = await db.execute(
+            select(Contract.id, Contract.number, Contract.date).where(Contract.id.in_(linked_contract_ids))
+        )
+        contract_data_map = {row[0]: (row[1], row[2]) for row in _cr.all()}
+
     result_rows = []
     for p in purchases:
         out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map)
@@ -601,6 +610,13 @@ async def list_purchases(
         _unseen = unseen_map.get(p.id, [])
         out.unseen_fields = _unseen
         out.unseen_changes_count = len(_unseen)
+        # contract_conflict: purchase has linked contract but copy of number/date doesn't match
+        if p.contract_id and p.contract_id in contract_data_map:
+            c_number, c_date = contract_data_map[p.contract_id]
+            out.contract_conflict = (
+                (c_number is not None and p.contract_number != c_number)
+                or (c_date is not None and p.contract_date != c_date)
+            )
         result_rows.append(out)
     return result_rows
 
@@ -844,6 +860,15 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     except Exception as _exc:
         import logging as _log
         _log.getLogger(__name__).warning("unseen purchase single failed: %s", _exc)
+
+    # Phase 31-04: contract_conflict — single GET (1 extra query, only if contract_id set)
+    if p.contract_id:
+        _c = await db.get(Contract, p.contract_id)
+        if _c:
+            out.contract_conflict = (
+                (_c.number is not None and p.contract_number != _c.number)
+                or (_c.date is not None and p.contract_date != _c.date)
+            )
 
     return out
 

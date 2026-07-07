@@ -39,6 +39,7 @@ from decimal import Decimal
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
+from app.routers.subsidies import calculate_budget_from_categories
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -134,27 +135,48 @@ async def _check_budget(
     Raises:
         HTTPException(422): When budget exceeded.
     """
-    # ── 1. Subsidy-level check (unchanged) ──
+    # ── 1. Subsidy-level check — canonical ФЭО-tree limit (D-14, D-16) ──
     if subsidy_id and amount:
         subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
         subsidy = subsidy_r.scalar_one_or_none()
         if subsidy:
-            q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
-                Purchase.subsidy_id == subsidy_id
+            # Canonical limit: _budget_from_tree (D-14)
+            limit = await calculate_budget_from_categories(db, subsidy_id)
+            if limit <= 0:
+                # Fallback: use raw budget if no FEO tree configured
+                limit = float(subsidy.budget or 0)
+
+            # Spent WITHOUT this purchase (exclude_pid = id of current purchase on UPDATE)
+            from sqlalchemy import func as _func
+            spent_q = select(_func.coalesce(_func.sum(Purchase.planned_total_price), 0)).where(
+                Purchase.subsidy_id == subsidy_id,
+                Purchase.status.notin_(("cancelled",)),
             )
             if exclude_pid:
-                q = q.where(Purchase.id != exclude_pid)
-            total_r = await db.execute(q)
-            total = Decimal(str(total_r.scalar() or 0))
+                spent_q = spent_q.where(Purchase.id != exclude_pid)
+            spent_without_this = Decimal(str((await db.execute(spent_q)).scalar() or 0))
+
             amt = Decimal(str(amount))
-            budget = Decimal(str(subsidy.budget))
-            if total + amt > budget:
-                remaining = budget - total
-                raise HTTPException(
-                    422,
-                    f"Превышение бюджета субсидии «{subsidy.name}». "
-                    f"Доступно: {remaining:,.2f} ₽, запрашивается: {amt:,.2f} ₽"
-                )
+            limit_d = Decimal(str(limit))
+            remaining_after = limit_d - spent_without_this - amt
+
+            if remaining_after < 0:
+                # D-16: if exclude_pid provided AND pre-existing spend already exceeded limit,
+                # this is an UPDATE of an existing purchase — allow (already overcommitted).
+                if exclude_pid is not None and (limit_d - spent_without_this) < 0:
+                    # Pre-existing overrun: allow save, return silently (red display on frontend)
+                    pass
+                elif not is_admin:
+                    over = -remaining_after
+                    raise HTTPException(
+                        422,
+                        f"Превышен бюджет субсидии «{subsidy.name}». "
+                        f"Лимит: {limit_d:,.2f} ₽, "
+                        f"уже использовано: {spent_without_this:,.2f} ₽, "
+                        f"требуется: {amt:,.2f} ₽. "
+                        f"Не хватает: {over:,.2f} ₽. "
+                        f"Уменьшите плановую сумму закупки или увеличьте ФЭО-бюджет."
+                    )
 
     # ── 2. FEO-item-level check (non-admin only) ──
     if is_admin or not feo_items:

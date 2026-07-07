@@ -282,6 +282,10 @@ class SubsidyOut(BaseModel):
     # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
     extra_contract_clause_1: Optional[str] = None
     extra_contract_clause_2: Optional[str] = None
+    # Phase 31-05: canonical budget fields (D-14..D-17)
+    remaining: Optional[float] = None          # limit - spent (calculated_budget_from_categories - Σ purchases)
+    planned_amount: Optional[float] = None     # Σ FeoPlannedItem.amount (ФЭО плановая сумма)
+    budget_discrepancy: Optional[float] = None  # limit - planned_amount (Δ ФЭО vs плановая)
     model_config = {"from_attributes": True}
 
 

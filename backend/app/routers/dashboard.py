@@ -13,7 +13,7 @@ from app.models.contractor import Contractor
 from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
-from app.routers.subsidies import calculate_budgets_bulk
+from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk, _calculate_planned_amounts_bulk
 from app.config import settings
 from decimal import Decimal
 
@@ -285,13 +285,17 @@ async def dashboard_charts(
     }
 
     subsidy_rows = subsidy_result.all()
+    sid_list = [row.id for row in subsidy_rows]
     # Batch вместо N+1: бюджеты, субсидии и контрагенты одним IN-запросом каждый
-    budgets = await calculate_budgets_bulk(db, [row.id for row in subsidy_rows])
+    budgets = await calculate_budgets_bulk(db, sid_list)
+    # Phase 31-05: canonical spent + planned_amounts for D-17 (единый источник)
+    spent_map = await _calculate_spent_bulk(db, sid_list)
+    planned_amounts_map = await _calculate_planned_amounts_bulk(db, sid_list)
     sub_objs = {}
     if subsidy_rows:
         sub_objs = {
             s.id: s for s in (await db.execute(
-                select(Subsidy).where(Subsidy.id.in_([row.id for row in subsidy_rows]))
+                select(Subsidy).where(Subsidy.id.in_(sid_list))
             )).scalars().all()
         }
     contractor_ids = {s.contractor_id for s in sub_objs.values() if s.contractor_id}
@@ -306,6 +310,10 @@ async def dashboard_charts(
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
+        spent = spent_map.get(row.id, 0.0)
+        planned_amt = planned_amounts_map.get(row.id, 0.0)
+        remaining = calc - spent
+        discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
         contractor_inn = None
@@ -331,6 +339,10 @@ async def dashboard_charts(
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
             "contractor_name": contractor_name,
             "contractor_inn": contractor_inn,
+            # Phase 31-05: canonical budget fields (D-17)
+            "remaining": remaining,
+            "planned_amount": planned_amt,
+            "budget_discrepancy": discrepancy,
         })
 
     return {

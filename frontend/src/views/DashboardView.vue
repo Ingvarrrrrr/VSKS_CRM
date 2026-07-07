@@ -500,8 +500,17 @@
                   <td class="text-right text-blue-grey">{{ formatCurrency(s.total_feo_planned ?? 0) }}</td>
                   <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
                   <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
-                  <td class="text-right" :class="s.budget - s.paid >= 0 ? 'text-success' : 'text-error'">
-                    {{ formatCurrency(s.budget - s.paid) }}
+                  <td class="text-right" :class="(s.remaining ?? (s.budget - s.paid)) >= 0 ? 'text-success' : 'text-error'">
+                    {{ formatCurrency(s.remaining ?? (s.budget - s.paid)) }}
+                    <!-- Phase 31-05: discrepancy chip (D-15) -->
+                    <v-chip
+                      v-if="s.budget_discrepancy !== null && s.budget_discrepancy !== undefined && Math.abs(s.budget_discrepancy) > 0.01"
+                      color="#fb923c"
+                      size="x-small"
+                      class="ml-1"
+                      prepend-icon="mdi-alert"
+                      :title="'Расхождение суммы ФЭО-разбивки и плановой суммы субсидии'"
+                    >Δ {{ Math.abs(s.budget_discrepancy).toLocaleString('ru-RU', {maximumFractionDigits:0}) }} ₽</v-chip>
                   </td>
                   <td>
                     <v-progress-linear
@@ -1053,6 +1062,10 @@ interface SubsidyRow {
   budget: number; contracted: number; paid: number; planned: number
   plan_schedule: number; ordered: number
   total_feo_planned: number  // 12-01
+  // Phase 31-05: canonical budget fields
+  remaining?: number | null
+  planned_amount?: number | null
+  budget_discrepancy?: number | null
 }
 
 const allSubsidies    = ref<SubsidyRow[]>([])
@@ -1645,6 +1658,10 @@ async function loadAll() {
       plan_schedule: s.total_plan_schedule ?? 0,
       ordered: s.total_ordered ?? 0,
       total_feo_planned: s.total_feo_planned ?? 0,  // 12-01
+      // Phase 31-05: canonical budget fields (D-17) — from server, not recalculated on client
+      remaining: s.remaining ?? null,
+      planned_amount: s.planned_amount ?? null,
+      budget_discrepancy: s.budget_discrepancy ?? null,
     }))
 
     statusCounts.value = chartsData.status_counts

@@ -31,6 +31,8 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from app.database import get_db, engine
 from app.models.subsidy import Subsidy
 from app.models.feo_category import FeoCategory
+from app.models.feo_planned_item import FeoPlannedItem
+from app.models.purchase import Purchase
 from app.models.subsidy_contractor_override import SubsidyContractorOverride
 from app.models.contractor import Contractor
 from app.schemas.schemas import (
@@ -112,6 +114,81 @@ async def calculate_budgets_bulk(db: AsyncSession, subsidy_ids: list[int]) -> di
     return {sid: _budget_from_tree(by_subsidy.get(sid, [])) for sid in subsidy_ids}
 
 
+# Статусы, исключаемые из подсчёта потраченного (отменённые закупки не занимают бюджет)
+_EXCLUDED_FROM_SPENT: tuple = ("cancelled",)
+
+
+async def _calculate_spent(
+    db: AsyncSession,
+    subsidy_id: int,
+    exclude_purchase_id: Optional[int] = None,
+) -> float:
+    """Σ planned_total_price по активным закупкам субсидии (кроме cancelled)."""
+    q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
+        Purchase.subsidy_id == subsidy_id,
+        Purchase.status.notin_(_EXCLUDED_FROM_SPENT),
+    )
+    if exclude_purchase_id:
+        q = q.where(Purchase.id != exclude_purchase_id)
+    result = await db.execute(q)
+    return float(result.scalar() or 0)
+
+
+async def _calculate_planned_amount(db: AsyncSession, subsidy_id: int) -> float:
+    """Σ FeoPlannedItem.amount для субсидии (ФЭО плановая сумма)."""
+    q = select(func.coalesce(func.sum(FeoPlannedItem.amount), 0)).join(
+        FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id
+    ).where(
+        FeoCategory.subsidy_id == subsidy_id,
+        FeoPlannedItem.is_active == True,
+    )
+    result = await db.execute(q)
+    return float(result.scalar() or 0)
+
+
+async def _calculate_planned_amounts_bulk(
+    db: AsyncSession, subsidy_ids: list[int]
+) -> dict[int, float]:
+    """Batch Σ FeoPlannedItem.amount для набора субсидий."""
+    if not subsidy_ids:
+        return {}
+    q = (
+        select(FeoCategory.subsidy_id, func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("total"))
+        .join(FeoPlannedItem, FeoPlannedItem.feo_category_id == FeoCategory.id)
+        .where(
+            FeoCategory.subsidy_id.in_(subsidy_ids),
+            FeoPlannedItem.is_active == True,
+        )
+        .group_by(FeoCategory.subsidy_id)
+    )
+    rows = (await db.execute(q)).all()
+    result = {sid: 0.0 for sid in subsidy_ids}
+    for r in rows:
+        result[r.subsidy_id] = float(r.total)
+    return result
+
+
+async def _calculate_spent_bulk(
+    db: AsyncSession, subsidy_ids: list[int]
+) -> dict[int, float]:
+    """Batch Σ planned_total_price для набора субсидий (кроме cancelled)."""
+    if not subsidy_ids:
+        return {}
+    q = (
+        select(Purchase.subsidy_id, func.coalesce(func.sum(Purchase.planned_total_price), 0).label("spent"))
+        .where(
+            Purchase.subsidy_id.in_(subsidy_ids),
+            Purchase.status.notin_(_EXCLUDED_FROM_SPENT),
+        )
+        .group_by(Purchase.subsidy_id)
+    )
+    rows = (await db.execute(q)).all()
+    result = {sid: 0.0 for sid in subsidy_ids}
+    for r in rows:
+        result[r.subsidy_id] = float(r.spent)
+    return result
+
+
 @router.get("/", response_model=List[SubsidyOut])
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
@@ -154,7 +231,10 @@ async def list_subsidies(
 
     # Batch-загрузка вместо N+1: бюджеты/контрагенты/орги одним IN-запросом каждый
     from app.models.organization import Organization
-    budgets = await calculate_budgets_bulk(db, [s.id for s in subsidies])
+    sid_list = [s.id for s in subsidies]
+    budgets = await calculate_budgets_bulk(db, sid_list)
+    spent_map = await _calculate_spent_bulk(db, sid_list)
+    planned_amounts = await _calculate_planned_amounts_bulk(db, sid_list)
     contractor_ids = {s.contractor_id for s in subsidies if s.contractor_id}
     contractors = {}
     if contractor_ids:
@@ -178,10 +258,18 @@ async def list_subsidies(
         if calc > 0 and s.budget != calc:
             s.budget = calc
 
+        spent = spent_map.get(s.id, 0.0)
+        planned_amt = planned_amounts.get(s.id, 0.0)
+        remaining = calc - spent
+        discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
+
         d = {c.name: getattr(s, c.name) for c in s.__table__.columns}
         d["calculated_budget"] = calc
         d["feo_filled"] = calc > 0
         d["feo_budget_total"] = calc
+        d["remaining"] = remaining
+        d["planned_amount"] = planned_amt
+        d["budget_discrepancy"] = discrepancy
         contractor = contractors.get(s.contractor_id) if s.contractor_id else None
         d["contractor_name"] = contractor.name if contractor else None
         d["contractor_inn"] = contractor.inn if contractor else None
@@ -208,10 +296,18 @@ async def get_subsidy(
         subsidy.budget = calc
     await db.commit()
 
+    spent = await _calculate_spent(db, subsidy.id)
+    planned_amt = await _calculate_planned_amount(db, subsidy.id)
+    remaining = calc - spent
+    discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
+
     d = {c.name: getattr(subsidy, c.name) for c in subsidy.__table__.columns}
     d["calculated_budget"] = calc
     d["feo_filled"] = calc > 0
     d["feo_budget_total"] = calc
+    d["remaining"] = remaining
+    d["planned_amount"] = planned_amt
+    d["budget_discrepancy"] = discrepancy
     if subsidy.contractor_id:
         contractor = await db.get(Contractor, subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
@@ -220,6 +316,44 @@ async def get_subsidy(
         d["contractor_name"] = None
         d["contractor_inn"] = None
     return d
+
+
+@router.get("/{subsidy_id}/budget-check")
+async def budget_check(
+    subsidy_id: int,
+    exclude_purchase_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Canonical budget-check endpoint (D-17).
+
+    Returns limit (ФЭО-tree budget), spent (Σ active purchases), remaining, discrepancy.
+    T-31-05-01: read-access validated — only subsidies visible to user.
+    """
+    from app.auth.visibility import get_visible_subsidy_ids
+    # Security: ensure user has read-access to this subsidy
+    visible = await get_visible_subsidy_ids(current_user, db)
+    if visible is not None and subsidy_id not in visible:
+        raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not subsidy:
+        raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    limit = await calculate_budget_from_categories(db, subsidy_id)
+    spent = await _calculate_spent(db, subsidy_id, exclude_purchase_id=exclude_purchase_id)
+    planned_amt = await _calculate_planned_amount(db, subsidy_id)
+    remaining = limit - spent
+    discrepancy = (limit - planned_amt) if abs(limit - planned_amt) > 0.01 else 0.0
+
+    return {
+        "limit": limit,
+        "spent": spent,
+        "remaining": remaining,
+        "planned_amount": planned_amt,
+        "discrepancy": discrepancy,
+    }
+
 
 async def _materialize_org_from_contractor(db: AsyncSession, contractor):
     """Find-or-create Organization, зеркалящую контрагента (получатель субсидии),

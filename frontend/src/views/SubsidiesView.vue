@@ -173,6 +173,20 @@
                 paid: s.paid,
               }"
             />
+            <!-- Phase 31-05: остаток бюджета + discrepancy chip (D-15, D-17) -->
+            <div v-if="s.remaining !== undefined && s.remaining !== null" class="sc-remaining mt-1">
+              <span :style="s.remaining < 0 ? 'color:#ef4444;font-weight:600' : 'color:#6b7280'">
+                Остаток: {{ formatCurrencyShort(s.remaining) }}
+              </span>
+            </div>
+            <v-chip
+              v-if="s.budget_discrepancy !== null && s.budget_discrepancy !== undefined && Math.abs(s.budget_discrepancy) > 0.01"
+              color="#fb923c"
+              size="small"
+              class="mt-1"
+              prepend-icon="mdi-alert"
+              :title="'Расхождение суммы ФЭО-разбивки и плановой суммы субсидии'"
+            >Σ ФЭО ≠ план: Δ {{ Math.abs(s.budget_discrepancy).toLocaleString('ru-RU', {maximumFractionDigits:0}) }} ₽</v-chip>
             <div v-if="s.contractor_name" class="sc-contractor">
               <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
               <span>{{ s.contractor_name }}</span>
@@ -2360,6 +2374,10 @@ interface SubsidyRow {
   contractor_inn?: string
   basis_doc_number?: string
   basis_doc_date?: string
+  // Phase 31-05: canonical budget fields
+  remaining?: number | null
+  planned_amount?: number | null
+  budget_discrepancy?: number | null
 }
 
 interface FeoCategory {
@@ -3445,6 +3463,10 @@ async function loadAll() {
       contractor_id: s.contractor_id ?? null,
       contractor_name: s.contractor_name ?? null,
       contractor_inn: s.contractor_inn ?? null,
+      // Phase 31-05: canonical budget fields (D-17)
+      remaining: s.remaining ?? null,
+      planned_amount: s.planned_amount ?? null,
+      budget_discrepancy: s.budget_discrepancy ?? null,
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year

@@ -4505,7 +4505,7 @@ async function confirmDocDownload() {
 }
 const snack = reactive({ show: false, text: '', color: 'success', actionText: '' as string, onAction: null as (() => void) | null })
 const itemsEditorRef = ref<any>(null)
-const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number } | null>(null)
+const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
 const authStore = useAuthStore()
 const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
@@ -5647,7 +5647,7 @@ const onSubsidyChange = async () => {
   selectedFeo2.value = null
   selectedFeo3.value = null
   feoSaveAttempted.value = false
-  calcBudget()
+  fetchRemaining()
   loadResponsiblePersons()
   // Pre-fill delivery address from org if empty & load address history
   loadDeliveryAddressHistory()
@@ -5686,23 +5686,29 @@ const nmckWarningLevel = computed((): 'error' | 'warning' | null => {
   return null
 })
 
-const calcBudget = async () => {
+// Phase 31-05: server-side remaining (D-17); replaces client-side calcBudget.
+// exclude_purchase_id excludes current purchase from spent on UPDATE (D-16 correct remaining).
+const fetchRemaining = async () => {
   if (!form.subsidy_id) { budgetInfo.value = null; return }
   try {
-    const all = await apiFetch<any[]>(`/purchases/?subsidy_id=${form.subsidy_id}`)
-    const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
-    if (!subsidy) return
-    const total = all
-      .filter(p => !purchaseId.value || p.id !== purchaseId.value)
-      .reduce((s, p) => s + (Number(p.planned_total_price) || 0), 0)
-    const mine = totalNmck.value
-    const remaining = subsidy.budget - total - mine
-    budgetInfo.value = { remaining, exceeded: remaining < 0, over: remaining < 0 ? -remaining : 0 }
+    const params = new URLSearchParams()
+    if (purchaseId.value) params.set('exclude_purchase_id', String(purchaseId.value))
+    const data = await apiFetch<{ limit: number; spent: number; remaining: number; planned_amount: number; discrepancy: number }>(
+      `/api/subsidies/${form.subsidy_id}/budget-check?${params.toString()}`
+    )
+    const remaining = data.remaining - totalNmck.value
+    budgetInfo.value = {
+      remaining,
+      exceeded: remaining < 0,
+      over: remaining < 0 ? -remaining : 0,
+      limit: data.limit,
+      spent: data.spent,
+    }
   } catch {}
 }
 
-watch(totalNmck, () => { calcEconomy(); calcBudget() })
-watch(nmckMode, () => { syncContractPriceIfSingle(); calcEconomy(); calcBudget() })
+watch(totalNmck, () => { calcEconomy(); fetchRemaining() })
+watch(nmckMode, () => { syncContractPriceIfSingle(); calcEconomy(); fetchRemaining() })
 watch(nmckManualValue, () => { syncContractPriceIfSingle(); calcEconomy() })
 watch(contractPriceMode, () => { syncContractPriceIfSingle() })
 
@@ -6258,7 +6264,7 @@ const loadPurchase = async () => {
     }))
   }
 
-  calcBudget()
+  fetchRemaining()
 
   // Restore manual НМЦД if saved value differs from items total
   if (savedNmck.value != null && !isContracted.value) {

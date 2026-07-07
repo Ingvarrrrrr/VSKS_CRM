@@ -143,7 +143,7 @@
                 <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
                   label="Субсидия *" variant="outlined" density="compact"
                   hint="По какой субсидии финансируется закупка" persistent-hint
-                  :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
+                  :rules="[r => !!r || 'Выберите субсидию']" data-field="subsidy_id" @update:model-value="onSubsidyChange" />
               </div>
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="3">
@@ -163,6 +163,7 @@
                   :loading="contractorSearchLoading"
                   :menu-props="{ maxWidth: 500 }"
                   hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
+                  data-field="contractor_id"
                   @update:search="onContractorSearch"
                   @update:model-value="onContractorSelect"
                   @click:clear="onContractorClear"
@@ -251,6 +252,7 @@
                   density="compact"
                   placeholder="Поставка оборудования..."
                   hint="Краткое описание: что закупается" persistent-hint
+                  data-field="subject"
                 />
                 <div v-if="entityChanges.isFieldUnseen('subject')" class="field-changed-info" @click.stop="openFieldHistory('subject')">
                   <v-icon size="14" color="#fb923c">mdi-history</v-icon>
@@ -1034,6 +1036,7 @@
                   :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
                   persistent-hint
                   :readonly="!isNew && !contractNumberEditEnabled"
+                  data-field="contract_number"
                   @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
               </div>
             </v-col>
@@ -1041,7 +1044,7 @@
               <div :class="entityChanges.isFieldUnseen('contract_date') ? 'field-changed' : ''"
                 @click="entityChanges.dismissField('contract_date')">
                 <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
-                  density="compact" type="date" :rules="contractDateRules" />
+                  density="compact" type="date" :rules="contractDateRules" data-field="contract_date" />
               </div>
             </v-col>
             <!-- Phase 31-04: contract_conflict chip + «Взять из договора» button -->
@@ -2410,6 +2413,25 @@
           />
           {{ autosaveState === 'saving' ? 'Сохраняется…' : autosaveState === 'saved' ? 'Сохранено' : 'Не сохранилось' }}
         </v-chip>
+        <!-- Phase 31-07: Undo/Redo кнопки -->
+        <v-btn
+          :disabled="!_undoRedo?.canUndo.value"
+          icon="mdi-undo"
+          size="small"
+          variant="text"
+          :color="_undoRedo?.canUndo.value ? '#fb923c' : undefined"
+          title="Отменить (Ctrl+Z)"
+          @click="_undoRedo?.undo()"
+        />
+        <v-btn
+          :disabled="!_undoRedo?.canRedo.value"
+          icon="mdi-redo"
+          size="small"
+          variant="text"
+          :color="_undoRedo?.canRedo.value ? '#fb923c' : undefined"
+          title="Повторить (Ctrl+Y)"
+          @click="_undoRedo?.redo()"
+        />
         <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
           → {{ STATUS_LABEL[nextStatusTarget] }}
@@ -3462,7 +3484,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick, shallowRef } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -3493,6 +3515,7 @@ import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
 import { useDisplay } from 'vuetify'
 import { useEntityChanges } from '@/composables/useEntityChanges'
+import { useUndoRedo } from '@/composables/useUndoRedo'
 
 const { mobile } = useDisplay()
 
@@ -3556,6 +3579,13 @@ const autosaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const autosaveError = ref<string | null>(null)
 let serverAutosaveTimer: any = null
 let autosaveBaseline = ''
+
+// Phase 31-07: Undo/Redo — shallowRef wraps reactive form so composable can mutate fields via .value[field]
+// Wiring happens here (after form reactive is declared at line ~3724) — composable is safe to use from any point below.
+// Note: formRef.value IS the same reactive object as form — mutations flow through Vue reactivity normally.
+let _undoRedo: ReturnType<typeof useUndoRedo> | null = null
+// pendingUndoBlur tracks the value of a field at focusin so we can push on focusout
+let _pendingUndoBlur: { field: string; before: unknown } | null = null
 
 // Role-based visibility
 const userRole = localStorage.getItem('user_role') || 'employee'
@@ -4001,6 +4031,44 @@ const _focusoutHandler = (e: FocusEvent) => {
 onMounted(() => document.addEventListener('focusout', _focusoutHandler, true))
 onUnmounted(() => document.removeEventListener('focusout', _focusoutHandler, true))
 onMounted(() => { if (!authStore.loaded) authStore.loadPermissions() })
+
+// Phase 31-07: Undo/Redo init — form is reactive, wrap in shallowRef so composable can mutate via .value[field]
+const _formRef = shallowRef(form as Record<string, any>)
+_undoRedo = useUndoRedo(_formRef, {
+  onAfterUndoRedo: async () => {
+    // D-12: clear pending debounce and immediately persist rolled-back state
+    if (serverAutosaveTimer) { clearTimeout(serverAutosaveTimer); serverAutosaveTimer = null }
+    await performAutosave()
+  },
+})
+
+// Field-level blur tracking for undo push (data-field attribute on inputs)
+const _undoFocusinHandler = (e: FocusEvent) => {
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (!field) return
+  _pendingUndoBlur = { field, before: (form as any)[field] }
+}
+const _undoFocusoutHandler = (e: FocusEvent) => {
+  if (!_pendingUndoBlur) return
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (field && field === _pendingUndoBlur.field) {
+    const after = (form as any)[field]
+    _undoRedo?.push(field, _pendingUndoBlur.before, after)
+  }
+  _pendingUndoBlur = null
+}
+onMounted(() => {
+  document.addEventListener('focusin', _undoFocusinHandler, true)
+  document.addEventListener('focusout', _undoFocusoutHandler, true)
+})
+onUnmounted(() => {
+  document.removeEventListener('focusin', _undoFocusinHandler, true)
+  document.removeEventListener('focusout', _undoFocusoutHandler, true)
+})
 
 function activeDescription(item: OrderItem): string | undefined {
   if (form.description_mode === '44fz') return item._description_44fz || item._description
@@ -6330,6 +6398,8 @@ const loadPurchase = async () => {
   purchaseLoaded.value = true
   // Phase 31-06: sync unseen_fields from freshly loaded purchase
   entityChanges.syncFromEntity(data.unseen_fields ?? [])
+  // Phase 31-07: clear undo stack when a new purchase record is loaded
+  _undoRedo?.clear()
 }
 
 // ---------------------------------------------------------------------------

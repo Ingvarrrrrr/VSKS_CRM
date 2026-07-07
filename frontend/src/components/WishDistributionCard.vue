@@ -22,6 +22,9 @@
 </template>
 
 <script setup lang="ts">
+// Phase 31-07: Undo/Redo is wired in WishesView.vue (wishForm ref + undoRedoWish composable).
+// WishDistributionCard is a display-only kanban tile with no editable form state,
+// so the undo/redo integration lives in the view that owns the edit dialog.
 import { computed } from 'vue'
 
 interface WishItem {

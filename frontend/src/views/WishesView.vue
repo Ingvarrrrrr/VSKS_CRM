@@ -794,8 +794,29 @@
             <div class="text-body-2 text-medium-emphasis">Загрузка позиций…</div>
           </div>
         </v-overlay>
-        <v-card-title class="pa-4 pb-2">
-          {{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}
+        <v-card-title class="pa-4 pb-2 d-flex align-center justify-space-between">
+          <span>{{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}</span>
+          <!-- Phase 31-07: Undo/Redo кнопки -->
+          <div class="d-flex ga-1 align-center">
+            <v-btn
+              :disabled="!undoRedoWish.canUndo.value"
+              icon="mdi-undo"
+              size="x-small"
+              variant="text"
+              :color="undoRedoWish.canUndo.value ? '#fb923c' : undefined"
+              title="Отменить (Ctrl+Z)"
+              @click="undoRedoWish.undo()"
+            />
+            <v-btn
+              :disabled="!undoRedoWish.canRedo.value"
+              icon="mdi-redo"
+              size="x-small"
+              variant="text"
+              :color="undoRedoWish.canRedo.value ? '#fb923c' : undefined"
+              title="Повторить (Ctrl+Y)"
+              @click="undoRedoWish.redo()"
+            />
+          </div>
         </v-card-title>
         <!-- B6 — от кого/кому/дата/статус -->
         <v-card-subtitle v-if="editingWish" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
@@ -855,6 +876,7 @@
                       :rules="[v => !!v || 'Выберите субсидию']"
                       clearable
                       :readonly="!isWishEditable"
+                      data-field="subsidy_id"
                       @update:model-value="onSubsidyChange"
                     />
                   </v-col>
@@ -1148,6 +1170,7 @@
                       hint="Почему это необходимо для работы"
                       persistent-hint
                       :readonly="!isWishEditable"
+                      data-field="justification"
                     />
                   </v-col>
                   <v-col cols="12" md="6">
@@ -1158,6 +1181,7 @@
                       variant="outlined"
                       density="compact"
                       :readonly="!isWishEditable"
+                      data-field="priority"
                     />
                   </v-col>
                   <v-col cols="12" md="6">
@@ -1330,7 +1354,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
+import { useUndoRedo } from '@/composables/useUndoRedo'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
@@ -1700,6 +1725,36 @@ const wishForm = ref({
   execution_deadline: '' as string,
 })
 
+// Phase 31-07: Undo/Redo for wish edit form (WishDistributionCard is display-only;
+// actual wish editing happens here in WishesView via wishForm ref)
+const undoRedoWish = useUndoRedo(wishForm as any)
+let _wishPendingBlur: { field: string; before: unknown } | null = null
+const _wishFocusinHandler = (e: FocusEvent) => {
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (!field) return
+  _wishPendingBlur = { field, before: (wishForm.value as any)[field] }
+}
+const _wishFocusoutHandler = (e: FocusEvent) => {
+  if (!_wishPendingBlur) return
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (field && field === _wishPendingBlur.field) {
+    undoRedoWish.push(field, _wishPendingBlur.before, (wishForm.value as any)[field])
+  }
+  _wishPendingBlur = null
+}
+onMounted(() => {
+  document.addEventListener('focusin', _wishFocusinHandler, true)
+  document.addEventListener('focusout', _wishFocusoutHandler, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('focusin', _wishFocusinHandler, true)
+  document.removeEventListener('focusout', _wishFocusoutHandler, true)
+})
+
 // Watchers зависят от wishForm — объявлены ПОСЛЕ его ref, иначе immediate:true
 // дёргает getter в TDZ (ReferenceError: Cannot access 'wishForm' before initialization)
 watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
@@ -1855,10 +1910,12 @@ function openCreateDialog() {
   editingWish.value = null
   wishMembers.value = []
   resetForm()
+  undoRedoWish.clear() // Phase 31-07: fresh stack per dialog open
   wishDialog.value = true
 }
 
 async function openEditDialog(wish: Wish) {
+  undoRedoWish.clear() // Phase 31-07: fresh stack per dialog open
   editingWishId.value = wish.id
   editingWish.value = wish
   resetForm()

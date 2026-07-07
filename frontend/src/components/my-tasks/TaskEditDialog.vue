@@ -11,23 +11,42 @@
           <v-chip v-if="editingTask && isTaskReadonly" size="small" variant="tonal" color="warning" prepend-icon="mdi-lock-outline">
             Только статус
           </v-chip>
+          <!-- Phase 31-07: Undo/Redo кнопки -->
+          <v-btn
+            :disabled="!undoRedo.canUndo.value"
+            icon="mdi-undo"
+            size="x-small"
+            variant="text"
+            :color="undoRedo.canUndo.value ? '#fb923c' : undefined"
+            title="Отменить (Ctrl+Z)"
+            @click="undoRedo.undo()"
+          />
+          <v-btn
+            :disabled="!undoRedo.canRedo.value"
+            icon="mdi-redo"
+            size="x-small"
+            variant="text"
+            :color="undoRedo.canRedo.value ? '#fb923c' : undefined"
+            title="Повторить (Ctrl+Y)"
+            @click="undoRedo.redo()"
+          />
         </div>
       </v-card-title>
       <v-card-text>
         <div :class="isFieldUnseen('title') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('title')">
-          <v-text-field v-model="localForm.title" label="Название *" variant="outlined" density="compact" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          <v-text-field v-model="localForm.title" label="Название *" variant="outlined" density="compact" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" data-field="title" />
         </div>
         <div :class="isFieldUnseen('description') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('description')">
-          <v-textarea v-model="localForm.description" label="Описание" variant="outlined" density="compact" rows="2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          <v-textarea v-model="localForm.description" label="Описание" variant="outlined" density="compact" rows="2" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" data-field="description" />
         </div>
         <div class="d-flex ga-2 mb-2">
           <div :class="isFieldUnseen('priority') ? 'field-changed' : ''" style="max-width:200px;flex:0 0 auto" @click="dismissField('priority')">
-            <v-select v-model="localForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" :disabled="isTaskReadonly" />
+            <v-select v-model="localForm.priority" :items="priorityItems" label="Приоритет" variant="outlined" density="compact" :disabled="isTaskReadonly" data-field="priority" />
           </div>
           <v-combobox v-model="localForm.category" :items="taskCategories" label="Категория" variant="outlined" density="compact" clearable :disabled="isTaskReadonly" />
         </div>
         <div :class="isFieldUnseen('due_date') ? 'field-changed mb-2' : 'mb-2'" @click="dismissField('due_date')">
-          <v-text-field v-model="localForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" />
+          <v-text-field v-model="localForm.due_date" label="Срок исполнения" variant="outlined" density="compact" type="date" :min="todayStr" :rules="[dueDateRule]" :readonly="isTaskReadonly" :bg-color="isTaskReadonly ? 'grey-lighten-4' : undefined" data-field="due_date" />
         </div>
         <div class="mb-2">
           <v-select
@@ -221,7 +240,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useUndoRedo } from '@/composables/useUndoRedo'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
@@ -254,6 +274,38 @@ const router = useRouter()
 const localForm = ref({ ...props.taskForm })
 
 watch(() => props.taskForm, (v) => { localForm.value = { ...v } }, { deep: true })
+
+// Phase 31-07: Undo/Redo for task form (in-memory, no autosave — save on button)
+const undoRedo = useUndoRedo(localForm as any)
+// Clear undo stack when the dialog opens a new/different task
+watch(() => props.editingTask, () => { undoRedo.clear() })
+// Blur-driven field snapshot for push
+let _taskPendingBlur: { field: string; before: unknown } | null = null
+const _taskFocusinHandler = (e: FocusEvent) => {
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (!field) return
+  _taskPendingBlur = { field, before: (localForm.value as any)[field] }
+}
+const _taskFocusoutHandler = (e: FocusEvent) => {
+  if (!_taskPendingBlur) return
+  const t = e.target as HTMLElement | null
+  if (!t) return
+  const field = t.dataset?.field || (t.closest('[data-field]') as HTMLElement | null)?.dataset?.field
+  if (field && field === _taskPendingBlur.field) {
+    undoRedo.push(field, _taskPendingBlur.before, (localForm.value as any)[field])
+  }
+  _taskPendingBlur = null
+}
+onMounted(() => {
+  document.addEventListener('focusin', _taskFocusinHandler, true)
+  document.addEventListener('focusout', _taskFocusoutHandler, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('focusin', _taskFocusinHandler, true)
+  document.removeEventListener('focusout', _taskFocusoutHandler, true)
+})
 
 const todayStr = new Date().toISOString().split('T')[0]
 const dueDateRule = (v: string) => !v || v >= todayStr || 'Срок не может быть раньше сегодня'

@@ -306,6 +306,7 @@ const props = defineProps<{
   isManager: boolean
   isAdmin: boolean
   visible: boolean
+  subsidyId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -349,7 +350,10 @@ const usersList = ref<Array<{ id: number; full_name: string }>>([])
 
 async function loadUsers() {
   try {
-    const data = await apiFetch<any[]>('/users/')
+    // Согласующим по закупке с субсидией может быть только сотрудник орг(а)
+    // субсидии или человек с персональным доступом к ней.
+    const qs = props.subsidyId ? `?subsidy_id=${props.subsidyId}` : ''
+    const data = await apiFetch<any[]>(`/users/${qs}`)
     usersList.value = data
       .filter((u: any) => u.full_name)
       .map((u: any) => ({ id: u.id, full_name: u.full_name }))
@@ -359,7 +363,7 @@ async function loadUsers() {
 async function openAddApproverDialog() {
   addApproverForm.value = { selectedUser: null, role_name: '' }
   addApproverDialog.value = true
-  if (!usersList.value.length) await loadUsers()
+  await loadUsers()
 }
 
 async function submitAddApprover() {

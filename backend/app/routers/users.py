@@ -90,26 +90,37 @@ async def list_users(
                 target_org_ids.update(inn_org_ids)
     if explicit_assign_mode:
         from sqlalchemy import or_
-        from app.services.consent import compute_assignable_user_ids
-        # Кому вызывающий может ставить задачи. None = super-роль → ВСЕ (без ограничений).
-        assignable = await compute_assignable_user_ids(current_user, db)
-        if assignable is not None:
-            from app.models.user_organization import UserOrganization
-            conds = []
-            if target_org_ids:
-                target_list = list(target_org_ids)
-                member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
-                conds += [User.org_id.in_(target_list), User.id.in_(member_q)]
-                try:
-                    from app.models.user_org_access import UserOrgAccess
-                    uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
-                    conds.append(User.id.in_(uoa_q))
-                except Exception:
-                    pass
-            if assignable:
-                conds.append(User.id.in_(list(assignable)))
-            # Пустой conds (нет ни орг, ни assignable) → вернуть пусто, не весь список.
-            q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
+        from app.models.user_organization import UserOrganization
+
+        def _org_member_conds(target_list: list[int]) -> list:
+            member_q = select(UserOrganization.user_id).where(UserOrganization.org_id.in_(target_list))
+            conds = [User.org_id.in_(target_list), User.id.in_(member_q)]
+            from app.models.user_org_access import UserOrgAccess
+            uoa_q = select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(target_list))
+            conds.append(User.id.in_(uoa_q))
+            return conds
+
+        if subsidy_id is not None:
+            # СТРОГО по субсидии (для всех ролей, включая super): исполнителями и
+            # согласующими могут быть только сотрудники орг(а) субсидии или люди
+            # с персональным доступом к ней — иначе не закрыться по документам.
+            # Никакого union с «кому могу ставить задачи» и контуром.
+            from app.models.user_subsidy_access import UserSubsidyAccess
+            conds = _org_member_conds(list(target_org_ids)) if target_org_ids else []
+            conds.append(User.id.in_(
+                select(UserSubsidyAccess.user_id).where(UserSubsidyAccess.subsidy_id == subsidy_id)
+            ))
+            q = q.where(or_(*conds))
+        else:
+            from app.services.consent import compute_assignable_user_ids
+            # Кому вызывающий может ставить задачи. None = super-роль → ВСЕ (без ограничений).
+            assignable = await compute_assignable_user_ids(current_user, db)
+            if assignable is not None:
+                conds = _org_member_conds(list(target_org_ids)) if target_org_ids else []
+                if assignable:
+                    conds.append(User.id.in_(list(assignable)))
+                # Пустой conds (нет ни орг, ни assignable) → вернуть пусто, не весь список.
+                q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
     elif org_ids is not None:
         # Обычный режим (без явной цели) — ограничиваем контуром вызывающего.
         # Bugfix: членство в орг определяется не только primary User.org_id, но и

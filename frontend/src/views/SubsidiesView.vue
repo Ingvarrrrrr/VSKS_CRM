@@ -2558,11 +2558,16 @@ async function confirmCopyTemplates() {
   }
 }
 
+let _approverUsersSubsidyId: number | null = null
 async function loadApproverUsers() {
-  if (approverUsersList.value.length) return
+  // Согласующим может быть только сотрудник орг(а) субсидии или человек
+  // с персональным доступом к ней — не весь контур.
+  const sid = approversSubsidy.value?.id ?? null
+  if (approverUsersList.value.length && _approverUsersSubsidyId === sid) return
   try {
-    const data = await apiFetch<any[]>('/users/')
+    const data = await apiFetch<any[]>(`/users/${sid ? `?subsidy_id=${sid}` : ''}`)
     approverUsersList.value = data
+    _approverUsersSubsidyId = sid
   } catch { approverUsersList.value = [] }
 }
 

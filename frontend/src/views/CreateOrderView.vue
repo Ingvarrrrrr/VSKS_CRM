@@ -138,45 +138,51 @@
         <v-card-text>
           <v-row>
             <v-col cols="12" md="3">
-              <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
-                label="Субсидия *" variant="outlined" density="compact"
-                hint="По какой субсидии финансируется закупка" persistent-hint
-                :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
+              <div :class="entityChanges.isFieldUnseen('subsidy_id') ? 'field-changed' : ''"
+                @click="entityChanges.dismissField('subsidy_id')">
+                <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
+                  label="Субсидия *" variant="outlined" density="compact"
+                  hint="По какой субсидии финансируется закупка" persistent-hint
+                  :rules="[r => !!r || 'Выберите субсидию']" @update:model-value="onSubsidyChange" />
+              </div>
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="3">
-              <v-autocomplete
-                v-model="form.contractor_id"
-                :items="contractors"
-                item-title="name"
-                item-value="id"
-                label="Контрагент"
-                variant="outlined"
-                density="compact"
-                clearable
-                auto-select-first
-                :custom-filter="contractorFilter"
-                :loading="contractorSearchLoading"
-                :menu-props="{ maxWidth: 500 }"
-                hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
-                @update:search="onContractorSearch"
-                @update:model-value="onContractorSelect"
-                @click:clear="onContractorClear"
-              >
-                <template #item="{ item, props: itemProps }">
-                  <v-list-item v-bind="itemProps" :title="undefined">
-                    <template #title>
-                      <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
-                    </template>
-                    <template #subtitle>
-                      <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
-                    </template>
-                  </v-list-item>
-                </template>
-                <template #append-inner>
-                  <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
-                    title="Добавить контрагента" @click.stop="openAddContractor" />
-                </template>
-              </v-autocomplete>
+              <div :class="entityChanges.isFieldUnseen('contractor_id') ? 'field-changed' : ''"
+                @click="entityChanges.dismissField('contractor_id')">
+                <v-autocomplete
+                  v-model="form.contractor_id"
+                  :items="contractors"
+                  item-title="name"
+                  item-value="id"
+                  label="Контрагент"
+                  variant="outlined"
+                  density="compact"
+                  clearable
+                  auto-select-first
+                  :custom-filter="contractorFilter"
+                  :loading="contractorSearchLoading"
+                  :menu-props="{ maxWidth: 500 }"
+                  hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
+                  @update:search="onContractorSearch"
+                  @update:model-value="onContractorSelect"
+                  @click:clear="onContractorClear"
+                >
+                  <template #item="{ item, props: itemProps }">
+                    <v-list-item v-bind="itemProps" :title="undefined">
+                      <template #title>
+                        <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
+                      </template>
+                      <template #subtitle>
+                        <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
+                      </template>
+                    </v-list-item>
+                  </template>
+                  <template #append-inner>
+                    <v-btn icon="mdi-account-plus" size="x-small" variant="text" color="teal"
+                      title="Добавить контрагента" @click.stop="openAddContractor" />
+                  </template>
+                </v-autocomplete>
+              </div>
             </v-col>
             <!-- Contract type choice after selecting contractor -->
             <v-col v-if="showContractTypeChoice" cols="12">
@@ -236,14 +242,32 @@
               />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
-              <v-text-field
-                v-model="form.subject"
-                :label="formMode === 'advance_report' ? 'Предмет авансового' : `Предмет ${contractWordGen}`"
-                variant="outlined"
-                density="compact"
-                placeholder="Поставка оборудования..."
-                hint="Краткое описание: что закупается" persistent-hint
-              />
+              <div :class="entityChanges.isFieldUnseen('subject') ? 'field-changed' : ''"
+                @click="entityChanges.dismissField('subject')">
+                <v-text-field
+                  v-model="form.subject"
+                  :label="formMode === 'advance_report' ? 'Предмет авансового' : `Предмет ${contractWordGen}`"
+                  variant="outlined"
+                  density="compact"
+                  placeholder="Поставка оборудования..."
+                  hint="Краткое описание: что закупается" persistent-hint
+                />
+                <div v-if="entityChanges.isFieldUnseen('subject')" class="field-changed-info" @click.stop="openFieldHistory('subject')">
+                  <v-icon size="14" color="#fb923c">mdi-history</v-icon>
+                  <span class="text-caption" style="color:#fb923c;margin-left:2px">изменено — нажмите чтобы увидеть</span>
+                  <v-card v-if="fieldHistoryMenu['subject']" class="field-history-card elevation-4 pa-2" @click.stop>
+                    <div v-if="fieldHistoryData['subject']?.length">
+                      <div v-for="(h, idx) in fieldHistoryData['subject']" :key="idx" class="text-caption mb-1">
+                        <span class="text-medium-emphasis">было: </span><b>{{ h.old_value ?? '—' }}</b>
+                        <span v-if="h.changed_by_name" class="text-medium-emphasis">, {{ h.changed_by_name }}</span>
+                        <span class="text-medium-emphasis">, {{ formatHistoryDate(h.changed_at) }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="text-caption text-medium-emphasis">Загрузка...</div>
+                    <v-btn size="x-small" variant="text" @click="fieldHistoryMenu['subject'] = false">Закрыть</v-btn>
+                  </v-card>
+                </div>
+              </div>
               <v-expand-transition>
                 <v-autocomplete
                   v-if="showVehicleSelect"
@@ -1003,16 +1027,22 @@
           <v-window-item value="contract">
           <v-row class="mt-1">
             <v-col cols="12" md="3" data-field-name="contract_number">
-              <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
-                :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
-                :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
-                persistent-hint
-                :readonly="!isNew && !contractNumberEditEnabled"
-                @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
+              <div :class="entityChanges.isFieldUnseen('contract_number') ? 'field-changed' : ''"
+                @click="entityChanges.dismissField('contract_number')">
+                <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
+                  :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
+                  :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
+                  persistent-hint
+                  :readonly="!isNew && !contractNumberEditEnabled"
+                  @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
+              </div>
             </v-col>
             <v-col cols="12" md="3" data-field-name="contract_date">
-              <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
-                density="compact" type="date" :rules="contractDateRules" />
+              <div :class="entityChanges.isFieldUnseen('contract_date') ? 'field-changed' : ''"
+                @click="entityChanges.dismissField('contract_date')">
+                <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
+                  density="compact" type="date" :rules="contractDateRules" />
+              </div>
             </v-col>
             <!-- Phase 31-04: contract_conflict chip + «Взять из договора» button -->
             <v-col v-if="!isNew && purchaseData?.contract_conflict && form.contract_id" cols="12" class="d-flex align-center gap-2 pb-0">
@@ -3462,6 +3492,7 @@ function onMonthlyStagesCreated(res: any) {
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
 import { useDisplay } from 'vuetify'
+import { useEntityChanges } from '@/composables/useEntityChanges'
 
 const { mobile } = useDisplay()
 
@@ -3475,6 +3506,26 @@ const purchaseId = computed(() => Number(route.params.id) || null)
 const purchaseLoaded = ref(false)
 // Phase 31-04: raw purchase data from last loadPurchase (for contract_conflict)
 const purchaseData = ref<any>(null)
+
+// Phase 31-06: diff-tracking composable for purchase fields
+const _purchaseUnseenFields = computed<string[]>(() => purchaseData.value?.unseen_fields ?? [])
+const entityChanges = useEntityChanges('purchase', purchaseId, _purchaseUnseenFields)
+// Tooltip state for "было: X" on highlighted fields
+const fieldHistoryMenu = ref<Record<string, boolean>>({})
+const fieldHistoryData = ref<Record<string, Array<{ old_value: string | null; changed_by_name: string | null; changed_at: string }>>>({})
+async function openFieldHistory(field: string) {
+  if (!entityChanges.isFieldUnseen(field)) return
+  fieldHistoryMenu.value[field] = true
+  if (!fieldHistoryData.value[field]) {
+    const history = await entityChanges.getFieldHistory(field)
+    fieldHistoryData.value[field] = history
+  }
+}
+function formatHistoryDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
 
 // 12-02: FEO auto-match suggestions
 const feoMatchSuggestions = ref<Array<{
@@ -6277,6 +6328,8 @@ const loadPurchase = async () => {
 
   // Phase 23.5: данные загружены — теперь заголовок показывает актуальный номер
   purchaseLoaded.value = true
+  // Phase 31-06: sync unseen_fields from freshly loaded purchase
+  entityChanges.syncFromEntity(data.unseen_fields ?? [])
 }
 
 // ---------------------------------------------------------------------------
@@ -7644,6 +7697,34 @@ async function downloadKpXlsx() {
   .compact-mobile :deep(.v-col) { padding-top: 4px; padding-bottom: 4px; }
   .compact-mobile :deep(.v-card-title) { font-size: 0.95rem; padding: 12px 16px 8px; }
   .compact-mobile :deep(.v-card-text) { padding: 8px 12px; }
+}
+
+/* Phase 31-06: diff-tracking highlight for unseen changes (GALA-orange) */
+.field-changed {
+  border-radius: 6px;
+  outline: 2px solid #fb923c;
+  outline-offset: 2px;
+  cursor: pointer;
+  transition: outline-color 0.2s;
+}
+.field-changed:hover {
+  outline-color: #ea7a1a;
+}
+.field-changed-info {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+  cursor: pointer;
+  position: relative;
+}
+.field-history-card {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  min-width: 240px;
+  max-width: 360px;
+  background: white;
 }
 
 /* Подсветка обязательных полей, не заполненных на момент перехода статуса.

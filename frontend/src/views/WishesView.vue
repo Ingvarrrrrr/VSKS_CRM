@@ -239,7 +239,17 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
-          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="d-flex align-center flex-wrap" style="gap:6px">
+            <span class="font-weight-medium">{{ item.title }}</span>
+            <!-- Phase 31-06: badge for unseen changes -->
+            <v-chip
+              v-if="item.unseen_changes_count > 0"
+              size="x-small"
+              variant="tonal"
+              :color="GALA_ORANGE"
+              :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
+            >+{{ item.unseen_changes_count }}</v-chip>
+          </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
             <span v-if="item.items_count && item.total_amount"> · </span>
@@ -509,7 +519,17 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
-          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="d-flex align-center flex-wrap" style="gap:6px">
+            <span class="font-weight-medium">{{ item.title }}</span>
+            <!-- Phase 31-06: badge for unseen changes -->
+            <v-chip
+              v-if="item.unseen_changes_count > 0"
+              size="x-small"
+              variant="tonal"
+              :color="GALA_ORANGE"
+              :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
+            >+{{ item.unseen_changes_count }}</v-chip>
+          </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
             <span v-if="item.items_count && item.total_amount"> · </span>
@@ -669,7 +689,17 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
-          <div class="font-weight-medium">{{ item.title }}</div>
+          <div class="d-flex align-center flex-wrap" style="gap:6px">
+            <span class="font-weight-medium">{{ item.title }}</span>
+            <!-- Phase 31-06: badge for unseen changes -->
+            <v-chip
+              v-if="item.unseen_changes_count > 0"
+              size="x-small"
+              variant="tonal"
+              :color="GALA_ORANGE"
+              :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
+            >+{{ item.unseen_changes_count }}</v-chip>
+          </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
             <span v-if="item.items_count && item.total_amount"> · </span>
@@ -1309,6 +1339,9 @@ import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { useCardView } from '@/composables/useCardView'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
+
+// Phase 31-06: GALA-orange for unseen-changes badges
+const GALA_ORANGE = '#fb923c'
 
 const router = useRouter()
 const registryArea = ref<HTMLElement | null>(null)

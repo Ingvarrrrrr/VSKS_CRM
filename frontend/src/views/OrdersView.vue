@@ -97,6 +97,16 @@
             Сохранить фильтр
           </v-btn>
           <v-btn variant="tonal" prepend-icon="mdi-view-column" size="small" @click="showColumnPicker = true">Колонки</v-btn>
+          <!-- Phase 31-06: filter by unseen changes -->
+          <v-checkbox
+            v-model="filterOnlyUnseen"
+            label="Только с чужими правками"
+            density="compact"
+            hide-details
+            color="#fb923c"
+            class="ml-1"
+            style="min-width:fit-content"
+          />
           <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
             <v-btn value="table" size="small" icon="mdi-table" />
             <v-btn value="cards" size="small" icon="mdi-view-grid" />
@@ -394,7 +404,17 @@
 
         <!-- Предмет договора -->
         <template #item.subject="{ item }">
-          <div>{{ item.subject || item.item_name || '—' }}</div>
+          <div class="d-flex align-center flex-wrap" style="gap:6px">
+            <span>{{ item.subject || item.item_name || '—' }}</span>
+            <!-- Phase 31-06: badge for unseen changes -->
+            <v-chip
+              v-if="item.unseen_changes_count > 0"
+              size="x-small"
+              variant="tonal"
+              color="#fb923c"
+              :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
+            >+{{ item.unseen_changes_count }}</v-chip>
+          </div>
           <div v-if="!item.contractor_name || !item.feo_category_id || !item.execution_term || !(item.planned_total_price)" class="d-flex flex-wrap ga-1 mt-1">
             <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
             <v-chip v-if="!item.feo_category_id" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-tag-off">ФЭО</v-chip>
@@ -1340,6 +1360,9 @@ const filterContractorIds = ref<number[]>([])
 const fProduct = ref('')
 const search = ref('')
 
+// Phase 31-06: filter to show only purchases with unseen foreign changes
+const filterOnlyUnseen = ref(false)
+
 const orderTypeOptions = [
   { label: 'Разовый', value: 'one_time' },
   { label: 'Рамочный', value: 'framework' },
@@ -1499,6 +1522,8 @@ const filteredOrders = computed(() => {
       o.item_name?.toLowerCase().includes(q)
     )
   }
+  // Phase 31-06: filter to show only purchases with unseen foreign changes
+  if (filterOnlyUnseen.value) r = r.filter(o => (o as any).unseen_changes_count > 0)
   // Column-header filters (поверх panel-фильтров)
   r = r.filter(matchesColumnFilters)
   return r

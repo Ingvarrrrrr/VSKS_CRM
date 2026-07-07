@@ -1,5 +1,5 @@
 <template>
-  <div class="wish-card" :class="{ 'readonly': readonly }">
+  <div class="wish-card" :class="{ 'readonly': readonly, 'wish-card-unseen': hasUnseenChanges }">
     <div class="wish-card-photo">
       <img v-if="item._photo_url" :src="item._photo_url" alt="" />
       <v-icon v-else color="grey-lighten-1" size="32">mdi-package-variant</v-icon>
@@ -14,10 +14,16 @@
         {{ item._product_category }}
       </v-chip>
     </div>
+    <!-- Phase 31-06: unseen changes badge -->
+    <div v-if="hasUnseenChanges" class="wish-card-unseen-badge" title="Чужие правки с последнего просмотра">
+      <v-icon size="14" color="#fb923c">mdi-pencil-circle</v-icon>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+
 interface WishItem {
   id: number
   item_name: string
@@ -27,11 +33,20 @@ interface WishItem {
   target_column_key: string | null
   _photo_url?: string | null
   _product_category?: string
+  unseen_changes_count?: number
 }
-defineProps<{
+
+const props = defineProps<{
   item: WishItem
   readonly?: boolean
+  /** Phase 31-06: passed from parent when wish entity has unseen changes */
+  unseenChangesCount?: number
 }>()
+
+/** Has unseen changes — either from wish-item prop or from item itself */
+const hasUnseenChanges = computed(() =>
+  (props.unseenChangesCount ?? props.item.unseen_changes_count ?? 0) > 0,
+)
 
 function formatMoney(v: number | null | undefined): string {
   if (v == null) return '0 ₽'
@@ -49,6 +64,7 @@ function formatMoney(v: number | null | undefined): string {
   border-radius: 6px;
   cursor: grab;
   transition: box-shadow 0.15s, transform 0.15s;
+  position: relative;
 }
 .wish-card:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -61,6 +77,16 @@ function formatMoney(v: number | null | undefined): string {
 .wish-card.readonly:hover {
   box-shadow: none;
   transform: none;
+}
+/* Phase 31-06: GALA-orange border for unseen-changes card */
+.wish-card.wish-card-unseen {
+  border-color: #fb923c;
+  border-width: 2px;
+}
+.wish-card-unseen-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
 }
 .wish-card-photo {
   width: 48px;

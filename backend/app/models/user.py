@@ -27,6 +27,7 @@ class User(Base):
     profile_photo = Column(Text, nullable=True)    # base64 JPEG/PNG фото профиля
     inn = Column(String(12), nullable=True)          # ИНН физ. лица
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    superior_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # вышестоящий начальник (ручной override иерархии)
     can_publish = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на публикацию закупок
     exclude_from_directory = Column(Boolean, default=False, nullable=False, server_default="false")  # Не включать в справочник сотрудников
 

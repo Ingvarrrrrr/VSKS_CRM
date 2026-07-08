@@ -155,6 +155,7 @@ class WishOut(BaseModel):
     executor_id: Optional[int] = None
     executor_name: Optional[str] = None
     execution_deadline: Optional[date] = None
+    approval_mode: Optional[str] = None
     items: List[WishItemOut] = []
     # Phase 31: diff-tracking — unseen changes from other users
     unseen_fields: List[str] = []

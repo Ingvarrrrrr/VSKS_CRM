@@ -23,6 +23,7 @@ from .routers import (
 )
 from .routers import wish_documents
 from .routers import wish_members as wish_members_router
+from .routers import wish_approvals as wish_approvals_router
 from .routers import user_addresses as user_addresses_router
 from .routers import org_config
 from .routers import purchase_transitions
@@ -1787,6 +1788,9 @@ app.include_router(wish_documents.router)
 # to avoid /{wish_id:int} swallowing the static "members" segment.
 app.include_router(wish_members_router.pending_router)
 app.include_router(wish_members_router.router)
+# wish_approvals (/api/wishes/{wid}/approvers/*) MUST be before wishes.router
+# so static "approvers" segment resolves before the catch-all /{wish_id:int}.
+app.include_router(wish_approvals_router.router)
 app.include_router(wishes.router)
 app.include_router(push_router.router)
 app.include_router(permissions_router.router)

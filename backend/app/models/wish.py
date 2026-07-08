@@ -33,6 +33,7 @@ class Wish(Base):
     assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)
     execution_deadline = Column(Date, nullable=True)  # Срок исполнения (ставит approver)
+    approval_mode = Column(String(20), nullable=False, default="sequential", server_default="sequential")  # sequential/parallel
 
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
@@ -42,3 +43,4 @@ class Wish(Base):
     subsidy = relationship("Subsidy", lazy="selectin")
     event = relationship("Event", foreign_keys=[event_id], lazy="selectin")
     items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin")
+    approvals = relationship("WishApproval", back_populates="wish", cascade="all, delete-orphan", lazy="selectin", order_by="WishApproval.order_num")

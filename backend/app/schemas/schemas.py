@@ -56,6 +56,7 @@ class UserUpdate(BaseModel):
     avatar: Optional[str] = None
     inn: Optional[str] = None
     exclude_from_directory: Optional[bool] = None
+    superior_user_id: Optional[int] = None  # вышестоящий начальник (иерархия согласования)
     # Phase 29 D-04: driver fields
     can_drive: Optional[bool] = None
     license_series: Optional[str] = None
@@ -96,6 +97,7 @@ class UserOut(BaseModel):
     can_publish: bool = False
     inn: Optional[str] = None
     exclude_from_directory: bool = False
+    superior_user_id: Optional[int] = None
     # Phase 29 D-04 / 30: driver fields exposed to frontend
     can_drive: bool = False
     license_series: Optional[str] = None

@@ -431,6 +431,41 @@ async def notify_wish_member_added(wish, added_user, added_by_name: str) -> None
                       reply_markup_override=_wish_keyboard(wish.id))
 
 
+async def notify_wish_approval_step(wish, approver_user, requester_name: str | None = None) -> None:
+    """Notify an approver that it's their turn to decide on a wish."""
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    text = (
+        f"✍️ <b>Требуется ваше согласование</b>\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"Откройте заявку, чтобы согласовать или отклонить."
+    )
+    await notify_user(approver_user, text, reply_markup_override=_wish_keyboard(wish.id))
+
+
+async def notify_wish_rejected(wish, creator_user, decided_by_name: str, reason: str | None = None) -> None:
+    """Notify the wish creator that their wish was rejected and returned to them."""
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    reason_line = f"\n💬 Причина: <i>{_esc(reason)}</i>" if reason else ""
+    text = (
+        f"❌ <b>Заявка не согласована</b>\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"👤 Отклонил: <i>{_esc(decided_by_name)}</i>{reason_line}\n\n"
+        f"Заявка возвращена вам на доработку."
+    )
+    await notify_user(creator_user, text, reply_markup_override=_wish_keyboard(wish.id))
+
+
+async def notify_wish_approved(wish, creator_user) -> None:
+    """Notify the wish creator that their wish was fully approved."""
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    text = (
+        f"✅ <b>Заявка согласована</b>\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"Все согласующие одобрили заявку."
+    )
+    await notify_user(creator_user, text, reply_markup_override=_wish_keyboard(wish.id))
+
+
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
     """Notify about approaching purchase deadline."""
     subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")

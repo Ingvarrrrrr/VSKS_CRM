@@ -1041,6 +1041,170 @@
               </v-card-text>
             </v-card>
 
+            <!-- Section: Согласующие (мультисогласование с авто-каскадом) -->
+            <v-card v-if="editingWishId" variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2" color="primary">mdi-account-check</v-icon>
+                Согласующие
+                <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishApprovers.length }}</v-chip>
+                <v-spacer />
+                <v-chip size="x-small" :color="approvalMode === 'sequential' ? 'blue' : 'teal'" variant="tonal">
+                  {{ approvalMode === 'sequential' ? 'Последовательно' : 'Параллельно' }}
+                </v-chip>
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <!-- Построение цепочки (только для черновика/отклонённой) -->
+                <template v-if="isWishEditable">
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    Выберите верхнего согласующего — система автоматически подтянет всю восходящую цепочку начальников снизу вверх.
+                  </div>
+                  <v-row dense align="center">
+                    <v-col cols="12" md="6">
+                      <v-autocomplete
+                        v-model="approverTopUser"
+                        :items="orgUsers"
+                        item-title="full_name"
+                        item-value="id"
+                        label="Верхний согласующий"
+                        variant="outlined"
+                        density="compact"
+                        clearable
+                        hide-details
+                      >
+                        <template #item="{ item, props: itemProps }">
+                          <v-list-item v-bind="itemProps">
+                            <template #title>{{ item.raw.full_name }}</template>
+                            <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                          </v-list-item>
+                        </template>
+                      </v-autocomplete>
+                    </v-col>
+                    <v-col cols="12" md="3">
+                      <v-select
+                        v-model="approvalMode"
+                        :items="[
+                          { value: 'sequential', title: 'Последовательно' },
+                          { value: 'parallel', title: 'Параллельно' },
+                        ]"
+                        label="Режим"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                      />
+                    </v-col>
+                    <v-col cols="12" md="3">
+                      <v-btn
+                        color="primary"
+                        variant="flat"
+                        block
+                        :loading="cascadeLoading"
+                        :disabled="!approverTopUser"
+                        prepend-icon="mdi-sitemap"
+                        @click="runCascade"
+                      >Построить цепочку</v-btn>
+                    </v-col>
+                  </v-row>
+                  <v-divider class="my-3" />
+                </template>
+
+                <!-- Список согласующих -->
+                <div v-if="wishApprovers.length === 0" class="text-caption text-medium-emphasis">
+                  Согласующие ещё не назначены.
+                </div>
+                <div v-else class="d-flex flex-column" style="gap:10px">
+                  <v-sheet
+                    v-for="a in wishApprovers"
+                    :key="a.id"
+                    rounded="lg"
+                    border
+                    class="pa-3"
+                  >
+                    <div class="d-flex align-center flex-wrap" style="gap:8px">
+                      <v-chip size="x-small" variant="tonal" color="grey">#{{ a.order_num + 1 }}</v-chip>
+                      <span class="font-weight-medium">{{ a.full_name || '—' }}</span>
+                      <span v-if="a.role_name" class="text-caption text-medium-emphasis">{{ a.role_name }}</span>
+                      <v-chip
+                        v-if="!a.is_auto"
+                        size="x-small"
+                        variant="tonal"
+                        color="purple"
+                      >вручную</v-chip>
+                      <v-spacer />
+                      <v-chip size="small" :color="approvalStatusColor[a.status]" variant="tonal">
+                        {{ approvalStatusLabel[a.status] || a.status }}
+                      </v-chip>
+                      <v-btn
+                        v-if="a.status === 'pending' && isWishEditable"
+                        icon="mdi-close"
+                        size="x-small"
+                        variant="text"
+                        @click="removeApprover(a.id)"
+                      />
+                    </div>
+                    <div v-if="a.comment" class="text-caption text-medium-emphasis mt-1">
+                      Комментарий: {{ a.comment }}
+                    </div>
+                    <!-- Действия текущего пользователя-согласующего -->
+                    <div v-if="canDecideApprover(a)" class="mt-2">
+                      <v-textarea
+                        v-model="decideComment[a.id]"
+                        label="Комментарий (необязательно при согласовании, обязателен при отказе)"
+                        variant="outlined"
+                        density="compact"
+                        rows="2"
+                        auto-grow
+                        hide-details
+                        class="mb-2"
+                      />
+                      <div class="d-flex" style="gap:8px">
+                        <v-btn
+                          color="green"
+                          variant="flat"
+                          size="small"
+                          :loading="decideLoading === a.id"
+                          prepend-icon="mdi-check"
+                          @click="decideApprover(a.id, 'approved')"
+                        >Согласовать</v-btn>
+                        <v-btn
+                          color="red"
+                          variant="tonal"
+                          size="small"
+                          :loading="decideLoading === a.id"
+                          :disabled="!decideComment[a.id]"
+                          prepend-icon="mdi-close"
+                          @click="decideApprover(a.id, 'rejected')"
+                        >Отклонить</v-btn>
+                      </div>
+                    </div>
+                  </v-sheet>
+                </div>
+
+                <!-- Ручное добавление -->
+                <template v-if="isWishEditable">
+                  <v-divider class="my-3" />
+                  <v-autocomplete
+                    v-model="approverToAdd"
+                    :items="orgUsers"
+                    item-title="full_name"
+                    item-value="id"
+                    label="Добавить согласующего вручную"
+                    variant="outlined"
+                    density="compact"
+                    clearable
+                    hide-details
+                    @update:model-value="(val) => { if (val) addApprover(val) }"
+                  >
+                    <template #item="{ item, props: itemProps }">
+                      <v-list-item v-bind="itemProps">
+                        <template #title>{{ item.raw.full_name }}</template>
+                        <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </template>
+              </v-card-text>
+            </v-card>
+
             <!-- Section: Принудительная смена статуса (только superadmin/account_owner) -->
             <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4" color="red-lighten-5">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
@@ -1469,9 +1633,9 @@ const statusColor: Record<string, string> = {
 }
 const statusLabel: Record<string, string> = {
   draft: 'Черновик',
-  submitted: 'Отправлена',
-  approved: 'Одобрена',
-  rejected: 'Отклонена',
+  submitted: 'На согласовании',
+  approved: 'Согласовано',
+  rejected: 'Не согласовано',
   converted: 'Передано в исполнение',
 }
 
@@ -1720,6 +1884,41 @@ const participantToAdd = ref<number | null>(null)
 const pendingWishConsents = ref<PendingWishConsent[]>([])
 const consentLoading = ref<string | null>(null)
 
+// Wish approvers (multi-approver cascade)
+interface WishApprover {
+  id: number
+  wish_id: number
+  user_id: number | null
+  order_num: number
+  role_name: string | null
+  full_name: string | null
+  is_auto: boolean
+  status: string  // pending / approved / rejected / skipped
+  comment: string | null
+  decided_at: string | null
+  decided_by_user_id: number | null
+}
+const wishApprovers = ref<WishApprover[]>([])
+const approverTopUser = ref<number | null>(null)
+const approverToAdd = ref<number | null>(null)
+const approvalMode = ref<'sequential' | 'parallel'>('sequential')
+const cascadeLoading = ref(false)
+const decideComment = ref<Record<number, string>>({})
+const decideLoading = ref<number | null>(null)
+
+const approvalStatusColor: Record<string, string> = {
+  pending: 'orange',
+  approved: 'green',
+  rejected: 'red',
+  skipped: 'grey',
+}
+const approvalStatusLabel: Record<string, string> = {
+  pending: 'На согласовании',
+  approved: 'Согласовано',
+  rejected: 'Не согласовано',
+  skipped: 'Пропущено',
+}
+
 const isWishEditable = computed(() =>
   !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
 )
@@ -1934,6 +2133,10 @@ function openCreateDialog() {
   editingWishId.value = null
   editingWish.value = null
   wishMembers.value = []
+  wishApprovers.value = []
+  approverTopUser.value = null
+  approverToAdd.value = null
+  approvalMode.value = 'sequential'
   resetForm()
   undoRedoWish.clear() // Phase 31-07: fresh stack per dialog open
   wishDialog.value = true
@@ -2035,6 +2238,8 @@ async function openEditDialog(wish: Wish) {
       }
     }) as any
     await loadWishMembers()
+    await loadWishApprovers()
+    approvalMode.value = ((wish as any).approval_mode === 'parallel') ? 'parallel' : 'sequential'
   } finally {
     wishDialogLoading.value = false
   }
@@ -2132,6 +2337,96 @@ async function removeWishMember(userId: number) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось удалить участника', 'error')
   }
 }
+// Wish approvers functions
+async function loadWishApprovers() {
+  if (!editingWishId.value) { wishApprovers.value = []; return }
+  try {
+    wishApprovers.value = await apiFetch<WishApprover[]>(`/wishes/${editingWishId.value}/approvers`)
+  } catch { wishApprovers.value = [] }
+}
+async function runCascade() {
+  if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
+  if (!approverTopUser.value) { showSnack('Выберите верхнего согласующего', 'warning'); return }
+  cascadeLoading.value = true
+  try {
+    const res = await apiFetch<{ approval_mode: string; approvers: WishApprover[] }>(
+      `/wishes/${editingWishId.value}/approvers/cascade`,
+      { method: 'POST', body: JSON.stringify({ top_user_id: approverTopUser.value, mode: approvalMode.value }) },
+    )
+    wishApprovers.value = res.approvers
+    approverTopUser.value = null
+    showSnack('Цепочка согласующих построена')
+    await loadWishOnce()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
+  } finally {
+    cascadeLoading.value = false
+  }
+}
+async function addApprover(userId: number | null) {
+  approverToAdd.value = null
+  if (!userId || !editingWishId.value) return
+  if (wishApprovers.value.some(a => a.user_id === userId)) return
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/approvers`, {
+      method: 'POST', body: JSON.stringify({ user_id: userId }),
+    })
+    await loadWishApprovers()
+    showSnack('Согласующий добавлен')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось добавить согласующего', 'error')
+  }
+}
+async function removeApprover(approvalId: number) {
+  if (!editingWishId.value) return
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/approvers/${approvalId}`, { method: 'DELETE' })
+    await loadWishApprovers()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось удалить согласующего', 'error')
+  }
+}
+async function decideApprover(approvalId: number, decision: 'approved' | 'rejected') {
+  if (!editingWishId.value) return
+  decideLoading.value = approvalId
+  try {
+    const res = await apiFetch<{ status: string; approvers: WishApprover[] }>(
+      `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
+      { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
+    )
+    wishApprovers.value = res.approvers
+    decideComment.value[approvalId] = ''
+    if (wishForm.value) (wishForm.value as any).status = res.status
+    showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
+    await loadWishOnce()
+    await loadWishes()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
+  } finally {
+    decideLoading.value = null
+  }
+}
+// Обновить editingWish (статус) после действий с согласующими
+async function loadWishOnce() {
+  if (!editingWishId.value) return
+  try {
+    const fresh = await apiFetch<Wish>(`/wishes/${editingWishId.value}`)
+    editingWish.value = fresh
+    ;(wishForm.value as any).status = fresh.status
+    if ((fresh as any).approval_mode) approvalMode.value = (fresh as any).approval_mode
+  } catch { /* ignore */ }
+}
+const canDecideApprover = (a: WishApprover): boolean => {
+  if (a.status !== 'pending') return false
+  const mine = a.user_id === currentUserId || isAdmin.value
+  if (!mine) return false
+  if (approvalMode.value === 'sequential') {
+    const lowerPending = wishApprovers.value.some(x => x.order_num < a.order_num && x.status === 'pending')
+    if (lowerPending) return false
+  }
+  return true
+}
+
 async function loadPendingWishConsents() {
   try {
     pendingWishConsents.value = await apiFetch<PendingWishConsent[]>('/wishes/members/pending-consent')

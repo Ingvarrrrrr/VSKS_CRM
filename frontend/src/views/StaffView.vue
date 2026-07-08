@@ -600,6 +600,10 @@
           <v-text-field v-model="editDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
           <v-select v-model="editDialog.role" :items="roleItems" item-title="label" item-value="value"
             label="Роль" variant="outlined" density="compact" class="mb-3" />
+          <v-select v-model="editDialog.superior_user_id" :items="userDropdownItems" item-title="text" item-value="value"
+            label="Вышестоящий начальник" variant="outlined" density="compact" clearable class="mb-3"
+            prepend-inner-icon="mdi-account-arrow-up"
+            hint="Ручной override иерархии для авторасстановки согласующих (если фактически подчиняется не своему отделу)" persistent-hint />
           <!-- Отдел и Должность перенесены вниз в блок "Организации, должности, оклад" -->
           <!-- Avatar picker -->
           <div class="mb-3">
@@ -1084,8 +1088,17 @@
               :hint="deptMemberItems.length === 0 ? 'Сначала добавьте сотрудников в отдел (кнопка справа)' : 'Выберите из сотрудников этого отдела'"
               persistent-hint :disabled="deptMemberItems.length === 0" />
 
+            <v-select v-model="deptForm.deputy_head_user_id" :items="deptMemberItems" item-title="text" item-value="value"
+              label="Зам. начальника отдела" variant="outlined" density="compact" clearable class="mb-3"
+              hint="Используется в восходящей цепочке согласования заявок (ниже начальника)" persistent-hint
+              :disabled="deptMemberItems.length === 0" />
+
+            <v-select v-model="deptForm.curator_user_id" :items="userDropdownItems" item-title="text" item-value="value"
+              label="Курирующий зам" variant="outlined" density="compact" clearable class="mb-3"
+              hint="Заместитель, курирующий это подразделение (в цепочке согласования выше начальника)" persistent-hint />
+
             <v-select v-model="deptForm.parent_id" :items="otherDeptItems" item-title="text" item-value="value"
-              label="Входит в состав отдела" variant="outlined" density="compact" clearable
+              label="Вышестоящее подразделение" variant="outlined" density="compact" clearable
               hint="Если это подотдел внутри другого (например, Сектор мониторинга внутри Отдела закупок)" persistent-hint />
           </template>
 
@@ -1632,6 +1645,7 @@ const editDialog = reactive({
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
   exclude_from_directory: false,
+  superior_user_id: null as number | null,
   org_id: null as number | null,
   extraOrgIds: [] as number[],
   extraOrgsLoading: false,
@@ -1847,7 +1861,7 @@ const filterUserSearch = ref('')
 // Dept dialog
 const deptDialog = ref(false)
 const editingDept = ref<any>(null)
-const deptForm = ref({ name: '', subsidy_id: null as number | null, head_user_id: null as number | null, parent_id: null as number | null })
+const deptForm = ref({ name: '', subsidy_id: null as number | null, head_user_id: null as number | null, deputy_head_user_id: null as number | null, curator_user_id: null as number | null, parent_id: null as number | null })
 
 // Member dialog
 const addMemberDialog = ref(false)
@@ -2134,6 +2148,7 @@ async function openEditUser(item: UserItem) {
   editDialog.telegram_id = (item as any).telegram_id || ''
   editDialog.max_chat_id = (item as any).max_chat_id || ''
   editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
+  editDialog.superior_user_id = (item as any).superior_user_id ?? null
   // 29-15: водительские данные
   editDialog.can_drive = !!(item as any).can_drive
   editDialog.license_series = (item as any).license_series || ''
@@ -2301,6 +2316,7 @@ async function saveEditUser() {
       telegram_id: editDialog.telegram_id || null,
       max_chat_id: editDialog.max_chat_id || null,
       exclude_from_directory: editDialog.exclude_from_directory,
+      superior_user_id: editDialog.superior_user_id,
       // 29-15: водительские данные
       can_drive: editDialog.can_drive,
       license_series: editDialog.can_drive ? (editDialog.license_series || null) : null,
@@ -2635,7 +2651,7 @@ watch([filterSubsidyId, filterDeptOrgId], () => { loadDeptTree() })
 
 function openCreateDept() {
   editingDept.value = null
-  deptForm.value = { name: '', subsidy_id: filterSubsidyId.value, head_user_id: null, parent_id: null }
+  deptForm.value = { name: '', subsidy_id: filterSubsidyId.value, head_user_id: null, deputy_head_user_id: null, curator_user_id: null, parent_id: null }
   deptDialog.value = true
 }
 
@@ -2650,7 +2666,7 @@ async function openEditDept(node: any) {
   selectedDept.value = node
   await loadDeptMembers(node.id)
   editingDept.value = node
-  deptForm.value = { name: node.name, subsidy_id: node.subsidy_id, head_user_id: node.head_user_id, parent_id: node.parent_id }
+  deptForm.value = { name: node.name, subsidy_id: node.subsidy_id, head_user_id: node.head_user_id, deputy_head_user_id: node.deputy_head_user_id ?? null, curator_user_id: node.curator_user_id ?? null, parent_id: node.parent_id }
   deptDialog.value = true
 }
 

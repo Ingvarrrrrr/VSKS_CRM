@@ -27,12 +27,16 @@ class DepartmentCreate(BaseModel):
     name: str
     subsidy_id: Optional[int] = None
     head_user_id: Optional[int] = None
+    deputy_head_user_id: Optional[int] = None
+    curator_user_id: Optional[int] = None
     parent_id: Optional[int] = None
     org_id: Optional[int] = None  # Override org assignment (superadmin only)
 
 class DepartmentUpdate(BaseModel):
     name: Optional[str] = None
     head_user_id: Optional[int] = None
+    deputy_head_user_id: Optional[int] = None
+    curator_user_id: Optional[int] = None
     parent_id: Optional[int] = None
     subsidy_id: Optional[int] = None
 
@@ -43,6 +47,8 @@ class DepartmentOut(BaseModel):
     subsidy_id: Optional[int] = None
     head_user_id: Optional[int] = None
     head_user_name: Optional[str] = None
+    deputy_head_user_id: Optional[int] = None
+    curator_user_id: Optional[int] = None
     parent_id: Optional[int] = None
     member_count: int = 0
     class Config:
@@ -90,6 +96,7 @@ async def _enrich_dept(d: Department, db: AsyncSession) -> DepartmentOut:
     return DepartmentOut(
         id=d.id, name=d.name, org_id=d.org_id, subsidy_id=d.subsidy_id,
         head_user_id=d.head_user_id, head_user_name=head_name,
+        deputy_head_user_id=d.deputy_head_user_id, curator_user_id=d.curator_user_id,
         parent_id=d.parent_id, member_count=member_count,
     )
 
@@ -215,6 +222,7 @@ async def create_department(
     dept = Department(
         name=norm_name, org_id=org_id,
         subsidy_id=data.subsidy_id, head_user_id=data.head_user_id,
+        deputy_head_user_id=data.deputy_head_user_id, curator_user_id=data.curator_user_id,
         parent_id=data.parent_id,
     )
     db.add(dept)

@@ -205,6 +205,25 @@ async def get_account_contour_org_ids(user: User, db: AsyncSession) -> set[int]:
     return await compute_account_contour_org_ids(db, user.org_id)
 
 
+async def get_managed_org_ids(user: User, db: AsyncSession) -> set[int]:
+    """Орги, которыми пользователь руководит (ManagerOrganization).
+
+    Принцип: «командуешь оргой → видишь всё, что в ней происходит» (данные,
+    персонал, вкладки, субсидии). Подчинённость задаётся управлением, а не деревом
+    орг (root_org_id/контур), поэтому орга вне контура аккаунта тоже сюда попадает.
+    Использует кэш _managed_org_ids из get_current_user, иначе считает по БД."""
+    if user.role in _SAAS_ROLES:
+        return set()
+    cached = getattr(user, "_managed_org_ids", None)
+    if cached is not None:
+        return {int(x) for x in cached}
+    return {int(x) for x in (await db.execute(
+        select(ManagerOrganization.org_id).where(
+            ManagerOrganization.manager_user_id == user.id
+        )
+    )).scalars().all() if x}
+
+
 async def get_view_all_org_ids(user: User, db: AsyncSession) -> set[int]:
     """set[org_id] где у user есть effective action 'documents.view_all_in_org'.
 
@@ -288,6 +307,7 @@ async def get_role_scoped_org_ids(
     # UOA даёт доступ к орг даже без строки в user_organizations (как get_org_filter),
     # поэтому такие орг тоже учитываем — иначе org_admin-через-UOA орг теряются.
     candidates = member | set(uoa_role_map.keys()) | await get_account_contour_org_ids(user, db)
+    candidates |= await get_managed_org_ids(user, db)
 
     result: list[int] = []
     for org_id in candidates:
@@ -327,6 +347,7 @@ async def get_tab_scoped_org_ids(
         select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
     )).scalars().all() if x}
     org_ids |= await get_account_contour_org_ids(user, db)
+    org_ids |= await get_managed_org_ids(user, db)
 
     result: list[int] = []
     for oid in org_ids:
@@ -374,6 +395,9 @@ async def get_visible_subsidy_ids(
         select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
     )).scalars().all() if x}
     org_ids |= await get_account_contour_org_ids(user, db)
+    # Руководимые орги: видимость субсидий наследуется по управлению, даже если
+    # орг вне контура аккаунта. Гейт по эффективной вкладке ниже отсекает лишнее.
+    org_ids |= await get_managed_org_ids(user, db)
 
     visible: set[int] = set()
     # Орг-дефолт: орг с эффективным ключом tab_key → все её субсидии.

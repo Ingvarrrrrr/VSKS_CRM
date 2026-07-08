@@ -84,6 +84,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         user._contour_org_ids = list(
             await compute_account_contour_org_ids(db, user.org_id)
         )
+    # Руководимые орги: если пользователь может отдавать распоряжения организации
+    # (ManagerOrganization / «ставит задачи организации»), он видит ВСЁ, что в ней
+    # происходит — данные, персонал, вкладки. Подчинённость задаётся УПРАВЛЕНИЕМ, а
+    # не деревом орг (root_org_id/контур): орга-«сирота» вне контура тоже видна.
+    user._managed_org_ids = []
+    if user.role not in ('superadmin', 'account_owner'):
+        from app.models.manager_organization import ManagerOrganization
+        _mo_ids = (await db.execute(
+            select(ManagerOrganization.org_id).where(
+                ManagerOrganization.manager_user_id == user.id
+            )
+        )).scalars().all()
+        user._managed_org_ids = list({int(x) for x in _mo_ids if x})
     return user
 
 async def has_role_via_hierarchy(
@@ -170,13 +183,14 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     # аккаунт) + JWT-выборка + per-org access (UOA).
     uoa_ids = getattr(current_user, '_uoa_org_ids', None) or []
     contour_ids = getattr(current_user, '_contour_org_ids', None) or []
+    managed_ids = getattr(current_user, '_managed_org_ids', None) or []
     org_ids = getattr(current_user, '_active_org_ids', None)
     base = list(org_ids) if org_ids else []
     if not base:
         active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
         if active_org_id:
             base = [active_org_id]
-    merged = list({*base, *uoa_ids, *contour_ids})
+    merged = list({*base, *uoa_ids, *contour_ids, *managed_ids})
     return merged or None
 
 def get_single_org_id(current_user: User) -> Optional[int]:

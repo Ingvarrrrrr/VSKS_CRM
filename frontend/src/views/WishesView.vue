@@ -2146,8 +2146,16 @@ async function saveWish(andSubmit = false) {
       if (andSubmit && created?.id) {
         await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
-      } else {
-        showSnack('Черновик сохранён')
+      } else if (created?.id) {
+        // Черновик создан → переходим в режим редактирования, НЕ закрывая диалог.
+        // Только у сохранённой заявки есть id, а значит и блок «Участники заявки»
+        // (v-if="editingWishId") — иначе кнопка совместного редактирования не
+        // появляется и заявку нельзя расшарить нескольким людям.
+        editingWishId.value = created.id
+        showSnack('Черновик сохранён — добавьте участников для совместной работы')
+        await loadWishMembers()
+        await reloadActiveTab()
+        return
       }
     }
 

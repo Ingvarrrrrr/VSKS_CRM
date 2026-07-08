@@ -3876,7 +3876,7 @@ let vehicleSearchDebounce: ReturnType<typeof setTimeout> | null = null
 async function loadVehicles(q: string = '') {
   vehiclesLoading.value = true
   try {
-    const r = await apiFetch(`/api/vehicles?q=${encodeURIComponent(q)}&limit=30`)
+    const r = await apiFetch(`/vehicles?q=${encodeURIComponent(q)}&limit=30`)
     const items = r?.items ?? r ?? []
     vehicleOptions.value = items.map((v: any) => ({
       id: v.id,
@@ -5813,7 +5813,7 @@ const fetchRemaining = async () => {
     const params = new URLSearchParams()
     if (purchaseId.value) params.set('exclude_purchase_id', String(purchaseId.value))
     const data = await apiFetch<{ limit: number; spent: number; remaining: number; planned_amount: number; discrepancy: number }>(
-      `/api/subsidies/${form.subsidy_id}/budget-check?${params.toString()}`
+      `/subsidies/${form.subsidy_id}/budget-check?${params.toString()}`
     )
     const remaining = data.remaining - totalNmck.value
     budgetInfo.value = {

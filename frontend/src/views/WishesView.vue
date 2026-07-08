@@ -976,7 +976,7 @@
             </v-card>
 
             <!-- Section: Участники заявки -->
-            <v-card v-if="editingWishId" variant="outlined" class="mb-4">
+            <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
                 <v-icon class="mr-2" color="primary">mdi-account-multiple-plus</v-icon>
                 Участники заявки
@@ -2070,8 +2070,20 @@ async function loadWishMembers() {
 }
 async function addWishMember(userId: number | null) {
   participantToAdd.value = null
-  if (!userId || !editingWishId.value) return
+  if (!userId) return
   if (wishMembers.value.some(m => m.user_id === userId)) return
+  // Новая (ещё не сохранённая) заявка: у участников нет wish_id, поэтому копим их
+  // локально и прикрепляем сразу после создания черновика в saveWish. Это и есть
+  // «совместное создание» — люди выбираются до первого сохранения.
+  if (!editingWishId.value) {
+    const u = orgUsers.value.find((x: any) => x.id === userId)
+    wishMembers.value.push({
+      id: -userId, wish_id: 0, user_id: userId, role: 'participant',
+      added_by_id: null, consent_pending: false,
+      username: u?.username ?? null, full_name: u?.full_name ?? null,
+    } as WishMember)
+    return
+  }
   try {
     await apiFetch(`/wishes/${editingWishId.value}/members`, {
       method: 'POST',
@@ -2084,7 +2096,10 @@ async function addWishMember(userId: number | null) {
   }
 }
 async function removeWishMember(userId: number) {
-  if (!editingWishId.value) return
+  if (!editingWishId.value) {
+    wishMembers.value = wishMembers.value.filter(m => m.user_id !== userId)
+    return
+  }
   try {
     await apiFetch(`/wishes/${editingWishId.value}/members/${userId}`, { method: 'DELETE' })
     await loadWishMembers()
@@ -2147,12 +2162,22 @@ async function saveWish(andSubmit = false) {
         await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
       } else if (created?.id) {
-        // Черновик создан → переходим в режим редактирования, НЕ закрывая диалог.
-        // Только у сохранённой заявки есть id, а значит и блок «Участники заявки»
-        // (v-if="editingWishId") — иначе кнопка совместного редактирования не
-        // появляется и заявку нельзя расшарить нескольким людям.
+        // Прикрепляем участников, выбранных до сохранения (совместное создание).
+        const staged = wishMembers.value.map(m => m.user_id)
+        for (const uid of staged) {
+          try {
+            await apiFetch(`/wishes/${created.id}/members`, {
+              method: 'POST', body: JSON.stringify({ user_id: uid, role: 'participant' }),
+            })
+          } catch { /* дубликат/нет прав — пропускаем, не роняем сохранение */ }
+        }
+        // Черновик создан → переходим в режим редактирования, НЕ закрывая диалог,
+        // чтобы блок «Участники заявки» остался виден и заявку можно было
+        // дорасшарить нескольким людям.
         editingWishId.value = created.id
-        showSnack('Черновик сохранён — добавьте участников для совместной работы')
+        showSnack(staged.length
+          ? 'Черновик сохранён, участники добавлены'
+          : 'Черновик сохранён — добавьте участников для совместной работы')
         await loadWishMembers()
         await reloadActiveTab()
         return

@@ -304,9 +304,11 @@ async def list_categories(
     vis = await get_visible_subsidy_ids(current_user, db, "feo_categories")
     if vis is not None:
         # ФЭО-категории выбираются внутри форм заявки/закупки, поэтому пикер
-        # доступен и тем, кто видит субсидию по вкладке purchases (напр. роль
-        # Менеджер без админской вкладки feo_categories) — иначе список пуст.
+        # доступен всем, кто видит субсидию по вкладкам wishes или purchases
+        # (напр. роль Менеджер без админской вкладки feo_categories видит субсидию
+        # только через «Заявки») — иначе список категорий пуст.
         vis = vis | await get_visible_subsidy_ids(current_user, db, "purchases")
+        vis = vis | await get_visible_subsidy_ids(current_user, db, "wishes")
         q = q.where(FeoCategory.subsidy_id.in_(vis))
     if parent_id is not None:
         q = q.where(FeoCategory.parent_id == parent_id)

@@ -998,7 +998,15 @@
                 >
                   <template #item="{ item, props: itemProps }">
                     <v-list-item v-bind="itemProps">
-                      <template #title>{{ item.raw.full_name }}</template>
+                      <template #title>
+                        {{ item.raw.full_name }}
+                        <v-chip
+                          size="x-small"
+                          :color="requiresConsent(item.raw.id) ? 'orange' : 'green'"
+                          variant="tonal"
+                          class="ml-2"
+                        >{{ requiresConsent(item.raw.id) ? 'нужно согласование' : 'без согласования' }}</v-chip>
+                      </template>
                       <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
                     </v-list-item>
                   </template>
@@ -1021,6 +1029,13 @@
                       variant="tonal"
                       class="ml-1"
                     >ждёт согласия</v-chip>
+                    <v-chip
+                      v-else-if="!editingWishId && requiresConsent(m.user_id)"
+                      size="x-small"
+                      color="orange"
+                      variant="tonal"
+                      class="ml-1"
+                    >потребует согласования</v-chip>
                   </v-chip>
                 </div>
               </v-card-text>
@@ -1646,6 +1661,16 @@ const orgUsers = computed(() => {
   if (orgMembers.value.length) return orgMembers.value
   return users.value
 })
+
+// Кому текущий может ставить задачи без согласия (для пометки в пикере участников).
+// assignableAll=true → SaaS-роль, согласование не нужно ни для кого.
+const assignableAll = ref(false)
+const assignableIds = ref<Set<number>>(new Set())
+function requiresConsent(userId: number | null | undefined): boolean {
+  if (!userId || assignableAll.value) return false
+  if (userId === currentUserId) return false
+  return !assignableIds.value.has(userId)
+}
 
 // Должность сотрудника: per-org → fallback на legacy User.position/department
 function resolveUserPosition(u: any): string {
@@ -2491,6 +2516,9 @@ onMounted(async () => {
     apiFetch<FeoCategory[]>('/feo-categories/').then(r => { allFeoCategories.value = r }).catch(() => {}),
     apiFetch<User[]>('/users/').then(r => { users.value = r }).catch(() => {}),
     apiFetch<EventItem[]>('/events/').then(r => { events.value = r || [] }).catch(() => {}),
+    apiFetch<{ all: boolean; ids: number[] }>('/users/assignable-ids')
+      .then(r => { assignableAll.value = !!r.all; assignableIds.value = new Set(r.ids || []) })
+      .catch(() => {}),
   ])
   await loadWishes()
   await loadIncoming()

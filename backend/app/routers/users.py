@@ -149,6 +149,25 @@ async def list_users(
     result = await db.execute(q)
     return result.scalars().all()
 
+
+@router.get("/assignable-ids")
+async def assignable_user_ids(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """ID пользователей, которым текущий может ставить задачи БЕЗ согласия.
+
+    Нужен фронту, чтобы в пикере участников заявки/задачи показать пометку
+    «требуется согласование» у тех, кто не в подчинении. all=true → SaaS-роль,
+    согласование не нужно ни для кого.
+    """
+    from app.services.consent import compute_assignable_user_ids
+    assignable = await compute_assignable_user_ids(current_user, db)
+    if assignable is None:
+        return {"all": True, "ids": []}
+    return {"all": False, "ids": sorted(assignable)}
+
+
 @router.post("/", response_model=UserOut)
 async def create_user(
     data: UserCreate,

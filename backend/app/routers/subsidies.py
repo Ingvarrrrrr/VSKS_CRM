@@ -193,6 +193,7 @@ async def _calculate_spent_bulk(
 async def list_subsidies(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scope: Optional[str] = Query(None, description="strict|wishes — строгий скоуп пикера: прямое членство + управляемые орги + гранты, БЕЗ контура-детей"),
 ):
     # GET list is intentionally open to all authenticated users (incl. employee) so
     # that WishesView can populate the subsidy selector. Org-filter below already
@@ -202,6 +203,28 @@ async def list_subsidies(
     # Shared picker endpoint (orders/wishes/etc): member-union scope, NOT role-scoped.
     # Сужение до орг-админ-орг ломало бы выбор субсидии у сотрудника в /orders.
     org_ids = get_org_filter(current_user)
+    # scope="wishes"/"strict" — строгий скоуп пикера заявки: пользователь видит
+    # субсидии ТОЛЬКО тех орг, где реально состоит (членство/primary/UOA) или которыми
+    # управляет, + личные гранты. Контур аккаунта (root+дети) НЕ применяется: менеджер
+    # ВСКС не должен видеть субсидии дочернего Центрпоиска только из-за дерева орг —
+    # наследование по дереву признано неверным (видимость даёт членство/управление).
+    if scope in ("wishes", "strict") and current_user.role not in ('superadmin', 'account_owner'):
+        from app.models.user_organization import UserOrganization
+        from app.models.user_org_access import UserOrgAccess
+        from app.models.manager_organization import ManagerOrganization
+        strict: set[int] = set()
+        if current_user.org_id:
+            strict.add(int(current_user.org_id))
+        strict |= {int(r[0]) for r in (await db.execute(
+            select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
+        )).all() if r[0]}
+        strict |= {int(r[0]) for r in (await db.execute(
+            select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == current_user.id)
+        )).all() if r[0]}
+        strict |= {int(r[0]) for r in (await db.execute(
+            select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
+        )).all() if r[0]}
+        org_ids = list(strict)
     # 27.4-06: hard fallback для не-SaaS-ролей. Если JWT не содержит org_id/org_ids
     # И users.org_id = NULL — get_org_filter вернёт None → раньше employee видел ВСЕ
     # субсидии. Подтягиваем memberships из user_organizations.

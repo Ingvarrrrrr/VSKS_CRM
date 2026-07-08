@@ -2512,7 +2512,7 @@ watch(activeTab, (v) => {
 
 onMounted(async () => {
   await Promise.all([
-    apiFetch<Subsidy[]>('/subsidies/').then(r => { subsidies.value = r }).catch(() => {}),
+    apiFetch<Subsidy[]>('/subsidies/?scope=wishes').then(r => { subsidies.value = r }).catch(() => {}),
     apiFetch<FeoCategory[]>('/feo-categories/').then(r => { allFeoCategories.value = r }).catch(() => {}),
     apiFetch<User[]>('/users/').then(r => { users.value = r }).catch(() => {}),
     apiFetch<EventItem[]>('/events/').then(r => { events.value = r || [] }).catch(() => {}),

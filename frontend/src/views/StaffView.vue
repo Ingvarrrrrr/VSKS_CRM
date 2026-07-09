@@ -1423,28 +1423,34 @@ function randomAvatarId() {
 // ── Constants ──
 const ROLE_LABELS: Record<string, string> = {
   superadmin: 'Суперадмин',
-  account_owner: 'Владелец аккаунта',
-  org_admin: 'Администратор',
+  account_owner: 'Хозяин аккаунта',
+  admin: 'Администратор аккаунта',
+  org_admin: 'Администратор организации',
   manager: 'Менеджер',
   employee: 'Сотрудник',
-  admin: 'Администратор',
 }
 const roleItems = computed(() => {
+  // Глобальная роль: org_admin СЮДА НЕ входит — «Администратор организации» это
+  // только per-org роль (UserOrgAccess.role), не глобальная. Глобально доступны
+  // Сотрудник / Менеджер / Администратор аккаунта (управляет всем аккаунтом).
   const items = [
-    { value: 'org_admin', label: 'Администратор' },
     { value: 'manager', label: 'Менеджер' },
     { value: 'employee', label: 'Сотрудник' },
   ]
-  // «Владелец аккаунта» — SaaS-роль уровня всего аккаунта. Выдавать/передавать её
-  // может суперадмин ИЛИ сам владелец аккаунта (передача роли дальше). Обычному
-  // админу опция не видна, иначе после снятия её нельзя было бы вернуть.
+  // «Администратор аккаунта» — управляет всем аккаунтом. Выдавать может тот, у кого
+  // есть аккаунт-уровень: admin / account_owner / superadmin.
+  if (['superadmin', 'account_owner', 'admin'].includes(currentRole)) {
+    items.unshift({ value: 'admin', label: 'Администратор аккаунта' })
+  }
+  // «Хозяин аккаунта» — высшая роль аккаунта (email-recovery). Выдавать/передавать
+  // может суперадмин ИЛИ сам хозяин аккаунта.
   if (['superadmin', 'account_owner'].includes(currentRole)) {
-    items.unshift({ value: 'account_owner', label: 'Владелец аккаунта' })
+    items.unshift({ value: 'account_owner', label: 'Хозяин аккаунта' })
   }
   return items
 })
 const roleColor = (r: string) => ({
-  superadmin: 'purple', account_owner: 'deep-orange', org_admin: 'error', admin: 'error', manager: 'blue', employee: 'teal',
+  superadmin: 'purple', account_owner: 'deep-orange', admin: 'error', org_admin: 'orange-darken-2', manager: 'blue', employee: 'teal',
 }[r] || 'grey')
 
 // ── Route / Tab ──
@@ -1647,7 +1653,11 @@ const currentOrgId = parseInt(localStorage.getItem('user_org_id') || '0') || nul
 const currentOrgName = localStorage.getItem('user_org_name') || ''
 const isSuperadmin = computed(() => currentRole === 'superadmin')
 // SaaS-роли видят все орг → дать им выбор организации (account_owner Цыганов тоже).
-const canPickOrg = computed(() => ['superadmin', 'account_owner'].includes(currentRole))
+// Менеджер, управляющий >1 орг (напр. Маркодеева → ВСКС + Донецкое), тоже должен
+// выбирать целевую орг при добавлении сотрудника — иначе орг жёстко = его своя (баг).
+const canPickOrg = computed(() =>
+  ['superadmin', 'account_owner'].includes(currentRole) || organizations.value.length > 1
+)
 
 const editDialog = reactive({
   show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
@@ -2073,16 +2083,15 @@ function openCreateUser() {
   createDialog.subsidy_id = null
   createDialog.saving = false
   createDialog.show = true
-  // Load organizations for SaaS-роли (выбор орг). Если протухший currentOrgId
-  // не входит в список — сбрасываем, чтобы заставить выбрать валидную орг.
-  if (canPickOrg.value) {
-    apiFetch<any[]>('/organizations/').then(r => {
-      organizations.value = r
-      if (createDialog.org_id && !r.some(o => o.id === createDialog.org_id)) {
-        createDialog.org_id = null
-      }
-    }).catch(() => {})
-  }
+  // Грузим орг, в которые пользователь реально может создавать сотрудника
+  // (assignable = свои + управляемые). Для менеджера с >1 орг это включит пикер
+  // (canPickOrg). Если протухший currentOrgId не входит в список — сбрасываем.
+  apiFetch<any[]>('/organizations/assignable').then(r => {
+    organizations.value = r
+    if (createDialog.org_id && !r.some(o => o.id === createDialog.org_id)) {
+      createDialog.org_id = r.length ? r[0].id : null
+    }
+  }).catch(() => {})
 }
 
 async function saveUser() {
@@ -2753,6 +2762,9 @@ async function createAndAddMember() {
         phone: unformatPhone(newMemberForm.value.phone) || null,
         department: selectedDept.value.name,
         position: newMemberForm.value.position || null,
+        // Орг сотрудника = орг отдела, куда добавляем (напр. Донецкое), а не своя
+        // орг вызывающего. Иначе backend ставил org_id = current_user.org_id (ВСКС).
+        org_id: selectedDept.value.org_id ?? null,
       }),
     })
     // 2. Add to department

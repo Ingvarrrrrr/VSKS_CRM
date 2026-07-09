@@ -61,6 +61,14 @@
           <span class="text-caption">Управляет организацией</span>
         </div>
         <div class="d-flex align-center ga-1">
+          <div class="legend-line" style="background:#1976d2" />
+          <span class="text-caption">Подчинение отделов</span>
+        </div>
+        <div class="d-flex align-center ga-1">
+          <div class="legend-line" style="background:#7b1fa2" />
+          <span class="text-caption">Подчинение организаций</span>
+        </div>
+        <div class="d-flex align-center ga-1">
           <div class="legend-rect legend-dept" />
           <span class="text-caption">Отдел</span>
         </div>
@@ -121,6 +129,12 @@
             </v-list-item>
             <v-list-item prepend-icon="mdi-domain">
               <v-list-item-title class="text-body-2">Тяни от сотрудника к <strong>организации</strong> — он станет руководителем всей организации (фиолетовая стрелка)</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-arrow-right-circle">
+              <v-list-item-title class="text-body-2">Тяни от точки-выхода <strong>отдела</strong> к другому отделу — тот станет подчинённым (синяя стрелка)</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-arrow-right-circle">
+              <v-list-item-title class="text-body-2">Тяни от точки-выхода <strong>организации</strong> к другой организации — та станет подчинённой (фиолетовая стрелка)</v-list-item-title>
             </v-list-item>
             <v-list-item prepend-icon="mdi-crown">
               <v-list-item-title class="text-body-2">Корона — начальник отдела. При добавлении в отдел с начальником связь создаётся автоматически</v-list-item-title>
@@ -851,10 +865,16 @@ const OrgNode = markRaw({
   props: ['data'],
   setup(p: any) {
     return () => h('div', { class: 'hnode hnode-org' }, [
-      // Purple target handle for user→org "manager of org" edges
+      // Purple target handle (вход) for user→org "manager of org" edges + орг→орг (эта орг подчинена)
       h(Handle, {
         type: 'target', position: Position.Left, id: 'tgt',
         style: 'background:#9c27b0;width:14px;height:14px;border:2px solid white;left:-7px',
+      }),
+      // Source handle (выход, справа) — тяни отсюда к другой орг: та станет подчинённой
+      h(Handle, {
+        type: 'source', position: Position.Right, id: 'src',
+        style: 'background:#7b1fa2;width:14px;height:14px;border:2px solid white;right:-7px;cursor:crosshair',
+        title: 'Тяни к другой организации — она станет подчинённой',
       }),
       h('div', { class: 'hnode-header hnode-header-org', style: p.data.orgColor ? `background:linear-gradient(135deg,${p.data.orgColor},${p.data.orgColor}aa)` : '' }, [
         h('span', { class: 'mdi mdi-domain hnode-icon' }),
@@ -914,10 +934,16 @@ const DeptNode = markRaw({
       ]),
       // Название отдела — отдельной строкой на всю ширину
       h('div', { class: 'hnode-dept-name' }, p.data.label),
-      // Target handle for user→dept "manager of dept" edges
+      // Target handle (вход) for user→dept "manager of dept" + отдел→отдел (этот подчинён)
       h(Handle, {
         type: 'target', position: Position.Left, id: 'tgt',
         style: 'background:#ff9800;width:12px;height:12px;border:2px solid white;left:-6px;top:18px',
+      }),
+      // Source handle (выход, справа) — тяни к другому отделу: тот станет подчинённым
+      h(Handle, {
+        type: 'source', position: Position.Right, id: 'src',
+        style: 'background:#f57c00;width:12px;height:12px;border:2px solid white;right:-6px;top:18px;cursor:crosshair',
+        title: 'Тяни к другому отделу — он станет подчинённым',
       }),
       matchPointer(p.data.matched),
     ])
@@ -1188,6 +1214,7 @@ interface GraphData {
   user_dept_edges: { id: number; manager_user_id: number; dept_id: number }[]
   user_org_edges: { id: number; manager_user_id: number; org_id: number }[]
   dept_dept_edges?: { parent_id: number; dept_id: number }[]
+  org_org_edges?: { parent_org_id: number; org_id: number }[]
 }
 
 function getInitials(name: string | null, username: string): string {
@@ -1589,6 +1616,21 @@ function buildGraph(data: GraphData) {
       label: '×',
       labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
       data: { relation_id: e.dept_id, relation_type: 'dept_dept' },
+    })
+  }
+
+  // org-org edges (вышестоящая организация → подчинённая) — тёмно-фиолетовый
+  for (const e of (data.org_org_edges || [])) {
+    newEdges.push({
+      id: `oo-${e.org_id}`,
+      source: `org-${e.parent_org_id}`,
+      target: `org-${e.org_id}`,
+      type: 'smoothstep',
+      style: { stroke: '#7b1fa2', strokeWidth: 2.5 },
+      markerEnd: { type: 'arrowclosed', color: '#7b1fa2' },
+      label: '×',
+      labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
+      data: { relation_id: e.org_id, relation_type: 'org_org' },
     })
   }
 
@@ -2006,8 +2048,42 @@ async function onConnect(conn: Connection) {
     return
   }
 
+  // Стрелка орг→орг: источник становится вышестоящей организацией цели.
+  if (source.startsWith('org-') && target.startsWith('org-')) {
+    const source_id = parseInt(source.replace('org-', ''))
+    const target_id = parseInt(target.replace('org-', ''))
+    try {
+      const result = await apiFetch<{ id: number; type: string }>('/hierarchy/edges', {
+        method: 'POST',
+        body: { type: 'org_org', source_id, target_id },
+      })
+      const edgeId = `oo-${result.id}`
+      // Убрать прежнюю стрелку к этой орг (у орг один родитель).
+      edges.value = edges.value.filter(e => e.id !== edgeId)
+      addEdges([{
+        id: edgeId, source, target,
+        type: 'smoothstep',
+        style: { stroke: '#7b1fa2', strokeWidth: 2.5 },
+        markerEnd: { type: 'arrowclosed', color: '#7b1fa2' },
+        label: '×',
+        labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
+        data: { relation_id: result.id, relation_type: 'org_org' },
+      }])
+      showSnack('Задана вышестоящая организация')
+    } catch (e: any) {
+      showSnack(e?.message || 'Ошибка создания связи', 'error')
+    }
+    return
+  }
+
+  // Орг-источник допускает только орг→орг (обработано выше). Иначе — понятная причина.
+  if (source.startsWith('org-')) {
+    showSnack('От организации стрелку можно вести только к другой организации', 'warning')
+    return
+  }
+
   if (!source.startsWith('user-')) {
-    showSnack('Связь тянуть от сотрудника или между отделами', 'warning')
+    showSnack('Связь тянуть от сотрудника, между отделами или между организациями', 'warning')
     return
   }
 

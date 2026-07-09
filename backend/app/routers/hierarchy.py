@@ -96,6 +96,11 @@ class DeptDeptEdgeOut(BaseModel):
     dept_id: int
 
 
+class OrgOrgEdgeOut(BaseModel):
+    parent_org_id: int
+    org_id: int
+
+
 class GraphOut(BaseModel):
     orgs: List[OrgOut]
     departments: List[DeptGraphOut]
@@ -104,6 +109,7 @@ class GraphOut(BaseModel):
     user_dept_edges: List[UserDeptEdgeOut]
     user_org_edges: List[UserOrgEdgeOut]
     dept_dept_edges: List[DeptDeptEdgeOut] = []
+    org_org_edges: List[OrgOrgEdgeOut] = []
 
 
 class TaskAuthorityUserOut(BaseModel):
@@ -288,6 +294,14 @@ async def get_hierarchy_graph(
             deduped_orgs[deduped_orgs.index(prev)] = o
             by_inn[_inn] = o
 
+    # Org→org edges (вышестоящая организация) — только когда оба конца видимы
+    deduped_org_id_set = {o.id for o in deduped_orgs}
+    oo_edges = [
+        {"parent_org_id": o.parent_org_id, "org_id": o.id}
+        for o in deduped_orgs
+        if getattr(o, "parent_org_id", None) and o.parent_org_id in deduped_org_id_set
+    ]
+
     return {
         "orgs": [{"id": o.id, "name": o.name, "inn": getattr(o, "inn", None), "color": getattr(o, "color", None), "contractor_id": getattr(o, "contractor_id", None)} for o in deduped_orgs],
         "departments": [
@@ -322,6 +336,7 @@ async def get_hierarchy_graph(
         "user_dept_edges": ud_edges,
         "user_org_edges": uo_edges,
         "dept_dept_edges": dd_edges,
+        "org_org_edges": oo_edges,
     }
 
 
@@ -403,6 +418,26 @@ async def create_edge(
         await db.commit()
         return {"id": tgt.id, "type": "dept_dept"}
 
+    elif body.type == "org_org":
+        # Стрелка орг→орг: источник — вышестоящая организация цели (parent_org_id).
+        # Отдельно от root_org_id (контур/видимость) — это только оргструктура.
+        if body.source_id == body.target_id:
+            raise HTTPException(400, "Организация не может быть вышестоящей для самой себя")
+        src = await db.get(Organization, body.source_id)
+        tgt = await db.get(Organization, body.target_id)
+        if not src or not tgt:
+            raise HTTPException(404, "Организация не найдена")
+        # Защита от цикла: source не должен быть потомком target.
+        cur, depth = src, 0
+        while cur is not None and getattr(cur, 'parent_org_id', None) and depth < 30:
+            if cur.parent_org_id == body.target_id:
+                raise HTTPException(400, "Создаст цикл в дереве организаций")
+            cur = await db.get(Organization, cur.parent_org_id)
+            depth += 1
+        tgt.parent_org_id = body.source_id
+        await db.commit()
+        return {"id": tgt.id, "type": "org_org"}
+
     elif body.type == "user_org":
         org = await db.get(Organization, body.target_id)
         if not org:
@@ -476,6 +511,15 @@ async def delete_edge(
         if not tgt:
             raise HTTPException(404, "Связь не найдена")
         tgt.parent_id = None
+        await db.commit()
+        return {"ok": True}
+
+    elif type == "org_org":
+        # edge_id = id целевой орг; снять вышестоящую организацию.
+        tgt = await db.get(Organization, edge_id)
+        if not tgt:
+            raise HTTPException(404, "Связь не найдена")
+        tgt.parent_org_id = None
         await db.commit()
         return {"ok": True}
 

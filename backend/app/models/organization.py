@@ -19,6 +19,9 @@ class Organization(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # Multi-org / contour support
     root_org_id   = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    # Оргструктура «кто кому подчиняется» (редактор иерархии, стрелки орг→орг).
+    # Отдельно от root_org_id (контур/видимость) — подчинение НЕ наследует видимость.
+    parent_org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     owner_user_id = Column(Integer, ForeignKey("users.id",         ondelete="SET NULL"), nullable=True)
     # Phase 17.1-03 — single-entity link to Contractor (source of truth for legal requisites)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True, index=True)

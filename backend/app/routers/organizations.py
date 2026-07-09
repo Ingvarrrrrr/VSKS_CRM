@@ -181,6 +181,35 @@ async def my_organizations(
     return result
 
 
+@router.get("/api/organizations/assignable", response_model=List[OrganizationOut])
+async def assignable_organizations(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Орг, в которые current_user может создавать/добавлять сотрудников.
+
+    Совпадает с бэкенд-гейтом create_user (get_org_filter): своя орг + UOA +
+    контур + управляемые орг (ManagerOrganization, «ставит задачи организации»).
+    SaaS-роли (superadmin/account_owner) → все орг. Нужен фронту, чтобы менеджер,
+    управляющий несколькими орг (напр. Маркодеева → ВСКС + Донецкое), мог выбрать
+    целевую орг при добавлении сотрудника, а не был жёстко привязан к своей.
+    """
+    from app.auth.jwt import get_org_filter
+    base_q = select(Organization).options(selectinload(Organization.contractor)).order_by(Organization.name)
+    if current_user.role in ('superadmin', 'account_owner'):
+        orgs = (await db.execute(base_q)).scalars().all()
+    else:
+        allowed = get_org_filter(current_user)
+        if not allowed:
+            return []
+        orgs = (await db.execute(base_q.where(Organization.id.in_(allowed)))).scalars().all()
+    result = []
+    for org in orgs:
+        uc = (await db.execute(select(func.count()).where(User.org_id == org.id))).scalar() or 0
+        result.append(_merge_org_with_contractor(org, user_count=uc))
+    return result
+
+
 @router.get("/api/organizations/me")
 async def get_my_org(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not current_user.org_id:

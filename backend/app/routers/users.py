@@ -997,8 +997,8 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    # Org admin can only delete users from their org
-    if current_user.role == 'account_owner' and user.org_id != current_user.org_id:
+    # Org-admin ограничен своей орг; account_owner/admin/superadmin — по всей учётке.
+    if current_user.role == 'org_admin' and user.org_id != current_user.org_id:
         raise HTTPException(403, "Удалять можно только сотрудников своей организации.")
 
     # Удаление карточки в контексте орг = открепление от этой орг, а не

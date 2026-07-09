@@ -1465,7 +1465,7 @@ watch(activeTab, (val) => {
 // ── Auth ──
 const currentRole = localStorage.getItem('user_role') || ''
 const currentUserId = Number(localStorage.getItem('user_id') || 0)
-const isAdmin = computed(() => ['admin', 'org_admin', 'superadmin'].includes(currentRole))
+const isAdmin = computed(() => ['admin', 'org_admin', 'account_owner', 'superadmin'].includes(currentRole))
 
 // ── Snackbar ──
 const snack = reactive({ show: false, text: '', color: 'success' })

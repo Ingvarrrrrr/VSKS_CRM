@@ -353,11 +353,25 @@ async def budget_check(
     Returns limit (ФЭО-tree budget), spent (Σ active purchases), remaining, discrepancy.
     T-31-05-01: read-access validated — only subsidies visible to user.
     """
-    from app.auth.visibility import get_visible_subsidy_ids
+    from app.auth.visibility import get_visible_subsidy_ids, build_visibility_clause
     # Security: ensure user has read-access to this subsidy
     visible = await get_visible_subsidy_ids(current_user, db)
     if visible is not None and subsidy_id not in visible:
-        raise HTTPException(status_code=404, detail="Subsidy not found")
+        # Пользователь может не иметь вкладки «Субсидии» в орге субсидии, но видеть
+        # закупку по ней (назначен/участник/в чате/задача) — тогда бюджет субсидии
+        # ему доступен для контекста закупки. Иначе открытие чужой (по орг) закупки
+        # падало 404 «Subsidy not found» у исполнителя.
+        clause = await build_visibility_clause(current_user, db, "purchase")
+        allowed = clause is None
+        if clause is not None:
+            cnt = (await db.execute(
+                select(func.count()).select_from(Purchase).where(
+                    Purchase.subsidy_id == subsidy_id, clause
+                )
+            )).scalar() or 0
+            allowed = cnt > 0
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Subsidy not found")
 
     subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
     if not subsidy:

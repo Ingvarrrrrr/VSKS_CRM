@@ -122,23 +122,39 @@ async def list_users(
                 # Пустой conds (нет ни орг, ни assignable) → вернуть пусто, не весь список.
                 q = q.where(or_(*conds)) if conds else q.where(User.id == -1)
     elif org_ids is not None:
-        # Обычный режим (без явной цели) — ограничиваем контуром вызывающего.
+        # Обычный режим (без явной цели) — ограничиваем орг вызывающего.
+        # СТРОГИЙ скоуп (как в subsidies scope=strict): орг, где вызывающий реально
+        # состоит (primary/членство/UOA) или которыми управляет. Контур аккаунта
+        # (root+дети) НЕ применяется: менеджер ВСКС не должен видеть сотрудников
+        # дочернего Центрпоиска только из-за дерева орг — наследования по дереву нет.
+        from sqlalchemy import or_
+        from app.models.user_organization import UserOrganization
+        from app.models.user_org_access import UserOrgAccess
+        if current_user.role not in ('superadmin', 'account_owner'):
+            from app.models.manager_organization import ManagerOrganization
+            strict: set[int] = set()
+            if current_user.org_id:
+                strict.add(int(current_user.org_id))
+            strict |= {int(r[0]) for r in (await db.execute(
+                select(UserOrganization.org_id).where(UserOrganization.user_id == current_user.id)
+            )).all() if r[0]}
+            strict |= {int(r[0]) for r in (await db.execute(
+                select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == current_user.id)
+            )).all() if r[0]}
+            strict |= {int(r[0]) for r in (await db.execute(
+                select(ManagerOrganization.org_id).where(ManagerOrganization.manager_user_id == current_user.id)
+            )).all() if r[0]}
+            org_ids = list(strict)
         # Bugfix: членство в орг определяется не только primary User.org_id, но и
         # записями user_organizations (отдел/иерархия) и user_org_access. Иначе
         # сотрудник, состоящий в отделе через user_organizations (виден в Иерархии),
         # но с другим/пустым User.org_id, пропадал из списка «Сотрудники».
-        from sqlalchemy import or_
-        from app.models.user_organization import UserOrganization
         conds = [
             User.org_id.in_(org_ids),
             User.id.in_(select(UserOrganization.user_id).where(UserOrganization.org_id.in_(org_ids))),
+            User.id.in_(select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(org_ids))),
         ]
-        try:
-            from app.models.user_org_access import UserOrgAccess
-            conds.append(User.id.in_(select(UserOrgAccess.user_id).where(UserOrgAccess.org_id.in_(org_ids))))
-        except Exception:
-            pass
-        q = q.where(or_(*conds))
+        q = q.where(or_(*conds)) if org_ids else q.where(User.id == -1)
     # Phase 30.2: driver-only filter — can_drive=True OR fleet_role='driver'
     if can_drive is True:
         from sqlalchemy import or_

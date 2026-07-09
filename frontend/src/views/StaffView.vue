@@ -1094,8 +1094,8 @@
               :disabled="deptMemberItems.length === 0" />
 
             <v-select v-model="deptForm.curator_user_id" :items="userDropdownItems" item-title="text" item-value="value"
-              label="Курирующий зам" variant="outlined" density="compact" clearable class="mb-3"
-              hint="Заместитель, курирующий это подразделение (в цепочке согласования выше начальника)" persistent-hint />
+              label="Куратор" variant="outlined" density="compact" clearable class="mb-3"
+              hint="Любой человек, курирующий это подразделение (в цепочке согласования выше начальника). Не обязательно зам." persistent-hint />
 
             <v-select v-model="deptForm.parent_id" :items="otherDeptItems" item-title="text" item-value="value"
               label="Вышестоящее подразделение" variant="outlined" density="compact" clearable
@@ -1423,18 +1423,28 @@ function randomAvatarId() {
 // ── Constants ──
 const ROLE_LABELS: Record<string, string> = {
   superadmin: 'Суперадмин',
+  account_owner: 'Владелец аккаунта',
   org_admin: 'Администратор',
   manager: 'Менеджер',
   employee: 'Сотрудник',
   admin: 'Администратор',
 }
-const roleItems = [
-  { value: 'org_admin', label: 'Администратор' },
-  { value: 'manager', label: 'Менеджер' },
-  { value: 'employee', label: 'Сотрудник' },
-]
+const roleItems = computed(() => {
+  const items = [
+    { value: 'org_admin', label: 'Администратор' },
+    { value: 'manager', label: 'Менеджер' },
+    { value: 'employee', label: 'Сотрудник' },
+  ]
+  // «Владелец аккаунта» — SaaS-роль уровня всего аккаунта. Выдавать/передавать её
+  // может суперадмин ИЛИ сам владелец аккаунта (передача роли дальше). Обычному
+  // админу опция не видна, иначе после снятия её нельзя было бы вернуть.
+  if (['superadmin', 'account_owner'].includes(currentRole)) {
+    items.unshift({ value: 'account_owner', label: 'Владелец аккаунта' })
+  }
+  return items
+})
 const roleColor = (r: string) => ({
-  superadmin: 'purple', org_admin: 'error', admin: 'error', manager: 'blue', employee: 'teal',
+  superadmin: 'purple', account_owner: 'deep-orange', org_admin: 'error', admin: 'error', manager: 'blue', employee: 'teal',
 }[r] || 'grey')
 
 // ── Route / Tab ──

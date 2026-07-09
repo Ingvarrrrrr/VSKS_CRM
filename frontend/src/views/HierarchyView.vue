@@ -1187,6 +1187,7 @@ interface GraphData {
   user_user_edges: { id: number; manager_id: number; subordinate_id: number }[]
   user_dept_edges: { id: number; manager_user_id: number; dept_id: number }[]
   user_org_edges: { id: number; manager_user_id: number; org_id: number }[]
+  dept_dept_edges?: { parent_id: number; dept_id: number }[]
 }
 
 function getInitials(name: string | null, username: string): string {
@@ -1576,6 +1577,21 @@ function buildGraph(data: GraphData) {
     })
   }
 
+  // dept-dept edges (вышестоящее подразделение → дочернее) — синий
+  for (const e of (data.dept_dept_edges || [])) {
+    newEdges.push({
+      id: `dd-${e.dept_id}`,
+      source: `dept-${e.parent_id}`,
+      target: `dept-${e.dept_id}`,
+      type: 'smoothstep',
+      style: { stroke: '#1976d2', strokeWidth: 2 },
+      markerEnd: { type: 'arrowclosed', color: '#1976d2' },
+      label: '×',
+      labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
+      data: { relation_id: e.dept_id, relation_type: 'dept_dept' },
+    })
+  }
+
   nodes.value = newNodes
   edges.value = newEdges
 }
@@ -1960,8 +1976,38 @@ onNodeDragStop(async ({ node }) => {
 
 async function onConnect(conn: Connection) {
   const { source, target } = conn
-  if (!source || !target || !source.startsWith('user-')) {
-    showSnack('Связь тянуть только от сотрудника', 'warning')
+  if (!source || !target) return
+
+  // Стрелка отдел→отдел: источник становится вышестоящим подразделением цели.
+  if (source.startsWith('dept-') && target.startsWith('dept-')) {
+    const source_id = parseInt(source.replace('dept-', ''))
+    const target_id = parseInt(target.replace('dept-', ''))
+    try {
+      const result = await apiFetch<{ id: number; type: string }>('/hierarchy/edges', {
+        method: 'POST',
+        body: { type: 'dept_dept', source_id, target_id },
+      })
+      const edgeId = `dd-${result.id}`
+      // Убрать прежнюю стрелку к этому отделу (у отдела один родитель).
+      edges.value = edges.value.filter(e => e.id !== edgeId)
+      addEdges([{
+        id: edgeId, source, target,
+        type: 'smoothstep',
+        style: { stroke: '#1976d2', strokeWidth: 2 },
+        markerEnd: { type: 'arrowclosed', color: '#1976d2' },
+        label: '×',
+        labelStyle: { cursor: 'pointer', fill: '#f44336', fontWeight: 'bold', fontSize: '14px' },
+        data: { relation_id: result.id, relation_type: 'dept_dept' },
+      }])
+      showSnack('Задано вышестоящее подразделение')
+    } catch (e: any) {
+      showSnack(e?.message || 'Ошибка создания связи', 'error')
+    }
+    return
+  }
+
+  if (!source.startsWith('user-')) {
+    showSnack('Связь тянуть от сотрудника или между отделами', 'warning')
     return
   }
 
@@ -1998,7 +2044,7 @@ async function onConnect(conn: Connection) {
       data: { relation_id: result.id, relation_type: type },
     }])
     const msg = type === 'user_user' ? 'Связь подчинённости создана'
-      : type === 'user_dept' ? 'Назначен начальник отдела'
+      : type === 'user_dept' ? 'Назначен куратор отдела'
       : 'Назначен руководитель организации'
     showSnack(msg)
   } catch (e: any) {

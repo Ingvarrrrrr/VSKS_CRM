@@ -71,7 +71,7 @@ async def build_ascending_chain(
             add(cur.deputy_head_user_id, "Зам.начальника отдела")
             add(cur.head_user_id, "Начальник отдела")
         else:
-            add(cur.curator_user_id, "Курирующий зам")
+            add(cur.curator_user_id, "Куратор")
             add(cur.deputy_head_user_id, "Зам.начальника подразделения")
             add(cur.head_user_id, "Начальник подразделения")
         cur = await db.get(Department, cur.parent_id) if cur.parent_id else None

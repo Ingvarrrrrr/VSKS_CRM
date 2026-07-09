@@ -91,6 +91,11 @@ class UserOrgEdgeOut(BaseModel):
     org_id: int
 
 
+class DeptDeptEdgeOut(BaseModel):
+    parent_id: int
+    dept_id: int
+
+
 class GraphOut(BaseModel):
     orgs: List[OrgOut]
     departments: List[DeptGraphOut]
@@ -98,6 +103,7 @@ class GraphOut(BaseModel):
     user_user_edges: List[UserUserEdgeOut]
     user_dept_edges: List[UserDeptEdgeOut]
     user_org_edges: List[UserOrgEdgeOut]
+    dept_dept_edges: List[DeptDeptEdgeOut] = []
 
 
 class TaskAuthorityUserOut(BaseModel):
@@ -252,6 +258,14 @@ async def get_hierarchy_graph(
         )).scalars().all()
         uo_edges = [{"id": r.id, "manager_user_id": r.manager_user_id, "org_id": r.org_id} for r in mo_rows]
 
+    # Dept→dept edges (вышестоящее подразделение) — только когда оба конца видимы
+    dept_id_set = set(dept_ids)
+    dd_edges = [
+        {"parent_id": d.parent_id, "dept_id": d.id}
+        for d in depts
+        if d.parent_id and d.parent_id in dept_id_set
+    ]
+
     # Dedup org-узлов по ИНН: одна организация (один ИНН) = один узел, даже если
     # на неё ссылаются несколько субсидий/контрагентов. Представителя выбираем по
     # приоритету: есть отделы > есть contractor_id > меньший id. Орг без ИНН не трогаем.
@@ -307,6 +321,7 @@ async def get_hierarchy_graph(
         "user_user_edges": uu_edges,
         "user_dept_edges": ud_edges,
         "user_org_edges": uo_edges,
+        "dept_dept_edges": dd_edges,
     }
 
 
@@ -347,6 +362,9 @@ async def create_edge(
         dept = await db.get(Department, body.target_id)
         if not dept:
             raise HTTPException(404, "Отдел не найден")
+        # Стрелка человек→отдел = куратор подразделения (заполняет явное поле,
+        # которое читает цепочка согласования).
+        dept.curator_user_id = body.source_id
         existing = (await db.execute(
             select(ManagerDepartment).where(
                 ManagerDepartment.manager_user_id == body.source_id,
@@ -354,6 +372,7 @@ async def create_edge(
             )
         )).scalar_one_or_none()
         if existing:
+            await db.commit()
             return {"id": existing.id, "type": "user_dept"}
         row = ManagerDepartment(
             manager_user_id=body.source_id,
@@ -364,6 +383,25 @@ async def create_edge(
         await db.commit()
         await db.refresh(row)
         return {"id": row.id, "type": "user_dept"}
+
+    elif body.type == "dept_dept":
+        # Стрелка отдел→отдел: источник — вышестоящее подразделение цели.
+        if body.source_id == body.target_id:
+            raise HTTPException(400, "Отдел не может быть вышестоящим для самого себя")
+        src = await db.get(Department, body.source_id)
+        tgt = await db.get(Department, body.target_id)
+        if not src or not tgt:
+            raise HTTPException(404, "Отдел не найден")
+        # Защита от цикла: source не должен быть потомком target.
+        cur, depth = src, 0
+        while cur is not None and cur.parent_id and depth < 30:
+            if cur.parent_id == body.target_id:
+                raise HTTPException(400, "Создаст цикл в дереве подразделений")
+            cur = await db.get(Department, cur.parent_id)
+            depth += 1
+        tgt.parent_id = body.source_id
+        await db.commit()
+        return {"id": tgt.id, "type": "dept_dept"}
 
     elif body.type == "user_org":
         org = await db.get(Organization, body.target_id)
@@ -425,7 +463,19 @@ async def delete_edge(
         row = await db.get(ManagerDepartment, edge_id)
         if not row:
             raise HTTPException(404, "Связь не найдена")
+        dept = await db.get(Department, row.dept_id)
+        if dept is not None and dept.curator_user_id == row.manager_user_id:
+            dept.curator_user_id = None
         await db.delete(row)
+        await db.commit()
+        return {"ok": True}
+
+    elif type == "dept_dept":
+        # edge_id = id целевого отдела; снять вышестоящее подразделение.
+        tgt = await db.get(Department, edge_id)
+        if not tgt:
+            raise HTTPException(404, "Связь не найдена")
+        tgt.parent_id = None
         await db.commit()
         return {"ok": True}
 
@@ -691,6 +741,14 @@ async def patch_user_org_membership_row(
         v = body["hired_at"]
         row.hired_at = datetime.fromisoformat(v) if v else None
     await db.commit()
+    # Должность в членстве → head/deputy отдела (двусторонняя синхронизация)
+    if "position" in body and row.dept_id:
+        from app.models.department import Department
+        from app.services.dept_role_sync import sync_head_from_position
+        dept = await db.get(Department, row.dept_id)
+        if dept is not None:
+            await sync_head_from_position(db, dept, uid, row.position)
+            await db.commit()
     return {"ok": True}
 
 

@@ -243,6 +243,7 @@ async def update_department(
         raise HTTPException(404, "Отдел не найден")
     old_name = dept.name
     old_head = dept.head_user_id
+    old_deputy = dept.deputy_head_user_id
     update = data.dict(exclude_unset=True)
     if "name" in update and update["name"]:
         update["name"] = update["name"].strip()
@@ -261,6 +262,11 @@ async def update_department(
     if dept.head_user_id and dept.head_user_id != old_head:
         from app.routers.users import _sync_head_hierarchy
         await _sync_head_hierarchy(dept, db)
+        await db.commit()
+    # Двусторонняя синхронизация: head/deputy отдела → должность в членстве
+    if dept.head_user_id != old_head or dept.deputy_head_user_id != old_deputy:
+        from app.services.dept_role_sync import sync_position_from_head
+        await sync_position_from_head(db, dept, old_head, old_deputy)
         await db.commit()
     return await _enrich_dept(dept, db)
 
@@ -361,6 +367,10 @@ async def add_member(
         db.add(m)
         await db.commit()
         await db.refresh(m)
+    # Должность члена → head/deputy отдела (двусторонняя синхронизация)
+    from app.services.dept_role_sync import sync_head_from_position
+    await sync_head_from_position(db, dept, data.user_id, m.position)
+    await db.commit()
     # Also update user.department string
     if user:
         user.department = dept.name
@@ -404,7 +414,14 @@ async def update_member(
         raise HTTPException(404, "Сотрудник не найден в отделе")
     if "position" in data:
         m.position = data["position"]
-    await db.commit()
+        await db.commit()
+        dept = await db.get(Department, dept_id)
+        if dept is not None:
+            from app.services.dept_role_sync import sync_head_from_position
+            await sync_head_from_position(db, dept, user_id, m.position)
+            await db.commit()
+    else:
+        await db.commit()
     return {"ok": True}
 
 
@@ -449,6 +466,16 @@ async def remove_member(
             select(Organization.name).where(Organization.id == dept_org_id)
         )).scalar() if dept_org_id else 'этой организации'
         raise HTTPException(400, f"У сотрудника {active_count} активных задач (закупок) в «{org_name}». Сначала перераспределите задачи.")
+
+    # Человек выведен из отдела → снять с него роль начальника/зама этого отдела
+    # и очистить должность в снимаемых членствах (человек в разных отделах может
+    # занимать разные должности — трогаем только это членство).
+    if dept is not None:
+        from app.services.dept_role_sync import clear_role_on_removal
+        await clear_role_on_removal(db, dept, user_id)
+    for uo in uo_rows:
+        if uo.position in ("Начальник отдела", "Заместитель начальника отдела"):
+            uo.position = None
 
     for uo in uo_rows:
         # Check whether a dept_id=NULL row for (user, org) already exists.

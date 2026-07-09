@@ -532,6 +532,11 @@ async def _sync_user_department(user: User, db: AsyncSession):
         existing.position = user.position
     else:
         db.add(_UO_sync(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=user.position))
+    await db.flush()
+
+    # Должность в карточке пользователя → head/deputy отдела (двусторонняя синхронизация)
+    from app.services.dept_role_sync import sync_head_from_position
+    await sync_head_from_position(db, dept, user.id, user.position)
 
     # If user is head of this dept — auto-create hierarchy for all members
     if dept.head_user_id == user.id:

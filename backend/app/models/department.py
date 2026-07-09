@@ -13,7 +13,7 @@ class Department(Base):
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     deputy_head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # зам.начальника отдела
-    curator_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)      # курирующий зам
+    curator_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)      # куратор (любой человек)
     parent_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)      # вышестоящее подразделение
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

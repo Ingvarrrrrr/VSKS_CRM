@@ -4,7 +4,7 @@ import re
 import shutil
 import logging
 from urllib.parse import quote
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 
@@ -1811,6 +1811,7 @@ def _render_plan_graph_workbook(tree: list, items: list, meta: dict):
 @router.get("/{subsidy_id}/plan-graph/export")
 async def export_plan_graph_excel(
     subsidy_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1901,6 +1902,15 @@ async def export_plan_graph_excel(
         "contracted": "Договор", "ordered": "Заказано",
         "delivered": "Поставлено", "paid": "Оплачено",
     }
+    def _act_number(acc_number, acc_docs) -> str:
+        if acc_number:
+            return str(acc_number)
+        if isinstance(acc_docs, list) and acc_docs:
+            first = acc_docs[0]
+            if isinstance(first, dict) and first.get("number"):
+                return str(first["number"])
+        return ""
+
     purchased_by_item: dict[int, list] = {}
     if item_ids:
         pi_rows = (await db.execute(
@@ -1912,7 +1922,10 @@ async def export_plan_graph_excel(
                 _PI.unit_price,
                 _PI.total_price,
                 _PI.contractor_name,
+                _P.id.label("purchase_id"),
                 _P.status,
+                _P.acceptance_doc_number,
+                _P.acceptance_docs,
             )
             .join(_P, _PI.purchase_id == _P.id)
             .where(_PI.feo_planned_item_id.in_(item_ids))
@@ -1926,7 +1939,10 @@ async def export_plan_graph_excel(
                 "unit_price": float(r.unit_price or 0),
                 "total": float(r.total_price or 0),
                 "contractor": r.contractor_name or "",
+                "raw_status": r.status or "",
                 "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+                "purchase_id": r.purchase_id,
+                "act_number": _act_number(r.acceptance_doc_number, r.acceptance_docs),
             })
 
     # FCAT: закупки часто привязаны к КАТЕГОРИИ (feo_category_id), а не к плановой
@@ -1973,10 +1989,13 @@ async def export_plan_graph_excel(
                 _PI.unit_price,
                 _PI.total_price,
                 _PI.contractor_name,
+                _P.id.label("purchase_id"),
                 _P.status,
                 _P.is_monthly_payment,
                 _P.monthly_payment_count,
                 _P.monthly_payment_amount,
+                _P.acceptance_doc_number,
+                _P.acceptance_docs,
             )
             .join(_P, _PI.purchase_id == _P.id)
             .where(_PI.feo_category_id.in_(cat_ids))
@@ -1995,7 +2014,10 @@ async def export_plan_graph_excel(
                     "unit_price": float(r.unit_price or 0),
                     "total": float(r.total_price or 0),
                     "contractor": r.contractor_name or "",
+                    "raw_status": r.status or "",
                     "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+                    "purchase_id": r.purchase_id,
+                    "act_number": _act_number(r.acceptance_doc_number, r.acceptance_docs),
                     "is_monthly": bool(r.is_monthly_payment),
                     "monthly_count": r.monthly_payment_count,
                     "monthly_amount": float(r.monthly_payment_amount or 0),
@@ -2076,8 +2098,9 @@ async def export_plan_graph_excel(
         "Фактически (итого), ₽", "Остаток, ₽",
         "% исполнения", "Исполнитель", "Статус",
         "Ежемес. (регуляр.) платежи, ₽",
+        "№ акта", "Документы",
     ]
-    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 18, 18, 18, 20, 18, 12, 30, 15, 22]
+    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 18, 18, 18, 20, 18, 12, 30, 15, 22, 16, 14]
 
     cats_by_parent: dict = {}
     for c in cats:
@@ -2123,22 +2146,41 @@ async def export_plan_graph_excel(
         d = subtree_map.get(cat_id, {}).get("status", {})
         return sum(d.get(s, 0.0) for s in statuses)
 
+    base_url = str(request.base_url).rstrip("/")
+    LINK_FONT = Font(size=8, italic=True, color="2563EB", underline="single")
+
+    def _cascade(raw_status: str, total: float):
+        """Каскад суммы поставки по стадиям: сумма падает во все столбцы до текущей
+        стадии включительно; недостигнутые = 0. Столбцы: Заказано/Поставлено/Оплачено."""
+        t = round(total or 0, 2)
+        ordered = t if raw_status in ("ordered", "delivered", "paid") else 0
+        delivered = t if raw_status in ("delivered", "paid") else 0
+        paid = t if raw_status == "paid" else 0
+        return ordered, delivered, paid
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "План-график"
 
-    ws.append(HEADERS)
+    # Заголовок-титул в строке 1 (не через insert_rows — иначе гиперлинки не
+    # сдвигаются вместе с ячейками и «съезжают» на строку выше).
+    title_cell = ws.cell(row=1, column=1, value=f"ПЛАН-ГРАФИК — {sub.name} ({sub.year})")
+    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    ws.merge_cells(f"A1:{chr(64 + len(HEADERS))}1")
+    title_cell.alignment = CENTER_ALIGN
+    ws.row_dimensions[1].height = 28
+
     for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), 1):
-        cell = ws.cell(row=1, column=col_idx)
+        cell = ws.cell(row=2, column=col_idx, value=header)
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = CENTER_ALIGN
         cell.border = THIN_BORDER
         ws.column_dimensions[cell.column_letter].width = width
-    ws.row_dimensions[1].height = 32
-    ws.freeze_panes = "A2"
+    ws.row_dimensions[2].height = 32
+    ws.freeze_panes = "A3"
 
-    row_num = 2
+    row_num = 3
     seq = 0
 
     def _write_row(values, fill, font, height=20):
@@ -2151,6 +2193,16 @@ async def export_plan_graph_excel(
             cell.alignment = RIGHT_ALIGN if col_idx >= 6 else LEFT_ALIGN
         ws.row_dimensions[row_num].height = height
         row_num += 1
+
+    def _set_doc_link(purchase_id):
+        """Проставить гиперлинк «Открыть» в колонку 20 последней записанной строки —
+        ведёт на страницу заказа, где под авторизацией доступны все документы."""
+        if not purchase_id:
+            return
+        cell = ws.cell(row=row_num - 1, column=20)
+        cell.value = "Открыть"
+        cell.hyperlink = f"{base_url}/orders/{purchase_id}"
+        cell.font = LINK_FONT
 
     E = ""  # пустая ячейка
 
@@ -2200,8 +2252,12 @@ async def export_plan_graph_excel(
                 + _money_cols(cat.id, cat_contractor_map.get(cat.id, "")),
                 L3_FILL, L3_FONT
             )
-            # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи)
-            for pi in purchased_by_cat.get(cat.id, []):
+            # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи).
+            # По каждой фактической позиции — цена, кол-во, сумма, контрагент, № акта,
+            # ссылка на документы + каскад Заказано/Поставлено/Оплачено.
+            cat_purchases = purchased_by_cat.get(cat.id, [])
+            cat_ord = cat_del = cat_paid = 0.0
+            for pi in cat_purchases:
                 price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
                 status_txt = pi["status"]
                 monthly_val = ""
@@ -2212,16 +2268,31 @@ async def export_plan_graph_excel(
                     monthly_val = round(pi["total"], 2)
                     if amt:
                         price_note += f" ({round(amt, 2):,.2f} ₽/мес)"
+                ord_a, del_a, paid_a = _cascade(pi["raw_status"], pi["total"])
+                cat_ord += ord_a; cat_del += del_a; cat_paid += paid_a
                 _write_row(
                     [
                         "", "", "", price_note,
                         pi["unit"], round(pi["qty"], 3),
-                        "", "", "", "", "", "",
+                        "", "", "",
+                        ord_a, del_a, paid_a,
                         round(pi["total"], 2), "",
                         "", pi["contractor"], status_txt,
-                        monthly_val,
+                        monthly_val, pi["act_number"],
                     ],
                     SUB_FILL, SUB_FONT, height=16
+                )
+                _set_doc_link(pi["purchase_id"])
+            if cat_purchases:
+                _write_row(
+                    [
+                        "", "", "", "    Итого по факту:",
+                        "", "",
+                        "", "", "",
+                        round(cat_ord, 2), round(cat_del, 2), round(cat_paid, 2),
+                        "", "", "", "", "", "",
+                    ],
+                    SUB_FILL, Font(size=8, bold=True, color="374151"), height=16
                 )
             for item in items_by_cat.get(cat.id, []):
                 seq += 1
@@ -2249,19 +2320,24 @@ async def export_plan_graph_excel(
                     ],
                     PatternFill(), font
                 )
-                # Под-строки: реально закупленные позиции (что и по какой цене)
+                # Под-строки: реально закупленные позиции (что, по какой цене, № акта,
+                # каскад статусов Заказано/Поставлено/Оплачено + ссылка на документы)
                 for pi in purchased_by_item.get(item.id, []):
                     price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
+                    ord_a, del_a, paid_a = _cascade(pi["raw_status"], pi["total"])
                     _write_row(
                         [
                             "", "", "", price_note,
                             pi["unit"], round(pi["qty"], 3),
-                            "", "", "", "", "", "",
+                            "", "", "",
+                            ord_a, del_a, paid_a,
                             round(pi["total"], 2), "",
                             "", pi["contractor"], pi["status"],
+                            "", pi["act_number"],
                         ],
                         SUB_FILL, SUB_FONT, height=16
                     )
+                    _set_doc_link(pi["purchase_id"])
 
         for child in cats_by_parent.get(cat.id, []):
             _traverse(child, direction_name, type_name)
@@ -2269,12 +2345,97 @@ async def export_plan_graph_excel(
     for root in cats_by_parent.get(None, []):
         _traverse(root)
 
-    ws.insert_rows(1)
-    title_cell = ws.cell(row=1, column=1, value=f"ПЛАН-ГРАФИК — {sub.name} ({sub.year})")
-    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
-    ws.merge_cells(f"A1:{chr(64 + len(HEADERS))}1")
-    title_cell.alignment = CENTER_ALIGN
-    ws.row_dimensions[1].height = 28
+    # ── Лист «Сводная»: деньги по Товары/Услуги × корзины обязательств ────────
+    def _empty_buckets():
+        return {"paid": 0.0, "delivered": 0.0, "accepted_unpaid": 0.0,
+                "planned": 0.0, "monthly": 0.0, "likely": 0.0, "total": 0.0}
+
+    summary = {"услуга": _empty_buckets(), "товар": _empty_buckets()}
+    _planned_statuses = ("wishes", "plan_schedule", "confirmed",
+                         "work_in_progress", "contracted", "ordered")
+    if cat_ids or item_ids:
+        sum_rows = (await db.execute(
+            select(
+                _PI.item_type,
+                _PI.total_price,
+                _P.status,
+                _P.acceptance_doc_number,
+                _P.acceptance_docs,
+                _P.is_monthly_payment,
+                _P.is_likely_needed,
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(or_(
+                _PI.feo_category_id.in_(cat_ids or [-1]),
+                _PI.feo_planned_item_id.in_(item_ids or [-1]),
+            ))
+        )).all()
+        for r in sum_rows:
+            key = "услуга" if (r.item_type or "").strip().lower() == "услуга" else "товар"
+            b = summary[key]
+            amt = float(r.total_price or 0)
+            st = r.status or ""
+            b["total"] += amt
+            if st == "paid":
+                b["paid"] += amt
+            if st == "delivered":
+                b["delivered"] += amt
+            has_act = bool(r.acceptance_doc_number) or bool(
+                isinstance(r.acceptance_docs, list) and r.acceptance_docs)
+            if has_act and st != "paid":
+                b["accepted_unpaid"] += amt
+            if st in _planned_statuses:
+                b["planned"] += amt
+            if r.is_monthly_payment:
+                b["monthly"] += amt
+            if r.is_likely_needed:
+                b["likely"] += amt
+
+    sm = wb.create_sheet("Сводная", 0)
+    SUM_HEADERS = [
+        "Категория",
+        "Оплаченные+поставленные (треб. оплата), ₽",
+        "Оплаченные, ₽",
+        "Принятые, не оплаченные, ₽",
+        "Планируемые, ₽",
+        "Ежемесячные оплаты, ₽",
+        "Скорее всего понадобятся, ₽",
+        "Всего, ₽",
+    ]
+    SUM_WIDTHS = [16, 28, 18, 24, 20, 22, 26, 20]
+    sm_title = sm.cell(row=1, column=1, value=f"СВОДНАЯ — {sub.name} ({sub.year})")
+    sm_title.font = Font(bold=True, size=12, color="1E3A5F")
+    sm.merge_cells(f"A1:{chr(64 + len(SUM_HEADERS))}1")
+    sm_title.alignment = CENTER_ALIGN
+    sm.row_dimensions[1].height = 28
+    for ci, (h, w) in enumerate(zip(SUM_HEADERS, SUM_WIDTHS), 1):
+        cell = sm.cell(row=2, column=ci, value=h)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER_ALIGN
+        cell.border = THIN_BORDER
+        sm.column_dimensions[cell.column_letter].width = w
+    sm.row_dimensions[2].height = 34
+
+    _order = ["delivered", "paid", "accepted_unpaid", "planned", "monthly", "likely", "total"]
+
+    def _sum_row(sm_row, label, b, fill, font):
+        sm.cell(row=sm_row, column=1, value=label)
+        for j, k in enumerate(_order, 2):
+            c = sm.cell(row=sm_row, column=j, value=round(b[k], 2) if b[k] else "")
+            c.number_format = "#,##0.00"
+            c.alignment = RIGHT_ALIGN
+            c.border = THIN_BORDER
+        lc = sm.cell(row=sm_row, column=1)
+        lc.fill = fill; lc.font = font; lc.border = THIN_BORDER
+        for j in range(2, 9):
+            sm.cell(row=sm_row, column=j).fill = fill
+
+    _sum_row(3, "Услуги", summary["услуга"], L2_FILL, L2_FONT)
+    _sum_row(4, "Товары", summary["товар"], L3_FILL, L3_FONT)
+    total_b = {k: summary["услуга"][k] + summary["товар"][k] for k in _empty_buckets()}
+    _sum_row(5, "ИТОГО", total_b, L1_FILL, Font(bold=True, size=10))
+    sm.freeze_panes = "A3"
 
     buf = io.BytesIO()
     wb.save(buf)

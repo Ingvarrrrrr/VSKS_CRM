@@ -153,36 +153,37 @@ async def _create_plan_graph_version(
         .order_by(_FPI.id)
     )
     rows = (await db.execute(items_q)).all()
-
-    if not rows:
-        return  # nothing to version
-
     item_ids = [r[0].id for r in rows]
 
-    # Aggregate used amounts
-    used_q = (
-        select(
-            PurchaseItem.feo_planned_item_id,
-            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
-        )
-        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
-        .group_by(PurchaseItem.feo_planned_item_id)
-    )
-    used_map: dict[int, float] = {
-        r.feo_planned_item_id: float(r.used)
-        for r in (await db.execute(used_q)).all()
-    }
-
-    # Collect linked purchase ids
-    links_q = (
-        select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
-        .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
-    )
+    # Версия строится из дерева ФЭО-категорий даже без FeoPlannedItem'ов
+    # (субсидия может иметь только категории с бюджетом). Пустой рынок позиций
+    # даёт пустые агрегаты, но дерево всё равно снапшотится ниже.
+    used_map: dict[int, float] = {}
     links_map: dict[int, list] = {}
-    for lr in (await db.execute(links_q)).all():
-        links_map.setdefault(lr.feo_planned_item_id, [])
-        if lr.purchase_id not in links_map[lr.feo_planned_item_id]:
-            links_map[lr.feo_planned_item_id].append(lr.purchase_id)
+    if item_ids:
+        # Aggregate used amounts
+        used_q = (
+            select(
+                PurchaseItem.feo_planned_item_id,
+                func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+            )
+            .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+            .group_by(PurchaseItem.feo_planned_item_id)
+        )
+        used_map = {
+            r.feo_planned_item_id: float(r.used)
+            for r in (await db.execute(used_q)).all()
+        }
+
+        # Collect linked purchase ids
+        links_q = (
+            select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
+            .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
+        )
+        for lr in (await db.execute(links_q)).all():
+            links_map.setdefault(lr.feo_planned_item_id, [])
+            if lr.purchase_id not in links_map[lr.feo_planned_item_id]:
+                links_map[lr.feo_planned_item_id].append(lr.purchase_id)
 
     snapshot_items = []
     total_planned = 0.0
@@ -206,6 +207,9 @@ async def _create_plan_graph_version(
     # Build FeoCategory tree for schema_version=2
     cats_q = select(_FC).where(_FC.subsidy_id == subsidy_id).order_by(_FC.id)
     all_cats = (await db.execute(cats_q)).scalars().all()
+
+    if not rows and not all_cats:
+        return  # ни позиций, ни категорий — версионировать нечего
 
     # FCAT-B3: aggregate used_amount via PurchaseItem.feo_category_id for leaf nodes
     all_cat_ids = [c.id for c in all_cats]
@@ -242,6 +246,20 @@ async def _create_plan_graph_version(
         return nodes
 
     feo_tree = _build_tree(all_cats)
+
+    # Без FeoPlannedItem'ов план берём из бюджетов листовых категорий,
+    # чтобы «Итого план» в списке редакций не было нулевым.
+    if not snapshot_items:
+        def _leaf_budget_sum(nodes):
+            total = 0.0
+            for n in nodes:
+                children = n.get("children") or []
+                if children:
+                    total += _leaf_budget_sum(children)
+                elif n.get("budget"):
+                    total += float(n["budget"])
+            return total
+        total_planned = _leaf_budget_sum(feo_tree)
 
     snapshot = {
         "schema_version": 2,

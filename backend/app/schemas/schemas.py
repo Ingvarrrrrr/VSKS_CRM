@@ -1143,7 +1143,7 @@ class TaskOut(BaseModel):
     # legacy single-assignee fields (for backward compat in frontend)
     assigned_user_id: Optional[int] = None
     assigned_user_name: Optional[str] = None
-    created_by_id: int
+    created_by_id: Optional[int] = None
     created_by_name: Optional[str] = None
     org_id: Optional[int] = None
     category: Optional[str] = None

@@ -34,15 +34,18 @@ async def get_purchase_totals(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Sum of planned_total_price per feo_category_id for a given subsidy."""
+    """Фактическая сумма per feo_category_id: только поставленное/оплаченное (по актам)."""
     from app.models.purchase import Purchase
     stmt = (
         select(
             Purchase.feo_category_id,
-            func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total_planned"),
+            func.coalesce(
+                func.sum(func.coalesce(Purchase.final_total_amount, Purchase.planned_total_price)), 0
+            ).label("total_planned"),
         )
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.feo_category_id.isnot(None))
+        .where(Purchase.status.in_(["delivered", "paid"]))
         .group_by(Purchase.feo_category_id)
     )
     rows = (await db.execute(stmt)).all()

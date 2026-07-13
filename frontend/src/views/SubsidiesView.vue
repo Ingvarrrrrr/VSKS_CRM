@@ -369,7 +369,21 @@
                       Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
-                    <th class="feo-th feo-th-num">ОСТАТОК</th>
+                    <th class="feo-th feo-th-num">
+                      <div>ОСТАТОК</div>
+                      <div class="feo-residual-toggle">
+                        <span
+                          :class="residualBase === 'plan' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Остаток = Плановая сумма − Фактическая"
+                          @click.stop="residualBase = 'plan'"
+                        >от плановой</span>
+                        <span
+                          :class="residualBase === 'feo' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Остаток = Финансирование по ФЭО − Фактическая"
+                          @click.stop="residualBase = 'feo'"
+                        >от ФЭО</span>
+                      </div>
+                    </th>
                     <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
                   </tr>
                 </thead>
@@ -380,7 +394,7 @@
                       class="feo-tr"
                       :class="[
                         `feo-tr--l${node.level}`,
-                        feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node) ? 'feo-tr--over' : '',
+                        feoRowClass(node),
                         node.hasChildren && node.budget != null && directChildSum(node) > node.budget ? 'feo-tr--children-exceed' : '',
                         dragOverId === node.id ? 'feo-drop-target' : '',
                         dragNodeId === node.id ? 'feo-dragging' : '',
@@ -473,6 +487,12 @@
                           :style="feoBudgetFor(node) > 0 && feoPlannedTotalFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
                         >{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
+                        <div v-if="feoBudgetFor(node) > 0 && Math.abs(feoFinDiff(node)) > 0.005"
+                          class="feo-plan-note"
+                          :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
+                        >
+                          {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
+                        </div>
                       </td>
 
                       <!-- Фактическая сумма -->
@@ -486,19 +506,15 @@
                         </span>
                       </td>
 
-                      <!-- 12-04: Остаток (residual) -->
+                      <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма -->
                       <td class="feo-td feo-td-num">
-                        <template v-if="!node.hasChildren">
-                          <div v-for="item in Object.values(feoResiduals).filter((r: any) => r.category_id === node.id)" :key="(item as any).feo_item_id">
-                            <span
-                              :style="(item as any).residual < 0 ? 'color:#EF4444;font-weight:700;font-size:11px' : (item as any).residual === 0 ? 'color:#22C55E;font-size:11px' : 'font-size:11px'"
-                              :title="`${(item as any).name}: план ${formatCurrency((item as any).planned_amount)}, факт ${formatCurrency((item as any).used_amount)}`"
-                            >
-                              {{ (item as any).residual < 0 ? '−' : '' }}{{ formatCurrency(Math.abs((item as any).residual)) }}
-                            </span>
-                          </div>
-                          <span v-if="!Object.values(feoResiduals).some((r: any) => r.category_id === node.id)" class="feo-amount-empty">—</span>
-                        </template>
+                        <span v-if="feoResidualBaseFor(node) > 0 || feoPurchasedFor(node) > 0"
+                          class="feo-amount"
+                          :style="feoResidualFor(node) < -0.005 ? 'color:#EF4444;font-weight:700' : 'color:#16A34A'"
+                          :title="`${residualBase === 'feo' ? 'ФЭО' : 'План'} ${formatCurrency(feoResidualBaseFor(node))} − Факт ${formatCurrency(feoPurchasedFor(node))}`"
+                        >
+                          {{ feoResidualFor(node) < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(feoResidualFor(node))) }}
+                        </span>
                         <span v-else class="feo-amount-empty">—</span>
                       </td>
 
@@ -570,7 +586,7 @@
                               <!-- Сопоставленные пары: actual сгруппированы по planned_item_id -->
                               <template v-for="planned in comparisonData[node.id].planned" :key="`p-${planned.id}`">
                                 <!-- Найдём все actual для этого planned -->
-                                <template v-for="(actual, ai) in comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id)" :key="`pa-${actual.purchase_item_id}`">
+                                <template v-for="(actual, ai) in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
                                   <tr style="border-bottom:1px solid #E0F2FE">
                                     <td style="padding:4px 8px;color:#0c4a6e">
                                       <span v-if="ai === 0">{{ planned.name }}</span>
@@ -596,9 +612,9 @@
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
-                                    <td v-if="ai === 0" :rowspan="comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id).length" style="padding:4px 8px;text-align:right">
-                                      <span v-if="planned.amount != null" :style="getDiffStyle(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))">
-                                        {{ formatCurrency(calcDiff(planned, comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id))) }}
+                                    <td v-if="ai === 0" :rowspan="factForPlanned(node.id, planned.id).length" style="padding:4px 8px;text-align:right">
+                                      <span v-if="planned.amount != null" :style="getDiffStyle(planned, factForPlanned(node.id, planned.id))">
+                                        {{ formatCurrency(calcDiff(planned, factForPlanned(node.id, planned.id))) }}
                                       </span>
                                     </td>
                                     <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
@@ -622,7 +638,7 @@
                                   </tr>
                                 </template>
                                 <!-- Плановая без факта -->
-                                <tr v-if="comparisonData[node.id].actual.filter(a => a.feo_planned_item_id === planned.id).length === 0"
+                                <tr v-if="factForPlanned(node.id, planned.id).length === 0"
                                   style="border-bottom:1px solid #E0F2FE">
                                   <td style="padding:4px 8px;color:#0c4a6e">{{ planned.name }}</td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
@@ -653,8 +669,45 @@
                                 </tr>
                               </template>
 
+                              <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план-график … заказано) -->
+                              <tr v-for="actual in actualPlanStageFor(node.id)"
+                                :key="`ps-${actual.purchase_item_id}`"
+                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
+                                <td style="padding:4px 8px;color:#0c4a6e">
+                                  <div>{{ actual.item_name }}</div>
+                                  <a
+                                    href="javascript:void(0)"
+                                    class="feo-purchase-link"
+                                    :title="`Перейти в закупку #${actual.purchase_id}`"
+                                    @click.stop="router.push(`/orders/${actual.purchase_id}`)"
+                                  >
+                                    <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                    {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                  </a>
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
+                                <td style="padding:4px 8px;text-align:center">
+                                  <v-chip size="x-small" color="blue" variant="tonal">
+                                    {{ PURCHASE_STATUS_LABELS[actual.purchase_status || ''] || actual.purchase_status }}
+                                  </v-chip>
+                                </td>
+                                <td style="padding:2px;text-align:center">
+                                  <v-btn v-if="!actual.feo_planned_item_id" icon="mdi-link-variant" size="x-small" variant="text" color="teal"
+                                    title="Сопоставить с плановой"
+                                    @click="openMapDialog(actual, node.id)"
+                                  />
+                                </td>
+                              </tr>
+
                               <!-- Фактические без плана -->
-                              <tr v-for="actual in comparisonData[node.id].actual.filter(a => !a.feo_planned_item_id)"
+                              <tr v-for="actual in actualFactFor(node.id).filter(a => !a.feo_planned_item_id)"
                                 :key="`a-${actual.purchase_item_id}`"
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
                                 <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
@@ -701,17 +754,17 @@
                                 <td style="padding:4px 8px" class="text-success">ИТОГО</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  {{ formatCurrency(comparisonData[node.id].planned.reduce((s, p) => s + Number(p.amount || 0), 0)) }}
+                                  {{ formatCurrency(comparisonPlanTotal(node.id)) }}
                                 </td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  {{ formatCurrency(comparisonData[node.id].actual.reduce((s, a) => s + Number(a.total_price || 0), 0)) }}
+                                  {{ formatCurrency(comparisonFactTotal(node.id)) }}
                                 </td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  <span :class="comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) >= comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0) ? 'text-success' : 'text-error'">
-                                    {{ formatCurrency(comparisonData[node.id].planned.reduce((s,p)=>s+Number(p.amount||0),0) - comparisonData[node.id].actual.reduce((s,a)=>s+Number(a.total_price||0),0)) }}
+                                  <span :class="comparisonPlanTotal(node.id) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
+                                    {{ formatCurrency(comparisonPlanTotal(node.id) - comparisonFactTotal(node.id)) }}
                                   </span>
                                 </td>
                                 <td colspan="3" style="padding:4px 8px"></td>
@@ -750,7 +803,9 @@
                       {{ feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
-                    <td class="feo-td" />
+                    <td class="feo-td feo-td-num font-weight-bold">
+                      {{ formatCurrency(feoTree.reduce((acc, r) => acc + feoResidualBaseFor(r), 0) - totalFeoPurchased) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -3283,6 +3338,69 @@ function feoPurchasedFor(node: FeoNode): number {
   return node.children.reduce((acc, child) => acc + feoPurchasedFor(child), 0)
 }
 
+// База остатка: от плановой суммы или от финансирования по ФЭО
+const residualBase = ref<'plan' | 'feo'>('plan')
+
+function feoResidualBaseFor(node: FeoNode): number {
+  return residualBase.value === 'feo' ? feoBudgetFor(node) : feoPlannedTotalFor(node)
+}
+
+// Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма
+function feoResidualFor(node: FeoNode): number {
+  return feoResidualBaseFor(node) - feoPurchasedFor(node)
+}
+
+// Финансирование vs Плановая сумма: >0 — можно добавить (зелёная), <0 — надо убрать (красная)
+function feoFinDiff(node: FeoNode): number {
+  return feoBudgetFor(node) - feoPlannedTotalFor(node)
+}
+
+function feoRowClass(node: FeoNode): string {
+  const b = feoBudgetFor(node)
+  const p = feoPlannedTotalFor(node)
+  if (b <= 0 && p <= 0) return ''
+  const d = b - p
+  if (d > 0.005) return 'feo-tr--fin-over'
+  if (d < -0.005) return 'feo-tr--fin-under'
+  return ''
+}
+
+// Факт — только то, что реально поставлено/оплачено (по актам)
+const FACT_STATUSES = ['delivered', 'paid']
+function isFactActual(a: { purchase_status?: string | null }): boolean {
+  return FACT_STATUSES.includes(a.purchase_status || '')
+}
+
+const PURCHASE_STATUS_LABELS: Record<string, string> = {
+  plan_schedule: 'План-график', confirmed: 'Подтверждено', work_in_progress: 'В работе',
+  contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
+}
+
+function actualFactFor(catId: number) {
+  return (comparisonData.value[catId]?.actual || []).filter(a => isFactActual(a))
+}
+
+// Позиции закупок в плановых стадиях (план-график … заказано) — отображаются на стороне ПЛАН
+function actualPlanStageFor(catId: number) {
+  return (comparisonData.value[catId]?.actual || []).filter(a => !isFactActual(a))
+}
+
+function factForPlanned(catId: number, plannedId: number) {
+  return actualFactFor(catId).filter(a => a.feo_planned_item_id === plannedId)
+}
+
+function comparisonPlanTotal(catId: number): number {
+  const planned = (comparisonData.value[catId]?.planned || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+  // Несопоставленные плановые из закупок; сопоставленные уже учтены суммой плановой позиции
+  const planStage = actualPlanStageFor(catId).filter(a => !a.feo_planned_item_id)
+    .reduce((s, a) => s + Number(a.total_price || 0), 0)
+  return planned + planStage
+}
+
+function comparisonFactTotal(catId: number): number {
+  return actualFactFor(catId).reduce((s, a) => s + Number(a.total_price || 0), 0)
+}
+
 function toggleExpand(id: number) {
   const idx = expandedIds.value.indexOf(id)
   if (idx >= 0) {
@@ -4538,8 +4656,10 @@ function progressColor(p: number) {
   return '#22C55E'
 }
 
-function formatCurrency(v: number) {
-  return (v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+function formatCurrency(v: number | string) {
+  // API отдаёт Decimal строками — без Number() toLocaleString вернёт строку как есть, без пробелов-разрядов
+  const n = Number(v) || 0
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 }
 
 function formatCurrencyShort(v: number) {
@@ -4983,6 +5103,20 @@ onMounted(() => {
 .feo-tr--over .feo-amount { color: #EF4444; font-weight: 700; }
 .feo-tr--children-exceed .feo-td { background: rgba(239,68,68,0.08) !important; }
 .feo-tr--children-exceed .feo-amount { color: #EF4444; font-weight: 700; }
+/* Финансирование по ФЭО vs Плановая сумма: выше — зелёная, ниже — красная */
+.feo-tr--fin-over .feo-td { background: rgba(34,197,94,0.10) !important; }
+.feo-tr--fin-over:hover .feo-td { background: rgba(34,197,94,0.16) !important; }
+.feo-tr--fin-under .feo-td { background: rgba(239,68,68,0.08) !important; }
+.feo-tr--fin-under:hover .feo-td { background: rgba(239,68,68,0.13) !important; }
+.feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
+.feo-residual-toggle { display: flex; gap: 2px; justify-content: flex-end; margin-top: 2px; }
+.feo-residual-opt {
+  font-size: 9px; font-weight: 500; text-transform: none; letter-spacing: 0;
+  padding: 1px 6px; border-radius: 8px; cursor: pointer;
+  color: #94a3b8; border: 1px solid transparent; user-select: none;
+}
+.feo-residual-opt:hover { color: #475569; }
+.feo-residual-opt--active { color: #0f766e; background: rgba(20,184,166,0.12); border-color: rgba(20,184,166,0.35); }
 .feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }

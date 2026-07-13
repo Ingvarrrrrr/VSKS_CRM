@@ -142,6 +142,8 @@ async def get_comparison(
         select(PurchaseItem, Purchase)
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(Purchase.feo_category_id == feo_category_id)
+        # Желания — ещё не подтверждённые хотелки, в сравнение план/факт не входят
+        .where(Purchase.status != "wishes")
     )
     if subsidy_id is not None:
         stmt = stmt.where(Purchase.subsidy_id == subsidy_id)

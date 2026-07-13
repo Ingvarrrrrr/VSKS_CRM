@@ -1456,7 +1456,7 @@ async def list_plan_graph_versions(
     return out
 
 
-@router.get("/{subsidy_id}/plan-graph/versions/{version_id}")
+@router.get("/{subsidy_id}/plan-graph/versions/{version_id:int}")
 async def get_plan_graph_version(
     subsidy_id: int,
     version_id: int,
@@ -2071,7 +2071,7 @@ async def export_plan_graph_excel(
     )
 
 
-@router.get("/{subsidy_id}/plan-graph/versions/{version_id}/export")
+@router.get("/{subsidy_id}/plan-graph/versions/{version_id:int}/export")
 async def export_plan_graph_version_excel(
     subsidy_id: int,
     version_id: int,
@@ -2621,6 +2621,7 @@ def _build_multi_compare_rows(versions: list) -> list:
     order: list = []            # список ключей в порядке появления
     meta: dict = {}             # key -> {"level", "name", "code"}
     budgets: dict = {}          # key -> {version_index: float}
+    facts: dict = {}            # key -> {version_index: float} — фактически освоено (used_amount)
 
     def _dfs(node, path, ver_idx):
         norm_name = _normalize_name(node.get("name", ""))
@@ -2650,6 +2651,10 @@ def _build_multi_compare_rows(versions: list) -> list:
             budgets[key] = {}
         budgets[key][ver_idx] = float(node.get("budget") or 0)
 
+        if key not in facts:
+            facts[key] = {}
+        facts[key][ver_idx] = float(node.get("used_amount") or 0)
+
         for child in node.get("children", []):
             _dfs(child, full_path, ver_idx)
 
@@ -2666,6 +2671,7 @@ def _build_multi_compare_rows(versions: list) -> list:
             "name": m["name"],
             "code": m["code"],
             "budgets": [budgets[key].get(i, 0.0) for i in range(n_vers)],
+            "facts": [facts[key].get(i, 0.0) for i in range(n_vers)],
         })
     return rows
 
@@ -2786,6 +2792,9 @@ async def export_plan_graph_versions_multi_excel(
     plan_headers = [
         f"План ₽\n{v['date_display']}" for v in versions
     ]
+    fact_headers = [
+        f"Факт ₽\n{v['date_display']}" for v in versions
+    ]
     delta_adj_headers = []
     if has_deltas:
         for i in range(1, n_vers):
@@ -2798,14 +2807,14 @@ async def export_plan_graph_versions_multi_excel(
             f"Δ итог\n{versions[-1]['date_display']}−{versions[0]['date_display']}"
         ]
 
-    all_headers = fixed_headers + plan_headers + delta_adj_headers + total_delta_headers
+    all_headers = fixed_headers + plan_headers + fact_headers + delta_adj_headers + total_delta_headers
     n_cols = len(all_headers)
     last_col = chr(64 + n_cols) if n_cols <= 26 else (
         chr(64 + (n_cols - 1) // 26) + chr(64 + (n_cols - 1) % 26 + 1)
     )
 
-    # Ширины колонок: фиксированные 5,8,50,15; план 18; дельта 16
-    col_widths = [5, 8, 50, 15] + [18] * n_vers + [16] * (len(delta_adj_headers) + len(total_delta_headers))
+    # Ширины колонок: фиксированные 5,8,50,15; план 18; факт 18; дельта 16
+    col_widths = [5, 8, 50, 15] + [18] * n_vers + [18] * n_vers + [16] * (len(delta_adj_headers) + len(total_delta_headers))
 
     # ── Workbook ─────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
@@ -2872,12 +2881,13 @@ async def export_plan_graph_versions_multi_excel(
         name_str = indent + (row["name"] or "")
         code_str = row["code"] or ""
         bgets = row["budgets"]  # list[float] длиной n_vers
+        fcts = row.get("facts") or [0.0] * n_vers  # фактически освоено по каждой редакции
 
         # Вычисляем дельта-значения
         adj_deltas = [bgets[i] - bgets[i - 1] for i in range(1, n_vers)] if has_deltas else []
         total_delta = [bgets[-1] - bgets[0]] if has_deltas else []
 
-        row_values = [seq_i, level, name_str, code_str] + bgets + adj_deltas + total_delta
+        row_values = [seq_i, level, name_str, code_str] + bgets + fcts + adj_deltas + total_delta
         data_row_num = header_row + seq_i
         ws.append(row_values)
 
@@ -2896,6 +2906,10 @@ async def export_plan_graph_versions_multi_excel(
             elif col_idx <= 4 + n_vers:
                 # Плановые колонки
                 cell.font = ITEM_FONT
+                cell.alignment = RIGHT_ALIGN
+            elif col_idx <= 4 + 2 * n_vers:
+                # Фактические колонки (used_amount)
+                cell.font = GREEN_FONT if isinstance(val, float) and val > 0.005 else ITEM_FONT
                 cell.alignment = RIGHT_ALIGN
             else:
                 # Дельта-колонки: цветной шрифт

@@ -2062,6 +2062,43 @@ async def export_plan_graph_excel(
     for c in cats:
         cats_by_parent.setdefault(c.parent_id, []).append(c)
 
+    # Роллап факта/бюджета вверх по дереву: направление (ур.1) и группа (ур.2)
+    # показывают суммарные итоги по всем листовым категориям-потомкам.
+    # Факт листа берём по feo_category_id (cat_status_map) — это включает все
+    # закупки категории, поэтому суммирование по потомкам не задваивается.
+    _cat_by_id = {c.id: c for c in cats}
+    subtree_map: dict[int, dict] = {}
+
+    def _compute_subtree(cat) -> dict:
+        if cat.id in subtree_map:
+            return subtree_map[cat.id]
+        children = cats_by_parent.get(cat.id, [])
+        status_agg: dict[str, float] = {}
+        if not children:
+            for k, v in cat_status_map.get(cat.id, {}).items():
+                status_agg[k] = status_agg.get(k, 0.0) + v
+            if cat.budget is not None:
+                budget = float(cat.budget)
+            else:
+                budget = sum(float(it.amount or 0) for it in items_by_cat.get(cat.id, []))
+        else:
+            budget = 0.0
+            for ch in children:
+                r = _compute_subtree(ch)
+                for k, v in r["status"].items():
+                    status_agg[k] = status_agg.get(k, 0.0) + v
+                budget += r["budget"]
+        res = {"status": status_agg, "budget": budget}
+        subtree_map[cat.id] = res
+        return res
+
+    for c in cats:
+        _compute_subtree(c)
+
+    def _sub(cat_id: int, *statuses: str) -> float:
+        d = subtree_map.get(cat_id, {}).get("status", {})
+        return sum(d.get(s, 0.0) for s in statuses)
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "План-график"
@@ -2091,57 +2128,51 @@ async def export_plan_graph_excel(
         ws.row_dimensions[row_num].height = height
         row_num += 1
 
+    E = ""  # пустая ячейка
+
+    def _money_cols(cat_id: int, contractor: str) -> list:
+        """Денежные колонки 7..17 из роллапа поддерева по статусам."""
+        budget = subtree_map.get(cat_id, {}).get("budget", 0.0)
+        plan = _sub(cat_id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
+        contract = _sub(cat_id, "contracted")
+        ordered = _sub(cat_id, "ordered")
+        delivered = _sub(cat_id, "delivered")
+        paid = _sub(cat_id, "paid")
+        used = plan + contract + ordered + delivered + paid
+        resid = budget - used
+
+        def _nz(v):
+            return round(v, 2) if abs(v) > 0.005 else E
+
+        return [
+            round(budget, 2) if budget else E,
+            _nz(plan), _nz(contract), _nz(ordered), _nz(delivered), _nz(paid),
+            _nz(used),
+            round(resid, 2) if (budget or abs(used) > 0.005) else E,
+            (f"{round(used / budget * 100)}%" if budget > 0 else E),
+            contractor, E,
+        ]
+
     def _traverse(cat, direction_name="", type_name=""):
         nonlocal seq
-        E = ""  # пустая ячейка
         if cat.level == 1:
             direction_name = cat.name
             _write_row(
-                [cat.code or "", cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E],
+                [cat.code or "", cat.name, E, E, E, E] + _money_cols(cat.id, ""),
                 L1_FILL, L1_FONT, height=22
             )
         elif cat.level == 2:
             type_name = cat.name
             _write_row(
-                [E, direction_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E, E],
+                [E, direction_name, cat.name, E, E, E] + _money_cols(cat.id, ""),
                 L2_FILL, L2_FONT
             )
         elif cat.level == 3:
-            # Факт по категории (закупки, привязанные к feo_category_id) — субитог
-            c_plan = _cst(cat.id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
-            c_contract = _cst(cat.id, "contracted")
-            c_ordered = _cst(cat.id, "ordered")
-            c_delivered = _cst(cat.id, "delivered")
-            c_paid = _cst(cat.id, "paid")
-            c_used = c_plan + c_contract + c_ordered + c_delivered + c_paid
-            c_budget = float(cat.budget) if cat.budget is not None else 0.0
-            has_fact = cat.id in cat_status_map
-            if c_budget or has_fact:
-                c_resid = c_budget - c_used
-                c_pct = round(c_used / c_budget * 100) if c_budget > 0 else 0
-                _write_row(
-                    [
-                        E, direction_name, type_name, cat.name,
-                        E, E,
-                        round(c_budget, 2) if c_budget else E,
-                        round(c_plan, 2) if has_fact else E,
-                        round(c_contract, 2) if has_fact else E,
-                        round(c_ordered, 2) if has_fact else E,
-                        round(c_delivered, 2) if has_fact else E,
-                        round(c_paid, 2) if has_fact else E,
-                        round(c_used, 2) if has_fact else E,
-                        round(c_resid, 2) if (c_budget or has_fact) else E,
-                        f"{c_pct}%" if c_budget else E,
-                        cat_contractor_map.get(cat.id, ""),
-                        E,
-                    ],
-                    L3_FILL, L3_FONT
-                )
-            else:
-                _write_row(
-                    [E, direction_name, type_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E],
-                    L3_FILL, L3_FONT
-                )
+            _write_row(
+                [E, direction_name, type_name, cat.name, E, E]
+                + _money_cols(cat.id, cat_contractor_map.get(cat.id, "")),
+                L3_FILL, L3_FONT
+            )
             # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи)
             for pi in purchased_by_cat.get(cat.id, []):
                 price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."

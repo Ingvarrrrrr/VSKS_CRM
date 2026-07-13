@@ -1247,6 +1247,22 @@ async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession
         await _update_subtree_levels(child.id, level_delta, db)
 
 
+@router.get("/{cat_id}/subtree")
+async def get_category_subtree(
+    cat_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Имя категории + id всего поддерева (для фильтра «закупки этой категории»)."""
+    cat = (await db.execute(
+        select(FeoCategory).where(FeoCategory.id == cat_id)
+    )).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Категория не найдена")
+    ids = await _collect_subtree_ids(cat_id, db)
+    return {"id": cat.id, "name": cat.name, "ids": ids}
+
+
 @router.delete("/{cat_id}")
 async def delete_category(
     cat_id: int,

@@ -513,7 +513,10 @@ async def list_purchases(
     if contract_id:
         q = q.where(Purchase.contract_id == contract_id)
     if feo_category_id:
-        q = q.where(Purchase.feo_category_id == feo_category_id)
+        # Фильтр по всему поддереву: закупки часто привязаны к дочерним категориям
+        from app.routers.feo_categories import _collect_subtree_ids
+        _sub_ids = await _collect_subtree_ids(feo_category_id, db)
+        q = q.where(Purchase.feo_category_id.in_(_sub_ids))
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
     if status:

@@ -157,7 +157,7 @@
 
     <!-- FEO category filter badge -->
     <v-chip v-if="filterFeoCategoryId" color="teal" variant="tonal" closable class="mb-3" prepend-icon="mdi-filter"
-      @click:close="filterFeoCategoryId = null; filterFeoCategoryName = ''">
+      @click:close="filterFeoCategoryId = null; filterFeoCategoryName = ''; filterFeoCategoryIds = new Set()">
       ФЭО: {{ filterFeoCategoryName }}
     </v-chip>
 
@@ -1355,6 +1355,7 @@ const filterMethod   = ref<string>('')
 const filterOverdue  = ref(false)
 const filterDueSoon  = ref(false)
 const filterFeoCategoryName = ref<string>('')
+const filterFeoCategoryIds = ref<Set<number>>(new Set())  // всё поддерево категории
 const filterTypes = ref<string[]>([])
 const filterContractorIds = ref<number[]>([])
 const fProduct = ref('')
@@ -1491,7 +1492,12 @@ const filteredOrders = computed(() => {
     r = r.filter(o => statuses.includes(o.status))
   }
   if (filterSubsidyId.value) r = r.filter(o => o.subsidy_id === filterSubsidyId.value)
-  if (filterFeoCategoryId.value) r = r.filter(o => o.feo_category_id === filterFeoCategoryId.value)
+  if (filterFeoCategoryId.value) {
+    const feoIds = filterFeoCategoryIds.value
+    r = feoIds.size
+      ? r.filter(o => o.feo_category_id != null && feoIds.has(o.feo_category_id))
+      : r.filter(o => o.feo_category_id === filterFeoCategoryId.value)
+  }
   if (filterMethod.value) r = r.filter(o => o.purchase_method === filterMethod.value)
   if (filterOverdue.value) {
     const today = new Date().toISOString().slice(0, 10)
@@ -1625,13 +1631,17 @@ onMounted(async () => {
   const qFeo = route.query.feo_category_id
   if (qFeo) {
     filterFeoCategoryId.value = Number(qFeo)
-    // Find feo category name from loaded orders (or set generic label)
     filterFeoCategoryName.value = `ФЭО #${qFeo}`
-    // Update name once orders load
-    loadOrders().then(() => {
-      const found = orders.value.find(o => o.feo_category_id === Number(qFeo))
-      if (found?.feo_category_name) filterFeoCategoryName.value = found.feo_category_name
-    })
+    // Имя категории + id всего поддерева (закупки часто висят на дочерних)
+    apiFetch<{ id: number; name: string; ids: number[] }>(`/feo-categories/${qFeo}/subtree`)
+      .then(res => {
+        filterFeoCategoryName.value = res.name
+        filterFeoCategoryIds.value = new Set(res.ids)
+      })
+      .catch(() => {
+        const found = orders.value.find(o => o.feo_category_id === Number(qFeo))
+        if (found?.feo_category_name) filterFeoCategoryName.value = found.feo_category_name
+      })
   }
 
   // Enable column resize after table renders

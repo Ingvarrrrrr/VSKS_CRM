@@ -218,7 +218,24 @@ async def list_approvals(
         .where(PurchaseApproval.purchase_id == pid)
         .order_by(PurchaseApproval.order_num)
     )
-    return [_to_out(a) for a in result.scalars().all()]
+    approvals = result.scalars().all()
+
+    # Исторические записи хранят логин — подменяем на ФИО решившего пользователя
+    decider_ids = {a.decided_by_user_id for a in approvals if a.decided_by_user_id}
+    names: dict[int, str] = {}
+    if decider_ids:
+        u_rows = (await db.execute(
+            select(User.id, User.full_name).where(User.id.in_(decider_ids))
+        )).all()
+        names = {uid: fn for uid, fn in u_rows if fn}
+
+    out = []
+    for a in approvals:
+        d = _to_out(a)
+        if a.decided_by_user_id and a.decided_by_user_id in names:
+            d["decided_by_username"] = names[a.decided_by_user_id]
+        out.append(d)
+    return out
 
 
 # ── 3. Decide (approve / reject) ────────────────────────────────────────────
@@ -278,7 +295,7 @@ async def decide_approval(
     approval.comment = body.comment
     approval.decided_at = datetime.now(timezone.utc)
     approval.decided_by_user_id = current_user.id
-    approval.decided_by_username = current_user.username
+    approval.decided_by_username = current_user.full_name or current_user.username
     approval.decided_by_ip = _client_ip(request)
 
     # Load purchase

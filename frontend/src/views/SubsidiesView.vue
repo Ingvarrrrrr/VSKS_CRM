@@ -756,7 +756,8 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;font-size:11px" class="text-medium-emphasis">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
-                                  <v-icon icon="mdi-alert-circle-outline" size="16" color="warning" title="Не в плане" />
+                                  <v-icon icon="mdi-alert-circle-outline" size="16" color="warning"
+                                    title="Товар куплен и поставлен, но не привязан ни к одной плановой позиции — в графу «план» он не засчитан. Нажмите кнопку-ссылку справа «Сопоставить с плановой»." />
                                 </td>
                                 <td style="padding:2px;text-align:center">
                                   <v-btn icon="mdi-link-variant" size="x-small" variant="text" color="teal"

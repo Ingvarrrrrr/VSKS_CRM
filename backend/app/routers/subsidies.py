@@ -1929,6 +1929,62 @@ async def export_plan_graph_excel(
                 "status": _STATUS_HUMAN.get(r.status, r.status or ""),
             })
 
+    # FCAT: закупки часто привязаны к КАТЕГОРИИ (feo_category_id), а не к плановой
+    # позиции. Агрегируем факт по категории — иначе колонки факта пустые.
+    cat_ids = [c.id for c in cats]
+    cat_status_map: dict[int, dict[str, float]] = {}
+    cat_contractor_map: dict[int, str] = {}
+    purchased_by_cat: dict[int, list] = {}
+    if cat_ids:
+        cst_rows = (await db.execute(
+            select(
+                _PI.feo_category_id,
+                _P.status,
+                func.coalesce(func.sum(_PI.total_price), 0).label("s"),
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(_PI.feo_category_id.in_(cat_ids))
+            .group_by(_PI.feo_category_id, _P.status)
+        )).all()
+        for r in cst_rows:
+            cat_status_map.setdefault(r.feo_category_id, {})[r.status] = float(r.s)
+
+        cpi_rows = (await db.execute(
+            select(
+                _PI.feo_category_id,
+                _PI.feo_planned_item_id,
+                _PI.item_name,
+                _PI.unit,
+                _PI.quantity,
+                _PI.unit_price,
+                _PI.total_price,
+                _PI.contractor_name,
+                _P.status,
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(_PI.feo_category_id.in_(cat_ids))
+            .order_by(_PI.feo_category_id, _PI.id)
+        )).all()
+        for r in cpi_rows:
+            if r.contractor_name and r.feo_category_id not in cat_contractor_map:
+                cat_contractor_map[r.feo_category_id] = r.contractor_name
+            # Детализацию по категории показываем только для позиций БЕЗ привязки к
+            # плановой статье — иначе задвоится со строками под плановой позицией.
+            if r.feo_planned_item_id is None:
+                purchased_by_cat.setdefault(r.feo_category_id, []).append({
+                    "name": r.item_name or "",
+                    "unit": r.unit or "",
+                    "qty": float(r.quantity or 0),
+                    "unit_price": float(r.unit_price or 0),
+                    "total": float(r.total_price or 0),
+                    "contractor": r.contractor_name or "",
+                    "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+                })
+
+    def _cst(cat_id: int, *statuses: str) -> float:
+        d = cat_status_map.get(cat_id, {})
+        return sum(d.get(s, 0.0) for s in statuses)
+
     items_by_cat: dict[int, list] = {}
     for item in feo_items:
         items_by_cat.setdefault(item.feo_category_id, []).append(item)
@@ -2051,10 +2107,54 @@ async def export_plan_graph_excel(
                 L2_FILL, L2_FONT
             )
         elif cat.level == 3:
-            _write_row(
-                [E, direction_name, type_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E],
-                L3_FILL, L3_FONT
-            )
+            # Факт по категории (закупки, привязанные к feo_category_id) — субитог
+            c_plan = _cst(cat.id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
+            c_contract = _cst(cat.id, "contracted")
+            c_ordered = _cst(cat.id, "ordered")
+            c_delivered = _cst(cat.id, "delivered")
+            c_paid = _cst(cat.id, "paid")
+            c_used = c_plan + c_contract + c_ordered + c_delivered + c_paid
+            c_budget = float(cat.budget) if cat.budget is not None else 0.0
+            has_fact = cat.id in cat_status_map
+            if c_budget or has_fact:
+                c_resid = c_budget - c_used
+                c_pct = round(c_used / c_budget * 100) if c_budget > 0 else 0
+                _write_row(
+                    [
+                        E, direction_name, type_name, cat.name,
+                        E, E,
+                        round(c_budget, 2) if c_budget else E,
+                        round(c_plan, 2) if has_fact else E,
+                        round(c_contract, 2) if has_fact else E,
+                        round(c_ordered, 2) if has_fact else E,
+                        round(c_delivered, 2) if has_fact else E,
+                        round(c_paid, 2) if has_fact else E,
+                        round(c_used, 2) if has_fact else E,
+                        round(c_resid, 2) if (c_budget or has_fact) else E,
+                        f"{c_pct}%" if c_budget else E,
+                        cat_contractor_map.get(cat.id, ""),
+                        E,
+                    ],
+                    L3_FILL, L3_FONT
+                )
+            else:
+                _write_row(
+                    [E, direction_name, type_name, cat.name, E, E, E, E, E, E, E, E, E, E, E, E, E],
+                    L3_FILL, L3_FONT
+                )
+            # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи)
+            for pi in purchased_by_cat.get(cat.id, []):
+                price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
+                _write_row(
+                    [
+                        "", "", "", price_note,
+                        pi["unit"], round(pi["qty"], 3),
+                        "", "", "", "", "", "",
+                        round(pi["total"], 2), "",
+                        "", pi["contractor"], pi["status"],
+                    ],
+                    SUB_FILL, SUB_FONT, height=16
+                )
             for item in items_by_cat.get(cat.id, []):
                 seq += 1
                 feo_budget = float(item.amount or 0)

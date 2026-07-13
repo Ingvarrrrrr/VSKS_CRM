@@ -1952,43 +1952,50 @@ async def export_plan_graph_excel(
     cat_contractor_map: dict[int, str] = {}
     cat_monthly_map: dict[int, float] = {}  # факт по закупкам-регулярным (ежемес.) платежам
     purchased_by_cat: dict[int, list] = {}
+    # Привязка к категории живёт на ТРЁХ уровнях: PurchaseItem.feo_category_id,
+    # Purchase.feo_category_id (так работает вкладка «план vs факт») и через
+    # плановую статью (feo_planned_item_id → её категория). Берём coalesce,
+    # иначе часть факта выпадает из роллапа.
+    _ecat = func.coalesce(_PI.feo_category_id, _P.feo_category_id, _FPI.feo_category_id)
     if cat_ids:
         cst_rows = (await db.execute(
             select(
-                _PI.feo_category_id,
+                _ecat.label("ecat"),
                 _P.status,
                 func.coalesce(func.sum(_PI.total_price), 0).label("s"),
             )
             .join(_P, _PI.purchase_id == _P.id)
-            .where(_PI.feo_category_id.in_(cat_ids))
-            .group_by(_PI.feo_category_id, _P.status)
+            .outerjoin(_FPI, _PI.feo_planned_item_id == _FPI.id)
+            .where(_ecat.in_(cat_ids))
+            .group_by(_ecat, _P.status)
         )).all()
         for r in cst_rows:
-            cat_status_map.setdefault(r.feo_category_id, {})[r.status] = float(r.s)
+            cat_status_map.setdefault(r.ecat, {})[r.status] = float(r.s)
 
         mth_rows = (await db.execute(
             select(
-                _PI.feo_category_id,
+                _ecat.label("ecat"),
                 func.coalesce(func.sum(_PI.total_price), 0).label("s"),
             )
             .join(_P, _PI.purchase_id == _P.id)
-            .where(_PI.feo_category_id.in_(cat_ids))
+            .outerjoin(_FPI, _PI.feo_planned_item_id == _FPI.id)
+            .where(_ecat.in_(cat_ids))
             .where(_P.is_monthly_payment.is_(True))
-            .group_by(_PI.feo_category_id)
+            .group_by(_ecat)
         )).all()
         for r in mth_rows:
-            cat_monthly_map[r.feo_category_id] = float(r.s)
+            cat_monthly_map[r.ecat] = float(r.s)
 
         cpi_rows = (await db.execute(
             select(
-                _PI.feo_category_id,
+                _ecat.label("ecat"),
                 _PI.feo_planned_item_id,
                 _PI.item_name,
                 _PI.unit,
                 _PI.quantity,
                 _PI.unit_price,
                 _PI.total_price,
-                _PI.contractor_name,
+                func.coalesce(_PI.contractor_name, _C.name).label("contractor_name"),
                 _P.id.label("purchase_id"),
                 _P.status,
                 _P.is_monthly_payment,
@@ -1998,16 +2005,18 @@ async def export_plan_graph_excel(
                 _P.acceptance_docs,
             )
             .join(_P, _PI.purchase_id == _P.id)
-            .where(_PI.feo_category_id.in_(cat_ids))
-            .order_by(_PI.feo_category_id, _PI.id)
+            .outerjoin(_C, _P.contractor_id == _C.id)
+            .outerjoin(_FPI, _PI.feo_planned_item_id == _FPI.id)
+            .where(_ecat.in_(cat_ids))
+            .order_by(_ecat, _PI.id)
         )).all()
         for r in cpi_rows:
-            if r.contractor_name and r.feo_category_id not in cat_contractor_map:
-                cat_contractor_map[r.feo_category_id] = r.contractor_name
+            if r.contractor_name and r.ecat not in cat_contractor_map:
+                cat_contractor_map[r.ecat] = r.contractor_name
             # Детализацию по категории показываем только для позиций БЕЗ привязки к
             # плановой статье — иначе задвоится со строками под плановой позицией.
             if r.feo_planned_item_id is None:
-                purchased_by_cat.setdefault(r.feo_category_id, []).append({
+                purchased_by_cat.setdefault(r.ecat, []).append({
                     "name": r.item_name or "",
                     "unit": r.unit or "",
                     "qty": float(r.quantity or 0),
@@ -2022,6 +2031,101 @@ async def export_plan_graph_excel(
                     "monthly_count": r.monthly_payment_count,
                     "monthly_amount": float(r.monthly_payment_amount or 0),
                 })
+
+    # ── Закупки БЕЗ позиций: факт живёт на самой закупке (item_name/суммы) ──
+    # Иначе такие закупки полностью выпадают из выгрузки.
+    itemless_extra: list[dict] = []      # для «Сводной»
+    unlinked_purchases: list[dict] = []  # секция «без категории ФЭО»
+    pl_rows = (await db.execute(
+        select(
+            _P.id.label("purchase_id"), _P.feo_category_id, _P.item_name,
+            _P.subject, _P.status,
+            _P.planned_quantity, _P.unit, _P.planned_unit_price,
+            _P.planned_total_price, _P.final_total_amount,
+            _P.acceptance_doc_number, _P.acceptance_docs,
+            _P.is_monthly_payment, _P.monthly_payment_count, _P.monthly_payment_amount,
+            _P.item_type, _P.is_likely_needed,
+            _C.name.label("contractor_name"),
+        )
+        .outerjoin(_C, _P.contractor_id == _C.id)
+        .where(or_(
+            _P.feo_category_id.in_(cat_ids or [-1]),
+            _P.subsidy_id == subsidy_id,
+        ))
+        .where(~select(_PI.id).where(_PI.purchase_id == _P.id).exists())
+        .order_by(_P.id)
+    )).all()
+    _cat_id_set = set(cat_ids)
+    for r in pl_rows:
+        amount = float(r.final_total_amount or r.planned_total_price or 0)
+        qty = float(r.planned_quantity or 0)
+        d = {
+            "name": (r.item_name or r.subject or f"Закупка №{r.purchase_id}"),
+            "unit": r.unit or "",
+            "qty": qty,
+            "unit_price": float(r.planned_unit_price or 0) or (amount / qty if qty else amount),
+            "total": amount,
+            "contractor": r.contractor_name or "",
+            "raw_status": r.status or "",
+            "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+            "purchase_id": r.purchase_id,
+            "act_number": _act_number(r.acceptance_doc_number, r.acceptance_docs),
+            "has_act": bool(r.acceptance_doc_number) or bool(
+                isinstance(r.acceptance_docs, list) and r.acceptance_docs),
+            "is_monthly": bool(r.is_monthly_payment),
+            "monthly_count": r.monthly_payment_count,
+            "monthly_amount": float(r.monthly_payment_amount or 0),
+            "item_type": (r.item_type or "").strip().lower(),
+            "is_likely_needed": bool(r.is_likely_needed),
+        }
+        itemless_extra.append(d)
+        if r.feo_category_id in _cat_id_set:
+            purchased_by_cat.setdefault(r.feo_category_id, []).append(d)
+            if amount:
+                m = cat_status_map.setdefault(r.feo_category_id, {})
+                st_key = r.status or ""
+                m[st_key] = m.get(st_key, 0.0) + amount
+                if r.is_monthly_payment:
+                    cat_monthly_map[r.feo_category_id] = \
+                        cat_monthly_map.get(r.feo_category_id, 0.0) + amount
+        else:
+            unlinked_purchases.append(d)
+
+    # ── Позиции закупок, привязанных к субсидии ТОЛЬКО через subsidy_id ──────
+    # (ни у закупки, ни у позиций нет категории/плановой статьи)
+    _ecat_u = func.coalesce(_PI.feo_category_id, _P.feo_category_id, _FPI.feo_category_id)
+    upi_rows = (await db.execute(
+        select(
+            _PI.item_name, _PI.unit, _PI.quantity, _PI.unit_price, _PI.total_price,
+            func.coalesce(_PI.contractor_name, _C.name).label("contractor_name"),
+            func.coalesce(_PI.item_type, _P.item_type).label("item_type"),
+            _P.id.label("purchase_id"), _P.status,
+            _P.is_monthly_payment, _P.monthly_payment_count, _P.monthly_payment_amount,
+            _P.acceptance_doc_number, _P.acceptance_docs, _P.is_likely_needed,
+        )
+        .join(_P, _PI.purchase_id == _P.id)
+        .outerjoin(_C, _P.contractor_id == _C.id)
+        .outerjoin(_FPI, _PI.feo_planned_item_id == _FPI.id)
+        .where(_P.subsidy_id == subsidy_id)
+        .where(_ecat_u.is_(None))
+        .order_by(_P.id, _PI.id)
+    )).all()
+    for r in upi_rows:
+        unlinked_purchases.append({
+            "name": r.item_name or "",
+            "unit": r.unit or "",
+            "qty": float(r.quantity or 0),
+            "unit_price": float(r.unit_price or 0),
+            "total": float(r.total_price or 0),
+            "contractor": r.contractor_name or "",
+            "raw_status": r.status or "",
+            "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+            "purchase_id": r.purchase_id,
+            "act_number": _act_number(r.acceptance_doc_number, r.acceptance_docs),
+            "is_monthly": bool(r.is_monthly_payment),
+            "monthly_count": r.monthly_payment_count,
+            "monthly_amount": float(r.monthly_payment_amount or 0),
+        })
 
     def _cst(cat_id: int, *statuses: str) -> float:
         d = cat_status_map.get(cat_id, {})
@@ -2345,6 +2449,51 @@ async def export_plan_graph_excel(
     for root in cats_by_parent.get(None, []):
         _traverse(root)
 
+    # ── Секция: закупки, привязанные к субсидии, но без категории ФЭО ────────
+    if unlinked_purchases:
+        _write_row(
+            ["", "Закупки по субсидии без привязки к категории ФЭО", "", "", "", ""]
+            + [""] * 12,
+            L1_FILL, L1_FONT, height=22
+        )
+        u_ord = u_del = u_paid = 0.0
+        for pi in unlinked_purchases:
+            price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
+            status_txt = pi["status"]
+            monthly_val = ""
+            if pi.get("is_monthly"):
+                cnt = pi.get("monthly_count")
+                amt = pi.get("monthly_amount") or 0
+                status_txt = f"{status_txt} · ежемес." + (f" ×{cnt}" if cnt else "")
+                monthly_val = round(pi["total"], 2)
+                if amt:
+                    price_note += f" ({round(amt, 2):,.2f} ₽/мес)"
+            ord_a, del_a, paid_a = _cascade(pi["raw_status"], pi["total"])
+            u_ord += ord_a; u_del += del_a; u_paid += paid_a
+            _write_row(
+                [
+                    "", "", "", price_note,
+                    pi["unit"], round(pi["qty"], 3),
+                    "", "", "",
+                    ord_a, del_a, paid_a,
+                    round(pi["total"], 2), "",
+                    "", pi["contractor"], status_txt,
+                    monthly_val, pi["act_number"],
+                ],
+                SUB_FILL, SUB_FONT, height=16
+            )
+            _set_doc_link(pi["purchase_id"])
+        _write_row(
+            [
+                "", "", "", "    Итого по факту:",
+                "", "",
+                "", "", "",
+                round(u_ord, 2), round(u_del, 2), round(u_paid, 2),
+                "", "", "", "", "", "",
+            ],
+            SUB_FILL, Font(size=8, bold=True, color="374151"), height=16
+        )
+
     # ── Лист «Сводная»: деньги по Товары/Услуги × корзины обязательств ────────
     def _empty_buckets():
         return {"paid": 0.0, "delivered": 0.0, "accepted_unpaid": 0.0,
@@ -2353,43 +2502,63 @@ async def export_plan_graph_excel(
     summary = {"услуга": _empty_buckets(), "товар": _empty_buckets()}
     _planned_statuses = ("wishes", "plan_schedule", "confirmed",
                          "work_in_progress", "contracted", "ordered")
-    if cat_ids or item_ids:
-        sum_rows = (await db.execute(
-            select(
-                _PI.item_type,
-                _PI.total_price,
-                _P.status,
-                _P.acceptance_doc_number,
-                _P.acceptance_docs,
-                _P.is_monthly_payment,
-                _P.is_likely_needed,
-            )
-            .join(_P, _PI.purchase_id == _P.id)
-            .where(or_(
-                _PI.feo_category_id.in_(cat_ids or [-1]),
-                _PI.feo_planned_item_id.in_(item_ids or [-1]),
-            ))
-        )).all()
-        for r in sum_rows:
-            key = "услуга" if (r.item_type or "").strip().lower() == "услуга" else "товар"
-            b = summary[key]
-            amt = float(r.total_price or 0)
-            st = r.status or ""
-            b["total"] += amt
-            if st == "paid":
-                b["paid"] += amt
-            if st == "delivered":
-                b["delivered"] += amt
-            has_act = bool(r.acceptance_doc_number) or bool(
-                isinstance(r.acceptance_docs, list) and r.acceptance_docs)
-            if has_act and st != "paid":
-                b["accepted_unpaid"] += amt
-            if st in _planned_statuses:
-                b["planned"] += amt
-            if r.is_monthly_payment:
-                b["monthly"] += amt
-            if r.is_likely_needed:
-                b["likely"] += amt
+    sum_rows = (await db.execute(
+        select(
+            func.coalesce(_PI.item_type, _P.item_type).label("item_type"),
+            _PI.total_price,
+            _P.status,
+            _P.acceptance_doc_number,
+            _P.acceptance_docs,
+            _P.is_monthly_payment,
+            _P.is_likely_needed,
+        )
+        .join(_P, _PI.purchase_id == _P.id)
+        .where(or_(
+            func.coalesce(_PI.feo_category_id, _P.feo_category_id).in_(cat_ids or [-1]),
+            _PI.feo_planned_item_id.in_(item_ids or [-1]),
+            _P.subsidy_id == subsidy_id,
+        ))
+    )).all()
+    for r in sum_rows:
+        key = "услуга" if (r.item_type or "").strip().lower() == "услуга" else "товар"
+        b = summary[key]
+        amt = float(r.total_price or 0)
+        st = r.status or ""
+        b["total"] += amt
+        if st == "paid":
+            b["paid"] += amt
+        if st == "delivered":
+            b["delivered"] += amt
+        has_act = bool(r.acceptance_doc_number) or bool(
+            isinstance(r.acceptance_docs, list) and r.acceptance_docs)
+        if has_act and st != "paid":
+            b["accepted_unpaid"] += amt
+        if st in _planned_statuses:
+            b["planned"] += amt
+        if r.is_monthly_payment:
+            b["monthly"] += amt
+        if r.is_likely_needed:
+            b["likely"] += amt
+
+    # Закупки без позиций — их суммы живут на самой закупке
+    for d in itemless_extra:
+        key = "услуга" if d["item_type"] == "услуга" else "товар"
+        b = summary[key]
+        amt = d["total"]
+        st = d["raw_status"]
+        b["total"] += amt
+        if st == "paid":
+            b["paid"] += amt
+        if st == "delivered":
+            b["delivered"] += amt
+        if d["has_act"] and st != "paid":
+            b["accepted_unpaid"] += amt
+        if st in _planned_statuses:
+            b["planned"] += amt
+        if d["is_monthly"]:
+            b["monthly"] += amt
+        if d["is_likely_needed"]:
+            b["likely"] += amt
 
     sm = wb.create_sheet("Сводная", 0)
     SUM_HEADERS = [

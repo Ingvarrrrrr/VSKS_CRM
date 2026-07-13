@@ -924,10 +924,17 @@ async def import_feo_from_excel(
     # Определяем индексы столбцов по заголовку строки 1
     raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
 
+    # Каждая колонка достаётся ровно одному полю: generic-ключи («ед. изм»)
+    # не должны утаскивать колонку Ур.2 в поле Ур.5
+    _used_cols: set[int] = set()
+
     def find_col(keywords: list[str]) -> int | None:
         for kw in keywords:
             for i, h in enumerate(raw_headers):
+                if i in _used_cols:
+                    continue
                 if kw in h:
+                    _used_cols.add(i)
                     return i
         return None
 
@@ -949,8 +956,8 @@ async def import_feo_from_excel(
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])
-    c_unit     = find_col(["ед. изм", "единица изм", "ед.изм"])
-    c_item_amt = find_col(["сумма плановая", "сумма (ур.5)", "сумма ур"])
+    c_unit     = find_col(["ед. измерения (ур.5)", "ед. изм. (ур.5)", "единица ур.5", "ед. изм", "единица изм", "ед.изм"])
+    c_item_amt = find_col(["плановая стоимость за ед. (ур.5)", "плановая стоимость (ур.5)", "стоимость за ед. (ур.5)", "стоимость ур.5", "сумма плановая", "сумма (ур.5)", "сумма ур"])
     c_code     = find_col(["код"])
     c_appendix = find_col(["приложение"])
     c_budget   = find_col(["финансирование", "бюджет", "budget"])

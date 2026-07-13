@@ -394,8 +394,6 @@
                       class="feo-tr"
                       :class="[
                         `feo-tr--l${node.level}`,
-                        feoRowClass(node),
-                        node.hasChildren && node.budget != null && directChildSum(node) > node.budget ? 'feo-tr--children-exceed' : '',
                         dragOverId === node.id ? 'feo-drop-target' : '',
                         dragNodeId === node.id ? 'feo-dragging' : '',
                       ]"
@@ -451,8 +449,22 @@
                           />
                         </div>
                         <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
-                          <span v-if="feoBudgetFor(node) > 0" class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</span>
+                          <span v-if="feoBudgetFor(node) > 0" class="feo-amount"
+                            :style="feoChildrenBudgetDiff(node) > 0.005 ? 'color:#EF4444;font-weight:700' : ''"
+                          >{{ formatCurrency(feoBudgetFor(node)) }}</span>
                           <span v-else class="feo-set-hint">Задать</span>
+                        </div>
+                        <div v-if="feoChildrenBudgetDiff(node) > 0.005"
+                          class="feo-plan-note" style="color:#EF4444"
+                          :title="`Финансирование дочерних строк ${formatCurrency(directChildSum(node))} превышает финансирование этой строки ${formatCurrency(node.budget || 0)}. Ищите лишнюю сумму в дочерних строках.`"
+                        >
+                          в дочерних {{ formatCurrency(directChildSum(node)) }} — лишние {{ formatCurrency(feoChildrenBudgetDiff(node)) }}
+                        </div>
+                        <div v-else-if="feoChildrenBudgetDiff(node) < -0.005"
+                          class="feo-plan-note" style="color:#F59E0B"
+                          :title="`Финансирование дочерних строк ${formatCurrency(directChildSum(node))} меньше финансирования этой строки ${formatCurrency(node.budget || 0)}. Часть суммы не распределена по дочерним.`"
+                        >
+                          в дочерних {{ formatCurrency(directChildSum(node)) }} — не распределено {{ formatCurrency(-feoChildrenBudgetDiff(node)) }}
                         </div>
                       </td>
 
@@ -490,6 +502,7 @@
                         <div v-if="feoBudgetFor(node) > 0 && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
+                          :title="`Финансирование по ФЭО ${formatCurrency(feoBudgetFor(node))} − Плановая сумма ${formatCurrency(feoPlannedTotalFor(node))}`"
                         >
                           {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
                         </div>
@@ -504,6 +517,18 @@
                         >
                           {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
                         </span>
+                        <div v-if="feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) - feoPlannedTotalFor(node) > 0.005"
+                          class="feo-plan-note" style="color:#EF4444"
+                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedTotalFor(node))}`"
+                        >
+                          больше плана на {{ formatCurrency(feoPurchasedFor(node) - feoPlannedTotalFor(node)) }}
+                        </div>
+                        <div v-if="feoBudgetFor(node) > 0 && feoPurchasedFor(node) - feoBudgetFor(node) > 0.005"
+                          class="feo-plan-note" style="color:#EF4444"
+                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoBudgetFor(node))}`"
+                        >
+                          больше ФЭО на {{ formatCurrency(feoPurchasedFor(node) - feoBudgetFor(node)) }}
+                        </div>
                       </td>
 
                       <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма -->
@@ -2923,15 +2948,23 @@ function feoAutoMap(headers: string[]) {
     appendix: ['приложение'],
     budget:   ['финансирование', 'бюджет'],
     quantity: ['количество (ур.5)', 'количество ур.5', 'кол-во (ур.5)', 'кол-во ур.5'],
-    unit:     ['ед. изм', 'ед.изм', 'единица'],
+    unit:     ['ед. измерения (ур.5)', 'ед. изм. (ур.5)', 'ед.изм. ур.5', 'единица ур.5', 'ед. изм', 'ед.изм', 'единица'],
     item_amt: ['плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма плановая', 'сумма (ур.5)', 'сумма ур'],
     active:   ['активна', 'активен'],
   }
+  // Каждая колонка достаётся ровно одному полю: без этого generic-ключи
+  // («ед. изм») утаскивали колонку Ур.2 в поле Ур.5
+  const used = new Set<number>()
   for (const [field, kws] of Object.entries(KEYWORDS)) {
-    for (let i = 0; i < headers.length; i++) {
-      const h = headers[i].toLowerCase()
-      if (kws.some(kw => h.includes(kw))) {
-        mapping[field] = i
+    for (const kw of kws) {
+      let found = -1
+      for (let i = 0; i < headers.length; i++) {
+        if (used.has(i)) continue
+        if (headers[i].toLowerCase().includes(kw)) { found = i; break }
+      }
+      if (found >= 0) {
+        mapping[field] = found
+        used.add(found)
         break
       }
     }
@@ -3355,14 +3388,10 @@ function feoFinDiff(node: FeoNode): number {
   return feoBudgetFor(node) - feoPlannedTotalFor(node)
 }
 
-function feoRowClass(node: FeoNode): string {
-  const b = feoBudgetFor(node)
-  const p = feoPlannedTotalFor(node)
-  if (b <= 0 && p <= 0) return ''
-  const d = b - p
-  if (d > 0.005) return 'feo-tr--fin-over'
-  if (d < -0.005) return 'feo-tr--fin-under'
-  return ''
+// Финансирование дочерних vs собственное финансирование узла (только при ручном бюджете)
+function feoChildrenBudgetDiff(node: FeoNode): number {
+  if (!node.hasChildren || node.budget == null || node.budget <= 0) return 0
+  return directChildSum(node) - node.budget
 }
 
 // Факт — только то, что реально поставлено/оплачено (по актам)
@@ -5086,28 +5115,11 @@ onMounted(() => {
 .feo-tr:hover .feo-td-actions { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td-actions { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td-actions { background: var(--crm-surface-hover); }
-.feo-tr--over .feo-td-actions,
-.feo-tr--children-exceed .feo-td-actions {
-  background: linear-gradient(rgba(239,68,68,0.08), rgba(239,68,68,0.08)), var(--crm-surface) !important;
-}
-.feo-tr--over:hover .feo-td-actions {
-  background: linear-gradient(rgba(239,68,68,0.13), rgba(239,68,68,0.13)), var(--crm-surface-alt) !important;
-}
 .feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
-.feo-tr--over .feo-td { background: rgba(239,68,68,0.08) !important; }
-.feo-tr--over:hover .feo-td { background: rgba(239,68,68,0.13) !important; }
-.feo-tr--over .feo-amount { color: #EF4444; font-weight: 700; }
-.feo-tr--children-exceed .feo-td { background: rgba(239,68,68,0.08) !important; }
-.feo-tr--children-exceed .feo-amount { color: #EF4444; font-weight: 700; }
-/* Финансирование по ФЭО vs Плановая сумма: выше — зелёная, ниже — красная */
-.feo-tr--fin-over .feo-td { background: rgba(34,197,94,0.10) !important; }
-.feo-tr--fin-over:hover .feo-td { background: rgba(34,197,94,0.16) !important; }
-.feo-tr--fin-under .feo-td { background: rgba(239,68,68,0.08) !important; }
-.feo-tr--fin-under:hover .feo-td { background: rgba(239,68,68,0.13) !important; }
 .feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
 .feo-residual-toggle { display: flex; gap: 2px; justify-content: flex-end; margin-top: 2px; }
 .feo-residual-opt {

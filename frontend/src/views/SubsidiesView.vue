@@ -294,7 +294,7 @@
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
               <div class="d-flex align-center ml-auto" style="gap:8px">
-                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить</v-btn>
+                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
                 <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
                 <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
                 <!-- 12-04: Version history -->

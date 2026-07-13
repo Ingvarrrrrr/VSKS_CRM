@@ -1934,6 +1934,7 @@ async def export_plan_graph_excel(
     cat_ids = [c.id for c in cats]
     cat_status_map: dict[int, dict[str, float]] = {}
     cat_contractor_map: dict[int, str] = {}
+    cat_monthly_map: dict[int, float] = {}  # факт по закупкам-регулярным (ежемес.) платежам
     purchased_by_cat: dict[int, list] = {}
     if cat_ids:
         cst_rows = (await db.execute(
@@ -1949,6 +1950,19 @@ async def export_plan_graph_excel(
         for r in cst_rows:
             cat_status_map.setdefault(r.feo_category_id, {})[r.status] = float(r.s)
 
+        mth_rows = (await db.execute(
+            select(
+                _PI.feo_category_id,
+                func.coalesce(func.sum(_PI.total_price), 0).label("s"),
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(_PI.feo_category_id.in_(cat_ids))
+            .where(_P.is_monthly_payment.is_(True))
+            .group_by(_PI.feo_category_id)
+        )).all()
+        for r in mth_rows:
+            cat_monthly_map[r.feo_category_id] = float(r.s)
+
         cpi_rows = (await db.execute(
             select(
                 _PI.feo_category_id,
@@ -1960,6 +1974,9 @@ async def export_plan_graph_excel(
                 _PI.total_price,
                 _PI.contractor_name,
                 _P.status,
+                _P.is_monthly_payment,
+                _P.monthly_payment_count,
+                _P.monthly_payment_amount,
             )
             .join(_P, _PI.purchase_id == _P.id)
             .where(_PI.feo_category_id.in_(cat_ids))
@@ -1979,6 +1996,9 @@ async def export_plan_graph_excel(
                     "total": float(r.total_price or 0),
                     "contractor": r.contractor_name or "",
                     "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+                    "is_monthly": bool(r.is_monthly_payment),
+                    "monthly_count": r.monthly_payment_count,
+                    "monthly_amount": float(r.monthly_payment_amount or 0),
                 })
 
     def _cst(cat_id: int, *statuses: str) -> float:
@@ -2055,8 +2075,9 @@ async def export_plan_graph_excel(
         "Договор, ₽", "Заказано, ₽", "Поставлено, ₽", "Оплачено, ₽",
         "Фактически (итого), ₽", "Остаток, ₽",
         "% исполнения", "Исполнитель", "Статус",
+        "Ежемес. (регуляр.) платежи, ₽",
     ]
-    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 18, 18, 18, 20, 18, 12, 30, 15]
+    COL_WIDTHS = [5, 30, 25, 40, 8, 10, 18, 18, 18, 18, 18, 18, 20, 18, 12, 30, 15, 22]
 
     cats_by_parent: dict = {}
     for c in cats:
@@ -2077,18 +2098,21 @@ async def export_plan_graph_excel(
         if not children:
             for k, v in cat_status_map.get(cat.id, {}).items():
                 status_agg[k] = status_agg.get(k, 0.0) + v
+            monthly = cat_monthly_map.get(cat.id, 0.0)
             if cat.budget is not None:
                 budget = float(cat.budget)
             else:
                 budget = sum(float(it.amount or 0) for it in items_by_cat.get(cat.id, []))
         else:
             budget = 0.0
+            monthly = 0.0
             for ch in children:
                 r = _compute_subtree(ch)
                 for k, v in r["status"].items():
                     status_agg[k] = status_agg.get(k, 0.0) + v
                 budget += r["budget"]
-        res = {"status": status_agg, "budget": budget}
+                monthly += r["monthly"]
+        res = {"status": status_agg, "budget": budget, "monthly": monthly}
         subtree_map[cat.id] = res
         return res
 
@@ -2131,8 +2155,10 @@ async def export_plan_graph_excel(
     E = ""  # пустая ячейка
 
     def _money_cols(cat_id: int, contractor: str) -> list:
-        """Денежные колонки 7..17 из роллапа поддерева по статусам."""
-        budget = subtree_map.get(cat_id, {}).get("budget", 0.0)
+        """Денежные колонки 7..18 из роллапа поддерева по статусам."""
+        st = subtree_map.get(cat_id, {})
+        budget = st.get("budget", 0.0)
+        monthly = st.get("monthly", 0.0)
         plan = _sub(cat_id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
         contract = _sub(cat_id, "contracted")
         ordered = _sub(cat_id, "ordered")
@@ -2151,6 +2177,7 @@ async def export_plan_graph_excel(
             round(resid, 2) if (budget or abs(used) > 0.005) else E,
             (f"{round(used / budget * 100)}%" if budget > 0 else E),
             contractor, E,
+            _nz(monthly),
         ]
 
     def _traverse(cat, direction_name="", type_name=""):
@@ -2176,13 +2203,23 @@ async def export_plan_graph_excel(
             # Под-строки: закупки, привязанные напрямую к категории (без плановой статьи)
             for pi in purchased_by_cat.get(cat.id, []):
                 price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
+                status_txt = pi["status"]
+                monthly_val = ""
+                if pi.get("is_monthly"):
+                    cnt = pi.get("monthly_count")
+                    amt = pi.get("monthly_amount") or 0
+                    status_txt = f"{status_txt} · ежемес." + (f" ×{cnt}" if cnt else "")
+                    monthly_val = round(pi["total"], 2)
+                    if amt:
+                        price_note += f" ({round(amt, 2):,.2f} ₽/мес)"
                 _write_row(
                     [
                         "", "", "", price_note,
                         pi["unit"], round(pi["qty"], 3),
                         "", "", "", "", "", "",
                         round(pi["total"], 2), "",
-                        "", pi["contractor"], pi["status"],
+                        "", pi["contractor"], status_txt,
+                        monthly_val,
                     ],
                     SUB_FILL, SUB_FONT, height=16
                 )

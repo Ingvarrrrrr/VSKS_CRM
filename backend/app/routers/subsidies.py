@@ -2583,6 +2583,345 @@ async def compare_plan_graph_versions_excel(
     )
 
 
+# ── Multi-edition ФЭО compare (Phase 12-06) ──────────────────────────────────
+
+
+async def _build_current_feo_tree(subsidy_id: int, db: AsyncSession) -> list:
+    """Строит живое дерево FeoCategory для субсидии (аналог snapshot["tree"])."""
+    cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.id)
+    )).scalars().all()
+
+    def _recurse(parent_id):
+        nodes = []
+        for c in cats:
+            if c.parent_id == parent_id:
+                nodes.append({
+                    "id": c.id,
+                    "name": c.name,
+                    "level": c.level,
+                    "code": c.code,
+                    "budget": float(c.budget) if c.budget is not None else None,
+                    "children": _recurse(c.id),
+                })
+        return nodes
+
+    return _recurse(None)
+
+
+def _build_multi_compare_rows(versions: list) -> list:
+    """
+    versions = [{"tree": [...]}, ...]  — уже в хронологическом порядке.
+    Возвращает список строк: {"level", "name", "code", "budgets": [v0_val, v1_val, ...]}.
+    Canonical key:
+      - ("code", code)          если у узла есть code
+      - ("path", level, path)   иначе (path = tuple нормализованных предков + имя узла)
+    Ключи упорядочены по первому появлению (первая редакция задаёт порядок).
+    """
+    order: list = []            # список ключей в порядке появления
+    meta: dict = {}             # key -> {"level", "name", "code"}
+    budgets: dict = {}          # key -> {version_index: float}
+
+    def _dfs(node, path, ver_idx):
+        norm_name = _normalize_name(node.get("name", ""))
+        full_path = path + (norm_name,)
+
+        code = (node.get("code") or "").strip()
+        if code:
+            key = ("code", code)
+        else:
+            key = ("path", node.get("level", 0), full_path)
+
+        if key not in meta:
+            order.append(key)
+            meta[key] = {
+                "level": node.get("level", 0),
+                "name": node.get("name", ""),
+                "code": code,
+            }
+        else:
+            # Обновляем имя/код из последней редакции, если они непустые
+            if node.get("name", ""):
+                meta[key]["name"] = node["name"]
+            if code:
+                meta[key]["code"] = code
+
+        if key not in budgets:
+            budgets[key] = {}
+        budgets[key][ver_idx] = float(node.get("budget") or 0)
+
+        for child in node.get("children", []):
+            _dfs(child, full_path, ver_idx)
+
+    for ver_idx, ver in enumerate(versions):
+        for root_node in ver.get("tree", []):
+            _dfs(root_node, (), ver_idx)
+
+    n_vers = len(versions)
+    rows = []
+    for key in order:
+        m = meta[key]
+        rows.append({
+            "level": m["level"],
+            "name": m["name"],
+            "code": m["code"],
+            "budgets": [budgets[key].get(i, 0.0) for i in range(n_vers)],
+        })
+    return rows
+
+
+@router.get("/{subsidy_id}/plan-graph/versions/export-multi.xlsx")
+async def export_plan_graph_versions_multi_excel(
+    subsidy_id: int,
+    ids: str = Query("", description="ID редакций через запятую"),
+    include_current: bool = Query(False, description="Добавить колонку текущей живой ФЭО"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Экспорт N редакций ФЭО бок-о-бок в один Excel-файл с дельтами."""
+    if openpyxl is None:
+        raise HTTPException(500, "openpyxl не установлен")
+
+    from app.models.plan_graph_version import PlanGraphVersion as _PGV
+    from datetime import datetime as _dt
+
+    # ── Авторизация ──────────────────────────────────────────────────────────
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and sub.org_id not in org_ids:
+        raise HTTPException(403, "Нет доступа к субсидии")
+
+    # ── Парсим id редакций ───────────────────────────────────────────────────
+    try:
+        id_list: list[int] = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(422, "Некорректный список id редакций")
+    if not id_list and not include_current:
+        raise HTTPException(422, "Выберите хотя бы одну редакцию")
+
+    # ── Загружаем версии из БД ───────────────────────────────────────────────
+    skipped_legacy: list[str] = []
+    versions: list[dict] = []
+
+    if id_list:
+        ver_rows = (await db.execute(
+            select(_PGV).where(_PGV.id.in_(id_list), _PGV.subsidy_id == subsidy_id)
+        )).scalars().all()
+
+        def _ver_date(v) -> date:
+            if v.effective_date:
+                return v.effective_date
+            if v.created_at:
+                return v.created_at.date()
+            return date.today()
+
+        # Хронологическая сортировка: сначала по дате, потом по номеру версии
+        ver_rows_sorted = sorted(ver_rows, key=lambda v: (_ver_date(v), v.version_number))
+
+        for ver in ver_rows_sorted:
+            snap = ver.snapshot or {}
+            tree = snap.get("tree")
+            if not tree:
+                skipped_legacy.append(f"v{ver.version_number}")
+                continue
+            d = _ver_date(ver)
+            versions.append({
+                "ver": ver,
+                "label": f"v{ver.version_number}",
+                "date_str": d.isoformat(),
+                "date_display": d.strftime("%d.%m.%Y"),
+                "note": ver.note,
+                "tree": tree,
+                "total_planned": snap.get("total_planned", 0),
+            })
+
+    # ── Текущая живая ФЭО ────────────────────────────────────────────────────
+    if include_current:
+        live_tree = await _build_current_feo_tree(subsidy_id, db)
+
+        def _sum_tree(nodes):
+            total = 0.0
+            for n in nodes:
+                total += float(n.get("budget") or 0)
+                total += _sum_tree(n.get("children", []))
+            return total
+
+        today = date.today()
+        versions.append({
+            "ver": None,
+            "label": "Текущая",
+            "date_str": today.isoformat(),
+            "date_display": today.strftime("%d.%m.%Y"),
+            "note": None,
+            "tree": live_tree,
+            "total_planned": _sum_tree(live_tree),
+        })
+
+    if not versions:
+        raise HTTPException(422, "Нет редакций с деревом ФЭО для выгрузки")
+
+    rows = _build_multi_compare_rows(versions)
+
+    # ── Стили (копируем из compare.xlsx) ────────────────────────────────────
+    HEADER_FILL  = PatternFill("solid", fgColor="1E3A5F")
+    HEADER_FONT  = Font(color="FFFFFF", bold=True, size=9)
+    META_FONT    = Font(size=9, italic=True, color="374151")
+    ITEM_FONT    = Font(size=9)
+    CENTER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT_ALIGN   = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    RIGHT_ALIGN  = Alignment(horizontal="right", vertical="center")
+    THIN_BORDER  = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    n_vers = len(versions)
+    has_deltas = n_vers >= 2
+
+    # ── Заголовки колонок ────────────────────────────────────────────────────
+    fixed_headers = ["№", "Уровень", "Наименование", "Код"]
+    plan_headers = [
+        f"План ₽\n{v['date_display']}" for v in versions
+    ]
+    delta_adj_headers = []
+    if has_deltas:
+        for i in range(1, n_vers):
+            delta_adj_headers.append(
+                f"Δ {versions[i]['date_display']}−{versions[i - 1]['date_display']}"
+            )
+    total_delta_headers = []
+    if has_deltas:
+        total_delta_headers = [
+            f"Δ итог\n{versions[-1]['date_display']}−{versions[0]['date_display']}"
+        ]
+
+    all_headers = fixed_headers + plan_headers + delta_adj_headers + total_delta_headers
+    n_cols = len(all_headers)
+    last_col = chr(64 + n_cols) if n_cols <= 26 else (
+        chr(64 + (n_cols - 1) // 26) + chr(64 + (n_cols - 1) % 26 + 1)
+    )
+
+    # Ширины колонок: фиксированные 5,8,50,15; план 18; дельта 16
+    col_widths = [5, 8, 50, 15] + [18] * n_vers + [16] * (len(delta_adj_headers) + len(total_delta_headers))
+
+    # ── Workbook ─────────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Редакции ФЭО"
+
+    # Строка-заголовок (merged)
+    ws.append([f"РЕДАКЦИИ ФЭО — {sub.name}"] + [""] * (n_cols - 1))
+    title_cell = ws.cell(row=1, column=1)
+    title_cell.font = Font(bold=True, size=12, color="1E3A5F")
+    ws.merge_cells(f"A1:{last_col}1")
+    title_cell.alignment = CENTER_ALIGN
+    ws.row_dimensions[1].height = 28
+
+    # Мета-строки: по одной на каждую редакцию
+    meta_lines = []
+    for v in versions:
+        line = f"{v['label']} — {v['date_display']}"
+        if v["note"]:
+            line += f" — {v['note']}"
+        meta_lines.append(line)
+
+    # Строка с итогами по редакциям
+    totals_parts = [
+        f"{v['label']}: {float(v['total_planned']):,.2f} ₽" for v in versions
+    ]
+    meta_lines.append("Итого: " + "  |  ".join(totals_parts))
+
+    # Предупреждение о пропущенных legacy-версиях
+    if skipped_legacy:
+        meta_lines.append(
+            f"⚠ Пропущены (нет дерева ФЭО): {', '.join(skipped_legacy)}"
+        )
+
+    for i, mtext in enumerate(meta_lines):
+        r = 2 + i
+        ws.append([mtext] + [""] * (n_cols - 1))
+        cell = ws.cell(row=r, column=1)
+        cell.font = META_FONT
+        cell.alignment = LEFT_ALIGN
+        ws.merge_cells(f"A{r}:{last_col}{r}")
+        ws.row_dimensions[r].height = 16
+
+    # Строка заголовков колонок
+    header_row = 2 + len(meta_lines)
+    ws.append(all_headers)
+    for col_idx, (h, w) in enumerate(zip(all_headers, col_widths), 1):
+        cell = ws.cell(row=header_row, column=col_idx)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER_ALIGN
+        cell.border = THIN_BORDER
+        ws.column_dimensions[cell.column_letter].width = w
+    ws.row_dimensions[header_row].height = 32
+    ws.freeze_panes = f"A{header_row + 1}"
+
+    # ── Строки данных ────────────────────────────────────────────────────────
+    GREEN_FONT = Font(size=9, color="1B7F3B")
+    RED_FONT   = Font(size=9, color="B00020")
+
+    for seq_i, row in enumerate(rows, 1):
+        level = row["level"]
+        indent = ("    " * (level - 1)) if level > 0 else ""
+        name_str = indent + (row["name"] or "")
+        code_str = row["code"] or ""
+        bgets = row["budgets"]  # list[float] длиной n_vers
+
+        # Вычисляем дельта-значения
+        adj_deltas = [bgets[i] - bgets[i - 1] for i in range(1, n_vers)] if has_deltas else []
+        total_delta = [bgets[-1] - bgets[0]] if has_deltas else []
+
+        row_values = [seq_i, level, name_str, code_str] + bgets + adj_deltas + total_delta
+        data_row_num = header_row + seq_i
+        ws.append(row_values)
+
+        for col_idx, val in enumerate(row_values, 1):
+            cell = ws.cell(row=data_row_num, column=col_idx)
+            cell.border = THIN_BORDER
+
+            if col_idx == 3:
+                # Наименование — левое выравнивание
+                cell.font = ITEM_FONT
+                cell.alignment = LEFT_ALIGN
+            elif col_idx <= 4:
+                # №, Уровень, Код
+                cell.font = ITEM_FONT
+                cell.alignment = CENTER_ALIGN
+            elif col_idx <= 4 + n_vers:
+                # Плановые колонки
+                cell.font = ITEM_FONT
+                cell.alignment = RIGHT_ALIGN
+            else:
+                # Дельта-колонки: цветной шрифт
+                if isinstance(val, float) and val > 0.005:
+                    cell.font = GREEN_FONT
+                elif isinstance(val, float) and val < -0.005:
+                    cell.font = RED_FONT
+                else:
+                    cell.font = ITEM_FONT
+                cell.alignment = RIGHT_ALIGN
+
+        ws.row_dimensions[data_row_num].height = 18
+
+    # ── Сохраняем и отдаём ──────────────────────────────────────────────────
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"subsidy-{subsidy_id}_feo-editions.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": _content_disposition(filename)},
+    )
+
+
 @router.post("/{subsidy_id}/plan-graph/template")
 async def upload_plan_graph_template(
     subsidy_id: int,

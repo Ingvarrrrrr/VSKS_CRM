@@ -294,7 +294,7 @@
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
               <div class="d-flex align-center ml-auto" style="gap:8px">
-                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportFeoToExcel">Выгрузить</v-btn>
+                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить</v-btn>
                 <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
                 <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
                 <!-- 12-04: Version history -->
@@ -2199,6 +2199,67 @@
       </v-card>
     </v-dialog>
 
+    <!-- Export versions dialog -->
+    <v-dialog v-model="showExportVersionsDialog" max-width="760" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon icon="mdi-file-excel-outline" size="20" color="success" class="mr-2" />
+          Выгрузить редакции ФЭО
+          <v-spacer />
+          <v-btn icon="mdi-close" size="x-small" variant="text" @click="showExportVersionsDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text style="min-height:160px">
+          <v-progress-linear v-if="exportVersionsLoading" indeterminate color="primary" class="mb-3" />
+          <div class="text-caption text-medium-emphasis mb-3">Выберите одну или несколько редакций. Несколько редакций выгрузятся в один документ — колонки рядом.</div>
+          <v-checkbox v-model="exportIncludeCurrent" density="compact" hide-details label="Текущая (живая) ФЭО" class="mb-2" />
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Дата редакции</th>
+                <th>Примечание</th>
+                <th class="text-right">План, ₽</th>
+                <th class="text-right">Факт, ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="v in exportVersionsList" :key="v.id">
+                <td>
+                  <v-checkbox
+                    :model-value="exportSelectedIds.includes(v.id)"
+                    @update:model-value="toggleExportId(v.id)"
+                    density="compact"
+                    hide-details
+                  />
+                </td>
+                <td style="font-size:12px">{{ formatEditionDate(v.effective_date || v.created_at) }}</td>
+                <td style="font-size:12px">{{ v.note || '—' }}</td>
+                <td class="text-right" style="font-size:12px">{{ Number(v.total_planned || 0).toLocaleString('ru-RU') }}</td>
+                <td class="text-right" style="font-size:12px">{{ Number(v.total_used || 0).toLocaleString('ru-RU') }}</td>
+              </tr>
+              <tr v-if="!exportVersionsLoading && exportVersionsList.length === 0">
+                <td colspan="5" class="text-center text-medium-emphasis py-4">Сохранённых редакций нет</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showExportVersionsDialog = false">Отмена</v-btn>
+          <v-btn
+            color="success"
+            variant="flat"
+            prepend-icon="mdi-file-excel-outline"
+            :loading="exportRunning"
+            :disabled="exportSelectedIds.length === 0 && !exportIncludeCurrent"
+            @click="runVersionsExport"
+          >Выгрузить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 12-04/12-05: Version Snapshot Dialog -->
     <v-dialog v-model="showVersionSnapshotDialog" max-width="960" scrollable :fullscreen="mobile">
       <v-card v-if="selectedVersionSnapshot">
@@ -2470,6 +2531,14 @@ const showVersionSnapshotDialog = ref(false)
 // 12-05 F2: compare state
 const compareSelected = ref<number[]>([])
 const compareLoading = ref(false)
+
+// Export versions dialog state
+const showExportVersionsDialog = ref(false)
+const exportVersionsLoading = ref(false)      // loading the list
+const exportVersionsList = ref<any[]>([])
+const exportSelectedIds = ref<number[]>([])
+const exportIncludeCurrent = ref(true)        // current live FEO preselected
+const exportRunning = ref(false)              // during download
 
 // 12-05: Save version state
 const showSaveVersionDialog = ref(false)
@@ -3732,6 +3801,81 @@ async function downloadVersionExcel(vid: number) {
     URL.revokeObjectURL(url)
   } catch (e: any) {
     snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
+  }
+}
+
+function formatEditionDate(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+async function openExportVersionsDialog() {
+  if (!selectedId.value) return
+  exportVersionsLoading.value = true
+  showExportVersionsDialog.value = true
+  exportSelectedIds.value = []
+  exportIncludeCurrent.value = true
+  try {
+    exportVersionsList.value = await apiFetch<any[]>(`/subsidies/${selectedId.value}/plan-graph/versions`)
+  } finally {
+    exportVersionsLoading.value = false
+  }
+}
+
+function toggleExportId(id: number) {
+  const idx = exportSelectedIds.value.indexOf(id)
+  if (idx === -1) exportSelectedIds.value.push(id)
+  else exportSelectedIds.value.splice(idx, 1)
+}
+
+async function runVersionsExport() {
+  const sel = exportSelectedIds.value
+  const inc = exportIncludeCurrent.value
+  if (sel.length === 0 && !inc) {
+    showSnack('Выберите хотя бы одну редакцию', 'warning')
+    return
+  }
+  if (sel.length === 0 && inc) {
+    await exportFeoToExcel()
+    showExportVersionsDialog.value = false
+    return
+  }
+  if (sel.length === 1 && !inc) {
+    await downloadVersionExcel(sel[0])
+    showExportVersionsDialog.value = false
+    return
+  }
+  // multi: several selected, or selected+current
+  exportRunning.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const url = `/api/subsidies/${selectedId.value}/plan-graph/versions/export-multi.xlsx?ids=${sel.join(',')}&include_current=${inc}`
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      let errMsg = 'Ошибка выгрузки'
+      try { const j = await res.json(); errMsg = j.message || j.detail || errMsg } catch { /* ignore */ }
+      throw new Error(errMsg)
+    }
+    const blob = await res.blob()
+    const cd = res.headers.get('Content-Disposition') || ''
+    let name = 'feo_editions.xlsx'
+    const star = cd.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i)
+    const plain = cd.match(/filename\s*=\s*(?:"([^"]+)"|([^;\n]+))/i)
+    if (star) name = decodeURIComponent(star[1].trim())
+    else if (plain) name = (plain[1] ?? plain[2] ?? name).trim()
+    const objUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objUrl; a.download = name; a.click()
+    URL.revokeObjectURL(objUrl)
+    showExportVersionsDialog.value = false
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка выгрузки', 'error')
+  } finally {
+    exportRunning.value = false
   }
 }
 

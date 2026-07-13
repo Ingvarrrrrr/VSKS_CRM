@@ -1893,6 +1893,42 @@ async def export_plan_graph_excel(
             if r.feo_planned_item_id not in contractor_map:
                 contractor_map[r.feo_planned_item_id] = r.cname
 
+    # Фактически закупленные позиции (PurchaseItem) по каждой плановой статье —
+    # чтобы в выгрузке было видно ЧТО куплено и ПО КАКОЙ ЦЕНЕ, а не только сумма.
+    _STATUS_HUMAN = {
+        "wishes": "Запланировано", "plan_schedule": "Запланировано",
+        "confirmed": "Запланировано", "work_in_progress": "Запланировано",
+        "contracted": "Договор", "ordered": "Заказано",
+        "delivered": "Поставлено", "paid": "Оплачено",
+    }
+    purchased_by_item: dict[int, list] = {}
+    if item_ids:
+        pi_rows = (await db.execute(
+            select(
+                _PI.feo_planned_item_id,
+                _PI.item_name,
+                _PI.unit,
+                _PI.quantity,
+                _PI.unit_price,
+                _PI.total_price,
+                _PI.contractor_name,
+                _P.status,
+            )
+            .join(_P, _PI.purchase_id == _P.id)
+            .where(_PI.feo_planned_item_id.in_(item_ids))
+            .order_by(_PI.feo_planned_item_id, _PI.id)
+        )).all()
+        for r in pi_rows:
+            purchased_by_item.setdefault(r.feo_planned_item_id, []).append({
+                "name": r.item_name or "",
+                "unit": r.unit or "",
+                "qty": float(r.quantity or 0),
+                "unit_price": float(r.unit_price or 0),
+                "total": float(r.total_price or 0),
+                "contractor": r.contractor_name or "",
+                "status": _STATUS_HUMAN.get(r.status, r.status or ""),
+            })
+
     items_by_cat: dict[int, list] = {}
     for item in feo_items:
         items_by_cat.setdefault(item.feo_category_id, []).append(item)
@@ -1947,6 +1983,8 @@ async def export_plan_graph_excel(
     L3_FONT      = Font(size=9, color="166534")
     ITEM_FONT    = Font(size=9)
     RED_FONT     = Font(size=9, color="EF4444", bold=True)
+    SUB_FONT     = Font(size=8, italic=True, color="6B7280")
+    SUB_FILL     = PatternFill("solid", fgColor="FAFAFA")
     CENTER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
     LEFT_ALIGN   = Alignment(horizontal="left", vertical="center", wrap_text=True)
     RIGHT_ALIGN  = Alignment(horizontal="right", vertical="center")
@@ -2043,6 +2081,19 @@ async def export_plan_graph_excel(
                     ],
                     PatternFill(), font
                 )
+                # Под-строки: реально закупленные позиции (что и по какой цене)
+                for pi in purchased_by_item.get(item.id, []):
+                    price_note = f"    └ {pi['name']} — {round(pi['unit_price'], 2):,.2f} ₽/ед."
+                    _write_row(
+                        [
+                            "", "", "", price_note,
+                            pi["unit"], round(pi["qty"], 3),
+                            "", "", "", "", "", "",
+                            round(pi["total"], 2), "",
+                            "", pi["contractor"], pi["status"],
+                        ],
+                        SUB_FILL, SUB_FONT, height=16
+                    )
 
         for child in cats_by_parent.get(cat.id, []):
             _traverse(child, direction_name, type_name)

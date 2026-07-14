@@ -505,13 +505,13 @@
                       <!-- Плановая сумма (кол-во × стоимость за ед.) -->
                       <td class="feo-td feo-td-num">
                         <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount"
-                          :style="feoBudgetFor(node) > 0 && feoPlannedTotalFor(node) > feoBudgetFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="feoDisplayedFor(node) > 0 && feoPlannedTotalFor(node) > feoDisplayedFor(node) ? 'color:#EF4444;font-weight:700' : ''"
                         >{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
-                        <div v-if="feoBudgetFor(node) > 0 && Math.abs(feoFinDiff(node)) > 0.005"
+                        <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedTotalFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
-                          :title="`Финансирование по ФЭО ${formatCurrency(feoBudgetFor(node))} − Плановая сумма ${formatCurrency(feoPlannedTotalFor(node))}`"
+                          :title="`Финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))} − Плановая сумма ${formatCurrency(feoPlannedTotalFor(node))}`"
                         >
                           {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
                         </div>
@@ -520,7 +520,7 @@
                       <!-- Фактическая сумма -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="(feoBudgetFor(node) > 0 && feoPurchasedFor(node) > feoBudgetFor(node)) || (feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) > feoPlannedTotalFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="(feoDisplayedFor(node) > 0 && feoPurchasedFor(node) > feoDisplayedFor(node)) || (feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) > feoPlannedTotalFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
                           @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
@@ -532,11 +532,11 @@
                         >
                           больше плана на {{ formatCurrency(feoPurchasedFor(node) - feoPlannedTotalFor(node)) }}
                         </div>
-                        <div v-if="feoBudgetFor(node) > 0 && feoPurchasedFor(node) - feoBudgetFor(node) > 0.005"
+                        <div v-if="feoDisplayedFor(node) > 0 && feoPurchasedFor(node) - feoDisplayedFor(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoBudgetFor(node))}`"
+                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))}`"
                         >
-                          больше ФЭО на {{ formatCurrency(feoPurchasedFor(node) - feoBudgetFor(node)) }}
+                          больше ФЭО на {{ formatCurrency(feoPurchasedFor(node) - feoDisplayedFor(node)) }}
                         </div>
                       </td>
 
@@ -3426,9 +3426,15 @@ function feoResidualFor(node: FeoNode): number {
   return feoResidualBaseFor(node) - feoPurchasedFor(node)
 }
 
+// Отображаемое финансирование по ФЭО: ручное значение, для групп без ручного — серый расчёт
+function feoDisplayedFor(node: FeoNode): number {
+  if (node.budget != null) return Number(node.budget)
+  return node.hasChildren ? feoEffectiveFor(node) : 0
+}
+
 // Финансирование vs Плановая сумма: >0 — можно добавить (зелёная), <0 — надо убрать (красная)
 function feoFinDiff(node: FeoNode): number {
-  return feoBudgetFor(node) - feoPlannedTotalFor(node)
+  return feoDisplayedFor(node) - feoPlannedTotalFor(node)
 }
 
 // Расчёт по дочерним (ручное ФЭО / факт / план) vs собственная ручная сумма узла

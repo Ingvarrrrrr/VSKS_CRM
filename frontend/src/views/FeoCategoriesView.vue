@@ -114,7 +114,7 @@
                     class="feo-tr"
                     :class="[
                       `feo-tr--l${node.level}`,
-                      feoBudgetFor(node) !== null && feoPurchasedFor(node) > feoBudgetFor(node)! ? 'feo-tr--over' : '',
+                      feoDisplayedFor(node) !== null && feoPurchasedFor(node) > feoDisplayedFor(node)! ? 'feo-tr--over' : '',
                       dragOverId === node.id ? 'feo-drop-target' : '',
                       dragNodeId === node.id ? 'feo-dragging' : '',
                     ]"
@@ -185,7 +185,7 @@
                     <!-- Фактически запланировано -->
                     <td class="feo-td feo-td-num">
                       <span v-if="feoPurchasedFor(node) > 0" class="feo-amount"
-                        :class="feoBudgetFor(node) !== null && feoPurchasedFor(node) > feoBudgetFor(node)! ? 'text-error' : ''"
+                        :class="feoDisplayedFor(node) !== null && feoPurchasedFor(node) > feoDisplayedFor(node)! ? 'text-error' : ''"
                       >
                         {{ formatCurrency(feoPurchasedFor(node)) }}
                       </span>
@@ -607,6 +607,12 @@ const feoEffectiveFor = (node: FeoNode): number => {
 
 // Группа без ручной суммы — показываем расчёт серым (редактирование доступно)
 const isAutoNode = (node: FeoNode): boolean => node.hasChildren && node.budget == null
+
+// Отображаемое ФЭО: ручное, для групп без ручного — расчёт (для сравнений с фактом)
+const feoDisplayedFor = (node: FeoNode): number | null => {
+  if (node.budget != null) return Number(node.budget)
+  return node.hasChildren ? feoEffectiveFor(node) : null
+}
 
 const feoPurchasedFor = (node: FeoNode): number => {
   if (!node.hasChildren) return purchaseTotals.value[node.id] ?? 0

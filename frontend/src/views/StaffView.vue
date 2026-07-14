@@ -1437,14 +1437,11 @@ const roleItems = computed(() => {
     { value: 'manager', label: 'Менеджер' },
     { value: 'employee', label: 'Сотрудник' },
   ]
-  // «Администратор аккаунта» — управляет всем аккаунтом. Выдавать может тот, у кого
-  // есть аккаунт-уровень: admin / account_owner / superadmin.
-  if (['superadmin', 'account_owner', 'admin'].includes(currentRole)) {
+  // «Администратор аккаунта» и «Хозяин аккаунта» доступны любому, кто управляет
+  // сотрудниками (org_admin и выше). Запрос 14.07: в аккаунте может не быть ни одного
+  // admin/account_owner — если опции прятать, роль некому выдать в принципе.
+  if (['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentRole)) {
     items.unshift({ value: 'admin', label: 'Администратор аккаунта' })
-  }
-  // «Хозяин аккаунта» — высшая роль аккаунта (email-recovery). Выдавать/передавать
-  // может суперадмин ИЛИ сам хозяин аккаунта.
-  if (['superadmin', 'account_owner'].includes(currentRole)) {
     items.unshift({ value: 'account_owner', label: 'Хозяин аккаунта' })
   }
   return items

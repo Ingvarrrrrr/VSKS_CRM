@@ -1099,17 +1099,16 @@ async def get_department_names(
     current_user: User = Depends(get_current_user),
 ):
     """Default + custom departments used in this org (optionally filtered by ?org_id=N)."""
-    from app.models.user_org_access import UserOrgAccess
     from app.models.department import Department
     if org_id is not None:
-        # Users whose primary org is org_id OR who have access via user_org_access
+        # Только primary org: у мульти-орг (UOA) юзеров User.department — строка
+        # родной орги, через UOA-join чужие отделы утекали в список другой орги.
         q = (
             select(User.department)
-            .outerjoin(UserOrgAccess, UserOrgAccess.user_id == User.id)
             .where(
                 User.department.isnot(None),
                 User.department != "",
-                (User.org_id == org_id) | (UserOrgAccess.org_id == org_id),
+                User.org_id == org_id,
             )
             .distinct()
         )
@@ -1124,6 +1123,10 @@ async def get_department_names(
     result = await db.execute(q)
     custom = {r[0] for r in result.all() if r[0]}
     dept_table = {r[0] for r in (await db.execute(dq)).all() if r[0]}
+    if org_id is not None:
+        # Конкретная орга → только её реальные отделы, без generic-шаблонов:
+        # тестировщики принимали DEFAULT_DEPARTMENTS за «отделы всех организаций».
+        return sorted(custom | dept_table)
     all_depts = sorted(set(DEFAULT_DEPARTMENTS) | custom | dept_table)
     return all_depts
 

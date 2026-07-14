@@ -354,9 +354,8 @@ async def can_manage_purchase(user, purchase, db) -> bool:
 
     Правила:
     - superadmin → всегда
-    - admin/account_owner → если purchase видим (через build_visibility_clause)
     - Любой user → если он автор авансового отчёта (purchase_method='advance' AND reimbursement_user_id == user.id)
-    - manager → если purchase видим И user имеет tab 'purchases'
+    - admin/manager/account_owner → если tab 'purchases' есть хоть в одной орге (any-org, как у bulk-delete)
     - employee → только свои авансовые отчёты (см. выше)
     """
     if not purchase:
@@ -367,8 +366,10 @@ async def can_manage_purchase(user, purchase, db) -> bool:
     if (getattr(purchase, 'purchase_method', None) == 'advance'
             and getattr(purchase, 'reimbursement_user_id', None) == user.id):
         return True
-    # Manager+ с tab 'purchases'
-    effective = await _get_effective(user, db, _active_org(user))
-    if 'purchases' in effective and user.role in ('admin', 'manager', 'account_owner'):
-        return True
+    # Manager+ с tab 'purchases' — any-org, как в require_tab('purchases') у bulk-delete.
+    # Иначе per-row удаление давало 403, когда активная орга не совпадает
+    # с оргой, где у пользователя есть 'purchases' (bulk при этом работал).
+    if user.role in ('admin', 'manager', 'account_owner'):
+        if await _has_key_in_any_org(user, db, 'purchases'):
+            return True
     return False

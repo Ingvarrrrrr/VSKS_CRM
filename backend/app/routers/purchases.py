@@ -1509,7 +1509,7 @@ async def delete_purchase(
     # 27.4-09: авансовый owner может удалить свой отчёт; остальным нужен tab 'purchases'
     from app.auth.permissions import can_manage_purchase
     if not await can_manage_purchase(current_user, p, db):
-        raise HTTPException(403, "Нет прав на удаление этой закупки")
+        raise HTTPException(403, "Нет прав на удаление: нужна вкладка «Закупки» (роль менеджер и выше) либо авторство своего авансового отчёта")
     await db.delete(p)
     await db.commit()
     return {"ok": True}

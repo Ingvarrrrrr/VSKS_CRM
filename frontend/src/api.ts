@@ -34,7 +34,12 @@ export async function forceClearCacheAndReload(): Promise<void> {
   window.location.reload()
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+export interface ApiFetchOptions extends RequestInit {
+  /** Не показывать глобальный ApiErrorDialog — вызывающий обрабатывает ошибку сам (имеет fallback). */
+  suppressErrorDialog?: boolean
+}
+
+export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
     ? JSON.stringify(options.body)
     : options.body
@@ -107,7 +112,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     }
     // 409 Conflict = expected business logic error; handled locally by callers, no global dialog
     // INN_NOT_FOUND = user-facing "not found", handled locally with friendly snackbar
-    const suppressGlobal = res.status === 409 || payload.code === 'INN_NOT_FOUND'
+    const suppressGlobal = res.status === 409 || payload.code === 'INN_NOT_FOUND' || options.suppressErrorDialog === true
     if (!suppressGlobal) {
       window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
     }

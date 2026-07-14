@@ -404,19 +404,33 @@
             <!-- FEO level 2 — появляется после выбора ур.1 -->
             <v-col v-if="selectedFeo1 && feoLevel2Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo2" :items="feoLevel2Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
+                :label="formMode === 'service_note_delivery' || feoSkipLast ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
                 variant="outlined" density="compact" clearable
-                :error-messages="feoSaveAttempted && !selectedFeo2 && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo2 && !feoSkipLast && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo2Change" />
             </v-col>
             <!-- FEO level 3 — появляется после выбора ур.2 -->
             <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
+                :label="formMode === 'service_note_delivery' || feoSkipLast ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
                 variant="outlined" density="compact" clearable
                 :disabled="form.feo_per_item"
-                :error-messages="feoSaveAttempted && !selectedFeo3 && !form.feo_per_item && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo3 && !feoSkipLast && !form.feo_per_item && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
+            </v-col>
+            <!-- Переключатель «не указывать последний уровень ФЭО» -->
+            <v-col v-if="selectedFeo1 && feoLevel2Options.length && formMode !== 'service_note_delivery'" cols="12">
+              <v-switch
+                v-model="feoSkipLast"
+                label="Не указывать последний уровень ФЭО"
+                density="compact"
+                color="primary"
+                hide-details
+                class="mb-2"
+              />
+              <div v-if="feoSkipLast" class="text-caption text-medium-emphasis mt-n2 mb-2">
+                Закупка будет привязана к выбранному уровню без детализации до конечной категории.
+              </div>
             </v-col>
             <!-- F-PIF1: тогл «Разные ФЭО позиции для каждого товара» -->
             <v-col v-if="selectedFeo2" cols="12">
@@ -5692,6 +5706,9 @@ const selectedFeo1 = ref<number | null>(null)
 const selectedFeo2 = ref<number | null>(null)
 const selectedFeo3 = ref<number | null>(null)
 const feoSaveAttempted = ref(false)
+// Переключатель «не указывать последний уровень»: обязателен только уровень 1,
+// более глубокие уровни ФЭО можно не выбирать (закупка привяжется к промежуточной категории).
+const feoSkipLast = ref(false)
 
 // Ошибка выбора ФЭО: нужно выбрать самый глубокий доступный уровень
 const feoValidationError = computed((): string | null => {
@@ -5699,6 +5716,7 @@ const feoValidationError = computed((): string | null => {
   if (formMode.value === 'service_note_delivery') return null
   if (!form.subsidy_id || !feoLevel1Options.value.length) return null
   if (!selectedFeo1.value) return 'Выберите категорию ФЭО'
+  if (feoSkipLast.value) return null
   if (feoLevel2Options.value.length > 0 && !selectedFeo2.value) return 'Выберите категорию ФЭО уровня 2'
   // В режиме per-item level-3 выбирается per-row — не требуем общий
   if (!form.feo_per_item && feoLevel3Options.value.length > 0 && !selectedFeo3.value) return 'Выберите категорию ФЭО уровня 3'
@@ -5766,6 +5784,7 @@ const onSubsidyChange = async () => {
   selectedFeo2.value = null
   selectedFeo3.value = null
   feoSaveAttempted.value = false
+  feoSkipLast.value = false
   fetchRemaining()
   loadResponsiblePersons()
   // Pre-fill delivery address from org if empty & load address history
@@ -6301,7 +6320,13 @@ const loadPurchase = async () => {
   }
 
   // Resolve FEO cascade
-  if (data.feo_category_id) resolveFeeLevels(data.feo_category_id)
+  if (data.feo_category_id) {
+    resolveFeeLevels(data.feo_category_id)
+    // Закупка сохранена на промежуточном уровне (у категории есть дети, глубже не выбрано) —
+    // включаем «Не указывать последний уровень», чтобы редактирование не требовало довыбора.
+    const hasChildren = allFeoCategories.value.some(c => c.parent_id === data.feo_category_id)
+    if (hasChildren && !form.feo_per_item) feoSkipLast.value = true
+  }
 
   // Load acceptance docs
   acceptanceDocs.value = (data.acceptance_docs || []).map((d: any) => ({
@@ -6362,7 +6387,9 @@ const loadPurchase = async () => {
     }
     await Promise.all(_toHydrate.map(async (uid) => {
       try {
-        const u = await apiFetch<any>(`/users/${uid}`)
+        // suppressErrorDialog: бек прячет суперадминов за 404 «Пользователь не найден» (D-09),
+        // ниже есть fallback-заглушка — глобальный диалог ошибки тут только пугает.
+        const u = await apiFetch<any>(`/users/${uid}`, { suppressErrorDialog: true })
         if (u && u.full_name) {
           orgUsersList.value.push({
             id: u.id,

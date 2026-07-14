@@ -46,10 +46,25 @@ if ('serviceWorker' in navigator) {
     }
     setInterval(tryUpdate, 60 * 1000)
     window.addEventListener('focus', tryUpdate)
+    // controllerchange стреляет и при ПЕРВОЙ установке SW (clientsClaim берёт
+    // страницу под контроль) — это НЕ обновление. Реагируем только если у
+    // страницы уже был контроллер на старте (= реально сменилась версия SW).
+    // Иначе на iOS WebClip (Safari периодически сбрасывает SW-хранилище) диалог
+    // «новая версия» + reload выскакивали при каждом запуске — вечное моргание.
+    let hadController = !!navigator.serviceWorker.controller
     let _reloadOnControllerChange = false
+    const RELOAD_TS_KEY = 'sw_auto_reload_ts'
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) {
+        hadController = true
+        return
+      }
       if (_reloadOnControllerChange) return
       _reloadOnControllerChange = true
+      // Страховка от reload-цикла: не чаще одного авто-reload в 60 секунд.
+      const last = Number(sessionStorage.getItem(RELOAD_TS_KEY) || 0)
+      if (Date.now() - last < 60_000) return
+      sessionStorage.setItem(RELOAD_TS_KEY, String(Date.now()))
       // Тихий reload если вкладка не видна — пользователь ничего не заметит,
       // но при возврате во вкладку получит свежую версию.
       if (document.visibilityState === 'hidden') {

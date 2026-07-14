@@ -541,8 +541,8 @@
             variant="outlined" density="compact" class="mb-3"
           />
           <v-combobox v-model="createDialog.department" :items="getDepartmentsForOrg(createDialog.org_id)" label="Отдел" variant="outlined" density="compact" clearable class="mb-3"
-            hint="Введите новый отдел или выберите из списка" persistent-hint
-            no-data-text="Введите название нового отдела" prepend-inner-icon="mdi-office-building-outline" />
+            :hint="createDialog.org_id ? 'Введите новый отдел или выберите из списка' : 'Сначала выберите организацию — покажем её отделы'" persistent-hint
+            :no-data-text="createDialog.org_id ? 'Введите название нового отдела' : 'Сначала выберите организацию'" prepend-inner-icon="mdi-office-building-outline" />
           <v-combobox v-model="createDialog.position" :items="getPositionsForOrg(createDialog.org_id)" label="Должность" variant="outlined" density="compact" clearable class="mb-3"
             hint="Введите новую должность или выберите из списка" persistent-hint
             no-data-text="Введите название новой должности" prepend-inner-icon="mdi-briefcase-outline" />
@@ -1500,8 +1500,10 @@ async function loadDicts(orgId?: number | null) {
 }
 
 function getDepartmentsForOrg(orgId?: number | null): string[] {
-  if (!orgId) return knownDepartments.value
-  return dictsCache.value[orgId]?.departments ?? knownDepartments.value
+  // Строго по орге: без орги и до загрузки кеша список пуст —
+  // иначе в диалоге показывались отделы ВСЕХ организаций.
+  if (!orgId) return []
+  return dictsCache.value[orgId]?.departments ?? []
 }
 
 function getPositionsForOrg(orgId?: number | null): string[] {

@@ -150,15 +150,8 @@
 
                     <!-- Финансирование по ФЭО (inline edit) -->
                     <td class="feo-td feo-td-num">
-                      <!-- Авто-режим: дети имеют суммы → показываем сумму + чип "авто" -->
-                      <div v-if="isAutoNode(node)" class="d-flex align-center justify-end">
-                        <span class="feo-amount">{{ formatCurrency(feoBudgetFor(node)!) }}</span>
-                        <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-2"
-                          title="Сумма автоматически считается из дочерних направлений"
-                        >авто</v-chip>
-                      </div>
-                      <!-- Ручной режим: поле ввода -->
-                      <div v-else-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
+                      <!-- Поле ввода -->
+                      <div v-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                         <input
                           ref="inlineInputEl"
                           v-model="inlineBudgetVal"
@@ -168,6 +161,17 @@
                           @keydown.enter="saveInlineBudget(node)"
                           @keydown.esc="inlineBudgetId = null"
                         />
+                      </div>
+                      <!-- Группа без ручной суммы: расчёт серым + чип, клик = задать вручную -->
+                      <div v-else-if="isAutoNode(node)" class="feo-amount-cell d-flex align-center justify-end"
+                        title="Расчёт: ручное ФЭО дочерних, без него — факт закупок. Кликните, чтобы задать вручную"
+                        @click="startInlineBudget(node)"
+                      >
+                        <template v-if="feoEffectiveFor(node) > 0">
+                          <span class="feo-amount text-medium-emphasis">{{ formatCurrency(feoEffectiveFor(node)) }}</span>
+                          <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-2">расчёт</v-chip>
+                        </template>
+                        <span v-else class="feo-empty-hint">Задать</span>
                       </div>
                       <!-- Ручной режим: значение или "Задать" -->
                       <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
@@ -591,27 +595,18 @@ const toggleExpand = (id: number) => {
 }
 
 // ─── Budget calc ──────────────────────────────────────────────────────────────
-// Правило: если у дочерних есть суммы → авто-сумма (игнорируем node.budget).
-//           Если дочерних с суммами нет → ручное значение node.budget.
-//           Листовые узлы — всегда ручное.
-const feoBudgetFor = (node: FeoNode): number | null => {
-  if (!node.hasChildren) return node.budget ?? null
-  // Вычисляем авто-сумму из детей
-  let sum = 0; let any = false
-  for (const c of node.children) {
-    const v = feoBudgetFor(c); if (v !== null) { sum += v; any = true }
-  }
-  // Если хотя бы у одного ребёнка есть сумма — авто-режим, node.budget игнорируется
-  if (any) return sum
-  // Детей с суммами нет — используем ручное значение
-  return node.budget ?? null
+// Решение 14.07: финансирование по ФЭО — ТОЛЬКО ручное значение узла (без авто-суммы)
+const feoBudgetFor = (node: FeoNode): number | null => node.budget ?? null
+
+// Расчётная справка: ручное ФЭО, если задано; иначе факт закупок; группа — Σ по детям
+const feoEffectiveFor = (node: FeoNode): number => {
+  if (node.budget != null) return Number(node.budget)
+  if (!node.hasChildren) return purchaseTotals.value[node.id] ?? 0
+  return node.children.reduce((acc, c) => acc + feoEffectiveFor(c), 0)
 }
 
-// Узел в авто-режиме: есть дети хотя бы с одним бюджетом
-const isAutoNode = (node: FeoNode): boolean => {
-  if (!node.hasChildren) return false
-  return node.children.some(c => feoBudgetFor(c) !== null)
-}
+// Группа без ручной суммы — показываем расчёт серым (редактирование доступно)
+const isAutoNode = (node: FeoNode): boolean => node.hasChildren && node.budget == null
 
 const feoPurchasedFor = (node: FeoNode): number => {
   if (!node.hasChildren) return purchaseTotals.value[node.id] ?? 0
@@ -619,15 +614,13 @@ const feoPurchasedFor = (node: FeoNode): number => {
 }
 
 const totalBudget = computed(() => {
-  let sum = 0; let any = false
-  for (const r of rootNodes.value) { const v = feoBudgetFor(r); if (v !== null) { sum += v; any = true } }
-  return any ? sum : null
+  const sum = rootNodes.value.reduce((a, r) => a + feoEffectiveFor(r), 0)
+  return sum > 0 ? sum : null
 })
 const totalPurchased = computed(() => rootNodes.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
 
 // ─── Inline budget edit ───────────────────────────────────────────────────────
 const startInlineBudget = async (node: FeoNode) => {
-  if (isAutoNode(node)) return  // авто-режим — редактирование заблокировано
   inlineBudgetId.value = node.id
   inlineBudgetVal.value = node.budget != null ? String(node.budget) : ''
   await nextTick(); inlineInputEl.value?.focus()

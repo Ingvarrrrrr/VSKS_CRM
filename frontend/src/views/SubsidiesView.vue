@@ -63,7 +63,7 @@
           class="subsidy-main-table mb-3"
         >
           <template #item.feo_budget_total="{ item }">
-            {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
+            {{ formatCurrencyShort(item.budget || item.feo_budget_total) }}
           </template>
           <template #item.plan_schedule="{ item }">
             <span style="color:#F59E0B">{{ formatCurrencyShort(item.plan_schedule) }}</span>
@@ -139,8 +139,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
-            <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО' : 'Бюджет' }}</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.budget || s.feo_budget_total) }}</div>
+            <div class="sc-budget-label">{{ (s.budget || 0) > 0 ? 'Бюджет' : 'Бюджет ФЭО (расчёт)' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini" title="Плановая стоимость всех закупок субсидии (то же, что «Запланировано» на шкале ниже)">
@@ -158,8 +158,8 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
-              :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
+              :model-value="pct(s.planned, s.budget || s.feo_budget_total)"
+              :color="progressColor(pct(s.planned, s.budget || s.feo_budget_total))"
               height="6" rounded class="mt-3"
             />
             <BudgetBar
@@ -169,7 +169,7 @@
               :subsidy="{
                 id: s.id,
                 name: s.name,
-                budget: s.feo_budget_total || s.budget,
+                budget: s.budget || s.feo_budget_total,
                 planned: s.planned,
                 contracted: s.contracted,
                 paid: s.paid,
@@ -182,11 +182,11 @@
               class="mt-1 sc-delta-chip"
               prepend-icon="mdi-alert"
               :title="cardDelta(s) > 0
-                ? `Бюджет ФЭО ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ФЭО ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+                ? `Бюджет ${Math.round(s.budget || s.feo_budget_total || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
+                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.budget || s.feo_budget_total || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
             >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
             <v-chip
-              v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
+              v-else-if="(s.budget || s.feo_budget_total || 0) > 0 && (s.planned || 0) > 0"
               color="success"
               size="small"
               class="mt-1 sc-delta-chip"
@@ -198,7 +198,7 @@
               <span>{{ s.contractor_name }}</span>
             </div>
             <div class="sc-footer">
-              <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
+              <div class="sc-pct">{{ pct(s.planned, s.budget || s.feo_budget_total) }}% запланировано</div>
               <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
                 <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
                 ФЭО
@@ -437,13 +437,7 @@
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="isAutoNode(node)" class="text-right">
-                          <div class="feo-amount">{{ formatCurrency(feoBudgetFor(node)) }}</div>
-                          <v-chip size="x-small" color="blue-grey" variant="tonal"
-                            title="Сумма автоматически считается из дочерних направлений"
-                          >авто</v-chip>
-                        </div>
-                        <div v-else-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
+                        <div v-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                           <input
                             ref="inlineInputEl"
                             v-model="inlineBudgetVal"
@@ -454,6 +448,15 @@
                             @keydown.esc="inlineBudgetId = null"
                           />
                         </div>
+                        <div v-else-if="isAutoNode(node)" class="feo-amount-cell text-right" @click="startInlineBudget(node)"
+                          title="Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план. Кликните, чтобы задать вручную"
+                        >
+                          <template v-if="feoEffectiveFor(node) > 0">
+                            <span class="feo-amount text-medium-emphasis">{{ formatCurrency(feoEffectiveFor(node)) }}</span>
+                            <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1">расчёт</v-chip>
+                          </template>
+                          <span v-else class="feo-set-hint">Задать</span>
+                        </div>
                         <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
                           <span v-if="feoBudgetFor(node) > 0" class="feo-amount"
                             :style="feoChildrenBudgetDiff(node) > 0.005 ? 'color:#EF4444;font-weight:700' : ''"
@@ -462,15 +465,15 @@
                         </div>
                         <div v-if="feoChildrenBudgetDiff(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
-                          :title="`Финансирование дочерних строк ${formatCurrency(directChildSum(node))} превышает финансирование этой строки ${formatCurrency(node.budget || 0)}. Ищите лишнюю сумму в дочерних строках.`"
+                          :title="`Расчёт по дочерним ${formatCurrency(directChildEffective(node))} (ручное ФЭО, без него — факт, иначе план) превышает финансирование этой строки ${formatCurrency(node.budget || 0)}. Ищите лишнюю сумму в дочерних строках.`"
                         >
-                          в дочерних {{ formatCurrency(directChildSum(node)) }} — лишние {{ formatCurrency(feoChildrenBudgetDiff(node)) }}
+                          в дочерних {{ formatCurrency(directChildEffective(node)) }} — лишние {{ formatCurrency(feoChildrenBudgetDiff(node)) }}
                         </div>
                         <div v-else-if="feoChildrenBudgetDiff(node) < -0.005"
                           class="feo-plan-note" style="color:#F59E0B"
-                          :title="`Финансирование дочерних строк ${formatCurrency(directChildSum(node))} меньше финансирования этой строки ${formatCurrency(node.budget || 0)}. Часть суммы не распределена по дочерним.`"
+                          :title="`Расчёт по дочерним ${formatCurrency(directChildEffective(node))} (ручное ФЭО, без него — факт, иначе план) меньше финансирования этой строки ${formatCurrency(node.budget || 0)}. Часть суммы не распределена по дочерним.`"
                         >
-                          в дочерних {{ formatCurrency(directChildSum(node)) }} — не распределено {{ formatCurrency(-feoChildrenBudgetDiff(node)) }}
+                          в дочерних {{ formatCurrency(directChildEffective(node)) }} — не распределено {{ formatCurrency(-feoChildrenBudgetDiff(node)) }}
                         </div>
                       </td>
 
@@ -826,7 +829,26 @@
                   <tr class="feo-tr feo-tr--total">
                     <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
                     <td class="feo-td feo-td-num font-weight-bold">
-                      {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                      <span :title="totalFeoBudget !== null ? 'Ручной бюджет субсидии' : 'Бюджет субсидии не задан'">
+                        {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                      </span>
+                      <div class="feo-plan-note text-medium-emphasis font-weight-regular"
+                        title="Расчёт по дереву: ручное ФЭО, без него — факт (поставлено/оплачено), иначе план"
+                      >
+                        расчёт {{ formatCurrency(totalFeoEffective) }}
+                      </div>
+                      <div v-if="totalFeoBudget !== null && totalFeoDiff > 0.005"
+                        class="feo-plan-note font-weight-regular" style="color:#EF4444"
+                        :title="`Расчёт по дереву ${formatCurrency(totalFeoEffective)} превышает бюджет субсидии ${formatCurrency(totalFeoBudget)}`"
+                      >
+                        лишние {{ formatCurrency(totalFeoDiff) }}
+                      </div>
+                      <div v-else-if="totalFeoBudget !== null && totalFeoDiff < -0.005"
+                        class="feo-plan-note font-weight-regular" style="color:#F59E0B"
+                        :title="`Расчёт по дереву ${formatCurrency(totalFeoEffective)} меньше бюджета субсидии ${formatCurrency(totalFeoBudget)}`"
+                      >
+                        не распределено {{ formatCurrency(-totalFeoDiff) }}
+                      </div>
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
@@ -3285,13 +3307,12 @@ const selectedSubsidy = computed(() =>
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
-  // Use totalFeoBudget from local FEO tree if loaded, otherwise feo_budget_total from API
-  if (totalFeoBudget.value !== null && totalFeoBudget.value > 0) return totalFeoBudget.value
-  return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget
+  // Приоритет ручного бюджета субсидии; расчётный feo_budget_total — только как fallback
+  return selectedSubsidy.value.budget || selectedSubsidy.value.feo_budget_total || 0
 })
 
 const totals = computed(() => ({
-  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget), 0),
+  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.budget || x.feo_budget_total || 0), 0),
   planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
   plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
   ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
@@ -3340,27 +3361,42 @@ const visibleFeoNodes = computed(() => {
   return all
 })
 
+// Решение 14.07: итог по субсидии НЕ суммируется из дерева — сравнение всегда
+// с ручным бюджетом субсидии (Subsidy.budget)
 const totalFeoBudget = computed(() => {
-  let sum = 0; let any = false
-  for (const r of feoTree.value) { const v = feoBudgetFor(r); if (v > 0) { sum += v; any = true } }
-  return any ? sum : null
+  const b = selectedSubsidy.value?.budget
+  return b != null && Number(b) > 0 ? Number(b) : null
 })
+
+// Расчётная справка: Σ effective по корням дерева
+const totalFeoEffective = computed(() => feoTree.value.reduce((a, r) => a + feoEffectiveFor(r), 0))
+
+// Расхождение итога: расчёт по дереву vs ручной бюджет субсидии
+const totalFeoDiff = computed(() =>
+  totalFeoBudget.value != null ? totalFeoEffective.value - totalFeoBudget.value : 0
+)
 
 const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
 
-// Бюджет по ФЭО:
-// Правило: budget = NULL → авто из детей; budget = значение → ручной режим (приоритет)
+// Финансирование ФЭО: ТОЛЬКО ручное значение (решение 14.07 — без авто-суммирования из детей)
 function feoBudgetFor(node: FeoNode): number {
-  if (!node.hasChildren) return node.budget != null ? Number(node.budget) : 0
-  // Ручной режим: если явно задан бюджет — использовать его
-  if (node.budget != null) return Number(node.budget)
-  // Авто: сумма всех детей
-  return node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
+  return node.budget != null ? Number(node.budget) : 0
 }
 
-// Только прямые дети (для проверки превышения)
-function directChildSum(node: FeoNode): number {
-  return node.children.reduce((acc, child) => acc + feoBudgetFor(child), 0)
+// Расчётное значение узла: ручное ФЭО, если задано; иначе факт (поставлено/оплачено),
+// если появился; иначе плановая сумма. Группа без ручного — Σ по детям.
+function feoEffectiveFor(node: FeoNode): number {
+  if (node.budget != null) return Number(node.budget)
+  if (!node.hasChildren) {
+    const fact = purchaseTotals.value[node.id] || 0
+    return fact > 0 ? fact : feoPlannedTotalFor(node)
+  }
+  return node.children.reduce((acc, child) => acc + feoEffectiveFor(child), 0)
+}
+
+// Прямые дети по effective-формуле (для проверки распределения ручной суммы группы)
+function directChildEffective(node: FeoNode): number {
+  return node.children.reduce((acc, child) => acc + feoEffectiveFor(child), 0)
 }
 
 function isAutoNode(node: FeoNode): boolean {
@@ -3382,7 +3418,7 @@ function feoPurchasedFor(node: FeoNode): number {
 const residualBase = ref<'plan' | 'feo'>('plan')
 
 function feoResidualBaseFor(node: FeoNode): number {
-  return residualBase.value === 'feo' ? feoBudgetFor(node) : feoPlannedTotalFor(node)
+  return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedTotalFor(node)
 }
 
 // Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма
@@ -3395,10 +3431,10 @@ function feoFinDiff(node: FeoNode): number {
   return feoBudgetFor(node) - feoPlannedTotalFor(node)
 }
 
-// Финансирование дочерних vs собственное финансирование узла (только при ручном бюджете)
+// Расчёт по дочерним (ручное ФЭО / факт / план) vs собственная ручная сумма узла
 function feoChildrenBudgetDiff(node: FeoNode): number {
   if (!node.hasChildren || node.budget == null || node.budget <= 0) return 0
-  return directChildSum(node) - node.budget
+  return directChildEffective(node) - node.budget
 }
 
 // Факт — только то, что реально поставлено/оплачено (по актам)
@@ -4345,8 +4381,8 @@ async function addFeoCategory() {
 // Update calculated_budget on the card after FEO budget changes (using tree logic)
 function syncFeoFilled() {
   if (!selectedId.value) return
-  // Recalculate from tree: use feoBudgetFor on root nodes
-  const total = feoTree.value.reduce((sum, root) => sum + feoBudgetFor(root), 0)
+  // Справочный расчёт по дереву: ручное ФЭО, без него — факт, иначе план
+  const total = feoTree.value.reduce((sum, root) => sum + feoEffectiveFor(root), 0)
   const s = allSubsidies.value.find(x => x.id === selectedId.value)
   if (s) {
     s.feo_filled = total > 0
@@ -4699,7 +4735,8 @@ function formatCurrency(v: number | string) {
 }
 
 function cardDelta(s: SubsidyRow): number {
-  return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
+  // Приоритет ручного бюджета субсидии (решение 14.07)
+  return (s.budget || s.feo_budget_total || 0) - (s.planned || 0)
 }
 
 function formatCurrencyShort(v: number) {

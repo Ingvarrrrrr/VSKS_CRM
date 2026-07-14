@@ -277,10 +277,7 @@ async def list_subsidies(
     for s in subsidies:
         calc = budgets.get(s.id, 0.0)
         s.calculated_budget = calc
-        # Синхронизируем budget с calculated_budget если ФЭО заполнено
-        if calc > 0 and s.budget != calc:
-            s.budget = calc
-
+        # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
         spent = spent_map.get(s.id, 0.0)
         planned_amt = planned_amounts.get(s.id, 0.0)
         remaining = calc - spent
@@ -315,8 +312,7 @@ async def get_subsidy(
 
     calc = await calculate_budget_from_categories(db, subsidy.id)
     subsidy.calculated_budget = calc
-    if calc > 0 and subsidy.budget != calc:
-        subsidy.budget = calc
+    # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
     await db.commit()
 
     spent = await _calculate_spent(db, subsidy.id)

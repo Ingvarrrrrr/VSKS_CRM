@@ -122,8 +122,8 @@
             @drop.prevent="onCardDrop(idx)"
             @dragend="cardDragIdx = -1; cardDragOverIdx = -1"
           >
+            <div class="sc-name" :title="s.name">{{ s.name }}</div>
             <div class="sc-header">
-              <div class="sc-name">{{ s.name }}</div>
               <div class="sc-actions">
                 <v-btn
                   icon="mdi-file-document-outline"
@@ -143,15 +143,15 @@
             <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
-              <div class="sc-mini">
+              <div class="sc-mini" title="Плановая стоимость всех закупок субсидии (то же, что «Запланировано» на шкале ниже)">
                 <div class="sc-mini-label">Запланировано</div>
-                <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.plan_schedule) }}</div>
+                <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.planned) }}</div>
               </div>
-              <div class="sc-mini">
+              <div class="sc-mini" title="Закупки в статусе «Заказано» — заказ размещён, поставка не завершена">
                 <div class="sc-mini-label">Заказано</div>
                 <div class="sc-mini-val" style="color:#3B82F6">{{ formatCurrencyShort(s.ordered) }}</div>
               </div>
-              <div class="sc-mini">
+              <div class="sc-mini" title="Закупки в статусе «Оплачено» — фактически оплаченные суммы">
                 <div class="sc-mini-label">Оплачено</div>
                 <div class="sc-mini-val" style="color:var(--color-paid)">{{ formatCurrencyShort(s.paid) }}</div>
               </div>
@@ -164,6 +164,8 @@
             />
             <BudgetBar
               class="mt-3"
+              hide-legend
+              hide-name
               :subsidy="{
                 id: s.id,
                 name: s.name,
@@ -173,20 +175,24 @@
                 paid: s.paid,
               }"
             />
-            <!-- Phase 31-05: остаток бюджета + discrepancy chip (D-15, D-17) -->
-            <div v-if="s.remaining !== undefined && s.remaining !== null" class="sc-remaining mt-1">
-              <span :style="s.remaining < 0 ? 'color:#ef4444;font-weight:600' : 'color:#6b7280'">
-                Остаток: {{ formatCurrencyShort(s.remaining) }}
-              </span>
-            </div>
             <v-chip
-              v-if="s.budget_discrepancy !== null && s.budget_discrepancy !== undefined && Math.abs(s.budget_discrepancy) > 0.01"
-              color="#fb923c"
+              v-if="Math.abs(cardDelta(s)) > 0.01"
+              :color="cardDelta(s) > 0 ? '#fb923c' : '#ef4444'"
               size="small"
-              class="mt-1"
+              class="mt-1 sc-delta-chip"
               prepend-icon="mdi-alert"
-              :title="'Расхождение суммы ФЭО-разбивки и плановой суммы субсидии'"
-            >Σ ФЭО ≠ план: Δ {{ Math.abs(s.budget_discrepancy).toLocaleString('ru-RU', {maximumFractionDigits:0}) }} ₽</v-chip>
+              :title="cardDelta(s) > 0
+                ? `Бюджет ФЭО ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
+                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ФЭО ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+            >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
+            <v-chip
+              v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
+              color="success"
+              size="small"
+              class="mt-1 sc-delta-chip"
+              prepend-icon="mdi-check"
+              :title="`Бюджет ФЭО и запланировано закупками совпадают: ${Math.round(s.planned).toLocaleString('ru-RU')} ₽`"
+            >ФЭО = план</v-chip>
             <div v-if="s.contractor_name" class="sc-contractor">
               <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
               <span>{{ s.contractor_name }}</span>
@@ -4692,6 +4698,10 @@ function formatCurrency(v: number | string) {
   return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 }
 
+function cardDelta(s: SubsidyRow): number {
+  return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
+}
+
 function formatCurrencyShort(v: number) {
   if (!v) return '0 ₽'
   if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + ' млрд ₽'
@@ -4969,14 +4979,19 @@ onMounted(() => {
 }
 
 .sc-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
+  display: flex; align-items: flex-start; justify-content: center;
   margin-bottom: 8px;
 }
-.sc-actions { display: flex; gap: 2px; flex-shrink: 0; margin-left: 4px; }
+.sc-actions { display: flex; gap: 2px; flex-shrink: 0; }
 .sc-name {
-  font-size: 14px; font-weight: 700; color: var(--crm-text);
-  line-height: 1.3; word-break: break-word;
+  font-size: 18px; font-weight: 700; color: var(--crm-text);
+  line-height: 1.3; word-break: break-word; text-align: center;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  height: calc(1.3em * 2);
+  margin-bottom: 2px;
 }
+.sc-delta-chip { height: auto !important; max-width: 100%; }
+.sc-delta-chip :deep(.v-chip__content) { white-space: normal; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
 .sc-budget      { font-size: 22px; font-weight: 700; color: var(--crm-text); }
 .sc-budget-label{ font-size: 11px; color: var(--crm-text-faint); margin-bottom: 12px; }
 

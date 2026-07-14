@@ -5,8 +5,10 @@
     :aria-label="`Бюджет: ${subsidy.name}. НМЦД ${fmtRub(subsidy.planned)}, в договоре ${fmtRub(subsidy.contracted)}, оплачено ${fmtRub(subsidy.paid)}, лимит ${fmtRub(subsidy.budget)}`"
   >
     <div class="bb-head">
-      <span class="bb-name">{{ subsidy.name }}</span>
-      <span class="bb-amounts" :style="{ color: overrun ? '#ef4444' : '#fb923c' }">
+      <span v-if="!hideName" class="bb-name">{{ subsidy.name }}</span>
+      <span class="bb-amounts" :style="{ color: overrun ? '#ef4444' : '#fb923c' }"
+        :title="`Занято ${fmtFull(filled)} из бюджета ${fmtFull(subsidy.budget)} (занято = наибольшее из: запланировано ${fmtFull(subsidy.planned)}, в договоре ${fmtFull(subsidy.contracted)}, оплачено ${fmtFull(subsidy.paid)})`"
+      >
         {{ fmtRub(filled) }} / {{ fmtRub(subsidy.budget) }}
       </span>
     </div>
@@ -24,10 +26,10 @@
       </div>
     </div>
 
-    <div class="bb-legend">
-      <span class="bb-leg"><i class="bb-dot bb-dot-paid" />Оплачено {{ fmtRub(subsidy.paid) }}</span>
-      <span class="bb-leg"><i class="bb-dot bb-dot-contracted" />В договоре {{ fmtRub(subsidy.contracted) }}</span>
-      <span class="bb-leg"><i class="bb-dot bb-dot-planned" />Запланировано {{ fmtRub(subsidy.planned) }}</span>
+    <div v-if="!hideLegend" class="bb-legend">
+      <span class="bb-leg" :class="{ 'bb-leg--zero': paid <= 0 }"><i class="bb-dot bb-dot-paid" />Оплачено {{ fmtRub(subsidy.paid) }}</span>
+      <span class="bb-leg" :class="{ 'bb-leg--zero': contracted <= 0 }"><i class="bb-dot bb-dot-contracted" />В договоре {{ fmtRub(subsidy.contracted) }}</span>
+      <span class="bb-leg" :class="{ 'bb-leg--zero': planned <= 0 }"><i class="bb-dot bb-dot-planned" />Запланировано {{ fmtRub(subsidy.planned) }}</span>
       <span class="bb-leg"><i class="bb-dot bb-dot-free" />Свободно {{ fmtRub(freeAmount) }}</span>
       <v-tooltip v-if="showWarn" location="top">
         <template #activator="{ props: tooltipProps }">
@@ -51,7 +53,7 @@ interface SubsidyBudgetData {
   paid: number
 }
 
-const props = defineProps<{ subsidy: SubsidyBudgetData }>()
+const props = defineProps<{ subsidy: SubsidyBudgetData; hideLegend?: boolean; hideName?: boolean }>()
 
 const paid = computed(() => Math.max(props.subsidy.paid || 0, 0))
 const contracted = computed(() => Math.max(props.subsidy.contracted || 0, 0))
@@ -80,9 +82,13 @@ function pct(v: number): string {
 }
 
 function fmtRub(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1e6).toFixed(2)} М ₽`
-  if (n >= 1_000) return `${Math.round(n / 1000)} к ₽`
+  if (n >= 1_000_000) return `${(n / 1e6).toFixed(1)} млн ₽`
+  if (n >= 1_000) return `${Math.round(n / 1000)} тыс ₽`
   return `${Math.round(n)} ₽`
+}
+
+function fmtFull(n: number): string {
+  return `${Math.round(n || 0).toLocaleString('ru-RU')} ₽`
 }
 </script>
 
@@ -90,7 +96,7 @@ function fmtRub(n: number): string {
 .budget-bar { width: 100%; font-family: var(--font-ui, 'Inter Tight', sans-serif); }
 .bb-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
 .bb-name { font-size: 13px; font-weight: 600; color: var(--gala-sand-100, #f0ece4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
-.bb-amounts { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.bb-amounts { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; font-weight: 600; white-space: nowrap; margin-left: auto; }
 
 .bb-bar { position: relative; height: 28px; border-radius: 4px; overflow: hidden; background: var(--bb-bg, #1a1714); display: flex; }
 .bb-seg { height: 100%; transition: width 0.3s ease; }
@@ -104,6 +110,7 @@ function fmtRub(n: number): string {
 
 .bb-legend { display: flex; gap: 14px; align-items: center; margin-top: 8px; font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 10px; color: var(--gala-sand-500, #9a9080); flex-wrap: wrap; }
 .bb-leg { display: inline-flex; align-items: center; gap: 5px; }
+.bb-leg--zero { opacity: 0.45; }
 .bb-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
 .bb-dot-paid { background: #22c55e; }
 .bb-dot-contracted { background: #fb923c; }

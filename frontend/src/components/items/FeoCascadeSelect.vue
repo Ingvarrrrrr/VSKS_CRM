@@ -99,9 +99,11 @@ function buildChainFor(id: number): number[] {
 
 // Watch external modelValue: when it becomes a valid non-null id, rebuild chain from it.
 // When it becomes null, leave chain untouched — it is managed by onSelect.
+// Also re-run when nodes arrive: modelValue may be seeded before the async
+// nodes load finishes (edit-dialog case), so the chain must rebuild afterwards.
 watch(
-  () => props.modelValue,
-  (val) => {
+  [() => props.modelValue, nodeById],
+  ([val]) => {
     if (val != null && nodeById.value.has(val)) {
       chain.value = buildChainFor(val)
     } else if (val == null) {

@@ -39,6 +39,11 @@
           Добавить в каталог ({{ uncatalogedSelectedCount }})
         </v-btn>
         <slot name="toolbar-actions" />
+        <v-btn v-if="!props.readonly"
+          variant="tonal" prepend-icon="mdi-plus" size="small"
+          @click="addItem(true)">
+          Добавить позицию
+        </v-btn>
         <v-btn v-if="(props.supportsExcelImport || props.supportsSmartImport) && !props.readonly"
           variant="outlined" prepend-icon="mdi-file-upload-outline" size="small" color="success"
           @click="openSmartImportDialog">
@@ -335,7 +340,7 @@
 
     <!-- Bottom action buttons -->
     <div v-if="!props.readonly" class="d-flex gap-2 mt-3 flex-wrap">
-      <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem">
+      <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem()">
         Добавить позицию
       </v-btn>
       <v-btn v-if="props.supportsFullProductDialog"
@@ -1513,7 +1518,7 @@ const visibleItemsCount = computed(() =>
 
 // ── Items CRUD ────────────────────────────────────────────────────────────────
 
-function addItem() {
+function addItem(atStart = false) {
   const newItem: EditorItem = {
     _uid: nextUid(),
     product_id: null,
@@ -1538,7 +1543,13 @@ function addItem() {
       newItem.feo_category_id = props.defaultFeoCategoryId
     }
   }
-  localItems.value.push(newItem)
+  if (atStart) {
+    // Кнопка в шапке: новая строка сверху, чтобы была видна без прокрутки длинного списка
+    localItems.value.unshift(newItem)
+    selectedItemIdxs.value = selectedItemIdxs.value.map(i => i + 1)
+  } else {
+    localItems.value.push(newItem)
+  }
   emit('item-added', newItem)
   emitUpdate()
 }

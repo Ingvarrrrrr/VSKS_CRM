@@ -23,6 +23,38 @@ export interface FeoNode {
   parent_id: number | null
   level: number
   is_leaf: boolean
+  /** Собственная (ручная) сумма финансирования узла; null — не задана. */
+  budget?: number | null
+}
+
+/**
+ * Узлы без заданного финансирования (ни у себя, ни у потомков) не являются
+ * уровнем ФЭО и не предлагаются к выбору. Оставляем только «профинансированные»
+ * узлы и пересчитываем is_leaf по оставшимся.
+ */
+export function filterFundedNodes(nodes: FeoNode[]): FeoNode[] {
+  if (!nodes.length) return nodes
+  const childrenByParent = new Map<number | null, FeoNode[]>()
+  for (const n of nodes) {
+    const arr = childrenByParent.get(n.parent_id) || []
+    arr.push(n)
+    childrenByParent.set(n.parent_id, arr)
+  }
+  const fundedMemo = new Map<number, boolean>()
+  function isFunded(n: FeoNode): boolean {
+    const cached = fundedMemo.get(n.id)
+    if (cached !== undefined) return cached
+    let ok = n.budget != null
+    if (!ok) ok = (childrenByParent.get(n.id) || []).some(isFunded)
+    fundedMemo.set(n.id, ok)
+    return ok
+  }
+  const kept = nodes.filter(isFunded)
+  const keptHasChildren = new Set<number>()
+  for (const n of kept) {
+    if (n.parent_id != null) keptHasChildren.add(n.parent_id)
+  }
+  return kept.map(n => ({ ...n, is_leaf: !keptHasChildren.has(n.id) }))
 }
 
 export interface UseFeoLeavesOptions {
@@ -51,7 +83,7 @@ export function useFeoLeaves(opts: UseFeoLeavesOptions) {
           apiFetch<FeoNode[]>(`/feo-categories/flat?subsidy_id=${subsidyId}`),
         ])
         feoLeaves.value = leaves
-        feoNodes.value = nodes
+        feoNodes.value = filterFundedNodes(nodes)
       } catch {
         feoLeaves.value = []
         feoNodes.value = []

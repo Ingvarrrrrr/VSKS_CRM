@@ -880,54 +880,40 @@
                       @update:model-value="onSubsidyChange"
                     />
                   </v-col>
-                  <v-col cols="12" md="4">
-                    <v-select
-                      v-model="selectedFeo1"
-                      :items="feoLevel1"
-                      item-title="name"
-                      item-value="id"
-                      label="Категория ФЭО (ур.1)"
-                      variant="outlined"
-                      density="compact"
-                      clearable
-                      :disabled="!wishForm.subsidy_id"
-                      :readonly="!isWishEditable && !canAssigneeAct"
-                      @update:model-value="onFeo1Change"
-                    />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-select
-                      v-model="selectedFeo2"
-                      :items="feoLevel2"
-                      item-title="name"
-                      item-value="id"
-                      label="Категория ФЭО (ур.2)"
-                      variant="outlined"
-                      density="compact"
-                      clearable
-                      :disabled="!selectedFeo1"
-                      :readonly="!isWishEditable && !canAssigneeAct"
-                      @update:model-value="onFeo2Change"
-                    />
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-select
-                      v-model="selectedFeo3"
-                      :items="feoLevel3"
-                      item-title="name"
-                      item-value="id"
-                      label="Категория ФЭО (ур.3)"
-                      variant="outlined"
-                      density="compact"
-                      clearable
-                      :disabled="!selectedFeo2"
+                  <v-col v-if="wishForm.subsidy_id" cols="12">
+                    <div class="text-caption text-medium-emphasis mb-1">Категория ФЭО</div>
+                    <FeoCascadeSelect
+                      v-model="wishFeoSelected"
+                      :nodes="wishFeoNodes"
+                      :leaves="wishFeoLeaves"
+                      horizontal
                       :readonly="!isWishEditable && !canAssigneeAct"
                     />
                   </v-col>
-                  <v-col cols="12" v-if="selectedFeoLeaf">
-                    <v-alert density="compact" variant="tonal" :color="selectedFeoLeaf.residual > 0 ? 'success' : 'error'" class="py-2">
-                      План: {{ formatMoney(selectedFeoLeaf.budget) }} • Остаток: {{ formatMoney(selectedFeoLeaf.residual) }}
-                    </v-alert>
+                  <!-- Переключатель «не указывать последний уровень ФЭО» -->
+                  <v-col v-if="wishFeoSelected" cols="12" class="py-0">
+                    <v-switch
+                      v-model="wishFeoSkipLast"
+                      label="Не указывать последний уровень ФЭО"
+                      density="compact"
+                      color="primary"
+                      hide-details
+                      :disabled="!isWishEditable && !canAssigneeAct"
+                    />
+                    <div v-if="wishFeoSkipLast" class="text-caption text-medium-emphasis mt-n2 mb-2">
+                      Заявка будет привязана к выбранному уровню без детализации до конечной категории.
+                    </div>
+                  </v-col>
+                  <!-- Тогл «Разные ФЭО позиции для каждого товара» (как в закупке) -->
+                  <v-col v-if="wishForm.subsidy_id" cols="12" class="py-0">
+                    <v-switch
+                      v-model="wishFeoPerItem"
+                      label="Разные ФЭО позиции для каждого товара"
+                      density="compact"
+                      color="primary"
+                      hide-details
+                      :disabled="!isWishEditable && !canAssigneeAct"
+                    />
                   </v-col>
                   <v-col cols="12">
                     <v-autocomplete
@@ -1324,6 +1310,9 @@
                   :supports-full-product-dialog="true"
                   :supports-photo-upload="true"
                   :readonly="!isWishEditable"
+                  :feo-per-item="wishFeoPerItem"
+                  :subsidy-id="wishForm.subsidy_id"
+                  :default-feo-category-id="wishFeoSelected"
                 />
                 <div class="d-flex justify-end mt-3">
                   <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
@@ -1539,6 +1528,8 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
+import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
+import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { useCardView } from '@/composables/useCardView'
@@ -1781,34 +1772,11 @@ const eventsForSubsidy = computed(() => {
   return filtered
 })
 
-// FEO cascading selects
-const selectedFeo1 = ref<number | null>(null)
-const selectedFeo2 = ref<number | null>(null)
-const selectedFeo3 = ref<number | null>(null)
-
-// FEO leaves with budget/residual (additional data source for residual display)
-const feoLeaves = ref<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>([])
-
-const selectedFeoLeaf = computed(() => {
-  const id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value
-  return id ? feoLeaves.value.find(l => l.id === id) ?? null : null
-})
-
-const feoLevel1 = computed(() =>
-  wishForm.value.subsidy_id
-    ? allFeoCategories.value.filter(c => c.subsidy_id === wishForm.value.subsidy_id && !c.parent_id)
-    : []
-)
-const feoLevel2 = computed(() =>
-  selectedFeo1.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value)
-    : []
-)
-const feoLevel3 = computed(() =>
-  selectedFeo2.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value)
-    : []
-)
+// FEO: динамический каскад (глубина = реальная глубина дерева, не 3 захардкоженных уровня).
+// wishFeoSelected — самый глубокий выбранный узел (лист или промежуточный при skipLast).
+const wishFeoSelected = ref<number | null>(null)
+const wishFeoSkipLast = ref(false)
+const wishFeoPerItem = ref(false)
 
 const orgMembers = ref<User[]>([])
 
@@ -1949,6 +1917,11 @@ const wishForm = ref({
   execution_deadline: '' as string,
 })
 
+// ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
+const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
+  subsidyId: computed(() => wishForm.value.subsidy_id),
+})
+
 // Phase 31-07: Undo/Redo for wish edit form (WishDistributionCard is display-only;
 // actual wish editing happens here in WishesView via wishForm ref)
 const undoRedoWish = useUndoRedo(wishForm as any)
@@ -1983,33 +1956,15 @@ onBeforeUnmount(() => {
 // дёргает getter в TDZ (ReferenceError: Cannot access 'wishForm' before initialization)
 watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
 
-watch(() => wishForm.value.subsidy_id, async (sid) => {
-  if (!sid) { feoLeaves.value = []; return }
-  try {
-    feoLeaves.value = await apiFetch<Array<{ id: number; name: string; budget: number; residual: number; path?: string }>>(`/feo-categories/leaves?subsidy_id=${sid}`)
-  } catch { feoLeaves.value = [] }
-}, { immediate: true })
-
 // Items computed total
 const totalNmck = computed(() =>
   wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
 )
 
 function onSubsidyChange() {
-  selectedFeo1.value = null
-  selectedFeo2.value = null
-  selectedFeo3.value = null
+  wishFeoSelected.value = null
   wishForm.value.assigned_to = null
   wishForm.value.event_id = null
-}
-
-function onFeo1Change() {
-  selectedFeo2.value = null
-  selectedFeo3.value = null
-}
-
-function onFeo2Change() {
-  selectedFeo3.value = null
 }
 
 // Submit
@@ -2124,9 +2079,9 @@ function resetForm() {
     executor_id: null,
     execution_deadline: '',
   }
-  selectedFeo1.value = null
-  selectedFeo2.value = null
-  selectedFeo3.value = null
+  wishFeoSelected.value = null
+  wishFeoSkipLast.value = false
+  wishFeoPerItem.value = false
 }
 
 function openCreateDialog() {
@@ -2160,19 +2115,13 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.status = wish.status || 'draft'
   forceStatusValue.value = wish.status || 'draft'
 
-  // B5 — Seed cascade selects from wish.feo_category_id by walking up parent_id
+  // B5 — Seed cascade from wish.feo_category_id (цепочку строит сам FeoCascadeSelect).
+  // Если выбранный узел не лист — заявка была сохранена «без последнего уровня».
+  wishFeoSelected.value = wish.feo_category_id ?? null
   if (wish.feo_category_id) {
-    const chain: number[] = []
-    let curId: number | null = wish.feo_category_id
-    while (curId) {
-      const node = allFeoCategories.value.find(c => c.id === curId)
-      if (!node) break
-      chain.unshift(node.id)
-      curId = node.parent_id || null
-    }
-    selectedFeo1.value = chain[0] ?? null
-    selectedFeo2.value = chain[1] ?? null
-    selectedFeo3.value = chain[2] ?? null
+    const node = allFeoCategories.value.find(c => c.id === wish.feo_category_id)
+    const hasChildren = allFeoCategories.value.some(c => c.parent_id === wish.feo_category_id)
+    if (node && hasChildren) wishFeoSkipLast.value = true
   }
 
   // Открываем диалог СРАЗУ после синхронного заполнения формы — пользователь
@@ -2233,10 +2182,13 @@ async function openEditDialog(wish: Wish) {
         unit_price: i.unit_price != null ? Number(i.unit_price) : null,
         total_price: i.total_price != null ? Number(i.total_price) : null,
         country_origin: i.country_origin || 'РФ',
+        feo_category_id: i.feo_category_id ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
         _description: prod?.description || undefined,
       }
     }) as any
+    // B9: позиции с собственным ФЭО → включаем per-item режим
+    wishFeoPerItem.value = rawItems.some((i: any) => i.feo_category_id != null)
     await loadWishMembers()
     await loadWishApprovers()
     approvalMode.value = ((wish as any).approval_mode === 'parallel') ? 'parallel' : 'sequential'
@@ -2276,7 +2228,7 @@ async function saveExecution() {
       executor_id: wishForm.value.executor_id,
       execution_deadline: wishForm.value.execution_deadline || null,
       event_id: wishForm.value.event_id,
-      feo_category_id: selectedFeo3.value || selectedFeo2.value || selectedFeo1.value || wishForm.value.feo_category_id,
+      feo_category_id: wishFeoSelected.value || wishForm.value.feo_category_id,
     }
     await apiFetch(`/wishes/${editingWishId.value}/execution`, {
       method: 'PATCH',
@@ -2452,11 +2404,19 @@ async function saveWish(andSubmit = false) {
   if (andSubmit) {
     const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
     if (!valid) return
+    // ФЭО выбрано не до конечной категории — требуем либо лист, либо явный skipLast
+    if (wishFeoSelected.value && !wishFeoSkipLast.value && !wishFeoPerItem.value) {
+      const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
+      if (node && !node.is_leaf) {
+        showSnack('Выберите конечную категорию ФЭО или включите «Не указывать последний уровень ФЭО»', 'warning')
+        return
+      }
+    }
   }
 
   saving.value = true
   try {
-    const feo = selectedFeo3.value || selectedFeo2.value || selectedFeo1.value
+    const feo = wishFeoSelected.value
     // Заголовок: краткий и читаемый. При множестве позиций — первая + счётчик,
     // иначе склейка переполняет title (VARCHAR 500) и роняет создание заявки.
     const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
@@ -2470,7 +2430,11 @@ async function saveWish(andSubmit = false) {
       ...wishForm.value,
       feo_category_id: feo,
       title,
-      items: wishForm.value.items.map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => rest),
+      items: wishForm.value.items.map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+        ...rest,
+        // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
+        feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
+      })),
     }
 
     if (editingWishId.value) {

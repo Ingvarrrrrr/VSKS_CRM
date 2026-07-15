@@ -363,8 +363,9 @@ async def get_feo_flat(
 ):
     """Returns all FeoCategory nodes for a subsidy as a flat list with is_leaf flag.
 
-    Response: [{id, name, parent_id, level, is_leaf}]
+    Response: [{id, name, parent_id, level, is_leaf, budget}]
     is_leaf = True if the node has no children within the same subsidy.
+    budget = собственная (ручная) сумма финансирования узла, без расчёта по детям.
     Sorted by level, then sort_order, then id.
     """
     cats_q = (
@@ -389,6 +390,7 @@ async def get_feo_flat(
             "parent_id": c.parent_id,
             "level": c.level,
             "is_leaf": c.id not in has_children,
+            "budget": float(c.budget) if c.budget is not None else None,
         }
         for c in all_cats
     ]

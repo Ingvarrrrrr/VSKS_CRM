@@ -43,7 +43,9 @@ export function useResizableColumns(tableId: string, defaults: Record<string, nu
     e.stopPropagation()
     resizingCol = colKey
     startX = e.clientX
-    startWidth = colWidths.value[colKey] || defaults[colKey] || 100
+    // Для авто-колонок (default 0) стартуем от фактической ширины th, чтобы не было скачка
+    const th = (e.currentTarget as HTMLElement | null)?.closest('th')
+    startWidth = colWidths.value[colKey] || th?.offsetWidth || defaults[colKey] || 100
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!resizingCol) return

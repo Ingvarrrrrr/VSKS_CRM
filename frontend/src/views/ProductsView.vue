@@ -31,17 +31,17 @@
             variant="outlined" density="compact" clearable hide-details
             style="min-width:240px"
           />
-          <v-combobox
+          <v-autocomplete
             v-model="filterType"
             :items="typeOptions"
             label="Тип" variant="outlined" density="compact"
-            clearable hide-details style="min-width:160px"
+            multiple chips closable-chips clearable hide-details style="min-width:180px"
           />
-          <v-combobox
+          <v-autocomplete
             v-model="filterCategory"
             :items="categoryOptions"
             label="Категория" variant="outlined" density="compact"
-            clearable hide-details style="min-width:160px"
+            multiple chips closable-chips clearable hide-details style="min-width:180px"
           />
           <v-select
             v-model="filterActive"
@@ -62,9 +62,9 @@
             style="min-width:120px;max-width:140px"
           />
           <v-btn
-            v-if="filterType || filterCategory || filterActive !== null || filterPriceMin || filterPriceMax"
+            v-if="filterType.length || filterCategory.length || filterActive !== null || filterPriceMin || filterPriceMax"
             variant="text" size="small" prepend-icon="mdi-filter-off" color="grey-darken-1"
-            @click="filterType = null; filterCategory = null; filterActive = null; filterPriceMin = null; filterPriceMax = null"
+            @click="filterType = []; filterCategory = []; filterActive = null; filterPriceMin = null; filterPriceMax = null"
           >Сбросить</v-btn>
         </div>
       </v-card-text>
@@ -85,6 +85,8 @@
         <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
           @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
         <v-spacer />
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-tag-multiple" color="white" class="mr-2"
+          @click="openBulkEdit">Категория / вид</v-btn>
         <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
           @click="bulkToggleActive(true)">Активировать</v-btn>
         <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
@@ -281,6 +283,8 @@
         <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
           @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
         <v-spacer />
+        <v-btn variant="tonal" size="small" prepend-icon="mdi-tag-multiple" color="white" class="mr-2"
+          @click="openBulkEdit">Категория / вид</v-btn>
         <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
           @click="bulkToggleActive(true)">Активировать</v-btn>
         <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
@@ -592,6 +596,31 @@
       </v-card>
     </v-dialog>
 
+    <!-- Bulk edit category/type -->
+    <v-dialog v-model="bulkEditDialog" max-width="460">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">Массовое изменение ({{ selectedIds.length }})</v-card-title>
+        <v-card-text class="px-6">
+          <v-combobox
+            v-model="bulkEditCategory" :items="categoryOptions"
+            label="Новая категория" variant="outlined" density="compact"
+            clearable hide-details class="mb-3"
+          />
+          <v-combobox
+            v-model="bulkEditType" :items="typeOptions"
+            label="Новый вид (тип)" variant="outlined" density="compact"
+            clearable hide-details
+          />
+          <div class="text-caption text-medium-emphasis mt-2">Пустое поле — значение не меняется.</div>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="bulkEditDialog = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="bulkEditing" @click="doBulkEdit">Применить к {{ selectedIds.length }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Delete ALL confirm (superadmin only) -->
     <v-dialog v-model="deleteAllDialog" max-width="480">
       <v-card>
@@ -879,8 +908,8 @@ const deleteTarget = ref<Product | null>(null)
 const editingId    = ref<number | null>(null)
 const selectedIds  = ref<number[]>([])
 const search         = ref('')
-const filterType     = ref<string | null>(null)
-const filterCategory = ref<string | null>(null)
+const filterType     = ref<string[]>([])
+const filterCategory = ref<string[]>([])
 const filterActive   = ref<boolean | null>(null)
 const filterPriceMin = ref<number | null>(null)
 const filterPriceMax = ref<number | null>(null)
@@ -1103,8 +1132,8 @@ function resetColOrder() {
 
 const filteredProducts = computed(() => {
   let r = products.value
-  if (filterType.value)     r = r.filter(p => p.product_type === filterType.value)
-  if (filterCategory.value) r = r.filter(p => p.category === filterCategory.value)
+  if (filterType.value.length)     r = r.filter(p => filterType.value.includes(p.product_type || ''))
+  if (filterCategory.value.length) r = r.filter(p => filterCategory.value.includes(p.category || ''))
   if (filterActive.value !== null) r = r.filter(p => p.is_active === filterActive.value)
   if (filterPriceMin.value !== null) r = r.filter(p => p.price != null && Number(p.price) >= filterPriceMin.value!)
   if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
@@ -1310,6 +1339,42 @@ async function doDeleteAll() {
     showSnack('Ошибка при удалении', 'error')
   } finally {
     deletingAll.value = false
+  }
+}
+
+const bulkEditDialog = ref(false)
+const bulkEditCategory = ref<string | null>(null)
+const bulkEditType = ref<string | null>(null)
+const bulkEditing = ref(false)
+
+function openBulkEdit() {
+  bulkEditCategory.value = null
+  bulkEditType.value = null
+  bulkEditDialog.value = true
+}
+
+async function doBulkEdit() {
+  const body: Record<string, string> = {}
+  const cat = (bulkEditCategory.value || '').trim()
+  const pt = (bulkEditType.value || '').trim()
+  if (cat) body.category = cat
+  if (pt) body.product_type = pt
+  if (!Object.keys(body).length) {
+    showSnack('Укажите новую категорию и/или вид', 'warning')
+    return
+  }
+  const ids = [...selectedIds.value]
+  bulkEditing.value = true
+  try {
+    await Promise.all(ids.map(id => apiFetch(`/products/${id}`, { method: 'PATCH', body })))
+    showSnack(`Обновлено ${ids.length} товаров`)
+    bulkEditDialog.value = false
+    selectedIds.value = []
+    await load()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка массового обновления', 'error')
+  } finally {
+    bulkEditing.value = false
   }
 }
 

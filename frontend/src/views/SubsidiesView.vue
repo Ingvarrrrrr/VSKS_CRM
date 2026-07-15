@@ -122,8 +122,8 @@
             @drop.prevent="onCardDrop(idx)"
             @dragend="cardDragIdx = -1; cardDragOverIdx = -1"
           >
-            <div class="sc-name" :title="s.name">{{ s.name }}</div>
-            <div class="sc-header">
+            <div class="sc-title-band">
+              <div v-fit-text class="sc-name" :title="s.name">{{ s.name }}</div>
               <div class="sc-actions">
                 <v-btn
                   icon="mdi-file-document-outline"
@@ -271,17 +271,17 @@
                 title="Ручное поле «Бюджет» из формы субсидии — справочно"
               >поле бюджета: {{ formatCurrency(selectedSubsidy.budget) }}</div>
             </div>
-            <div class="dkpi dkpi-planned">
+            <div class="dkpi dkpi-planned" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике. Совпадает с ИТОГО колонки «Плановая сумма (все)»">
               <div class="dkpi-label">Запланировано</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.planned) }}</div>
+              <div class="dkpi-val">{{ formatCurrency(selectedPlannedTotal) }}</div>
             </div>
             <div class="dkpi dkpi-paid">
               <div class="dkpi-label">Оплачено</div>
               <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
             </div>
-            <div class="dkpi dkpi-free" :class="selectedBudget - selectedSubsidy.planned < 0 ? 'dkpi-over' : ''">
-              <div class="dkpi-label">{{ selectedBudget - selectedSubsidy.planned < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedBudget - selectedSubsidy.planned)) }}</div>
+            <div class="dkpi dkpi-free" :class="selectedBudget - selectedPlannedTotal < 0 ? 'dkpi-over' : ''">
+              <div class="dkpi-label">{{ selectedBudget - selectedPlannedTotal < 0 ? 'Превышение' : 'Свободно' }}</div>
+              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedBudget - selectedPlannedTotal)) }}</div>
             </div>
           </div>
           <!-- Контрагент -->
@@ -374,8 +374,11 @@
                       Финансирование по ФЭО
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
-                    <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
-                    <th class="feo-th feo-th-num">
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('qty')">
+                      ПЛАНОВОЕ<br>КОЛ-ВО
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'qty')"></span>
+                    </th>
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('planned')">
                       <div>ПЛАНОВАЯ<br>СУММА</div>
                       <div class="feo-residual-toggle">
                         <span
@@ -394,12 +397,13 @@
                           @click.stop="plannedSumBase = 'requests'"
                         >из заявок</span>
                       </div>
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'planned')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
-                    <th class="feo-th feo-th-num">
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('residual')">
                       <div>ОСТАТОК</div>
                       <div class="feo-residual-toggle">
                         <span
@@ -413,8 +417,9 @@
                           @click.stop="residualBase = 'feo'"
                         >от ФЭО</span>
                       </div>
+                      <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'residual')"></span>
                     </th>
-                    <th class="feo-th feo-th-actions" :style="feoResize.resizeStyle('actions')"></th>
+                    <th class="feo-th feo-th-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -596,27 +601,35 @@
 
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
-                        <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
-                        <span class="feo-action-slot"><v-btn v-if="!node.hasChildren"
-                          :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
-                          variant="text" size="x-small"
-                          :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
-                          title="Показать плановые / фактические позиции"
-                          @click="toggleItemPanel(node)"
-                        /></span>
-                        <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
-                          title="Переместить выше" @click.stop="reorderFeoNode(node, 'up')" />
-                        <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
-                          title="Переместить ниже" @click.stop="reorderFeoNode(node, 'down')" />
-                        <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
-                          title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
-                        <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
-                          title="Показать закупки по этой категории"
-                          @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
-                        <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
-                          title="Редактировать" @click="startFeoEdit(node)" />
-                        <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
-                          title="Удалить" @click="confirmFeoDelete(node)" />
+                        <div class="feo-actions-wrap">
+                          <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
+                          <span class="feo-action-slot"><v-btn v-if="!node.hasChildren"
+                            :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
+                            variant="text" size="x-small"
+                            :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
+                            title="Показать плановые / фактические позиции"
+                            @click="toggleItemPanel(node)"
+                          /></span>
+                          <!-- Стрелки — друг под другом -->
+                          <div class="feo-actions-col">
+                            <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
+                              title="Переместить выше" @click.stop="reorderFeoNode(node, 'up')" />
+                            <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
+                              title="Переместить ниже" @click.stop="reorderFeoNode(node, 'down')" />
+                          </div>
+                          <!-- Четыре значка — квадратом 2×2 -->
+                          <div class="feo-actions-grid">
+                            <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
+                              title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
+                            <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
+                              title="Показать закупки по этой категории"
+                              @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
+                            <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
+                              title="Редактировать" @click="startFeoEdit(node)" />
+                            <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
+                              title="Удалить" @click="confirmFeoDelete(node)" />
+                          </div>
+                        </div>
                       </td>
                     </tr>
 
@@ -2567,8 +2580,22 @@ import { useRegistryExport } from '@/composables/useRegistryExport'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
+// Название карточки в одну строку: базовый крупный шрифт, ужимается пока не влезет
+function fitTextToWidth(el: HTMLElement) {
+  const base = 30
+  el.style.fontSize = `${base}px`
+  const cw = el.clientWidth
+  if (cw > 0 && el.scrollWidth > cw) {
+    el.style.fontSize = `${Math.max(13, Math.floor((base * cw) / el.scrollWidth))}px`
+  }
+}
+const vFitText = {
+  mounted: fitTextToWidth,
+  updated: fitTextToWidth,
+}
+
 const feoResize = useResizableColumns('feo-table', {
-  name: 0, budget: 180, spent: 180, actions: 200,
+  name: 0, budget: 180, qty: 0, planned: 0, spent: 180, residual: 0,
 })
 
 const router = useRouter()
@@ -3353,6 +3380,15 @@ const selectedBudget = computed(() => {
   // Живой расчёт по дереву ФЭО; ручное поле budget — только как fallback (решение 15.07)
   if (feoTree.value.length) return totalFeoEffective.value
   return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
+})
+
+// «Запланировано» панели ФЭО = плановая сумма дерева (ручные позиции ФЭО + из заявок в план-графике),
+// а не только закупки — план вносится и импортом/созданием позиций прямо в ФЭО
+const selectedPlannedTotal = computed(() => {
+  if (feoTree.value.length) {
+    return feoTree.value.reduce((acc, r) => acc + feoPlannedTotalFor(r) + feoPlannedRequestsFor(r), 0)
+  }
+  return selectedSubsidy.value?.planned || 0
 })
 
 const totals = computed(() => ({
@@ -5095,17 +5131,18 @@ onMounted(() => {
   box-shadow: 0 0 0 4px rgba(59,130,246,0.12), 0 4px 16px var(--crm-shadow-hover);
 }
 
-.sc-header {
-  display: flex; align-items: flex-start; justify-content: center;
+/* Шапка карточки: название — крупные полупрозрачные буквы в одну строку (фон),
+   кнопки управления поверх них */
+.sc-title-band {
   margin-bottom: 8px;
+  display: flex; flex-direction: column; align-items: center;
 }
-.sc-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.sc-actions { display: flex; gap: 2px; align-items: center; justify-content: center; }
 .sc-name {
-  font-size: 18px; font-weight: 700; color: var(--crm-text);
-  line-height: 1.3; word-break: break-word; text-align: center;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  height: calc(1.3em * 2);
-  margin-bottom: 2px;
+  font-weight: 800; color: var(--crm-text);
+  line-height: 1.15; text-align: center;
+  white-space: nowrap; overflow: hidden;
+  width: 100%; user-select: none;
 }
 .sc-delta-chip { height: auto !important; max-width: 100%; }
 .sc-delta-chip :deep(.v-chip__content) { white-space: normal; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
@@ -5229,7 +5266,8 @@ onMounted(() => {
 }
 .feo-th-num { text-align: right; }
 .feo-th-name { }
-.feo-th-actions { min-width: 200px; position: sticky; right: 0; z-index: 5; }
+/* table-layout:fixed — ширину колонки задаёт th: ровно под 6 значков (100px контент + 12px паддинги) */
+.feo-th-actions { width: 112px; position: sticky; right: 0; z-index: 5; }
 .feo-td {
   padding: 8px 12px; border-bottom: 1px solid var(--crm-border);
   vertical-align: middle;
@@ -5238,10 +5276,18 @@ onMounted(() => {
 .feo-name-inner { display: flex; align-items: center; min-width: 0; }
 .feo-td-num { text-align: right; }
 .feo-td-actions {
-  text-align: right; white-space: nowrap; min-width: 200px;
+  text-align: right; white-space: nowrap; padding-left: 6px; padding-right: 6px;
   position: sticky; right: 0; z-index: 2;
   background: var(--crm-surface);
   box-shadow: inset 1px 0 0 var(--crm-border-strong);
+}
+/* Действия: [позиции][стрелки друг под другом][квадрат 2×2] — всегда влезает в вьюпорт */
+.feo-actions-wrap { display: inline-flex; align-items: center; vertical-align: middle; }
+.feo-actions-wrap .v-btn { width: 24px !important; height: 24px !important; }
+.feo-actions-col { display: flex; flex-direction: column; align-items: center; }
+.feo-actions-grid {
+  display: inline-grid; grid-template-columns: repeat(2, 26px);
+  justify-items: center; align-items: center;
 }
 .feo-td-actions .v-btn { background: transparent !important; }
 /* sticky-колонку действий держим непрозрачной во всех состояниях строки,
@@ -5249,7 +5295,7 @@ onMounted(() => {
 .feo-tr:hover .feo-td-actions { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td-actions { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td-actions { background: var(--crm-surface-hover); }
-.feo-action-slot { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
+.feo-action-slot { display: inline-flex; width: 24px; justify-content: center; vertical-align: middle; }
 .feo-tr:last-child .feo-td { border-bottom: none; }
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }

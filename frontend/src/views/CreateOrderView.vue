@@ -3708,7 +3708,7 @@ const SUBSTATUS_OPTIONS = [
   { value: 'kp_collecting', title: 'Идёт сбор КП' },
   { value: 'on_platform', title: 'Выставлено на площадку' },
 ]
-interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number }
+interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number; budget?: number | null }
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
 interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string; has_photo?: boolean }
@@ -5723,19 +5723,44 @@ const feoValidationError = computed((): string | null => {
   return null
 })
 
+// Узлы без заданных сумм финансирования (ни у себя, ни у потомков) — не уровень ФЭО,
+// к выбору не предлагаются.
+const fundedFeoIds = computed(() => {
+  const childrenByParent = new Map<number, FeoCategory[]>()
+  for (const c of allFeoCategories.value) {
+    if (c.parent_id != null) {
+      const arr = childrenByParent.get(c.parent_id) || []
+      arr.push(c)
+      childrenByParent.set(c.parent_id, arr)
+    }
+  }
+  const memo = new Map<number, boolean>()
+  const isFunded = (c: FeoCategory): boolean => {
+    const cached = memo.get(c.id)
+    if (cached !== undefined) return cached
+    let ok = c.budget != null
+    if (!ok) ok = (childrenByParent.get(c.id) || []).some(isFunded)
+    memo.set(c.id, ok)
+    return ok
+  }
+  const res = new Set<number>()
+  for (const c of allFeoCategories.value) if (isFunded(c)) res.add(c.id)
+  return res
+})
+
 const feoLevel1Options = computed(() =>
   form.subsidy_id
-    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id && !c.parent_id)
+    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id && !c.parent_id && fundedFeoIds.value.has(c.id))
     : []
 )
 const feoLevel2Options = computed(() =>
   selectedFeo1.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value)
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value && fundedFeoIds.value.has(c.id))
     : []
 )
 const feoLevel3Options = computed(() =>
   selectedFeo2.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value)
+    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value && fundedFeoIds.value.has(c.id))
     : []
 )
 

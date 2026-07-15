@@ -506,12 +506,25 @@ async def patch_product(
     product_id: int,
     data: dict = Body(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Частичное обновление товара (цена, ссылки)."""
+    """Частичное обновление товара (цена, ссылки, категория, вид)."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(404, "Product not found")
+    if "category" in data:
+        cat = (data["category"] or "").strip()
+        if not cat:
+            raise HTTPException(422, "Категория не может быть пустой")
+        db_product.category = cat
+    if "product_type" in data:
+        pt = (data["product_type"] or "").strip()
+        db_product.product_type = pt or None
+    if "category" in data or "product_type" in data:
+        from datetime import datetime
+        db_product.updated_at = datetime.utcnow()
+        db_product.updated_by = current_user.full_name or current_user.username
     if "price_links" in data:
         db_product.price_links = data["price_links"]
         from sqlalchemy.orm.attributes import flag_modified

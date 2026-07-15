@@ -266,12 +266,13 @@ async def feo_budget_residuals(
     # Направления (ур.1) субсидии — только для пользователей с view_all_levels.
     directions = []
     if can_view_all_levels:
-        for c in all_cats:
-            if c.level == 1 or c.parent_id is None:
-                d = node_info(c.id)
-                d["path"] = path_of(c.id)
-                directions.append(d)
-        directions.sort(key=lambda d: d["name"] or "")
+        # Порядок как во вкладке субсидии: sort_order, затем id (не алфавит)
+        roots = [c for c in all_cats if c.level == 1 or c.parent_id is None]
+        roots.sort(key=lambda c: (c.sort_order is None, c.sort_order or 0, c.id))
+        for c in roots:
+            d = node_info(c.id)
+            d["path"] = path_of(c.id)
+            directions.append(d)
 
     leaves = []
     for lid in ids:
@@ -1286,21 +1287,40 @@ async def delete_category(
     # Collect entire subtree
     all_ids = await _collect_subtree_ids(cat_id, db)
 
-    # Block deletion if purchases are linked — return their IDs for navigation
+    # Удаление блокируют только закупки, по которым работа реально идёт
+    # (стадия «Ведётся работа» и далее). Желания/план-график/подтверждено —
+    # работа не начата, категория удаляется, привязка обнуляется (FK SET NULL).
     from app.models.purchase import Purchase
+    BLOCKING_STATUSES = ("work_in_progress", "contracted", "ordered", "delivered", "paid")
     linked_purchases = (await db.execute(
-        select(Purchase.id, Purchase.subject).where(Purchase.feo_category_id.in_(all_ids))
+        select(Purchase.id, Purchase.subject).where(
+            Purchase.feo_category_id.in_(all_ids),
+            Purchase.status.in_(BLOCKING_STATUSES),
+        )
     )).all()
     if linked_purchases:
         purchase_ids = [p.id for p in linked_purchases]
         raise HTTPException(
             status_code=409,
             detail={
-                "message": f"Нельзя удалить: {len(linked_purchases)} закупок привязано к этой категории.",
+                "message": (
+                    f"Нельзя удалить: {len(linked_purchases)} закупок со стадией "
+                    f"«Ведётся работа» и далее привязано к этой категории. "
+                    f"Закупки на ранних стадиях (желания, план-график) удалению не мешают."
+                ),
                 "purchase_ids": purchase_ids,
                 "feo_category_ids": all_ids,
             }
         )
+
+    # Отвязать закупки ранних стадий и их позиции от удаляемого поддерева
+    from app.models.purchase_item import PurchaseItem as _PI
+    await db.execute(
+        Purchase.__table__.update().where(Purchase.feo_category_id.in_(all_ids)).values(feo_category_id=None)
+    )
+    await db.execute(
+        _PI.__table__.update().where(_PI.feo_category_id.in_(all_ids)).values(feo_category_id=None)
+    )
 
     # Nullify FK references in products before deleting
     from app.models.product import Product

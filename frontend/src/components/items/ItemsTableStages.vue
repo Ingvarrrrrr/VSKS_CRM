@@ -19,7 +19,10 @@
           </th>
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th>Наименование</th>
-          <th style="min-width:280px">Суммы стадий</th>
+          <th style="width:90px">Кол-во</th>
+          <th style="width:110px">Цена, ₽</th>
+          <th style="width:120px">Сумма, ₽</th>
+          <th style="min-width:220px">Суммы стадий</th>
           <th style="width:48px">Матч</th>
           <th style="width:80px"></th>
         </tr>
@@ -54,6 +57,20 @@
                 <span class="text-body-2" style="white-space:normal;line-height:1.3;word-break:break-word">{{ summaryName(idx) || '—' }}</span>
               </div>
             </td>
+            <td @click.stop>
+              <v-text-field v-model.number="item.quantity" type="number" density="compact"
+                variant="outlined" hide-details class="my-1 summary-num-input" :disabled="readonly"
+                @update:model-value="emit('calc-item-total', idx)" />
+            </td>
+            <td @click.stop>
+              <v-text-field
+                :model-value="formatNumber(item.unit_price)"
+                density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
+                :disabled="readonly"
+                @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+              />
+            </td>
+            <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">{{ fmtRub(totalWithVat(item)) }}</td>
             <td>
               <div class="d-flex ga-1 flex-wrap align-center">
                 <v-chip size="x-small" color="info" variant="tonal">ТЗ: {{ stageTotals(idx).tz > 0 ? stageTotals(idx).tz.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
@@ -100,7 +117,7 @@
           </tr>
           <!-- Expanded sub-rows -->
           <tr v-if="expanded[idx]" class="stage-row-wrapper">
-            <td colspan="7" style="padding:0 0 8px 48px">
+            <td colspan="10" style="padding:0 0 8px 48px">
               <v-table density="compact" class="nested-stages-table">
                 <thead>
                   <tr>
@@ -376,7 +393,7 @@
           </tr>
         </template>
         <tr v-if="!items.length">
-          <td colspan="7" class="text-center text-medium-emphasis py-4">
+          <td colspan="10" class="text-center text-medium-emphasis py-4">
             Нет позиций. Нажмите «Добавить позицию».
           </td>
         </tr>
@@ -384,7 +401,7 @@
       <tfoot v-if="items.length">
         <tr>
           <td colspan="3" class="text-right pr-3 py-2 text-caption font-weight-bold">НМЦД итого:</td>
-          <td colspan="4" class="py-2 font-weight-bold text-blue-darken-2">
+          <td colspan="7" class="py-2 font-weight-bold text-blue-darken-2">
             {{ totalNmck.toLocaleString('ru-RU') }} ₽
           </td>
         </tr>
@@ -517,6 +534,17 @@ const emit = defineEmits<{
 /* Phase 27.1.1: expand-row layout (moved from PurchaseItemsEditor.vue during Layer 3 extraction) */
 .summary-row:hover {
   background: rgba(0, 0, 0, 0.02);
+}
+.summary-num-input :deep(.v-text-field input),
+.summary-num-input :deep(.v-field__input) {
+  font-size: 12px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+  min-height: 32px !important;
+}
+.summary-num-input :deep(.v-field) {
+  --v-field-padding-start: 8px;
+  --v-field-padding-end: 8px;
 }
 .stage-row-wrapper td {
   background: #fafafa;

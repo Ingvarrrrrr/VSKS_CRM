@@ -63,7 +63,7 @@
           class="subsidy-main-table mb-3"
         >
           <template #item.feo_budget_total="{ item }">
-            {{ formatCurrencyShort(item.budget || item.feo_budget_total) }}
+            {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
           </template>
           <template #item.plan_schedule="{ item }">
             <span style="color:#F59E0B">{{ formatCurrencyShort(item.plan_schedule) }}</span>
@@ -139,8 +139,8 @@
               </div>
             </div>
 
-            <div class="sc-budget">{{ formatCurrencyShort(s.budget || s.feo_budget_total) }}</div>
-            <div class="sc-budget-label">{{ (s.budget || 0) > 0 ? 'Бюджет' : 'Бюджет ФЭО (расчёт)' }}</div>
+            <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
+            <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
               <div class="sc-mini" title="Плановая стоимость всех закупок субсидии (то же, что «Запланировано» на шкале ниже)">
@@ -158,8 +158,8 @@
             </div>
 
             <v-progress-linear
-              :model-value="pct(s.planned, s.budget || s.feo_budget_total)"
-              :color="progressColor(pct(s.planned, s.budget || s.feo_budget_total))"
+              :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
+              :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
               height="6" rounded class="mt-3"
             />
             <BudgetBar
@@ -169,7 +169,7 @@
               :subsidy="{
                 id: s.id,
                 name: s.name,
-                budget: s.budget || s.feo_budget_total,
+                budget: s.feo_budget_total || s.budget,
                 planned: s.planned,
                 contracted: s.contracted,
                 paid: s.paid,
@@ -182,11 +182,11 @@
               class="mt-1 sc-delta-chip"
               prepend-icon="mdi-alert"
               :title="cardDelta(s) > 0
-                ? `Бюджет ${Math.round(s.budget || s.feo_budget_total || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.budget || s.feo_budget_total || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+                ? `Бюджет ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
+                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
             >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
             <v-chip
-              v-else-if="(s.budget || s.feo_budget_total || 0) > 0 && (s.planned || 0) > 0"
+              v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
               color="success"
               size="small"
               class="mt-1 sc-delta-chip"
@@ -198,7 +198,7 @@
               <span>{{ s.contractor_name }}</span>
             </div>
             <div class="sc-footer">
-              <div class="sc-pct">{{ pct(s.planned, s.budget || s.feo_budget_total) }}% запланировано</div>
+              <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
               <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
                 <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
                 ФЭО
@@ -262,9 +262,14 @@
 
           <!-- KPI mini-cards for selected subsidy -->
           <div class="detail-kpis">
-            <div class="dkpi dkpi-budget">
+            <div class="dkpi dkpi-budget" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже">
               <div class="dkpi-label">Бюджет (ФЭО)</div>
               <div class="dkpi-val">{{ formatCurrency(selectedBudget) }}</div>
+              <div
+                v-if="selectedSubsidy.budget && Math.abs(selectedSubsidy.budget - selectedBudget) > 0.005"
+                class="dkpi-sub text-medium-emphasis"
+                title="Ручное поле «Бюджет» из формы субсидии — справочно"
+              >поле бюджета: {{ formatCurrency(selectedSubsidy.budget) }}</div>
             </div>
             <div class="dkpi dkpi-planned">
               <div class="dkpi-label">Запланировано</div>
@@ -3318,12 +3323,13 @@ const selectedSubsidy = computed(() =>
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
-  // Приоритет ручного бюджета субсидии; расчётный feo_budget_total — только как fallback
-  return selectedSubsidy.value.budget || selectedSubsidy.value.feo_budget_total || 0
+  // Живой расчёт по дереву ФЭО; ручное поле budget — только как fallback (решение 15.07)
+  if (feoTree.value.length) return totalFeoEffective.value
+  return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
 })
 
 const totals = computed(() => ({
-  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.budget || x.feo_budget_total || 0), 0),
+  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
   planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
   plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
   ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
@@ -4762,7 +4768,7 @@ function formatCurrency(v: number | string) {
 
 function cardDelta(s: SubsidyRow): number {
   // Приоритет ручного бюджета субсидии (решение 14.07)
-  return (s.budget || s.feo_budget_total || 0) - (s.planned || 0)
+  return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
 }
 
 function formatCurrencyShort(v: number) {
@@ -5126,6 +5132,7 @@ onMounted(() => {
 
 .dkpi-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 4px; }
 .dkpi-val   { font-size: 16px; font-weight: 700; color: var(--crm-text); }
+.dkpi-sub   { font-size: 10px; margin-top: 2px; white-space: nowrap; }
 
 /* FEO section */
 .detail-feo-header {

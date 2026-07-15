@@ -463,18 +463,29 @@
                           >{{ formatCurrency(feoBudgetFor(node)) }}</span>
                           <span v-else class="feo-set-hint">Задать</span>
                         </div>
-                        <div v-if="feoChildrenBudgetDiff(node) > 0.005"
-                          class="feo-plan-note" style="color:#EF4444"
-                          :title="`Расчёт по дочерним ${formatCurrency(directChildEffective(node))} (ручное ФЭО, без него — факт, иначе план) превышает финансирование этой строки ${formatCurrency(node.budget || 0)}. Ищите лишнюю сумму в дочерних строках.`"
-                        >
-                          в дочерних {{ formatCurrency(directChildEffective(node)) }} — лишние {{ formatCurrency(feoChildrenBudgetDiff(node)) }}
-                        </div>
-                        <div v-else-if="feoChildrenBudgetDiff(node) < -0.005"
-                          class="feo-plan-note" style="color:#F59E0B"
-                          :title="`Расчёт по дочерним ${formatCurrency(directChildEffective(node))} (ручное ФЭО, без него — факт, иначе план) меньше финансирования этой строки ${formatCurrency(node.budget || 0)}. Часть суммы не распределена по дочерним.`"
-                        >
-                          в дочерних {{ formatCurrency(directChildEffective(node)) }} — не распределено {{ formatCurrency(-feoChildrenBudgetDiff(node)) }}
-                        </div>
+                        <template v-if="node.hasChildren && node.budget != null && node.budget > 0">
+                          <div v-if="!hasManualChildFeo(node)"
+                            class="feo-plan-note text-medium-emphasis"
+                            title="Ни у одной дочерней строки не задано финансирование по ФЭО"
+                          >
+                            Подробное деление в ФЭО отсутствовало
+                          </div>
+                          <div v-else-if="feoChildrenBudgetDiff(node) > 0.005"
+                            class="feo-plan-note" style="color:#EF4444"
+                            :title="`Ручное ФЭО дочерних ${formatCurrency(manualChildFeoSum(node))} превышает финансирование этой строки ${formatCurrency(node.budget || 0)}. Ищите лишнюю сумму в дочерних строках.`"
+                          >
+                            заложено в ФЭО {{ formatCurrency(manualChildFeoSum(node)) }} — лишние {{ formatCurrency(feoChildrenBudgetDiff(node)) }}
+                          </div>
+                          <div v-else-if="feoChildrenBudgetDiff(node) < -0.005"
+                            class="feo-plan-note" style="color:#F59E0B"
+                            :title="`Ручное ФЭО дочерних ${formatCurrency(manualChildFeoSum(node))} меньше финансирования этой строки ${formatCurrency(node.budget || 0)}. Часть суммы не распределена по дочерним в ФЭО.`"
+                          >
+                            заложено в ФЭО {{ formatCurrency(manualChildFeoSum(node)) }} — не распределено {{ formatCurrency(-feoChildrenBudgetDiff(node)) }}
+                          </div>
+                          <div v-else class="feo-plan-note text-medium-emphasis">
+                            заложено в ФЭО {{ formatCurrency(manualChildFeoSum(node)) }}
+                          </div>
+                        </template>
                       </td>
 
                       <!-- Плановое количество -->
@@ -3394,9 +3405,17 @@ function feoEffectiveFor(node: FeoNode): number {
   return node.children.reduce((acc, child) => acc + feoEffectiveFor(child), 0)
 }
 
-// Прямые дети по effective-формуле (для проверки распределения ручной суммы группы)
-function directChildEffective(node: FeoNode): number {
-  return node.children.reduce((acc, child) => acc + feoEffectiveFor(child), 0)
+// Σ ручного ФЭО в поддеревьях прямых детей. Факт/план НЕ подставляются;
+// budget 0 или NULL = «не задано» (в UI оба показываются как «Задать»)
+function manualChildFeoSum(node: FeoNode): number {
+  const walk = (n: FeoNode): number =>
+    Number(n.budget) > 0 ? Number(n.budget) : n.children.reduce((a, c) => a + walk(c), 0)
+  return node.children.reduce((a, c) => a + walk(c), 0)
+}
+
+function hasManualChildFeo(node: FeoNode): boolean {
+  const walk = (n: FeoNode): boolean => Number(n.budget) > 0 || n.children.some(walk)
+  return node.children.some(walk)
 }
 
 function isAutoNode(node: FeoNode): boolean {
@@ -3437,10 +3456,11 @@ function feoFinDiff(node: FeoNode): number {
   return feoDisplayedFor(node) - feoPlannedTotalFor(node)
 }
 
-// Расчёт по дочерним (ручное ФЭО / факт / план) vs собственная ручная сумма узла
+// Ручное ФЭО дочерних vs собственная ручная сумма узла (без подмены фактом/планом)
 function feoChildrenBudgetDiff(node: FeoNode): number {
   if (!node.hasChildren || node.budget == null || node.budget <= 0) return 0
-  return directChildEffective(node) - node.budget
+  if (!hasManualChildFeo(node)) return 0
+  return manualChildFeoSum(node) - node.budget
 }
 
 // Факт — только то, что реально поставлено/оплачено (по актам)

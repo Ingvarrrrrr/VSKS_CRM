@@ -52,6 +52,33 @@ async def get_purchase_totals(
     return {r.feo_category_id: float(r.total_planned) for r in rows}
 
 
+@router.get("/planned-purchase-totals")
+async def get_planned_purchase_totals(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Плановая сумма из заявок per feo_category_id: позиции закупок в статусах план-графика и дальше."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.routers.purchase_budget import PLANNED_STATUSES
+
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    stmt = (
+        select(
+            cat_col.label("cat_id"),
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("total"),
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(Purchase.subsidy_id == subsidy_id)
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(cat_col.isnot(None))
+        .group_by(cat_col)
+    )
+    rows = (await db.execute(stmt)).all()
+    return {r.cat_id: float(r.total) for r in rows}
+
+
 @router.get("/leaves")
 async def get_feo_leaves(
     subsidy_id: int = Query(...),

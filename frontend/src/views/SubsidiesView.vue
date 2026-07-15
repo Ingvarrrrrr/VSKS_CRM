@@ -375,7 +375,26 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num">ПЛАНОВОЕ<br>КОЛ-ВО</th>
-                    <th class="feo-th feo-th-num">ПЛАНОВАЯ<br>СУММА</th>
+                    <th class="feo-th feo-th-num">
+                      <div>ПЛАНОВАЯ<br>СУММА</div>
+                      <div class="feo-residual-toggle">
+                        <span
+                          :class="plannedSumBase === 'all' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Ручной план ФЭО + позиции заявок в план-графике"
+                          @click.stop="plannedSumBase = 'all'"
+                        >все</span>
+                        <span
+                          :class="plannedSumBase === 'manual' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Только ручной план: кол-во × стоимость за ед."
+                          @click.stop="plannedSumBase = 'manual'"
+                        >ручные</span>
+                        <span
+                          :class="plannedSumBase === 'requests' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Только позиции заявок со статусом «План-график» и дальше"
+                          @click.stop="plannedSumBase = 'requests'"
+                        >из заявок</span>
+                      </div>
+                    </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
                       Фактическая сумма
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
@@ -518,16 +537,23 @@
                         </div>
                       </td>
 
-                      <!-- Плановая сумма (кол-во × стоимость за ед.) -->
+                      <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
                       <td class="feo-td feo-td-num">
-                        <span v-if="feoPlannedTotalFor(node) > 0" class="feo-amount"
-                          :style="feoDisplayedFor(node) > 0 && feoPlannedTotalFor(node) > feoDisplayedFor(node) ? 'color:#EF4444;font-weight:700' : ''"
-                        >{{ formatCurrency(feoPlannedTotalFor(node)) }}</span>
+                        <span v-if="feoPlannedDisplayFor(node) > 0" class="feo-amount"
+                          :style="feoDisplayedFor(node) > 0 && feoPlannedDisplayFor(node) > feoDisplayedFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                          :title="plannedSumBase === 'all' ? `Ручные ${formatCurrency(feoPlannedTotalFor(node))} + из заявок ${formatCurrency(feoPlannedRequestsFor(node))}` : ''"
+                        >{{ formatCurrency(feoPlannedDisplayFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
-                        <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedTotalFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
+                        <div v-if="plannedSumBase === 'all' && feoPlannedRequestsFor(node) > 0"
+                          class="feo-plan-note text-medium-emphasis"
+                          :title="`Позиции заявок в статусе «План-график» и дальше: ${formatCurrency(feoPlannedRequestsFor(node))}`"
+                        >
+                          из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
+                        </div>
+                        <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedDisplayFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
-                          :title="`Финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))} − Плановая сумма ${formatCurrency(feoPlannedTotalFor(node))}`"
+                          :title="`Финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))} − Плановая сумма ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
                           {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
                         </div>
@@ -536,17 +562,17 @@
                       <!-- Фактическая сумма -->
                       <td class="feo-td feo-td-num">
                         <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="(feoDisplayedFor(node) > 0 && feoPurchasedFor(node) > feoDisplayedFor(node)) || (feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) > feoPlannedTotalFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="(feoDisplayedFor(node) > 0 && feoPurchasedFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoPurchasedFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
                           @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
                           {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
                         </span>
-                        <div v-if="feoPlannedTotalFor(node) > 0 && feoPurchasedFor(node) - feoPlannedTotalFor(node) > 0.005"
+                        <div v-if="feoPlannedDisplayFor(node) > 0 && feoPurchasedFor(node) - feoPlannedDisplayFor(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedTotalFor(node))}`"
+                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
-                          больше плана на {{ formatCurrency(feoPurchasedFor(node) - feoPlannedTotalFor(node)) }}
+                          больше плана на {{ formatCurrency(feoPurchasedFor(node) - feoPlannedDisplayFor(node)) }}
                         </div>
                         <div v-if="feoDisplayedFor(node) > 0 && feoPurchasedFor(node) - feoDisplayedFor(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
@@ -870,7 +896,7 @@
                       {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
-                      {{ feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedTotalFor(r), 0)) : '—' }}
+                      {{ feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0)) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
                     <td class="feo-td feo-td-num font-weight-bold">
@@ -2622,6 +2648,7 @@ const loadingFeo = ref(false)
 const allSubsidies    = ref<SubsidyRow[]>([])
 const feoCategories   = ref<FeoCategory[]>([])
 const purchaseTotals  = ref<Record<number, number>>({})
+const plannedPurchaseTotals = ref<Record<number, number>>({})
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
@@ -3442,8 +3469,11 @@ function feoPurchasedFor(node: FeoNode): number {
 // База остатка: от плановой суммы или от финансирования по ФЭО
 const residualBase = ref<'plan' | 'feo'>('plan')
 
+// Режим колонки «Плановая сумма»: все = ручные + из заявок
+const plannedSumBase = ref<'all' | 'manual' | 'requests'>('all')
+
 function feoResidualBaseFor(node: FeoNode): number {
-  return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedTotalFor(node)
+  return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
 }
 
 // Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма
@@ -3457,9 +3487,9 @@ function feoDisplayedFor(node: FeoNode): number {
   return node.hasChildren ? feoEffectiveFor(node) : 0
 }
 
-// Финансирование vs Плановая сумма: >0 — можно добавить (зелёная), <0 — надо убрать (красная)
+// Финансирование vs Плановая сумма (в текущем режиме): >0 — можно добавить (зелёная), <0 — надо убрать (красная)
 function feoFinDiff(node: FeoNode): number {
-  return feoDisplayedFor(node) - feoPlannedTotalFor(node)
+  return feoDisplayedFor(node) - feoPlannedDisplayFor(node)
 }
 
 // Ручное ФЭО дочерних vs собственная ручная сумма узла (без подмены фактом/планом)
@@ -3606,6 +3636,21 @@ function feoPlannedTotalFor(node: FeoNode): number {
   const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : 0
   if (qty > 0 && unitPrice > 0) return qty * unitPrice
   return 0
+}
+
+// ── Плановая сумма из заявок (статусы план-график и дальше) ───
+// Лист — из карты бэкенда; группа — собственные позиции (привязанные прямо к группе) + сумма детей
+function feoPlannedRequestsFor(node: FeoNode): number {
+  const own = plannedPurchaseTotals.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoPlannedRequestsFor(child), 0)
+}
+
+// Отображаемая «Плановая сумма» по режиму переключателя
+function feoPlannedDisplayFor(node: FeoNode): number {
+  if (plannedSumBase.value === 'manual') return feoPlannedTotalFor(node)
+  if (plannedSumBase.value === 'requests') return feoPlannedRequestsFor(node)
+  return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node)
 }
 
 function isAutoAmtNode(node: FeoNode): boolean {
@@ -3933,13 +3978,16 @@ async function loadFeo(subsidyId: number) {
   loadingFeo.value = true
   feoCategories.value = []
   purchaseTotals.value = {}
+  plannedPurchaseTotals.value = {}
   try {
-    const [cats, totals] = await Promise.all([
+    const [cats, totals, plannedTotals] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, number>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
     ])
     feoCategories.value = cats
     purchaseTotals.value = totals
+    plannedPurchaseTotals.value = plannedTotals
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {

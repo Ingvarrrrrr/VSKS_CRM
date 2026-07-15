@@ -14,8 +14,16 @@
       <span class="text-caption text-medium-emphasis">Выбрать все</span>
     </div>
 
+    <template v-for="(row, rPos) in bodyRows" :key="row.header != null ? `gh-${rPos}` : (items[row.idx!]?._uid ?? row.idx)">
+    <div v-if="row.header != null" class="items-group-header-card d-flex align-center ga-1 px-2 py-1 mb-2"
+      :class="row.level === 2 ? 'items-group-header-card--type ml-4' : ''">
+      <v-icon size="14">{{ row.level === 2 ? 'mdi-shape-outline' : 'mdi-folder-outline' }}</v-icon>
+      <span class="font-weight-bold" style="font-size:12px">{{ row.header }}</span>
+      <span class="text-medium-emphasis" style="font-size:11px">{{ row.count }} поз. · {{ fmtRub(row.sum || 0) }}</span>
+    </div>
+    <template v-else>
     <v-card
-      v-for="(item, idx) in items"
+      v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]"
       :key="item._uid ?? idx"
       variant="outlined"
       class="mb-3 item-card"
@@ -190,6 +198,8 @@
         </v-col>
       </v-row>
     </v-card>
+    </template>
+    </template>
 
     <div v-if="!items.length" class="text-center text-medium-emphasis py-6">
       Нет позиций. Нажмите «Добавить позицию».
@@ -207,7 +217,7 @@ import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { Contractor, ProductLike } from '@/components/items/types'
+import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
@@ -243,9 +253,16 @@ const props = defineProps<{
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
   productPhotoSrc?: (p: ProductLike | null | undefined) => string | undefined
+  // Optional grouped/filtered render order (see ItemsDisplayRow). When absent,
+  // cards render in natural items[] order exactly as before.
+  displayRows?: ItemsDisplayRow[] | null
 }>()
 
 const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
+
+const bodyRows = computed<ItemsDisplayRow[]>(() =>
+  props.displayRows ?? props.items.map((_, i) => ({ idx: i }))
+)
 
 // Identical contract to ItemsTableFlat — same emit names & payload shapes so the
 // parent handlers are wired unchanged.
@@ -296,5 +313,16 @@ const emit = defineEmits<{
 .cv-card {
   content-visibility: auto;
   contain-intrinsic-size: auto 240px;
+}
+
+/* Группировка позиций по категориям/видам: полоски-заголовки групп */
+.items-group-header-card {
+  background: rgba(var(--v-theme-primary), 0.06);
+  border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+  border-radius: 4px;
+}
+.items-group-header-card--type {
+  background: rgba(var(--v-theme-primary), 0.03);
+  border-left-style: dashed;
 }
 </style>

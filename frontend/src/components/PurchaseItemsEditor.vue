@@ -78,6 +78,28 @@
       </v-btn-toggle>
     </div>
 
+    <!-- Группировка и фильтр позиций по категориям/видам товаров из каталога -->
+    <div v-if="itemShape === 'purchase' && !stagesEnabled && localItems.length > 1"
+      class="d-flex ga-2 mb-2 align-center flex-wrap">
+      <span class="text-caption text-medium-emphasis">Группировка:</span>
+      <v-btn-toggle v-model="itemsGroupBy" density="compact" rounded="lg" color="primary" border mandatory>
+        <v-btn value="none" size="x-small">Нет</v-btn>
+        <v-btn value="category" size="x-small">По категориям</v-btn>
+        <v-btn value="category_type" size="x-small">Категории + виды</v-btn>
+      </v-btn-toggle>
+      <v-select v-model="itemsFilterCats" :items="itemCategoryOptions" label="Фильтр: категория"
+        multiple clearable chips closable-chips density="compact" variant="outlined" hide-details
+        style="max-width:240px;min-width:170px" />
+      <v-select v-model="itemsFilterTypes" :items="itemTypeOptions" label="Фильтр: вид"
+        multiple clearable chips closable-chips density="compact" variant="outlined" hide-details
+        style="max-width:240px;min-width:170px" />
+      <template v-if="itemsFilterActive">
+        <span class="text-caption text-medium-emphasis">Показано {{ visibleItemsCount }} из {{ localItems.length }}</span>
+        <v-btn size="x-small" variant="text" color="primary"
+          @click="itemsFilterCats = []; itemsFilterTypes = []">Сбросить</v-btn>
+      </template>
+    </div>
+
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
       <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) — Layer 3: extracted -->
@@ -153,6 +175,7 @@
         <ItemsCardsView
           v-if="effectiveView === 'cards'"
           :items="localItems"
+          :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
@@ -195,6 +218,7 @@
         <ItemsTableFlat
           v-else
           :items="localItems"
+          :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
@@ -480,6 +504,7 @@ import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
 import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
 import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { ContractItem } from '@/types/contractItem'
+import type { ItemsDisplayRow } from '@/components/items/types'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
@@ -1399,6 +1424,91 @@ onMounted(async () => {
 
 const internalTotalNmck = computed(() =>
   localItems.value.reduce((s, i) => s + (i.total_price || 0), 0)
+)
+
+// ── Группировка/фильтр позиций по категории и виду товара из каталога ────────
+// Категория/вид берутся у сматченного товара (product_id → products); позиции
+// без товара попадают в «Без категории»/«Без вида». Строки данных ссылаются на
+// ОРИГИНАЛЬНЫЙ индекс в localItems, поэтому все idx-события работают как раньше.
+const NO_CATEGORY = 'Без категории'
+const NO_TYPE = 'Без вида'
+const itemsGroupBy = ref<'none' | 'category' | 'category_type'>('none')
+const itemsFilterCats = ref<string[]>([])
+const itemsFilterTypes = ref<string[]>([])
+
+const productById = computed(() => {
+  const m = new Map<number, Product>()
+  for (const p of products.value) m.set(p.id, p)
+  return m
+})
+function itemCategoryOf(it: EditorItem): string {
+  const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
+  return (p?.category || '').trim() || NO_CATEGORY
+}
+function itemTypeOf(it: EditorItem): string {
+  const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
+  return (p?.product_type || '').trim() || NO_TYPE
+}
+const itemCategoryOptions = computed(() => {
+  const s = new Set(localItems.value.map(itemCategoryOf))
+  return [...s].sort((a, b) => a.localeCompare(b, 'ru'))
+})
+const itemTypeOptions = computed(() => {
+  const cats = itemsFilterCats.value
+  const s = new Set(
+    localItems.value
+      .filter(it => !cats.length || cats.includes(itemCategoryOf(it)))
+      .map(itemTypeOf)
+  )
+  return [...s].sort((a, b) => a.localeCompare(b, 'ru'))
+})
+const itemsFilterActive = computed(() =>
+  itemsFilterCats.value.length > 0 || itemsFilterTypes.value.length > 0
+)
+
+const itemsDisplayRows = computed<ItemsDisplayRow[] | null>(() => {
+  // null → дети рендерят natural order без каких-либо изменений (быстрый путь)
+  if (itemsGroupBy.value === 'none' && !itemsFilterActive.value) return null
+  const rows = localItems.value
+    .map((item, idx) => ({
+      idx,
+      cat: itemCategoryOf(item),
+      type: itemTypeOf(item),
+      sum: Number(item.total_price || 0),
+    }))
+    .filter(r =>
+      (!itemsFilterCats.value.length || itemsFilterCats.value.includes(r.cat)) &&
+      (!itemsFilterTypes.value.length || itemsFilterTypes.value.includes(r.type))
+    )
+  if (itemsGroupBy.value === 'none') return rows.map(r => ({ idx: r.idx }))
+  rows.sort((a, b) =>
+    a.cat.localeCompare(b.cat, 'ru') ||
+    a.type.localeCompare(b.type, 'ru') ||
+    a.idx - b.idx
+  )
+  const out: ItemsDisplayRow[] = []
+  let curCat: string | null = null
+  let curType: string | null = null
+  for (const r of rows) {
+    if (r.cat !== curCat) {
+      curCat = r.cat
+      curType = null
+      const grp = rows.filter(x => x.cat === r.cat)
+      out.push({ header: r.cat, level: 1, count: grp.length, sum: grp.reduce((s, x) => s + x.sum, 0) })
+    }
+    if (itemsGroupBy.value === 'category_type' && r.type !== curType) {
+      curType = r.type
+      const grp = rows.filter(x => x.cat === r.cat && x.type === r.type)
+      out.push({ header: r.type, level: 2, count: grp.length, sum: grp.reduce((s, x) => s + x.sum, 0) })
+    }
+    out.push({ idx: r.idx })
+  }
+  return out
+})
+const visibleItemsCount = computed(() =>
+  itemsDisplayRows.value == null
+    ? localItems.value.length
+    : itemsDisplayRows.value.filter(r => r.idx != null).length
 )
 
 // ── Items CRUD ────────────────────────────────────────────────────────────────

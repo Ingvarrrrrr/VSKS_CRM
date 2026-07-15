@@ -31,6 +31,18 @@ export interface PriceLink {
   price: number | null
 }
 
+// Grouping/filtering of positions by product category/type. The parent computes
+// the ordered row list; children render it. A row is either a group header
+// (header != null) or a data row pointing at the ORIGINAL index in items[] so
+// all idx-based emits keep working regardless of sort/filter.
+export interface ItemsDisplayRow {
+  idx?: number
+  header?: string
+  level?: 1 | 2   // 1 = category, 2 = type inside category
+  count?: number
+  sum?: number
+}
+
 // Mutable form object for the full product create/edit dialog. The parent owns
 // the reactive instance and passes it down; the child v-models its fields.
 export interface FullProductForm {

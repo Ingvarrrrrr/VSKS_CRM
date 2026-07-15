@@ -30,7 +30,16 @@
              the browser skips layout/paint of offscreen rows. Small lists behave
              EXACTLY as before (no class, no style). contain-intrinsic-size reserves
              approximate row height so the scrollbar stays stable. -->
-        <tr v-for="(item, idx) in items" :key="item._uid ?? idx"
+        <template v-for="(row, rPos) in bodyRows" :key="row.header != null ? `gh-${rPos}` : (items[row.idx!]?._uid ?? row.idx)">
+        <tr v-if="row.header != null" class="items-group-header" :class="row.level === 2 ? 'items-group-header--type' : ''">
+          <td :colspan="totalColCount" :class="row.level === 2 ? 'pl-8' : 'pl-3'" class="py-1">
+            <v-icon size="14" class="mr-1">{{ row.level === 2 ? 'mdi-shape-outline' : 'mdi-folder-outline' }}</v-icon>
+            <span class="font-weight-bold" style="font-size:12px">{{ row.header }}</span>
+            <span class="text-medium-emphasis ml-2" style="font-size:11px">{{ row.count }} поз. · {{ fmtRub(row.sum || 0) }}</span>
+          </td>
+        </tr>
+        <template v-else>
+        <tr v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]" :key="item._uid ?? idx"
           :class="{ 'cv-row': virtualize }">
           <td style="width:36px;padding:0 4px;text-align:center">
             <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
@@ -171,6 +180,8 @@
               :disabled="readonly" @click="emit('remove-item', idx)" />
           </td>
         </tr>
+        </template>
+        </template>
         <tr v-if="!items.length">
           <td :colspan="showContractorColumn ? 11 : 10" class="text-center text-medium-emphasis py-4">
             Нет позиций. Нажмите «Добавить позицию».
@@ -195,7 +206,7 @@ import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { Contractor, ProductLike } from '@/components/items/types'
+import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
@@ -233,9 +244,20 @@ const props = defineProps<{
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
   productPhotoSrc?: (p: ProductLike | null | undefined) => string | undefined
+  // Optional grouped/filtered render order (see ItemsDisplayRow). When absent,
+  // rows render in natural items[] order exactly as before.
+  displayRows?: ItemsDisplayRow[] | null
 }>()
 
 const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
+
+const bodyRows = computed<ItemsDisplayRow[]>(() =>
+  props.displayRows ?? props.items.map((_, i) => ({ idx: i }))
+)
+
+const totalColCount = computed(() =>
+  10 + (props.vatMode === 'per_item' ? 1 : 0) + (props.showContractorColumn ? 1 : 0)
+)
 
 const emit = defineEmits<{
   'toggle-select-all': [val: boolean | null]
@@ -287,6 +309,16 @@ th { position: relative; }
 .cv-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 88px;
+}
+
+/* Группировка позиций по категориям/видам: строки-заголовки групп */
+.items-group-header td {
+  background: rgba(var(--v-theme-primary), 0.06);
+  border-top: 1px solid rgba(var(--v-theme-primary), 0.2);
+}
+.items-group-header--type td {
+  background: rgba(var(--v-theme-primary), 0.03);
+  border-top: 1px dashed rgba(var(--v-theme-primary), 0.15);
 }
 
 /* SN-UX: шрифт 12px во всех inline-полях flat-таблицы позиций */

@@ -482,20 +482,49 @@ def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
 # Product-catalog upsert helper
 # ---------------------------------------------------------------------------
 
-async def _upsert_product_to_catalog(db, item_name: str, item_type: str, unit_price, description: str = "") -> int:
-    """Find or create a product in the global catalog. Returns product.id."""
+async def _upsert_product_to_catalog(
+    db, item_name: str, item_type: str, unit_price, description: str = "",
+    category: str | None = None, product_type: str | None = None,
+    import_note: str | None = None, updated_by: str | None = None,
+) -> int:
+    """Find or create a product in the global catalog. Returns product.id.
+
+    Правила конфликтов при импорте из файла:
+    - цена: обновляется из файла (файл — источник актуальной цены);
+    - категория/вид: БД главнее — из файла берём только если в БД пусто
+      (для категории дефолт «Прочее» считается пустым);
+    - import_note: кто/как/когда загрузил — перезаписывается свежим импортом.
+    """
+    from datetime import datetime as _dt
     norm = item_name.strip().lower()
     existing = (await db.execute(
         select(Product).where(func.lower(Product.name) == norm)
     )).scalar_one_or_none()
     if existing:
+        new_price = Decimal(str(unit_price)) if unit_price else None
+        if new_price and existing.price != new_price:
+            existing.price = new_price
+        if category and (not existing.category or existing.category == 'Прочее'):
+            existing.category = category
+        if product_type and not existing.product_type:
+            existing.product_type = product_type
+        if import_note:
+            existing.import_note = import_note
+            existing.updated_at = _dt.utcnow()
+            if updated_by:
+                existing.updated_by = updated_by
         return existing.id
     p = Product(
         name=item_name.strip(),
         description=description or "",
-        product_type=item_type or "товар",
+        category=category or 'Прочее',
+        product_type=product_type or item_type or "товар",
+        item_kind=item_type or "товар",
         price=Decimal(str(unit_price)) if unit_price else Decimal("0"),
         is_active=True,
+        import_note=import_note,
+        updated_at=_dt.utcnow() if import_note else None,
+        updated_by=updated_by if import_note else None,
     )
     db.add(p)
     await db.flush()
@@ -677,7 +706,12 @@ async def import_items_excel(
                 unit_price = matched_product.price
                 total_price = quantity * unit_price
         else:
-            product_id = await _upsert_product_to_catalog(db, item_name, item_type, unit_price, description or "")
+            _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+            product_id = await _upsert_product_to_catalog(
+                db, item_name, item_type, unit_price, description or "",
+                import_note=f"Импорт из файла «{file.filename}» (шаблон), {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                updated_by=_uname,
+            )
             product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
             new_in_catalog += 1
 
@@ -892,10 +926,17 @@ async def import_items_mapped_nopid(
     col_vat_rate: Optional[int] = Query(default=None),       # import-vat-cols: ставка НДС
     col_vat_amount: Optional[int] = Query(default=None),     # import-vat-cols: сумма НДС
     col_total_with_vat: Optional[int] = Query(default=None), # import-vat-cols: стоимость с НДС
+    col_category: Optional[int] = Query(default=None),       # Категория товара
+    col_product_type: Optional[int] = Query(default=None),   # Вид товара
     header_row_offset: int = Query(0),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Like import-mapped but for new-purchase/wish context. Returns parsed items without saving to DB."""
+    """Like import-mapped but for new-purchase/wish context.
+
+    Returns parsed items (не создаёт PurchaseItem), но товары upsert'ится в каталог:
+    цена обновляется из файла, категория/вид берутся из файла только если в БД пусто
+    (БД главнее), пишется import_note кто/как/когда загрузил."""
     if col_item_name < 0:
         raise HTTPException(400, "Не указан столбец Наименование")
 
@@ -1021,6 +1062,12 @@ async def import_items_mapped_nopid(
     skipped_empty = 0
     skipped_junk = 0
 
+    _user_name = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+    _import_note = (
+        f"Импорт из файла «{file.filename}» (маппинг столбцов), "
+        f"{_user_name}, {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
     for row in data_iter:
         item_name = _cell(row, col_item_name)
         if not item_name:
@@ -1049,6 +1096,26 @@ async def import_items_mapped_nopid(
         vat_rate_str = _cell(row, col_vat_rate) if (col_vat_rate is not None and col_vat_rate >= 0) else None
         vat_amount_dec = _to_dec(_cell(row, col_vat_amount)) if (col_vat_amount is not None and col_vat_amount >= 0) else None
         total_with_vat_dec = _to_dec(_cell(row, col_total_with_vat)) if (col_total_with_vat is not None and col_total_with_vat >= 0) else None
+
+        row_category = _cell(row, col_category) if (col_category is not None and col_category >= 0) else None
+        row_product_type = _cell(row, col_product_type) if (col_product_type is not None and col_product_type >= 0) else None
+
+        # Upsert в каталог: цена из файла, категория/вид — БД главнее, примечание об импорте
+        product_id = None
+        eff_category, eff_product_type = row_category, row_product_type
+        try:
+            product_id = await _upsert_product_to_catalog(
+                db, item_name, 'товар', unit_price, description or "",
+                category=row_category, product_type=row_product_type,
+                import_note=_import_note, updated_by=_user_name,
+            )
+            prod = await db.get(Product, product_id)
+            if prod:
+                eff_category = prod.category
+                eff_product_type = prod.product_type
+        except Exception:
+            logging.getLogger(__name__).warning("nopid import: upsert to catalog failed for %r", item_name, exc_info=True)
+
         items_out.append({
             'item_name': item_name[:500],
             'item_type': 'товар',
@@ -1060,7 +1127,15 @@ async def import_items_mapped_nopid(
             'vat_rate': vat_rate_str or (vat_str if not description else None),
             'vat_amount': float(vat_amount_dec) if vat_amount_dec else None,
             'total_with_vat': float(total_with_vat_dec) if total_with_vat_dec else None,
+            'product_id': product_id,
+            'category': eff_category,
+            'product_type': eff_product_type,
         })
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     return {
         "items": items_out,
@@ -1089,6 +1164,8 @@ async def import_items_mapped(
     col_vat_rate: Optional[int] = Query(default=None, description="Индекс столбца Ставка НДС"),
     col_vat_amount: Optional[int] = Query(default=None, description="Индекс столбца Сумма НДС"),
     col_total_with_vat: Optional[int] = Query(default=None, description="Индекс столбца Стоимость с НДС"),
+    col_category: Optional[int] = Query(default=None, description="Индекс столбца Категория товара"),
+    col_product_type: Optional[int] = Query(default=None, description="Индекс столбца Вид товара"),
     header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (авто-определено при preview)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1227,6 +1304,12 @@ async def import_items_mapped(
     skipped_junk = 0       # _is_junk_row matched
     total_data_rows = 0    # счётчик прошедших data_iter
 
+    _user_name = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+    _import_note = (
+        f"Импорт из файла «{file.filename}» (маппинг столбцов в закупке), "
+        f"{_user_name}, {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
     # Keywords that indicate non-product rows (totals, footers, signatures)
     _SKIP_KEYWORDS = {
         'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
@@ -1289,6 +1372,9 @@ async def import_items_mapped(
             vat_amount_val = _to_dec(_cell(row, col_vat_amount)) if (col_vat_amount is not None and col_vat_amount >= 0) else None
             total_with_vat_val = _to_dec(_cell(row, col_total_with_vat)) if (col_total_with_vat is not None and col_total_with_vat >= 0) else None
 
+            row_category = _cell(row, col_category) if (col_category is not None and col_category >= 0) else None
+            row_product_type = _cell(row, col_product_type) if (col_product_type is not None and col_product_type >= 0) else None
+
             # Auto-match or create in catalog
             # 1) exact match (fast path)
             matched_product = product_by_name.get(item_name.lower().strip())
@@ -1309,8 +1395,23 @@ async def import_items_mapped(
                 if not unit_price and matched_product.price:
                     unit_price = matched_product.price
                     total_price = quantity * unit_price
+                elif unit_price and isinstance(matched_product, Product):
+                    # Цена из файла актуальнее; категория/вид из БД не трогаем (БД главнее)
+                    if matched_product.price != unit_price:
+                        matched_product.price = unit_price
+                    matched_product.import_note = _import_note
+                    matched_product.updated_at = datetime.utcnow()
+                    matched_product.updated_by = _user_name
+                    if row_category and (not matched_product.category or matched_product.category == 'Прочее'):
+                        matched_product.category = row_category
+                    if row_product_type and not matched_product.product_type:
+                        matched_product.product_type = row_product_type
             else:
-                product_id = await _upsert_product_to_catalog(db, item_name, 'товар', unit_price, description or "")
+                product_id = await _upsert_product_to_catalog(
+                    db, item_name, 'товар', unit_price, description or "",
+                    category=row_category, product_type=row_product_type,
+                    import_note=_import_note, updated_by=_user_name,
+                )
                 product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
                 new_in_catalog += 1
 
@@ -1729,7 +1830,12 @@ async def _save_smart_preview_to_purchase(
                     unit_price = matched.price
                     total_price = qty * unit_price
             else:
-                product_id = await _upsert_product_to_catalog(db, item_name, row_data["item_type"], unit_price)
+                _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+                product_id = await _upsert_product_to_catalog(
+                    db, item_name, row_data["item_type"], unit_price,
+                    import_note=f"Смарт-импорт из файла, {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                    updated_by=_uname,
+                )
                 new_in_catalog += 1
         if total_price is None and unit_price:
             total_price = qty * unit_price

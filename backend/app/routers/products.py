@@ -666,6 +666,7 @@ async def import_products_from_excel(
     file: UploadFile = File(...),
     purchase_id: Optional[int] = Query(None, description="Если передан — добавить импортированные товары в закупку"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Импорт товаров из Excel. Возвращает {created, skipped, errors}."""
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
@@ -806,6 +807,13 @@ async def import_products_from_excel(
     all_products: list[Product] = []   # both new and existing (for purchase items)
     product_row_data: list[dict] = []  # qty/unit per product for PurchaseItem
 
+    from datetime import datetime as _dt
+    _user_name = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+    _import_note = (
+        f"Импорт каталога из файла «{file.filename}», "
+        f"{_user_name}, {_dt.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
     for row_num, row in enumerate(rows[1:], start=2):
         try:
             name = cell(row, "name")
@@ -847,10 +855,16 @@ async def import_products_from_excel(
                     if val and not getattr(ep, attr):
                         setattr(ep, attr, val)
 
-                _fill("category", cell(row, "category"))
+                # Категория: «Прочее» — дефолт, считаем пустым; заполненную в БД не трогаем (БД главнее)
+                if cell(row, "category") and (not ep.category or ep.category == 'Прочее'):
+                    ep.category = cell(row, "category")
                 _fill("product_type", cell(row, "product_type"))
                 _fill("photo_link", cell(row, "photo_link"))
                 _fill("description", cell(row, "description"))
+
+                ep.import_note = _import_note
+                ep.updated_at = _dt.utcnow()
+                ep.updated_by = _user_name
 
                 # feo_category_id — numeric, set only if empty
                 if feo_id and not ep.feo_category_id:
@@ -878,6 +892,9 @@ async def import_products_from_excel(
                 is_active=to_bool(cell(row, "is_active")),
                 feo_category_id=feo_id,
                 price_links=price_links or [],
+                import_note=_import_note,
+                updated_at=_dt.utcnow(),
+                updated_by=_user_name,
             )
             db.add(p)
             all_products.append(p)
@@ -1256,8 +1273,12 @@ async def bulk_create_from_items(
             if item.product_id is not None:
                 linked += 1
                 continue
+            from datetime import datetime as _dtb
+            _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
             product_id = await _upsert_product_to_catalog(
-                db, item.item_name, item.item_type or "товар", item.unit_price
+                db, item.item_name, item.item_type or "товар", item.unit_price,
+                import_note=f"Добавлен из позиций закупки (сопоставление), {_uname}, {_dtb.now().strftime('%d.%m.%Y %H:%M')}",
+                updated_by=_uname,
             )
             item.product_id = product_id
             item.match_confirmed = True

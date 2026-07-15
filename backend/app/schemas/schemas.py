@@ -867,6 +867,7 @@ class ProductOut(ProductCreate):
     tz_44fz_verified_by: Optional[str] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[str] = None
+    import_note: Optional[str] = None
     # Phase 17.1-08 — photo bytea storage. We expose only metadata here,
     # never the raw bytes (would bloat API responses to MBs per product).
     has_photo: bool = False

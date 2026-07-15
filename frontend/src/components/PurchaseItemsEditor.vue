@@ -1443,11 +1443,11 @@ const productById = computed(() => {
 })
 function itemCategoryOf(it: EditorItem): string {
   const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
-  return (p?.category || '').trim() || NO_CATEGORY
+  return (p?.category || '').trim() || ((it as any)._category || '').trim() || NO_CATEGORY
 }
 function itemTypeOf(it: EditorItem): string {
   const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
-  return (p?.product_type || '').trim() || NO_TYPE
+  return (p?.product_type || '').trim() || ((it as any)._product_type || '').trim() || NO_TYPE
 }
 const itemCategoryOptions = computed(() => {
   const s = new Set(localItems.value.map(itemCategoryOf))
@@ -2036,6 +2036,8 @@ const TARGET_FIELDS = [
   { value: 'vat_rate',      title: 'Ставка НДС',      required: false },
   { value: 'vat_amount',    title: 'Сумма НДС',       required: false },
   { value: 'total_with_vat', title: 'Стоимость с НДС', required: false },
+  { value: 'category',      title: 'Категория товара', required: false, hint: 'Для группировки/фильтрации; при конфликте главнее категория из каталога' },
+  { value: 'product_type',  title: 'Вид товара',      required: false, hint: 'Вид внутри категории; при конфликте главнее вид из каталога' },
 ]
 
 const currentSheetData = computed(() => {
@@ -2155,6 +2157,8 @@ function autoDetectMapping(headers: string[]): Record<string, number | null> {
     vat_rate:       ['ставка ндс', 'налоговая ставка', '% ндс', 'ндс %', 'vat rate'],
     vat_amount:     ['сумма ндс', 'налог', 'vat amount'],
     total_with_vat: ['с ндс', 'с учётом ндс', 'с налогом всего', 'итого с ндс', 'total with vat', 'к оплате', 'сумма с налогом'],
+    category:       ['категор', 'category'],
+    product_type:   ['вид товара'],
   }
   for (const [field, kws] of Object.entries(keywords)) {
     if (mapping[field] !== null) continue  // already set (e.g. total_price by с налогом)
@@ -2308,6 +2312,8 @@ async function doMappedImport() {
         vat_rate:      'col_vat_rate',
         vat_amount:    'col_vat_amount',
         total_with_vat: 'col_total_with_vat',
+        category:      'col_category',
+        product_type:  'col_product_type',
       }
       for (const [field, colIdx] of Object.entries(dragMapping.value)) {
         if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
@@ -2366,6 +2372,8 @@ async function doMappedImport() {
         vat_rate:      'col_vat_rate',
         vat_amount:    'col_vat_amount',
         total_with_vat: 'col_total_with_vat',
+        category:      'col_category',
+        product_type:  'col_product_type',
       }
       for (const [field, colIdx] of Object.entries(dragMapping.value)) {
         if (colIdx !== null && colIdx !== undefined && paramMapNoPid[field]) {
@@ -2388,7 +2396,7 @@ async function doMappedImport() {
       const backendItems: any[] = dataNoPid.items || []
       const newItems: EditorItem[] = backendItems.map((bi) => ({
         _uid: nextUid(),
-        product_id: null,
+        product_id: bi.product_id ?? null,
         item_name: bi.item_name || '',
         item_type: bi.item_type || 'товар',
         quantity: bi.quantity ?? 1,
@@ -2397,6 +2405,8 @@ async function doMappedImport() {
         total_price: bi.total_price ?? 0,
         country_origin: 'РФ',
         _description: bi.description || '',
+        _category: bi.category || '',
+        _product_type: bi.product_type || '',
       } as EditorItem))
       localItems.value = [...localItems.value, ...newItems]
       emitUpdate()

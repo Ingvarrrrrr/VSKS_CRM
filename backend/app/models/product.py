@@ -45,4 +45,7 @@ class Product(Base):
     updated_at = Column(DateTime, nullable=True)
     updated_by = Column(String(200), nullable=True)  # full_name пользователя
 
+    # Примечание об импорте: кто загрузил данные, каким способом и когда
+    import_note = Column(Text, nullable=True)
+
     feo_category = relationship("FeoCategory", backref="products")

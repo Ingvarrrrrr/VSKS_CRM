@@ -378,6 +378,9 @@
           <div v-if="editingId && editMeta.updated_by" class="text-caption text-medium-emphasis mt-1">
             Изменено: {{ editMeta.updated_by }} — {{ formatDate(editMeta.updated_at) }}
           </div>
+          <div v-if="editingId && editMeta.import_note" class="text-caption text-medium-emphasis mt-1">
+            {{ editMeta.import_note }}
+          </div>
         </v-card-title>
         <v-card-text class="px-6">
           <v-row dense>
@@ -988,7 +991,7 @@ const emptyForm = () => ({
 const form = reactive(emptyForm())
 // Bumped when we re-download / re-upload so the <img> bypasses browser cache.
 const photoCacheBuster = ref(0)
-const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null })
+const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null, import_note: null as string | null })
 
 // Name autocomplete + duplicate detection
 const nameSearch = ref('')
@@ -1197,6 +1200,7 @@ function openEdit(p: Product) {
   editingId.value = p.id
   editMeta.updated_at = (p as any).updated_at || null
   editMeta.updated_by = (p as any).updated_by || null
+  editMeta.import_note = (p as any).import_note || null
   dialog.value = true
 }
 

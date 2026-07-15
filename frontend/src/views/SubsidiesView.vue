@@ -840,23 +840,23 @@
                   <tr class="feo-tr feo-tr--total">
                     <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
                     <td class="feo-td feo-td-num font-weight-bold">
-                      <span :title="totalFeoBudget !== null ? 'Ручной бюджет субсидии' : 'Бюджет субсидии не задан'">
-                        {{ totalFeoBudget !== null ? formatCurrency(totalFeoBudget) : '—' }}
+                      <span title="Сумма верхних категорий: ручное ФЭО, без него — факт (поставлено/оплачено), иначе план">
+                        {{ formatCurrency(totalFeoEffective) }}
                       </span>
-                      <div class="feo-plan-note text-medium-emphasis font-weight-regular"
-                        title="Расчёт по дереву: ручное ФЭО, без него — факт (поставлено/оплачено), иначе план"
+                      <div v-if="totalFeoBudget !== null" class="feo-plan-note text-medium-emphasis font-weight-regular"
+                        title="Ручной бюджет субсидии"
                       >
-                        расчёт {{ formatCurrency(totalFeoEffective) }}
+                        бюджет {{ formatCurrency(totalFeoBudget) }}
                       </div>
                       <div v-if="totalFeoBudget !== null && totalFeoDiff > 0.005"
                         class="feo-plan-note font-weight-regular" style="color:#EF4444"
-                        :title="`Расчёт по дереву ${formatCurrency(totalFeoEffective)} превышает бюджет субсидии ${formatCurrency(totalFeoBudget)}`"
+                        :title="`Сумма категорий ${formatCurrency(totalFeoEffective)} превышает бюджет субсидии ${formatCurrency(totalFeoBudget)}`"
                       >
                         лишние {{ formatCurrency(totalFeoDiff) }}
                       </div>
                       <div v-else-if="totalFeoBudget !== null && totalFeoDiff < -0.005"
                         class="feo-plan-note font-weight-regular" style="color:#F59E0B"
-                        :title="`Расчёт по дереву ${formatCurrency(totalFeoEffective)} меньше бюджета субсидии ${formatCurrency(totalFeoBudget)}`"
+                        :title="`Сумма категорий ${formatCurrency(totalFeoEffective)} меньше бюджета субсидии ${formatCurrency(totalFeoBudget)}`"
                       >
                         не распределено {{ formatCurrency(-totalFeoDiff) }}
                       </div>

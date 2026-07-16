@@ -454,6 +454,7 @@ async def list_purchases(
     purchase_basis: Optional[str] = Query(None),
     framework_seq: Optional[int] = Query(None),
     vehicle_id: Optional[int] = Query(None),
+    wish_id: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
     scope: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -529,6 +530,8 @@ async def list_purchases(
         q = q.where(Purchase.framework_seq == framework_seq)
     if vehicle_id is not None:
         q = q.where(Purchase.vehicle_id == vehicle_id)
+    if wish_id is not None:
+        q = q.where(Purchase.wish_id == wish_id)
     # Hide purchases that were split into children unless explicitly requested
     if status != "split":
         q = q.where(Purchase.status != "split")

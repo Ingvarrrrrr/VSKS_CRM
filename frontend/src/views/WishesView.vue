@@ -89,6 +89,32 @@
       <v-card-text class="py-3">
         <div class="d-flex flex-wrap align-center" style="gap:12px">
           <v-autocomplete
+            v-if="isSaas"
+            v-model="filterAccountId"
+            :items="accountOptions"
+            item-title="name"
+            item-value="id"
+            label="Аккаунт"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:260px"
+          />
+          <v-autocomplete
+            v-if="isSaas"
+            v-model="filterOrgId"
+            :items="orgOptionsFiltered"
+            item-title="name"
+            item-value="id"
+            label="Организация"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:200px;max-width:260px"
+          />
+          <v-autocomplete
             v-model="filterSubsidyId"
             :items="subsidies"
             item-title="name"
@@ -275,6 +301,10 @@
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
         </template>
+        <template #item.approver_names="{ item }">
+          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
         <template #item.event_name="{ item }">
           {{ item.event_name || '—' }}
         </template>
@@ -333,9 +363,9 @@
               variant="tonal"
               color="purple"
               prepend-icon="mdi-cart-arrow-right"
-              @click="$router.push(`/orders/${item.purchase_id}/edit`)"
+              @click="goToWishPurchases(item)"
             >
-              Закупка
+              {{ wishPurchasesLabel(item) }}
             </v-btn>
           </div>
         </template>
@@ -371,8 +401,8 @@
                   От: <span class="font-weight-medium text-high-emphasis">{{ shortName(w.creator_name) }}</span><span
                     v-if="wishCoAuthors(w).length">, {{ wishCoAuthors(w).join(', ') }}</span>
                 </div>
-                <div v-if="w.assigned_to_name" class="text-caption text-medium-emphasis mb-1">
-                  Кому: <span class="font-weight-medium text-high-emphasis">{{ w.assigned_to_name }}</span>
+                <div v-if="wishRecipients(w)" class="text-caption text-medium-emphasis mb-1">
+                  Кому: <span class="font-weight-medium text-high-emphasis">{{ wishRecipients(w) }}</span>
                 </div>
                 <div v-if="w.executor_name" class="text-caption text-medium-emphasis mb-1">
                   Исполнитель: <span class="font-weight-medium text-high-emphasis">{{ w.executor_name }}</span>
@@ -420,9 +450,9 @@
                   variant="tonal"
                   color="purple"
                   prepend-icon="mdi-cart-arrow-right"
-                  @click.stop="$router.push(`/orders/${w.purchase_id}/edit`)"
+                  @click.stop="goToWishPurchases(w)"
                 >
-                  Закупка
+                  {{ wishPurchasesLabel(w) }}
                 </v-btn>
               </v-card-actions>
             </v-card>
@@ -556,6 +586,10 @@
         </template>
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
+        </template>
+        <template #item.approver_names="{ item }">
+          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.event_name="{ item }">
           {{ item.event_name || '—' }}
@@ -728,6 +762,10 @@
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
         </template>
+        <template #item.approver_names="{ item }">
+          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
         <template #item.event_name="{ item }">
           {{ item.event_name || '—' }}
         </template>
@@ -786,9 +824,9 @@
               size="x-small"
               variant="tonal"
               color="purple"
-              @click="$router.push(`/orders/${item.purchase_id}/edit`)"
+              @click="goToWishPurchases(item)"
             >
-              Перейти
+              {{ wishPurchasesLabel(item) }}
             </v-btn>
           </div>
         </template>
@@ -838,7 +876,7 @@
         <v-card-subtitle v-if="editingWish" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
           <div><b>От кого:</b> <span class="font-weight-medium">{{ shortName(editingWish.creator_name) || '—' }}</span><span
             v-if="wishCoAuthors(editingWish).length" class="text-medium-emphasis">, {{ wishCoAuthors(editingWish).join(', ') }}</span></div>
-          <div><b>Кому:</b> {{ editingWish.assigned_to_name || '—' }}</div>
+          <div><b>Кому:</b> {{ wishRecipients(editingWish) || '—' }}</div>
           <div><b>Создано:</b> {{ formatDate(editingWish.created_at) }}</div>
           <div v-if="editingWish.status"><b>Статус:</b> {{ statusLabel[editingWish.status] || editingWish.status }}</div>
           <div v-if="editingWish.executor_name"><b>Исполнитель:</b> {{ editingWish.executor_name }}</div>
@@ -1660,6 +1698,8 @@ interface Wish {
   executor_name?: string | null
   execution_deadline?: string | null
   member_names?: string[]
+  approver_names?: string[]
+  purchase_ids?: number[]
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -1679,6 +1719,23 @@ function wishCoAuthors(w: { creator_name?: string | null; member_names?: string[
     if (s && !seen.has(s)) { seen.add(s); out.push(s) }
   }
   return out
+}
+
+// «Кому»: назначенный или цепочка согласующих (Фамилия И.О.)
+function wishRecipients(w: { assigned_to_name?: string | null; approver_names?: string[] }): string {
+  if (w.assigned_to_name) return shortName(w.assigned_to_name)
+  return (w.approver_names || []).map(shortName).join(' → ')
+}
+// Конвертация разбивает заявку на несколько закупок: одна → сразу в карточку,
+// несколько → список закупок с фильтром по заявке
+function goToWishPurchases(w: Wish) {
+  const ids = w.purchase_ids || []
+  if (ids.length > 1) router.push({ path: '/orders', query: { wish_id: String(w.id) } })
+  else router.push(`/orders/${w.purchase_id}/edit`)
+}
+function wishPurchasesLabel(w: Wish): string {
+  const n = (w.purchase_ids || []).length
+  return n > 1 ? `Закупки (${n})` : 'Закупка'
 }
 
 interface Subsidy {
@@ -1755,6 +1812,7 @@ const wishHeaders = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
   { title: 'Заявка', key: 'title_col', sortable: false },
   { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
+  { title: 'Кому', key: 'approver_names', width: 170, sortable: false },
   { title: 'На чьё имя', key: 'assigned_to_name', width: 180, sortable: true },
   { title: 'Мероприятие', key: 'event_name', width: 180, sortable: true },
   { title: 'Создано', key: 'created_at', width: 110, sortable: true },
@@ -1786,9 +1844,26 @@ const filterCreatedFrom = ref('')
 const filterCreatedTo = ref('')
 const filterDeadlineFrom = ref('')
 const filterDeadlineTo = ref('')
+// SaaS-фильтры: аккаунт (корневая орг + дочерние) и конкретная организация
+const filterAccountId = ref<number | null>(null)
+const filterOrgId = ref<number | null>(null)
+const allOrgs = ref<{ id: number; name: string; root_org_id?: number | null; parent_org_id?: number | null }[]>([])
+const accountOptions = computed(() => allOrgs.value.filter(o => !o.root_org_id && !o.parent_org_id))
+const orgOptionsFiltered = computed(() => {
+  const acc = filterAccountId.value
+  if (!acc) return allOrgs.value
+  return allOrgs.value.filter(o => o.id === acc || o.root_org_id === acc || o.parent_org_id === acc)
+})
+watch(filterAccountId, () => {
+  if (filterOrgId.value && !orgOptionsFiltered.value.some(o => o.id === filterOrgId.value)) {
+    filterOrgId.value = null
+  }
+})
 
 function buildFilterParams(extra: Record<string, any> = {}) {
   const params = new URLSearchParams()
+  if (filterAccountId.value) params.set('account_org_id', String(filterAccountId.value))
+  if (filterOrgId.value) params.set('org_id', String(filterOrgId.value))
   if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
   if (filterCreatorId.value) params.set('creator_id', String(filterCreatorId.value))
   if (filterAssignedToId.value) params.set('assigned_to_id', String(filterAssignedToId.value))
@@ -1804,6 +1879,8 @@ function buildFilterParams(extra: Record<string, any> = {}) {
 }
 
 function resetFilters() {
+  filterAccountId.value = null
+  filterOrgId.value = null
   filterSubsidyId.value = null
   filterCreatorId.value = null
   filterAssignedToId.value = null
@@ -1816,7 +1893,7 @@ function resetFilters() {
 // Debounced filter watcher
 let filterTimer: any = null
 watch(
-  [filterSubsidyId, filterCreatorId, filterAssignedToId, filterCreatedFrom, filterCreatedTo, filterDeadlineFrom, filterDeadlineTo],
+  [filterAccountId, filterOrgId, filterSubsidyId, filterCreatorId, filterAssignedToId, filterCreatedFrom, filterCreatedTo, filterDeadlineFrom, filterDeadlineTo],
   () => {
     clearTimeout(filterTimer)
     filterTimer = setTimeout(() => reloadActiveTab(), 300)
@@ -2960,6 +3037,9 @@ onMounted(async () => {
     apiFetch<{ all: boolean; ids: number[] }>('/users/assignable-ids')
       .then(r => { assignableAll.value = !!r.all; assignableIds.value = new Set(r.ids || []) })
       .catch(() => {}),
+    isSaas.value
+      ? apiFetch<typeof allOrgs.value>('/organizations/').then(r => { allOrgs.value = r || [] }).catch(() => {})
+      : Promise.resolve(),
   ])
   await loadWishes()
   await loadIncoming()

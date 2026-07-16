@@ -791,6 +791,8 @@ class PurchaseUpdate(BaseModel):
 
 class PurchaseOut(PurchaseCreate):
     id: int
+    # Заявка-источник (конвертация заявки в закупки)
+    wish_id: Optional[int] = None
     items: List[PurchaseItemOut] = []
     files: List[PurchaseFileOut] = []
     subsidy_allocations: Optional[List[SubsidyAllocationOut]] = None

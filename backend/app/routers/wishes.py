@@ -257,6 +257,8 @@ async def list_wishes(
     creator_id: Optional[int] = None,
     assigned_to_id: Optional[int] = None,
     subsidy_id: Optional[int] = None,
+    org_id: Optional[int] = None,
+    account_org_id: Optional[int] = None,
     created_from: Optional[date] = None,
     created_to: Optional[date] = None,
     deadline_from: Optional[date] = None,
@@ -348,6 +350,17 @@ async def list_wishes(
         q = q.where(Wish.assigned_to == assigned_to_id)
     if subsidy_id is not None:
         q = q.where(Wish.subsidy_id == subsidy_id)
+    if org_id is not None:
+        q = q.where(Wish.org_id == org_id)
+    if account_org_id is not None:
+        # Аккаунт = корневая орг + все её дочерние (root_org_id/parent_org_id)
+        from app.models.organization import Organization
+        acc_orgs = select(Organization.id).where(or_(
+            Organization.id == account_org_id,
+            Organization.root_org_id == account_org_id,
+            Organization.parent_org_id == account_org_id,
+        ))
+        q = q.where(Wish.org_id.in_(acc_orgs))
     if created_from is not None:
         q = q.where(func.date(Wish.created_at) >= created_from)
     if created_to is not None:
@@ -378,6 +391,8 @@ async def list_wishes(
 
     # «От кого»: имена участников (WishMember) батчем, без N+1
     members_map: dict[int, list[str]] = {}
+    approvers_map: dict[int, list[str]] = {}
+    purchases_map: dict[int, list[int]] = {}
     if wish_ids:
         mres = await db.execute(
             select(WishMember.wish_id, User.full_name, User.username)
@@ -387,10 +402,32 @@ async def list_wishes(
         for m_wid, m_fn, m_un in mres.all():
             members_map.setdefault(m_wid, []).append(m_fn or m_un)
 
+        # «Кому»: цепочка согласующих по order_num (батчем, без N+1)
+        from app.models.wish_approval import WishApproval
+        ares = await db.execute(
+            select(WishApproval.wish_id, User.full_name, User.username)
+            .join(User, User.id == WishApproval.user_id)
+            .where(WishApproval.wish_id.in_(wish_ids))
+            .order_by(WishApproval.wish_id, WishApproval.order_num)
+        )
+        for a_wid, a_fn, a_un in ares.all():
+            approvers_map.setdefault(a_wid, []).append(a_fn or a_un)
+
+        # Конвертация разбивает заявку на несколько закупок — отдаём все id
+        pres = await db.execute(
+            select(Purchase.wish_id, Purchase.id)
+            .where(Purchase.wish_id.in_(wish_ids))
+            .order_by(Purchase.id)
+        )
+        for p_wid, p_id in pres.all():
+            purchases_map.setdefault(p_wid, []).append(p_id)
+
     out_list = []
     for w in wishes:
         enriched = _enrich(w)
         enriched.member_names = members_map.get(w.id, [])
+        enriched.approver_names = approvers_map.get(w.id, [])
+        enriched.purchase_ids = purchases_map.get(w.id, [])
         _unseen = unseen_map.get(w.id, [])
         enriched.unseen_fields = _unseen
         enriched.unseen_changes_count = len(_unseen)
@@ -436,6 +473,18 @@ async def get_wish(
         .where(WishMember.wish_id == wish_id)
     )).all()
     enriched.member_names = [fn or un for fn, un in mnames]
+
+    from app.models.wish_approval import WishApproval
+    anames = (await db.execute(
+        select(User.full_name, User.username)
+        .join(WishApproval, WishApproval.user_id == User.id)
+        .where(WishApproval.wish_id == wish_id)
+        .order_by(WishApproval.order_num)
+    )).all()
+    enriched.approver_names = [fn or un for fn, un in anames]
+    enriched.purchase_ids = (await db.execute(
+        select(Purchase.id).where(Purchase.wish_id == wish_id).order_by(Purchase.id)
+    )).scalars().all()
 
     # Phase 31: unseen_fields for single wish GET (D-05..D-09)
     try:

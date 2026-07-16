@@ -161,6 +161,12 @@
       ФЭО: {{ filterFeoCategoryName }}
     </v-chip>
 
+    <!-- Wish filter badge: все закупки, созданные из одной заявки -->
+    <v-chip v-if="filterWishId" color="deep-orange" variant="tonal" closable class="mb-3" prepend-icon="mdi-filter"
+      @click:close="filterWishId = null">
+      Закупки из заявки #{{ filterWishId }} ({{ filteredOrders.length }})
+    </v-chip>
+
     <!-- Bulk actions bar -->
     <div v-if="selectedOrders.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
       <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
@@ -1356,6 +1362,7 @@ const filterOverdue  = ref(false)
 const filterDueSoon  = ref(false)
 const filterFeoCategoryName = ref<string>('')
 const filterFeoCategoryIds = ref<Set<number>>(new Set())  // всё поддерево категории
+const filterWishId = ref<number | null>(null)  // все закупки одной заявки
 const filterTypes = ref<string[]>([])
 const filterContractorIds = ref<number[]>([])
 const fProduct = ref('')
@@ -1492,6 +1499,7 @@ const filteredOrders = computed(() => {
     r = r.filter(o => statuses.includes(o.status))
   }
   if (filterSubsidyId.value) r = r.filter(o => o.subsidy_id === filterSubsidyId.value)
+  if (filterWishId.value) r = r.filter(o => (o as any).wish_id === filterWishId.value)
   if (filterFeoCategoryId.value) {
     const feoIds = filterFeoCategoryIds.value
     r = feoIds.size
@@ -1625,6 +1633,7 @@ onMounted(async () => {
   }
   const qStatus = route.query.status
   if (qStatus && typeof qStatus === 'string') filterStatus.value = qStatus
+  if (route.query.wish_id) filterWishId.value = Number(route.query.wish_id)
   if (route.query.method)   filterMethod.value  = route.query.method as string
   if (route.query.overdue)  filterOverdue.value  = true
   if (route.query.due_soon) filterDueSoon.value  = true

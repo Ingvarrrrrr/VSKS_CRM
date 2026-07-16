@@ -912,6 +912,11 @@
                   </v-col>
                   <v-col v-if="wishForm.subsidy_id" cols="12">
                     <div class="text-caption text-medium-emphasis mb-1">Категория ФЭО</div>
+                    <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
+                      Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
+                      пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
+                      закупка будет создана без категории ФЭО, её можно задать в «План-графике».
+                    </v-alert>
                     <FeoCascadeSelect
                       v-model="wishFeoSelected"
                       :nodes="wishFeoNodes"
@@ -2057,6 +2062,14 @@ const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
   subsidyId: computed(() => wishForm.value.subsidy_id),
 })
 
+// ФЭО заявки не найдена в текущем дереве субсидии → категорию удалили/пересоздали.
+// Согласование не блокируется (backend обнулит и создаст закупку без ФЭО),
+// но в форме подсказываем выбрать актуальную категорию.
+const wishFeoStale = computed(() => {
+  const id = wishFeoSelected.value
+  return !!id && wishFeoNodes.value.length > 0 && !wishFeoNodes.value.some(n => n.id === id)
+})
+
 // Phase 31-07: Undo/Redo for wish edit form (WishDistributionCard is display-only;
 // actual wish editing happens here in WishesView via wishForm ref)
 const undoRedoWish = useUndoRedo(wishForm as any)
@@ -2689,8 +2702,9 @@ async function deleteWish(wish: Wish) {
 async function approveWish(wish: Wish) {
   approvingId.value = wish.id
   try {
-    await apiFetch(`/wishes/${wish.id}/approve`, { method: 'POST' })
-    showSnack('Заявка одобрена')
+    const res = await apiFetch<{ convert_warning?: string | null }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
+    if (res?.convert_warning) showSnack(res.convert_warning, 'warning')
+    else showSnack('Заявка одобрена')
     await reloadActiveTab()
   } catch (e: any) {
     showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')

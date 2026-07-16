@@ -162,6 +162,8 @@ class WishOut(BaseModel):
     # Phase 31: diff-tracking — unseen changes from other users
     unseen_fields: List[str] = []
     unseen_changes_count: int = 0
+    # Предупреждение конвертации (например, удалённая категория ФЭО обнулена)
+    convert_warning: Optional[str] = None
 
     class Config:
         from_attributes = True

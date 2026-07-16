@@ -120,18 +120,25 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         valid_feo = set((await db.execute(
             select(FeoCategory.id).where(FeoCategory.id.in_(feo_ids))
         )).scalars().all())
+    # Битые ссылки НЕ блокируют согласование: обнуляем и продолжаем — закупка
+    # создаётся без ФЭО, категорию можно задать в План-графике. Причину
+    # возвращаем предупреждением (wish._convert_warning) в approve/decide.
+    convert_warning: str | None = None
     if wish.feo_category_id and wish.feo_category_id not in valid_feo:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Категория ФЭО, выбранная в заявке, была удалена или пересоздана "
-                f"(id={wish.feo_category_id}). Выберите категорию ФЭО заново "
-                "(поле «Категория ФЭО» в заявке) и повторите одобрение."
-            ),
+        convert_warning = (
+            "Категория ФЭО, выбранная в заявке, была удалена из справочника "
+            "(структуру ФЭО субсидии пересоздавали). Закупка создана без категории ФЭО — "
+            "задайте её в «План-графике», чтобы сумма попала в план ФЭО."
         )
+        wish.feo_category_id = None
     for it in items_full:
         if it.feo_category_id and it.feo_category_id not in valid_feo:
             it.feo_category_id = None
+            convert_warning = convert_warning or (
+                "У части позиций категория ФЭО была удалена из справочника — "
+                "они добавлены в закупку без ФЭО, задайте категории в «План-графике»."
+            )
+    wish._convert_warning = convert_warning
 
     # Backfill product_id + category by item_name for legacy wish_items
     # (created before product_id was persisted on wish_items).
@@ -664,10 +671,13 @@ async def approve_wish(
     if wish.items:
         await _distribute_wish_to_purchases(wish, db, current_user)
         wish.status = "converted"
+    warning = getattr(wish, "_convert_warning", None)
     await db.commit()
     await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
-    return _enrich(wish)
+    out = _enrich(wish)
+    out.convert_warning = warning
+    return out
 
 
 @router.post("/{wish_id}/reject", response_model=WishOut)
@@ -971,6 +981,7 @@ async def approve_distribution(
         "purchase_ids": ids,
         "count": len(ids),
         "status": "converted",
+        "warning": getattr(wish, "_convert_warning", None),
     }
 
 

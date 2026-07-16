@@ -312,9 +312,10 @@ async def decide_wish_approval(
                 if items > 0:
                     await _distribute_wish_to_purchases(wish, db, current_user)
                     wish.status = "converted"
+                    # например, удалённая категория ФЭО обнулена — предупреждаем
+                    convert_error = getattr(wish, "_convert_warning", None)
             except HTTPException as e:
-                # например, удалённая категория ФЭО — заявка остаётся approved,
-                # причину показываем согласующему
+                # заявка остаётся approved, причину показываем согласующему
                 convert_error = e.detail
             except Exception as e:
                 logger.warning("auto-convert on full approval failed: %s", e)

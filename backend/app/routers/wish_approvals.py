@@ -301,8 +301,8 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
-            # Полностью согласованная заявка автоматически уходит в «План-график»:
-            # создаются закупки (plan_schedule), суммы попадают в план выбранного ФЭО.
+            # Полностью согласованная заявка автоматически уходит в «План-график»
+            # ОДНОЙ закупкой (без разбиения — разбиение только через канбан-распределение).
             try:
                 from app.routers.wishes import _distribute_wish_to_purchases
                 from app.models.wish_item import WishItem
@@ -310,7 +310,7 @@ async def decide_wish_approval(
                     select(func.count()).select_from(WishItem).where(WishItem.wish_id == wid)
                 )).scalar() or 0
                 if items > 0:
-                    await _distribute_wish_to_purchases(wish, db, current_user)
+                    await _distribute_wish_to_purchases(wish, db, current_user, split=False)
                     wish.status = "converted"
                     # например, удалённая категория ФЭО обнулена — предупреждаем
                     convert_error = getattr(wish, "_convert_warning", None)

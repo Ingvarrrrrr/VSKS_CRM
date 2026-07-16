@@ -88,9 +88,11 @@ async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     return res.scalar_one_or_none() is not None
 
 
-async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule") -> list[int]:
+async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План-график») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
+    split=False (быстрое одобрение / полное согласование цепочкой): одна закупка со ВСЕМИ позициями,
+    без разбиения по категориям — разбиение только при явном распределении через канбан.
     Возвращает список id созданных закупок. Транзакцию/commit НЕ делает — это на вызывающем.
     Защита от дублей: если по заявке уже есть закупки (purchases.wish_id == wish.id) — НИЧЕГО не создаёт и возвращает их id."""
     from sqlalchemy.orm import selectinload as sil
@@ -166,8 +168,11 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         return "__uncategorized__"
 
     groups: dict[str, list] = {}
-    for it in items_full:
-        groups.setdefault(_resolve_key(it), []).append(it)
+    if split:
+        for it in items_full:
+            groups.setdefault(_resolve_key(it), []).append(it)
+    elif items_full:
+        groups["__all__"] = list(items_full)
 
     if not groups:
         raise HTTPException(status_code=400, detail="Нет позиций для распределения")
@@ -176,14 +181,16 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     for column_key, items_in_col in groups.items():
         total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
         display_key = "Не определено" if column_key == "__uncategorized__" else column_key
+        title = (wish.title or "").strip() or f"Заявка #{wish.id}"
+        subject = title if column_key == "__all__" else f"{title} — {display_key}"
         total_qty_grp = sum(float(i.quantity or 0) for i in items_in_col)
         p = Purchase(
             wish_id=wish.id,
             subsidy_id=wish.subsidy_id,
             feo_category_id=wish.feo_category_id,
             event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
-            item_name=(wish.title or "").strip() or f"Заявка #{wish.id}",
-            subject=f"{(wish.title or '').strip() or f'Заявка #{wish.id}'} — {display_key}",
+            item_name=title,
+            subject=subject,
             planned_quantity=total_qty_grp or wish.quantity,
             planned_total_price=total_nmck,
             total_nmck=total_nmck,
@@ -715,10 +722,11 @@ async def approve_wish(
 
     wish.status = "approved"
     wish.approved_by = current_user.id
-    # Согласованная заявка автоматически уходит в «План-график»: создаются закупки
-    # (status='plan_schedule'), их суммы попадают в план выбранного уровня ФЭО.
+    # Согласованная заявка автоматически уходит в «План-график» ОДНОЙ закупкой
+    # (быстрое одобрение — без разбиения по категориям), сумма попадает в план ФЭО.
+    created_ids: list[int] = []
     if wish.items:
-        await _distribute_wish_to_purchases(wish, db, current_user)
+        created_ids = await _distribute_wish_to_purchases(wish, db, current_user, split=False)
         wish.status = "converted"
     warning = getattr(wish, "_convert_warning", None)
     await db.commit()
@@ -726,6 +734,7 @@ async def approve_wish(
     wish = await _load_wish(wish_id, db)
     out = _enrich(wish)
     out.convert_warning = warning
+    out.purchase_ids = created_ids
     return out
 
 
@@ -820,7 +829,7 @@ async def force_wish_status(
         if not wish.items:
             raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
         try:
-            await _distribute_wish_to_purchases(wish, db, current_user)
+            await _distribute_wish_to_purchases(wish, db, current_user, split=False)
             wish.status = "converted"
             wish.approved_by = wish.approved_by or current_user.id
             await db.commit()

@@ -236,12 +236,12 @@
             @update:model-value="v => colFilters.creator_name = v"
             @sort="dir => colSort.creator_name = dir" />
         </template>
-        <template #header.assigned_to_name="{ column }">
-          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
-            :model-value="colFilters.assigned_to_name"
-            :sort-by="colSort.assigned_to_name"
-            @update:model-value="v => colFilters.assigned_to_name = v"
-            @sort="dir => colSort.assigned_to_name = dir" />
+        <template #header.approver_names="{ column }">
+          <ColumnHeaderMenu col-key="approver_names" :title="column.title" col-type="text"
+            :model-value="colFilters.approver_names"
+            :sort-by="colSort.approver_names"
+            @update:model-value="v => colFilters.approver_names = v"
+            @sort="dir => colSort.approver_names = dir" />
         </template>
         <template #header.created_at="{ column }">
           <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
@@ -298,11 +298,8 @@
           <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
             v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
-        <template #item.assigned_to_name="{ item }">
-          {{ item.assigned_to_name || '—' }}
-        </template>
         <template #item.approver_names="{ item }">
-          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-if="wishRecipients(item)">{{ wishRecipients(item) }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.event_name="{ item }">
@@ -522,12 +519,12 @@
             @update:model-value="v => colFilters.creator_name = v"
             @sort="dir => colSort.creator_name = dir" />
         </template>
-        <template #header.assigned_to_name="{ column }">
-          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
-            :model-value="colFilters.assigned_to_name"
-            :sort-by="colSort.assigned_to_name"
-            @update:model-value="v => colFilters.assigned_to_name = v"
-            @sort="dir => colSort.assigned_to_name = dir" />
+        <template #header.approver_names="{ column }">
+          <ColumnHeaderMenu col-key="approver_names" :title="column.title" col-type="text"
+            :model-value="colFilters.approver_names"
+            :sort-by="colSort.approver_names"
+            @update:model-value="v => colFilters.approver_names = v"
+            @sort="dir => colSort.approver_names = dir" />
         </template>
         <template #header.created_at="{ column }">
           <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
@@ -584,11 +581,8 @@
           <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
             v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
-        <template #item.assigned_to_name="{ item }">
-          {{ item.assigned_to_name || '—' }}
-        </template>
         <template #item.approver_names="{ item }">
-          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-if="wishRecipients(item)">{{ wishRecipients(item) }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.event_name="{ item }">
@@ -697,12 +691,12 @@
             @update:model-value="v => colFilters.creator_name = v"
             @sort="dir => colSort.creator_name = dir" />
         </template>
-        <template #header.assigned_to_name="{ column }">
-          <ColumnHeaderMenu col-key="assigned_to_name" :title="column.title" col-type="text"
-            :model-value="colFilters.assigned_to_name"
-            :sort-by="colSort.assigned_to_name"
-            @update:model-value="v => colFilters.assigned_to_name = v"
-            @sort="dir => colSort.assigned_to_name = dir" />
+        <template #header.approver_names="{ column }">
+          <ColumnHeaderMenu col-key="approver_names" :title="column.title" col-type="text"
+            :model-value="colFilters.approver_names"
+            :sort-by="colSort.approver_names"
+            @update:model-value="v => colFilters.approver_names = v"
+            @sort="dir => colSort.approver_names = dir" />
         </template>
         <template #header.created_at="{ column }">
           <ColumnHeaderMenu col-key="created_at" :title="column.title" col-type="date"
@@ -759,11 +753,8 @@
           <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
             v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
-        <template #item.assigned_to_name="{ item }">
-          {{ item.assigned_to_name || '—' }}
-        </template>
         <template #item.approver_names="{ item }">
-          <span v-if="item.approver_names?.length">{{ item.approver_names.map(shortName).join(', ') }}</span>
+          <span v-if="wishRecipients(item)">{{ wishRecipients(item) }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.event_name="{ item }">
@@ -1812,8 +1803,8 @@ const wishHeaders = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
   { title: 'Заявка', key: 'title_col', sortable: false },
   { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
-  { title: 'Кому', key: 'approver_names', width: 170, sortable: false },
-  { title: 'На чьё имя', key: 'assigned_to_name', width: 180, sortable: true },
+  // «Кому» = назначенный (assigned_to) или цепочка согласующих — одно понятие
+  { title: 'Кому', key: 'approver_names', width: 180, sortable: false },
   { title: 'Мероприятие', key: 'event_name', width: 180, sortable: true },
   { title: 'Создано', key: 'created_at', width: 110, sortable: true },
   { title: 'Срок', key: 'desired_date', width: 110, sortable: true },
@@ -2954,7 +2945,7 @@ const colFilters = ref<Record<string, any>>({
   status: null,
   title_col: null,
   creator_name: null,
-  assigned_to_name: null,
+  approver_names: null,
   event_name: null,
   created_at: null,
   desired_date: null,
@@ -2965,7 +2956,7 @@ const colSort = ref<Record<string, 'asc' | 'desc' | null>>({
   status: null,
   title_col: null,
   creator_name: null,
-  assigned_to_name: null,
+  approver_names: null,
   event_name: null,
   created_at: null,
   desired_date: null,
@@ -2981,8 +2972,8 @@ function applyColFilters(rows: Wish[]): Wish[] {
   if (colFilters.value.creator_name?.type === 'text' && colFilters.value.creator_name.q)
     result = result.filter(r => [r.creator_name || '', ...(r.member_names || [])]
       .join(' ').toLowerCase().includes(colFilters.value.creator_name.q.toLowerCase()))
-  if (colFilters.value.assigned_to_name?.type === 'text' && colFilters.value.assigned_to_name.q)
-    result = result.filter(r => (r.assigned_to_name || '').toLowerCase().includes(colFilters.value.assigned_to_name.q.toLowerCase()))
+  if (colFilters.value.approver_names?.type === 'text' && colFilters.value.approver_names.q)
+    result = result.filter(r => wishRecipients(r).toLowerCase().includes(colFilters.value.approver_names.q.toLowerCase()))
   if (colFilters.value.event_name?.type === 'text' && colFilters.value.event_name.q)
     result = result.filter(r => ((r as any).event_name || '').toLowerCase().includes(colFilters.value.event_name.q.toLowerCase()))
   if (colFilters.value.executor_name?.type === 'text' && colFilters.value.executor_name.q)
@@ -2995,8 +2986,9 @@ function applyColFilters(rows: Wish[]): Wish[] {
   if (activeSort) {
     const [k, dir] = activeSort
     result.sort((a: any, b: any) => {
-      const va = a[k === 'title_col' ? 'title' : k] ?? ''
-      const vb = b[k === 'title_col' ? 'title' : k] ?? ''
+      const pick = (r: any) => k === 'approver_names' ? wishRecipients(r) : r[k === 'title_col' ? 'title' : k]
+      const va = pick(a) ?? ''
+      const vb = pick(b) ?? ''
       const cmp = String(va).localeCompare(String(vb), 'ru', { numeric: true })
       return dir === 'asc' ? cmp : -cmp
     })

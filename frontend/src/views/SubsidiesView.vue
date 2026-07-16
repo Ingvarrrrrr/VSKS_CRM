@@ -304,6 +304,14 @@
           <div v-else>
             <div class="detail-feo-header">
               <span class="chart-card-title">Направления ФЭО</span>
+              <div class="d-flex align-center ml-4" style="gap:6px" title="Группировка позиций «из заявок» при раскрытии направления">
+                <span class="text-caption text-medium-emphasis">Позиции:</span>
+                <v-btn-toggle v-model="feoItemsGroupBy" density="compact" mandatory variant="outlined" color="teal" style="height:26px">
+                  <v-btn size="x-small" value="none">Нет</v-btn>
+                  <v-btn size="x-small" value="category">По категориям</v-btn>
+                  <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
+                </v-btn-toggle>
+              </div>
               <div class="d-flex align-center ml-auto" style="gap:8px">
                 <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
                 <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
@@ -442,11 +450,18 @@
                       <!-- Наименование -->
                       <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
                         <div class="feo-name-inner">
-                          <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : undefined">
+                          <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : (hasReqItems(node) ? toggleReqItems(node) : undefined)">
                             <v-icon
                               v-if="node.hasChildren"
                               size="15"
                               :icon="expandedIds.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                              color="grey"
+                              class="mr-1 cursor-pointer"
+                            />
+                            <v-icon
+                              v-else-if="hasReqItems(node)"
+                              size="15"
+                              :icon="expandedReqItems.has(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                               color="grey"
                               class="mr-1 cursor-pointer"
                             />
@@ -455,8 +470,14 @@
                           <v-icon
                             size="16"
                             class="mr-1 flex-shrink-0"
-                            :icon="node.hasChildren ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder') : 'mdi-file-document-outline'"
+                            :class="hasReqItems(node) ? 'cursor-pointer' : ''"
+                            :icon="node.hasChildren
+                              ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
+                              : hasReqItems(node)
+                                ? (expandedReqItems.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')
+                                : 'mdi-file-document-outline'"
                             :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
+                            @click="hasReqItems(node) && !node.hasChildren ? toggleReqItems(node) : undefined"
                           />
                           <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
                           <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
@@ -876,6 +897,61 @@
                         </div>
                       </td>
                     </tr>
+
+                    <!-- ── Позиции «из заявок»: раскрытие листа-папки ── -->
+                    <template v-if="!node.hasChildren && expandedReqItems.has(node.id) && isNodeVisible(node)">
+                      <tr v-if="loadingPlannedItems" :key="`req-load-${node.id}`" class="feo-tr">
+                        <td colspan="7" class="feo-td" :style="{ paddingLeft: `${(node.depth + 1) * 20 + 28}px`, padding: '6px 8px' }">
+                          <v-progress-circular indeterminate size="14" width="2" color="teal" class="mr-2" />
+                          <span class="text-caption">Загрузка позиций...</span>
+                        </td>
+                      </tr>
+                      <template v-else>
+                        <tr
+                          v-for="row in reqItemRowsFor(node)"
+                          :key="`req-${node.id}-${row.key}`"
+                          class="feo-tr feo-req-row"
+                          :style="row.item ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
+                        >
+                          <td class="feo-td feo-td-name" :style="{ paddingLeft: reqRowIndent(node, row) }">
+                            <div class="feo-name-inner">
+                              <template v-if="!row.item">
+                                <v-icon size="14" class="mr-1 flex-shrink-0"
+                                  :icon="row.level === 1 ? 'mdi-shape-outline' : 'mdi-tag-outline'"
+                                  :color="row.level === 1 ? '#0D9488' : '#64748B'" />
+                                <span :style="row.level === 1 ? 'font-weight:600;font-size:12px' : 'font-weight:500;font-size:12px;color:#475569'">{{ row.header }}</span>
+                                <span class="feo-code ml-2">{{ row.count }} поз.</span>
+                              </template>
+                              <template v-else>
+                                <v-icon size="14" class="mr-1 flex-shrink-0" icon="mdi-package-variant-closed" color="#94A3B8" />
+                                <span style="font-size:12px">{{ row.item.item_name }}</span>
+                                <a href="javascript:void(0)" class="feo-purchase-link ml-2 flex-shrink-0"
+                                  :title="`Перейти в закупку #${row.item.purchase_id}`"
+                                  @click.stop="router.push(`/orders/${row.item.purchase_id}`)"
+                                >
+                                  <v-icon icon="mdi-link-variant" size="10" class="mr-1" />{{ row.item.registry_number || (row.item.purchase_number != null ? `№ ${row.item.purchase_number}` : `#${row.item.purchase_id}`) }}
+                                </a>
+                              </template>
+                            </div>
+                          </td>
+                          <td class="feo-td feo-td-num"></td>
+                          <td class="feo-td feo-td-num">
+                            <span v-if="!row.item" class="feo-amount text-medium-emphasis" style="font-size:12px">{{ row.sumQty }}</span>
+                            <span v-else class="feo-amount" style="font-size:12px">{{ row.item.quantity }}{{ row.item.unit ? ` ${row.item.unit}` : '' }}</span>
+                          </td>
+                          <td class="feo-td feo-td-num">
+                            <span v-if="!row.item" class="feo-amount text-medium-emphasis" style="font-size:12px">{{ formatCurrency(row.sum) }}</span>
+                            <template v-else>
+                              <span class="feo-amount" style="font-size:12px">{{ formatCurrency(row.item.total_price) }}</span>
+                              <div v-if="row.item.unit_price" class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.item.unit_price) }}/ед.</div>
+                            </template>
+                          </td>
+                          <td class="feo-td feo-td-num"></td>
+                          <td class="feo-td feo-td-num"></td>
+                          <td class="feo-td feo-td-actions"></td>
+                        </tr>
+                      </template>
+                    </template>
                   </template>
 
                   <!-- Drop zone: переместить на верхний уровень -->
@@ -3156,6 +3232,104 @@ async function refreshComparison(categoryId: number) {
   comparisonData.value[categoryId] = res
 }
 
+// ── Позиции «из заявок» в дереве ФЭО (раскрытие листа-папки) ──
+interface FeoReqItem {
+  id: number
+  item_name: string
+  quantity: number
+  unit: string | null
+  unit_price: number
+  total_price: number
+  purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
+  purchase_status: string
+  category: string
+  product_type: string
+}
+interface FeoReqRow {
+  key: string
+  header: string
+  level: number
+  count: number
+  sumQty: number
+  sum: number
+  item: FeoReqItem | null
+}
+const plannedItemsByCat = ref<Record<number, FeoReqItem[]>>({})
+const plannedItemsLoaded = ref(false)
+const loadingPlannedItems = ref(false)
+const expandedReqItems = ref<Set<number>>(new Set())
+const feoItemsGroupBy = ref<'none' | 'category' | 'category_type'>('none')
+
+function hasReqItems(node: FeoNode): boolean {
+  return !node.hasChildren && (plannedPurchaseQty.value[node.id] || 0) > 0
+}
+
+async function toggleReqItems(node: FeoNode) {
+  const id = node.id
+  if (expandedReqItems.value.has(id)) {
+    expandedReqItems.value.delete(id)
+    return
+  }
+  expandedReqItems.value.add(id)
+  if (plannedItemsLoaded.value || !selectedId.value) return
+  loadingPlannedItems.value = true
+  try {
+    plannedItemsByCat.value = await apiFetch<Record<number, FeoReqItem[]>>(
+      `/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`
+    )
+    plannedItemsLoaded.value = true
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || 'Не удалось загрузить позиции из заявок', 'error')
+  } finally {
+    loadingPlannedItems.value = false
+  }
+}
+
+function reqItemRowsFor(node: FeoNode): FeoReqRow[] {
+  const items = plannedItemsByCat.value[node.id] || []
+  const mode = feoItemsGroupBy.value
+  const itemRow = (it: FeoReqItem): FeoReqRow =>
+    ({ key: `i${it.id}`, header: '', level: 0, count: 0, sumQty: 0, sum: 0, item: it })
+  if (mode === 'none') return items.map(itemRow)
+  const sorted = [...items].sort((a, b) =>
+    a.category.localeCompare(b.category, 'ru')
+    || a.product_type.localeCompare(b.product_type, 'ru')
+    || a.item_name.localeCompare(b.item_name, 'ru'))
+  const rows: FeoReqRow[] = []
+  let curCat: string | null = null
+  let curType: string | null = null
+  const groupRow = (key: string, header: string, level: number, grp: FeoReqItem[]): FeoReqRow => ({
+    key, header, level,
+    count: grp.length,
+    sumQty: Math.round(grp.reduce((s, x) => s + x.quantity, 0) * 10000) / 10000,
+    sum: grp.reduce((s, x) => s + x.total_price, 0),
+    item: null,
+  })
+  for (const it of sorted) {
+    if (it.category !== curCat) {
+      curCat = it.category
+      curType = null
+      rows.push(groupRow(`c-${curCat}`, curCat, 1, sorted.filter(x => x.category === curCat)))
+    }
+    if (mode === 'category_type' && it.product_type !== curType) {
+      curType = it.product_type
+      rows.push(groupRow(`c-${curCat}-t-${curType}`, curType, 2,
+        sorted.filter(x => x.category === curCat && x.product_type === curType)))
+    }
+    rows.push(itemRow(it))
+  }
+  return rows
+}
+
+function reqRowIndent(node: FeoNode, row: FeoReqRow): string {
+  const extra = row.item
+    ? (feoItemsGroupBy.value === 'none' ? 0 : feoItemsGroupBy.value === 'category' ? 1 : 2)
+    : row.level - 1
+  return `${(node.depth + 1 + extra) * 20 + 8}px`
+}
+
 function openMapDialog(item: FeoActualItem, categoryId: number) {
   mapTarget.value = item
   mapCategoryId.value = categoryId
@@ -4043,6 +4217,9 @@ async function loadFeo(subsidyId: number) {
   purchaseTotals.value = {}
   plannedPurchaseTotals.value = {}
   plannedPurchaseQty.value = {}
+  plannedItemsByCat.value = {}
+  plannedItemsLoaded.value = false
+  expandedReqItems.value = new Set()
   try {
     const [cats, totals, plannedTotals] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),

@@ -88,6 +88,25 @@ async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     return res.scalar_one_or_none() is not None
 
 
+async def _ensure_no_pending_approvals(wish, db: AsyncSession) -> None:
+    """Конвертация заявки запрещена, пока цепочка согласования не завершена:
+    иначе заявка уходит в converted, а pending-согласующие «зависают»
+    и не видят её во вкладке «На согласовании мне»."""
+    from app.models.wish_approval import WishApproval
+    pending = (await db.execute(
+        select(WishApproval)
+        .where(WishApproval.wish_id == wish.id, WishApproval.status == "pending")
+        .order_by(WishApproval.order_num)
+    )).scalars().all()
+    if pending:
+        names = ", ".join(a.approver_full_name or f"пользователь #{a.user_id}" for a in pending)
+        raise HTTPException(
+            status_code=409,
+            detail=f"У заявки незавершённое согласование ({names}). "
+                   "Дождитесь решения согласующих или удалите цепочку согласования.",
+        )
+
+
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План-график») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
@@ -98,12 +117,16 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     from sqlalchemy.orm import selectinload as sil
     from app.models.product import Product
 
-    # Защита от дублей: если по заявке уже есть закупки — ничего не создаём
+    # Защита от дублей: если по заявке уже есть закупки — ничего не создаём,
+    # но скрытые до одобрения (status='wishes') продвигаем в целевой статус
     existing = (await db.execute(
-        select(Purchase.id).where(Purchase.wish_id == wish.id)
+        select(Purchase).where(Purchase.wish_id == wish.id)
     )).scalars().all()
     if existing:
-        return list(existing)
+        for p in existing:
+            if p.status == "wishes":
+                p.status = purchase_status
+        return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
     res = await db.execute(
@@ -720,6 +743,8 @@ async def approve_wish(
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
+    await _ensure_no_pending_approvals(wish, db)
+
     wish.status = "approved"
     wish.approved_by = current_user.id
     # Согласованная заявка автоматически уходит в «План-график» ОДНОЙ закупкой
@@ -829,6 +854,20 @@ async def force_wish_status(
         if not wish.items:
             raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
         try:
+            # Аварийный рычаг: цепочку не блокируем, но закрываем pending-согласования,
+            # чтобы заявка не «зависла» у согласующих
+            from app.models.wish_approval import WishApproval
+            pending = (await db.execute(
+                select(WishApproval).where(
+                    WishApproval.wish_id == wish.id,
+                    WishApproval.status == "pending",
+                )
+            )).scalars().all()
+            for a in pending:
+                a.status = "approved"
+                a.comment = "Закрыто принудительным переводом статуса"
+                a.decided_by_user_id = current_user.id
+                a.decided_at = func.now()
             await _distribute_wish_to_purchases(wish, db, current_user, split=False)
             wish.status = "converted"
             wish.approved_by = wish.approved_by or current_user.id
@@ -878,6 +917,23 @@ async def convert_wish(
     org_ids = get_org_filter(current_user)
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    await _ensure_no_pending_approvals(wish, db)
+
+    # Защита от дублей: закупки по заявке уже есть — не создаём вторую,
+    # скрытые (status='wishes') продвигаем в План-график
+    existing = (await db.execute(
+        select(Purchase).where(Purchase.wish_id == wish.id)
+    )).scalars().all()
+    if existing:
+        for ep in existing:
+            if ep.status == "wishes":
+                ep.status = "plan_schedule"
+        wish.status = "converted"
+        wish.approved_by = wish.approved_by or current_user.id
+        wish.purchase_id = wish.purchase_id or existing[0].id
+        await db.commit()
+        return {"wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted"}
 
     # Preload items with products (B4/B10)
     res = await db.execute(
@@ -1021,6 +1077,8 @@ async def approve_distribution(
         raise HTTPException(status_code=403, detail="Распределять заявку может админ или назначенный согласующий")
     if not wish.items:
         raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
+
+    await _ensure_no_pending_approvals(wish, db)
 
     try:
         ids = await _distribute_wish_to_purchases(wish, db, current_user)

@@ -80,6 +80,62 @@ async def get_planned_purchase_totals(
     return {r.cat_id: {"total": float(r.total), "qty": float(r.qty)} for r in rows}
 
 
+@router.get("/planned-purchase-items")
+async def get_planned_purchase_items(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Позиции закупок «из заявок» per feo_category_id (статусы план-графика и дальше)."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+    from app.routers.purchase_budget import PLANNED_STATUSES
+
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    stmt = (
+        select(
+            cat_col.label("cat_id"),
+            PurchaseItem.id,
+            PurchaseItem.item_name,
+            PurchaseItem.quantity,
+            PurchaseItem.unit,
+            PurchaseItem.unit_price,
+            PurchaseItem.total_price,
+            PurchaseItem.purchase_id,
+            Purchase.purchase_number,
+            Purchase.registry_number,
+            Purchase.status.label("purchase_status"),
+            Product.category.label("product_category"),
+            Product.product_type.label("product_type"),
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .outerjoin(Product, PurchaseItem.product_id == Product.id)
+        .where(Purchase.subsidy_id == subsidy_id)
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(cat_col.isnot(None))
+        .order_by(cat_col, PurchaseItem.item_name)
+    )
+    rows = (await db.execute(stmt)).all()
+    result: dict[int, list] = {}
+    for r in rows:
+        result.setdefault(r.cat_id, []).append({
+            "id": r.id,
+            "item_name": r.item_name,
+            "quantity": float(r.quantity or 0),
+            "unit": r.unit,
+            "unit_price": float(r.unit_price or 0),
+            "total_price": float(r.total_price or 0),
+            "purchase_id": r.purchase_id,
+            "purchase_number": r.purchase_number,
+            "registry_number": r.registry_number,
+            "purchase_status": r.purchase_status,
+            "category": r.product_category or "Без категории",
+            "product_type": r.product_type or "Без вида",
+        })
+    return result
+
+
 @router.get("/leaves")
 async def get_feo_leaves(
     subsidy_id: int = Query(...),

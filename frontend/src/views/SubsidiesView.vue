@@ -5139,7 +5139,7 @@ onMounted(() => {
 }
 .sc-actions { display: flex; gap: 2px; align-items: center; justify-content: center; }
 .sc-name {
-  font-weight: 800; color: var(--crm-text);
+  font-weight: 800; color: var(--crm-text-muted);
   line-height: 1.15; text-align: center;
   white-space: nowrap; overflow: hidden;
   width: 100%; user-select: none;

@@ -93,19 +93,26 @@ async def cascade_wish_approvers(
     if not top_user_id:
         raise HTTPException(422, "top_user_id обязателен")
 
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
+        raise HTTPException(400, "Цепочку можно менять только у черновика или отклонённой заявки")
+
     author_id = wish.created_by or current_user.id
     chain = await build_ascending_chain(db, author_id, top_user_id, wish.org_id)
     if not chain:
         raise HTTPException(400, "Не удалось построить цепочку согласующих — проверьте иерархию отдела")
 
-    # Replace existing auto rows (keep manual ones? — cascade пересобирает всю цепочку)
+    # Пересобираем авто-цепочку; добавленных вручную сохраняем (перенумеруем после цепочки)
+    manual: list[WishApproval] = []
+    chain_user_ids = {step["user_id"] for step in chain}
     for a in await _load_approvals(wid, db):
-        await db.delete(a)
+        if not a.is_auto and a.user_id not in chain_user_ids:
+            manual.append(a)
+        else:
+            await db.delete(a)
     await db.flush()
 
-    created: list[WishApproval] = []
     for step in chain:
-        a = WishApproval(
+        db.add(WishApproval(
             wish_id=wid,
             user_id=step["user_id"],
             order_num=step["order_num"],
@@ -113,12 +120,13 @@ async def cascade_wish_approvers(
             approver_full_name=step["full_name"],
             is_auto=True,
             status="pending",
-        )
-        db.add(a)
-        created.append(a)
+        ))
+    for i, a in enumerate(manual):
+        a.order_num = len(chain) + i
 
+    # Статус заявки НЕ меняем: на согласование отправляет только кнопка
+    # «Отправить на согласование» (POST /wishes/{id}/submit).
     wish.approval_mode = mode
-    wish.status = "submitted"
     await db.commit()
 
     rows = await _load_approvals(wid, db)
@@ -135,6 +143,8 @@ async def add_wish_approver(
     current_user: User = Depends(get_current_user),
 ):
     wish = await _get_wish_or_403(wid, current_user, db)
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
+        raise HTTPException(400, "Согласующих можно менять только у черновика или отклонённой заявки")
     user_id = int(body.get("user_id", 0))
     if not user_id:
         raise HTTPException(422, "user_id обязателен")
@@ -180,9 +190,11 @@ async def remove_wish_approver(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await _get_wish_or_403(wid, current_user, db)
+    wish = await _get_wish_or_403(wid, current_user, db)
     a = await db.get(WishApproval, approval_id)
     if a and a.wish_id == wid:
+        if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
+            raise HTTPException(400, "Согласующих можно менять только у черновика или отклонённой заявки")
         if a.status != "pending":
             raise HTTPException(400, "Нельзя удалить согласующего, который уже принял решение")
         await db.delete(a)
@@ -208,6 +220,9 @@ async def decide_wish_approval(
     decision = body.get("decision")
     if decision not in ("approved", "rejected"):
         raise HTTPException(422, "decision должен быть 'approved' или 'rejected'")
+
+    if not _is_saas(current_user) and wish.status != "submitted":
+        raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
 
     # Права: решать может сам назначенный согласующий или менеджер+/SaaS
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and a.user_id != current_user.id:
@@ -261,6 +276,19 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
+            # Полностью согласованная заявка автоматически уходит в «План-график»:
+            # создаются закупки (plan_schedule), суммы попадают в план выбранного ФЭО.
+            try:
+                from app.routers.wishes import _distribute_wish_to_purchases
+                from app.models.wish_item import WishItem
+                items = (await db.execute(
+                    select(func.count()).select_from(WishItem).where(WishItem.wish_id == wid)
+                )).scalar() or 0
+                if items > 0:
+                    await _distribute_wish_to_purchases(wish, db, current_user)
+                    wish.status = "converted"
+            except Exception as e:
+                logger.warning("auto-convert on full approval failed: %s", e)
             await db.commit()
             if creator:
                 try:

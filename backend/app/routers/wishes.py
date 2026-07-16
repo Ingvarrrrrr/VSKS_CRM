@@ -78,8 +78,8 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
     return wish
 
 
-async def _distribute_wish_to_purchases(wish, db, current_user) -> list[int]:
-    """Создаёт закупки (status='wishes') из позиций заявки по группам колонок,
+async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule") -> list[int]:
+    """Создаёт закупки (status='plan_schedule' — «План-график») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
     Возвращает список id созданных закупок. Транзакцию/commit НЕ делает — это на вызывающем.
     Защита от дублей: если по заявке уже есть закупки (purchases.wish_id == wish.id) — НИЧЕГО не создаёт и возвращает их id."""
@@ -149,7 +149,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user) -> list[int]:
             planned_total_price=total_nmck,
             total_nmck=total_nmck,
             nmck=total_nmck,
-            status="wishes",
+            status=purchase_status,
             assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec
             execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
             service_note_text=wish.justification,
@@ -204,6 +204,8 @@ async def _distribute_wish_to_purchases(wish, db, current_user) -> list[int]:
                 f"Закупка: {p.subject}",
             )
 
+    if created_purchase_ids and not wish.purchase_id:
+        wish.purchase_id = created_purchase_ids[0]
     return created_purchase_ids
 
 
@@ -215,6 +217,7 @@ async def list_wishes(
     subordinates_only: bool = False,
     creator_id: Optional[int] = None,
     assigned_to_id: Optional[int] = None,
+    subsidy_id: Optional[int] = None,
     created_from: Optional[date] = None,
     created_to: Optional[date] = None,
     deadline_from: Optional[date] = None,
@@ -260,7 +263,16 @@ async def list_wishes(
 
     if assigned_to_me:
         # Explicit shortcut: wishes where I am the designated approver
-        q = q.where(Wish.assigned_to == current_user.id)
+        # или я — согласующий из цепочки (WishApproval)
+        from app.models.wish_approval import WishApproval
+        appr_res = await db.execute(
+            select(WishApproval.wish_id).where(WishApproval.user_id == current_user.id)
+        )
+        appr_wish_ids = {r[0] for r in appr_res.all()}
+        if appr_wish_ids:
+            q = q.where(or_(Wish.assigned_to == current_user.id, Wish.id.in_(appr_wish_ids)))
+        else:
+            q = q.where(Wish.assigned_to == current_user.id)
     elif mine_only or current_user.role == 'employee':
         # Employee always sees only own + wishes they are a participant in
         base_cond = Wish.created_by == current_user.id
@@ -277,10 +289,9 @@ async def list_wishes(
             # (org filter уже применён выше). Дополнительных фильтров не нужно.
             pass
         else:
-            # Subordinates only — exclude self
-            sub_ids = visible_uids - {current_user.id}
-            if not sub_ids:
-                return []
+            # «Заявки сотрудников» = видимые подчинённые + сам пользователь
+            # (руководитель — тоже сотрудник, свои заявки видит здесь же)
+            sub_ids = set(visible_uids) | {current_user.id}
             q = q.where(Wish.created_by.in_(sub_ids))
     else:
         # Phase 28: unified visibility helper + member visibility
@@ -296,6 +307,8 @@ async def list_wishes(
         q = q.where(Wish.created_by == creator_id)
     if assigned_to_id is not None:
         q = q.where(Wish.assigned_to == assigned_to_id)
+    if subsidy_id is not None:
+        q = q.where(Wish.subsidy_id == subsidy_id)
     if created_from is not None:
         q = q.where(func.date(Wish.created_at) >= created_from)
     if created_to is not None:
@@ -519,6 +532,28 @@ async def submit_wish(
     wish.status = "submitted"
     await db.flush()
 
+    # Уведомить согласующих из цепочки: sequential — первого pending, parallel — всех
+    try:
+        from app.models.wish_approval import WishApproval
+        from app.notifications import notify_wish_approval_step
+        pending = (await db.execute(
+            select(WishApproval).where(
+                WishApproval.wish_id == wish.id,
+                WishApproval.status == "pending",
+            ).order_by(WishApproval.order_num)
+        )).scalars().all()
+        if pending:
+            targets = pending[:1] if (wish.approval_mode or "sequential") == "sequential" else pending
+            requester_name = current_user.full_name or current_user.username
+            for ap in targets:
+                if ap.user_id and ap.user_id != current_user.id:
+                    approver_user = await db.get(User, ap.user_id)
+                    if approver_user:
+                        await notify_wish_approval_step(wish, approver_user, requester_name)
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).warning("notify approvers on submit failed: %s", e)
+
     # Notify approver
     if wish.assigned_to and wish.assigned_to != current_user.id:
         org_id = getattr(current_user, 'org_id', None) or wish.org_id
@@ -561,6 +596,11 @@ async def approve_wish(
 
     wish.status = "approved"
     wish.approved_by = current_user.id
+    # Согласованная заявка автоматически уходит в «План-график»: создаются закупки
+    # (status='plan_schedule'), их суммы попадают в план выбранного уровня ФЭО.
+    if wish.items:
+        await _distribute_wish_to_purchases(wish, db, current_user)
+        wish.status = "converted"
     await db.commit()
     await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
@@ -611,7 +651,16 @@ async def patch_wish_execution(
     if not _is_saas(current_user) and wish.status not in ("submitted", "approved"):
         raise HTTPException(status_code=400, detail="Срок и исполнителя можно задать только на статусах submitted/approved")
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
-        raise HTTPException(status_code=403, detail="Только согласующий или менеджер+ может задать исполнителя/срок")
+        # Согласующий из цепочки тоже может править (в т.ч. сменить ФЭО, если не согласен)
+        from app.models.wish_approval import WishApproval
+        in_chain = (await db.execute(
+            select(WishApproval.id).where(
+                WishApproval.wish_id == wish.id,
+                WishApproval.user_id == current_user.id,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if not in_chain:
+            raise HTTPException(status_code=403, detail="Только согласующий (в т.ч. из цепочки) или менеджер+ может менять эти поля")
     if body.executor_id is not None:
         wish.executor_id = body.executor_id
     if body.execution_deadline is not None:
@@ -736,7 +785,7 @@ async def convert_wish(
         planned_total_price=eff_price,
         total_nmck=total_nmck or float(wish.estimated_price or 0),
         nmck=total_nmck or float(wish.estimated_price or 0),
-        status="wishes",
+        status="plan_schedule",
         service_note_text=wish.justification,
         service_note_by=wish.created_by,
         assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec: исполнитель из заявки

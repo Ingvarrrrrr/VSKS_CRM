@@ -89,6 +89,18 @@
       <v-card-text class="py-3">
         <div class="d-flex flex-wrap align-center" style="gap:12px">
           <v-autocomplete
+            v-model="filterSubsidyId"
+            :items="subsidies"
+            item-title="name"
+            item-value="id"
+            label="Субсидия"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            style="min-width:220px;max-width:280px"
+          />
+          <v-autocomplete
             v-model="filterCreatorId"
             :items="users"
             item-title="full_name"
@@ -757,7 +769,7 @@
               </v-btn>
             </template>
             <v-btn
-              v-if="item.status === 'approved' && isAdmin"
+              v-if="item.status === 'approved' && isManagerOrAdmin"
               size="x-small"
               variant="flat"
               color="primary"
@@ -865,6 +877,19 @@
               <v-card-text class="pa-4 pt-2">
                 <v-row dense>
                   <v-col cols="12">
+                    <v-text-field
+                      v-model="wishForm.title"
+                      label="Предмет заявки"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      :readonly="!isWishEditable"
+                      hint="Краткое название заявки. Если оставить пустым — сформируется из позиций"
+                      persistent-hint
+                      data-field="title"
+                    />
+                  </v-col>
+                  <v-col cols="12">
                     <v-select
                       v-model="wishForm.subsidy_id"
                       :items="subsidies"
@@ -887,8 +912,17 @@
                       :nodes="wishFeoNodes"
                       :leaves="wishFeoLeaves"
                       horizontal
-                      :readonly="!isWishEditable && !canAssigneeAct"
+                      :readonly="!isWishEditable && !canEditWishFeo"
                     />
+                    <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
+                      <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
+                             :loading="savingExecution" @click="saveExecution">
+                        Сохранить ФЭО
+                      </v-btn>
+                      <span class="text-caption text-medium-emphasis ml-2">
+                        Вы согласующий — можете изменить категорию ФЭО, если не согласны с выбором автора.
+                      </span>
+                    </div>
                   </v-col>
                   <!-- Переключатель «не указывать последний уровень ФЭО» -->
                   <v-col v-if="wishFeoSelected" cols="12" class="py-0">
@@ -898,7 +932,7 @@
                       density="compact"
                       color="primary"
                       hide-details
-                      :disabled="!isWishEditable && !canAssigneeAct"
+                      :disabled="!isWishEditable && !canEditWishFeo"
                     />
                     <div v-if="wishFeoSkipLast" class="text-caption text-medium-emphasis mt-n2 mb-2">
                       Заявка будет привязана к выбранному уровню без детализации до конечной категории.
@@ -1043,6 +1077,8 @@
                 <template v-if="isWishEditable">
                   <div class="text-caption text-medium-emphasis mb-2">
                     Выберите верхнего согласующего — система автоматически подтянет всю восходящую цепочку начальников снизу вверх.
+                    Построение цепочки НЕ отправляет заявку: цепочку можно менять и дополнять людьми вручную,
+                    а на согласование заявка уйдёт только по кнопке «Отправить на согласование».
                   </div>
                   <v-row dense align="center">
                     <v-col cols="12" md="6">
@@ -1391,6 +1427,12 @@
               Отправить на согласование
             </v-btn>
           </template>
+          <template v-else-if="editingWish && editingWish.status === 'approved' && isManagerOrAdmin">
+            <v-btn color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
+                   @click="openConvertDialog(editingWish); wishDialog = false">
+              Передать в План-график
+            </v-btn>
+          </template>
           <template v-else-if="canAssigneeAct && editingWish">
             <v-btn color="error" variant="tonal" prepend-icon="mdi-close" @click="openRejectDialog(editingWish); wishDialog = false">
               Отклонить
@@ -1680,6 +1722,7 @@ function getWishExportRows() {
 }
 
 // Filter state
+const filterSubsidyId = ref<number | null>(null)
 const filterCreatorId = ref<number | null>(null)
 const filterAssignedToId = ref<number | null>(null)
 const filterCreatedFrom = ref('')
@@ -1689,6 +1732,7 @@ const filterDeadlineTo = ref('')
 
 function buildFilterParams(extra: Record<string, any> = {}) {
   const params = new URLSearchParams()
+  if (filterSubsidyId.value) params.set('subsidy_id', String(filterSubsidyId.value))
   if (filterCreatorId.value) params.set('creator_id', String(filterCreatorId.value))
   if (filterAssignedToId.value) params.set('assigned_to_id', String(filterAssignedToId.value))
   if (filterCreatedFrom.value) params.set('created_from', filterCreatedFrom.value)
@@ -1703,6 +1747,7 @@ function buildFilterParams(extra: Record<string, any> = {}) {
 }
 
 function resetFilters() {
+  filterSubsidyId.value = null
   filterCreatorId.value = null
   filterAssignedToId.value = null
   filterCreatedFrom.value = ''
@@ -1714,7 +1759,7 @@ function resetFilters() {
 // Debounced filter watcher
 let filterTimer: any = null
 watch(
-  [filterCreatorId, filterAssignedToId, filterCreatedFrom, filterCreatedTo, filterDeadlineFrom, filterDeadlineTo],
+  [filterSubsidyId, filterCreatorId, filterAssignedToId, filterCreatedFrom, filterCreatedTo, filterDeadlineFrom, filterDeadlineTo],
   () => {
     clearTimeout(filterTimer)
     filterTimer = setTimeout(() => reloadActiveTab(), 300)
@@ -1902,8 +1947,18 @@ const canAssigneeAct = computed(() =>
   && editingWish.value.status === 'submitted'
   && (isDialogAssignee.value || isAdmin.value)
 )
+// Согласующий из цепочки может менять ФЭО у отправленной заявки,
+// если не согласен с выбором автора (backend PATCH /execution это разрешает)
+const isChainApprover = computed(() =>
+  wishApprovers.value.some(a => a.user_id === currentUserId)
+)
+const canEditWishFeo = computed(() =>
+  canAssigneeAct.value
+  || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)
+)
 
 const wishForm = ref({
+  title: '' as string,
   subsidy_id: null as number | null,
   feo_category_id: null as number | null,
   assigned_to: null as number | null,
@@ -2067,6 +2122,7 @@ async function reloadActiveTab() {
 function resetForm() {
   serverFieldErrors.value = {}
   wishForm.value = {
+    title: '',
     subsidy_id: null,
     feo_category_id: null,
     assigned_to: null,
@@ -2102,6 +2158,7 @@ async function openEditDialog(wish: Wish) {
   editingWishId.value = wish.id
   editingWish.value = wish
   resetForm()
+  wishForm.value.title = wish.title || ''
   wishForm.value.subsidy_id = wish.subsidy_id ?? null
   loadOrgMembers(wishForm.value.subsidy_id)
   wishForm.value.feo_category_id = wish.feo_category_id ?? null
@@ -2307,7 +2364,7 @@ async function runCascade() {
     )
     wishApprovers.value = res.approvers
     approverTopUser.value = null
-    showSnack('Цепочка согласующих построена')
+    showSnack('Цепочка построена. Заявка уйдёт на согласование после кнопки «Отправить на согласование»')
     await loadWishOnce()
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
@@ -2370,6 +2427,7 @@ async function loadWishOnce() {
 }
 const canDecideApprover = (a: WishApprover): boolean => {
   if (a.status !== 'pending') return false
+  if ((wishForm.value as any).status !== 'submitted') return false
   const mine = a.user_id === currentUserId || isAdmin.value
   if (!mine) return false
   if (approvalMode.value === 'sequential') {
@@ -2417,14 +2475,17 @@ async function saveWish(andSubmit = false) {
   saving.value = true
   try {
     const feo = wishFeoSelected.value
-    // Заголовок: краткий и читаемый. При множестве позиций — первая + счётчик,
-    // иначе склейка переполняет title (VARCHAR 500) и роняет создание заявки.
-    const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
-    let title = names.join(', ') || 'Новая заявка'
-    if (title.length > 255) {
-      title = names.length > 1
-        ? `${names[0].slice(0, 120)} + ещё ${names.length - 1} поз.`
-        : names[0].slice(0, 252) + '…'
+    // Заголовок: приоритет — ручной «Предмет заявки»; иначе автосклейка из позиций
+    // (при множестве позиций — первая + счётчик, чтобы не переполнить VARCHAR 500).
+    let title = (wishForm.value.title || '').trim().slice(0, 255)
+    if (!title) {
+      const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
+      title = names.join(', ') || 'Новая заявка'
+      if (title.length > 255) {
+        title = names.length > 1
+          ? `${names[0].slice(0, 120)} + ещё ${names.length - 1} поз.`
+          : names[0].slice(0, 252) + '…'
+      }
     }
     const payload = {
       ...wishForm.value,
@@ -2439,7 +2500,12 @@ async function saveWish(andSubmit = false) {
 
     if (editingWishId.value) {
       await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
-      showSnack('Заявка обновлена')
+      if (andSubmit && ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')) {
+        await apiFetch(`/wishes/${editingWishId.value}/submit`, { method: 'POST' })
+        showSnack('Заявка отправлена на согласование')
+      } else {
+        showSnack('Заявка обновлена')
+      }
     } else {
       const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
       if (andSubmit && created?.id) {

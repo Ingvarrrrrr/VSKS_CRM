@@ -78,6 +78,16 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
     return wish
 
 
+async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
+    res = await db.execute(
+        select(WishMember.id).where(
+            WishMember.wish_id == wish_id,
+            WishMember.user_id == user_id,
+        ).limit(1)
+    )
+    return res.scalar_one_or_none() is not None
+
+
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule") -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План-график») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
@@ -100,6 +110,28 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         .where(WishItem.wish_id == wish.id)
     )
     items_full = res.scalars().all()
+
+    # ФЭО могли удалить/пересоздать после выбора в заявке — валидируем заранее,
+    # иначе insert закупки падает FK-violation → 500 без объяснения
+    from app.models.feo_category import FeoCategory
+    feo_ids = {i for i in ({wish.feo_category_id} | {it.feo_category_id for it in items_full}) if i}
+    valid_feo: set[int] = set()
+    if feo_ids:
+        valid_feo = set((await db.execute(
+            select(FeoCategory.id).where(FeoCategory.id.in_(feo_ids))
+        )).scalars().all())
+    if wish.feo_category_id and wish.feo_category_id not in valid_feo:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Категория ФЭО, выбранная в заявке, была удалена или пересоздана "
+                f"(id={wish.feo_category_id}). Выберите категорию ФЭО заново "
+                "(поле «Категория ФЭО» в заявке) и повторите одобрение."
+            ),
+        )
+    for it in items_full:
+        if it.feo_category_id and it.feo_category_id not in valid_feo:
+            it.feo_category_id = None
 
     # Backfill product_id + category by item_name for legacy wish_items
     # (created before product_id was persisted on wish_items).
@@ -337,9 +369,21 @@ async def list_wishes(
         import logging as _log
         _log.getLogger(__name__).warning("unseen wish map failed: %s", _exc)
 
+    # «От кого»: имена участников (WishMember) батчем, без N+1
+    members_map: dict[int, list[str]] = {}
+    if wish_ids:
+        mres = await db.execute(
+            select(WishMember.wish_id, User.full_name, User.username)
+            .join(User, User.id == WishMember.user_id)
+            .where(WishMember.wish_id.in_(wish_ids))
+        )
+        for m_wid, m_fn, m_un in mres.all():
+            members_map.setdefault(m_wid, []).append(m_fn or m_un)
+
     out_list = []
     for w in wishes:
         enriched = _enrich(w)
+        enriched.member_names = members_map.get(w.id, [])
         _unseen = unseen_map.get(w.id, [])
         enriched.unseen_fields = _unseen
         enriched.unseen_changes_count = len(_unseen)
@@ -367,9 +411,24 @@ async def get_wish(
             )
         )
         if member_res.scalar_one_or_none() is None:
-            raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+            # …или согласующий из цепочки (вкладка «На согласование мне»)
+            from app.models.wish_approval import WishApproval
+            appr = await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish_id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )
+            if appr.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
     enriched = _enrich(wish)
+    mnames = (await db.execute(
+        select(User.full_name, User.username)
+        .join(WishMember, WishMember.user_id == User.id)
+        .where(WishMember.wish_id == wish_id)
+    )).all()
+    enriched.member_names = [fn or un for fn, un in mnames]
 
     # Phase 31: unseen_fields for single wish GET (D-05..D-09)
     try:
@@ -452,7 +511,9 @@ async def update_wish(
     wish = await _load_wish(wish_id, db)
 
     if not _is_saas(current_user) and wish.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+        # Участники заявки (WishMember) тоже могут её редактировать
+        if not await _is_wish_member(wish_id, current_user.id, db):
+            raise HTTPException(status_code=403, detail="Редактировать заявку может автор или участник заявки")
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Можно редактировать только черновик или отклонённую заявку")
 
@@ -525,7 +586,9 @@ async def submit_wish(
     wish = await _load_wish(wish_id, db)
 
     if not _is_saas(current_user) and wish.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Только автор может подать заявку")
+        # Участники заявки (WishMember) тоже могут отправить её на согласование
+        if not await _is_wish_member(wish_id, current_user.id, db):
+            raise HTTPException(status_code=403, detail="Отправить на согласование может автор или участник заявки")
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft' или 'rejected'")
 

@@ -156,6 +156,8 @@ class WishOut(BaseModel):
     executor_name: Optional[str] = None
     execution_deadline: Optional[date] = None
     approval_mode: Optional[str] = None
+    # «От кого»: имена участников заявки (WishMember), помимо автора
+    member_names: List[str] = []
     items: List[WishItemOut] = []
     # Phase 31: diff-tracking — unseen changes from other users
     unseen_fields: List[str] = []

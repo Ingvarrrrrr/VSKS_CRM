@@ -269,7 +269,8 @@
           </div>
         </template>
         <template #item.creator_name="{ item }">
-          {{ item.creator_name || '—' }}
+          <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
+            v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
@@ -367,7 +368,8 @@
                   <span v-if="w.registry_number" class="text-caption text-medium-emphasis">{{ w.registry_number }}</span>
                 </div>
                 <div v-if="w.creator_name" class="text-caption text-medium-emphasis mb-1">
-                  От: <span class="font-weight-medium text-high-emphasis">{{ w.creator_name }}</span>
+                  От: <span class="font-weight-medium text-high-emphasis">{{ shortName(w.creator_name) }}</span><span
+                    v-if="wishCoAuthors(w).length">, {{ wishCoAuthors(w).join(', ') }}</span>
                 </div>
                 <div v-if="w.assigned_to_name" class="text-caption text-medium-emphasis mb-1">
                   Кому: <span class="font-weight-medium text-high-emphasis">{{ w.assigned_to_name }}</span>
@@ -549,7 +551,8 @@
           </div>
         </template>
         <template #item.creator_name="{ item }">
-          {{ item.creator_name || '—' }}
+          <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
+            v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
@@ -719,7 +722,8 @@
           </div>
         </template>
         <template #item.creator_name="{ item }">
-          {{ item.creator_name || '—' }}
+          <span class="font-weight-medium">{{ shortName(item.creator_name) || '—' }}</span><span
+            v-if="wishCoAuthors(item).length" class="text-medium-emphasis">, {{ wishCoAuthors(item).join(', ') }}</span>
         </template>
         <template #item.assigned_to_name="{ item }">
           {{ item.assigned_to_name || '—' }}
@@ -832,7 +836,8 @@
         </v-card-title>
         <!-- B6 — от кого/кому/дата/статус -->
         <v-card-subtitle v-if="editingWish" class="pa-4 pt-0 d-flex flex-wrap" style="gap:16px">
-          <div><b>От кого:</b> {{ editingWish.creator_name || '—' }}</div>
+          <div><b>От кого:</b> <span class="font-weight-medium">{{ shortName(editingWish.creator_name) || '—' }}</span><span
+            v-if="wishCoAuthors(editingWish).length" class="text-medium-emphasis">, {{ wishCoAuthors(editingWish).join(', ') }}</span></div>
           <div><b>Кому:</b> {{ editingWish.assigned_to_name || '—' }}</div>
           <div><b>Создано:</b> {{ formatDate(editingWish.created_at) }}</div>
           <div v-if="editingWish.status"><b>Статус:</b> {{ statusLabel[editingWish.status] || editingWish.status }}</div>
@@ -1135,7 +1140,7 @@
                 </div>
                 <div v-else class="d-flex flex-column" style="gap:10px">
                   <v-sheet
-                    v-for="a in wishApprovers"
+                    v-for="(a, ai) in wishApprovers"
                     :key="a.id"
                     rounded="lg"
                     border
@@ -1155,6 +1160,24 @@
                       <v-chip size="small" :color="approvalStatusColor[a.status]" variant="tonal">
                         {{ approvalStatusLabel[a.status] || a.status }}
                       </v-chip>
+                      <template v-if="isWishEditable && wishApprovers.length > 1">
+                        <v-btn
+                          icon="mdi-arrow-up"
+                          size="x-small"
+                          variant="text"
+                          :disabled="ai === 0 || reorderLoading"
+                          title="Поднять в очереди согласования"
+                          @click="moveApprover(ai, -1)"
+                        />
+                        <v-btn
+                          icon="mdi-arrow-down"
+                          size="x-small"
+                          variant="text"
+                          :disabled="ai === wishApprovers.length - 1 || reorderLoading"
+                          title="Опустить в очереди согласования"
+                          @click="moveApprover(ai, 1)"
+                        />
+                      </template>
                       <v-btn
                         v-if="a.status === 'pending' && isWishEditable"
                         icon="mdi-close"
@@ -1423,7 +1446,7 @@
             <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
               Сохранить черновик
             </v-btn>
-            <v-btn color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
+            <v-btn ref="wishSubmitBtnRef" color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
               Отправить на согласование
             </v-btn>
           </template>
@@ -1449,6 +1472,14 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Стрелочки от кнопки отправки к незаполненным полям (как в Закупке) -->
+    <ValidationArrows
+      :active="validationArrowsActive"
+      :from-el="validationArrowFrom"
+      :to-els="validationArrowTargets"
+      @dismiss="dismissValidationArrows"
+    />
 
     <!-- ── KANBAN DISTRIBUTION DIALOG (Phase 13) ── -->
     <v-dialog v-model="kanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
@@ -1574,6 +1605,7 @@ import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import ValidationArrows from '@/components/ValidationArrows.vue'
 import { useCardView } from '@/composables/useCardView'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 
@@ -1622,6 +1654,26 @@ interface Wish {
   executor_id?: number | null
   executor_name?: string | null
   execution_deadline?: string | null
+  member_names?: string[]
+}
+
+// «От кого»: Фамилия И.О. вместо полного ФИО
+function shortName(full?: string | null): string {
+  if (!full) return ''
+  const parts = full.trim().split(/\s+/)
+  if (parts.length < 2) return parts[0]
+  return parts[0] + ' ' + parts.slice(1, 3).map(p => p[0].toUpperCase() + '.').join('')
+}
+// Участники заявки (WishMember) без дублирования автора — автор выделен отдельно
+function wishCoAuthors(w: { creator_name?: string | null; member_names?: string[] }): string[] {
+  const author = shortName(w.creator_name)
+  const seen = new Set<string>([author])
+  const out: string[] = []
+  for (const n of w.member_names || []) {
+    const s = shortName(n)
+    if (s && !seen.has(s)) { seen.add(s); out.push(s) }
+  }
+  return out
 }
 
 interface Subsidy {
@@ -1863,9 +1915,37 @@ function resolveUserPosition(u: any): string {
 // Create/edit dialog
 const wishDialog = ref(false)
 const wishDialogLoading = ref(false)
+watch(wishDialog, (v) => { if (!v) dismissValidationArrows() })
 const editingWishId = ref<number | null>(null)
 const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
+const wishSubmitBtnRef = ref<any>(null)
+
+// Стрелочки к незаполненным полям (паттерн из CreateOrderView)
+const validationArrowsActive = ref(false)
+const validationArrowFrom = ref<HTMLElement | null>(null)
+const validationArrowTargets = ref<HTMLElement[]>([])
+let validationArrowsTimer: number | null = null
+function dismissValidationArrows() {
+  validationArrowsActive.value = false
+  validationArrowFrom.value = null
+  validationArrowTargets.value = []
+  if (validationArrowsTimer) { window.clearTimeout(validationArrowsTimer); validationArrowsTimer = null }
+}
+function showValidationArrows() {
+  const formEl = wishFormRef.value?.$el as HTMLElement | undefined
+  if (!formEl) return
+  const errors = Array.from(formEl.querySelectorAll('.v-input.v-input--error')) as HTMLElement[]
+  if (!errors.length) return
+  const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
+  if (!btn) return
+  errors[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  validationArrowFrom.value = btn
+  validationArrowTargets.value = errors.slice(0, 8)
+  validationArrowsActive.value = true
+  if (validationArrowsTimer) window.clearTimeout(validationArrowsTimer)
+  validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
+}
 const saving = ref(false)
 // Серверные ошибки валидации по полям: {desired_date: 'неверный формат даты'}.
 // Биндим в :error-messages → Vuetify сам рисует красную подпись (стрелочка к полю).
@@ -2386,6 +2466,25 @@ async function addApprover(userId: number | null) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось добавить согласующего', 'error')
   }
 }
+const reorderLoading = ref(false)
+async function moveApprover(idx: number, dir: number) {
+  if (!editingWishId.value) return
+  const j = idx + dir
+  if (j < 0 || j >= wishApprovers.value.length) return
+  const arr = [...wishApprovers.value]
+  ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
+  reorderLoading.value = true
+  try {
+    wishApprovers.value = await apiFetch<WishApprover[]>(
+      `/wishes/${editingWishId.value}/approvers/reorder`,
+      { method: 'POST', body: JSON.stringify({ ids: arr.map(a => a.id) }) },
+    )
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось изменить порядок согласующих', 'error')
+  } finally {
+    reorderLoading.value = false
+  }
+}
 async function removeApprover(approvalId: number) {
   if (!editingWishId.value) return
   try {
@@ -2399,14 +2498,15 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
   if (!editingWishId.value) return
   decideLoading.value = approvalId
   try {
-    const res = await apiFetch<{ status: string; approvers: WishApprover[] }>(
+    const res = await apiFetch<{ status: string; convert_error?: string | null; approvers: WishApprover[] }>(
       `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
       { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
     )
     wishApprovers.value = res.approvers
     decideComment.value[approvalId] = ''
     if (wishForm.value) (wishForm.value as any).status = res.status
-    showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
+    if (res.convert_error) showSnack(res.convert_error, 'warning')
+    else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
     await loadWishOnce()
     await loadWishes()
   } catch (e: any) {
@@ -2461,7 +2561,7 @@ async function saveWish(andSubmit = false) {
   // часть не в каталоге). Валидацию формы требуем только при отправке на согласование.
   if (andSubmit) {
     const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
-    if (!valid) return
+    if (!valid) { await nextTick(); showValidationArrows(); return }
     // ФЭО выбрано не до конечной категории — требуем либо лист, либо явный skipLast
     if (wishFeoSelected.value && !wishFeoSkipLast.value && !wishFeoPerItem.value) {
       const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
@@ -2549,6 +2649,7 @@ async function saveWish(andSubmit = false) {
           : 'Проверьте значение'
       }
       await nextTick()
+      showValidationArrows()
       document.querySelector('.v-overlay--active .v-input--error')
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
@@ -2787,7 +2888,8 @@ function applyColFilters(rows: Wish[]): Wish[] {
   if (colFilters.value.title_col?.type === 'text' && colFilters.value.title_col.q)
     result = result.filter(r => (r.title || '').toLowerCase().includes(colFilters.value.title_col.q.toLowerCase()))
   if (colFilters.value.creator_name?.type === 'text' && colFilters.value.creator_name.q)
-    result = result.filter(r => (r.creator_name || '').toLowerCase().includes(colFilters.value.creator_name.q.toLowerCase()))
+    result = result.filter(r => [r.creator_name || '', ...(r.member_names || [])]
+      .join(' ').toLowerCase().includes(colFilters.value.creator_name.q.toLowerCase()))
   if (colFilters.value.assigned_to_name?.type === 'text' && colFilters.value.assigned_to_name.q)
     result = result.filter(r => (r.assigned_to_name || '').toLowerCase().includes(colFilters.value.assigned_to_name.q.toLowerCase()))
   if (colFilters.value.event_name?.type === 'text' && colFilters.value.event_name.q)

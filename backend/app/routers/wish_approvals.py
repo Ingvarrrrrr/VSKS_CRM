@@ -181,6 +181,30 @@ async def add_wish_approver(
     return _approval_dict(a)
 
 
+# ── POST reorder ──────────────────────────────────────────────────────────────
+
+@router.post("/{wid}/approvers/reorder")
+async def reorder_wish_approvers(
+    wid: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Задать порядок согласующих: body.ids — все approval_id в новом порядке."""
+    wish = await _get_wish_or_403(wid, current_user, db)
+    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
+        raise HTTPException(400, "Порядок можно менять только у черновика или отклонённой заявки")
+    ids = body.get("ids") or []
+    rows = await _load_approvals(wid, db)
+    by_id = {a.id: a for a in rows}
+    if set(ids) != set(by_id.keys()):
+        raise HTTPException(422, "ids должны содержать всех согласующих заявки без пропусков")
+    for i, aid in enumerate(ids):
+        by_id[aid].order_num = i
+    await db.commit()
+    return [_approval_dict(a) for a in await _load_approvals(wid, db)]
+
+
 # ── DELETE ────────────────────────────────────────────────────────────────────
 
 @router.delete("/{wid}/approvers/{approval_id}")
@@ -220,6 +244,7 @@ async def decide_wish_approval(
     decision = body.get("decision")
     if decision not in ("approved", "rejected"):
         raise HTTPException(422, "decision должен быть 'approved' или 'rejected'")
+    convert_error: str | None = None
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
@@ -287,8 +312,13 @@ async def decide_wish_approval(
                 if items > 0:
                     await _distribute_wish_to_purchases(wish, db, current_user)
                     wish.status = "converted"
+            except HTTPException as e:
+                # например, удалённая категория ФЭО — заявка остаётся approved,
+                # причину показываем согласующему
+                convert_error = e.detail
             except Exception as e:
                 logger.warning("auto-convert on full approval failed: %s", e)
+                convert_error = "Не удалось автоматически создать закупки — обратитесь к администратору"
             await db.commit()
             if creator:
                 try:
@@ -316,4 +346,4 @@ async def decide_wish_approval(
                         logger.warning("notify_wish_approval_step failed: %s", e)
 
     rows = await _load_approvals(wid, db)
-    return {"status": wish.status, "approvers": [_approval_dict(a) for a in rows]}
+    return {"status": wish.status, "convert_error": convert_error, "approvers": [_approval_dict(a) for a in rows]}

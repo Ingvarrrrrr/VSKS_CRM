@@ -520,7 +520,13 @@
                       <!-- Плановое количество -->
                       <td class="feo-td feo-td-num">
                         <div v-if="isAutoQtyNode(node)" class="text-right">
-                          <div class="feo-amount">{{ feoQtyFor(node) > 0 ? feoQtyFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
+                          <div class="feo-amount">{{ feoQtyDisplayFor(node) > 0 ? feoQtyDisplayFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
+                          <div v-if="plannedSumBase === 'all' && feoQtyRequestsFor(node) > 0"
+                            class="feo-plan-note text-medium-emphasis"
+                            :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
+                          >
+                            из заявок {{ feoQtyRequestsFor(node) }}
+                          </div>
                           <v-chip size="x-small" color="blue-grey" variant="tonal"
                             title="Количество автоматически считается из дочерних"
                           >авто</v-chip>
@@ -537,8 +543,14 @@
                           />
                         </div>
                         <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
-                          <span v-if="feoQtyFor(node) > 0" class="feo-amount">{{ feoQtyFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
+                          <span v-if="feoQtyDisplayFor(node) > 0" class="feo-amount">{{ feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
                           <span v-else class="feo-set-hint">—</span>
+                          <div v-if="plannedSumBase === 'all' && feoQtyRequestsFor(node) > 0"
+                            class="feo-plan-note text-medium-emphasis"
+                            :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
+                          >
+                            из заявок {{ feoQtyRequestsFor(node) }}
+                          </div>
                         </div>
                       </td>
 
@@ -658,7 +670,7 @@
                           <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
                             <thead>
                               <tr style="background:#CCFBF1">
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ПЛАН (Уровень 5)</th>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Значения берутся из плановых позиций категории">ПЛАН (из плановых)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ФАКТ (из закупок)</th>
@@ -906,7 +918,7 @@
                       </div>
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
-                      {{ feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyFor(r), 0) : '—' }}
+                      {{ feoTree.reduce((acc, r) => acc + feoQtyDisplayFor(r), 0) > 0 ? feoTree.reduce((acc, r) => acc + feoQtyDisplayFor(r), 0) : '—' }}
                     </td>
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0)) : '—' }}
@@ -2676,6 +2688,7 @@ const allSubsidies    = ref<SubsidyRow[]>([])
 const feoCategories   = ref<FeoCategory[]>([])
 const purchaseTotals  = ref<Record<number, number>>({})
 const plannedPurchaseTotals = ref<Record<number, number>>({})
+const plannedPurchaseQty = ref<Record<number, number>>({})
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
@@ -3653,6 +3666,20 @@ function isAutoQtyNode(node: FeoNode): boolean {
   return node.planned_quantity == null
 }
 
+// ── Плановое количество из заявок (статусы план-график и дальше) ───
+function feoQtyRequestsFor(node: FeoNode): number {
+  const own = plannedPurchaseQty.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoQtyRequestsFor(child), 0)
+}
+
+// Отображаемое «Плановое количество» по режиму переключателя (как у суммы)
+function feoQtyDisplayFor(node: FeoNode): number {
+  if (plannedSumBase.value === 'manual') return feoQtyFor(node)
+  if (plannedSumBase.value === 'requests') return feoQtyRequestsFor(node)
+  return feoQtyFor(node) + feoQtyRequestsFor(node)
+}
+
 // ── Planned amount helpers ───────────────────────
 function feoAmtFor(node: FeoNode): number {
   if (!node.hasChildren) return node.planned_amount != null ? Number(node.planned_amount) : 0
@@ -4015,15 +4042,23 @@ async function loadFeo(subsidyId: number) {
   feoCategories.value = []
   purchaseTotals.value = {}
   plannedPurchaseTotals.value = {}
+  plannedPurchaseQty.value = {}
   try {
     const [cats, totals, plannedTotals] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
-      apiFetch<Record<number, number>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, { total: number; qty: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
     ])
     feoCategories.value = cats
     purchaseTotals.value = totals
-    plannedPurchaseTotals.value = plannedTotals
+    const sums: Record<number, number> = {}
+    const qtys: Record<number, number> = {}
+    for (const [k, v] of Object.entries(plannedTotals)) {
+      sums[Number(k)] = Number(v?.total || 0)
+      qtys[Number(k)] = Number(v?.qty || 0)
+    }
+    plannedPurchaseTotals.value = sums
+    plannedPurchaseQty.value = qtys
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {

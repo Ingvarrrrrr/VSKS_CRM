@@ -7,7 +7,7 @@
         <v-icon icon="mdi-calendar-check" size="32" color="#3B82F6" class="mr-3" />
         <div>
           <div class="page-title">План-график закупок</div>
-          <div class="page-subtitle">Подтверждённые закупки · {{ selectedYear ?? 'все годы' }}</div>
+          <div class="page-subtitle">Закупки план-графика · {{ selectedYear ?? 'все годы' }}</div>
         </div>
       </div>
       <div class="page-header-right">
@@ -63,23 +63,20 @@
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
-        <span class="stat-label">Итого НМЦД</span>
-        <span class="stat-val">{{ fmt(totalNmck) }}</span>
+        <span class="stat-label">Итого план</span>
+        <span class="stat-val">{{ fmt(totalPlan) }}</span>
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
-        <span class="stat-label">Законтрактовано</span>
-        <span class="stat-val" style="color:var(--color-contracted)">{{ fmt(totalContracted) }}</span>
+        <span class="stat-label">Итого расчёт</span>
+        <span class="stat-val" style="color:var(--color-contracted)">{{ fmt(totalCalc) }}</span>
       </div>
       <div class="stat-sep" />
       <div class="stat-item">
-        <span class="stat-label">Оплачено</span>
-        <span class="stat-val" style="color:var(--color-paid)">{{ fmt(totalPaid) }}</span>
-      </div>
-      <div class="stat-sep" />
-      <div class="stat-item">
-        <span class="stat-label">Экономия</span>
-        <span class="stat-val" style="color:var(--color-savings)">{{ fmt(totalEconomy) }}</span>
+        <span class="stat-label">Остаток</span>
+        <span class="stat-val" :style="{ color: totalPlan - totalCalc >= 0 ? 'var(--color-savings)' : 'var(--color-paid)' }">
+          {{ fmtSigned(totalPlan - totalCalc) }}
+        </span>
       </div>
     </div>
 
@@ -101,6 +98,7 @@
               <th class="th-feo">Категория ФЭО</th>
               <th class="th-sub">Субсидия</th>
               <th class="th-money">НМЦД</th>
+              <th class="th-money">Сумма (расчёт)</th>
               <th class="th-method">Способ</th>
               <th class="th-contractor">Контрагент</th>
               <th class="th-money">Цена договора</th>
@@ -120,9 +118,11 @@
               <td class="th-feo text-caption text-medium-emphasis">{{ p.feo_category_name || '—' }}</td>
               <td class="th-sub text-caption">{{ p.subsidy_name || '—' }}</td>
               <td class="th-money">
-                <span v-if="p.nmck || p.total_nmck || p.planned_total_price">
-                  {{ fmt(Number(p.nmck || p.total_nmck || p.planned_total_price)) }}
-                </span>
+                <span v-if="planAmount(p) > 0">{{ fmt(planAmount(p)) }}</span>
+                <span v-else class="text-medium-emphasis">—</span>
+              </td>
+              <td class="th-money">
+                <span v-if="calcAmount(p) > 0" style="color:var(--color-contracted)">{{ fmt(calcAmount(p)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
               </td>
               <td class="th-method">
@@ -156,7 +156,8 @@
           <tfoot v-if="filtered.length > 0">
             <tr class="plan-total">
               <td colspan="4" class="font-weight-bold pl-3">ИТОГО ({{ filtered.length }} позиций)</td>
-              <td class="th-money font-weight-bold">{{ fmt(totalNmck) }}</td>
+              <td class="th-money font-weight-bold">{{ fmt(totalPlan) }}</td>
+              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">{{ fmt(totalCalc) }}</td>
               <td />
               <td />
               <td class="th-money font-weight-bold" style="color:var(--color-contracted)">{{ fmt(totalContracted) }}</td>
@@ -167,11 +168,99 @@
         </table>
       </div>
     </div>
+
+    <!-- ── Версии план-графика (только при выборе одной субсидии) ── -->
+    <div v-if="filterSubsidyId !== null" class="plan-card mt-5">
+      <div class="versions-header">
+        <div class="versions-title">
+          <v-icon icon="mdi-history" size="20" color="primary" class="mr-2" />
+          Версии план-графика
+        </div>
+        <div class="versions-summary" v-if="versionsList.length > 0">
+          Остаток: <strong>{{ fmtSigned(versionsRemainder) }}</strong>
+        </div>
+        <v-btn
+          color="primary" size="small" variant="flat" prepend-icon="mdi-content-save"
+          :loading="saveVersionLoading" @click="openSaveVersionDialog"
+        >
+          Зафиксировать версию
+        </v-btn>
+      </div>
+
+      <v-progress-linear v-if="versionsLoading" indeterminate color="primary" />
+
+      <div v-if="!versionsLoading && versionsList.length === 0" class="empty-state" style="padding:32px 0">
+        <v-icon icon="mdi-clock-outline" size="40" color="grey-lighten-2" />
+        <div class="text-medium-emphasis mt-2 text-caption">Версии не зафиксированы</div>
+      </div>
+
+      <div v-if="!versionsLoading && versionsList.length > 0" class="versions-table-wrap">
+        <table class="plan-table">
+          <thead>
+            <tr>
+              <th style="width:60px">№</th>
+              <th style="width:110px">Дата</th>
+              <th>Автор</th>
+              <th>Примечание</th>
+              <th class="th-money">Итого план</th>
+              <th class="th-money">Итого расчёт</th>
+              <th style="width:80px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="v in versionsList" :key="v.id" class="plan-tr">
+              <td class="text-medium-emphasis text-caption">{{ v.version_number }}</td>
+              <td class="text-caption">{{ fmtDate(v.created_at) }}</td>
+              <td class="text-caption">{{ v.created_by_name || '—' }}</td>
+              <td class="text-caption">{{ v.note || '—' }}</td>
+              <td class="th-money text-caption">{{ fmt(Number(v.total_planned) || 0) }}</td>
+              <td class="th-money text-caption" style="color:var(--color-contracted)">
+                {{ fmt(Number(v.total_effective ?? v.total_planned) || 0) }}
+              </td>
+              <td>
+                <v-btn
+                  icon="mdi-file-excel" size="x-small" variant="text" color="success"
+                  :title="`Скачать Excel версии ${v.version_number}`"
+                  @click.stop="downloadVersionExcel(v.id)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Dialog: зафиксировать версию ── -->
+    <v-dialog v-model="showSaveVersionDialog" max-width="420" persistent>
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-5">Зафиксировать версию план-графика</v-card-title>
+        <v-card-text class="px-5 pb-2">
+          <v-textarea
+            v-model="saveVersionNote"
+            label="Примечание (необязательно)"
+            variant="outlined" density="compact"
+            rows="3" auto-grow hide-details
+          />
+        </v-card-text>
+        <v-card-actions class="px-5 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showSaveVersionDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="saveVersionLoading" @click="saveVersion">
+            Зафиксировать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Snackbar ── -->
+    <v-snackbar v-model="snack.show" :color="snack.color" timeout="4000">
+      {{ snack.text }}
+    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import * as XLSX from 'xlsx'
@@ -206,6 +295,16 @@ interface Purchase {
 
 interface SubsidyMeta { id: number; name: string; year: number }
 
+interface PlanGraphVersion {
+  id: number
+  version_number: number
+  created_at: string
+  created_by_name?: string | null
+  note?: string | null
+  total_planned?: number | null
+  total_effective?: number | null
+}
+
 const purchases   = ref<Purchase[]>([])
 const subsidies   = ref<SubsidyMeta[]>([])
 const loading     = ref(false)
@@ -213,14 +312,27 @@ const exporting   = ref(false)
 const selectedYear    = ref<number | null>(null)
 const filterSubsidyId = ref<number | null>(null)
 const filterSearch    = ref('')
-const filterStatuses  = ref<string[]>(['confirmed', 'contracted', 'delivered', 'paid'])
+const filterStatuses  = ref<string[]>([
+  'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
+])
 
 const statusOptions = [
-  { value: 'confirmed',  label: 'Подтверждено', color: 'blue'   },
-  { value: 'contracted', label: 'Законтрактовано', color: 'indigo' },
-  { value: 'delivered',  label: 'Исполнено',    color: 'teal'   },
-  { value: 'paid',       label: 'Оплачено',     color: 'green'  },
+  { value: 'plan_schedule',   label: 'План-график',     color: 'blue'   },
+  { value: 'confirmed',       label: 'Подтверждено',    color: 'cyan'   },
+  { value: 'work_in_progress',label: 'В работе',        color: 'orange' },
+  { value: 'contracted',      label: 'Договор',         color: 'indigo' },
+  { value: 'ordered',         label: 'Заказано',        color: 'teal'   },
+  { value: 'delivered',       label: 'Поставлено',      color: 'green'  },
+  { value: 'paid',            label: 'Оплачено',        color: 'success'},
 ]
+
+// ── Versions block ──
+const versionsList         = ref<PlanGraphVersion[]>([])
+const versionsLoading      = ref(false)
+const showSaveVersionDialog = ref(false)
+const saveVersionNote      = ref('')
+const saveVersionLoading   = ref(false)
+const snack = ref({ show: false, text: '', color: 'info' })
 
 const availableYears = computed(() => {
   const years = new Set<number>()
@@ -247,10 +359,32 @@ const filtered = computed(() => {
   })
 })
 
-const totalNmck       = computed(() => filtered.value.reduce((s, p) => s + Number(p.nmck || p.total_nmck || p.planned_total_price || 0), 0))
+// ── Amount helpers ──
+const planAmount = (p: Purchase) =>
+  Number(p.nmck) || Number(p.total_nmck) || Number(p.planned_total_price) || 0
+
+const calcAmount = (p: Purchase) => {
+  if (p.status === 'delivered' || p.status === 'paid') {
+    return Number(p.payment_amount) || Number(p.contract_price) || planAmount(p)
+  }
+  return planAmount(p)
+}
+
+const totalPlan       = computed(() => filtered.value.reduce((s, p) => s + planAmount(p), 0))
+const totalCalc       = computed(() => filtered.value.reduce((s, p) => s + calcAmount(p), 0))
 const totalContracted = computed(() => filtered.value.reduce((s, p) => s + Number(p.contract_price || 0), 0))
 const totalPaid       = computed(() => filtered.value.reduce((s, p) => s + Number(p.payment_amount || 0), 0))
-const totalEconomy    = computed(() => filtered.value.reduce((s, p) => s + Number(p.economy || 0), 0))
+
+// ── Versions summary ──
+const versionsRemainder = computed(() => {
+  if (versionsList.value.length === 0) return 0
+  const sorted = [...versionsList.value].sort((a, b) => a.version_number - b.version_number)
+  const first = sorted[0]
+  const last  = sorted[sorted.length - 1]
+  const firstPlan = Number(first.total_planned) || 0
+  const lastCalc  = Number(last.total_effective ?? last.total_planned) || 0
+  return firstPlan - lastCalc
+})
 
 const toggleStatus = (v: string) => {
   const idx = filterStatuses.value.indexOf(v)
@@ -261,20 +395,20 @@ const toggleStatus = (v: string) => {
 const resetFilters = () => {
   filterSubsidyId.value = null
   filterSearch.value = ''
-  filterStatuses.value = ['confirmed', 'contracted', 'delivered', 'paid']
+  filterStatuses.value = [
+    'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
+  ]
 }
 
 const loadData = async () => {
   loading.value = true
   try {
-    const [subs, charts] = await Promise.all([
+    const [subs] = await Promise.all([
       apiFetch<SubsidyMeta[]>('/subsidies/'),
-      apiFetch<any>('/dashboard/charts?scope=plan'),
     ])
     subsidies.value = subs
     if (availableYears.value.length) selectedYear.value = availableYears.value[0]
 
-    // Load all confirmed+ purchases
     purchases.value = await apiFetch<Purchase[]>('/purchases/?scope=plan')
   } finally {
     loading.value = false
@@ -283,11 +417,72 @@ const loadData = async () => {
 
 loadData()
 
+// ── Versions loading ──
+const loadVersions = async () => {
+  if (filterSubsidyId.value === null) { versionsList.value = []; return }
+  versionsLoading.value = true
+  try {
+    versionsList.value = await apiFetch<PlanGraphVersion[]>(`/subsidies/${filterSubsidyId.value}/plan-graph/versions`)
+  } catch {
+    versionsList.value = []
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+watch(filterSubsidyId, () => { loadVersions() })
+
+const openSaveVersionDialog = () => {
+  saveVersionNote.value = ''
+  showSaveVersionDialog.value = true
+}
+
+const saveVersion = async () => {
+  if (filterSubsidyId.value === null) return
+  saveVersionLoading.value = true
+  try {
+    await apiFetch(`/subsidies/${filterSubsidyId.value}/plan-graph/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ note: saveVersionNote.value || null }),
+    })
+    showSaveVersionDialog.value = false
+    snack.value = { show: true, text: 'Версия план-графика зафиксирована', color: 'success' }
+    await loadVersions()
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.payload?.message || e?.message || 'Ошибка сохранения', color: 'error' }
+  } finally {
+    saveVersionLoading.value = false
+  }
+}
+
+const downloadVersionExcel = async (vid: number) => {
+  if (filterSubsidyId.value === null) return
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/subsidies/${filterSubsidyId.value}/plan-graph/versions/${vid}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error('Ошибка экспорта')
+    const blob = await res.blob()
+    const cd = res.headers.get('content-disposition') || ''
+    const m = cd.match(/filename="?([^"]+)"?/)
+    const filename = m ? m[1] : `version-${vid}.xlsx`
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
+  }
+}
+
 const openOrder = (id: number) => router.push(`/orders/${id}/edit`)
 
 // ─── Formatting ────────────────────────────────────────────────────────────────
 const fmt = (v: number) =>
   v > 0 ? v.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽' : '—'
+
+const fmtSigned = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽'
 
 const fmtDate = (d?: string | null) => {
   if (!d) return '—'
@@ -301,11 +496,24 @@ const isPastPlanned = (d?: string | null) => {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'Планируется', confirmed: 'Подтверждено',
-  contracted: 'Законтрактовано', delivered: 'Исполнено', paid: 'Оплачено',
+  planned:          'Планируется',
+  plan_schedule:    'План-график',
+  confirmed:        'Подтверждено',
+  work_in_progress: 'В работе',
+  contracted:       'Договор',
+  ordered:          'Заказано',
+  delivered:        'Поставлено',
+  paid:             'Оплачено',
 }
 const STATUS_COLORS: Record<string, string> = {
-  planned: 'grey', confirmed: 'blue', contracted: 'indigo', delivered: 'teal', paid: 'green',
+  planned:          'grey',
+  plan_schedule:    'blue',
+  confirmed:        'cyan',
+  work_in_progress: 'orange',
+  contracted:       'indigo',
+  ordered:          'teal',
+  delivered:        'green',
+  paid:             'success',
 }
 const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
 const statusColor = (s: string) => STATUS_COLORS[s] ?? 'grey'
@@ -319,8 +527,9 @@ const exportExcel = () => {
   try {
     const headers = [
       '№ п/п', 'Реестровый №', 'Предмет закупки', 'Категория ФЭО', 'Субсидия',
-      'НМЦД (руб.)', 'Способ закупки', 'Контрагент', '№ договора', 'Дата договора',
-      'Цена договора (руб.)', 'Оплачено (руб.)', 'Экономия (руб.)',
+      'НМЦД (руб.)', 'Сумма (план, руб.)', 'Сумма (расчёт, руб.)', 'Способ закупки',
+      'Контрагент', '№ договора', 'Дата договора',
+      'Цена договора (руб.)', 'Оплачено (руб.)',
       'Плановая дата закупки', 'Срок исполнения', 'Статус', 'Ссылка ЭТП',
     ]
 
@@ -331,13 +540,14 @@ const exportExcel = () => {
       p.feo_category_name ?? '',
       p.subsidy_name ?? '',
       Number(p.nmck || p.total_nmck || p.planned_total_price || 0),
+      planAmount(p),
+      calcAmount(p),
       methodLabel(p.purchase_method),
       p.contractor_name ?? '',
       p.contract_number ?? '',
       p.contract_date ?? '',
       Number(p.contract_price || 0),
       Number(p.payment_amount || 0),
-      Number(p.economy || 0),
       p.procurement_planned_date ?? '',
       p.execution_term ?? '',
       statusLabel(p.status),
@@ -349,15 +559,16 @@ const exportExcel = () => {
     // Column widths
     ws['!cols'] = [
       { wch: 5 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 20 },
-      { wch: 16 }, { wch: 26 }, { wch: 28 }, { wch: 14 }, { wch: 14 },
-      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 40 },
+      { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 26 }, { wch: 28 },
+      { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 16 },
+      { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 40 },
     ]
 
     // Totals row
     const totalRow = [
       'ИТОГО', '', '', '', '',
-      totalNmck.value, '', '', '', '',
-      totalContracted.value, totalPaid.value, totalEconomy.value, '', '', '', '',
+      totalPlan.value, totalPlan.value, totalCalc.value, '', '', '', '',
+      totalContracted.value, totalPaid.value, '', '', '', '',
     ]
     XLSX.utils.sheet_add_aoa(ws, [totalRow], { origin: -1 })
 
@@ -418,7 +629,7 @@ const exportExcel = () => {
   overflow: hidden;
 }
 
-.plan-table-wrap { overflow-x: auto; }
+.plan-table-wrap, .versions-table-wrap { overflow-x: auto; }
 
 .plan-table {
   width: 100%; border-collapse: collapse; font-size: 0.82rem;
@@ -461,5 +672,20 @@ const exportExcel = () => {
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   padding: 60px 0;
+}
+
+/* ── Versions block ── */
+.versions-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 20px; border-bottom: 1px solid var(--crm-border);
+  flex-wrap: wrap;
+}
+.versions-title {
+  display: flex; align-items: center;
+  font-weight: 600; font-size: 0.95rem; color: var(--crm-text);
+}
+.versions-summary {
+  font-size: 0.85rem; color: var(--crm-text-muted);
+  margin-left: auto;
 }
 </style>

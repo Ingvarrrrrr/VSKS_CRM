@@ -106,6 +106,7 @@ async def get_planned_purchase_items(
             Purchase.purchase_number,
             Purchase.registry_number,
             Purchase.status.label("purchase_status"),
+            Purchase.wish_id,
             Product.category.label("product_category"),
             Product.product_type.label("product_type"),
         )
@@ -130,6 +131,7 @@ async def get_planned_purchase_items(
             "purchase_number": r.purchase_number,
             "registry_number": r.registry_number,
             "purchase_status": r.purchase_status,
+            "wish_id": r.wish_id,
             "category": r.product_category or "Без категории",
             "product_type": r.product_type or "Без вида",
         })
@@ -1304,12 +1306,13 @@ async def update_category(
     cat_id: int,
     category_data: FeoCategoryCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     result = await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    _old_plan = (cat.budget, cat.planned_quantity, cat.planned_amount)
     cat.name = category_data.name
     cat.code = category_data.code
     cat.appendix = category_data.appendix
@@ -1318,6 +1321,9 @@ async def update_category(
     cat.planned_quantity = category_data.planned_quantity
     cat.planned_amount = category_data.planned_amount
     cat.unit = category_data.unit
+    if (cat.budget, cat.planned_quantity, cat.planned_amount) != _old_plan and cat.subsidy_id:
+        from app.routers.purchases import _create_plan_graph_version
+        await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
     await db.commit()
     await db.refresh(cat)
     return cat

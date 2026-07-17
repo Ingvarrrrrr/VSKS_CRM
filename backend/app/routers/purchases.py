@@ -134,16 +134,18 @@ async def _create_plan_graph_version(
     user,
     note: Optional[str] = None,
     effective_date: Optional[date] = None,
-) -> None:
+) -> bool:
     """
     Build a snapshot of all active FeoPlannedItems for the subsidy with residuals
     and save as a new PlanGraphVersion row. Increments version_number.
     schema_version=2: includes recursive FeoCategory tree with budget.
+    Returns True if a new version was created, False if deduplicated.
     Caller must commit after this call.
     """
     from app.models.feo_planned_item import FeoPlannedItem as _FPI
     from app.models.feo_category import FeoCategory as _FC
     from app.models.plan_graph_version import PlanGraphVersion as _PGV
+    from app.models.purchase import Purchase as _Purchase
 
     # Fetch all active FEO items for this subsidy
     items_q = (
@@ -159,9 +161,10 @@ async def _create_plan_graph_version(
     # (субсидия может иметь только категории с бюджетом). Пустой рынок позиций
     # даёт пустые агрегаты, но дерево всё равно снапшотится ниже.
     used_map: dict[int, float] = {}
+    used_actual_map: dict[int, float] = {}
     links_map: dict[int, list] = {}
     if item_ids:
-        # Aggregate used amounts
+        # Aggregate used amounts (all statuses)
         used_q = (
             select(
                 PurchaseItem.feo_planned_item_id,
@@ -173,6 +176,24 @@ async def _create_plan_graph_version(
         used_map = {
             r.feo_planned_item_id: float(r.used)
             for r in (await db.execute(used_q)).all()
+        }
+
+        # Aggregate used amounts (fact: only delivered/paid)
+        used_actual_q = (
+            select(
+                PurchaseItem.feo_planned_item_id,
+                func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+            )
+            .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
+            .where(
+                PurchaseItem.feo_planned_item_id.in_(item_ids),
+                _Purchase.status.in_(("delivered", "paid")),
+            )
+            .group_by(PurchaseItem.feo_planned_item_id)
+        )
+        used_actual_map = {
+            r.feo_planned_item_id: float(r.used)
+            for r in (await db.execute(used_actual_q)).all()
         }
 
         # Collect linked purchase ids
@@ -192,6 +213,7 @@ async def _create_plan_graph_version(
         item = r[0]
         planned = float(item.amount or 0)
         used = used_map.get(item.id, 0.0)
+        used_actual = used_actual_map.get(item.id, 0.0)
         total_planned += planned
         total_used += used
         snapshot_items.append({
@@ -200,6 +222,7 @@ async def _create_plan_graph_version(
             "category_id": item.feo_category_id,
             "planned_amount": planned,
             "used_amount": used,
+            "used_actual_amount": used_actual,
             "residual": planned - used,
             "linked_purchase_ids": links_map.get(item.id, []),
         })
@@ -209,22 +232,42 @@ async def _create_plan_graph_version(
     all_cats = (await db.execute(cats_q)).scalars().all()
 
     if not rows and not all_cats:
-        return  # ни позиций, ни категорий — версионировать нечего
+        return False  # ни позиций, ни категорий — версионировать нечего
 
     # FCAT-B3: aggregate used_amount via PurchaseItem.feo_category_id for leaf nodes
     all_cat_ids = [c.id for c in all_cats]
-    cat_used_q = (
-        select(
-            PurchaseItem.feo_category_id,
-            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+    cat_used_map: dict[int, float] = {}
+    cat_used_actual_map: dict[int, float] = {}
+    if all_cat_ids:
+        cat_used_q = (
+            select(
+                PurchaseItem.feo_category_id,
+                func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+            )
+            .where(PurchaseItem.feo_category_id.in_(all_cat_ids))
+            .group_by(PurchaseItem.feo_category_id)
         )
-        .where(PurchaseItem.feo_category_id.in_(all_cat_ids))
-        .group_by(PurchaseItem.feo_category_id)
-    )
-    cat_used_map: dict[int, float] = {
-        r.feo_category_id: float(r.used)
-        for r in (await db.execute(cat_used_q)).all()
-    }
+        cat_used_map = {
+            r.feo_category_id: float(r.used)
+            for r in (await db.execute(cat_used_q)).all()
+        }
+
+        cat_used_actual_q = (
+            select(
+                PurchaseItem.feo_category_id,
+                func.coalesce(func.sum(PurchaseItem.total_price), 0).label("used"),
+            )
+            .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
+            .where(
+                PurchaseItem.feo_category_id.in_(all_cat_ids),
+                _Purchase.status.in_(("delivered", "paid")),
+            )
+            .group_by(PurchaseItem.feo_category_id)
+        )
+        cat_used_actual_map = {
+            r.feo_category_id: float(r.used)
+            for r in (await db.execute(cat_used_actual_q)).all()
+        }
 
     def _build_tree(cats, parent_id=None):
         nodes = []
@@ -241,6 +284,7 @@ async def _create_plan_graph_version(
                     "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
                     "unit": c.unit,
                     "used_amount": cat_used_map.get(c.id, 0.0),  # FCAT-B3: агрегат через feo_category_id
+                    "used_actual_amount": cat_used_actual_map.get(c.id, 0.0),
                     "children": _build_tree(cats, parent_id=c.id),
                 })
         return nodes
@@ -261,15 +305,69 @@ async def _create_plan_graph_version(
             return total
         total_planned = _leaf_budget_sum(feo_tree)
 
+    # manual_plan_total — рекурсивно по дереву ФЭО (ручной план qty*amt или бюджет листа)
+    def _node_manual_plan(n):
+        own = 0.0
+        qty = float(n.get("planned_quantity") or 0)
+        amt = float(n.get("planned_amount") or 0)
+        children = n.get("children") or []
+        if qty > 0 and amt > 0:
+            own = qty * amt
+        elif not children and n.get("budget"):
+            own = float(n["budget"])
+        return own + sum(_node_manual_plan(c) for c in children)
+    manual_plan_total = sum(_node_manual_plan(n) for n in feo_tree)
+
+    # purchases_plan_total / purchases_calc_total — суммы закупок в статусах план-графика
+    _PLAN_STATUSES = ("plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid")
+    purch_rows = (await db.execute(
+        select(_Purchase.id, _Purchase.status, _Purchase.planned_total_price, _Purchase.total_nmck, _Purchase.nmck, _Purchase.contract_price, _Purchase.payment_amount)
+        .where(_Purchase.subsidy_id == subsidy_id, _Purchase.status.in_(_PLAN_STATUSES))
+    )).all()
+    purchases_plan_total = 0.0
+    purchases_calc_total = 0.0
+    for pr in purch_rows:
+        _plan = float(pr.planned_total_price or 0) or float(pr.total_nmck or 0) or float(pr.nmck or 0)
+        if pr.status in ("delivered", "paid"):
+            _calc = float(pr.payment_amount or 0) or float(pr.contract_price or 0) or _plan
+        else:
+            _calc = _plan
+        purchases_plan_total += _plan
+        purchases_calc_total += _calc
+    purchase_statuses = {str(pr.id): pr.status for pr in purch_rows}
+
+    # total_effective = ручной план дерева ФЭО + фактические суммы закупок
+    total_effective = manual_plan_total + purchases_calc_total
+
     snapshot = {
         "schema_version": 2,
         "subsidy_id": subsidy_id,
         "effective_date": effective_date.isoformat() if effective_date else None,
         "total_planned": total_planned,
         "total_used": total_used,
+        "total_effective": total_effective,
+        "manual_plan_total": manual_plan_total,
+        "purchases_plan_total": purchases_plan_total,
+        "purchases_calc_total": purchases_calc_total,
+        "total_plan_combined": manual_plan_total + purchases_plan_total,
+        "purchase_statuses": purchase_statuses,
         "items": snapshot_items,  # backward-compat
         "tree": feo_tree,
     }
+
+    # Dedup: skip if identical to last version (ignoring effective_date)
+    last_ver_q = (
+        select(_PGV)
+        .where(_PGV.subsidy_id == subsidy_id)
+        .order_by(_PGV.version_number.desc())
+        .limit(1)
+    )
+    last_ver = (await db.execute(last_ver_q)).scalar_one_or_none()
+    if last_ver is not None:
+        prev_snap = {k: v for k, v in (last_ver.snapshot or {}).items() if k != "effective_date"}
+        new_snap = {k: v for k, v in snapshot.items() if k != "effective_date"}
+        if prev_snap == new_snap:
+            return False
 
     # Get next version_number
     max_ver_q = select(
@@ -287,6 +385,7 @@ async def _create_plan_graph_version(
         effective_date=effective_date,
     )
     db.add(pgv)
+    return True
 
 
 # Status workflow
@@ -1207,14 +1306,20 @@ async def update_purchase(
                 reason=None,
             ))
 
-    # 12-03: Auto-create plan-graph version if any items are FEO-linked
-    if p.subsidy_id and any(i.feo_planned_item_id for i in items_data if i.feo_planned_item_id):
-        await _create_plan_graph_version(
-            subsidy_id=p.subsidy_id,
-            db=db,
-            user=current_user,
-            note=f"Авто-версия при сохранении закупки #{p.purchase_number or p.id}",
-        )
+    # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items
+    _old_status = _old_purchase_values.get("status")
+    _status_became_fact = (
+        p.status in ("delivered", "paid")
+        and _old_status not in ("delivered", "paid")
+    )
+    _has_feo_items = any(i.feo_planned_item_id for i in items_data if i.feo_planned_item_id)
+    if p.subsidy_id and (_status_became_fact or _has_feo_items):
+        if _status_became_fact:
+            _st_label = "Оплачено" if p.status == "paid" else "Поставлено"
+            _pgv_note = f"Авто-версия: закупка №{p.purchase_number or p.id} → {_st_label}"
+        else:
+            _pgv_note = f"Авто-версия при сохранении закупки #{p.purchase_number or p.id}"
+        await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=_pgv_note)
 
     await db.commit()
     await db.refresh(p)
@@ -1472,6 +1577,106 @@ async def set_item_product(
         it.product_id = None
     await db.commit()
     return {"ok": True, "item_id": item_id, "product_id": it.product_id}
+
+
+class _ItemPatchBody(BaseModel):
+    item_name: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    feo_category_id: Optional[int] = None
+    clear_feo_category: bool = False
+
+
+async def _recalc_purchase_totals(p: Purchase, db: AsyncSession) -> None:
+    """Пересчёт сумм закупки из позиций (та же логика, что в update_purchase)."""
+    items_sum = (await db.execute(
+        select(func.coalesce(func.sum(PurchaseItem.total_price), 0))
+        .where(PurchaseItem.purchase_id == p.id)
+    )).scalar() or Decimal("0")
+    if p.status not in ("contracted", "ordered", "delivered", "paid"):
+        p.total_nmck = items_sum
+        p.planned_total_price = items_sum or p.planned_total_price
+    if items_sum:
+        p.contract_price = items_sum
+
+
+@router.patch("/{pid}/items/{item_id}")
+async def patch_purchase_item(
+    pid: int,
+    item_id: int,
+    body: _ItemPatchBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Точечная правка позиции (название/кол-во/цена/ФЭО-привязка) без full PUT закупки."""
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
+    it = await db.get(PurchaseItem, item_id)
+    if not it or it.purchase_id != pid:
+        raise HTTPException(404, "Позиция не найдена")
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    if body.item_name is not None:
+        name = body.item_name.strip()
+        if not name:
+            raise HTTPException(422, "Название позиции не может быть пустым")
+        it.item_name = name
+    if body.quantity is not None:
+        it.quantity = body.quantity
+    if body.unit is not None:
+        it.unit = body.unit.strip() or None
+    if body.unit_price is not None:
+        it.unit_price = body.unit_price
+    if body.quantity is not None or body.unit_price is not None:
+        qty = it.quantity or Decimal("0")
+        price = it.unit_price or Decimal("0")
+        it.total_price = qty * price
+    if body.clear_feo_category:
+        it.feo_category_id = None
+    elif body.feo_category_id is not None:
+        cat = await db.get(FeoCategory, body.feo_category_id)
+        if not cat:
+            raise HTTPException(404, "Категория ФЭО не найдена")
+        if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
+            raise HTTPException(422, "Категория ФЭО относится к другой субсидии")
+        it.feo_category_id = body.feo_category_id
+    await db.flush()
+    await _recalc_purchase_totals(p, db)
+    if p and p.subsidy_id:
+        await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение позиций закупки #{p.purchase_number or p.id}")
+    await db.commit()
+    return {
+        "ok": True, "item_id": it.id, "item_name": it.item_name,
+        "quantity": float(it.quantity or 0), "unit": it.unit,
+        "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
+        "feo_category_id": it.feo_category_id,
+    }
+
+
+@router.delete("/{pid}/items/{item_id}")
+async def delete_purchase_item(
+    pid: int,
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Удаление одной позиции закупки с пересчётом сумм."""
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
+    it = await db.get(PurchaseItem, item_id)
+    if not it or it.purchase_id != pid:
+        raise HTTPException(404, "Позиция не найдена")
+    p = await db.get(Purchase, pid)
+    await db.delete(it)
+    await db.flush()
+    if p:
+        await _recalc_purchase_totals(p, db)
+    if p and p.subsidy_id:
+        await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение позиций закупки #{p.purchase_number or p.id}")
+    await db.commit()
+    return {"ok": True, "deleted_item_id": item_id}
 
 
 @router.delete("/bulk")

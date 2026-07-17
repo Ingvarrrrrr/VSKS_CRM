@@ -306,7 +306,7 @@
               <span class="chart-card-title">Направления ФЭО</span>
               <div class="d-flex align-center ml-4" style="gap:6px" title="Группировка позиций «из заявок» при раскрытии направления">
                 <span class="text-caption text-medium-emphasis">Позиции:</span>
-                <v-btn-toggle v-model="feoItemsGroupBy" density="compact" mandatory variant="outlined" color="teal" style="height:26px">
+                <v-btn-toggle v-model="feoItemsGroupBy" density="compact" mandatory variant="outlined" color="teal" style="height:26px" :disabled="plannedBase === 'purchases'">
                   <v-btn size="x-small" value="none">Нет</v-btn>
                   <v-btn size="x-small" value="category">По категориям</v-btn>
                   <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
@@ -383,7 +383,29 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('qty')">
-                      ПЛАНОВОЕ<br>КОЛ-ВО
+                      <div>ПЛАНОВОЕ<br>КОЛ-ВО</div>
+                      <div class="feo-residual-toggle">
+                        <span
+                          :class="plannedQtyBase === 'all' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Ручной план ФЭО + позиции заявок в план-графике"
+                          @click.stop="plannedQtyBase = 'all'"
+                        >все</span>
+                        <span
+                          :class="plannedQtyBase === 'manual' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Только ручной план ФЭО"
+                          @click.stop="plannedQtyBase = 'manual'"
+                        >ручные</span>
+                        <span
+                          :class="plannedQtyBase === 'requests' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Только позиции заявок со статусом «План-график» и дальше"
+                          @click.stop="plannedQtyBase = 'requests'"
+                        >из заявок</span>
+                        <span
+                          :class="plannedQtyBase === 'purchases' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Ручной план ФЭО + позиции закупок без слияния; при раскрытии направления — папки по закупкам"
+                          @click.stop="plannedQtyBase = 'purchases'"
+                        >по закупкам</span>
+                      </div>
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'qty')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('planned')">
@@ -404,6 +426,11 @@
                           title="Только позиции заявок со статусом «План-график» и дальше"
                           @click.stop="plannedSumBase = 'requests'"
                         >из заявок</span>
+                        <span
+                          :class="plannedSumBase === 'purchases' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
+                          title="Ручной план ФЭО + позиции закупок без слияния; при раскрытии направления — папки по закупкам"
+                          @click.stop="plannedSumBase = 'purchases'"
+                        >по закупкам</span>
                       </div>
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'planned')"></span>
                     </th>
@@ -433,7 +460,7 @@
                 <tbody>
                   <template v-for="node in visibleFeoNodes" :key="node.id">
                     <tr
-                      v-if="isNodeVisible(node)"
+                      v-if="isNodeVisible(node) && !(plannedBase === 'requests' && isManualPosLeaf(node))"
                       class="feo-tr"
                       :class="[
                         `feo-tr--l${node.level}`,
@@ -542,11 +569,11 @@
                       <td class="feo-td feo-td-num">
                         <div v-if="isAutoQtyNode(node)" class="text-right">
                           <div class="feo-amount">{{ feoQtyDisplayFor(node) > 0 ? feoQtyDisplayFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
-                          <div v-if="plannedSumBase === 'all' && feoQtyRequestsFor(node) > 0"
+                          <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
                             class="feo-plan-note text-medium-emphasis"
                             :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
                           >
-                            из заявок {{ feoQtyRequestsFor(node) }}
+                            в т.ч. из заявок {{ feoQtyRequestsFor(node) }}
                           </div>
                           <v-chip size="x-small" color="blue-grey" variant="tonal"
                             title="Количество автоматически считается из дочерних"
@@ -566,12 +593,26 @@
                         <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
                           <span v-if="feoQtyDisplayFor(node) > 0" class="feo-amount">{{ feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
                           <span v-else class="feo-set-hint">—</span>
-                          <div v-if="plannedSumBase === 'all' && feoQtyRequestsFor(node) > 0"
+                          <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
                             class="feo-plan-note text-medium-emphasis"
                             :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
                           >
-                            из заявок {{ feoQtyRequestsFor(node) }}
+                            в т.ч. из заявок {{ feoQtyRequestsFor(node) }}
                           </div>
+                          <template v-if="plannedQtyBase === 'all' && matchedReqFor(node).length">
+                            <div v-if="mergedQtyDiff(node) > 0"
+                              class="feo-plan-note" style="color:#F59E0B"
+                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.planned_quantity) || 0}`"
+                            >
+                              на {{ mergedQtyDiff(node) }} превышает заложенный в ФЭО показатель ({{ Number(node.planned_quantity) || 0 }})
+                            </div>
+                            <div v-else-if="mergedQtyDiff(node) < 0"
+                              class="feo-plan-note text-medium-emphasis"
+                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.planned_quantity) || 0}`"
+                            >
+                              не хватает {{ -mergedQtyDiff(node) }} до заложенного в ФЭО ({{ Number(node.planned_quantity) || 0 }})
+                            </div>
+                          </template>
                         </div>
                       </td>
 
@@ -586,7 +627,13 @@
                           class="feo-plan-note text-medium-emphasis"
                           :title="`Позиции заявок в статусе «План-график» и дальше: ${formatCurrency(feoPlannedRequestsFor(node))}`"
                         >
-                          из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
+                          в т.ч. из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
+                        </div>
+                        <div v-if="plannedSumBase === 'all' && matchedReqFor(node).length"
+                          class="feo-plan-note text-medium-emphasis"
+                          :title="mergedManualPriority(node) ? 'Сумма позиций заявок с тем же наименованием' : 'Сумма позиций заявок по фактическим ценам — прибавлена к ручному плану'"
+                        >
+                          в т.ч. из заявок {{ formatCurrency(matchedReqTotal(node)) }}
                         </div>
                         <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedDisplayFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
@@ -693,10 +740,11 @@
                               <tr style="background:#CCFBF1">
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Значения берутся из плановых позиций категории">ПЛАН (из плановых)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ФАКТ (из закупок)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Разница</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
@@ -715,6 +763,9 @@
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">
                                       <span v-if="ai === 0 && planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
+                                    </td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                      <span v-if="ai === 0 && planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">
                                       <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
@@ -767,6 +818,9 @@
                                     {{ planned.quantity ? `${parseFloat(String(planned.quantity))} ${planned.unit || ''}` : '—' }}
                                   </td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    {{ planned.amount && Number(planned.quantity) > 0 ? formatCurrency(Number(planned.amount) / Number(planned.quantity)) : '—' }}
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
                                     {{ planned.amount ? formatCurrency(planned.amount) : '—' }}
                                   </td>
                                   <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
@@ -776,7 +830,7 @@
                                   <td style="padding:4px 8px;text-align:right;color:#9ca3af">{{ planned.amount ? formatCurrency(Number(planned.amount)) : '—' }}</td>
                                   <td style="padding:4px 8px;color:#9ca3af">—</td>
                                   <td style="padding:4px 8px;text-align:center">
-                                    <v-icon icon="mdi-clock-outline" size="16" color="warning" title="Не куплено" />
+                                    <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
                                   </td>
                                   <td style="padding:2px;text-align:center">
                                     <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
@@ -808,6 +862,7 @@
                                   </a>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
                                 <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
                                 <td style="padding:4px 8px"></td>
@@ -833,6 +888,7 @@
                                 :key="`a-${actual.purchase_item_id}`"
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
                                 <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
+                                <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px" class="text-orange-darken-2">
@@ -864,9 +920,87 @@
                                 </td>
                               </tr>
 
+                              <!-- Ручной план ФЭО (сама категория) — отдельная плановая строка -->
+                              <tr v-if="matchedReqFor(node).length && (node.planned_quantity != null || node.planned_amount != null)"
+                                style="border-bottom:1px solid #E0F2FE">
+                                <td style="padding:4px 8px;color:#0c4a6e">
+                                  <div style="font-weight:500">{{ node.name }}</div>
+                                  <div class="feo-plan-note text-medium-emphasis">
+                                    <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />{{ mergedManualPriority(node) ? 'ручной план ФЭО' : 'Внесено вручную: подробного деления в ФЭО не было' }}
+                                  </div>
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                  {{ node.planned_quantity != null ? `${parseFloat(String(node.planned_quantity))} ${node.unit || ''}` : '—' }}
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                  {{ node.planned_amount != null ? formatCurrency(Number(node.planned_amount)) : '—' }}
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                  {{ feoPlannedTotalFor(node) > 0 ? formatCurrency(feoPlannedTotalFor(node)) : '—' }}
+                                </td>
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                <td style="padding:4px 8px;text-align:center">
+                                  <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
+                                </td>
+                                <td style="padding:2px"></td>
+                              </tr>
+
+                              <!-- Одноимённые позиции из заявок: план-стадия, факта ещё нет -->
+                              <tr v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`"
+                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
+                                <td style="padding:4px 8px;color:#0c4a6e">
+                                  <div>{{ it.item_name }}</div>
+                                  <div class="d-flex align-center flex-wrap" style="gap:8px">
+                                    <a href="javascript:void(0)" class="feo-purchase-link"
+                                      :title="`Перейти в закупку #${it.purchase_id}`"
+                                      @click.stop="router.push(`/orders/${it.purchase_id}`)"
+                                    >
+                                      <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                      {{ it.registry_number || (it.purchase_number != null ? `№ ${it.purchase_number}` : `Закупка #${it.purchase_id}`) }}
+                                    </a>
+                                    <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
+                                      title="Перейти к заявкам"
+                                      @click.stop="router.push('/wishes')"
+                                    >
+                                      <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}
+                                    </a>
+                                  </div>
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.unit_price ? formatCurrency(it.unit_price) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.total_price) }}</td>
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                <td style="padding:4px 8px;text-align:center">
+                                  <v-chip size="x-small" color="blue" variant="tonal">
+                                    {{ PURCHASE_STATUS_LABELS[it.purchase_status] || it.purchase_status }}
+                                  </v-chip>
+                                </td>
+                                <td style="padding:2px;text-align:center;white-space:nowrap">
+                                  <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
+                                    title="Открыть закупку"
+                                    @click.stop="router.push(`/orders/${it.purchase_id}`)" />
+                                  <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                    title="Редактировать позицию закупки"
+                                    @click="openReqItemEdit(node, it)" />
+                                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                    title="Удалить позицию из закупки"
+                                    @click="confirmReqItemDelete(node, it)" />
+                                </td>
+                              </tr>
+
                               <!-- Пусто -->
-                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length">
-                                <td colspan="11" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length && !matchedReqFor(node).length">
+                                <td colspan="12" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
@@ -875,6 +1009,7 @@
                             <tfoot v-if="comparisonData[node.id].planned.length || comparisonData[node.id].actual.length">
                               <tr style="background:rgba(34,197,94,0.08);font-weight:600;border-top:2px solid rgba(34,197,94,0.3)">
                                 <td style="padding:4px 8px" class="text-success">ИТОГО</td>
+                                <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;text-align:right">
                                   {{ formatCurrency(comparisonPlanTotal(node.id)) }}
@@ -894,62 +1029,238 @@
                               </tr>
                             </tfoot>
                           </table>
+
                         </div>
                       </td>
                     </tr>
 
-                    <!-- ── Позиции «из заявок»: раскрытие листа-папки ── -->
-                    <template v-if="!node.hasChildren && expandedReqItems.has(node.id) && isNodeVisible(node)">
-                      <tr v-if="loadingPlannedItems" :key="`req-load-${node.id}`" class="feo-tr">
-                        <td colspan="7" class="feo-td" :style="{ paddingLeft: `${(node.depth + 1) * 20 + 28}px`, padding: '6px 8px' }">
-                          <v-progress-circular indeterminate size="14" width="2" color="teal" class="mr-2" />
-                          <span class="text-caption">Загрузка позиций...</span>
-                        </td>
-                      </tr>
+                    <!-- ── Позиции «из заявок» как позиции ФЭО (после поддерева владельца) ── -->
+                    <template v-for="owner in (reqOwnersAfter[node.id] || [])" :key="`reqblk-${owner.id}`">
+                      <template v-if="plannedBase !== 'purchases'">
+                        <template v-for="row in reqItemRowsFor(owner)" :key="`req-${owner.id}-${row.key}`">
+                          <tr
+                            class="feo-tr feo-req-row"
+                            :style="row.group ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
+                          >
+                            <td class="feo-td feo-td-name" :style="{ paddingLeft: reqRowIndent(owner, row) }">
+                              <div class="feo-name-inner">
+                                <template v-if="!row.group">
+                                  <v-icon size="14" class="mr-1 flex-shrink-0"
+                                    :icon="row.level === 1 ? 'mdi-shape-outline' : 'mdi-tag-outline'"
+                                    :color="row.level === 1 ? '#0D9488' : '#64748B'" />
+                                  <span :style="row.level === 1 ? 'font-weight:600;font-size:12px' : 'font-weight:500;font-size:12px;color:#475569'">{{ row.header }}</span>
+                                  <span class="feo-code ml-2">{{ row.count }} поз.</span>
+                                </template>
+                                <template v-else>
+                                  <span style="width:16px;display:inline-block" />
+                                  <v-icon size="16" class="mr-1 flex-shrink-0" icon="mdi-file-document-outline" color="#22C55E" />
+                                  <span class="feo-name feo-name--l3">{{ row.group.name }}</span>
+                                  <span v-if="row.group.items.length > 1" class="feo-code ml-2"
+                                    title="Слито из нескольких позиций заявок">{{ row.group.items.length }} поз. в заявках</span>
+                                </template>
+                              </div>
+                            </td>
+                            <!-- Финансирование по ФЭО: не задавалось -->
+                            <td class="feo-td feo-td-num">
+                              <span v-if="row.group" class="feo-amount-empty"
+                                title="Эта позиция не задавалась в ФЭО — заведена через заявку">—</span>
+                            </td>
+                            <!-- Плановое кол-во -->
+                            <td class="feo-td feo-td-num">
+                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ row.sumQty }}{{ row.group?.unit ? ` ${row.group.unit}` : '' }}</span>
+                              <div v-if="row.group" class="feo-plan-note text-medium-emphasis">из заявок</div>
+                            </td>
+                            <!-- Плановая сумма -->
+                            <td class="feo-td feo-td-num">
+                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ formatCurrency(row.sum) }}</span>
+                              <div v-if="row.group && row.group.items.length === 1 && row.group.items[0].unit_price"
+                                class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.group.items[0].unit_price) }}/ед.</div>
+                            </td>
+                            <!-- Факт / Остаток: не считаются по незаданной в ФЭО позиции -->
+                            <td class="feo-td feo-td-num"><span v-if="row.group" class="feo-amount-empty">—</span></td>
+                            <td class="feo-td feo-td-num"><span v-if="row.group" class="feo-amount-empty">—</span></td>
+                            <td class="feo-td feo-td-actions">
+                              <div v-if="row.group" class="d-flex align-center justify-end">
+                                <v-btn
+                                  :icon="expandedReqItemPanels.has(reqPanelKey(owner, row.group)) ? 'mdi-list-box' : 'mdi-list-box-outline'"
+                                  variant="text" size="x-small"
+                                  :color="expandedReqItemPanels.has(reqPanelKey(owner, row.group)) ? 'teal' : 'grey'"
+                                  title="Источники: план vs факт по этой позиции"
+                                  @click="toggleReqItemPanel(owner, row.group)"
+                                />
+                                <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
+                                  :title="virtGroupPurchaseIds(row.group).length === 1 ? 'Открыть закупку' : 'Несколько закупок — открыть источники'"
+                                  @click.stop="virtCart(owner, row.group)" />
+                                <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
+                                  :title="row.group.items.length === 1 ? 'Редактировать позицию закупки' : 'Несколько позиций — открыть источники'"
+                                  @click="virtEdit(owner, row.group)" />
+                                <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
+                                  :title="row.group.items.length === 1 ? 'Удалить позицию из закупки' : 'Несколько позиций — открыть источники'"
+                                  @click="virtDelete(owner, row.group)" />
+                              </div>
+                            </td>
+                          </tr>
+
+                          <!-- Панель источников: план vs факт по каждой позиции заявки -->
+                          <tr v-if="row.group && expandedReqItemPanels.has(reqPanelKey(owner, row.group))">
+                            <td colspan="7" style="padding:0;background:rgba(20,184,166,0.08)">
+                              <div :style="{ padding: '8px 12px 10px', marginLeft: reqRowIndent(owner, row) }">
+                                <div class="d-flex align-center mb-1" style="gap:6px">
+                                  <v-icon icon="mdi-compare-horizontal" size="14" color="teal" />
+                                  <span style="font-size:11px;font-weight:600" class="text-teal-darken-2">Позиции: план vs факт</span>
+                                </div>
+                                <div v-if="loadingComparison.has(owner.id)" class="d-flex align-center" style="gap:8px;padding:4px 0">
+                                  <v-progress-circular indeterminate size="14" color="teal" />
+                                  <span class="text-caption">Загрузка...</span>
+                                </div>
+                                <table v-else style="width:100%;border-collapse:collapse;font-size:11px;background:#fff">
+                                  <thead>
+                                    <tr style="background:#CCFBF1">
+                                      <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600">ПЛАН (из заявок)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Кол-во (план)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Цена (план)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:110px">Сумма (план)</th>
+                                      <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600">ФАКТ (из закупок)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Кол-во (факт)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Цена (факт)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:110px">Сумма (факт)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:100px">Разница</th>
+                                      <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600;width:120px">Контрагент</th>
+                                      <th style="padding:3px 8px;text-align:center;color:#0f766e;font-weight:600;width:80px">Статус</th>
+                                      <th style="padding:3px 2px;width:80px"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    <tr v-for="it in row.group.items" :key="`src-${it.id}`" style="border-bottom:1px solid #E0F2FE">
+                                      <td style="padding:4px 8px;color:#0c4a6e">
+                                        <div>{{ it.item_name }}</div>
+                                        <div class="d-flex align-center flex-wrap" style="gap:8px">
+                                          <a href="javascript:void(0)" class="feo-purchase-link"
+                                            :title="`Перейти в закупку #${it.purchase_id}`"
+                                            @click.stop="router.push(`/orders/${it.purchase_id}`)"
+                                          >
+                                            <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                            {{ it.registry_number || (it.purchase_number != null ? `№ ${it.purchase_number}` : `Закупка #${it.purchase_id}`) }}
+                                          </a>
+                                          <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
+                                            title="Перейти к заявкам"
+                                            @click.stop="router.push('/wishes')"
+                                          >
+                                            <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}
+                                          </a>
+                                        </div>
+                                        <div v-if="reqItemPlanned(owner.id, it.id)" class="feo-plan-note text-medium-emphasis">
+                                          сопоставлено с плановой «{{ reqItemPlanned(owner.id, it.id)?.name }}»
+                                        </div>
+                                      </td>
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.unit_price ? formatCurrency(it.unit_price) : '—' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.total_price) }}</td>
+                                      <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
+                                      <td style="padding:4px 8px"></td>
+                                      <td style="padding:4px 8px"></td>
+                                      <td style="padding:4px 8px"></td>
+                                      <td style="padding:4px 8px;text-align:right;color:#9ca3af">—</td>
+                                      <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                      <td style="padding:4px 8px;text-align:center">
+                                        <v-chip size="x-small" color="blue" variant="tonal">
+                                          {{ PURCHASE_STATUS_LABELS[it.purchase_status] || it.purchase_status }}
+                                        </v-chip>
+                                      </td>
+                                      <td style="padding:2px;text-align:center;white-space:nowrap">
+                                        <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
+                                          title="Открыть закупку"
+                                          @click.stop="router.push(`/orders/${it.purchase_id}`)" />
+                                        <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                          title="Редактировать позицию закупки"
+                                          @click="openReqItemEdit(owner, it)" />
+                                        <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                          title="Удалить позицию из закупки"
+                                          @click="confirmReqItemDelete(owner, it)" />
+                                        <v-btn v-if="!reqItemPlanned(owner.id, it.id) && reqItemActual(owner.id, it.id)"
+                                          icon="mdi-link-variant" size="x-small" variant="text" color="teal"
+                                          title="Сопоставить с плановой позицией"
+                                          @click="mapReqItem(owner, it)"
+                                        />
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        </template>
+                      </template>
                       <template v-else>
-                        <tr
-                          v-for="row in reqItemRowsFor(node)"
-                          :key="`req-${node.id}-${row.key}`"
-                          class="feo-tr feo-req-row"
-                          :style="row.item ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
-                        >
-                          <td class="feo-td feo-td-name" :style="{ paddingLeft: reqRowIndent(node, row) }">
-                            <div class="feo-name-inner">
-                              <template v-if="!row.item">
-                                <v-icon size="14" class="mr-1 flex-shrink-0"
-                                  :icon="row.level === 1 ? 'mdi-shape-outline' : 'mdi-tag-outline'"
-                                  :color="row.level === 1 ? '#0D9488' : '#64748B'" />
-                                <span :style="row.level === 1 ? 'font-weight:600;font-size:12px' : 'font-weight:500;font-size:12px;color:#475569'">{{ row.header }}</span>
-                                <span class="feo-code ml-2">{{ row.count }} поз.</span>
-                              </template>
-                              <template v-else>
-                                <v-icon size="14" class="mr-1 flex-shrink-0" icon="mdi-package-variant-closed" color="#94A3B8" />
-                                <span style="font-size:12px">{{ row.item.item_name }}</span>
-                                <a href="javascript:void(0)" class="feo-purchase-link ml-2 flex-shrink-0"
-                                  :title="`Перейти в закупку #${row.item.purchase_id}`"
-                                  @click.stop="router.push(`/orders/${row.item.purchase_id}`)"
+                        <!-- Режим «по закупкам»: папки по purchase_id без слияния -->
+                        <template v-for="f in purchaseFoldersFor(owner)" :key="`pf-${owner.id}-${f.purchase_id}`">
+                          <tr class="feo-tr feo-req-row" style="background:rgba(20,184,166,0.10)">
+                            <td class="feo-td feo-td-name" :style="{ paddingLeft: ((owner.depth + 1) * 20 + 8) + 'px' }">
+                              <div class="feo-name-inner">
+                                <span class="feo-tree-chevron" style="cursor:pointer" @click.stop="togglePurchaseFolder(f.purchase_id)">
+                                  <v-icon size="16">{{ expandedPurchases.has(f.purchase_id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+                                </span>
+                                <v-icon size="15" color="#0D9488" class="mr-1">{{ expandedPurchases.has(f.purchase_id) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}</v-icon>
+                                <span>{{ purchaseFolderTitle(f) }}</span>
+                                <v-chip size="x-small" variant="tonal" color="blue" class="ml-2">{{ PURCHASE_STATUS_LABELS[f.purchase_status] || f.purchase_status }}</v-chip>
+                                <span class="feo-code ml-2">{{ f.items.length }} поз.</span>
+                                <a v-if="f.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
+                                  title="Перейти к заявкам"
+                                  @click.stop="router.push('/wishes')"
                                 >
-                                  <v-icon icon="mdi-link-variant" size="10" class="mr-1" />{{ row.item.registry_number || (row.item.purchase_number != null ? `№ ${row.item.purchase_number}` : `#${row.item.purchase_id}`) }}
+                                  <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ f.wish_id }}
                                 </a>
-                              </template>
-                            </div>
-                          </td>
-                          <td class="feo-td feo-td-num"></td>
-                          <td class="feo-td feo-td-num">
-                            <span v-if="!row.item" class="feo-amount text-medium-emphasis" style="font-size:12px">{{ row.sumQty }}</span>
-                            <span v-else class="feo-amount" style="font-size:12px">{{ row.item.quantity }}{{ row.item.unit ? ` ${row.item.unit}` : '' }}</span>
-                          </td>
-                          <td class="feo-td feo-td-num">
-                            <span v-if="!row.item" class="feo-amount text-medium-emphasis" style="font-size:12px">{{ formatCurrency(row.sum) }}</span>
-                            <template v-else>
-                              <span class="feo-amount" style="font-size:12px">{{ formatCurrency(row.item.total_price) }}</span>
-                              <div v-if="row.item.unit_price" class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.item.unit_price) }}/ед.</div>
-                            </template>
-                          </td>
-                          <td class="feo-td feo-td-num"></td>
-                          <td class="feo-td feo-td-num"></td>
-                          <td class="feo-td feo-td-actions"></td>
-                        </tr>
+                              </div>
+                            </td>
+                            <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                            <td class="feo-td feo-td-num">
+                              <span class="feo-amount" style="font-size:12px">{{ f.qty }}{{ f.unit ? ` ${f.unit}` : '' }}</span>
+                            </td>
+                            <td class="feo-td feo-td-num">
+                              <span class="feo-amount" style="font-size:12px">{{ formatCurrency(f.total) }}</span>
+                            </td>
+                            <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                            <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                            <td class="feo-td feo-td-actions">
+                              <div class="d-flex align-center justify-end">
+                                <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
+                                  title="Открыть закупку"
+                                  @click.stop="router.push(`/orders/${f.purchase_id}`)" />
+                              </div>
+                            </td>
+                          </tr>
+                          <template v-if="expandedPurchases.has(f.purchase_id)">
+                            <tr v-for="it in f.items" :key="`pfi-${owner.id}-${it.id}`" class="feo-tr feo-req-row" style="background:rgba(20,184,166,0.04)">
+                              <td class="feo-td feo-td-name" :style="{ paddingLeft: ((owner.depth + 2) * 20 + 8) + 'px' }">
+                                <div class="feo-name-inner">
+                                  <span style="width:16px;display:inline-block" />
+                                  <v-icon size="15" class="mr-1 flex-shrink-0" icon="mdi-file-document-outline" color="#22C55E" />
+                                  <span class="feo-name feo-name--l3">{{ it.item_name }}</span>
+                                </div>
+                              </td>
+                              <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                              <td class="feo-td feo-td-num">
+                                <span class="feo-amount" style="font-size:12px">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</span>
+                              </td>
+                              <td class="feo-td feo-td-num">
+                                <span class="feo-amount" style="font-size:12px">{{ formatCurrency(it.total_price) }}</span>
+                                <div v-if="it.unit_price" class="feo-plan-note text-medium-emphasis">{{ formatCurrency(it.unit_price) }}/ед.</div>
+                              </td>
+                              <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                              <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
+                              <td class="feo-td feo-td-actions">
+                                <div class="d-flex align-center justify-end">
+                                  <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                    title="Редактировать позицию закупки"
+                                    @click="openReqItemEdit(owner, it)" />
+                                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                    title="Удалить позицию из закупки"
+                                    @click="confirmReqItemDelete(owner, it)" />
+                                </div>
+                              </td>
+                            </tr>
+                          </template>
+                        </template>
                       </template>
                     </template>
                   </template>
@@ -1596,6 +1907,60 @@
           <v-spacer />
           <v-btn variant="text" @click="showDeleteFeoDialog = false">Отмена</v-btn>
           <v-btn v-if="!feoDeleteError" color="error" :loading="savingFeo" @click="deleteFeoCategory">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Редактирование позиции закупки (из дерева ФЭО) ── -->
+    <v-dialog v-model="reqItemEdit.show" max-width="520" :fullscreen="mobile">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
+          Редактировать позицию
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="reqItemEdit.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-text-field v-model="reqItemEdit.form.item_name" label="Название позиции" density="comfortable"
+            variant="outlined" class="mb-2" hide-details="auto" />
+          <div class="d-flex ga-2 mb-2">
+            <v-text-field v-model.number="reqItemEdit.form.quantity" label="Кол-во" type="number" min="0"
+              density="comfortable" variant="outlined" hide-details="auto" style="max-width: 130px" />
+            <v-text-field v-model="reqItemEdit.form.unit" label="Ед." density="comfortable" variant="outlined"
+              hide-details="auto" style="max-width: 100px" />
+            <v-text-field v-model.number="reqItemEdit.form.unit_price" label="Цена за ед., ₽" type="number" min="0"
+              density="comfortable" variant="outlined" hide-details="auto" />
+          </div>
+          <div class="text-body-2 text-medium-emphasis">
+            Сумма: <b>{{ formatCurrency((Number(reqItemEdit.form.quantity) || 0) * (Number(reqItemEdit.form.unit_price) || 0)) }}</b>
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="reqItemEdit.show = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="reqItemEdit.saving" @click="saveReqItemEdit">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Удаление позиции закупки (из дерева ФЭО) ── -->
+    <v-dialog v-model="reqItemDelete.show" max-width="480">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-delete-outline" color="error" class="mr-2" />
+          Удалить позицию
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          Удалить позицию «<b>{{ reqItemDelete.name }}</b>» из закупки?
+          <v-alert type="warning" variant="tonal" density="compact" class="mt-3">
+            Позиция будет удалена из закупки, суммы закупки пересчитаются.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="reqItemDelete.show = false">Отмена</v-btn>
+          <v-btn color="error" :loading="reqItemDelete.deleting" @click="doReqItemDelete">Удалить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -3244,6 +3609,7 @@ interface FeoReqItem {
   purchase_number: number | null
   registry_number: string | null
   purchase_status: string
+  wish_id: number | null
   category: string
   product_type: string
 }
@@ -3254,80 +3620,394 @@ interface FeoReqRow {
   count: number
   sumQty: number
   sum: number
-  item: FeoReqItem | null
+  group: FeoVirtualGroup | null
 }
 const plannedItemsByCat = ref<Record<number, FeoReqItem[]>>({})
 const plannedItemsLoaded = ref(false)
-const loadingPlannedItems = ref(false)
 const expandedReqItems = ref<Set<number>>(new Set())
 const feoItemsGroupBy = ref<'none' | 'category' | 'category_type'>('none')
 
-function hasReqItems(node: FeoNode): boolean {
-  return !node.hasChildren && (plannedPurchaseQty.value[node.id] || 0) > 0
+interface FeoPurchaseFolder {
+  purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
+  purchase_status: string
+  wish_id: number | null
+  qty: number
+  unit: string | null
+  total: number
+  items: FeoReqItem[]
+}
+const expandedPurchases = ref<Set<number>>(new Set())
+function togglePurchaseFolder(pid: number) {
+  if (expandedPurchases.value.has(pid)) expandedPurchases.value.delete(pid)
+  else expandedPurchases.value.add(pid)
 }
 
-async function toggleReqItems(node: FeoNode) {
-  const id = node.id
-  if (expandedReqItems.value.has(id)) {
-    expandedReqItems.value.delete(id)
-    return
-  }
-  expandedReqItems.value.add(id)
-  if (plannedItemsLoaded.value || !selectedId.value) return
-  loadingPlannedItems.value = true
-  try {
-    plannedItemsByCat.value = await apiFetch<Record<number, FeoReqItem[]>>(
-      `/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`
-    )
-    plannedItemsLoaded.value = true
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.detail || 'Не удалось загрузить позиции из заявок', 'error')
-  } finally {
-    loadingPlannedItems.value = false
-  }
+function hasReqItems(node: FeoNode): boolean {
+  if (plannedBase.value === 'manual') return false
+  if (plannedBase.value === 'purchases') return !node.hasChildren && purchaseFoldersFor(node).length > 0
+  return !node.hasChildren && virtualGroupsFor(node).length > 0
 }
+
+function toggleReqItems(node: FeoNode) {
+  const id = node.id
+  if (expandedReqItems.value.has(id)) expandedReqItems.value.delete(id)
+  else expandedReqItems.value.add(id)
+}
+
+// ── Слияние: позиции из заявок ↔ ручные дочерние позиции ФЭО ──
+function isManualPosLeaf(node: FeoNode): boolean {
+  return !node.hasChildren && (node.planned_quantity != null || node.planned_amount != null)
+}
+
+interface FeoVirtualGroup {
+  name: string
+  unit: string | null
+  qty: number
+  total: number
+  category: string
+  product_type: string
+  items: FeoReqItem[]
+}
+
+function normName(s: string | null | undefined): string {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+const mergedReqByCat = computed(() => {
+  const matched: Record<number, FeoReqItem[]> = {}
+  const virtualByCat: Record<number, FeoVirtualGroup[]> = {}
+  const byId: Record<number, FeoNode> = {}
+  for (const n of flattenAll(feoTree.value)) byId[n.id] = n
+  for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
+    const catId = Number(catIdStr)
+    const node = byId[catId]
+    const leafByName: Record<string, number> = {}
+    for (const ch of node?.children || []) {
+      if (!ch.hasChildren) leafByName[normName(ch.name)] = ch.id
+    }
+    const groups = new Map<string, FeoVirtualGroup>()
+    for (const it of items || []) {
+      const key = normName(it.item_name)
+      const childId = leafByName[key]
+      if (childId != null) {
+        ;(matched[childId] ||= []).push(it)
+        continue
+      }
+      let g = groups.get(key)
+      if (!g) {
+        g = { name: it.item_name, unit: it.unit, qty: 0, total: 0, category: it.category, product_type: it.product_type, items: [] }
+        groups.set(key, g)
+      }
+      g.qty = Math.round((g.qty + Number(it.quantity || 0)) * 10000) / 10000
+      g.total += Number(it.total_price || 0)
+      if (!g.unit && it.unit) g.unit = it.unit
+      g.items.push(it)
+    }
+    const list = [...groups.values()]
+    if (list.length) virtualByCat[catId] = list
+  }
+  return { matched, virtualByCat }
+})
+
+// Все позиции заявок сгруппированные по cat (без исключения matched) — для режима 'requests'
+const allReqGroupsByCat = computed<Record<number, FeoVirtualGroup[]>>(() => {
+  const result: Record<number, FeoVirtualGroup[]> = {}
+  for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
+    const catId = Number(catIdStr)
+    const groups = new Map<string, FeoVirtualGroup>()
+    for (const it of items || []) {
+      const key = normName(it.item_name)
+      let g = groups.get(key)
+      if (!g) {
+        g = { name: it.item_name, unit: it.unit, qty: 0, total: 0, category: it.category, product_type: it.product_type, items: [] }
+        groups.set(key, g)
+      }
+      g.qty = Math.round((g.qty + Number(it.quantity || 0)) * 10000) / 10000
+      g.total += Number(it.total_price || 0)
+      if (!g.unit && it.unit) g.unit = it.unit
+      g.items.push(it)
+    }
+    const list = [...groups.values()]
+    if (list.length) result[catId] = list
+  }
+  return result
+})
+
+const purchaseFoldersByCat = computed<Record<number, FeoPurchaseFolder[]>>(() => {
+  const res: Record<number, FeoPurchaseFolder[]> = {}
+  for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
+    const byPid = new Map<number, FeoPurchaseFolder>()
+    for (const it of items || []) {
+      let f = byPid.get(it.purchase_id)
+      if (!f) {
+        f = { purchase_id: it.purchase_id, purchase_number: it.purchase_number, registry_number: it.registry_number, purchase_status: it.purchase_status, wish_id: it.wish_id, qty: 0, unit: it.unit, total: 0, items: [] }
+        byPid.set(it.purchase_id, f)
+      }
+      f.qty = Math.round((f.qty + Number(it.quantity || 0)) * 10000) / 10000
+      f.total += Number(it.total_price || 0)
+      if (f.unit !== it.unit) f.unit = null
+      f.items.push(it)
+    }
+    const list = [...byPid.values()].sort((a, b) => (a.registry_number || String(a.purchase_number ?? a.purchase_id)).localeCompare(b.registry_number || String(b.purchase_number ?? b.purchase_id), 'ru'))
+    if (list.length) res[Number(catIdStr)] = list
+  }
+  return res
+})
+function purchaseFoldersFor(node: FeoNode): FeoPurchaseFolder[] {
+  return purchaseFoldersByCat.value[node.id] || []
+}
+function purchaseFolderTitle(f: FeoPurchaseFolder): string {
+  return 'Закупка ' + (f.registry_number || (f.purchase_number != null ? '№ ' + f.purchase_number : '#' + f.purchase_id))
+}
+
+function matchedReqFor(node: FeoNode): FeoReqItem[] {
+  return mergedReqByCat.value.matched[node.id] || []
+}
+function virtualGroupsFor(node: FeoNode): FeoVirtualGroup[] {
+  if (plannedBase.value === 'requests') return allReqGroupsByCat.value[node.id] || []
+  return mergedReqByCat.value.virtualByCat[node.id] || []
+}
+function matchedReqQty(node: FeoNode): number {
+  return Math.round(matchedReqFor(node).reduce((s, x) => s + Number(x.quantity || 0), 0) * 10000) / 10000
+}
+function matchedReqTotal(node: FeoNode): number {
+  return matchedReqFor(node).reduce((s, x) => s + Number(x.total_price || 0), 0)
+}
+// Финансирование задано вручную → детальное разбиение в ФЭО, ручные план-значения приоритетнее заявок
+function mergedManualPriority(node: FeoNode): boolean {
+  return feoBudgetFor(node) > 0
+}
+
+// Раскрыт ли узел для показа виртуальных позиций из заявок
+function reqExpandedFor(node: FeoNode): boolean {
+  return node.hasChildren ? expandedIds.value.includes(node.id) : expandedReqItems.value.has(node.id)
+}
+
+// Карта: после какой строки дерева (последний узел поддерева) рисовать виртуальные позиции владельца
+function ownerReqRowCount(n: FeoNode): number {
+  if (plannedBase.value === 'manual') return 0
+  return plannedBase.value === 'purchases' ? purchaseFoldersFor(n).length : virtualGroupsFor(n).length
+}
+
+const reqOwnersAfter = computed<Record<number, FeoNode[]>>(() => {
+  const map: Record<number, FeoNode[]> = {}
+  const all = visibleFeoNodes.value
+  for (let i = all.length - 1; i >= 0; i--) {
+    const n = all[i]
+    if (!ownerReqRowCount(n) || !reqExpandedFor(n) || !isNodeVisible(n)) continue
+    let j = i
+    while (j + 1 < all.length && all[j + 1].depth > n.depth) j++
+    ;(map[all[j].id] ||= []).push(n)
+  }
+  return map
+})
 
 function reqItemRowsFor(node: FeoNode): FeoReqRow[] {
-  const items = plannedItemsByCat.value[node.id] || []
+  const groupsList = virtualGroupsFor(node)
   const mode = feoItemsGroupBy.value
-  const itemRow = (it: FeoReqItem): FeoReqRow =>
-    ({ key: `i${it.id}`, header: '', level: 0, count: 0, sumQty: 0, sum: 0, item: it })
-  if (mode === 'none') return items.map(itemRow)
-  const sorted = [...items].sort((a, b) =>
+  const groupRowOf = (g: FeoVirtualGroup): FeoReqRow =>
+    ({ key: `g-${normName(g.name)}`, header: '', level: 0, count: g.items.length, sumQty: g.qty, sum: g.total, group: g })
+  if (mode === 'none') {
+    return [...groupsList].sort((a, b) => a.name.localeCompare(b.name, 'ru')).map(groupRowOf)
+  }
+  const sorted = [...groupsList].sort((a, b) =>
     a.category.localeCompare(b.category, 'ru')
     || a.product_type.localeCompare(b.product_type, 'ru')
-    || a.item_name.localeCompare(b.item_name, 'ru'))
+    || a.name.localeCompare(b.name, 'ru'))
   const rows: FeoReqRow[] = []
   let curCat: string | null = null
   let curType: string | null = null
-  const groupRow = (key: string, header: string, level: number, grp: FeoReqItem[]): FeoReqRow => ({
+  const headerRow = (key: string, header: string, level: number, grp: FeoVirtualGroup[]): FeoReqRow => ({
     key, header, level,
-    count: grp.length,
-    sumQty: Math.round(grp.reduce((s, x) => s + x.quantity, 0) * 10000) / 10000,
-    sum: grp.reduce((s, x) => s + x.total_price, 0),
-    item: null,
+    count: grp.reduce((s, x) => s + x.items.length, 0),
+    sumQty: Math.round(grp.reduce((s, x) => s + x.qty, 0) * 10000) / 10000,
+    sum: grp.reduce((s, x) => s + x.total, 0),
+    group: null,
   })
-  for (const it of sorted) {
-    if (it.category !== curCat) {
-      curCat = it.category
+  for (const g of sorted) {
+    if (g.category !== curCat) {
+      curCat = g.category
       curType = null
-      rows.push(groupRow(`c-${curCat}`, curCat, 1, sorted.filter(x => x.category === curCat)))
+      rows.push(headerRow(`c-${curCat}`, curCat, 1, sorted.filter(x => x.category === curCat)))
     }
-    if (mode === 'category_type' && it.product_type !== curType) {
-      curType = it.product_type
-      rows.push(groupRow(`c-${curCat}-t-${curType}`, curType, 2,
+    if (mode === 'category_type' && g.product_type !== curType) {
+      curType = g.product_type
+      rows.push(headerRow(`c-${curCat}-t-${curType}`, curType, 2,
         sorted.filter(x => x.category === curCat && x.product_type === curType)))
     }
-    rows.push(itemRow(it))
+    rows.push(groupRowOf(g))
   }
   return rows
 }
 
 function reqRowIndent(node: FeoNode, row: FeoReqRow): string {
-  const extra = row.item
+  const extra = row.group
     ? (feoItemsGroupBy.value === 'none' ? 0 : feoItemsGroupBy.value === 'category' ? 1 : 2)
     : row.level - 1
   return `${(node.depth + 1 + extra) * 20 + 8}px`
+}
+
+// ── Панель источников виртуальной позиции «план vs факт» + правка/удаление ──
+const expandedReqItemPanels = ref<Set<string>>(new Set())
+
+function reqPanelKey(node: FeoNode, g: FeoVirtualGroup): string {
+  return `${node.id}|${normName(g.name)}`
+}
+
+async function ensureComparison(catId: number) {
+  if (comparisonData.value[catId]) return
+  loadingComparison.value.add(catId)
+  try {
+    const subsId = selectedId.value
+    comparisonData.value[catId] = await apiFetch<{ planned: FeoPlannedItem[]; actual: FeoActualItem[] }>(
+      `/feo-planned-items/comparison?feo_category_id=${catId}${subsId ? `&subsidy_id=${subsId}` : ''}`
+    )
+  } catch {
+    comparisonData.value[catId] = { planned: [], actual: [] }
+  } finally {
+    loadingComparison.value.delete(catId)
+  }
+}
+
+function toggleReqItemPanel(node: FeoNode, g: FeoVirtualGroup) {
+  const key = reqPanelKey(node, g)
+  if (expandedReqItemPanels.value.has(key)) {
+    expandedReqItemPanels.value.delete(key)
+    return
+  }
+  expandedReqItemPanels.value.add(key)
+  ensureComparison(node.id)
+}
+
+function openReqItemPanel(node: FeoNode, g: FeoVirtualGroup) {
+  expandedReqItemPanels.value.add(reqPanelKey(node, g))
+  ensureComparison(node.id)
+}
+
+// Кнопки виртуальной позиции: одна цель → сразу действие, несколько → раскрыть панель источников
+function virtGroupPurchaseIds(g: FeoVirtualGroup): number[] {
+  return [...new Set(g.items.map(i => i.purchase_id))]
+}
+
+function virtCart(node: FeoNode, g: FeoVirtualGroup) {
+  const ids = virtGroupPurchaseIds(g)
+  if (ids.length === 1) router.push(`/orders/${ids[0]}`)
+  else openReqItemPanel(node, g)
+}
+
+function virtEdit(node: FeoNode, g: FeoVirtualGroup) {
+  if (g.items.length === 1) openReqItemEdit(node, g.items[0])
+  else openReqItemPanel(node, g)
+}
+
+function virtDelete(node: FeoNode, g: FeoVirtualGroup) {
+  if (g.items.length === 1) confirmReqItemDelete(node, g.items[0])
+  else openReqItemPanel(node, g)
+}
+
+function reqItemActual(catId: number, itemId: number): FeoActualItem | null {
+  return comparisonData.value[catId]?.actual.find(a => a.purchase_item_id === itemId) || null
+}
+
+function reqItemPlanned(catId: number, itemId: number): FeoPlannedItem | null {
+  const a = reqItemActual(catId, itemId)
+  if (!a?.feo_planned_item_id) return null
+  return comparisonData.value[catId]?.planned.find(p => p.id === a.feo_planned_item_id) || null
+}
+
+function mapReqItem(node: FeoNode, item: FeoReqItem) {
+  const a = reqItemActual(node.id, item.id)
+  if (a) openMapDialog(a, node.id)
+}
+
+// Обновление данных «из заявок» без сброса раскрытых папок
+async function refreshReqData(catId?: number) {
+  if (!selectedId.value) return
+  const [totals, items] = await Promise.all([
+    apiFetch<Record<number, { total: number; qty: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
+    apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`),
+  ])
+  const sums: Record<number, number> = {}
+  const qtys: Record<number, number> = {}
+  for (const [k, v] of Object.entries(totals)) {
+    sums[Number(k)] = Number(v?.total || 0)
+    qtys[Number(k)] = Number(v?.qty || 0)
+  }
+  plannedPurchaseTotals.value = sums
+  plannedPurchaseQty.value = qtys
+  plannedItemsByCat.value = items
+  plannedItemsLoaded.value = true
+  if (catId != null) {
+    delete comparisonData.value[catId]
+    await ensureComparison(catId)
+  }
+}
+
+const reqItemEdit = reactive({
+  show: false, saving: false,
+  catId: null as number | null, purchaseId: null as number | null, itemId: null as number | null,
+  form: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null },
+})
+
+function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
+  reqItemEdit.catId = node.id
+  reqItemEdit.purchaseId = item.purchase_id
+  reqItemEdit.itemId = item.id
+  reqItemEdit.form = { item_name: item.item_name, quantity: item.quantity, unit: item.unit || '', unit_price: item.unit_price }
+  reqItemEdit.show = true
+}
+
+async function saveReqItemEdit() {
+  if (!reqItemEdit.itemId || !reqItemEdit.purchaseId) return
+  reqItemEdit.saving = true
+  try {
+    await apiFetch(`/purchases/${reqItemEdit.purchaseId}/items/${reqItemEdit.itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        item_name: reqItemEdit.form.item_name,
+        quantity: reqItemEdit.form.quantity,
+        unit: reqItemEdit.form.unit || null,
+        unit_price: reqItemEdit.form.unit_price,
+      }),
+    })
+    reqItemEdit.show = false
+    await refreshReqData(reqItemEdit.catId ?? undefined)
+    showSnack('Позиция обновлена')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || 'Не удалось сохранить позицию', 'error')
+  } finally {
+    reqItemEdit.saving = false
+  }
+}
+
+const reqItemDelete = reactive({
+  show: false, deleting: false,
+  catId: null as number | null, purchaseId: null as number | null, itemId: null as number | null, name: '',
+})
+
+function confirmReqItemDelete(node: FeoNode, item: FeoReqItem) {
+  reqItemDelete.catId = node.id
+  reqItemDelete.purchaseId = item.purchase_id
+  reqItemDelete.itemId = item.id
+  reqItemDelete.name = item.item_name
+  reqItemDelete.show = true
+}
+
+async function doReqItemDelete() {
+  if (!reqItemDelete.itemId || !reqItemDelete.purchaseId) return
+  reqItemDelete.deleting = true
+  try {
+    await apiFetch(`/purchases/${reqItemDelete.purchaseId}/items/${reqItemDelete.itemId}`, { method: 'DELETE' })
+    reqItemDelete.show = false
+    await refreshReqData(reqItemDelete.catId ?? undefined)
+    showSnack('Позиция удалена из закупки')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || 'Не удалось удалить позицию', 'error')
+  } finally {
+    reqItemDelete.deleting = false
+  }
 }
 
 function openMapDialog(item: FeoActualItem, categoryId: number) {
@@ -3692,8 +4372,11 @@ function feoPurchasedFor(node: FeoNode): number {
 // База остатка: от плановой суммы или от финансирования по ФЭО
 const residualBase = ref<'plan' | 'feo'>('plan')
 
-// Режим колонки «Плановая сумма»: все = ручные + из заявок
-const plannedSumBase = ref<'all' | 'manual' | 'requests'>('all')
+// Режим колонок «Плановая сумма»/«Плановое кол-во» — единый синхронный переключатель
+type PlannedBase = 'all' | 'manual' | 'requests' | 'purchases'
+const plannedBase = ref<PlannedBase>('all')
+const plannedSumBase = plannedBase
+const plannedQtyBase = plannedBase
 
 function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
@@ -3847,11 +4530,27 @@ function feoQtyRequestsFor(node: FeoNode): number {
   return own + node.children.reduce((acc, child) => acc + feoQtyRequestsFor(child), 0)
 }
 
-// Отображаемое «Плановое количество» по режиму переключателя (как у суммы)
+// Отображаемое «Плановое количество» по режиму собственного переключателя
 function feoQtyDisplayFor(node: FeoNode): number {
-  if (plannedSumBase.value === 'manual') return feoQtyFor(node)
-  if (plannedSumBase.value === 'requests') return feoQtyRequestsFor(node)
+  if (plannedQtyBase.value === 'manual') return feoQtyFor(node)
+  if (plannedQtyBase.value === 'purchases') return feoQtyFor(node) + feoQtyRequestsFor(node)
+  if (plannedQtyBase.value === 'requests') {
+    // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
+    return feoQtyRequestsFor(node) + (!node.hasChildren ? matchedReqQty(node) : 0)
+  }
+  if (!node.hasChildren && matchedReqFor(node).length) {
+    // слитая позиция: всегда нарастающий итог — ручной план + одноимённые из заявок;
+    // сравнение с заложенным в ФЭО показателем — в заметке под числом
+    return feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node)
+  }
   return feoQtyFor(node) + feoQtyRequestsFor(node)
+}
+
+// Отклонение слитого кол-ва от заложенного в ФЭО показателя (планового кол-ва при заданном финансировании)
+function mergedQtyDiff(node: FeoNode): number {
+  if (!mergedManualPriority(node) || node.planned_quantity == null) return 0
+  const total = feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node)
+  return Math.round((total - Number(node.planned_quantity)) * 10000) / 10000
 }
 
 // ── Planned amount helpers ───────────────────────
@@ -3886,7 +4585,15 @@ function feoPlannedRequestsFor(node: FeoNode): number {
 // Отображаемая «Плановая сумма» по режиму переключателя
 function feoPlannedDisplayFor(node: FeoNode): number {
   if (plannedSumBase.value === 'manual') return feoPlannedTotalFor(node)
-  if (plannedSumBase.value === 'requests') return feoPlannedRequestsFor(node)
+  if (plannedSumBase.value === 'purchases') return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node)
+  if (plannedSumBase.value === 'requests') {
+    // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
+    return feoPlannedRequestsFor(node) + (!node.hasChildren ? matchedReqTotal(node) : 0)
+  }
+  if (!node.hasChildren && matchedReqFor(node).length) {
+    // слитая позиция: ручной план + одноимённые позиции заявок по их фактическим ценам
+    return feoPlannedTotalFor(node) + matchedReqTotal(node) + feoPlannedRequestsFor(node)
+  }
   return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node)
 }
 
@@ -4221,13 +4928,16 @@ async function loadFeo(subsidyId: number) {
   plannedItemsLoaded.value = false
   expandedReqItems.value = new Set()
   try {
-    const [cats, totals, plannedTotals] = await Promise.all([
+    const [cats, totals, plannedTotals, plannedItems] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, { total: number; qty: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${subsidyId}`),
     ])
     feoCategories.value = cats
     purchaseTotals.value = totals
+    plannedItemsByCat.value = plannedItems
+    plannedItemsLoaded.value = true
     const sums: Record<number, number> = {}
     const qtys: Record<number, number> = {}
     for (const [k, v] of Object.entries(plannedTotals)) {

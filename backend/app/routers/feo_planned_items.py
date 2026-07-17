@@ -33,7 +33,7 @@ async def list_planned_items(
 async def create_planned_item(
     data: FeoPlannedItemCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     cat = (await db.execute(
         select(FeoCategory).where(FeoCategory.id == data.feo_category_id)
@@ -51,6 +51,11 @@ async def create_planned_item(
         is_active=data.is_active,
     )
     db.add(item)
+    _sid = cat.subsidy_id
+    if _sid is not None:
+        from app.routers.purchases import _create_plan_graph_version
+        await db.flush()
+        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     await db.refresh(item)
     return item
@@ -61,19 +66,26 @@ async def update_planned_item(
     item_id: int,
     data: FeoPlannedItemCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
     )).scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Плановая позиция не найдена")
+    _feo_cat_id = item.feo_category_id
     item.name = data.name
     item.quantity = data.quantity
     item.unit = data.unit
     item.amount = data.amount
     item.notes = data.notes
     item.is_active = data.is_active
+    _sid = (await db.execute(
+        select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
+    )).scalar_one_or_none()
+    if _sid is not None:
+        from app.routers.purchases import _create_plan_graph_version
+        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     await db.refresh(item)
     return item
@@ -83,14 +95,22 @@ async def update_planned_item(
 async def delete_planned_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
     )).scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Плановая позиция не найдена")
+    _feo_cat_id = item.feo_category_id
+    _sid = (await db.execute(
+        select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
+    )).scalar_one_or_none()
     await db.delete(item)
+    if _sid is not None:
+        from app.routers.purchases import _create_plan_graph_version
+        await db.flush()
+        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     return {"ok": True}
 

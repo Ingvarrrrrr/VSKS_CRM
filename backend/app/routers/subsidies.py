@@ -1411,6 +1411,30 @@ async def get_budget_history(
 
 # ── Plan-Graph Version endpoints (Phase 12-03) ────────────────────────────────
 
+def _snapshot_effective_total(snapshot: dict) -> float:
+    """Compute total_effective from snapshot: fact replaces plan where fact > 0."""
+    if snapshot.get("total_effective") is not None:
+        return float(snapshot["total_effective"])
+    items = snapshot.get("items") or []
+    if items:
+        return sum(
+            (float(it.get("used_actual_amount") or 0) if float(it.get("used_actual_amount") or 0) > 0
+             else float(it.get("planned_amount") or 0))
+            for it in items
+        )
+    def _leaf_effective(nodes):
+        total = 0.0
+        for n in nodes:
+            children = n.get("children") or []
+            if children:
+                total += _leaf_effective(children)
+            else:
+                ua = float(n.get("used_actual_amount") or 0)
+                total += ua if ua > 0 else float(n.get("budget") or 0)
+        return total
+    return _leaf_effective(snapshot.get("tree") or [])
+
+
 @router.get("/{subsidy_id}/plan-graph/versions")
 async def list_plan_graph_versions(
     subsidy_id: int,
@@ -1445,8 +1469,9 @@ async def list_plan_graph_versions(
             "created_by_name": v.created_by_name,
             "note": v.note,
             "effective_date": v.effective_date.isoformat() if v.effective_date else None,
-            "total_planned": snap.get("total_planned", 0),
+            "total_planned": snap.get("total_plan_combined", snap.get("total_planned", 0)),
             "total_used": snap.get("total_used", 0),
+            "total_effective": _snapshot_effective_total(snap),
             "item_count": len(snap.get("items", [])),
         })
     return out

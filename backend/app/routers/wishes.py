@@ -123,6 +123,9 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         select(Purchase).where(Purchase.wish_id == wish.id)
     )).scalars().all()
     if existing:
+        # Авансовый: статус не меняем — закупка живёт в своём статусе независимо
+        if getattr(wish, 'source', None) == 'advance_report':
+            return [p.id for p in existing]
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status

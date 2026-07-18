@@ -672,6 +672,7 @@ class PurchaseCreate(BaseModel):
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру
     etp_url: Optional[str] = None
+    wish_id: Optional[int] = None  # Связь с заявкой; при авансовом создаётся авто-заявка
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 

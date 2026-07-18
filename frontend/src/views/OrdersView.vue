@@ -10,7 +10,7 @@
         <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-import" color="blue" @click="importDialog.show = true">Импорт</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="openExportDialog">Excel</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" to="/create-order">Добавить</v-btn>
+        <v-btn v-if="authStore.hasTab('wishes')" color="primary" prepend-icon="mdi-plus" to="/wishes?create=1">Добавить</v-btn>
       </div>
     </div>
 
@@ -971,6 +971,7 @@
 import { ref, computed, onMounted, reactive, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -981,6 +982,7 @@ import { formatMoney } from '@/utils/formatMoney'
 import { useDisplay } from 'vuetify'
 
 const { globalSubsidyId } = useGlobalSubsidy()
+const authStore = useAuthStore()
 
 const route = useRoute()
 const router = useRouter()

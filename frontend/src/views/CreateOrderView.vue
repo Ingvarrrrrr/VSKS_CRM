@@ -132,6 +132,18 @@
         В одном авансовом отчёте можно загрузить <strong>несколько чеков от разных контрагентов</strong>. Каждый чек сохранит свой ИНН продавца и список товаров. Для добавления чека используйте кнопки «Загрузить чек», «Сканировать QR» или «Внести вручную».
       </v-alert>
 
+      <!-- Инфо про авто-заявку при создании авансового -->
+      <v-alert
+        v-if="formMode === 'advance_report' && !isEdit"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        class="mb-3"
+        icon="mdi-file-document-check-outline"
+      >
+        При сохранении будет автоматически создана <strong>заявка на возмещение</strong> (статус «На согласовании»). После одобрения руководителем вам вернут средства.
+      </v-alert>
+
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Основная информация</v-card-title>
@@ -6820,6 +6832,11 @@ onMounted(async () => {
       consumePostSaveAction()
     }
   } else {
+    // Страховка: прямой /create-order без formMode → редирект на создание заявки
+    if (!formMode.value || formMode.value === 'default' || formMode.value === 'order') {
+      router.replace('/wishes?create=1')
+      return
+    }
     await loadDraft()
     // formMode overrides — these are always enforced regardless of draft
     if (formMode.value === 'service_note_delivery') {
@@ -6979,7 +6996,10 @@ const doSave = async (adminOverride: boolean) => {
     // Save new delivery address to history
     if (form.delivery_address) saveDeliveryAddressIfNew(form.delivery_address)
 
-    const qs = adminOverride ? '?admin_override=true' : ''
+    const _qsParams = new URLSearchParams()
+    if (adminOverride) _qsParams.set('admin_override', 'true')
+    if (formMode.value === 'service_note_delivery') _qsParams.set('context', 'service_note_delivery')
+    const qs = _qsParams.toString() ? `?${_qsParams.toString()}` : ''
     if (isEdit.value) {
       const updated = await apiFetch<any>(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
       // 12-02: capture FEO match suggestions
@@ -7019,7 +7039,7 @@ const doSave = async (adminOverride: boolean) => {
         showSnack('Сохранено')
       }
     } else {
-      const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload })
+      const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload, suppressErrorDialog: true })
       clearDraft()
       const hasPostSaveAction = !!sessionStorage.getItem(POST_SAVE_ACTION_KEY)
       if (!hasPostSaveAction) {
@@ -7052,6 +7072,9 @@ const doSave = async (adminOverride: boolean) => {
         await doSave(adminOverride)
         return
       }
+    } else if (e?.status === 403) {
+      // Показываем полный detail из бэка (не generic «ошибка»)
+      showSnack(e?.payload?.message || e?.detail || 'Нет доступа', 'error')
     } else {
       showSnack(e?.message || e?.detail || 'Ошибка сохранения', 'error')
     }

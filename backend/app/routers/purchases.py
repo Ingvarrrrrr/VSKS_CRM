@@ -1000,11 +1000,20 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
 async def create_purchase(
     data: PurchaseCreate,
     admin_override: bool = Query(False),
+    context: str = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
+
+    is_advance = (data.purchase_method == 'advance')
+    is_sn = (context == 'service_note_delivery')
+    if not is_advance and not is_sn:
+        raise HTTPException(
+            403,
+            detail="Прямое создание закупки отключено. Создайте заявку в разделе «Заявки на закупку» и отправьте на согласование — после одобрения она автоматически станет закупкой в «План-графике». Исключения: авансовые отчёты и СЗ на выдачу."
+        )
 
     items_data = data.items or []
     # Compute total_nmck from items
@@ -1072,6 +1081,42 @@ async def create_purchase(
                 d["product_id"] = new_prod.id
         item = PurchaseItem(purchase_id=p.id, **d)
         db.add(item)
+
+    # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='submitted')
+    if is_advance and not data.wish_id:
+        from app.models.wish import Wish
+        from app.models.wish_item import WishItem as WishItemModel
+        wish_title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"
+        auto_wish = Wish(
+            source='advance_report',
+            status='submitted',
+            title=wish_title[:499],
+            created_by=current_user.id,
+            org_id=get_single_org_id(current_user) or current_user.org_id,
+            subsidy_id=p.subsidy_id,
+            feo_category_id=p.feo_category_id,
+            event_id=p.event_id,
+            justification=p.service_note_text,
+            estimated_price=total_nmck,
+        )
+        db.add(auto_wish)
+        await db.flush()  # get auto_wish.id
+        p.wish_id = auto_wish.id
+        # Копируем позиции закупки → WishItem
+        for item_d in items_data:
+            d = item_d.model_dump()
+            db.add(WishItemModel(
+                wish_id=auto_wish.id,
+                item_name=d.get('item_name', ''),
+                item_type=d.get('item_type'),
+                quantity=d.get('quantity'),
+                unit=d.get('unit'),
+                unit_price=d.get('unit_price'),
+                total_price=d.get('total_price'),
+                country_origin=d.get('country_origin'),
+                product_id=d.get('product_id'),
+                feo_category_id=d.get('feo_category_id'),
+            ))
 
     # Save subsidy allocations
     if data.subsidy_allocations:
@@ -1305,6 +1350,32 @@ async def update_purchase(
                 changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
                 reason=None,
             ))
+
+    # Авансовый: синхронизировать связанную авто-заявку если она ещё не одобрена
+    if p.purchase_method == 'advance' and p.wish_id:
+        from app.models.wish import Wish
+        from app.models.wish_item import WishItem as WishItemModel
+        _wish = await db.get(Wish, p.wish_id)
+        if _wish and getattr(_wish, 'source', None) == 'advance_report' and _wish.status in ('draft', 'submitted', 'rejected'):
+            _wish.estimated_price = items_sum or p.planned_total_price
+            _wish.justification = p.service_note_text
+            _wish.title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"[:499]
+            # Пересобрать WishItems из позиций закупки
+            await db.execute(delete(WishItemModel).where(WishItemModel.wish_id == _wish.id))
+            for item_d in items_data:
+                d = item_d.model_dump()
+                db.add(WishItemModel(
+                    wish_id=_wish.id,
+                    item_name=d.get('item_name', ''),
+                    item_type=d.get('item_type'),
+                    quantity=d.get('quantity'),
+                    unit=d.get('unit'),
+                    unit_price=d.get('unit_price'),
+                    total_price=d.get('total_price'),
+                    country_origin=d.get('country_origin'),
+                    product_id=d.get('product_id'),
+                    feo_category_id=d.get('feo_category_id'),
+                ))
 
     # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items
     _old_status = _old_purchase_values.get("status")

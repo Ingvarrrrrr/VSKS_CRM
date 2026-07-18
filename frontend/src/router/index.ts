@@ -65,8 +65,7 @@ const router = createRouter({
     {
       path: '/create-order',
       name: 'create-order',
-      component: CreateOrderView,
-      meta: { requiresAuth: true, title: 'Новый заказ', tab_key: 'purchases' }
+      redirect: '/wishes?create=1',
     },
     {
       path: '/orders/:id/edit',
@@ -325,7 +324,7 @@ const router = createRouter({
       path: '/wishes',
       name: 'wishes',
       component: () => import('../views/WishesView.vue'),
-      meta: { requiresAuth: true, title: 'Заявки', tab_key: 'wishes' }
+      meta: { requiresAuth: true, title: 'Заявки на закупку', tab_key: 'wishes' }
     },
     // Internal chat
     {

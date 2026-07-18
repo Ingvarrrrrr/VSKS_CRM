@@ -47,7 +47,7 @@
     <!-- Header -->
     <div class="d-flex align-center mb-4 flex-wrap" style="gap:12px">
       <div>
-        <h1 class="text-h5 font-weight-bold">Заявки</h1>
+        <h1 class="text-h5 font-weight-bold">Заявки на закупку</h1>
         <span class="text-body-2 text-medium-emphasis">
           {{ activeTab === 'my' ? 'Мои заявки' : activeTab === 'incoming' ? 'На согласование мне' : 'Заявки сотрудников' }}
         </span>
@@ -66,7 +66,7 @@
         <v-btn value="cards" size="small" icon="mdi-view-grid" />
       </v-btn-toggle>
       <RegistryExportButton
-        title="Заявки"
+        title="Заявки на закупку"
         :get-columns="getWishExportColumns"
         :get-rows="getWishExportRows"
         :get-capture-el="() => registryArea"
@@ -1631,7 +1631,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useUndoRedo } from '@/composables/useUndoRedo'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -1647,6 +1647,7 @@ import RegistryExportButton from '@/components/RegistryExportButton.vue'
 const GALA_ORANGE = '#fb923c'
 
 const router = useRouter()
+const route = useRoute()
 const registryArea = ref<HTMLElement | null>(null)
 
 interface WishItem {
@@ -3039,6 +3040,10 @@ onMounted(async () => {
     await loadAllWishes()
   }
   loadPendingWishConsents()
+  // Открыть диалог создания если ?create=1 (редирект из /create-order или кнопки «Добавить»)
+  if (route.query.create === '1') {
+    openCreateDialog()
+  }
 })
 </script>
 

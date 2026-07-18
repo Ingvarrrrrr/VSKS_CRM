@@ -168,6 +168,8 @@ class WishOut(BaseModel):
     unseen_changes_count: int = 0
     # Предупреждение конвертации (например, удалённая категория ФЭО обнулена)
     convert_warning: Optional[str] = None
+    # 'advance_report' = авто-заявка из авансового отчёта; NULL = обычная
+    source: Optional[str] = None
 
     class Config:
         from_attributes = True

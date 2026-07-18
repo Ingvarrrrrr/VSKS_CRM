@@ -34,6 +34,7 @@ class Wish(Base):
     executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)
     execution_deadline = Column(Date, nullable=True)  # Срок исполнения (ставит approver)
     approval_mode = Column(String(20), nullable=False, default="sequential", server_default="sequential")  # sequential/parallel
+    source = Column(String(30), nullable=True)  # 'advance_report' = авто-заявка из авансового; NULL = обычная
 
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")

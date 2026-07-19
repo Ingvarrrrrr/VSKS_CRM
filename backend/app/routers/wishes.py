@@ -203,6 +203,32 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     if not groups:
         raise HTTPException(status_code=400, detail="Нет позиций для распределения")
 
+    # W2: Гейт обязательности дат потребности при переносе в План-график
+    if wish.subsidy_id:
+        from app.models.subsidy import Subsidy
+        subsidy = await db.get(Subsidy, wish.subsidy_id)
+        if subsidy and subsidy.require_planned_dates:
+            items_without_date = [
+                it for it in items_full
+                if not it.needed_date and not wish.desired_date
+            ]
+            if items_without_date:
+                names_list = ", ".join(
+                    f'«{it.item_name}»' for it in items_without_date[:5]
+                )
+                suffix = f" и ещё {len(items_without_date) - 5} поз." if len(items_without_date) > 5 else ""
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Невозможно перенести заявку в План-график: у следующих позиций не указана "
+                        f"дата потребности (к какой дате планируется закупить): {names_list}{suffix}. "
+                        f"Без даты потребности ФЭО не может распределить расходы по месяцам. "
+                        f"Укажите дату потребности для каждой позиции или общую дату желаемой поставки "
+                        f"в заявке. Требование дат можно отключить в настройках субсидии "
+                        f"(доступно Хозяину аккаунта)."
+                    ),
+                )
+
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
         total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
@@ -210,6 +236,12 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         title = (wish.title or "").strip() or f"Заявка #{wish.id}"
         subject = title if column_key == "__all__" else f"{title} — {display_key}"
         total_qty_grp = sum(float(i.quantity or 0) for i in items_in_col)
+
+        # W2: шапочная delivery_date — если все позиции группы имеют одну дату
+        effective_dates = {(wi.needed_date or wish.desired_date) for wi in items_in_col}
+        effective_dates.discard(None)
+        group_delivery_date = effective_dates.pop() if len(effective_dates) == 1 else None
+
         p = Purchase(
             wish_id=wish.id,
             subsidy_id=wish.subsidy_id,
@@ -226,6 +258,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
             service_note_text=wish.justification,
             service_note_by=wish.created_by,
+            delivery_date=group_delivery_date,  # W2: единая дата для группы
         )
         db.add(p)
         await db.flush()  # get p.id
@@ -243,6 +276,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 total_price=wi.total_price,
                 country_origin=wi.country_origin,
                 feo_category_id=wi.feo_category_id,  # B9: per-item feo
+                needed_date=(wi.needed_date or wish.desired_date),  # W2: наследование даты
             )
             db.add(pi)
         await db.flush()
@@ -578,6 +612,7 @@ async def create_wish(
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
+                needed_date=item_data.get('needed_date'),  # W2
             )
             db.add(wi)
         await db.flush()
@@ -627,6 +662,7 @@ async def update_wish(
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
+                needed_date=item_data.get('needed_date'),  # W2
             )
             db.add(wi)
         await db.flush()
@@ -997,6 +1033,7 @@ async def convert_wish(
             total_price=wi.total_price,
             country_origin=wi.country_origin,
             feo_category_id=wi.feo_category_id,  # B9: per-item feo
+            needed_date=(wi.needed_date or wish.desired_date),  # W2: наследование даты
         )
         db.add(pi)
     await db.flush()

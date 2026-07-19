@@ -9,6 +9,7 @@
       <div class="d-flex gap-2">
         <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-import" color="blue" @click="importDialog.show = true">Импорт</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-folder-upload" color="teal" @click="scansDialog.show = true">Сканы</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="openExportDialog">Excel</v-btn>
         <v-btn v-if="authStore.hasTab('wishes')" color="primary" prepend-icon="mdi-plus" to="/wishes?create=1">Добавить</v-btn>
       </div>
@@ -90,6 +91,21 @@
             placeholder="Название товара..."
             style="min-width:200px; max-width:240px"
           />
+          <!-- Phase 32: period filter -->
+          <v-text-field
+            v-model="filterPeriodFrom"
+            label="Период с"
+            type="date"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:160px; max-width:180px"
+          />
+          <v-text-field
+            v-model="filterPeriodTo"
+            label="Период по"
+            type="date"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:160px; max-width:180px"
+          />
           <v-btn
             size="small" variant="tonal" color="primary"
             prepend-icon="mdi-bookmark-plus-outline"
@@ -112,14 +128,14 @@
             <v-btn value="cards" size="small" icon="mdi-view-grid" />
           </v-btn-toggle>
           <v-chip
-            v-if="activeFilterCount > 0"
+            v-if="activeFilterCount > 0 || filterPeriodFrom || filterPeriodTo"
             color="deep-orange" variant="tonal" size="small"
             prepend-icon="mdi-filter-multiple"
             class="ml-1"
             closable
-            @click:close="clearAllFilters()"
+            @click:close="clearAllFilters(); filterPeriodFrom = ''; filterPeriodTo = ''"
           >
-            Фильтры {{ activeFilterCount }}
+            Фильтры {{ activeFilterCount + (filterPeriodFrom || filterPeriodTo ? 1 : 0) }}
           </v-chip>
           <v-chip color="primary" variant="tonal" prepend-icon="mdi-cash-multiple" size="small" class="ml-2">
             Сумма: {{ formatMoney(filteredSum) }}
@@ -563,6 +579,15 @@
               Привязать
             </v-btn>
             <v-spacer />
+            <!-- Phase 32: file badge -->
+            <v-chip
+              v-if="(item.files_count ?? 0) > 0"
+              size="x-small" variant="tonal" color="teal"
+              prepend-icon="mdi-paperclip"
+              class="cursor-pointer"
+              :title="`${item.files_count} файл(ов)`"
+              @click.stop="openFilesViewer(item)"
+            >{{ item.files_count }}</v-chip>
             <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDeleteOne(item)" />
           </div>
         </template>
@@ -657,6 +682,14 @@
             <v-card-actions class="py-1" @click.stop>
               <v-btn v-if="nextStatus(item.status)" size="x-small" :color="STATUS_COLOR[nextStatus(item.status)!]" variant="tonal" :loading="transitioning === item.id" @click.stop="doTransition(item)">→ {{ statusLabelFor(item, nextStatus(item.status)!) }}</v-btn>
               <v-spacer />
+              <!-- Phase 32: file badge -->
+              <v-chip
+                v-if="(item.files_count ?? 0) > 0"
+                size="x-small" variant="tonal" color="teal"
+                prepend-icon="mdi-paperclip"
+                class="cursor-pointer"
+                @click.stop="openFilesViewer(item)"
+              >{{ item.files_count }}</v-chip>
               <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="confirmDeleteOne(item)" />
             </v-card-actions>
           </v-card>
@@ -726,6 +759,49 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Phase 32: Quick File Viewer Dialog ── -->
+    <v-dialog v-model="filesViewer.show" max-width="560" scrollable>
+      <v-card>
+        <v-card-title class="pa-4 d-flex align-center">
+          <v-icon icon="mdi-paperclip" color="teal" class="mr-2" />
+          Файлы закупки
+          <span v-if="filesViewer.purchaseSubject" class="text-body-2 text-medium-emphasis ml-2">— {{ filesViewer.purchaseSubject }}</span>
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="filesViewer.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-0" style="min-height:120px">
+          <div v-if="filesViewer.loading" class="d-flex justify-center align-center py-8">
+            <v-progress-circular indeterminate color="teal" />
+          </div>
+          <v-list v-else-if="filesViewer.files.length" density="compact">
+            <v-list-item
+              v-for="f in filesViewer.files"
+              :key="f.id"
+              :prepend-icon="filesViewer.fileIcon(f.mime_type)"
+              class="py-2"
+            >
+              <template #title>
+                <span class="text-body-2">{{ f.filename }}</span>
+              </template>
+              <template #subtitle>
+                <v-chip size="x-small" :color="filesViewer.fileTypeColor(f.file_type)" variant="tonal" class="mr-1">
+                  {{ filesViewer.fileTypeLabel(f.file_type) }}
+                </v-chip>
+                <span v-if="f.size" class="text-caption text-medium-emphasis">{{ (f.size / 1024).toFixed(0) }} КБ</span>
+              </template>
+              <template #append>
+                <v-btn size="small" variant="tonal" color="teal" @click.stop="filesViewer.openFile(f)">
+                  Открыть
+                </v-btn>
+              </template>
+            </v-list-item>
+          </v-list>
+          <div v-else class="text-center text-medium-emphasis py-8">Нет файлов</div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Import Dialog ── -->
     <v-dialog v-model="importDialog.show" max-width="580" persistent :fullscreen="mobile">
       <v-card>
@@ -741,18 +817,19 @@
             <!-- Format selection -->
             <v-radio-group v-model="importDialog.format" inline class="mb-3" hide-details density="compact">
               <template #label><span class="text-body-2 font-weight-medium mr-3">Формат файла:</span></template>
-              <v-radio value="standard" label="Стандартный (17 колонок)" />
+              <v-radio value="standard" label="Универсальный" />
               <v-radio value="feo" label="ФЭО-формат (57 колонок)" />
             </v-radio-group>
 
-            <!-- Standard: subsidy override -->
+            <!-- Standard: subsidy REQUIRED -->
             <v-select
               v-if="importDialog.format === 'standard'"
               v-model="importDialog.subsidyId"
-              :items="[{ id: null, name: '— Из файла (колонка «Субсидия»)' }, ...subsidies]"
+              :items="subsidies"
               item-title="name" item-value="id"
-              label="Субсидия (переопределить для всего файла)"
+              label="Субсидия *"
               variant="outlined" density="compact" class="mb-3"
+              :rules="[(v: any) => !!v || 'Обязательное поле']"
             />
 
             <!-- Standard: format hint -->
@@ -800,8 +877,125 @@
               class="mb-2" />
 
             <div v-if="importDialog.format === 'standard'" class="mt-3 text-caption text-medium-emphasis">
-              Допустимые заголовки колонок:
-              <span class="fz-11">Наименование, Субсидия, Категория ФЭО, Контрагент, ИНН контрагента, НМЦД, Способ закупки, Реестровый №, № договора, Дата договора, Цена договора, Срок исполнения, ПП №, ПП дата, Оплачено, Статус, Год</span>
+              <div class="mb-1">Колонки листа 1 <span class="text-error">(*</span> — обязательны, красные в файле):</div>
+              <span class="fz-11">
+                Тип договора, Номер закупки, Номер заказа внутри закупки,
+                Предмет договора (общий),
+                <span class="text-error">Наименование товара*</span>,
+                ФЭО Ур.1<span class="text-error">*</span>…Ур.5,
+                Мероприятие, Контрагент,
+                <span class="text-error">ИНН контрагента*</span>,
+                Способ закупки, Реестровый №,
+                <span class="text-error">№ договора*</span>,
+                <span class="text-error">Дата договора*</span>,
+                Максимальная цена договора, Срок исполнения, Статус,
+                <span class="text-error">Количество (план)*</span>,
+                Ед.изм.,
+                <span class="text-error">Цена за ед. (план)*</span>,
+                Сумма план, Кол-во факт, Цена за ед. (факт),
+                <span class="text-error">Сумма факт*</span>,
+                Страна, Ставка НДС, Год
+              </span>
+              <div class="mt-2 fz-11">
+                <strong>Платежи</strong> заполняются прямо в строках листа «Закупки»: колонки
+                «Номер платёжного документа», «Дата платёжного документа», «Сумма оплаты», «Назначение платежа».
+                Помесячные / несколько платежей по одному договору — отдельная строка с тем же Номером закупки/заказа.
+              </div>
+              <div class="mt-1 fz-11">
+                <strong>Заказы</strong> внутри одной закупки — отдельными строками с одним «Номер закупки» и разным «Номер заказа».
+              </div>
+              <div class="mt-1 fz-11">
+                <strong>ФЭО</strong> — по уровням в отдельных колонках, заполняйте сколько есть.
+              </div>
+              <div class="mt-1 text-error fz-11">Красные колонки в шаблоне обязательны.</div>
+            </div>
+          </template>
+
+          <!-- Step 'preview': Preview (standard only) -->
+          <template v-else-if="importDialog.step === 'preview'">
+            <div class="text-body-2 font-weight-medium mb-2">
+              Предпросмотр — {{ importDialog.preview?.purchases?.length ?? 0 }} закупок
+              <span v-if="previewPaymentsTotal > 0" class="text-medium-emphasis ml-2">/ {{ previewPaymentsTotal }} платежей</span>
+            </div>
+            <v-table density="compact" class="import-preview-table mb-3">
+              <thead>
+                <tr>
+                  <th>Закупка / Заказ</th>
+                  <th>№ договора</th>
+                  <th>Контрагент</th>
+                  <th>ФЭО путь</th>
+                  <th class="text-right">Позиций</th>
+                  <th class="text-right">Платежей</th>
+                  <th class="text-right">План</th>
+                  <th class="text-right">Факт</th>
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="p in importDialog.preview?.purchases" :key="p.group_key"
+                  :class="p.skipped ? 'import-preview-skipped' : ''"
+                >
+                  <td class="fz-11">
+                    <span v-if="(p as any).purchase_group || (p as any).order_number">
+                      {{ (p as any).purchase_group || '—' }}<template v-if="(p as any).order_number"> / {{ (p as any).order_number }}</template>
+                    </span>
+                    <span v-else>—</span>
+                  </td>
+                  <td>
+                    <span :class="p.skipped ? 'text-decoration-line-through text-medium-emphasis' : ''">{{ p.contract_number || '—' }}</span>
+                  </td>
+                  <td>{{ p.contractor || '—' }}</td>
+                  <td class="text-truncate" style="max-width:120px">
+                    <v-tooltip v-if="p.feo_path" :text="p.feo_path" location="top">
+                      <template #activator="{ props: tp }">
+                        <span v-bind="tp">{{ p.feo_path }}</span>
+                      </template>
+                    </v-tooltip>
+                    <span v-else>—</span>
+                  </td>
+                  <td class="text-right">{{ p.items_count }}</td>
+                  <td class="text-right">{{ (p as any).payments_count ?? '—' }}</td>
+                  <td class="text-right">{{ p.plan_total?.toLocaleString('ru-RU') ?? '—' }}</td>
+                  <td class="text-right">{{ p.fact_total?.toLocaleString('ru-RU') ?? '—' }}</td>
+                  <td>
+                    <v-tooltip v-if="p.skipped && p.skip_reason" :text="p.skip_reason" location="top">
+                      <template #activator="{ props: tp }">
+                        <v-chip v-bind="tp" color="warning" size="x-small" label>Пропуск</v-chip>
+                      </template>
+                    </v-tooltip>
+                    <v-chip v-else-if="!p.skipped" color="success" size="x-small" label>{{ p.status || 'OK' }}</v-chip>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div v-if="importDialog.preview?.errors?.length || (importDialog.preview as any)?.payments_errors?.length" class="mt-2">
+              <v-alert type="error" variant="tonal" density="compact" class="mb-0">
+                <div v-if="importDialog.preview?.errors?.length">
+                  <div class="text-caption font-weight-bold mb-1">Ошибки в строках ({{ importDialog.preview.errors.length }}):</div>
+                  <v-list density="compact" class="import-errors-list bg-transparent">
+                    <v-list-item
+                      v-for="e in importDialog.preview.errors" :key="e.row"
+                      :title="`Строка ${e.row}: ${e.name}`"
+                      :subtitle="e.missing?.length ? 'не заполнено: ' + e.missing.join(', ') : (e.message ?? '')"
+                      prepend-icon="mdi-alert-circle-outline"
+                      color="error"
+                    />
+                  </v-list>
+                </div>
+                <div v-if="(importDialog.preview as any)?.payments_errors?.length" class="mt-2">
+                  <div class="text-caption font-weight-bold mb-1">Ошибки платежей ({{ (importDialog.preview as any).payments_errors.length }}):</div>
+                  <v-list density="compact" class="import-errors-list bg-transparent">
+                    <v-list-item
+                      v-for="e in (importDialog.preview as any).payments_errors" :key="e.row ?? e.contract_number"
+                      :title="e.contract_number ? `№ договора ${e.contract_number}` : `Строка ${e.row}`"
+                      :subtitle="e.message ?? ''"
+                      prepend-icon="mdi-alert-circle-outline"
+                      color="error"
+                    />
+                  </v-list>
+                </div>
+              </v-alert>
             </div>
           </template>
 
@@ -809,8 +1003,16 @@
           <template v-else-if="importDialog.step === 2">
             <div class="import-result-row">
               <div class="import-stat import-stat--ok">
-                <div class="import-stat-val">{{ importDialog.result?.created ?? 0 }}</div>
-                <div class="import-stat-lbl">Создано</div>
+                <div class="import-stat-val">{{ importDialog.result?.created_purchases ?? 0 }}</div>
+                <div class="import-stat-lbl">Закупок</div>
+              </div>
+              <div class="import-stat import-stat--ok" style="background:rgba(59,130,246,0.1)">
+                <div class="import-stat-val">{{ importDialog.result?.created_items ?? 0 }}</div>
+                <div class="import-stat-lbl">Позиций</div>
+              </div>
+              <div class="import-stat import-stat--ok" style="background:rgba(20,184,166,0.1)">
+                <div class="import-stat-val">{{ importDialog.result?.created_payments ?? 0 }}</div>
+                <div class="import-stat-lbl">Платежей</div>
               </div>
               <div class="import-stat import-stat--skip">
                 <div class="import-stat-val">{{ importDialog.result?.skipped ?? 0 }}</div>
@@ -826,8 +1028,8 @@
               <v-list density="compact" class="import-errors-list">
                 <v-list-item
                   v-for="e in importDialog.result.errors" :key="e.row"
-                  :subtitle="`Строка ${e.row}: ${e.message}`"
-                  :title="e.name"
+                  :title="`Строка ${e.row}: ${e.name}`"
+                  :subtitle="e.missing?.length ? 'не заполнено: ' + e.missing.join(', ') : (e.message ?? '')"
                   prepend-icon="mdi-alert-circle-outline"
                   color="error"
                 />
@@ -840,15 +1042,172 @@
           <v-btn variant="text" size="small" prepend-icon="mdi-download"
             @click="downloadTemplate">Скачать шаблон</v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="resetImport">
-            {{ importDialog.step === 2 ? 'Закрыть' : 'Отмена' }}
-          </v-btn>
-          <v-btn v-if="importDialog.step === 1" color="blue" variant="flat"
-            :loading="importDialog.loading" :disabled="!importDialog.file"
-            @click="doImport">
-            Загрузить
-          </v-btn>
-          <v-btn v-else color="primary" variant="flat" @click="resetImport">Готово</v-btn>
+          <!-- Step 1: setup -->
+          <template v-if="importDialog.step === 1">
+            <v-btn variant="text" @click="resetImport">Отмена</v-btn>
+            <v-btn v-if="importDialog.format === 'standard'" color="blue" variant="flat"
+              :loading="importDialog.loading"
+              :disabled="!importDialog.file || !importDialog.subsidyId"
+              @click="doPreview">
+              Предпросмотр
+            </v-btn>
+            <v-btn v-else color="blue" variant="flat"
+              :loading="importDialog.loading" :disabled="!importDialog.file"
+              @click="doImport">
+              Загрузить
+            </v-btn>
+          </template>
+          <!-- Step 'preview' -->
+          <template v-else-if="importDialog.step === 'preview'">
+            <v-btn variant="text" @click="importDialog.step = 1">Назад</v-btn>
+            <v-btn color="primary" variant="flat"
+              :loading="importDialog.loading"
+              :disabled="!importDialog.preview?.purchases?.filter((p: any) => !p.skipped).length"
+              @click="doImport">
+              Импортировать
+            </v-btn>
+          </template>
+          <!-- Step 2: result -->
+          <template v-else>
+            <v-btn variant="text" @click="resetImport">Закрыть</v-btn>
+            <v-btn color="primary" variant="flat" @click="resetImport">Готово</v-btn>
+          </template>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Scans Bulk Upload Dialog ── -->
+    <v-dialog v-model="scansDialog.show" max-width="640" persistent :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-5 pb-2 d-flex align-center">
+          <v-icon icon="mdi-folder-upload" color="teal" class="mr-2" />
+          Загрузить сканы пачкой
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="resetScans" />
+        </v-card-title>
+        <v-card-text class="pa-5 pt-2">
+
+          <!-- Setup step -->
+          <template v-if="scansDialog.step === 'setup'">
+            <v-select
+              v-model="scansDialog.subsidyId"
+              :items="subsidies"
+              item-title="name" item-value="id"
+              label="Субсидия *"
+              variant="outlined" density="compact" class="mb-3"
+              :rules="[(v: any) => !!v || 'Обязательное поле']"
+            />
+
+            <v-radio-group v-model="scansDialog.uploadMode" inline class="mb-3" hide-details density="compact">
+              <template #label><span class="text-body-2 font-weight-medium mr-3">Режим загрузки:</span></template>
+              <v-radio value="zip" label="ZIP-архив" />
+              <v-radio value="folder" label="Папку с подпапками" />
+            </v-radio-group>
+
+            <!-- ZIP mode -->
+            <FileDropZone
+              v-if="scansDialog.uploadMode === 'zip'"
+              v-model="scansDialog.zipFile"
+              accept=".zip"
+              hint="ZIP-архив — перетащите или нажмите"
+              class="mb-3"
+            />
+
+            <!-- Folder mode -->
+            <div v-else class="mb-3">
+              <label class="scans-folder-label" :class="{ 'scans-folder-label--active': scansDialog.files.length }">
+                <v-icon icon="mdi-folder-open" class="mr-1" />
+                <span v-if="!scansDialog.files.length">Выберите папку</span>
+                <span v-else>{{ scansDialog.files.length }} файл(ов) из папки</span>
+                <input
+                  type="file"
+                  webkitdirectory
+                  multiple
+                  style="display:none"
+                  @change="onFolderSelect"
+                />
+              </label>
+            </div>
+
+            <v-alert type="info" variant="tonal" density="compact" icon="mdi-information-outline" class="text-body-2">
+              Имя каждой папки должно содержать ИНН (10 или 12 цифр) и сумму договора. Файлы приложатся к закупке по совпадению.
+            </v-alert>
+          </template>
+
+          <!-- Preview step -->
+          <template v-else-if="scansDialog.step === 'preview'">
+            <div class="text-body-2 font-weight-medium mb-2">
+              Предпросмотр — {{ scansDialog.previewResult?.folders?.length ?? 0 }} папок
+              ({{ scansDialog.previewResult?.attached ?? 0 }} совпадений,
+              {{ scansDialog.previewResult?.skipped ?? 0 }} пропущено)
+            </div>
+            <div v-for="folder in scansDialog.previewResult?.folders" :key="folder.folder" class="scans-folder-row mb-2">
+              <div class="d-flex align-center gap-2 flex-wrap">
+                <v-icon icon="mdi-folder" color="amber" size="small" />
+                <span class="text-body-2 font-weight-medium">{{ folder.folder }}</span>
+                <span class="text-caption text-medium-emphasis">ИНН: {{ folder.inn || '?' }}, Сумма: {{ folder.sum?.toLocaleString('ru-RU') ?? '?' }}</span>
+                <v-chip v-if="folder.status === 'attached'" color="success" size="x-small" label>
+                  → Договор {{ folder.contract_number }} (#{{ folder.purchase_id }})
+                </v-chip>
+                <v-chip v-else color="error" size="x-small" label>
+                  <v-tooltip :text="folder.reason || 'Нет совпадения'" location="top">
+                    <template #activator="{ props: tp }">
+                      <span v-bind="tp">Пропущено</span>
+                    </template>
+                  </v-tooltip>
+                </v-chip>
+              </div>
+              <div v-if="folder.files?.length" class="d-flex flex-wrap gap-1 ml-6 mt-1">
+                <v-chip
+                  v-for="f in folder.files" :key="f.name"
+                  size="x-small" variant="tonal" color="teal" class="mr-1 mb-1"
+                >
+                  {{ f.name }}
+                  <span v-if="f.file_type" class="ml-1 text-medium-emphasis">· {{ f.file_type }}</span>
+                  <span v-if="f.doc_format" class="ml-1 text-medium-emphasis">· {{ f.doc_format }}</span>
+                </v-chip>
+              </div>
+            </div>
+          </template>
+
+          <!-- Result step -->
+          <template v-else-if="scansDialog.step === 'result'">
+            <div class="import-result-row">
+              <div class="import-stat import-stat--ok">
+                <div class="import-stat-val">{{ scansDialog.result?.attached ?? 0 }}</div>
+                <div class="import-stat-lbl">Прикреплено</div>
+              </div>
+              <div class="import-stat import-stat--skip">
+                <div class="import-stat-val">{{ scansDialog.result?.skipped ?? 0 }}</div>
+                <div class="import-stat-lbl">Пропущено</div>
+              </div>
+            </div>
+          </template>
+
+        </v-card-text>
+        <v-card-actions class="pa-5 pt-0">
+          <v-spacer />
+          <template v-if="scansDialog.step === 'setup'">
+            <v-btn variant="text" @click="resetScans">Отмена</v-btn>
+            <v-btn color="teal" variant="flat"
+              :loading="scansDialog.loading"
+              :disabled="!scansDialog.subsidyId || (scansDialog.uploadMode === 'zip' ? !scansDialog.zipFile : !scansDialog.files.length)"
+              @click="doScanPreview">
+              Предпросмотр
+            </v-btn>
+          </template>
+          <template v-else-if="scansDialog.step === 'preview'">
+            <v-btn variant="text" @click="scansDialog.step = 'setup'">Назад</v-btn>
+            <v-btn color="teal" variant="flat"
+              :loading="scansDialog.loading"
+              :disabled="!(scansDialog.previewResult?.attached ?? 0)"
+              @click="doScanUpload">
+              Прикрепить
+            </v-btn>
+          </template>
+          <template v-else>
+            <v-btn variant="text" @click="resetScans">Закрыть</v-btn>
+            <v-btn color="primary" variant="flat" @click="resetScans">Готово</v-btn>
+          </template>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1046,6 +1405,8 @@ interface Purchase {
   agreement_date?: string
   order_number?: string
   order_date?: string
+  // Phase 32: file count from backend
+  files_count?: number
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -1373,6 +1734,10 @@ const search = ref('')
 // Phase 31-06: filter to show only purchases with unseen foreign changes
 const filterOnlyUnseen = ref(false)
 
+// Phase 32: period filter (from/to dates; priority: payment_doc_date else contract_date)
+const filterPeriodFrom = ref<string>('')
+const filterPeriodTo = ref<string>('')
+
 const orderTypeOptions = [
   { label: 'Разовый', value: 'one_time' },
   { label: 'Рамочный', value: 'framework' },
@@ -1540,6 +1905,16 @@ const filteredOrders = computed(() => {
   }
   // Phase 31-06: filter to show only purchases with unseen foreign changes
   if (filterOnlyUnseen.value) r = r.filter(o => (o as any).unseen_changes_count > 0)
+  // Phase 32: period filter — payment_doc_date if present, else contract_date
+  if (filterPeriodFrom.value || filterPeriodTo.value) {
+    r = r.filter(o => {
+      const d = (o as any).payment_doc_date || o.contract_date
+      if (!d) return false
+      if (filterPeriodFrom.value && d < filterPeriodFrom.value) return false
+      if (filterPeriodTo.value && d > filterPeriodTo.value) return false
+      return true
+    })
+  }
   // Column-header filters (поверх panel-фильтров)
   r = r.filter(matchesColumnFilters)
   return r
@@ -1767,20 +2142,98 @@ const doDelete = async () => {
   }
 }
 
+// ─── Phase 32: Quick File Viewer ──────────────────────────────────────────────
+interface QuickFile { id: number; filename: string; mime_type?: string; size?: number; file_type?: string }
+const FILE_TYPE_LABELS_QV: Record<string, string> = {
+  contract: 'Договор', act: 'Акт', invoice: 'Счёт', payment: 'Платёж',
+  acceptance_doc: 'Приёмка', scan: 'Скан', other: 'Прочее',
+}
+const filesViewer = reactive({
+  show: false,
+  loading: false,
+  purchaseId: 0,
+  purchaseSubject: '',
+  files: [] as QuickFile[],
+  fileIcon(mime?: string): string {
+    if (mime === 'application/pdf') return 'mdi-file-pdf-box'
+    if (mime?.startsWith('image/')) return 'mdi-file-image'
+    return 'mdi-file-document-outline'
+  },
+  fileTypeColor(t?: string): string {
+    const m: Record<string, string> = { contract: 'blue', act: 'green', invoice: 'orange', payment: 'teal', acceptance_doc: 'purple', scan: 'grey' }
+    return m[t || ''] || 'grey'
+  },
+  fileTypeLabel(t?: string): string {
+    return FILE_TYPE_LABELS_QV[t || ''] || t || 'Прочее'
+  },
+  async openFile(f: QuickFile) {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/purchases/${filesViewer.purchaseId}/files/${f.id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) { return }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+  },
+})
+
+async function openFilesViewer(item: Purchase) {
+  filesViewer.purchaseId = item.id
+  filesViewer.purchaseSubject = item.subject || item.item_name || `#${item.id}`
+  filesViewer.files = []
+  filesViewer.loading = true
+  filesViewer.show = true
+  try {
+    filesViewer.files = await apiFetch<QuickFile[]>(`/purchases/${item.id}/files`)
+  } catch (e: any) {
+    showSnack(`[${e?.status || ''}] ${e?.detail || e?.message || 'Ошибка загрузки файлов'}`, 'error')
+    filesViewer.show = false
+  } finally {
+    filesViewer.loading = false
+  }
+}
+
 // ─── Import ───────────────────────────────────────────────────────────────────
 const _importCurrentUserId = parseInt(localStorage.getItem('user_id') || '0')
 const importUserItems = ref<{ text: string; value: number }[]>([])
 
+interface ImportError { row: number; name: string; missing?: string[]; message?: string }
+interface ImportPreviewPurchase {
+  group_key: string; contract_number?: string; contractor?: string; feo_path?: string
+  items_count: number; plan_total?: number; fact_total?: number; status?: string
+  skipped: boolean; skip_reason?: string; payments_count?: number
+  purchase_group?: string; order_number?: string
+}
+interface ImportPreview {
+  purchases: ImportPreviewPurchase[]
+  skipped: number
+  errors: ImportError[]
+  payments_count?: number
+  payments_total?: number
+  payments_errors?: Array<{ row?: number; contract_number?: string; message?: string }>
+}
+interface ImportResult {
+  created_purchases: number; created_items: number; skipped: number; errors: ImportError[]
+  created_payments?: number
+}
+
 const importDialog = reactive({
   show: false,
-  step: 1,
+  step: 1 as number | 'preview',
   format: 'standard' as 'standard' | 'feo',
   subsidyId: null as number | null,
   assignedUserId: _importCurrentUserId || null as number | null,
   file: null as File | null,
   loading: false,
-  result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
+  preview: null as ImportPreview | null,
+  result: null as ImportResult | null,
 })
+
+const previewPaymentsTotal = computed(() =>
+  (importDialog.preview?.purchases ?? []).reduce((s, p) => s + (p.payments_count ?? 0), 0)
+)
 
 apiFetch<any[]>('/users/in-my-orgs').then(users => {
   importUserItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
@@ -1793,6 +2246,7 @@ const resetImport = () => {
   importDialog.file = null
   importDialog.subsidyId = null
   importDialog.assignedUserId = _importCurrentUserId || null
+  importDialog.preview = null
   importDialog.result = null
 }
 
@@ -1809,6 +2263,32 @@ const downloadTemplate = async () => {
   const a = document.createElement('a'); a.href = blobUrl; a.download = filename
   document.body.appendChild(a); a.click()
   window.URL.revokeObjectURL(blobUrl); document.body.removeChild(a)
+}
+
+const doPreview = async () => {
+  if (!importDialog.file || !importDialog.subsidyId) return
+  importDialog.loading = true
+  try {
+    const formData = new FormData()
+    formData.append('file', importDialog.file)
+    const token = localStorage.getItem('auth_token')
+    const response = await fetch(`/api/purchases/import/preview?subsidy_id=${importDialog.subsidyId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Ошибка предпросмотра' }))
+      showSnack(`[${response.status}] ${err.detail || err.message || 'Ошибка предпросмотра'}`, 'error')
+      return
+    }
+    importDialog.preview = await response.json()
+    importDialog.step = 'preview'
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка предпросмотра', 'error')
+  } finally {
+    importDialog.loading = false
+  }
 }
 
 const doImport = async () => {
@@ -1833,17 +2313,120 @@ const doImport = async () => {
     })
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Ошибка импорта' }))
-      showSnack(err.detail || 'Ошибка импорта', 'error')
+      showSnack(`[${response.status}] ${err.detail || err.message || 'Ошибка импорта'}`, 'error')
       return
     }
     importDialog.result = await response.json()
     importDialog.step = 2
-    if ((importDialog.result?.created ?? 0) > 0) await loadOrders()
+    if ((importDialog.result?.created_purchases ?? 0) > 0) await loadOrders()
   } catch (e: any) {
     showSnack(e.message || 'Ошибка импорта', 'error')
   } finally {
     importDialog.loading = false
   }
+}
+
+// ─── Scans bulk upload ────────────────────────────────────────────────────────
+interface ScanFolder {
+  folder: string; inn?: string; sum?: number; purchase_id?: number; contract_number?: string
+  files: { name: string; file_type?: string; doc_format?: string }[]
+  status: 'attached' | 'skipped'; reason?: string
+}
+interface ScanPreviewResult { dry_run: boolean; attached: number; skipped: number; folders: ScanFolder[] }
+interface ScanResult { attached: number; skipped: number }
+
+const scansDialog = reactive({
+  show: false,
+  step: 'setup' as 'setup' | 'preview' | 'result',
+  subsidyId: null as number | null,
+  uploadMode: 'zip' as 'zip' | 'folder',
+  zipFile: null as File | null,
+  files: [] as File[],
+  loading: false,
+  previewResult: null as ScanPreviewResult | null,
+  result: null as ScanResult | null,
+})
+
+const onFolderSelect = (e: Event) => {
+  const input = e.target as HTMLInputElement
+  scansDialog.files = input.files ? Array.from(input.files) : []
+}
+
+const buildScansFormData = (): FormData => {
+  const fd = new FormData()
+  if (scansDialog.uploadMode === 'zip') {
+    fd.append('archive', scansDialog.zipFile as File)
+  } else {
+    for (const f of scansDialog.files) {
+      fd.append('files', f)
+      fd.append('paths', (f as any).webkitRelativePath || f.name)
+    }
+  }
+  return fd
+}
+
+const doScanPreview = async () => {
+  if (!scansDialog.subsidyId) return
+  if (scansDialog.uploadMode === 'zip' && !scansDialog.zipFile) return
+  if (scansDialog.uploadMode === 'folder' && !scansDialog.files.length) return
+  scansDialog.loading = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = buildScansFormData()
+    const response = await fetch(`/api/purchases/files/bulk-upload?subsidy_id=${scansDialog.subsidyId}&dry_run=true`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Ошибка предпросмотра сканов' }))
+      showSnack(`[${response.status}] ${err.detail || err.message || 'Ошибка предпросмотра сканов'}`, 'error')
+      return
+    }
+    scansDialog.previewResult = await response.json()
+    scansDialog.step = 'preview'
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка предпросмотра сканов', 'error')
+  } finally {
+    scansDialog.loading = false
+  }
+}
+
+const doScanUpload = async () => {
+  if (!scansDialog.subsidyId) return
+  scansDialog.loading = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const fd = buildScansFormData()
+    const response = await fetch(`/api/purchases/files/bulk-upload?subsidy_id=${scansDialog.subsidyId}&dry_run=false`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Ошибка загрузки сканов' }))
+      showSnack(`[${response.status}] ${err.detail || err.message || 'Ошибка загрузки сканов'}`, 'error')
+      return
+    }
+    scansDialog.result = await response.json()
+    scansDialog.step = 'result'
+  } catch (e: any) {
+    showSnack(e.message || 'Ошибка загрузки сканов', 'error')
+  } finally {
+    scansDialog.loading = false
+  }
+}
+
+const resetScans = () => {
+  scansDialog.show = false
+  scansDialog.step = 'setup'
+  scansDialog.subsidyId = null
+  scansDialog.uploadMode = 'zip'
+  scansDialog.zipFile = null
+  scansDialog.files = []
+  scansDialog.loading = false
+  scansDialog.previewResult = null
+  scansDialog.result = null
 }
 
 // ---------------------------------------------------------------------------
@@ -1994,4 +2577,15 @@ async function doExport() {
   white-space: normal;
   word-break: break-word;
 }
+.import-preview-table { border: 1px solid var(--crm-border); border-radius: 8px; max-height: 280px; overflow-y: auto; }
+.import-preview-skipped { opacity: 0.55; }
+.scans-folder-label {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 16px; border: 2px dashed var(--crm-border);
+  border-radius: 8px; cursor: pointer; color: var(--crm-text-muted);
+  transition: border-color 0.2s, color 0.2s;
+}
+.scans-folder-label:hover { border-color: teal; color: teal; }
+.scans-folder-label--active { border-color: teal; color: teal; }
+.scans-folder-row { border: 1px solid var(--crm-border); border-radius: 8px; padding: 8px 12px; }
 </style>

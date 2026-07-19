@@ -638,18 +638,57 @@ async def get_financial_plan(
         return [{"period": k, "accumulated": v["accumulated"], "items_count": v["items_count"]}
                 for k, v in sorted(d.items())]
 
+    # --- feo_plan: real ФЭО cash-flow from FeoPlannedItem schedule ---
+    from app.services.plan_cashflow import cashflow_for_subsidies
+
+    # Determine subsidy id set for feo_plan aggregation
+    if subsidy_id:
+        feo_sids = [subsidy_id]
+    elif dash_sids is not _UNSET:
+        # dash_sids is either None (superadmin — no restriction) or a list
+        if dash_sids is None:
+            # superadmin: all subsidies, filtered by org if applicable
+            _sid_q = select(Subsidy.id)
+            if org_ids is not None:
+                _sid_q = _sid_q.where(Subsidy.org_id.in_(org_ids))
+            feo_sids = [r[0] for r in (await db.execute(_sid_q)).all()]
+        else:
+            feo_sids = list(dash_sids)
+    else:
+        # scope not in dashboard/plan — fall back to org filter
+        _sid_q = select(Subsidy.id)
+        if org_ids is not None:
+            _sid_q = _sid_q.where(Subsidy.org_id.in_(org_ids))
+        feo_sids = [r[0] for r in (await db.execute(_sid_q)).all()]
+
+    by_month_feo: dict[str, float] = {}
+    by_quarter_feo: dict[str, float] = {}
+    if feo_sids:
+        cf = await cashflow_for_subsidies(db, feo_sids)
+        for sub_data in cf.values():
+            for (y, m), amt in sub_data.items():
+                mk = f"{y}-{m:02d}"
+                qk = f"{y}-Q{(m - 1) // 3 + 1}"
+                by_month_feo[mk] = by_month_feo.get(mk, 0.0) + float(amt)
+                by_quarter_feo[qk] = by_quarter_feo.get(qk, 0.0) + float(amt)
+
+    def _fmt_feo(d: dict):
+        return [{"period": k, "amount": v} for k, v in sorted(d.items())]
+
     return {
         "by_month": {
             "plan":        _fmt_plan(by_month_plan),
             "committed":   _fmt_plan(by_month_committed),
             "overdue":     _fmt_overdue(by_month_overdue),
             "no_deadline": {"amount": no_deadline_amount, "items_count": no_deadline_count},
+            "feo_plan":    _fmt_feo(by_month_feo),
         },
         "by_quarter": {
             "plan":        _fmt_plan(by_quarter_plan),
             "committed":   _fmt_plan(by_quarter_committed),
             "overdue":     _fmt_overdue(by_quarter_overdue),
             "no_deadline": {"amount": no_deadline_amount, "items_count": no_deadline_count},
+            "feo_plan":    _fmt_feo(by_quarter_feo),
         },
     }
 
@@ -1095,3 +1134,4 @@ async def export_financial_plan_details_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
+

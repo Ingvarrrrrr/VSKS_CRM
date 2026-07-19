@@ -472,6 +472,7 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         **data,
         items=items,
         files=files,
+        files_count=len(files),
         contractor_name=contractors.get(p.contractor_id),
         contractor_inn=(contractor_inns or {}).get(p.contractor_id),
         feo_category_name=p.feo_category.name if p.feo_category else None,

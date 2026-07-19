@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func
 from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
@@ -15,6 +15,11 @@ class FeoPlannedItem(Base):
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
+    payment_mode = Column(String(20), nullable=False, server_default='one_time')  # 'one_time' | 'monthly'
+    planned_date = Column(Date, nullable=True)          # «когда потребуется» для one_time
+    monthly_start_date = Column(Date, nullable=True)    # первый платёж для monthly
+    months_count = Column(Integer, nullable=True)       # на сколько месяцев
+    monthly_amount = Column(Numeric(15, 2), nullable=True)  # платёж за ОДИН месяц
 
     feo_category = relationship(
         "FeoCategory",

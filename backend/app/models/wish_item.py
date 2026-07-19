@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Numeric, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, Numeric, Text, Date
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -20,6 +20,7 @@ class WishItem(Base):
     # B9: per-item FEO category link (mirroring purchase_items.feo_category_id)
     # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    needed_date = Column(Date, nullable=True)   # дата потребности per-item
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

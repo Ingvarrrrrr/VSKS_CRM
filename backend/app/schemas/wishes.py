@@ -35,6 +35,7 @@ class WishItemOut(BaseModel):
     country_origin: Optional[str] = "Россия"
     target_column_key: Optional[str] = None  # Phase 13 D-04: kanban column override
     feo_category_id: Optional[int] = None  # B9: per-item FEO category
+    needed_date: Optional[date] = None  # W2: дата потребности per-item
     model_config = ConfigDict(from_attributes=True)
 
 

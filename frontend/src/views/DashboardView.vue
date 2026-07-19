@@ -2046,16 +2046,19 @@ const finplanSeries = computed(() => {
   const data = finplanData.value[key]
   if (!data) return []
   const allPeriods = [...new Set([
+    ...(data.feo_plan || []).map((d: any) => d.period),
     ...(data.plan || []).map((d: any) => d.period),
     ...(data.committed || []).map((d: any) => d.period),
     ...(data.overdue || []).map((d: any) => d.period),
   ])].sort()
   if (allPeriods.length === 0) return []
   finplanAllPeriods.value = allPeriods
+  const feoMap = new Map((data.feo_plan || []).map((d: any) => [d.period, d.amount]))
   const planMap = new Map((data.plan || []).map((d: any) => [d.period, d.amount]))
   const commMap = new Map((data.committed || []).map((d: any) => [d.period, d.amount]))
   const overdueMap = new Map((data.overdue || []).map((d: any) => [d.period, d.accumulated ?? d.amount ?? 0]))
   const series: any[] = [
+    { name: 'План (график ФЭО)', data: allPeriods.map(p => Math.round((feoMap.get(p) as number) ?? 0)) },
     { name: 'Принятые обязательства', data: allPeriods.map(p => Math.round((commMap.get(p) as number) ?? 0)) },
     { name: 'Плановые', data: allPeriods.map(p => Math.round((planMap.get(p) as number) ?? 0)) },
   ]
@@ -2072,6 +2075,7 @@ const finplanOptions = computed(() => {
   const data = finplanData.value[key]
   if (!data) return {}
   const allPeriods = [...new Set([
+    ...(data.feo_plan || []).map((d: any) => d.period),
     ...(data.plan || []).map((d: any) => d.period),
     ...(data.committed || []).map((d: any) => d.period),
   ])].sort()
@@ -2083,6 +2087,8 @@ const finplanOptions = computed(() => {
         dataPointSelection: (_event: any, _ctx: any, config: any) => {
           const period = finplanAllPeriods.value[config.dataPointIndex]
           const seriesName = config.w.config.series[config.seriesIndex]?.name || ''
+          // ФЭО-plan series has no drilldown — skip
+          if (seriesName.includes('ФЭО')) return
           let category: 'plan' | 'committed' | 'overdue' | 'no_deadline' = 'plan'
           if (seriesName.toLowerCase().includes('принят')) category = 'committed'
           else if (seriesName.toLowerCase().includes('накопл') || seriesName.toLowerCase().includes('долг')) category = 'overdue'
@@ -2094,7 +2100,7 @@ const finplanOptions = computed(() => {
     dataLabels: { enabled: false },
     xaxis: { categories: allPeriods, labels: { style: { colors: chartMuted.value, fontSize: '11px' } } },
     yaxis: { labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '11px' } } },
-    colors: ['#15803D', '#F59E0B', '#EF4444'],
+    colors: ['#6366F1', '#15803D', '#F59E0B', '#EF4444'],
     legend: { position: 'top', fontSize: '12px', labels: { colors: chartText.value } },
     grid: { borderColor: chartGrid.value },
     tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } },

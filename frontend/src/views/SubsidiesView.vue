@@ -1575,6 +1575,28 @@
             variant="outlined"
             density="compact"
           />
+          <!-- Настройки план-графика (только для admin+) -->
+          <template v-if="canSaveVersion">
+            <v-divider class="mt-4 mb-3" />
+            <div class="text-caption text-medium-emphasis mb-2">Настройки план-графика</div>
+            <v-switch
+              v-model="editForm.require_planned_dates"
+              label="Требовать дату потребности у позиций (для помесячного плана)"
+              density="compact"
+              color="primary"
+              hide-details
+              class="mb-2"
+            />
+            <v-alert
+              v-if="!editForm.require_planned_dates"
+              type="warning"
+              density="compact"
+              variant="tonal"
+              class="mt-2"
+            >
+              Без дат плановые траты по месяцам считаться не будут
+            </v-alert>
+          </template>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -2628,7 +2650,65 @@
               <v-text-field v-model="editPlannedDialog.unit" label="Ед. изм." variant="outlined" density="compact" />
             </v-col>
           </v-row>
-          <v-text-field v-model="editPlannedDialog.amount" label="Сумма (план), ₽" type="number" variant="outlined" density="compact" />
+          <v-text-field
+            v-model="editPlannedDialog.amount"
+            label="Сумма (план), ₽" type="number"
+            variant="outlined" density="compact"
+            :class="editPlannedDialog.payment_mode === 'monthly' ? 'd-none' : 'mb-2'"
+          />
+          <!-- Тип платежа -->
+          <div class="text-caption text-medium-emphasis mb-1">Тип платежа</div>
+          <v-btn-toggle
+            v-model="editPlannedDialog.payment_mode"
+            mandatory density="compact" variant="outlined" divided
+            class="mb-3"
+          >
+            <v-btn value="one_time" size="small">Разовый</v-btn>
+            <v-btn value="monthly" size="small">Ежемесячный</v-btn>
+          </v-btn-toggle>
+          <!-- Разовый: дата потребности -->
+          <v-text-field
+            v-if="editPlannedDialog.payment_mode === 'one_time'"
+            v-model="editPlannedDialog.planned_date"
+            label="Дата потребности"
+            type="date"
+            variant="outlined" density="compact"
+            class="mb-2"
+          />
+          <!-- Ежемесячный: поля -->
+          <template v-if="editPlannedDialog.payment_mode === 'monthly'">
+            <v-text-field
+              v-model="editPlannedDialog.monthly_start_date"
+              label="Первый платёж"
+              type="date"
+              variant="outlined" density="compact"
+              class="mb-2"
+            />
+            <v-row dense>
+              <v-col cols="6">
+                <v-text-field
+                  v-model.number="editPlannedDialog.months_count"
+                  label="Кол-во месяцев"
+                  type="number"
+                  variant="outlined" density="compact"
+                />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field
+                  v-model.number="editPlannedDialog.monthly_amount"
+                  label="Платёж за месяц, ₽"
+                  type="number"
+                  variant="outlined" density="compact"
+                />
+              </v-col>
+            </v-row>
+            <div
+              v-if="editPlannedDialog.monthly_amount && editPlannedDialog.months_count"
+              class="text-caption text-medium-emphasis mb-2"
+            >
+              Итого по позиции: {{ ((editPlannedDialog.monthly_amount ?? 0) * (editPlannedDialog.months_count ?? 0)).toLocaleString('ru-RU') }} ₽
+            </div>
+          </template>
         </v-card-text>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
@@ -2715,7 +2795,61 @@
             v-model.number="plannedItemForm.amount"
             label="Плановая сумма (₽)" type="number"
             variant="outlined" density="compact" suffix="₽"
+            :class="plannedItemForm.payment_mode === 'monthly' ? 'd-none' : 'mb-3'"
           />
+          <!-- Тип платежа -->
+          <div class="text-caption text-medium-emphasis mb-1">Тип платежа</div>
+          <v-btn-toggle
+            v-model="plannedItemForm.payment_mode"
+            mandatory density="compact" variant="outlined" divided
+            class="mb-3"
+          >
+            <v-btn value="one_time" size="small">Разовый</v-btn>
+            <v-btn value="monthly" size="small">Ежемесячный</v-btn>
+          </v-btn-toggle>
+          <!-- Разовый: дата потребности -->
+          <v-text-field
+            v-if="plannedItemForm.payment_mode === 'one_time'"
+            v-model="plannedItemForm.planned_date"
+            label="Дата потребности"
+            type="date"
+            variant="outlined" density="compact"
+            class="mb-2"
+          />
+          <!-- Ежемесячный: поля -->
+          <template v-if="plannedItemForm.payment_mode === 'monthly'">
+            <v-text-field
+              v-model="plannedItemForm.monthly_start_date"
+              label="Первый платёж"
+              type="date"
+              variant="outlined" density="compact"
+              class="mb-2"
+            />
+            <v-row dense>
+              <v-col cols="6">
+                <v-text-field
+                  v-model.number="plannedItemForm.months_count"
+                  label="Кол-во месяцев"
+                  type="number"
+                  variant="outlined" density="compact"
+                />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field
+                  v-model.number="plannedItemForm.monthly_amount"
+                  label="Платёж за месяц, ₽"
+                  type="number"
+                  variant="outlined" density="compact"
+                />
+              </v-col>
+            </v-row>
+            <div
+              v-if="plannedItemForm.monthly_amount && plannedItemForm.months_count"
+              class="text-caption text-medium-emphasis mb-2"
+            >
+              Итого по позиции: {{ ((plannedItemForm.monthly_amount ?? 0) * (plannedItemForm.months_count ?? 0)).toLocaleString('ru-RU') }} ₽
+            </div>
+          </template>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -3070,6 +3204,7 @@ interface SubsidyRow {
   remaining?: number | null
   planned_amount?: number | null
   budget_discrepancy?: number | null
+  require_planned_dates?: boolean
 }
 
 interface FeoCategory {
@@ -3535,6 +3670,11 @@ interface FeoPlannedItem {
   amount: number | null
   notes: string | null
   is_active: boolean
+  payment_mode?: 'one_time' | 'monthly'
+  planned_date?: string | null
+  monthly_start_date?: string | null
+  months_count?: number | null
+  monthly_amount?: number | null
 }
 interface FeoActualItem {
   purchase_item_id: number
@@ -3565,7 +3705,17 @@ const mappingInProgress = ref(false)
 const showAddPlannedDialog = ref(false)
 const addPlannedCategoryId = ref<number | null>(null)
 const savingPlannedItem = ref(false)
-const plannedItemForm = ref({ name: '', quantity: null as number | null, unit: '', amount: null as number | null })
+const plannedItemForm = ref({
+  name: '',
+  quantity: null as number | null,
+  unit: '',
+  amount: null as number | null,
+  payment_mode: 'one_time' as 'one_time' | 'monthly',
+  planned_date: '' as string,
+  monthly_start_date: '' as string,
+  months_count: null as number | null,
+  monthly_amount: null as number | null,
+})
 
 async function toggleItemPanel(node: FeoNode) {
   const id = node.id
@@ -4032,7 +4182,11 @@ async function applyMapping(plannedItemId: number | null) {
 
 function openAddPlannedItem(categoryId: number) {
   addPlannedCategoryId.value = categoryId
-  plannedItemForm.value = { name: '', quantity: null, unit: '', amount: null }
+  plannedItemForm.value = {
+    name: '', quantity: null, unit: '', amount: null,
+    payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
+    months_count: null, monthly_amount: null,
+  }
   showAddPlannedDialog.value = true
 }
 
@@ -4040,15 +4194,22 @@ async function savePlannedItem() {
   if (!addPlannedCategoryId.value || !plannedItemForm.value.name.trim()) return
   savingPlannedItem.value = true
   try {
+    const f = plannedItemForm.value
+    const isMonthly = f.payment_mode === 'monthly'
     await apiFetch('/feo-planned-items/', {
       method: 'POST',
       body: JSON.stringify({
         feo_category_id: addPlannedCategoryId.value,
-        name: plannedItemForm.value.name.trim(),
-        quantity: plannedItemForm.value.quantity,
-        unit: plannedItemForm.value.unit || null,
-        amount: plannedItemForm.value.amount,
+        name: f.name.trim(),
+        quantity: f.quantity,
+        unit: f.unit || null,
+        amount: isMonthly ? null : f.amount,
         is_active: true,
+        payment_mode: f.payment_mode,
+        planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
+        monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
+        months_count: isMonthly ? f.months_count : null,
+        monthly_amount: isMonthly ? f.monthly_amount : null,
       }),
     })
     showAddPlannedDialog.value = false
@@ -4078,6 +4239,11 @@ const editPlannedDialog = reactive({
   show: false, saving: false,
   id: 0, feo_category_id: 0,
   name: '', quantity: '' as string | number, unit: '', amount: '' as string | number,
+  payment_mode: 'one_time' as 'one_time' | 'monthly',
+  planned_date: '' as string,
+  monthly_start_date: '' as string,
+  months_count: null as number | null,
+  monthly_amount: null as number | null,
 })
 
 function openEditPlannedItem(item: FeoPlannedItem) {
@@ -4087,26 +4253,38 @@ function openEditPlannedItem(item: FeoPlannedItem) {
   editPlannedDialog.quantity = item.quantity != null ? parseFloat(String(item.quantity)) : ''
   editPlannedDialog.unit = item.unit || ''
   editPlannedDialog.amount = item.amount != null ? parseFloat(String(item.amount)) : ''
+  editPlannedDialog.payment_mode = item.payment_mode ?? 'one_time'
+  editPlannedDialog.planned_date = item.planned_date ?? ''
+  editPlannedDialog.monthly_start_date = item.monthly_start_date ?? ''
+  editPlannedDialog.months_count = item.months_count ?? null
+  editPlannedDialog.monthly_amount = item.monthly_amount ?? null
   editPlannedDialog.show = true
 }
 
 async function saveEditPlannedItem() {
   editPlannedDialog.saving = true
   try {
-    await apiFetch(`/feo-planned-items/${editPlannedDialog.id}`, {
+    const d = editPlannedDialog
+    const isMonthly = d.payment_mode === 'monthly'
+    await apiFetch(`/feo-planned-items/${d.id}`, {
       method: 'PUT',
       body: JSON.stringify({
-        feo_category_id: editPlannedDialog.feo_category_id,
-        name: editPlannedDialog.name,
-        quantity: editPlannedDialog.quantity !== '' ? Number(editPlannedDialog.quantity) : null,
-        unit: editPlannedDialog.unit || null,
-        amount: editPlannedDialog.amount !== '' ? Number(editPlannedDialog.amount) : null,
+        feo_category_id: d.feo_category_id,
+        name: d.name,
+        quantity: d.quantity !== '' ? Number(d.quantity) : null,
+        unit: d.unit || null,
+        amount: isMonthly ? null : (d.amount !== '' ? Number(d.amount) : null),
         notes: null,
         is_active: true,
+        payment_mode: d.payment_mode,
+        planned_date: !isMonthly && d.planned_date ? d.planned_date : null,
+        monthly_start_date: isMonthly && d.monthly_start_date ? d.monthly_start_date : null,
+        months_count: isMonthly ? d.months_count : null,
+        monthly_amount: isMonthly ? d.monthly_amount : null,
       }),
     })
     editPlannedDialog.show = false
-    await refreshComparison(editPlannedDialog.feo_category_id)
+    await refreshComparison(d.feo_category_id)
   } catch (e: any) {
     showSnack(e.detail || 'Ошибка сохранения', 'error')
   } finally {
@@ -4162,7 +4340,7 @@ const snack = ref({ show: false, text: '', color: 'success' })
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean })
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
 
@@ -5299,6 +5477,7 @@ async function startEdit(s: SubsidyRow) {
     ministry_name: full.ministry_name || '',
     extra_contract_clause_1: full.extra_contract_clause_1 ?? null,
     extra_contract_clause_2: full.extra_contract_clause_2 ?? null,
+    require_planned_dates: full.require_planned_dates ?? true,
   }
   showEditDialog.value = true
 }
@@ -5337,7 +5516,7 @@ async function updateSubsidy() {
   try {
     await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates })
     })
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge

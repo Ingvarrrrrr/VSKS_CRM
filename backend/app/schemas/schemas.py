@@ -210,6 +210,8 @@ class SubsidyCreate(BaseModel):
     # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
     extra_contract_clause_1: Optional[str] = None
     extra_contract_clause_2: Optional[str] = None
+    # Требовать дату потребности у позиций (для помесячного плана)
+    require_planned_dates: bool = True
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -243,6 +245,7 @@ class SubsidyUpdate(BaseModel):
     # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
     extra_contract_clause_1: Optional[str] = None
     extra_contract_clause_2: Optional[str] = None
+    require_planned_dates: Optional[bool] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -288,6 +291,7 @@ class SubsidyOut(BaseModel):
     remaining: Optional[float] = None          # limit - spent (calculated_budget_from_categories - Σ purchases)
     planned_amount: Optional[float] = None     # Σ FeoPlannedItem.amount (ФЭО плановая сумма)
     budget_discrepancy: Optional[float] = None  # limit - planned_amount (Δ ФЭО vs плановая)
+    require_planned_dates: bool = True
     model_config = {"from_attributes": True}
 
 
@@ -511,6 +515,7 @@ class PurchaseItemCreate(BaseModel):
     total_with_vat: Optional[float] = None   # import-vat-cols: стоимость с НДС
     feo_planned_item_id: Optional[int] = None  # 27.4-15: FEO link для plan-graph version
     feo_category_id: Optional[int] = None  # FCAT-B1: per-item привязка к leaf FeoCategory
+    needed_date: Optional[_Date] = None  # W2: дата потребности per-item
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int
@@ -802,6 +807,8 @@ class PurchaseOut(PurchaseCreate):
     unseen_changes_count: int = 0
     # Phase 31-04: contract sync — True when linked contract data differs from purchase copy
     contract_conflict: bool = False
+    # Phase 32: quick access to file count from list view
+    files_count: int = 0
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):
@@ -1197,6 +1204,12 @@ class FeoPlannedItemCreate(BaseModel):
     amount: Optional[Decimal] = None
     notes: Optional[str] = None
     is_active: bool = True
+    # W1b: payment schedule fields
+    payment_mode: str = "one_time"
+    planned_date: Optional[_Date] = None
+    monthly_start_date: Optional[_Date] = None
+    months_count: Optional[int] = None
+    monthly_amount: Optional[Decimal] = None
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int

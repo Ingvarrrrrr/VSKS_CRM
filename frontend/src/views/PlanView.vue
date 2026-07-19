@@ -252,6 +252,97 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Финансовый план (план/факт по месяцам) ── -->
+    <div class="plan-card mt-5">
+      <div class="versions-header">
+        <div class="versions-title">
+          <v-icon icon="mdi-chart-bar" size="20" color="primary" class="mr-2" />
+          Финансовый план (план/факт по месяцам)
+        </div>
+        <v-btn-toggle
+          v-if="filterSubsidyId !== null && finPlan !== null"
+          v-model="finPlanGran"
+          mandatory density="compact" variant="outlined" color="primary"
+          class="ml-auto"
+        >
+          <v-btn value="month" size="small">Месяцы</v-btn>
+          <v-btn value="quarter" size="small">Кварталы</v-btn>
+        </v-btn-toggle>
+      </div>
+
+      <v-progress-linear v-if="finPlanLoading" indeterminate color="primary" />
+
+      <div v-if="!finPlanLoading && filterSubsidyId === null" class="empty-state" style="padding:40px 0">
+        <v-icon icon="mdi-filter-outline" size="40" color="grey-lighten-2" />
+        <div class="text-medium-emphasis mt-2 text-caption">Выберите субсидию для просмотра финансового плана</div>
+      </div>
+
+      <div v-if="!finPlanLoading && filterSubsidyId !== null && finPlan !== null">
+        <!-- Matrix table -->
+        <div class="fin-table-wrap">
+          <table class="plan-table fin-plan-table">
+            <thead>
+              <tr>
+                <th class="fin-th-label">Показатель</th>
+                <template v-if="finPlanGran === 'month'">
+                  <!-- Month columns grouped by quarter -->
+                  <template v-for="q in 4" :key="'q' + q">
+                    <th
+                      v-for="m in monthsInQuarter(q)" :key="'m' + m"
+                      class="fin-th-money"
+                    >{{ MONTH_SHORT[m - 1] }}</th>
+                    <th class="fin-th-money fin-th-quarter">Q{{ q }}</th>
+                  </template>
+                </template>
+                <template v-else>
+                  <th v-for="q in 4" :key="'q' + q" class="fin-th-money fin-th-quarter">Q{{ q }}</th>
+                </template>
+                <th class="fin-th-money fin-th-total">Итого</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in finPlanRows" :key="row.key" :class="['fin-row', row.cls]">
+                <td class="fin-td-label">{{ row.label }}</td>
+                <template v-if="finPlanGran === 'month'">
+                  <template v-for="q in 4" :key="'qd' + q">
+                    <td
+                      v-for="m in monthsInQuarter(q)" :key="'md' + m"
+                      class="fin-td-money"
+                      :class="cellClass(row.key, monthVal(row.key, m))"
+                    >{{ fmtFin(monthVal(row.key, m)) }}</td>
+                    <td
+                      class="fin-td-money fin-td-quarter"
+                      :class="cellClass(row.key, quarterVal(row.key, q))"
+                    >{{ fmtFin(quarterVal(row.key, q)) }}</td>
+                  </template>
+                </template>
+                <template v-else>
+                  <td
+                    v-for="q in 4" :key="'qv' + q"
+                    class="fin-td-money fin-td-quarter"
+                    :class="cellClass(row.key, quarterVal(row.key, q))"
+                  >{{ fmtFin(quarterVal(row.key, q)) }}</td>
+                </template>
+                <td class="fin-td-money fin-td-total" :class="cellClass(row.key, annualVal(row.key))">
+                  {{ fmtFin(annualVal(row.key)) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Chart -->
+        <div class="fin-chart-wrap">
+          <apexchart
+            type="bar"
+            height="280"
+            :options="finChartOptions"
+            :series="finChartSeries"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- ── Snackbar ── -->
     <v-snackbar v-model="snack.show" :color="snack.color" timeout="4000">
       {{ snack.text }}
@@ -430,7 +521,8 @@ const loadVersions = async () => {
   }
 }
 
-watch(filterSubsidyId, () => { loadVersions() })
+watch(filterSubsidyId, () => { loadVersions(); loadFinancialPlan() })
+watch(selectedYear, () => { loadFinancialPlan() })
 
 const openSaveVersionDialog = () => {
   saveVersionNote.value = ''
@@ -475,6 +567,166 @@ const downloadVersionExcel = async (vid: number) => {
     snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
   }
 }
+
+// ── Financial plan ──────────────────────────────────────────────────────────────
+
+interface FinMonth {
+  month: number
+  plan: number
+  obligations: number
+  paid: number
+  debt_cumulative: number
+  variance_plan_obligation: number
+  variance_plan_paid: number
+}
+
+interface FinQuarter {
+  quarter: number
+  plan: number
+  obligations: number
+  paid: number
+  variance_plan_obligation: number
+  variance_plan_paid: number
+}
+
+interface FinAnnual {
+  plan: number
+  obligations: number
+  paid: number
+  variance_plan_obligation: number
+  variance_plan_paid: number
+}
+
+interface FinancialPlan {
+  subsidy_id: number
+  year: number
+  months: FinMonth[]
+  quarters: FinQuarter[]
+  annual: FinAnnual
+}
+
+const finPlan        = ref<FinancialPlan | null>(null)
+const finPlanLoading = ref(false)
+const finPlanGran    = ref<'month' | 'quarter'>('month')
+
+const MONTH_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+
+const loadFinancialPlan = async () => {
+  if (filterSubsidyId.value === null) { finPlan.value = null; return }
+  const year = selectedYear.value ?? new Date().getFullYear()
+  finPlanLoading.value = true
+  try {
+    finPlan.value = await apiFetch<FinancialPlan>(
+      `/subsidies/${filterSubsidyId.value}/financial-plan?year=${year}`
+    )
+  } catch {
+    finPlan.value = null
+  } finally {
+    finPlanLoading.value = false
+  }
+}
+
+const monthsInQuarter = (q: number) => {
+  const start = (q - 1) * 3 + 1
+  return [start, start + 1, start + 2]
+}
+
+const monthVal = (key: string, m: number): number => {
+  if (!finPlan.value) return 0
+  const rec = finPlan.value.months.find(r => r.month === m)
+  if (!rec) return 0
+  return (rec as any)[key] ?? 0
+}
+
+const quarterVal = (key: string, q: number): number => {
+  if (!finPlan.value) return 0
+  const rec = finPlan.value.quarters.find(r => r.quarter === q)
+  if (!rec) return 0
+  // debt_cumulative is not in quarters — use end-of-quarter month value
+  if (key === 'debt_cumulative') {
+    const lastMonth = q * 3
+    return monthVal(key, lastMonth)
+  }
+  return (rec as any)[key] ?? 0
+}
+
+const annualVal = (key: string): number => {
+  if (!finPlan.value) return 0
+  const a = finPlan.value.annual as any
+  if (key === 'debt_cumulative') {
+    // end of year = month 12
+    return monthVal(key, 12)
+  }
+  return a[key] ?? 0
+}
+
+interface FinRow { key: string; label: string; cls: string }
+
+const finPlanRows: FinRow[] = [
+  { key: 'plan',                    label: 'План (ФЭО)',             cls: 'fin-row-plan' },
+  { key: 'obligations',             label: 'Принятые обязательства', cls: 'fin-row-obl'  },
+  { key: 'paid',                    label: 'Оплачено',               cls: 'fin-row-paid' },
+  { key: 'debt_cumulative',         label: 'Накопленный долг',       cls: 'fin-row-debt' },
+  { key: 'variance_plan_paid',      label: 'Δ план − факт',          cls: 'fin-row-var'  },
+]
+
+const cellClass = (key: string, val: number) => {
+  if (key === 'debt_cumulative' && val > 0) return 'fin-neg'
+  if (key === 'variance_plan_paid' && val < 0) return 'fin-neg'
+  if (key === 'variance_plan_paid' && val > 0) return 'fin-pos'
+  return ''
+}
+
+const fmtFin = (v: number) => {
+  if (v === 0) return '—'
+  return v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })
+}
+
+// ── Chart ───────────────────────────────────────────────────────────────────────
+const finChartSeries = computed(() => {
+  if (!finPlan.value) return []
+  const months = finPlan.value.months
+  if (finPlanGran.value === 'month') {
+    return [
+      { name: 'План', type: 'bar',  data: months.map(m => +(m.plan.toFixed(0))) },
+      { name: 'Оплачено', type: 'bar', data: months.map(m => +(m.paid.toFixed(0))) },
+      { name: 'Накопленный долг', type: 'line', data: months.map(m => +(m.debt_cumulative.toFixed(0))) },
+    ]
+  } else {
+    const qs = finPlan.value.quarters
+    return [
+      { name: 'План', type: 'bar',  data: qs.map(q => +(q.plan.toFixed(0))) },
+      { name: 'Оплачено', type: 'bar', data: qs.map(q => +(q.paid.toFixed(0))) },
+      { name: 'Накопленный долг', type: 'line', data: [1,2,3,4].map(n => monthVal('debt_cumulative', n * 3)) },
+    ]
+  }
+})
+
+const finChartOptions = computed(() => {
+  const categories = finPlanGran.value === 'month'
+    ? MONTH_SHORT
+    : ['Q1', 'Q2', 'Q3', 'Q4']
+  return {
+    chart: { toolbar: { show: false }, background: 'transparent', fontFamily: 'inherit' },
+    plotOptions: { bar: { columnWidth: '55%', borderRadius: 3 } },
+    colors: ['#3B82F6', '#22C55E', '#F97316'],
+    stroke: { width: [0, 0, 2], curve: 'smooth' },
+    xaxis: { categories, labels: { style: { fontSize: '11px' } } },
+    yaxis: {
+      labels: {
+        formatter: (v: number) => v === 0 ? '0' : (v / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' т₽',
+        style: { fontSize: '10px' },
+      },
+    },
+    legend: { position: 'top', fontSize: '12px' },
+    tooltip: {
+      y: {
+        formatter: (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽',
+      },
+    },
+    grid: { borderColor: 'rgba(0,0,0,0.07)' },
+  }
+})
 
 const openOrder = (id: number) => router.push(`/orders/${id}/edit`)
 
@@ -674,6 +926,72 @@ const exportExcel = () => {
   padding: 60px 0;
 }
 
+/* ── Financial plan matrix ── */
+.fin-table-wrap { overflow-x: auto; }
+
+.fin-plan-table {
+  font-size: 0.78rem;
+  min-width: 900px;
+}
+.fin-plan-table thead th {
+  padding: 8px 6px;
+  font-size: 0.68rem;
+}
+
+.fin-th-label { min-width: 190px; text-align: left; }
+.fin-th-money { width: 72px; text-align: right; white-space: nowrap; }
+.fin-th-quarter {
+  background: rgba(59,130,246,0.07);
+  font-weight: 700;
+  border-left: 2px solid var(--crm-border-strong);
+}
+.fin-th-total {
+  background: rgba(59,130,246,0.12);
+  font-weight: 700;
+  border-left: 2px solid var(--crm-border-strong);
+}
+
+.fin-td-label {
+  padding: 7px 10px;
+  font-weight: 500;
+  color: var(--crm-text);
+  border-bottom: 1px solid var(--crm-border);
+  white-space: nowrap;
+}
+.fin-td-money {
+  padding: 7px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--crm-border);
+  color: var(--crm-text-muted);
+  white-space: nowrap;
+}
+.fin-td-quarter {
+  background: rgba(59,130,246,0.04);
+  font-weight: 600;
+  color: var(--crm-text);
+  border-left: 2px solid var(--crm-border-strong);
+}
+.fin-td-total {
+  background: rgba(59,130,246,0.09);
+  font-weight: 700;
+  color: var(--crm-text);
+  border-left: 2px solid var(--crm-border-strong);
+}
+
+.fin-row-plan  td { background: rgba(59,130,246,0.03); }
+.fin-row-obl   td { background: rgba(99,102,241,0.03); }
+.fin-row-paid  td { background: rgba(34,197,94,0.03); }
+.fin-row-debt  td { background: rgba(249,115,22,0.03); }
+.fin-row-var   td { background: rgba(168,85,247,0.03); }
+
+.fin-neg { color: #EF4444 !important; font-weight: 600; }
+.fin-pos { color: #22C55E !important; font-weight: 600; }
+
+.fin-chart-wrap {
+  padding: 16px 20px 8px;
+  border-top: 1px solid var(--crm-border);
+}
+
 /* ── Versions block ── */
 .versions-header {
   display: flex; align-items: center; gap: 16px;
@@ -688,4 +1006,5 @@ const exportExcel = () => {
   font-size: 0.85rem; color: var(--crm-text-muted);
   margin-left: auto;
 }
+
 </style>

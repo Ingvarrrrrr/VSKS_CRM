@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -21,6 +21,7 @@ class Subsidy(Base):
     # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии — например раздельный учёт расходов)
     extra_contract_clause_1 = Column(Text, nullable=True)
     extra_contract_clause_2 = Column(Text, nullable=True)
+    require_planned_dates = Column(Boolean, nullable=False, server_default='true')  # обязательность даты потребности
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

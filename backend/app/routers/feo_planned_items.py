@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func as sqlfunc
@@ -11,6 +12,27 @@ from app.models.feo_category import FeoCategory
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase import Purchase
 from app.schemas.schemas import FeoPlannedItemCreate, FeoPlannedItemOut, FeoComparisonOut, FeoActualItemOut
+
+
+def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
+    """
+    W1b: Apply payment schedule fields and enforce the amount consistency rule:
+      monthly mode → amount = monthly_amount * months_count (if both provided).
+      one_time mode → amount taken as-is from data.
+    """
+    item.payment_mode = data.payment_mode
+    item.planned_date = data.planned_date
+    item.monthly_start_date = data.monthly_start_date
+    item.months_count = data.months_count
+    item.monthly_amount = data.monthly_amount
+
+    if data.payment_mode == "monthly":
+        if data.monthly_amount is not None and data.months_count is not None:
+            item.amount = Decimal(str(data.monthly_amount)) * data.months_count
+        # else: keep whatever amount was already set (data.amount or existing value)
+    else:
+        # one_time: honour the manually supplied amount
+        item.amount = data.amount
 
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
 
@@ -46,10 +68,10 @@ async def create_planned_item(
         name=data.name,
         quantity=data.quantity,
         unit=data.unit,
-        amount=data.amount,
         notes=data.notes,
         is_active=data.is_active,
     )
+    _apply_payment_fields(item, data)
     db.add(item)
     _sid = cat.subsidy_id
     if _sid is not None:
@@ -77,9 +99,9 @@ async def update_planned_item(
     item.name = data.name
     item.quantity = data.quantity
     item.unit = data.unit
-    item.amount = data.amount
     item.notes = data.notes
     item.is_active = data.is_active
+    _apply_payment_fields(item, data)
     _sid = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
     )).scalar_one_or_none()

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Text, Numeric, ForeignKey, text
+from sqlalchemy import Boolean, Column, Integer, String, Text, Numeric, ForeignKey, text, Date
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -28,6 +28,7 @@ class PurchaseItem(Base):
     vat_amount = Column(Numeric(15, 2), nullable=True)      # import-vat-cols: сумма НДС по позиции
     total_with_vat = Column(Numeric(15, 2), nullable=True)  # import-vat-cols: стоимость с НДС
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
+    needed_date = Column(Date, nullable=True)   # дата потребности per-item
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

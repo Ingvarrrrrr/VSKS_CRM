@@ -267,7 +267,7 @@ async def export_purchases_to_excel(
 
 
 # ---------------------------------------------------------------------------
-# Import template (2 sheets: «Закупки» + «Платежи»)
+# Import template (single «Закупки» sheet, payments inline)
 # ---------------------------------------------------------------------------
 
 # (header_text, is_required, column_width)
@@ -717,7 +717,8 @@ async def _parse_and_group(
     commit: bool,
 ) -> Dict[str, Any]:
     """
-    Parse Excel content (2-sheet workbook), validate rows, group into purchases,
+    Parse Excel content (single «Закупки» sheet with inline payments; legacy 2-sheet
+    workbooks with a «Платежи» sheet are still supported), validate rows, group into purchases,
     optionally commit. Handles both new (5-level FEO, 2-sheet) and old (path, 1-sheet) templates.
 
     Returns dict with keys:

@@ -21,6 +21,7 @@
           <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
           <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
           <th v-if="vatMode === 'per_item'" style="min-width:130px">НДС</th>
+          <th v-if="showNeededDate" style="min-width:150px">Дата поставки</th>
           <th v-if="showContractorColumn" :style="resizeStyle('contractor')">Контрагент<span class="col-resize-handle" @mousedown="onResizeStart($event, 'contractor')">&nbsp;</span></th>
           <th :style="resizeStyle('actions')"><span class="col-resize-handle" @mousedown="onResizeStart($event, 'actions')">&nbsp;</span></th>
         </tr>
@@ -142,6 +143,14 @@
               placeholder="НДС %"
               @update:model-value="emit('vat-rate-change', idx, $event)" />
           </td>
+          <td v-if="showNeededDate">
+            <v-text-field
+              :model-value="item.needed_date ?? ''"
+              type="date" density="compact" variant="outlined" hide-details class="my-1"
+              :disabled="readonly"
+              @update:model-value="(e: string) => { item.needed_date = e || null; emit('items-changed') }"
+            />
+          </td>
           <td v-if="showContractorColumn" :style="resizeStyle('contractor')">
             <v-autocomplete
               :model-value="item.contractor_id ? contractors.find(c => c.id === item.contractor_id) || null : null"
@@ -183,7 +192,7 @@
         </template>
         </template>
         <tr v-if="!items.length">
-          <td :colspan="showContractorColumn ? 11 : 10" class="text-center text-medium-emphasis py-4">
+          <td :colspan="totalColCount" class="text-center text-medium-emphasis py-4">
             Нет позиций. Нажмите «Добавить позицию».
           </td>
         </tr>
@@ -194,7 +203,7 @@
           <td class="py-2 font-weight-bold text-blue-darken-2">
             {{ totalNmck.toLocaleString('ru-RU') }} ₽
           </td>
-          <td :colspan="showContractorColumn ? 3 : 2"></td>
+          <td :colspan="totalColCount - 8"></td>
         </tr>
       </tfoot>
     </v-table>
@@ -224,6 +233,7 @@ const props = defineProps<{
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
   showContractorColumn: boolean
+  showNeededDate?: boolean
   contractors: Contractor[]
   contractorLookupLoading: Record<number, boolean>
   selectedItemIdxs: number[]
@@ -256,7 +266,7 @@ const bodyRows = computed<ItemsDisplayRow[]>(() =>
 )
 
 const totalColCount = computed(() =>
-  10 + (props.vatMode === 'per_item' ? 1 : 0) + (props.showContractorColumn ? 1 : 0)
+  10 + (props.vatMode === 'per_item' ? 1 : 0) + (props.showNeededDate ? 1 : 0) + (props.showContractorColumn ? 1 : 0)
 )
 
 const emit = defineEmits<{

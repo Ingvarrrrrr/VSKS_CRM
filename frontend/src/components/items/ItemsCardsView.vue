@@ -150,6 +150,16 @@
                 variant="outlined" label="Страна происхождения" hide-details placeholder="РФ" :disabled="readonly" />
             </v-col>
 
+            <!-- Дата поставки (per-item, только при showNeededDate) -->
+            <v-col v-if="showNeededDate" cols="12" sm="4">
+              <v-text-field
+                :model-value="item.needed_date ?? ''"
+                type="date" density="compact" variant="outlined" label="Дата поставки" hide-details
+                :disabled="readonly"
+                @update:model-value="(e: string) => { item.needed_date = e || null; emit('items-changed') }"
+              />
+            </v-col>
+
             <!-- НДС (per_item only) -->
             <v-col v-if="vatMode === 'per_item'" cols="6" sm="4">
               <v-combobox v-model="item.vat_rate"
@@ -235,6 +245,7 @@ const props = defineProps<{
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
   showContractorColumn: boolean
+  showNeededDate?: boolean
   contractors: Contractor[]
   contractorLookupLoading: Record<number, boolean>
   selectedItemIdxs: number[]

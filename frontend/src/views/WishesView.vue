@@ -832,7 +832,7 @@
 
     <!-- ── CREATE/EDIT DIALOG ── -->
     <v-dialog v-model="wishDialog" max-width="1600" width="95vw" scrollable persistent :fullscreen="mobile">
-      <v-card>
+      <v-card class="wish-dialog">
         <v-overlay v-model="wishDialogLoading" contained class="align-center justify-center" persistent>
           <div class="d-flex flex-column align-center ga-3">
             <v-progress-circular indeterminate size="56" width="5" color="primary" />
@@ -1101,7 +1101,7 @@
             </v-card>
 
             <!-- Section: Согласующие (мультисогласование с авто-каскадом) -->
-            <v-card v-if="editingWishId" variant="outlined" class="mb-4">
+            <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
                 <v-icon class="mr-2" color="primary">mdi-account-check</v-icon>
                 Согласующие
@@ -1112,8 +1112,27 @@
                 </v-chip>
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
+                <v-alert
+                  v-if="!editingWishId"
+                  type="info"
+                  variant="tonal"
+                  density="compact"
+                  class="mb-0"
+                >
+                  Сначала сохраните черновик заявки — после этого можно назначить согласующих и построить цепочку согласования.
+                  <div class="mt-2">
+                    <v-btn
+                      size="small"
+                      color="primary"
+                      variant="flat"
+                      :loading="saving"
+                      prepend-icon="mdi-content-save"
+                      @click="saveWish(false)"
+                    >Сохранить черновик</v-btn>
+                  </div>
+                </v-alert>
                 <!-- Построение цепочки (только для черновика/отклонённой) -->
-                <template v-if="isWishEditable">
+                <template v-if="isWishEditable && editingWishId">
                   <div class="text-caption text-medium-emphasis mb-2">
                     Выберите верхнего согласующего — система автоматически подтянет всю восходящую цепочку начальников снизу вверх.
                     Построение цепочки НЕ отправляет заявку: цепочку можно менять и дополнять людьми вручную,
@@ -1259,7 +1278,7 @@
                 </div>
 
                 <!-- Ручное добавление -->
-                <template v-if="isWishEditable">
+                <template v-if="isWishEditable && editingWishId">
                   <v-divider class="my-3" />
                   <v-autocomplete
                     v-model="approverToAdd"
@@ -1286,7 +1305,7 @@
 
             <!-- Section: Принудительная смена статуса (только superadmin/account_owner) -->
             <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4" color="red-lighten-5">
-              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+              <v-card-title class="text-subtitle-1 font-weight-bold pa-4 pb-2">
                 <v-icon class="mr-2" color="red-darken-2">mdi-shield-crown</v-icon>Принудительная смена статуса (SaaS-admin)
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
@@ -1313,7 +1332,7 @@
                     </v-btn>
                   </v-col>
                 </v-row>
-                <div class="text-caption text-medium-emphasis mt-2">
+                <div class="text-body-2 text-medium-emphasis mt-2">
                   Минуя все workflow-проверки. Доступно только SaaS-роли.
                 </div>
               </v-card-text>
@@ -1321,8 +1340,8 @@
 
             <!-- Section: На исполнение (видна согласующему) -->
             <v-card v-if="canAssigneeAct || (editingWish && editingWish.status === 'approved' && (isDialogAssignee || isAdmin))" variant="outlined" class="mb-4" color="amber-lighten-5">
-              <v-card-title class="text-subtitle-1 pa-4 pb-2">
-                <v-icon class="mr-2" color="amber-darken-3">mdi-account-clock</v-icon>На исполнение
+              <v-card-title class="text-subtitle-1 font-weight-bold pa-4 pb-2">
+                <v-icon class="mr-2" color="orange-darken-4">mdi-account-clock</v-icon>На исполнение
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
                 <v-row dense>
@@ -1377,7 +1396,7 @@
                     />
                   </v-col>
                   <v-col cols="12">
-                    <v-btn color="amber-darken-3" variant="flat" prepend-icon="mdi-content-save" :loading="savingExecution" @click="saveExecution">
+                    <v-btn color="orange-darken-4" variant="flat" prepend-icon="mdi-content-save" :loading="savingExecution" @click="saveExecution">
                       Сохранить исполнителя / срок / мероприятие
                     </v-btn>
                   </v-col>
@@ -1406,6 +1425,7 @@
                   :feo-per-item="wishFeoPerItem"
                   :subsidy-id="wishForm.subsidy_id"
                   :default-feo-category-id="wishFeoSelected"
+                  :show-needed-date="wishDateMode === 'per_item'"
                 />
                 <div class="d-flex justify-end mt-3">
                   <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
@@ -1434,6 +1454,21 @@
                       data-field="justification"
                     />
                   </v-col>
+                  <v-col cols="12">
+                    <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
+                    <v-btn-toggle
+                      v-model="wishDateMode"
+                      color="primary"
+                      density="compact"
+                      variant="outlined"
+                      divided
+                      mandatory
+                      :disabled="!isWishEditable"
+                    >
+                      <v-btn value="common" size="small" prepend-icon="mdi-calendar">Одна на заявку</v-btn>
+                      <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
+                    </v-btn-toggle>
+                  </v-col>
                   <v-col cols="12" md="6">
                     <v-select
                       v-model="wishForm.priority"
@@ -1448,11 +1483,14 @@
                   <v-col cols="12" md="6">
                     <v-text-field
                       v-model="wishForm.desired_date"
-                      label="Желаемый срок"
+                      :label="wishDateMode === 'per_item' ? 'Общая дата поставки (по умолчанию)' : 'Желаемая дата поставки/исполнения'"
                       type="date"
                       variant="outlined"
                       density="compact"
+                      prepend-inner-icon="mdi-truck-delivery-outline"
                       :readonly="!isWishEditable"
+                      persistent-hint
+                      :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план-график' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план-график'"
                       :error-messages="serverFieldErrors.desired_date"
                       @update:model-value="serverFieldErrors.desired_date = ''"
                     />
@@ -1991,6 +2029,17 @@ const wishDialog = ref(false)
 const wishDialogLoading = ref(false)
 watch(wishDialog, (v) => { if (!v) dismissValidationArrows() })
 const editingWishId = ref<number | null>(null)
+const wishDateMode = ref<'common' | 'per_item'>('common')
+
+watch(wishDateMode, (mode, prev) => {
+  if (mode === 'per_item' && prev === 'common') {
+    const d = wishForm.value.desired_date
+    if (!d) return
+    for (const it of wishForm.value.items as any[]) {
+      if (!it.needed_date) it.needed_date = d
+    }
+  }
+})
 const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
 const wishSubmitBtnRef = ref<any>(null)
@@ -2300,6 +2349,7 @@ function resetForm() {
   wishFeoSelected.value = null
   wishFeoSkipLast.value = false
   wishFeoPerItem.value = false
+  wishDateMode.value = 'common'
 }
 
 function openCreateDialog() {
@@ -2402,12 +2452,14 @@ async function openEditDialog(wish: Wish) {
         total_price: i.total_price != null ? Number(i.total_price) : null,
         country_origin: i.country_origin || 'РФ',
         feo_category_id: i.feo_category_id ?? null,
+        needed_date: i.needed_date ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
         _description: prod?.description || undefined,
       }
     }) as any
     // B9: позиции с собственным ФЭО → включаем per-item режим
     wishFeoPerItem.value = rawItems.some((i: any) => i.feo_category_id != null)
+    wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
     await loadWishMembers()
     await loadWishApprovers()
     approvalMode.value = ((wish as any).approval_mode === 'parallel') ? 'parallel' : 'sequential'
@@ -3048,4 +3100,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.wish-dialog.v-theme--light :deep(.text-medium-emphasis) {
+  color: rgba(0, 0, 0, 0.72) !important;
+}
 </style>

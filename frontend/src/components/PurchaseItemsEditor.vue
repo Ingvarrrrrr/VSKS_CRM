@@ -186,6 +186,7 @@
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
           :show-contractor-column="showContractorColumn"
+          :show-needed-date="props.showNeededDate"
           :contractors="contractors"
           :contractor-lookup-loading="contractorLookupLoading"
           :selected-item-idxs="selectedItemIdxs"
@@ -229,6 +230,7 @@
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
           :show-contractor-column="showContractorColumn"
+          :show-needed-date="props.showNeededDate"
           :contractors="contractors"
           :contractor-lookup-loading="contractorLookupLoading"
           :selected-item-idxs="selectedItemIdxs"
@@ -555,6 +557,8 @@ interface EditorItem {
   feo_planned_item_id?: number | null
   feo_category_id?: number | null  // FCAT-F1: per-item привязка к leaf FeoCategory
   feo_node_id?: number | null      // UI-only: позиция каскада ФЭО (любой узел, не только лист)
+  // Per-item delivery date (ISO 'YYYY-MM-DD' | null)
+  needed_date?: string | null
   // UI-local state (stripped by parent before save):
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -688,6 +692,8 @@ const props = withDefaults(defineProps<{
   defaultFeoCategoryId?: number | null
   // SN-UX: кастомный заголовок секции позиций
   itemsTitle?: string
+  // Per-item delivery date column (only shown when explicitly enabled)
+  showNeededDate?: boolean
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -712,6 +718,7 @@ const props = withDefaults(defineProps<{
   purchaseIdFeo: null,
   defaultFeoCategoryId: null,
   itemsTitle: undefined,
+  showNeededDate: false,
 })
 
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias

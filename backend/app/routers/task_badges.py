@@ -314,10 +314,54 @@ async def get_badges(
     except Exception:
         pass
 
+    # Wishes: заявки, ждущие моего согласования (актуальная очередь) + недавно
+    # добавленные меня в участники (транзиентный «новый» индикатор за 24ч).
+    wishes_approval = 0
+    wishes_new = 0
+    try:
+        from app.models.wish import Wish
+        from app.models.wish_member import WishMember
+        from app.models.wish_approval import WishApproval
+
+        # 1) submitted-заявки, где я назначенный согласующий ИЛИ мой шаг цепочки pending
+        my_pending_appr_wids = select(WishApproval.wish_id).where(
+            WishApproval.user_id == current_user.id,
+            WishApproval.status == "pending",
+        ).scalar_subquery()
+        wishes_approval_q = select(func.count(func.distinct(Wish.id))).where(
+            Wish.status == "submitted",
+            or_(
+                Wish.assigned_to == current_user.id,
+                Wish.id.in_(my_pending_appr_wids),
+            ),
+        )
+        if org_id is not None:
+            wishes_approval_q = wishes_approval_q.where(Wish.org_id == org_id)
+        wishes_approval = (await db.execute(wishes_approval_q)).scalar() or 0
+
+        # 2) меня добавили участником за последние 24ч (не самим собой)
+        wishes_new_q = (
+            select(func.count(func.distinct(WishMember.wish_id)))
+            .select_from(WishMember)
+            .join(Wish, Wish.id == WishMember.wish_id)
+            .where(
+                WishMember.user_id == current_user.id,
+                WishMember.added_by_id != current_user.id,
+                WishMember.created_at > cutoff,
+            )
+        )
+        if org_id is not None:
+            wishes_new_q = wishes_new_q.where(Wish.org_id == org_id)
+        wishes_new = (await db.execute(wishes_new_q)).scalar() or 0
+    except Exception:
+        pass
+
     return {
         "new_tasks": new_tasks,
         "task_changes": task_changes,
         "new_purchases": new_purchases,
         "purchase_changes": purchase_changes,
         "chat_unread": chat_unread,
+        "wishes_approval": wishes_approval,
+        "wishes_new": wishes_new,
     }

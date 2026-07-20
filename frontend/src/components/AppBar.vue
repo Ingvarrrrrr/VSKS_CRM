@@ -315,6 +315,10 @@
                 class="sidebar-badge sidebar-badge--changes" :title="`${badgePurchaseChanges} изменений`">{{ badgePurchaseChanges }}</span>
               <span v-if="item.route === '/chat' && badgeChatUnread > 0"
                 class="sidebar-badge sidebar-badge--new" :title="`${badgeChatUnread} непрочитанных`">{{ badgeChatUnread }}</span>
+              <span v-if="item.route === '/wishes' && badgeWishesApproval > 0"
+                class="sidebar-badge sidebar-badge--new" :title="`${badgeWishesApproval} заявок ждут вашего согласования`">{{ badgeWishesApproval }}</span>
+              <span v-if="item.route === '/wishes' && badgeWishesNew > 0"
+                class="sidebar-badge sidebar-badge--changes" :title="`${badgeWishesNew} новых заявок с вашим участием`">{{ badgeWishesNew }}</span>
               <v-icon icon="mdi-drag-horizontal-variant" size="16" class="sidebar-drag-handle" />
             </div>
           </template>
@@ -528,6 +532,8 @@ const badgeTaskChanges = ref(0)
 const badgeNewPurchases = ref(0)
 const badgePurchaseChanges = ref(0)
 const badgeChatUnread = ref(0)
+const badgeWishesApproval = ref(0)
+const badgeWishesNew = ref(0)
 let _badgeInterval: ReturnType<typeof setInterval> | null = null
 
 async function loadBadges() {
@@ -540,6 +546,8 @@ async function loadBadges() {
     badgeNewPurchases.value = data.new_purchases || 0
     badgePurchaseChanges.value = data.purchase_changes || 0
     badgeChatUnread.value = data.chat_unread || 0
+    badgeWishesApproval.value = data.wishes_approval || 0
+    badgeWishesNew.value = data.wishes_new || 0
   } catch {}
 }
 

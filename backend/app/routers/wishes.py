@@ -88,23 +88,40 @@ async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     return res.scalar_one_or_none() is not None
 
 
-async def _ensure_no_pending_approvals(wish, db: AsyncSession) -> None:
+async def _ensure_no_pending_approvals(wish, db: AsyncSession, current_user=None) -> None:
     """Конвертация заявки запрещена, пока цепочка согласования не завершена:
     иначе заявка уходит в converted, а pending-согласующие «зависают»
-    и не видят её во вкладке «На согласовании мне»."""
+    и не видят её во вкладке «На согласовании мне».
+
+    Собственное pending-согласование текущего пользователя блоком не считается:
+    «Быстрое одобрение» согласующим = его решение approved. Оно фиксируется в цепочке,
+    и блокировка снимается, если других pending-согласующих не осталось."""
+    from datetime import datetime, timezone
     from app.models.wish_approval import WishApproval
     pending = (await db.execute(
         select(WishApproval)
         .where(WishApproval.wish_id == wish.id, WishApproval.status == "pending")
         .order_by(WishApproval.order_num)
     )).scalars().all()
-    if pending:
-        names = ", ".join(a.approver_full_name or f"пользователь #{a.user_id}" for a in pending)
+
+    own = [a for a in pending if current_user is not None and a.user_id == current_user.id]
+    others = [a for a in pending if not (current_user is not None and a.user_id == current_user.id)]
+
+    if others:
+        names = ", ".join(a.approver_full_name or f"пользователь #{a.user_id}" for a in others)
         raise HTTPException(
             status_code=409,
             detail=f"У заявки незавершённое согласование ({names}). "
                    "Дождитесь решения согласующих или удалите цепочку согласования.",
         )
+
+    # Других pending нет — фиксируем собственное решение согласующего как approved
+    for a in own:
+        a.status = "approved"
+        a.decided_at = datetime.now(timezone.utc)
+        a.decided_by_user_id = current_user.id
+    if own:
+        await db.flush()
 
 
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
@@ -782,7 +799,7 @@ async def approve_wish(
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
-    await _ensure_no_pending_approvals(wish, db)
+    await _ensure_no_pending_approvals(wish, db, current_user)
 
     wish.status = "approved"
     wish.approved_by = current_user.id
@@ -957,7 +974,7 @@ async def convert_wish(
     if org_ids is not None and wish.org_id not in org_ids:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
 
-    await _ensure_no_pending_approvals(wish, db)
+    await _ensure_no_pending_approvals(wish, db, current_user)
 
     # Защита от дублей: закупки по заявке уже есть — не создаём вторую,
     # скрытые (status='wishes') продвигаем в План-график
@@ -1118,7 +1135,7 @@ async def approve_distribution(
     if not wish.items:
         raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
 
-    await _ensure_no_pending_approvals(wish, db)
+    await _ensure_no_pending_approvals(wish, db, current_user)
 
     try:
         ids = await _distribute_wish_to_purchases(wish, db, current_user)

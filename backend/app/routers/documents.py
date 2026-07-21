@@ -2169,27 +2169,30 @@ async def generate_document(
 
 # ── Fabrikant package ZIP endpoint ───────────────────────────────────────────
 
-@router.get("/{pid}/fabrikant-package")
-async def download_fabrikant_package(
-    pid: int,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """Render and ZIP 5 documents for ЭТП Fabrikant:
-    1. fabrikant_instruction
-    2. fabrikant_application_form
-    3. fabrikant_documentation
-    4. fabrikant_contract_project
-    5. tech_spec_request (ТЗ — with fallback to contract_tz)
+# File names for Fabrikant document package (ASCII-safe for SOAP transport)
+FABRIKANT_PKG_FILE_NAMES = [
+    ("fabrikant_instruction",      "instruction.docx",       "Инструкция участника"),
+    ("fabrikant_application_form", "application_form.docx",  "Форма заявки участника"),
+    ("fabrikant_documentation",    "documentation.docx",     "Документация о закупке"),
+    ("fabrikant_contract_project", "contract_project.docx",  "Проект договора"),
+    ("tech_spec_request",          "tech_spec.docx",         "Техническое задание"),
+]
 
-    Individual render failures are tolerated: the failed doc is omitted from
-    the ZIP and listed in errors.txt.  If ALL docs fail → HTTP 500.
+
+async def render_fabrikant_package_files(
+    db: AsyncSession,
+    purchase_id: int,
+) -> tuple[list[tuple[str, str, bytes]], list[str]]:
+    """Render 5 Fabrikant documents for *purchase_id*.
+
+    Returns:
+        rendered: list of (ascii_file_name, ru_title, bytes)
+        errors:   list of human-readable error strings for failed docs
     """
-    import zipfile as _zipfile
     import traceback as _traceback
-
-    # ── Build the same rich context as generate_document ──────────────────────
+    from docxtpl import DocxTemplate as _DxTpl
     from app.models.contract_item import ContractItem as _CI
+
     result = await db.execute(
         select(Purchase)
         .options(
@@ -2199,11 +2202,11 @@ async def download_fabrikant_package(
             selectinload(Purchase.contract_items),
             selectinload(Purchase.assigned_user),
         )
-        .where(Purchase.id == pid)
+        .where(Purchase.id == purchase_id)
     )
     p = result.scalar_one_or_none()
     if not p:
-        raise HTTPException(404, "Закупка не найдена")
+        return [], [f"Закупка {purchase_id} не найдена"]
 
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
@@ -2532,7 +2535,8 @@ async def download_fabrikant_package(
         if os.path.exists(_fb_path):
             _tz_path = _fb_path
 
-    _pkg_docs = [
+    # (doc_key, archive_name used in ZIP) — legacy internal names, kept for ZIP endpoint
+    _pkg_docs_legacy = [
         ("fabrikant_instruction",      "Инструкция.docx"),
         ("fabrikant_application_form", "Форма_заявки.docx"),
         ("fabrikant_documentation",    "Документация.docx"),
@@ -2540,26 +2544,24 @@ async def download_fabrikant_package(
         ("tech_spec_request",          "ТЗ.docx"),
     ]
 
-    # ── Render each doc, collect results ──────────────────────────────────────
-    rendered: list[tuple[str, bytes]] = []  # (archive_name, bytes)
+    # ── Render each doc ───────────────────────────────────────────────────────
+    # rendered: (ascii_file_name, ru_title, bytes)
+    rendered: list[tuple[str, str, bytes]] = []
     errors: list[str] = []
 
-    from docxtpl import DocxTemplate as _DxTpl
-
-    for doc_key, archive_name in _pkg_docs:
+    for (doc_key, ascii_name, ru_title), (_doc_key2, legacy_arc) in zip(FABRIKANT_PKG_FILE_NAMES, _pkg_docs_legacy):
         if doc_key == "tech_spec_request":
             tpl_path = _tz_path
         else:
             tpl_file, _ = DOC_TYPES.get(doc_key, (f"{doc_key}.docx", doc_key))
             tpl_path = os.path.join(TEMPLATES_DIR, tpl_file)
-            # Per-subsidy override
             if p.subsidy_id:
                 _sub_override = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_key}.docx")
                 if os.path.exists(_sub_override):
                     tpl_path = _sub_override
 
         if not os.path.exists(tpl_path):
-            errors.append(f"{archive_name}: шаблон не найден ({tpl_path})")
+            errors.append(f"{ascii_name}: шаблон не найден ({tpl_path})")
             continue
 
         try:
@@ -2567,11 +2569,29 @@ async def download_fabrikant_package(
             _tpl.render(context)
             _buf = BytesIO()
             _tpl.save(_buf)
-            rendered.append((archive_name, _buf.getvalue()))
+            rendered.append((ascii_name, ru_title, _buf.getvalue()))
         except Exception as _re:
             _tb = _traceback.format_exc()
-            errors.append(f"{archive_name}: {type(_re).__name__}: {_re}\n{_tb[:500]}")
-            logger.warning("fabrikant-package render error for %s (purchase %s): %s", doc_key, pid, _re)
+            errors.append(f"{ascii_name}: {type(_re).__name__}: {_re}\n{_tb[:500]}")
+            logger.warning("fabrikant-package render error for %s (purchase %s): %s", doc_key, purchase_id, _re)
+
+    return rendered, errors
+
+
+@router.get("/{pid}/fabrikant-package")
+async def download_fabrikant_package(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Render and ZIP 5 documents for ЭТП Fabrikant.
+
+    Individual render failures are tolerated: the failed doc is omitted from
+    the ZIP and listed in errors.txt.  If ALL docs fail → HTTP 500.
+    """
+    import zipfile as _zipfile
+
+    rendered, errors = await render_fabrikant_package_files(db, pid)
 
     if not rendered:
         raise HTTPException(
@@ -2583,11 +2603,12 @@ async def download_fabrikant_package(
             },
         )
 
-    # ── Build ZIP in memory ───────────────────────────────────────────────────
+    # ZIP archive names use legacy Russian names for user-facing download
+    _ru_names = ["Инструкция.docx", "Форма_заявки.docx", "Документация.docx", "Проект_договора.docx", "ТЗ.docx"]
     zip_buf = BytesIO()
     with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
-        for name, data in rendered:
-            zf.writestr(name, data)
+        for (ascii_name, ru_title, data), ru_zip_name in zip(rendered, _ru_names):
+            zf.writestr(ru_zip_name, data)
         if errors:
             zf.writestr("errors.txt", "\n\n".join(errors))
     zip_buf.seek(0)

@@ -7,6 +7,7 @@ import re
 import ssl
 import urllib.request
 import urllib.error
+import uuid
 
 logger = logging.getLogger(__name__)
 import httpx
@@ -81,6 +82,146 @@ async def _set_pub_error(pub_id: int, error_text: str):
             pub.error_text = error_text[:500]
             pub.updated_at = datetime.now(timezone.utc)
             await db.commit()
+
+
+async def _set_pub_attachments_result(pub_id: int, results: list):
+    """Сохраняет результат прикрепления документов в PlatformPublication.attachments_result."""
+    async with async_session() as db:
+        res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
+        pub = res.scalar_one_or_none()
+        if pub:
+            pub.attachments_result = json.dumps(results, ensure_ascii=False)
+            pub.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
+# ── Фабрикант SOAP: addFileToPurchaseNotice ───────────────────────────────────
+
+NS_UF = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/uploadFile"
+NS_T_TYPES = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/types"
+FABRIKANT_SOAP_ACTION_ADD_FILE = "tns:addFileToPurchaseNotice"
+
+
+def _build_add_file_soap_xml(
+    purchase_id_str: str,
+    file_id: str,
+    file_name: str,
+    title: str,
+    file_bytes_b64: str,
+) -> str:
+    """Строит SOAP Envelope для операции addFileToPurchaseNotice."""
+    def esc(s: str) -> str:
+        return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    packet_guid = str(uuid.uuid4())
+    create_dt = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+03:00")
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        f'<uf:addFileToPurchaseNotice xmlns:uf="{NS_UF}">'
+        "<uf:header>"
+        f"<uf:guid>{esc(packet_guid)}</uf:guid>"
+        f"<uf:createDateTime>{create_dt}</uf:createDateTime>"
+        "</uf:header>"
+        "<uf:body><uf:item><uf:addFileToPurchaseNoticeData>"
+        f"<uf:purchaseId>{esc(purchase_id_str)}</uf:purchaseId>"
+        f"<uf:fileId>{esc(file_id)}</uf:fileId>"
+        f"<uf:fileName>{esc(file_name)}</uf:fileName>"
+        f"<uf:title>{esc(title)}</uf:title>"
+        f"<uf:fileBytes>{file_bytes_b64}</uf:fileBytes>"
+        "</uf:addFileToPurchaseNoticeData></uf:item></uf:body>"
+        "</uf:addFileToPurchaseNotice>"
+        "</soap:Body></soap:Envelope>"
+    )
+
+
+async def _attach_documents_to_notice(
+    pub_id: int,
+    purchase_id_str: str,
+    purchase_db_id: int,
+    auth: str,
+):
+    """Рендерит 5 документов и прикрепляет каждый к извещению Фабрикант.
+
+    Частичный сбой прикрепления НЕ меняет статус публикации — только
+    записывает детали в attachments_result.
+    """
+    # Импорт внутри функции чтобы избежать циклического импорта
+    from app.routers.documents import render_fabrikant_package_files
+
+    async with async_session() as db:
+        rendered, render_errors = await render_fabrikant_package_files(db, purchase_db_id)
+
+    results = []
+
+    # Render errors — сразу фиксируем как failed
+    for err_msg in render_errors:
+        # extract file name from error message prefix "filename.docx: ..."
+        file_label = err_msg.split(":")[0] if ":" in err_msg else "unknown"
+        results.append({"file": file_label, "ok": False, "error": err_msg[:300]})
+
+    loop = asyncio.get_event_loop()
+
+    for n, (ascii_name, ru_title, file_data) in enumerate(rendered, start=1):
+        file_id = f"{purchase_id_str}-doc-{n}"
+        file_bytes_b64 = base64.b64encode(file_data).decode("ascii")
+
+        soap_xml = _build_add_file_soap_xml(
+            purchase_id_str=purchase_id_str,
+            file_id=file_id,
+            file_name=ascii_name,
+            title=ru_title[:255],
+            file_bytes_b64=file_bytes_b64,
+        )
+
+        try:
+            req = urllib.request.Request(
+                FABRIKANT_URL,
+                data=soap_xml.encode("utf-8"),
+                method="POST",
+                headers={
+                    "Content-Type": "text/xml; charset=utf-8",
+                    "Authorization": f"Basic {auth}",
+                    "SOAPAction": FABRIKANT_SOAP_ACTION_ADD_FILE,
+                    "User-Agent": "VSKS-CRM/1.0",
+                },
+            )
+            try:
+                resp = await loop.run_in_executor(
+                    None, lambda: urllib.request.urlopen(req, timeout=30, context=_make_ssl_ctx())
+                )
+                resp_text = resp.read().decode("utf-8")
+                resp_status = resp.status
+            except urllib.error.HTTPError as e:
+                resp_text = e.read().decode("utf-8", errors="replace")
+                resp_status = e.code
+
+            logger.info(
+                "Fabrikant addFileToPurchaseNotice file=%s pub=%d: HTTP %s %.400s",
+                ascii_name, pub_id, resp_status, resp_text,
+            )
+
+            # Ответ операции — messageAccepted (асинхронный), ошибка — Fault / <error>
+            fault_m = re.search(r"<[^:>\s]*:?faultstring[^>]*>([^<]+)<", resp_text)
+            err_m = re.search(r"<[^:>\s]*:?error\b[^>]*>([^<]{3,})<", resp_text)
+            if fault_m:
+                results.append({"file": ascii_name, "ok": False, "error": fault_m.group(1).strip()[:300]})
+            elif err_m:
+                results.append({"file": ascii_name, "ok": False, "error": err_m.group(1).strip()[:300]})
+            elif resp_status not in (200, 202):
+                results.append({"file": ascii_name, "ok": False, "error": f"HTTP {resp_status}: {resp_text[:200]}"})
+            else:
+                results.append({"file": ascii_name, "ok": True})
+
+        except Exception as exc:
+            results.append({"file": ascii_name, "ok": False, "error": str(exc)[:300]})
+            logger.warning("Fabrikant addFile error for %s pub=%d: %s", ascii_name, pub_id, exc)
+
+    await _set_pub_attachments_result(pub_id, results)
+    ok_count = sum(1 for r in results if r.get("ok"))
+    logger.info("Fabrikant attach documents: pub=%d total=%d ok=%d", pub_id, len(results), ok_count)
 
 
 async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
@@ -381,7 +522,15 @@ FABRIKANT_CHECK_URL = "https://api.fabrikant.ru/multi-integration/common/commerc
 NS_CR = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/checkRequest"
 
 
-async def _poll_fabrikant_result(pub_id: int, request_id: str, auth: str, attempts: int = 0):
+async def _poll_fabrikant_result(
+    pub_id: int,
+    request_id: str,
+    auth: str,
+    attempts: int = 0,
+    attach_documents: bool = False,
+    purchase_id_str: str = "",
+    purchase_db_id: int = 0,
+):
     """Poll checkRequest every 30s until responseIsReady, then update publication."""
     MAX_ATTEMPTS = 20  # 10 minutes max
 
@@ -425,7 +574,12 @@ async def _poll_fabrikant_result(pub_id: int, request_id: str, auth: str, attemp
         if not is_ready:
             if attempts < MAX_ATTEMPTS:
                 await asyncio.sleep(30)
-                await _poll_fabrikant_result(pub_id, request_id, auth, attempts + 1)
+                await _poll_fabrikant_result(
+                    pub_id, request_id, auth, attempts + 1,
+                    attach_documents=attach_documents,
+                    purchase_id_str=purchase_id_str,
+                    purchase_db_id=purchase_db_id,
+                )
             else:
                 await _set_pub_error(pub_id, f"Фабрикант: таймаут ожидания результата (requestId={request_id})")
             return
@@ -438,6 +592,18 @@ async def _poll_fabrikant_result(pub_id: int, request_id: str, auth: str, attemp
         if url_m:
             proc_url = url_m.group(1).strip()
             await _set_pub_success(pub_id, external_id=request_id, external_url=proc_url)
+            # Прикрепляем документы ПОСЛЕ успешной публикации
+            if attach_documents and purchase_db_id:
+                try:
+                    await _attach_documents_to_notice(
+                        pub_id=pub_id,
+                        purchase_id_str=purchase_id_str or request_id,
+                        purchase_db_id=purchase_db_id,
+                        auth=auth,
+                    )
+                except Exception as _ae:
+                    logger.error("Fabrikant attach_documents failed pub=%d: %s", pub_id, _ae)
+                    # Сбой прикрепления не должен ронять статус публикации
         elif err_m:
             await _set_pub_error(pub_id, f"Фабрикант: {err_m.group(1).strip()[:400]}")
         else:
@@ -446,7 +612,12 @@ async def _poll_fabrikant_result(pub_id: int, request_id: str, auth: str, attemp
     except Exception as e:
         if attempts < MAX_ATTEMPTS:
             await asyncio.sleep(30)
-            await _poll_fabrikant_result(pub_id, request_id, auth, attempts + 1)
+            await _poll_fabrikant_result(
+                pub_id, request_id, auth, attempts + 1,
+                attach_documents=attach_documents,
+                purchase_id_str=purchase_id_str,
+                purchase_db_id=purchase_db_id,
+            )
         else:
             await _set_pub_error(pub_id, f"Фабрикант: ошибка опроса результата: {str(e)[:200]}")
 
@@ -470,7 +641,7 @@ async def _get_platform_creds(db: AsyncSession, user_id: int, platform: str):
     return row.login, plain
 
 
-async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None):
+async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None, attach_documents: bool = False):
     # Определяем логин/пароль: per-user креды из БД (приоритет) или env
     login = FABRIKANT_LOGIN
     password = FABRIKANT_PASSWORD
@@ -554,7 +725,13 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
                     pub.external_id = req_id
                     pub.updated_at = datetime.now(timezone.utc)
                     await db.commit()
-            await _poll_fabrikant_result(pub_id, req_id, auth)
+            purchase_id_str = str(payload.get("registry_number") or payload.get("purchase_id", ""))
+            await _poll_fabrikant_result(
+                pub_id, req_id, auth,
+                attach_documents=attach_documents,
+                purchase_id_str=purchase_id_str,
+                purchase_db_id=int(payload.get("purchase_id", 0)),
+            )
         else:
             fault = re.search(r"<[^:>\s]*:?faultstring[^>]*>([^<]+)<", resp_text)
             err = fault.group(1) if fault else f"HTTP {status_code}: {resp_text[:200]}"
@@ -625,7 +802,10 @@ async def publish_purchase(
     await db.refresh(pub)
 
     if body.platform == "fabrikant":
-        background_tasks.add_task(_call_fabrikant, pub.id, payload, current_user.id)
+        background_tasks.add_task(
+            _call_fabrikant, pub.id, payload, current_user.id,
+            body.attach_documents,
+        )
     elif body.platform == "roseltorg_rb":
         background_tasks.add_task(_call_roseltorg, pub.id, payload)
 

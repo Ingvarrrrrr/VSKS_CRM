@@ -992,6 +992,7 @@ class PublishRequest(BaseModel):
     determination_date: Optional[str] = None   # ISO datetime, Фабрикант: определение победителя
     summing_up_date: Optional[str] = None      # ISO datetime, Фабрикант: подведение итогов
     okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
+    attach_documents: bool = False             # Фабрикант: прикрепить пакет из 5 документов после публикации
 
 class PublicationStatusUpdate(BaseModel):
     status: str             # published / error

@@ -20,6 +20,7 @@ class PlatformPublication(Base):
 
     request_type = Column(String(50), nullable=True)       # auction / competition / price_request / monitoring
     auction_date = Column(DateTime(timezone=True), nullable=True)  # дата розыгрыша
+    attachments_result = Column(Text, nullable=True)        # JSON: [{file, ok, error?}] — результат прикрепления документов
 
     # Phase 17.1-07 hotfix: cascade delete + passive_deletes so SQLAlchemy does not
     # try to NULL-out purchase_id on Purchase deletion (FK is NOT NULL).

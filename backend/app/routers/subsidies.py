@@ -1050,6 +1050,11 @@ SUPPORTED_DOC_TYPES = {
     "contract_gph_individual_rid":  "Договор ГПХ с физ.лицом (+РИД)",
     "contract_repair_vehicle":      "Договор на ремонт ТС",
     "contract_repair_framework":    "Рамочный договор на ремонт ТС",
+    # Fabrikant ЭТП package
+    "fabrikant_instruction":        "Инструкция по заполнению заявки (Фабрикант)",
+    "fabrikant_application_form":   "Форма заявки (Фабрикант)",
+    "fabrikant_documentation":      "Документация к закупке (Фабрикант)",
+    "fabrikant_contract_project":   "Проект договора (Фабрикант)",
 }
 
 

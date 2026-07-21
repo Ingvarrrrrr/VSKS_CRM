@@ -34,6 +34,9 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
+      FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
+      FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
+      PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
     depends_on:
       db:
         condition: service_healthy

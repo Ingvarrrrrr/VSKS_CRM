@@ -2185,6 +2185,18 @@
             >
               Лист согласования
             </v-btn>
+            <v-divider vertical class="mx-1" />
+            <v-btn
+              prepend-icon="mdi-folder-zip-outline"
+              variant="tonal"
+              color="orange-darken-2"
+              size="small"
+              :loading="docLoading === 'fabrikant_package'"
+              @click="downloadFabrikantPackage"
+              title="Пакет документов для публикации на Фабрикант (5 файлов)"
+            >
+              Пакет для Фабриканта (ZIP)
+            </v-btn>
           </div>
           <div class="text-caption text-medium-emphasis mt-2">
             Документы формируются по шаблонам из backend/templates/
@@ -2557,6 +2569,14 @@
                     />
                   </v-col>
                 </v-row>
+                <v-checkbox
+                  v-model="fabrikantAttachDocs"
+                  label="Прикрепить пакет документов (5 файлов)"
+                  density="compact"
+                  hide-details
+                  color="orange-darken-2"
+                  class="mb-2"
+                />
                 <div class="d-flex gap-2 mt-1">
                   <v-btn variant="text" @click="pendingPlatform = null">Назад</v-btn>
                   <v-btn color="orange-darken-2"
@@ -4835,6 +4855,7 @@ const publishErrors = ref<string[]>([])
 
 const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
 const fabrikantOkpd2 = ref('')
+const fabrikantAttachDocs = ref(true)
 
 function initFabrikantDates() {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -4882,6 +4903,7 @@ async function doPublish(platform: string, procedureType?: string | null) {
       body.proposal_end = fabrikantDates.value.proposal_end
       body.determination_date = fabrikantDates.value.determination_date
       body.summing_up_date = fabrikantDates.value.summing_up_date
+      body.attach_documents = fabrikantAttachDocs.value
     }
     const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
       method: 'POST',
@@ -7475,6 +7497,54 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
     URL.revokeObjectURL(url)
   } catch {
     showSnack('Ошибка скачивания документа', 'error')
+  } finally {
+    docLoading.value = null
+  }
+}
+
+// ── Фабрикант: пакет документов (ZIP) ────────────────────────────────────────
+async function downloadFabrikantPackage() {
+  if (!purchaseId.value) return
+  docLoading.value = 'fabrikant_package'
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/purchases/${purchaseId.value}/fabrikant-package`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => null)
+      const d = err?.details || err?.detail
+      if (err?.code) {
+        const info: any = {
+          code: err.code,
+          message: err.message || 'Ошибка формирования пакета документов',
+          correlation_id: err.correlation_id,
+        }
+        if (d && typeof d === 'object') Object.assign(info, d)
+        else if (typeof d === 'string') info.error_raw = d
+        docErrorInfo.value = info
+        docErrorDialog.value = true
+      } else {
+        showSnack(err?.message || 'Ошибка формирования пакета документов', 'error')
+      }
+      return
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('Content-Disposition') || ''
+    let filename = `Фабрикант_закупка_${purchaseId.value}.zip`
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (utf8Match) {
+      try { filename = decodeURIComponent(utf8Match[1]) } catch { filename = utf8Match[1] }
+    } else {
+      const plain = disposition.match(/filename="?([^";]+)"?/)
+      if (plain) filename = plain[1]
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    showSnack('Ошибка скачивания пакета документов', 'error')
   } finally {
     docLoading.value = null
   }

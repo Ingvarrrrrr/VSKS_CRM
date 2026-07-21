@@ -893,6 +893,13 @@
             :user-role="editDialog.role"
           />
 
+          <!-- Учётки электронных площадок (ЭТП Фабрикант) -->
+          <UserPlatformCredentialsSection
+            v-if="editDialog.userId"
+            :user-id="editDialog.userId"
+            @error="(msg) => showSnack(msg, 'error')"
+          />
+
           <!-- Диагностика видимости: отделы, которые возглавляет сотрудник -->
           <div v-if="editDialog.headedDepts.length" class="mt-3 pa-3 rounded-lg" style="background:rgba(0,128,100,0.07);border-left:3px solid #00897b">
             <div class="text-caption text-medium-emphasis mb-2 d-flex align-center">
@@ -1324,6 +1331,7 @@ import UserAvatar from '@/components/UserAvatar.vue'
 import HierarchyView from './HierarchyView.vue'
 import UserPermissionsSection from '@/components/UserPermissionsSection.vue'
 import UserSubsidyAccessSection from '@/components/UserSubsidyAccessSection.vue'
+import UserPlatformCredentialsSection from '@/components/UserPlatformCredentialsSection.vue'
 import ProfilePhotoUpload from '@/components/ProfilePhotoUpload.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'

@@ -389,6 +389,85 @@ def _fmt_money_plain(v) -> str:
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
+# Signatory position: extract from signatory field if "Директор ФИО" format
+def _signatory_position(signatory: str) -> str:
+    if not signatory:
+        return ""
+    parts = signatory.strip().split()
+    if len(parts) > 1 and not parts[0][0].isupper():
+        return parts[0]
+    return "Директор"
+
+
+# Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
+def _signatory_split(signatory: str) -> dict:
+    """Split 'Position Lastname Firstname Patronymic' into structured dict.
+
+    Returns:
+        position      — all words before the ФИО (last 3 words treated as ФИО)
+        name_full     — last 3 words (ФИО)
+        name_genitive — rough genitive: add '-а'/'-я' to each part where possible
+        name_initials — "Козеев Е.В." (Lastname + Initials)
+    """
+    import re as _re
+    if not signatory:
+        return {"position": "", "name_full": "", "name_genitive": "", "name_initials": ""}
+    parts = signatory.strip().split()
+    if len(parts) <= 1:
+        return {"position": "", "name_full": signatory, "name_genitive": signatory, "name_initials": signatory}
+    # Heuristic: ФИО = last 3 words if ≥4 words total, else last 2
+    if len(parts) >= 4:
+        pos_words = parts[:-3]
+        fio_words = parts[-3:]  # Фамилия Имя Отчество
+    elif len(parts) == 3:
+        # Could be "Иванов Иван Иванович" (no position) or "Директор Иванов Иван"
+        # Heuristic: first word starts with uppercase → probably all ФИО or pos+2
+        pos_words = []
+        fio_words = parts
+    else:
+        pos_words = parts[:1]
+        fio_words = parts[1:]
+
+    position = " ".join(pos_words)
+    name_full = " ".join(fio_words)
+
+    # Rough genitive: Козеев→Козеева, Евгений→Евгения, Викторович→Викторовича
+    def _to_genitive(word: str) -> str:
+        w = word
+        if w.endswith("ич"):  # Иванович → Ивановича
+            return w + "а"
+        if w.endswith("ий"):  # Евгений → Евгения
+            return w[:-2] + "ия"
+        if w.endswith("ья"):  # Илья → Ильи
+            return w[:-2] + "ьи"
+        if w.endswith("а") and len(w) > 2:
+            return w[:-1] + "ы"
+        # Last consonant cluster: add -а
+        vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
+        if w and w[-1] not in vowels and w[-1] not in "ьъ":
+            return w + "а"
+        return w  # fallback: as-is
+
+    genitive_parts = [_to_genitive(w) for w in fio_words]
+    name_genitive = " ".join(genitive_parts)
+
+    # Initials: "Козеев Е.В." — Фамилия + инициалы Имени и Отчества
+    if len(fio_words) >= 3:
+        lastname, firstname, patronymic = fio_words[0], fio_words[1], fio_words[2]
+        name_initials = f"{lastname} {firstname[0]}.{patronymic[0]}."
+    elif len(fio_words) == 2:
+        name_initials = f"{fio_words[0]} {fio_words[1][0]}."
+    else:
+        name_initials = name_full
+
+    return {
+        "position": position,
+        "name_full": name_full,
+        "name_genitive": name_genitive,
+        "name_initials": name_initials,
+    }
+
+
 def _sum_items_price(p) -> float:
     """Fallback: manually sum item.total_price when p.total_nmck is NULL."""
     items = getattr(p, "items", None) or []
@@ -1248,83 +1327,6 @@ async def generate_document(
             return m.group(1)
         parts = full_name.split()
         return parts[-1] if parts else full_name
-
-    # Signatory position: extract from signatory field if "Директор ФИО" format
-    def _signatory_position(signatory: str) -> str:
-        if not signatory:
-            return ""
-        parts = signatory.strip().split()
-        if len(parts) > 1 and not parts[0][0].isupper():
-            return parts[0]
-        return "Директор"
-
-    # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
-    def _signatory_split(signatory: str) -> dict:
-        """Split 'Position Lastname Firstname Patronymic' into structured dict.
-
-        Returns:
-            position      — all words before the ФИО (last 3 words treated as ФИО)
-            name_full     — last 3 words (ФИО)
-            name_genitive — rough genitive: add '-а'/'-я' to each part where possible
-            name_initials — "Козеев Е.В." (Lastname + Initials)
-        """
-        import re as _re
-        if not signatory:
-            return {"position": "", "name_full": "", "name_genitive": "", "name_initials": ""}
-        parts = signatory.strip().split()
-        if len(parts) <= 1:
-            return {"position": "", "name_full": signatory, "name_genitive": signatory, "name_initials": signatory}
-        # Heuristic: ФИО = last 3 words if ≥4 words total, else last 2
-        if len(parts) >= 4:
-            pos_words = parts[:-3]
-            fio_words = parts[-3:]  # Фамилия Имя Отчество
-        elif len(parts) == 3:
-            # Could be "Иванов Иван Иванович" (no position) or "Директор Иванов Иван"
-            # Heuristic: first word starts with uppercase → probably all ФИО or pos+2
-            pos_words = []
-            fio_words = parts
-        else:
-            pos_words = parts[:1]
-            fio_words = parts[1:]
-
-        position = " ".join(pos_words)
-        name_full = " ".join(fio_words)
-
-        # Rough genitive: Козеев→Козеева, Евгений→Евгения, Викторович→Викторовича
-        def _to_genitive(word: str) -> str:
-            w = word
-            if w.endswith("ич"):  # Иванович → Ивановича
-                return w + "а"
-            if w.endswith("ий"):  # Евгений → Евгения
-                return w[:-2] + "ия"
-            if w.endswith("ья"):  # Илья → Ильи
-                return w[:-2] + "ьи"
-            if w.endswith("а") and len(w) > 2:
-                return w[:-1] + "ы"
-            # Last consonant cluster: add -а
-            vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
-            if w and w[-1] not in vowels and w[-1] not in "ьъ":
-                return w + "а"
-            return w  # fallback: as-is
-
-        genitive_parts = [_to_genitive(w) for w in fio_words]
-        name_genitive = " ".join(genitive_parts)
-
-        # Initials: "Козеев Е.В." — Фамилия + инициалы Имени и Отчества
-        if len(fio_words) >= 3:
-            lastname, firstname, patronymic = fio_words[0], fio_words[1], fio_words[2]
-            name_initials = f"{lastname} {firstname[0]}.{patronymic[0]}."
-        elif len(fio_words) == 2:
-            name_initials = f"{fio_words[0]} {fio_words[1][0]}."
-        else:
-            name_initials = name_full
-
-        return {
-            "position": position,
-            "name_full": name_full,
-            "name_genitive": name_genitive,
-            "name_initials": name_initials,
-        }
 
     # VAT calculations
     vat_app = bool(p.vat_applicable)

@@ -22,6 +22,8 @@ class Subsidy(Base):
     extra_contract_clause_1 = Column(Text, nullable=True)
     extra_contract_clause_2 = Column(Text, nullable=True)
     require_planned_dates = Column(Boolean, nullable=False, server_default='true')  # обязательность даты потребности
+    # Fabrikant: номер соглашения о субсидии (для документов закупки)
+    agreement_number = Column(String(200), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

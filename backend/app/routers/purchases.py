@@ -1505,6 +1505,8 @@ PATCHABLE_FIELDS = {
     'service_note_to_user_id',
     # ЭТП: ссылка на конкурсную процедуру
     'etp_url',
+    # Fabrikant: срок оплаты и дата рассмотрения заявок
+    'payment_term_days', 'applications_review_date',
 }
 
 
@@ -1520,6 +1522,8 @@ _DATE_FIELDS = {
     "agreement_date", "order_date",
     # Phase 28
     "contractor_ogrnip_date",
+    # Fabrikant
+    "applications_review_date",
 }
 _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 

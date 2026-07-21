@@ -142,6 +142,8 @@ class OrganizationCreate(BaseModel):
     lon: Optional[float] = None
     region: Optional[str] = None
     head_user_id: Optional[int] = None
+    # Fabrikant: город заключения договора
+    contract_city: Optional[str] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -180,6 +182,8 @@ class OrganizationOut(BaseModel):
     signatory_position: Optional[str] = None
     signatory_basis: Optional[str] = None
     website: Optional[str] = None
+    # Fabrikant: город заключения договора
+    contract_city: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class RegisterRequest(BaseModel):
@@ -212,6 +216,8 @@ class SubsidyCreate(BaseModel):
     extra_contract_clause_2: Optional[str] = None
     # Требовать дату потребности у позиций (для помесячного плана)
     require_planned_dates: bool = True
+    # Fabrikant: номер соглашения о субсидии
+    agreement_number: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -246,6 +252,8 @@ class SubsidyUpdate(BaseModel):
     extra_contract_clause_1: Optional[str] = None
     extra_contract_clause_2: Optional[str] = None
     require_planned_dates: Optional[bool] = None
+    # Fabrikant: номер соглашения о субсидии
+    agreement_number: Optional[str] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -292,6 +300,8 @@ class SubsidyOut(BaseModel):
     planned_amount: Optional[float] = None     # Σ FeoPlannedItem.amount (ФЭО плановая сумма)
     budget_discrepancy: Optional[float] = None  # limit - planned_amount (Δ ФЭО vs плановая)
     require_planned_dates: bool = True
+    # Fabrikant: номер соглашения о субсидии
+    agreement_number: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -678,6 +688,9 @@ class PurchaseCreate(BaseModel):
     # ЭТП: ссылка на конкурсную процедуру
     etp_url: Optional[str] = None
     wish_id: Optional[int] = None  # Связь с заявкой; при авансовом создаётся авто-заявка
+    # Fabrikant: срок оплаты и дата рассмотрения заявок
+    payment_term_days: Optional[int] = None
+    applications_review_date: Optional[date] = None
     items: List[PurchaseItemCreate] = []
     subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
 
@@ -793,6 +806,9 @@ class PurchaseUpdate(BaseModel):
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру
     etp_url: Optional[str] = None
+    # Fabrikant: срок оплаты и дата рассмотрения заявок
+    payment_term_days: Optional[int] = None
+    applications_review_date: Optional[date] = None
 
 
 class PurchaseOut(PurchaseCreate):
@@ -952,6 +968,19 @@ class DashboardSummary(BaseModel):
     total_payments: Decimal
     remaining: Decimal
     categories: List[DashboardCategory]
+
+
+# Platform credentials (per-user)
+class PlatformCredentialUpsert(BaseModel):
+    login: str
+    password: Optional[str] = None  # если None — обновить только login
+
+class PlatformCredentialOut(BaseModel):
+    platform: str
+    login: str
+    has_password: bool = True
+
+    model_config = {"from_attributes": True}
 
 
 # Platform publications

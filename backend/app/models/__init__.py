@@ -63,3 +63,4 @@ from app.models.fleet_document import FleetDocument  # noqa: F401 — Phase 30 v
 from app.models.waybill_children import RouteStop, OdometerReading, FuelRefill  # noqa: F401 — Phase 30
 from app.models.checklist import Checklist, ChecklistItem  # noqa: F401 — Phase 30
 from app.models.incident import Incident  # noqa: F401 — Phase 30
+from app.models.user_platform_credential import UserPlatformCredential  # noqa: F401 — Phase 31 Fabrikant per-user creds

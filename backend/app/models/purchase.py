@@ -133,6 +133,11 @@ class Purchase(Base):
     # ЭТП: ссылка на конкурсную процедуру (заполнена → закупка проводилась через ЭТП)
     etp_url = Column(Text, nullable=True)
 
+    # Fabrikant: срок оплаты в днях
+    payment_term_days = Column(Integer, nullable=True)
+    # Fabrikant: дата рассмотрения заявок (asyncpg требует date-объект, не строку — в _DATE_FIELDS)
+    applications_review_date = Column(Date, nullable=True)
+
     # Phase 28: гарантия договора + ретроактивный флаг (комментарии пользователя 2026-05-19)
     warranty_period_days = Column(Integer, nullable=True)   # срок гарантии товара/услуги в раб.днях (для договора)
     is_retroactive = Column(Boolean, nullable=False, server_default='false')  # договор задним числом — применяется ст. 425 ГК блок

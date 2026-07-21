@@ -451,8 +451,39 @@ async def _poll_fabrikant_result(pub_id: int, request_id: str, auth: str, attemp
             await _set_pub_error(pub_id, f"Фабрикант: ошибка опроса результата: {str(e)[:200]}")
 
 
-async def _call_fabrikant(pub_id: int, payload: dict):
-    if not FABRIKANT_LOGIN or not FABRIKANT_PASSWORD:
+async def _get_platform_creds(db: AsyncSession, user_id: int, platform: str):
+    """Возвращает (login, plain_password) из per-user кредов площадки, или None если нет записи."""
+    from app.models.user_platform_credential import UserPlatformCredential
+    from app.services.cred_crypto import decrypt_password
+    row = (await db.execute(
+        select(UserPlatformCredential).where(
+            UserPlatformCredential.user_id == user_id,
+            UserPlatformCredential.platform == platform,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        return None
+    try:
+        plain = decrypt_password(row.encrypted_password)
+    except Exception:
+        return None
+    return row.login, plain
+
+
+async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None):
+    # Определяем логин/пароль: per-user креды из БД (приоритет) или env
+    login = FABRIKANT_LOGIN
+    password = FABRIKANT_PASSWORD
+    if user_id is not None:
+        try:
+            async with async_session() as _cred_db:
+                result = await _get_platform_creds(_cred_db, user_id, "fabrikant")
+            if result:
+                login, password = result
+        except Exception:
+            pass  # fallback to env creds
+
+    if not login or not password:
         await _set_pub_error(pub_id, "Не заданы FABRIKANT_LOGIN / FABRIKANT_PASSWORD в окружении")
         return
 
@@ -484,7 +515,7 @@ async def _call_fabrikant(pub_id: int, payload: dict):
         )
         return
 
-    auth = base64.b64encode(f"{FABRIKANT_LOGIN}:{FABRIKANT_PASSWORD}".encode()).decode()
+    auth = base64.b64encode(f"{login}:{password}".encode()).decode()
     soap_xml = _build_soap_xml(payload)
 
     try:
@@ -554,7 +585,7 @@ async def publish_purchase(
     body: PublishRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_action('publication.create')),
+    current_user=Depends(require_action('publication.create')),
 ):
     if body.platform not in SUPPORTED_PLATFORMS:
         raise HTTPException(400, f"Неизвестная площадка: {body.platform}")
@@ -594,7 +625,7 @@ async def publish_purchase(
     await db.refresh(pub)
 
     if body.platform == "fabrikant":
-        background_tasks.add_task(_call_fabrikant, pub.id, payload)
+        background_tasks.add_task(_call_fabrikant, pub.id, payload, current_user.id)
     elif body.platform == "roseltorg_rb":
         background_tasks.add_task(_call_roseltorg, pub.id, payload)
 

@@ -101,7 +101,9 @@
                 :leaves="feoLeaves"
                 :readonly="readonly"
                 :error="isFeoMissing(item)"
+                :allow-unallocated="!!subsidyId"
                 @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
               />
               <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1">
                 <v-icon icon="mdi-alert-outline" size="12" />
@@ -241,6 +243,7 @@ const props = defineProps<{
   totalNmck: number
   feoLeaves: any[]
   feoNodes: FeoNode[]
+  subsidyId?: number | null
   unitOptions: string[]
   vatRateOptions: any[]
   // Pure helper / computed-bound function props supplied by the parent:
@@ -284,6 +287,7 @@ const emit = defineEmits<{
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
   'item-feo-change': [idx: number, val: number | null]
+  'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []
 }>()

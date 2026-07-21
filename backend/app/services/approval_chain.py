@@ -52,8 +52,10 @@ async def _walk_superiors(db: AsyncSession, start_id: int) -> list[tuple[int, st
 
 async def build_ascending_chain(
     db: AsyncSession, author_id: int, top_user_id: int, org_id: int
-) -> list[dict]:
-    """Вернуть [{user_id, role_name, full_name, order_num}] снизу вверх до top_user_id."""
+) -> tuple[list[dict], str | None]:
+    """Вернуть (chain, warning) — список [{user_id, role_name, full_name, order_num}] снизу вверх до top_user_id
+    и опциональное предупреждение если цепочка состоит только из top_user_id (нет промежуточных звеньев).
+    """
     ordered: list[tuple[int, str]] = []
     seen: set[int] = {author_id}
 
@@ -64,6 +66,10 @@ async def build_ascending_chain(
 
     # 1. Дерево отделов автора: свой отдел (зам→начальник), затем вверх по parent_id
     dept = await _author_department(db, author_id, org_id)
+    author_has_dept = dept is not None
+    author_user = await db.get(User, author_id)
+    author_has_superior = bool(author_user and author_user.superior_user_id)
+
     cur = dept
     depth = 0
     while cur is not None and depth < _MAX_DEPTH:
@@ -115,4 +121,29 @@ async def build_ascending_chain(
             "full_name": (u.full_name or u.username) if u else None,
             "order_num": i,
         })
-    return chain
+
+    # 6. W4: предупреждение, если цепочка получилась из одного звена (только top_user_id)
+    warning: str | None = None
+    if len(chain) == 1:
+        if not author_has_dept and not author_has_superior:
+            warning = (
+                "У автора заявки не указан отдел и не задан вышестоящий руководитель в организации — "
+                "промежуточные согласующие не найдены. Цепочка состоит только из выбранного верхнего согласующего."
+            )
+        elif not author_has_dept:
+            warning = (
+                "У автора заявки не указан отдел в организации — "
+                "промежуточные согласующие по структуре отделов не найдены. "
+                "Цепочка состоит только из выбранного верхнего согласующего."
+            )
+        elif not author_has_superior:
+            warning = (
+                "У автора заявки не задан вышестоящий руководитель — "
+                "промежуточные согласующие не найдены. Цепочка состоит только из выбранного верхнего согласующего."
+            )
+        else:
+            warning = (
+                "Промежуточные согласующие не найдены — цепочка состоит только из выбранного верхнего согласующего."
+            )
+
+    return chain, warning

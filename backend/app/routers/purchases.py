@@ -1690,6 +1690,15 @@ async def patch_purchase_item(
     p = await db.get(Purchase, pid)
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+    # W3: позиция привязана к заявке — редактировать только в заявке,
+    # НО смена категории ФЭО (feo_category_id / clear_feo_category) разрешена.
+    if it.wish_item_id is not None:
+        substantive_keys = set(body.model_dump(exclude_unset=True).keys()) - {"feo_category_id", "clear_feo_category"}
+        if substantive_keys:
+            raise HTTPException(
+                409,
+                f"Позиция привязана к заявке #{p.wish_id} — редактируйте её в заявке",
+            )
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:
@@ -1714,6 +1723,12 @@ async def patch_purchase_item(
         if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
             raise HTTPException(422, "Категория ФЭО относится к другой субсидии")
         it.feo_category_id = body.feo_category_id
+    # Синхронизировать feo_category_id с WishItem при category-only правке wish-позиции
+    if it.wish_item_id is not None and (body.clear_feo_category or body.feo_category_id is not None):
+        from app.models.wish_item import WishItem as _WishItem
+        wi = await db.get(_WishItem, it.wish_item_id)
+        if wi is not None:
+            wi.feo_category_id = it.feo_category_id
     await db.flush()
     await _recalc_purchase_totals(p, db)
     if p and p.subsidy_id:
@@ -1741,6 +1756,12 @@ async def delete_purchase_item(
     if not it or it.purchase_id != pid:
         raise HTTPException(404, "Позиция не найдена")
     p = await db.get(Purchase, pid)
+    # W3: позиция привязана к заявке — удалять только через заявку
+    if p is not None and p.wish_id is not None:
+        raise HTTPException(
+            409,
+            f"Позиция привязана к заявке #{p.wish_id} — редактируйте её в заявке",
+        )
     await db.delete(it)
     await db.flush()
     if p:

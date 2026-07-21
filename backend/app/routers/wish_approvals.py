@@ -97,7 +97,7 @@ async def cascade_wish_approvers(
         raise HTTPException(400, "Цепочку можно менять только у черновика или отклонённой заявки")
 
     author_id = wish.created_by or current_user.id
-    chain = await build_ascending_chain(db, author_id, top_user_id, wish.org_id)
+    chain, chain_warning = await build_ascending_chain(db, author_id, top_user_id, wish.org_id)
     if not chain:
         raise HTTPException(400, "Не удалось построить цепочку согласующих — проверьте иерархию отдела")
 
@@ -130,7 +130,7 @@ async def cascade_wish_approvers(
     await db.commit()
 
     rows = await _load_approvals(wid, db)
-    return {"approval_mode": mode, "approvers": [_approval_dict(a) for a in rows]}
+    return {"approval_mode": mode, "approvers": [_approval_dict(a) for a in rows], "warning": chain_warning}
 
 
 # ── POST add manual ───────────────────────────────────────────────────────────
@@ -143,8 +143,30 @@ async def add_wish_approver(
     current_user: User = Depends(get_current_user),
 ):
     wish = await _get_wish_or_403(wid, current_user, db)
-    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
-        raise HTTPException(400, "Согласующих можно менять только у черновика или отклонённой заявки")
+    if not _is_saas(current_user):
+        if wish.status in ("draft", "rejected"):
+            pass  # разрешено всем, кто имеет доступ к заявке
+        elif wish.status == "submitted":
+            # При submitted: только менеджер+ или согласующий из цепочки
+            if current_user.role not in MANAGER_ROLES:
+                in_chain = (await db.execute(
+                    select(WishApproval.id).where(
+                        WishApproval.wish_id == wid,
+                        WishApproval.user_id == current_user.id,
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if not in_chain:
+                    raise HTTPException(
+                        403,
+                        "Добавить согласующего к отправленной заявке может только менеджер+ или "
+                        "участник цепочки согласования этой заявки"
+                    )
+        else:
+            raise HTTPException(
+                400,
+                f"Добавить согласующего можно только к черновику, отклонённой или отправленной на согласование заявке "
+                f"(текущий статус: {wish.status})"
+            )
     user_id = int(body.get("user_id", 0))
     if not user_id:
         raise HTTPException(422, "user_id обязателен")
@@ -291,7 +313,7 @@ async def decide_wish_approval(
             except Exception as e:
                 logger.warning("notify_wish_rejected failed: %s", e)
     else:
-        # approved — если все approved → заявка согласована
+        # approved — если все approved → заявка полностью согласована
         remaining = (await db.execute(
             select(func.count()).select_from(WishApproval).where(
                 WishApproval.wish_id == wid,
@@ -301,25 +323,8 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
-            # Полностью согласованная заявка автоматически уходит в «План-график»
-            # ОДНОЙ закупкой (без разбиения — разбиение только через канбан-распределение).
-            try:
-                from app.routers.wishes import _distribute_wish_to_purchases
-                from app.models.wish_item import WishItem
-                items = (await db.execute(
-                    select(func.count()).select_from(WishItem).where(WishItem.wish_id == wid)
-                )).scalar() or 0
-                if items > 0:
-                    await _distribute_wish_to_purchases(wish, db, current_user, split=False)
-                    wish.status = "converted"
-                    # например, удалённая категория ФЭО обнулена — предупреждаем
-                    convert_error = getattr(wish, "_convert_warning", None)
-            except HTTPException as e:
-                # заявка остаётся approved, причину показываем согласующему
-                convert_error = e.detail
-            except Exception as e:
-                logger.warning("auto-convert on full approval failed: %s", e)
-                convert_error = "Не удалось автоматически создать закупки — обратитесь к администратору"
+            # Конвертация в закупки — ТОЛЬКО явным действием пользователя (кнопка «Передать в план-график»).
+            # Здесь только ставим статус 'approved' и шлём уведомление.
             await db.commit()
             if creator:
                 try:
@@ -327,6 +332,25 @@ async def decide_wish_approval(
                     await notify_wish_approved(wish, creator)
                 except Exception as e:
                     logger.warning("notify_wish_approved failed: %s", e)
+            # Сообщение в чате (если есть assigned_to)
+            if wish.assigned_to:
+                try:
+                    from app.routers.purchase_members import _create_assignment_chat_room
+                    from app.models.chat_message import ChatMessage
+                    org_id = wish.org_id
+                    room_id = await _create_assignment_chat_room(
+                        db, current_user.id, wish.assigned_to, org_id,
+                        f"Заявка №{wish.id}: {wish.title or 'без названия'}",
+                    )
+                    db.add(ChatMessage(
+                        room_id=room_id,
+                        sender_id=current_user.id,
+                        content=f"✅ Заявка полностью согласована: {wish.title or '(без названия)'}. Передайте её в план-график.",
+                    ))
+                    await db.flush()
+                    await db.commit()
+                except Exception as e:
+                    logger.warning("chat message on full approval failed: %s", e)
         else:
             await db.commit()
             # sequential — уведомить следующего согласующего

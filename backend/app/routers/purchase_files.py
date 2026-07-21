@@ -16,6 +16,7 @@ from app.models.purchase_file import PurchaseFile
 from app.models.contractor import Contractor
 from app.schemas.schemas import PurchaseFileOut
 from app.auth.jwt import get_current_user
+from app.auth.permissions import _has_key_in_any_org
 from typing import List, Optional, Dict, Any
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-files"])
@@ -65,6 +66,41 @@ FILE_TYPES = {
 DOC_FORMATS = {"scan", "editable"}
 
 
+async def _check_upload_permission(purchase_id: int, current_user, db: AsyncSession) -> None:
+    """403 unless user has purchase_files.upload action OR is a purchase member OR is an approver."""
+    from app.models.purchase_event import PurchaseMember
+    from app.models.purchase_approval import PurchaseApproval
+
+    # 1. action key
+    if await _has_key_in_any_org(current_user, db, 'purchase_files.upload'):
+        return
+
+    # 2. purchase member
+    member = (await db.execute(
+        select(PurchaseMember).where(
+            PurchaseMember.purchase_id == purchase_id,
+            PurchaseMember.user_id == current_user.id,
+        )
+    )).scalar_one_or_none()
+    if member:
+        return
+
+    # 3. purchase approver
+    approver = (await db.execute(
+        select(PurchaseApproval).where(
+            PurchaseApproval.purchase_id == purchase_id,
+            PurchaseApproval.user_id == current_user.id,
+        )
+    )).scalar_one_or_none()
+    if approver:
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail='Загрузка документов доступна участникам закупки, согласующим или по праву "Документы закупки — загрузка"',
+    )
+
+
 def _file_out(pf: PurchaseFile) -> PurchaseFileOut:
     uploaded_by_name = None
     if pf.uploaded_by:
@@ -97,6 +133,8 @@ async def upload_file(
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Закупка не найдена")
+
+    await _check_upload_permission(pid, current_user, db)
 
     if file.content_type not in ALLOWED_MIME:
         raise HTTPException(400, f"Недопустимый тип файла: {file.content_type}")
@@ -609,6 +647,8 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    await _check_upload_permission(pid, current_user, db)
+
     result = await db.execute(
         select(PurchaseFile).where(PurchaseFile.id == fid, PurchaseFile.purchase_id == pid)
     )

@@ -989,12 +989,21 @@
                                   <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
                                     title="Открыть закупку"
                                     @click.stop="router.push(`/orders/${it.purchase_id}`)" />
-                                  <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
-                                    title="Редактировать позицию закупки"
-                                    @click="openReqItemEdit(node, it)" />
-                                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                    title="Удалить позицию из закупки"
-                                    @click="confirmReqItemDelete(node, it)" />
+                                  <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
+                                    title="Изменить можно только в заявке"
+                                    @click.stop="router.push({ path: '/wishes', query: { open: String(it.wish_id) } })"
+                                  ><v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}</a>
+                                  <v-btn v-if="it.wish_id" icon="mdi-swap-horizontal" size="x-small" variant="text" color="teal"
+                                    title="Сменить категорию ФЭО позиции"
+                                    @click.stop="openWishItemFeoEdit(node, it)" />
+                                  <template v-if="!it.wish_id">
+                                    <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                      title="Редактировать позицию закупки"
+                                      @click="openReqItemEdit(node, it)" />
+                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                      title="Удалить позицию из закупки"
+                                      @click="confirmReqItemDelete(node, it)" />
+                                  </template>
                                 </td>
                               </tr>
 
@@ -1171,12 +1180,21 @@
                                         <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
                                           title="Открыть закупку"
                                           @click.stop="router.push(`/orders/${it.purchase_id}`)" />
-                                        <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
-                                          title="Редактировать позицию закупки"
-                                          @click="openReqItemEdit(owner, it)" />
-                                        <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                          title="Удалить позицию из закупки"
-                                          @click="confirmReqItemDelete(owner, it)" />
+                                        <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
+                                          title="Изменить можно только в заявке"
+                                          @click.stop="router.push({ path: '/wishes', query: { open: String(it.wish_id) } })"
+                                        ><v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}</a>
+                                        <v-btn v-if="it.wish_id" icon="mdi-swap-horizontal" size="x-small" variant="text" color="teal"
+                                          title="Сменить категорию ФЭО позиции"
+                                          @click.stop="openWishItemFeoEdit(owner, it)" />
+                                        <template v-if="!it.wish_id">
+                                          <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                            title="Редактировать позицию закупки"
+                                            @click="openReqItemEdit(owner, it)" />
+                                          <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                            title="Удалить позицию из закупки"
+                                            @click="confirmReqItemDelete(owner, it)" />
+                                        </template>
                                         <v-btn v-if="!reqItemPlanned(owner.id, it.id) && reqItemActual(owner.id, it.id)"
                                           icon="mdi-link-variant" size="x-small" variant="text" color="teal"
                                           title="Сопоставить с плановой позицией"
@@ -1250,12 +1268,21 @@
                               <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
                               <td class="feo-td feo-td-actions">
                                 <div class="d-flex align-center justify-end">
-                                  <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
-                                    title="Редактировать позицию закупки"
-                                    @click="openReqItemEdit(owner, it)" />
-                                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                    title="Удалить позицию из закупки"
-                                    @click="confirmReqItemDelete(owner, it)" />
+                                  <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
+                                    title="Изменить можно только в заявке"
+                                    @click.stop="router.push({ path: '/wishes', query: { open: String(it.wish_id) } })"
+                                  ><v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}</a>
+                                  <v-btn v-if="it.wish_id" icon="mdi-swap-horizontal" size="x-small" variant="text" color="teal"
+                                    title="Сменить категорию ФЭО позиции"
+                                    @click.stop="openWishItemFeoEdit(owner, it)" />
+                                  <template v-if="!it.wish_id">
+                                    <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
+                                      title="Редактировать позицию закупки"
+                                      @click="openReqItemEdit(owner, it)" />
+                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                      title="Удалить позицию из закупки"
+                                      @click="confirmReqItemDelete(owner, it)" />
+                                  </template>
                                 </div>
                               </td>
                             </tr>
@@ -1983,6 +2010,52 @@
           <v-spacer />
           <v-btn variant="text" @click="reqItemDelete.show = false">Отмена</v-btn>
           <v-btn color="error" :loading="reqItemDelete.deleting" @click="doReqItemDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Смена категории ФЭО у wish-позиции ── -->
+    <v-dialog v-model="wishItemFeoEdit.show" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-swap-horizontal" color="primary" class="mr-2" />
+          Сменить категорию ФЭО
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="wishItemFeoEdit.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <div class="text-body-2 text-medium-emphasis mb-3">
+            Позиция: <b>{{ wishItemFeoEdit.itemName }}</b>
+          </div>
+          <v-select
+            v-model="wishItemFeoEdit.selectedCatId"
+            :items="leafFeoCategories"
+            item-title="name"
+            item-value="id"
+            label="Категория ФЭО"
+            density="comfortable"
+            variant="outlined"
+            clearable
+            hide-details="auto"
+            class="mb-3"
+          />
+          <div class="mt-1">
+            <v-btn
+              size="small"
+              variant="tonal"
+              color="orange"
+              prepend-icon="mdi-package-variant"
+              :loading="wishItemFeoEdit.unallocatedLoading"
+              @click="pickWishItemUnallocated"
+            >
+              ❓ Не определена
+            </v-btn>
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="wishItemFeoEdit.show = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="wishItemFeoEdit.saving" :disabled="wishItemFeoEdit.selectedCatId == null" @click="saveWishItemFeo">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -4102,6 +4175,10 @@ const reqItemEdit = reactive({
 })
 
 function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
+  if (item.wish_id) {
+    router.push({ path: '/wishes', query: { open: String(item.wish_id) } })
+    return
+  }
   reqItemEdit.catId = node.id
   reqItemEdit.purchaseId = item.purchase_id
   reqItemEdit.itemId = item.id
@@ -4138,6 +4215,10 @@ const reqItemDelete = reactive({
 })
 
 function confirmReqItemDelete(node: FeoNode, item: FeoReqItem) {
+  if (item.wish_id) {
+    router.push({ path: '/wishes', query: { open: String(item.wish_id) } })
+    return
+  }
   reqItemDelete.catId = node.id
   reqItemDelete.purchaseId = item.purchase_id
   reqItemDelete.itemId = item.id
@@ -4159,6 +4240,75 @@ async function doReqItemDelete() {
     reqItemDelete.deleting = false
   }
 }
+
+// ── Смена ФЭО-категории у wish-позиции ──────────────────────────────────────
+const wishItemFeoEdit = reactive({
+  show: false,
+  saving: false,
+  unallocatedLoading: false,
+  purchaseId: null as number | null,
+  itemId: null as number | null,
+  itemName: '',
+  catId: null as number | null,   // текущий catId для refreshReqData
+  selectedCatId: null as number | null,
+})
+
+// Только листовые категории текущей субсидии
+const leafFeoCategories = computed(() =>
+  feoCategories.value.filter(c => !feoCategories.value.some(x => x.parent_id === c.id))
+)
+
+function openWishItemFeoEdit(node: FeoNode, item: FeoReqItem) {
+  wishItemFeoEdit.catId = node.id
+  wishItemFeoEdit.purchaseId = item.purchase_id
+  wishItemFeoEdit.itemId = item.id
+  wishItemFeoEdit.itemName = item.item_name
+  wishItemFeoEdit.selectedCatId = null
+  wishItemFeoEdit.show = true
+}
+
+async function saveWishItemFeo() {
+  if (!wishItemFeoEdit.itemId || !wishItemFeoEdit.purchaseId || wishItemFeoEdit.selectedCatId == null) return
+  wishItemFeoEdit.saving = true
+  try {
+    await apiFetch(`/purchases/${wishItemFeoEdit.purchaseId}/items/${wishItemFeoEdit.itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ feo_category_id: wishItemFeoEdit.selectedCatId }),
+    })
+    wishItemFeoEdit.show = false
+    await refreshReqData(wishItemFeoEdit.catId ?? undefined)
+    showSnack('Категория ФЭО обновлена')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось сменить категорию ФЭО', 'error')
+  } finally {
+    wishItemFeoEdit.saving = false
+  }
+}
+
+async function pickWishItemUnallocated() {
+  if (!selectedId.value) return
+  wishItemFeoEdit.unallocatedLoading = true
+  try {
+    const cat = await apiFetch<{ id: number; name: string }>('/feo-categories/unallocated', {
+      method: 'POST',
+      body: JSON.stringify({ subsidy_id: selectedId.value }),
+    })
+    // Добавить в feoCategories если ещё нет
+    if (!feoCategories.value.find(c => c.id === cat.id)) {
+      feoCategories.value = [...feoCategories.value, {
+        id: cat.id, name: cat.name, parent_id: null, level: 0,
+        subsidy_id: selectedId.value!, code: null, appendix: null,
+        is_active: true, budget: null, planned_quantity: null, planned_amount: null, unit: null,
+      }]
+    }
+    wishItemFeoEdit.selectedCatId = cat.id
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка получения «Не определена»', 'error')
+  } finally {
+    wishItemFeoEdit.unallocatedLoading = false
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function openMapDialog(item: FeoActualItem, categoryId: number) {
   mapTarget.value = item
@@ -4587,6 +4737,13 @@ function feoChildrenBudgetDiff(node: FeoNode): number {
 const FACT_STATUSES = ['delivered', 'paid']
 function isFactActual(a: { purchase_status?: string | null }): boolean {
   return FACT_STATUSES.includes(a.purchase_status || '')
+}
+
+// Позиция «из заявки» в плановой стадии (до договора): источник истины — заявка,
+// поэтому название/кол-во/цену тут править нельзя (бэкенд отдаёт 409). Прячем карандаш/удаление.
+const WISH_PLAN_LOCKED_STATUSES = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress']
+function isWishLocked(it: { wish_id?: number | null; purchase_status?: string | null }): boolean {
+  return !!it.wish_id && WISH_PLAN_LOCKED_STATUSES.includes(it.purchase_status || '')
 }
 
 const PURCHASE_STATUS_LABELS: Record<string, string> = {

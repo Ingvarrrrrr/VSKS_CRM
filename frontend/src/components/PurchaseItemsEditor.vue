@@ -123,6 +123,7 @@
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
           :feo-per-item="props.feoPerItem"
+          :subsidy-id="props.subsidyId"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
           :show-contractor-column="showContractorColumn"
           :is-advance="isAdvance"
@@ -167,6 +168,7 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @update-contract-field="updateContractField"
           @contract-vat-change="onContractVatRateChange"
@@ -194,6 +196,7 @@
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
+          :subsidy-id="props.subsidyId"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :is-over-budget="isOverBudget"
@@ -218,6 +221,7 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
         />
@@ -238,6 +242,7 @@
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
+          :subsidy-id="props.subsidyId"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :resize-style="resizeStyle"
@@ -264,6 +269,7 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
         />
@@ -461,7 +467,7 @@
 
     <!-- ===== ISSUE-3 PART B: Bulk FEO assignment dialog ===== -->
     <v-dialog v-model="bulkFeoDialog" max-width="520">
-      <v-card>
+      <v-card :loading="unallocatedLoading">
         <v-card-title class="text-subtitle-1">
           Назначить ФЭО для выбранных ({{ selectedItemIdxs.length }})
         </v-card-title>
@@ -470,6 +476,8 @@
             v-model="bulkFeoId"
             :nodes="feoNodes"
             :leaves="feoLeaves"
+            :allow-unallocated="!!props.subsidyId"
+            @pick-unallocated="(parentId: number | null) => applyBulkUnallocated(parentId)"
           />
         </v-card-text>
         <v-card-actions>
@@ -1627,6 +1635,7 @@ function removeSelectedItems() {
 // ── ISSUE-3 PART B: bulk-assign FEO level to selected items ───────────────────
 const bulkFeoDialog = ref(false)
 const bulkFeoId = ref<number | null>(null)
+const unallocatedLoading = ref(false)
 
 function openBulkFeoDialog() {
   bulkFeoId.value = null
@@ -1648,6 +1657,74 @@ function applyBulkFeo() {
   bulkFeoId.value = null
   selectedItemIdxs.value = []
   emitUpdate()
+}
+
+async function applyBulkUnallocated(parentId: number | null) {
+  if (!props.subsidyId) return
+  unallocatedLoading.value = true
+  try {
+    const body: Record<string, unknown> = { subsidy_id: props.subsidyId }
+    if (parentId != null) body.parent_id = parentId
+    const cat = await apiFetch<{ id: number; name: string; parent_id: number | null }>('/feo-categories/unallocated', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    // Добавить в feoNodes если отсутствует, пометив родителя не-листом.
+    _injectUnallocatedNode(cat)
+    for (const idx of selectedItemIdxs.value) {
+      const item = localItems.value[idx]
+      if (item) {
+        item.feo_node_id = cat.id
+        item.feo_category_id = cat.id
+      }
+    }
+    bulkFeoDialog.value = false
+    bulkFeoId.value = null
+    selectedItemIdxs.value = []
+    emitUpdate()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка получения категории «Не определена»', 'error')
+  } finally {
+    unallocatedLoading.value = false
+  }
+}
+
+async function pickUnallocatedForItem(idx: number, parentId: number | null) {
+  if (!props.subsidyId) return
+  try {
+    const body: Record<string, unknown> = { subsidy_id: props.subsidyId }
+    if (parentId != null) body.parent_id = parentId
+    const cat = await apiFetch<{ id: number; name: string; parent_id: number | null }>('/feo-categories/unallocated', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    _injectUnallocatedNode(cat)
+    _propagateToSelected(idx, it => {
+      it.feo_node_id = cat.id
+      it.feo_category_id = cat.id
+    })
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка получения категории «Не определена»', 'error')
+  }
+}
+
+/**
+ * Добавляет новый узел «Не определена» в feoNodes, если его там ещё нет.
+ * Если у узла есть parent_id — помечает родителя not-leaf (у него появился ребёнок).
+ */
+function _injectUnallocatedNode(cat: { id: number; name: string; parent_id?: number | null }) {
+  const existing = feoNodes.value.find(n => n.id === cat.id)
+  if (!existing) {
+    const parentNode = cat.parent_id != null ? feoNodes.value.find(n => n.id === cat.parent_id) : null
+    const newNode = { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? null, level: parentNode ? parentNode.level + 1 : 1, is_leaf: true } as any
+    const updated = [...feoNodes.value, newNode]
+    // Если у нового узла есть родитель — снимаем с него is_leaf
+    if (cat.parent_id != null) {
+      const parentIdx = updated.findIndex(n => n.id === cat.parent_id)
+      if (parentIdx !== -1) updated[parentIdx] = { ...updated[parentIdx], is_leaf: false }
+    }
+    feoNodes.value = updated
+  }
 }
 
 // Inline-пропагация на выбранные: при мультивыборе изменение ФЭО/Тип в одной

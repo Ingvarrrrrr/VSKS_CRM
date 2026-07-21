@@ -58,10 +58,12 @@ const props = defineProps<{
   readonly?: boolean
   error?: boolean
   horizontal?: boolean
+  allowUnallocated?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [val: number | null]
+  'pick-unallocated': [parentId: number | null]
 }>()
 
 // Internal chain of selected ids per level (including intermediate nodes).
@@ -114,6 +116,9 @@ watch(
   { immediate: true }
 )
 
+// Pseudo-item injected at the end of every level when allowUnallocated is true.
+const UNALLOCATED_ITEM: FeoNode = { id: -1, name: '❓ Не определена', parent_id: null, level: 0, is_leaf: true }
+
 // Build the sequence of level-item arrays to render based on chain.
 // Level 0: roots (parent_id=null)
 // Level k: children of chain[k-1], if chain[k-1] is defined and node is not a leaf
@@ -121,7 +126,9 @@ const visibleLevels = computed((): FeoNode[][] => {
   const levels: FeoNode[][] = []
   const roots = childrenByParent.value.get(null)
   if (!roots || roots.length === 0) return levels
-  levels.push(roots)
+  const withPseudo = (items: FeoNode[]): FeoNode[] =>
+    props.allowUnallocated && !props.readonly ? [...items, UNALLOCATED_ITEM] : items
+  levels.push(withPseudo(roots))
 
   for (let i = 0; i < chain.value.length; i++) {
     const selId = chain.value[i]
@@ -131,7 +138,7 @@ const visibleLevels = computed((): FeoNode[][] => {
     if (node.is_leaf) break
     const children = childrenByParent.value.get(selId)
     if (!children || children.length === 0) break
-    levels.push(children)
+    levels.push(withPseudo(children))
   }
 
   return levels
@@ -163,6 +170,15 @@ function onSelect(levelIdx: number, val: number | null) {
   if (val == null) {
     // Cleared this level — emit null and stop; deeper levels disappear via visibleLevels
     emit('update:modelValue', null)
+    return
+  }
+
+  // Pseudo-item «Не определена»: emit pick-unallocated with the parent id and return.
+  // Do NOT push -1 into the chain — parent will update modelValue to the real id
+  // after POST, which triggers the existing watch to rebuild chain correctly.
+  if (val === -1) {
+    const parentId = chain.value[levelIdx - 1] ?? null
+    emit('pick-unallocated', parentId)
     return
   }
 

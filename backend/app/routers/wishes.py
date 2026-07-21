@@ -88,14 +88,19 @@ async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     return res.scalar_one_or_none() is not None
 
 
-async def _ensure_no_pending_approvals(wish, db: AsyncSession, current_user=None) -> None:
+async def _ensure_no_pending_approvals(
+    wish, db: AsyncSession, current_user=None, allow_override: bool = False
+) -> None:
     """Конвертация заявки запрещена, пока цепочка согласования не завершена:
     иначе заявка уходит в converted, а pending-согласующие «зависают»
     и не видят её во вкладке «На согласовании мне».
 
     Собственное pending-согласование текущего пользователя блоком не считается:
     «Быстрое одобрение» согласующим = его решение approved. Оно фиксируется в цепочке,
-    и блокировка снимается, если других pending-согласующих не осталось."""
+    и блокировка снимается, если других pending-согласующих не осталось.
+
+    allow_override=True + менеджер/SaaS → одобряет ВСЕ pending от имени current_user,
+    не блокирует конвертацию."""
     from datetime import datetime, timezone
     from app.models.wish_approval import WishApproval
     pending = (await db.execute(
@@ -108,14 +113,35 @@ async def _ensure_no_pending_approvals(wish, db: AsyncSession, current_user=None
     others = [a for a in pending if not (current_user is not None and a.user_id == current_user.id)]
 
     if others:
-        names = ", ".join(a.approver_full_name or f"пользователь #{a.user_id}" for a in others)
-        raise HTTPException(
-            status_code=409,
-            detail=f"У заявки незавершённое согласование ({names}). "
-                   "Дождитесь решения согласующих или удалите цепочку согласования.",
+        # W3: менеджер/SaaS может одобрить чужие pending без блокировки
+        is_manager = (
+            current_user is not None
+            and (
+                _is_saas(current_user)
+                or getattr(current_user, 'role', None) in MANAGER_ROLES
+            )
         )
+        if allow_override and is_manager:
+            override_comment = (
+                f"Одобрено без согласования остальных "
+                f"({getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '')})"
+            )
+            now = datetime.now(timezone.utc)
+            for a in others:
+                a.status = "approved"
+                a.decided_at = now
+                a.decided_by_user_id = current_user.id
+                a.comment = override_comment
+            await db.flush()
+        else:
+            names = ", ".join(a.approver_full_name or f"пользователь #{a.user_id}" for a in others)
+            raise HTTPException(
+                status_code=409,
+                detail=f"У заявки незавершённое согласование ({names}). "
+                       "Дождитесь решения согласующих или удалите цепочку согласования.",
+            )
 
-    # Других pending нет — фиксируем собственное решение согласующего как approved
+    # Других pending нет (или они одобрены выше) — фиксируем собственное решение согласующего как approved
     for a in own:
         a.status = "approved"
         a.decided_at = datetime.now(timezone.utc)
@@ -132,6 +158,111 @@ def _eff_date(wish, item):
         or getattr(wish, "execution_deadline", None)
         or getattr(wish, "desired_date", None)
     )
+
+
+# W1: статусы «дошли до договора» — блокируют редактирование привязанной заявки
+CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
+
+
+async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
+    """Возвращает список закупок, привязанных к заявке."""
+    res = await db.execute(select(Purchase).where(Purchase.wish_id == wish_id))
+    return res.scalars().all()
+
+
+async def _wish_contracted_locked(wish_id: int, db: AsyncSession) -> bool:
+    """True если хотя бы одна привязанная закупка находится в статусе «Договор+»."""
+    purchases = await _wish_linked_purchases(wish_id, db)
+    return any(p.status in CONTRACTED_STATUSES for p in purchases)
+
+
+async def _reset_approvals(wish_id: int, db: AsyncSession) -> None:
+    """Сбрасывает все решения согласующих цепочки обратно в pending."""
+    from app.models.wish_approval import WishApproval
+    approvals = (await db.execute(
+        select(WishApproval).where(WishApproval.wish_id == wish_id)
+    )).scalars().all()
+    for a in approvals:
+        a.status = "pending"
+        a.decided_at = None
+        a.decided_by_user_id = None
+        a.comment = None
+    if approvals:
+        await db.flush()
+
+
+async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
+    """Синхронизирует позиции заявки в связанные закупки (не в contracted+).
+
+    Для каждой закупки НЕ в CONTRACTED_STATUSES: каждая PurchaseItem с wish_item_id
+    находит соответствующий WishItem и копирует item_name/unit/unit_price/quantity/total_price.
+    Затем пересчитывает суммы закупки.
+    """
+    wish_item_map = {wi.id: wi for wi in (wish.items or [])}
+    if not wish_item_map:
+        return
+    purchases = await _wish_linked_purchases(wish.id, db)
+    for p in purchases:
+        if p.status in CONTRACTED_STATUSES:
+            continue
+        pitems_res = await db.execute(
+            select(PurchaseItem).where(
+                PurchaseItem.purchase_id == p.id,
+                PurchaseItem.wish_item_id.isnot(None),
+            )
+        )
+        pitems = pitems_res.scalars().all()
+        changed = False
+        for pi in pitems:
+            wi = wish_item_map.get(pi.wish_item_id)
+            if wi is None:
+                continue
+            pi.item_name = wi.item_name
+            pi.unit = wi.unit
+            pi.unit_price = wi.unit_price
+            pi.quantity = wi.quantity
+            pi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+            changed = True
+        if changed:
+            await db.flush()
+            # Пересчёт сумм закупки
+            items_sum_res = await db.execute(
+                select(func.coalesce(func.sum(PurchaseItem.total_price), 0))
+                .where(PurchaseItem.purchase_id == p.id)
+            )
+            items_sum = items_sum_res.scalar() or 0
+            if p.status not in CONTRACTED_STATUSES:
+                p.total_nmck = items_sum
+                p.planned_total_price = items_sum or p.planned_total_price
+            await db.flush()
+
+
+async def _notify_pending_approvers(wish, db: AsyncSession, requester_name: str) -> None:
+    """Уведомляет согласующих из цепочки о необходимости решения.
+
+    sequential → уведомить первого pending; parallel → уведомить всех.
+    Повторно используется из submit_wish и update_wish (при повторном согласовании).
+    """
+    try:
+        from app.models.wish_approval import WishApproval
+        from app.notifications import notify_wish_approval_step
+        from app.models.user import User as _User
+        pending = (await db.execute(
+            select(WishApproval).where(
+                WishApproval.wish_id == wish.id,
+                WishApproval.status == "pending",
+            ).order_by(WishApproval.order_num)
+        )).scalars().all()
+        if pending:
+            targets = pending[:1] if (wish.approval_mode or "sequential") == "sequential" else pending
+            for ap in targets:
+                if ap.user_id and ap.user_id != wish.created_by:
+                    approver_user = await db.get(_User, ap.user_id)
+                    if approver_user:
+                        await notify_wish_approval_step(wish, approver_user, requester_name)
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).warning("notify approvers failed: %s", e)
 
 
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
@@ -156,6 +287,9 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status
+        # W2: синхронизируем изменённые позиции заявки в уже существующие закупки
+        # (единственная точка propagation при повторном одобрении после редактирования)
+        await _sync_wish_items_to_purchases(wish, db)
         return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
@@ -304,6 +438,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 country_origin=wi.country_origin,
                 feo_category_id=wi.feo_category_id,  # B9: per-item feo
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
+                wish_item_id=wi.id,  # W1: hard link to source WishItem
             )
             db.add(pi)
         await db.flush()
@@ -580,6 +715,9 @@ async def get_wish(
         select(Purchase.id).where(Purchase.wish_id == wish_id).order_by(Purchase.id)
     )).scalars().all()
 
+    # W1: contracted_locked — есть ли закупка в статусе Договор+
+    enriched.contracted_locked = await _wish_contracted_locked(wish_id, db)
+
     # Phase 31: unseen_fields for single wish GET (D-05..D-09)
     try:
         from app.routers.entity_changes import get_unseen_map as _get_unseen_map
@@ -656,8 +794,11 @@ async def update_wish(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a draft wish (creator only).
-    # B3: approved wishes are read-only — enforced by status checks in update/patch/approve/reject endpoints
+    """Update a wish.
+    Draft/rejected: full edit.
+    Submitted/approved/converted: edit allowed (for all non-SaaS if not contracted-locked),
+    then resets approval chain and re-notifies approvers.
+    B3: contracted-locked wishes (purchase in Договор+) are read-only.
     """
     wish = await _load_wish(wish_id, db)
 
@@ -665,8 +806,18 @@ async def update_wish(
         # Участники заявки (WishMember) тоже могут её редактировать
         if not await _is_wish_member(wish_id, current_user.id, db):
             raise HTTPException(status_code=403, detail="Редактировать заявку может автор или участник заявки")
-    if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
-        raise HTTPException(status_code=400, detail="Можно редактировать только черновик или отклонённую заявку")
+
+    # W2: contracted-lock replaces old draft-only gate
+    if not _is_saas(current_user):
+        if await _wish_contracted_locked(wish.id, db):
+            raise HTTPException(
+                status_code=409,
+                detail="Заявка привязана к закупке на этапе «Договор» — редактирование запрещено",
+            )
+        # SaaS is always allowed; for others allow draft/rejected AND submitted/approved/converted
+
+    # Capture old status BEFORE mutation
+    old_status = wish.status
 
     # Phase 31: capture old values for diff-tracking BEFORE any mutation (D-05..D-09)
     _old_wish_values = {f: getattr(wish, f, None) for f in WISH_TRACKED_FIELDS}
@@ -676,23 +827,70 @@ async def update_wish(
         setattr(wish, field, value)
 
     if body.items is not None:
-        await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
-        for item_data in body.items:
-            wi = WishItem(
-                wish_id=wish.id,
-                product_id=item_data.get('product_id'),
-                item_name=item_data.get('item_name', ''),
-                item_type=item_data.get('item_type', 'товар'),
-                quantity=item_data.get('quantity', 1),
-                unit=item_data.get('unit', 'шт'),
-                unit_price=item_data.get('unit_price', 0),
-                total_price=item_data.get('total_price', 0),
-                country_origin=item_data.get('country_origin', 'Россия'),
-                feo_category_id=item_data.get('feo_category_id'),  # B9
-                needed_date=item_data.get('needed_date'),  # W2
+        if old_status == "draft":
+            # Draft: delete+recreate (original behaviour)
+            await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
+            for item_data in body.items:
+                wi = WishItem(
+                    wish_id=wish.id,
+                    product_id=item_data.get('product_id'),
+                    item_name=item_data.get('item_name', ''),
+                    item_type=item_data.get('item_type', 'товар'),
+                    quantity=item_data.get('quantity', 1),
+                    unit=item_data.get('unit', 'шт'),
+                    unit_price=item_data.get('unit_price', 0),
+                    total_price=item_data.get('total_price', 0),
+                    country_origin=item_data.get('country_origin', 'Россия'),
+                    feo_category_id=item_data.get('feo_category_id'),  # B9
+                    needed_date=item_data.get('needed_date'),  # W2
+                )
+                db.add(wi)
+            await db.flush()
+        else:
+            # Non-draft (submitted/approved/converted/rejected): update existing items in-place by id.
+            # Add/remove NOT supported for advanced wishes — only update matching items.
+            existing_items = {wi.id: wi for wi in wish.items}
+            for item_data in body.items:
+                item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
+                wi = existing_items.get(item_id) if item_id else None
+                if wi is None:
+                    continue
+                if 'item_name' in item_data:
+                    wi.item_name = item_data['item_name']
+                if 'unit_price' in item_data:
+                    wi.unit_price = item_data['unit_price']
+                if 'quantity' in item_data:
+                    wi.quantity = item_data['quantity']
+                if 'unit' in item_data:
+                    wi.unit = item_data['unit']
+                if 'total_price' in item_data:
+                    wi.total_price = item_data['total_price']
+                elif 'unit_price' in item_data or 'quantity' in item_data:
+                    wi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+                if 'feo_category_id' in item_data:
+                    wi.feo_category_id = item_data['feo_category_id']
+                if 'needed_date' in item_data:
+                    wi.needed_date = item_data['needed_date']
+            await db.flush()
+
+    # W2: re-approval trigger for submitted/approved/converted wishes
+    if old_status in ("submitted", "approved", "converted"):
+        # Проверяем наличие согласующих ДО смены статуса (старые заявки могли быть одобрены без цепочки)
+        from app.models.wish_approval import WishApproval as _WA
+        _approver_count = (await db.execute(
+            select(func.count()).select_from(_WA).where(_WA.wish_id == wish.id)
+        )).scalar() or 0
+        if _approver_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Заявка уйдёт на повторное согласование, но согласующие не выбраны — "
+                       "добавьте хотя бы одного согласующего в разделе «Согласующие».",
             )
-            db.add(wi)
+        wish.status = "submitted"
         await db.flush()
+        await _reset_approvals(wish.id, db)
+        requester_name = getattr(current_user, 'full_name', None) or current_user.username
+        await _notify_pending_approvers(wish, db, requester_name)
 
     await db.commit()
 
@@ -744,30 +942,24 @@ async def submit_wish(
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'draft' или 'rejected'")
 
+    # Проверяем наличие согласующих: нельзя отправить заявку неизвестно кому
+    from app.models.wish_approval import WishApproval as _WA_submit
+    _approver_count = (await db.execute(
+        select(func.count()).select_from(_WA_submit).where(_WA_submit.wish_id == wish_id)
+    )).scalar() or 0
+    if _approver_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Нельзя отправить на согласование: не выбраны согласующие. "
+                   "Добавьте хотя бы одного согласующего в разделе «Согласующие».",
+        )
+
     wish.status = "submitted"
     await db.flush()
 
-    # Уведомить согласующих из цепочки: sequential — первого pending, parallel — всех
-    try:
-        from app.models.wish_approval import WishApproval
-        from app.notifications import notify_wish_approval_step
-        pending = (await db.execute(
-            select(WishApproval).where(
-                WishApproval.wish_id == wish.id,
-                WishApproval.status == "pending",
-            ).order_by(WishApproval.order_num)
-        )).scalars().all()
-        if pending:
-            targets = pending[:1] if (wish.approval_mode or "sequential") == "sequential" else pending
-            requester_name = current_user.full_name or current_user.username
-            for ap in targets:
-                if ap.user_id and ap.user_id != current_user.id:
-                    approver_user = await db.get(User, ap.user_id)
-                    if approver_user:
-                        await notify_wish_approval_step(wish, approver_user, requester_name)
-    except Exception as e:
-        import logging as _log
-        _log.getLogger(__name__).warning("notify approvers on submit failed: %s", e)
+    # Уведомить согласующих из цепочки (вынесено в _notify_pending_approvers)
+    requester_name = current_user.full_name or current_user.username
+    await _notify_pending_approvers(wish, db, requester_name)
 
     # Notify approver
     if wish.assigned_to and wish.assigned_to != current_user.id:
@@ -809,7 +1001,8 @@ async def approve_wish(
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and wish.assigned_to != current_user.id:
         raise HTTPException(status_code=403, detail="Одобрить заявку может менеджер+ или назначенный согласующий")
 
-    await _ensure_no_pending_approvals(wish, db, current_user)
+    # W3: менеджер/SaaS может одобрить чужие pending без блокировки (allow_override=True)
+    await _ensure_no_pending_approvals(wish, db, current_user, allow_override=True)
 
     wish.status = "approved"
     wish.approved_by = current_user.id
@@ -891,6 +1084,9 @@ async def patch_wish_execution(
         wish.event_id = body.event_id
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
+    # W2: assigned_to меняется без сброса цепочки согласования
+    if body.assigned_to is not None:
+        wish.assigned_to = body.assigned_to
     await db.commit()
     wish = await _load_wish(wish_id, db)
     return _enrich(wish)
@@ -1065,6 +1261,7 @@ async def convert_wish(
             country_origin=wi.country_origin,
             feo_category_id=wi.feo_category_id,  # B9: per-item feo
             needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
+            wish_item_id=wi.id,  # W1: hard link to source WishItem
         )
         db.add(pi)
     await db.flush()

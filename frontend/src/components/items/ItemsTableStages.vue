@@ -236,8 +236,10 @@
                             :readonly="readonly"
                             :error="isFeoMissing(item)"
                             horizontal
+                            :allow-unallocated="!!subsidyId"
                             style="flex:1 1 auto;min-width:240px"
                             @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                            @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
                           />
                           <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
                             <v-icon icon="mdi-alert-outline" size="14" />
@@ -449,6 +451,7 @@ defineProps<{
   feoLeaves: any[]
   feoNodes: FeoNode[]
   feoPerItem?: boolean
+  subsidyId?: number | null
   // mode flags (computed in parent)
   showVatColumnsInExpandRow: boolean
   showContractorColumn: boolean
@@ -496,6 +499,7 @@ const emit = defineEmits<{
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, val: any]
   'item-feo-change': [idx: number, val: number | null]
+  'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []
   'contractor-search-input': [idx: number, search: string]

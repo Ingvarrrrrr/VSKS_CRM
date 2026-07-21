@@ -310,10 +310,11 @@ async def dashboard_charts(
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
+        effective_budget = calc if calc > 0 else float(row.budget or 0)
         spent = spent_map.get(row.id, 0.0)
         planned_amt = planned_amounts_map.get(row.id, 0.0)
-        remaining = calc - spent
-        discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
+        remaining = effective_budget - spent
+        discrepancy = (effective_budget - planned_amt) if abs(effective_budget - planned_amt) > 0.01 else None
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
         contractor_inn = None
@@ -327,14 +328,14 @@ async def dashboard_charts(
             "name": row.name,
             "year": row.year,
             "budget": float(row.budget),
-            "calculated_budget": calc,
+            "calculated_budget": effective_budget,
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
             "total_plan_schedule": float(row.total_plan_schedule),
             "total_ordered": float(row.total_ordered),
             "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01
-            "feo_budget_total": calc,
+            "feo_budget_total": effective_budget,
             "feo_filled": calc > 0,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
             "contractor_name": contractor_name,

@@ -496,6 +496,11 @@
                 hint="К какому мероприятию относится закупка" persistent-hint
               />
             </v-col>
+            <!-- Нужна к дате — единая точка ввода, убрана из вкладок «Основание» -->
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
+                density="compact" type="date" />
+            </v-col>
           </v-row>
           <!-- Тип договора: определяет предельную сумму (Разовый/Рамочный) -->
           <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
@@ -1109,10 +1114,6 @@
                 hint="Дата окончания действия договора" persistent-hint />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
-                density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="3">
               <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
                 variant="outlined" density="compact" type="date" />
             </v-col>
@@ -1167,10 +1168,6 @@
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
-                density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="3">
               <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
                 variant="outlined" density="compact" type="date" />
             </v-col>
@@ -1204,10 +1201,6 @@
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_end_date" label="Срок действия" variant="outlined"
                 density="compact" type="date" hint="Дата окончания действия" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
-                density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
@@ -1294,10 +1287,6 @@
               <v-text-field v-model="form.execution_term" label="Срок исполнения" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
-                density="compact" type="date" />
-            </v-col>
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
                 :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
@@ -1319,10 +1308,6 @@
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.contract_date" label="Дата заказ-наряда" variant="outlined"
-                density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
                 density="compact" type="date" />
             </v-col>
             <v-col cols="12" md="3">
@@ -1938,8 +1923,8 @@
         </v-card>
       </v-dialog>
 
-      <!-- 7. Файлы (скрыто для employee) -->
-      <v-card v-if="isEdit && isManagerLevel" variant="outlined" class="mb-4">
+      <!-- 7. Файлы (скрыто для employee, если нет права purchase_files.upload и не участник/согласующий) -->
+      <v-card v-if="canSeePurchaseDocs" variant="outlined" class="mb-4">
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
         <v-card-text>
           <!-- Phase 26-ppp: typed-upload секции перенесены сюда из «Закрывающие
@@ -5105,6 +5090,30 @@ async function loadPurchaseMembers() {
   } catch { purchaseMembers.value = [] }
 }
 
+// Список user_id согласующих по текущей закупке (для canSeePurchaseDocs)
+const purchaseApprovalUserIds = ref<Set<number>>(new Set())
+
+async function loadPurchaseApprovals() {
+  if (!purchaseId.value) return
+  try {
+    const list = await apiFetch<any[]>(`/purchases/${purchaseId.value}/approvals`)
+    purchaseApprovalUserIds.value = new Set(list.map((a: any) => a.user_id).filter(Boolean))
+  } catch { purchaseApprovalUserIds.value = new Set() }
+}
+
+const isPurchaseApprover = computed(() =>
+  !!currentUserId && purchaseApprovalUserIds.value.has(currentUserId)
+)
+
+const canSeePurchaseDocs = computed(() =>
+  isEdit.value && (
+    isManagerLevel.value ||
+    authStore.hasAction('purchase_files.upload') ||
+    purchaseMembers.value.some((m: any) => m.user_id === currentUserId) ||
+    isPurchaseApprover.value
+  )
+)
+
 async function addPurchaseMember(userId: number | null) {
   if (!userId || !purchaseId.value) return
   try {
@@ -6823,6 +6832,7 @@ onMounted(async () => {
     await loadLinkedTasks()
     await loadPurchaseComments()
     await loadPurchaseMembers()
+    await loadPurchaseApprovals()
     loadAllUsers()
     approvalPanelRef.value?.loadApprovals()
     // Чеки/импорт чека: для авансовых, для обычной закупки c purchase_method='advance',

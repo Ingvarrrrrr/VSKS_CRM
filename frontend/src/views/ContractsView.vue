@@ -2003,7 +2003,7 @@ onMounted(async () => {
   }
   // Phase 27.1.7: auto-enrich pending contracts on view load (idempotent, fire-and-forget)
   try {
-    await apiFetch('/contracts/bulk-enrich-from-purchases', { method: 'POST' })
+    await apiFetch('/contracts/bulk-enrich-from-purchases', { method: 'POST', suppressErrorDialog: true })
   } catch (_) {
     // 403 для не-admin — игнорируем, не критично
   }

@@ -29,6 +29,7 @@ class PurchaseItem(Base):
     total_with_vat = Column(Numeric(15, 2), nullable=True)  # import-vat-cols: стоимость с НДС
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
+    wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)  # W1: hard link to source WishItem
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -486,6 +487,103 @@ async def category_tree(
         else:
             roots.append(node)
     return roots
+
+
+class _UnallocatedBody(BaseModel):
+    subsidy_id: int
+    parent_id: Optional[int] = None
+
+
+@router.post("/unallocated")
+async def get_or_create_unallocated(
+    body: _UnallocatedBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Найти или создать категорию «Не определена» (или «Нераспределённое») для субсидии.
+
+    Доступна всем авторизованным пользователям с доступом к субсидии
+    (wishes / purchases / feo_categories). Не требует require_tab('feo_categories').
+
+    parent_id (опц.) — создать дочернюю «Не определена» под этим родителем.
+
+    Response: {id, name, subsidy_id, parent_id, created: bool}
+    """
+    from app.models.subsidy import Subsidy
+
+    # Проверить существование субсидии
+    sub = (await db.execute(select(Subsidy).where(Subsidy.id == body.subsidy_id))).scalar_one_or_none()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Субсидия не найдена")
+
+    # Изоляция по организации (аналогично list_categories)
+    vis = await get_visible_subsidy_ids(current_user, db, "feo_categories")
+    if vis is not None:
+        vis = vis | await get_visible_subsidy_ids(current_user, db, "purchases")
+        vis = vis | await get_visible_subsidy_ids(current_user, db, "wishes")
+        if body.subsidy_id not in vis:
+            raise HTTPException(status_code=403, detail="Нет доступа к этой субсидии")
+
+    # Загрузить родителя, если указан
+    parent: Optional[FeoCategory] = None
+    if body.parent_id is not None:
+        parent = (await db.execute(
+            select(FeoCategory).where(FeoCategory.id == body.parent_id)
+        )).scalar_one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Родительская категория не найдена")
+        if parent.subsidy_id != body.subsidy_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Родительская категория относится к другой субсидии",
+            )
+
+    # Найти существующую (все варианты имён для обратной совместимости)
+    stmt = (
+        select(FeoCategory)
+        .where(FeoCategory.subsidy_id == body.subsidy_id)
+        .where(FeoCategory.is_active.is_(True))
+        .where(func.lower(FeoCategory.name).in_([
+            "не определена",
+            "нераспределённое",
+            "нераспределенное",
+        ]))
+    )
+    if body.parent_id is None:
+        stmt = stmt.where(FeoCategory.parent_id.is_(None))
+    else:
+        stmt = stmt.where(FeoCategory.parent_id == body.parent_id)
+
+    existing = (await db.execute(stmt.order_by(FeoCategory.id).limit(1))).scalars().first()
+    if existing:
+        return {
+            "id": existing.id,
+            "name": existing.name,
+            "subsidy_id": existing.subsidy_id,
+            "parent_id": existing.parent_id,
+            "created": False,
+        }
+
+    # Создать новую
+    new_level = (parent.level + 1) if parent is not None else 1
+    new_cat = FeoCategory(
+        name="Не определена",
+        subsidy_id=body.subsidy_id,
+        parent_id=body.parent_id,
+        level=new_level,
+        sort_order=9999,
+        is_active=True,
+    )
+    db.add(new_cat)
+    await db.commit()
+    await db.refresh(new_cat)
+    return {
+        "id": new_cat.id,
+        "name": new_cat.name,
+        "subsidy_id": new_cat.subsidy_id,
+        "parent_id": new_cat.parent_id,
+        "created": True,
+    }
 
 
 @router.post("/", response_model=FeoCategoryOut)

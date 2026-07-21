@@ -105,11 +105,12 @@ class WishReject(BaseModel):
 
 
 class WishExecutionPatch(BaseModel):
-    """B-exec: approver sets executor + execution deadline + event."""
+    """B-exec: approver sets executor + execution deadline + event + assigned_to."""
     executor_id: Optional[int] = None
     execution_deadline: Optional[date] = None
     event_id: Optional[int] = None
     feo_category_id: Optional[int] = None
+    assigned_to: Optional[int] = None
 
 
 class WishStatusForce(BaseModel):
@@ -171,6 +172,8 @@ class WishOut(BaseModel):
     convert_warning: Optional[str] = None
     # 'advance_report' = авто-заявка из авансового отчёта; NULL = обычная
     source: Optional[str] = None
+    # W1: True если привязанная закупка перешла в Договор+ (редактирование запрещено)
+    contracted_locked: bool = False
 
     class Config:
         from_attributes = True

@@ -276,17 +276,18 @@ async def list_subsidies(
     out = []
     for s in subsidies:
         calc = budgets.get(s.id, 0.0)
-        s.calculated_budget = calc
+        effective_budget = calc if calc > 0 else float(s.budget or 0)
+        s.calculated_budget = effective_budget
         # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
         spent = spent_map.get(s.id, 0.0)
         planned_amt = planned_amounts.get(s.id, 0.0)
-        remaining = calc - spent
-        discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
+        remaining = effective_budget - spent
+        discrepancy = (effective_budget - planned_amt) if abs(effective_budget - planned_amt) > 0.01 else None
 
         d = {c.name: getattr(s, c.name) for c in s.__table__.columns}
-        d["calculated_budget"] = calc
+        d["calculated_budget"] = effective_budget
         d["feo_filled"] = calc > 0
-        d["feo_budget_total"] = calc
+        d["feo_budget_total"] = effective_budget
         d["remaining"] = remaining
         d["planned_amount"] = planned_amt
         d["budget_discrepancy"] = discrepancy
@@ -311,19 +312,20 @@ async def get_subsidy(
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
     calc = await calculate_budget_from_categories(db, subsidy.id)
-    subsidy.calculated_budget = calc
+    effective_budget = calc if calc > 0 else float(subsidy.budget or 0)
+    subsidy.calculated_budget = effective_budget
     # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
     await db.commit()
 
     spent = await _calculate_spent(db, subsidy.id)
     planned_amt = await _calculate_planned_amount(db, subsidy.id)
-    remaining = calc - spent
-    discrepancy = (calc - planned_amt) if abs(calc - planned_amt) > 0.01 else None
+    remaining = effective_budget - spent
+    discrepancy = (effective_budget - planned_amt) if abs(effective_budget - planned_amt) > 0.01 else None
 
     d = {c.name: getattr(subsidy, c.name) for c in subsidy.__table__.columns}
-    d["calculated_budget"] = calc
+    d["calculated_budget"] = effective_budget
     d["feo_filled"] = calc > 0
-    d["feo_budget_total"] = calc
+    d["feo_budget_total"] = effective_budget
     d["remaining"] = remaining
     d["planned_amount"] = planned_amt
     d["budget_discrepancy"] = discrepancy

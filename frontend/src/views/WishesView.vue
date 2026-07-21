@@ -354,6 +354,21 @@
                 @click="deleteWish(item)"
               />
             </template>
+            <template v-else-if="item.status === 'approved'">
+              <v-btn
+                v-if="isManagerOrAdmin"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                prepend-icon="mdi-cart-arrow-right"
+                @click="openConvertDialog(item)"
+              >
+                Передать в план-график
+              </v-btn>
+              <v-chip v-else size="x-small" color="success" variant="tonal">
+                Согласована — ждёт передачи в план-график
+              </v-chip>
+            </template>
             <v-btn
               v-else-if="item.status === 'converted' && item.purchase_id"
               size="x-small"
@@ -440,6 +455,21 @@
                     :loading="deletingId === w.id"
                     @click.stop="deleteWish(w)"
                   />
+                </template>
+                <template v-else-if="w.status === 'approved'">
+                  <v-btn
+                    v-if="isManagerOrAdmin"
+                    size="x-small"
+                    variant="tonal"
+                    color="primary"
+                    prepend-icon="mdi-cart-arrow-right"
+                    @click.stop="openConvertDialog(w)"
+                  >
+                    В план-график
+                  </v-btn>
+                  <v-chip v-else size="x-small" color="success" variant="tonal">
+                    Согласована
+                  </v-chip>
                 </template>
                 <v-btn
                   v-else-if="w.status === 'converted' && w.purchase_id"
@@ -903,6 +933,30 @@
           </v-alert>
           <v-form ref="wishFormRef" @submit.prevent>
 
+            <!-- Баннер: редактирование одобренной/конвертированной заявки -->
+            <v-alert
+              v-if="editingWish && ['approved', 'converted'].includes(editingWish.status) && !editingWish.contracted_locked"
+              type="warning"
+              variant="tonal"
+              density="compact"
+              class="mb-4"
+              icon="mdi-alert-outline"
+            >
+              После изменения заявка уйдёт на повторное согласование
+            </v-alert>
+
+            <!-- Баннер: заявка заблокирована договором -->
+            <v-alert
+              v-if="editingWish && editingWish.contracted_locked"
+              type="error"
+              variant="tonal"
+              density="compact"
+              class="mb-4"
+              icon="mdi-lock-outline"
+            >
+              Заявка привязана к закупке на этапе «Договор» — редактирование запрещено
+            </v-alert>
+
             <!-- Section 1: Основная информация -->
             <v-card variant="outlined" class="mb-4">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
@@ -952,6 +1006,8 @@
                       :leaves="wishFeoLeaves"
                       horizontal
                       :readonly="!isWishEditable && !canEditWishFeo"
+                      :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                      @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
                       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
@@ -1278,7 +1334,7 @@
                 </div>
 
                 <!-- Ручное добавление -->
-                <template v-if="isWishEditable && editingWishId">
+                <template v-if="editingWishId && (isWishEditable || (editingWish && editingWish.status === 'submitted' && (isChainApprover || isManagerOrAdmin)))">
                   <v-divider class="my-3" />
                   <v-autocomplete
                     v-model="approverToAdd"
@@ -1304,7 +1360,7 @@
             </v-card>
 
             <!-- Section: Принудительная смена статуса (только superadmin/account_owner) -->
-            <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4" color="red-lighten-5">
+            <v-card v-if="isSaas && editingWishId" variant="outlined" class="mb-4 bg-red-lighten-5">
               <v-card-title class="text-subtitle-1 font-weight-bold pa-4 pb-2">
                 <v-icon class="mr-2" color="red-darken-2">mdi-shield-crown</v-icon>Принудительная смена статуса (SaaS-admin)
               </v-card-title>
@@ -1339,7 +1395,7 @@
             </v-card>
 
             <!-- Section: На исполнение (видна согласующему) -->
-            <v-card v-if="canAssigneeAct || (editingWish && editingWish.status === 'approved' && (isDialogAssignee || isAdmin))" variant="outlined" class="mb-4" color="amber-lighten-5">
+            <v-card v-if="canAssigneeAct || (editingWish && editingWish.status === 'approved' && (isDialogAssignee || isAdmin))" variant="outlined" class="mb-4 bg-amber-lighten-5">
               <v-card-title class="text-subtitle-1 font-weight-bold pa-4 pb-2">
                 <v-icon class="mr-2" color="orange-darken-4">mdi-account-clock</v-icon>На исполнение
               </v-card-title>
@@ -1396,8 +1452,32 @@
                     />
                   </v-col>
                   <v-col cols="12">
+                    <v-autocomplete
+                      v-model="wishForm.assigned_to"
+                      :items="orgUsers"
+                      item-title="full_name"
+                      item-value="id"
+                      label="На чьё имя заявка"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      hint="Сотрудник, на имя которого составляется заявка (без сброса цепочки согласования)"
+                      persistent-hint
+                    >
+                      <template #item="{ item, props: itemProps }">
+                        <v-list-item v-bind="itemProps">
+                          <template #title>{{ item.raw.full_name }}</template>
+                          <template #subtitle>{{ resolveUserPosition(item.raw) || '—' }}</template>
+                        </v-list-item>
+                      </template>
+                      <template #selection="{ item }">
+                        {{ item.raw.full_name }}<span v-if="resolveUserPosition(item.raw)" class="text-caption text-medium-emphasis ml-2">— {{ resolveUserPosition(item.raw) }}</span>
+                      </template>
+                    </v-autocomplete>
+                  </v-col>
+                  <v-col cols="12">
                     <v-btn color="orange-darken-4" variant="flat" prepend-icon="mdi-content-save" :loading="savingExecution" @click="saveExecution">
-                      Сохранить исполнителя / срок / мероприятие
+                      Сохранить исполнителя / срок / мероприятие / получателя
                     </v-btn>
                   </v-col>
                 </v-row>
@@ -1534,7 +1614,7 @@
             </v-btn>
             <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="approvingId === editingWish.id"
                    @click="approveWish(editingWish).then(() => wishDialog = false)">
-              Быстрое одобрение
+              Одобрить без согласования остальных
             </v-btn>
             <v-btn color="primary" variant="flat" prepend-icon="mdi-view-column-outline"
                    @click="openKanbanDialog(editingWish); wishDialog = false">
@@ -1730,6 +1810,7 @@ interface Wish {
   member_names?: string[]
   approver_names?: string[]
   purchase_ids?: number[]
+  contracted_locked?: boolean
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -2135,9 +2216,13 @@ const approvalStatusLabel: Record<string, string> = {
   skipped: 'Пропущено',
 }
 
-const isWishEditable = computed(() =>
-  !editingWishId.value || ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')
-)
+const isWishEditable = computed(() => {
+  if (!editingWishId.value) return true
+  const status = (wishForm.value as any).status || 'draft'
+  if (['draft', 'rejected'].includes(status)) return true
+  if (['approved', 'converted'].includes(status)) return !editingWish.value?.contracted_locked
+  return false
+})
 
 const isDialogAssignee = computed(() =>
   !!editingWish.value && editingWish.value.assigned_to === currentUserId
@@ -2276,6 +2361,35 @@ function showSnack(text: string, color = 'success') {
   snackbarText.value = text
   snackbarColor.value = color
   snackbar.value = true
+}
+
+// «Не определена» — парковка категории заявки (вызывается из @pick-unallocated каскада)
+async function pickWishUnallocated(parentId: number | null) {
+  const sid = wishForm.value.subsidy_id
+  if (!sid) return
+  try {
+    const body: Record<string, unknown> = { subsidy_id: sid }
+    if (parentId != null) body.parent_id = parentId
+    const cat = await apiFetch<{ id: number; name: string; parent_id?: number | null }>('/feo-categories/unallocated', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    // Добавить в wishFeoNodes если отсутствует, пометив родителя not-leaf
+    if (!wishFeoNodes.value.find(n => n.id === cat.id)) {
+      const parentNode = cat.parent_id != null ? wishFeoNodes.value.find(n => n.id === cat.parent_id) : null
+      const newNode = { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? null, level: parentNode ? parentNode.level + 1 : 1, is_leaf: true } as any
+      const updated = [...wishFeoNodes.value, newNode]
+      if (cat.parent_id != null) {
+        const pi = updated.findIndex(n => n.id === cat.parent_id)
+        if (pi !== -1) updated[pi] = { ...updated[pi], is_leaf: false }
+      }
+      wishFeoNodes.value = updated
+    }
+    wishFeoSelected.value = cat.id
+    wishFeoSkipLast.value = false
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка получения категории «Не определена»', 'error')
+  }
 }
 
 function formatPrice(price: number) {
@@ -2500,12 +2614,13 @@ async function saveExecution() {
       execution_deadline: wishForm.value.execution_deadline || null,
       event_id: wishForm.value.event_id,
       feo_category_id: wishFeoSelected.value || wishForm.value.feo_category_id,
+      assigned_to: wishForm.value.assigned_to,
     }
     await apiFetch(`/wishes/${editingWishId.value}/execution`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     })
-    showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО')
+    showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО / получатель')
     await reloadActiveTab()
   } catch (e: any) {
     showSnack(`Ошибка: ${e?.message || e?.payload?.message || 'не удалось сохранить'}`, 'error')
@@ -2572,13 +2687,17 @@ async function runCascade() {
   if (!approverTopUser.value) { showSnack('Выберите верхнего согласующего', 'warning'); return }
   cascadeLoading.value = true
   try {
-    const res = await apiFetch<{ approval_mode: string; approvers: WishApprover[] }>(
+    const res = await apiFetch<{ approval_mode: string; approvers: WishApprover[]; warning?: string | null }>(
       `/wishes/${editingWishId.value}/approvers/cascade`,
       { method: 'POST', body: JSON.stringify({ top_user_id: approverTopUser.value, mode: approvalMode.value }) },
     )
     wishApprovers.value = res.approvers
     approverTopUser.value = null
-    showSnack('Цепочка построена. Заявка уйдёт на согласование после кнопки «Отправить на согласование»')
+    if (res.warning) {
+      showSnack(`Цепочка построена. Внимание: ${res.warning}`, 'warning')
+    } else {
+      showSnack('Цепочка построена. Заявка уйдёт на согласование после кнопки «Отправить на согласование»')
+    }
     await loadWishOnce()
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
@@ -2733,16 +2852,35 @@ async function saveWish(andSubmit = false) {
     }
 
     if (editingWishId.value) {
+      const currentStatus = (wishForm.value as any).status || 'draft'
       await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
-      if (andSubmit && ['draft', 'rejected'].includes((wishForm.value as any).status || 'draft')) {
+      if (andSubmit && ['draft', 'rejected'].includes(currentStatus)) {
+        if (wishApprovers.value.length === 0) {
+          showSnack('Добавьте хотя бы одного согласующего — заявку нельзя отправить неизвестно кому', 'error')
+          return
+        }
         await apiFetch(`/wishes/${editingWishId.value}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
+      } else if (['approved', 'converted'].includes(currentStatus)) {
+        // Бэкенд автоматически переводит обратно в submitted при PUT — /submit не нужен
+        showSnack('Заявка отправлена на повторное согласование')
+        await loadWishApprovers()
       } else {
         showSnack('Заявка обновлена')
       }
     } else {
       const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
       if (andSubmit && created?.id) {
+        if (wishApprovers.value.length === 0) {
+          // Черновик создан, но согласующих нет — переходим в режим редактирования
+          // и объясняем, что нужно добавить согласующих перед отправкой
+          editingWishId.value = created.id
+          showSnack('Черновик сохранён. Добавьте хотя бы одного согласующего — заявку нельзя отправить неизвестно кому', 'error')
+          await loadWishMembers()
+          await loadWishApprovers()
+          await reloadActiveTab()
+          return
+        }
         await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
       } else if (created?.id) {
@@ -2801,7 +2939,7 @@ async function submitWish(wish: Wish) {
     showSnack('Заявка отправлена')
     await loadWishes()
   } catch (e: any) {
-    showSnack(`Ошибка при отправке: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    showSnack(`Ошибка при отправке: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     submittingId.value = null
   }
@@ -3095,6 +3233,14 @@ onMounted(async () => {
   // Открыть диалог создания если ?create=1 (редирект из /create-order или кнопки «Добавить»)
   if (route.query.create === '1') {
     openCreateDialog()
+  }
+  // Deep-link: ?open={wish_id} — открыть заявку напрямую (например, переход из субсидии)
+  const openId = route.query.open ? Number(route.query.open) : null
+  if (openId && !isNaN(openId)) {
+    try {
+      const wish = await apiFetch<Wish>(`/wishes/${openId}`)
+      if (wish?.id) await openEditDialog(wish)
+    } catch { /* невалидный id — игнорируем */ }
   }
 })
 </script>

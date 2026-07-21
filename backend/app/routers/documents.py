@@ -2173,12 +2173,66 @@ async def generate_document(
 
 # File names for Fabrikant document package (ASCII-safe for SOAP transport)
 FABRIKANT_PKG_FILE_NAMES = [
-    ("fabrikant_instruction",      "instruction.docx",       "Инструкция участника"),
-    ("fabrikant_application_form", "application_form.docx",  "Форма заявки участника"),
-    ("fabrikant_documentation",    "documentation.docx",     "Документация о закупке"),
+    ("fabrikant_instruction",      "instruction.docx",       "Инструкция по заполнению заявки"),
+    ("fabrikant_application_form", "application_form.docx",  "Заявка (форма)"),
+    ("fabrikant_documentation",    "documentation.docx",     "Документация к закупке"),
     ("fabrikant_contract_project", "contract_project.docx",  "Проект договора"),
     ("tech_spec_request",          "tech_spec.docx",         "Техническое задание"),
 ]
+
+
+def _strip_tech_spec_legend(docx_bytes: bytes) -> bytes:
+    """Remove legend paragraphs from a rendered tech_spec_request docx.
+
+    Deletes paragraphs from the first one containing «ЛЕГЕНДА» up to and
+    including the first paragraph consisting solely of em-dashes (—), which
+    acts as a visual separator.  If «ЛЕГЕНДА» is not found the original bytes
+    are returned unchanged (custom subsidy template without a legend block).
+
+    Wrapped in try/except: on any error returns the original bytes so the
+    caller always receives a valid document.
+    """
+    try:
+        from io import BytesIO as _BytesIO
+        from docx import Document as _Document
+
+        bio = _BytesIO(docx_bytes)
+        doc = _Document(bio)
+        paras = doc.paragraphs
+
+        # Find start index: first paragraph containing «ЛЕГЕНДА»
+        start_idx = None
+        for i, p in enumerate(paras):
+            if "ЛЕГЕНДА" in p.text:
+                start_idx = i
+                break
+
+        if start_idx is None:
+            return docx_bytes
+
+        # Find end index: first paragraph after start consisting only of em-dashes
+        end_idx = None
+        for i in range(start_idx, len(paras)):
+            stripped = paras[i].text.strip()
+            if stripped and all(ch == "—" for ch in stripped):
+                end_idx = i
+                break
+
+        if end_idx is None:
+            # No separator found — remove from start to end of legend block
+            end_idx = start_idx
+
+        # Remove paragraphs in reverse order to keep indices stable
+        for i in range(end_idx, start_idx - 1, -1):
+            p_el = paras[i]._element
+            p_el.getparent().remove(p_el)
+
+        out = _BytesIO()
+        doc.save(out)
+        return out.getvalue()
+    except Exception as _exc:
+        logger.warning("_strip_tech_spec_legend: failed to strip legend, returning original: %s", _exc)
+        return docx_bytes
 
 
 async def render_fabrikant_package_files(
@@ -2571,7 +2625,10 @@ async def render_fabrikant_package_files(
             _tpl.render(context)
             _buf = BytesIO()
             _tpl.save(_buf)
-            rendered.append((ascii_name, ru_title, _buf.getvalue()))
+            _rendered_bytes = _buf.getvalue()
+            if doc_key == "tech_spec_request":
+                _rendered_bytes = _strip_tech_spec_legend(_rendered_bytes)
+            rendered.append((ascii_name, ru_title, _rendered_bytes))
         except Exception as _re:
             _tb = _traceback.format_exc()
             errors.append(f"{ascii_name}: {type(_re).__name__}: {_re}\n{_tb[:500]}")

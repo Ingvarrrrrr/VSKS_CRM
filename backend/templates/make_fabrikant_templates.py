@@ -340,9 +340,9 @@ def make_contract_project():
     """
     fabrikant_contract_project.docx — Проект договора поставки.
     Variables: contract_city, contract_date_day, contract_date_month, contract_date_year,
-               customer_full_name, customer_signatory_position, customer_signatory,
+               customer_full_name, customer_signatory_position, customer_signatory_name,
                customer_signatory_basis, contractor_full_name, contractor_signatory_position,
-               contractor_signatory, contractor_signatory_basis,
+               contractor_signatory_name, contractor_signatory_basis,
                total_nmcd (НМЦД), contract_price, contract_price_words,
                payment_term_days, execution_term, delivery_location,
                customer_inn, customer_kpp, customer_ogrn, customer_address,
@@ -380,16 +380,16 @@ def make_contract_project():
     # Parties
     p = doc.add_paragraph()
     p.add_run(
-        '{{ customer_full_name }} ({{ customer_inn }} лет), именуемое в дальнейшем «Заказчик», '
+        '{{ customer_full_name }} (ИНН {{ customer_inn }}), именуемое в дальнейшем «Заказчик», '
         'действующее в соответствии с Законодательством, в лице '
-        '{{ customer_signatory_position }} {{ customer_signatory }}, '
+        '{{ customer_signatory_position }} {{ customer_signatory_name }}, '
         'действующего на основании {{ customer_signatory_basis }}, с одной стороны, и'
     )
 
     p = doc.add_paragraph()
     p.add_run(
         '{{ contractor_full_name }}, именуемое в дальнейшем «Поставщик», '
-        'в лице {{ contractor_signatory_position }} {{ contractor_signatory }}, '
+        'в лице {{ contractor_signatory_position }} {{ contractor_signatory_name }}, '
         'действующего на основании {{ contractor_signatory_basis }}, с другой стороны,'
     )
 

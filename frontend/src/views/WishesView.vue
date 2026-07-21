@@ -649,15 +649,25 @@
               </v-list>
             </v-menu>
             <template v-if="item.status === 'submitted'">
-              <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
-                Распределить
-              </v-btn>
-              <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="approveWish(item)">
-                Одобрить
-              </v-btn>
-              <v-btn size="x-small" variant="tonal" color="error" @click="openRejectDialog(item)">
-                Отклонить
-              </v-btn>
+              <!-- Распределить/Одобрить/Отклонить — только менеджер+ или назначенный согласующий.
+                   Участник цепочки (chain approver, employee) одобряет через диалог — кнопка «Согласовать» там. -->
+              <template v-if="isManagerOrAdmin || item.assigned_to === currentUserId">
+                <v-btn size="x-small" variant="tonal" color="primary" @click="openKanbanDialog(item)">
+                  Распределить
+                </v-btn>
+                <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="approveWish(item)">
+                  Одобрить
+                </v-btn>
+                <v-btn size="x-small" variant="tonal" color="error" @click="openRejectDialog(item)">
+                  Отклонить
+                </v-btn>
+              </template>
+              <template v-else>
+                <!-- Участник цепочки — кликнуть строку, чтобы открыть заявку и согласовать в разделе «Согласующие» -->
+                <v-btn size="x-small" variant="tonal" color="primary" @click.stop="openEditDialog(item)">
+                  Согласовать
+                </v-btn>
+              </template>
             </template>
           </div>
         </template>
@@ -904,6 +914,24 @@
           <div v-if="editingWish.execution_deadline"><b>Срок исполнения:</b> {{ formatDate(editingWish.execution_deadline) }}</div>
         </v-card-subtitle>
         <v-card-text class="pa-4">
+          <!-- T3: v-alert для ошибки «нет даты потребности» — остаётся пока пользователь не заполнит даты -->
+          <v-alert
+            v-if="wishConvertError"
+            type="error"
+            variant="tonal"
+            class="mb-3"
+            closable
+            @click:close="wishConvertError = null"
+          >
+            <div class="font-weight-medium mb-1">Не удалось передать в план-график</div>
+            <div style="white-space:pre-wrap">{{ wishConvertError.message }}</div>
+            <div v-if="wishConvertError.missingItemNames.length" class="mt-2">
+              <span class="font-weight-medium">Позиции без даты:</span>
+              <ul class="ml-4 mt-1">
+                <li v-for="name in wishConvertError.missingItemNames" :key="name">{{ name }}</li>
+              </ul>
+            </div>
+          </v-alert>
           <v-alert
             v-if="!isWishEditable && canAssigneeAct"
             type="warning"
@@ -993,6 +1021,36 @@
                       @update:model-value="onSubsidyChange"
                     />
                   </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field
+                      v-model="wishForm.desired_date"
+                      :label="wishDateMode === 'per_item' ? 'Общая дата поставки (по умолчанию)' : 'Желаемая дата поставки/исполнения'"
+                      type="date"
+                      variant="outlined"
+                      density="compact"
+                      prepend-inner-icon="mdi-truck-delivery-outline"
+                      :readonly="!isWishEditable"
+                      persistent-hint
+                      :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план-график' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план-график'"
+                      :error-messages="serverFieldErrors.desired_date"
+                      @update:model-value="serverFieldErrors.desired_date = ''"
+                    />
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
+                    <v-btn-toggle
+                      v-model="wishDateMode"
+                      color="primary"
+                      density="compact"
+                      variant="outlined"
+                      divided
+                      mandatory
+                      :disabled="!isWishEditable"
+                    >
+                      <v-btn value="common" size="small" prepend-icon="mdi-calendar">Одна на заявку</v-btn>
+                      <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
+                    </v-btn-toggle>
+                  </v-col>
                   <v-col v-if="wishForm.subsidy_id" cols="12">
                     <div class="text-caption text-medium-emphasis mb-1">Категория ФЭО</div>
                     <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
@@ -1066,14 +1124,15 @@
                       :items="orgUsers"
                       item-title="full_name"
                       item-value="id"
-                      label="На чьё имя заявка"
+                      label="На чьё имя будет заявка"
                       variant="outlined"
                       density="compact"
                       clearable
                       :disabled="!wishForm.subsidy_id"
-                      :readonly="!isWishEditable"
+                      :readonly="!isWishEditable && !canEditAssignee"
                       hint="Сотрудник, на имя которого составляется заявка"
                       persistent-hint
+                      @update:model-value="(val) => { if (!isWishEditable && canEditAssignee) saveAssignedTo(val) }"
                     >
                       <template #item="{ item, props: itemProps }">
                         <v-list-item v-bind="itemProps">
@@ -1341,7 +1400,7 @@
                     :items="orgUsers"
                     item-title="full_name"
                     item-value="id"
-                    label="Добавить согласующего вручную"
+                    label="Добавить согласующего"
                     variant="outlined"
                     density="compact"
                     clearable
@@ -1534,21 +1593,6 @@
                       data-field="justification"
                     />
                   </v-col>
-                  <v-col cols="12">
-                    <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
-                    <v-btn-toggle
-                      v-model="wishDateMode"
-                      color="primary"
-                      density="compact"
-                      variant="outlined"
-                      divided
-                      mandatory
-                      :disabled="!isWishEditable"
-                    >
-                      <v-btn value="common" size="small" prepend-icon="mdi-calendar">Одна на заявку</v-btn>
-                      <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
-                    </v-btn-toggle>
-                  </v-col>
                   <v-col cols="12" md="6">
                     <v-select
                       v-model="wishForm.priority"
@@ -1558,21 +1602,6 @@
                       density="compact"
                       :readonly="!isWishEditable"
                       data-field="priority"
-                    />
-                  </v-col>
-                  <v-col cols="12" md="6">
-                    <v-text-field
-                      v-model="wishForm.desired_date"
-                      :label="wishDateMode === 'per_item' ? 'Общая дата поставки (по умолчанию)' : 'Желаемая дата поставки/исполнения'"
-                      type="date"
-                      variant="outlined"
-                      density="compact"
-                      prepend-inner-icon="mdi-truck-delivery-outline"
-                      :readonly="!isWishEditable"
-                      persistent-hint
-                      :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план-график' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план-график'"
-                      :error-messages="serverFieldErrors.desired_date"
-                      @update:model-value="serverFieldErrors.desired_date = ''"
                     />
                   </v-col>
                 </v-row>
@@ -1594,7 +1623,8 @@
             </v-list>
           </v-menu>
           <v-spacer />
-          <template v-if="isWishEditable">
+          <!-- draft/rejected или новая заявка: черновик + отправить -->
+          <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
             <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
               Сохранить черновик
             </v-btn>
@@ -1602,8 +1632,12 @@
               Отправить на согласование
             </v-btn>
           </template>
-          <template v-else-if="editingWish && editingWish.status === 'approved' && isManagerOrAdmin">
-            <v-btn color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
+          <!-- approved/converted и editable (не contracted_locked): сохранить изменения -->
+          <template v-else-if="isWishEditable && editingWish && ['approved', 'converted'].includes(editingWish.status)">
+            <v-btn color="primary" variant="tonal" :loading="saving" @click="saveWish(false)">
+              Сохранить изменения
+            </v-btn>
+            <v-btn v-if="isManagerOrAdmin" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                    @click="openConvertDialog(editingWish); wishDialog = false">
               Передать в План-график
             </v-btn>
@@ -2108,9 +2142,12 @@ function resolveUserPosition(u: any): string {
 // Create/edit dialog
 const wishDialog = ref(false)
 const wishDialogLoading = ref(false)
-watch(wishDialog, (v) => { if (!v) dismissValidationArrows() })
+watch(wishDialog, (v) => { if (!v) { dismissValidationArrows(); wishConvertError.value = null } })
 const editingWishId = ref<number | null>(null)
 const wishDateMode = ref<'common' | 'per_item'>('common')
+
+// T3: error state for «missing needed dates» when converting/approving
+const wishConvertError = ref<{ message: string; missingItemIds: number[]; missingItemNames: string[] } | null>(null)
 
 watch(wishDateMode, (mode, prev) => {
   if (mode === 'per_item' && prev === 'common') {
@@ -2243,6 +2280,13 @@ const isChainApprover = computed(() =>
 const canEditWishFeo = computed(() =>
   canAssigneeAct.value
   || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)
+)
+// Зеркало backend-гейта PATCH /wishes/{id}/execution: assigned_to может менять
+// менеджер/админ, согласующий цепочки или сам назначенный (при статусах submitted/approved)
+const canEditAssignee = computed(() =>
+  !!editingWish.value
+  && ['submitted', 'approved'].includes(editingWish.value.status)
+  && (isManagerOrAdmin.value || isChainApprover.value || editingWish.value.assigned_to === currentUserId)
 )
 
 const wishForm = ref({
@@ -2629,6 +2673,22 @@ async function saveExecution() {
   }
 }
 
+// Быстрое сохранение поля «На чьё имя будет заявка» без полного saveExecution
+async function saveAssignedTo(val: number | null) {
+  if (!editingWishId.value) return
+  try {
+    await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+      method: 'PATCH',
+      body: JSON.stringify({ assigned_to: val }),
+    })
+    if (editingWish.value) editingWish.value.assigned_to = val as number
+    showSnack('Исполнитель обновлён')
+    await reloadActiveTab()
+  } catch (e: any) {
+    showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')
+  }
+}
+
 // Wish members functions
 async function loadWishMembers() {
   if (!editingWishId.value) { wishMembers.value = []; return }
@@ -2909,6 +2969,10 @@ async function saveWish(andSubmit = false) {
     wishDialog.value = false
     await reloadActiveTab()
   } catch (e: any) {
+    // T3: 409 missing_needed_dates — не закрывать диалог, включить per-item режим
+    if (editingWish.value && await handleMissingDatesError(e, editingWish.value)) {
+      return
+    }
     // Серверная валидация: backend шлёт {message, fields:[{field,label}]}.
     // Подсвечиваем проблемные поля и скроллим к первому — «стрелочка» вместо
     // технического дампа с именами переменных.
@@ -2939,7 +3003,10 @@ async function submitWish(wish: Wish) {
     showSnack('Заявка отправлена')
     await loadWishes()
   } catch (e: any) {
-    showSnack(`Ошибка при отправке: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
+    const handled = await handleMissingDatesError(e, wish)
+    if (!handled) {
+      showSnack(`Ошибка при отправке: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
+    }
   } finally {
     submittingId.value = null
   }
@@ -2958,17 +3025,112 @@ async function deleteWish(wish: Wish) {
   }
 }
 
+// T3: общий обработчик 409 missing_needed_dates — используется в approveWish/saveWish/submitWish
+async function handleMissingDatesError(e: any, wish: Wish) {
+  const det = e?.payload?.details
+  if (e?.status !== 409 || det?.error_code !== 'missing_needed_dates') return false
+  const missingIds: number[] = det.missing_item_ids || []
+  const missingNames: string[] = det.missing_item_names || []
+  wishConvertError.value = {
+    message: det.message || e.message,
+    missingItemIds: missingIds,
+    missingItemNames: missingNames,
+  }
+  // Убедиться, что диалог открыт
+  if (!wishDialog.value) {
+    await openEditDialog(wish)
+  }
+  // Переключить в per-item режим дат и подсветить проблемные позиции
+  if (missingIds.length > 0) {
+    if (wishDateMode.value !== 'per_item') wishDateMode.value = 'per_item'
+    await nextTick()
+    highlightMissingDateItems(missingIds)
+  } else {
+    await nextTick()
+    highlightCommonDateField()
+  }
+  return true
+}
+
 async function approveWish(wish: Wish) {
   approvingId.value = wish.id
   try {
     const res = await apiFetch<{ convert_warning?: string | null }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
     if (res?.convert_warning) showSnack(res.convert_warning, 'warning')
     else showSnack('Заявка одобрена')
+    wishConvertError.value = null
     await reloadActiveTab()
   } catch (e: any) {
-    showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    const handled = await handleMissingDatesError(e, wish)
+    if (!handled) {
+      showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    }
   } finally {
     approvingId.value = null
+  }
+}
+
+// ── T3: highlight items without needed_date ──────────────────────────────
+function highlightMissingDateItems(missingItemIds: number[]) {
+  if (!missingItemIds.length) return
+  // Find all item rows in the dialog (PurchaseItemsEditor renders them).
+  // Items table rows are <tr> elements; date input is <input type="date"> inside a td.
+  // We look for <input type="date"> inputs inside the dialog card.
+  const dialogEl = document.querySelector('.v-dialog--active .v-card, .v-overlay--active .v-card') as HTMLElement | null
+  if (!dialogEl) return
+
+  // Find date inputs in the items section (only those in the "Дата поставки" column).
+  // Each item row has an index matching wishForm.value.items order.
+  // missingItemIds are WishItem.id values; we cross-reference by index.
+  const items = (wishForm.value as any).items as any[]
+  const missingIndexes = new Set(
+    items.map((it: any, idx: number) => missingItemIds.includes(it.id) ? idx : -1).filter(i => i !== -1)
+  )
+  if (!missingIndexes.size) {
+    // Fallback: highlight common date field
+    highlightCommonDateField()
+    return
+  }
+
+  // All <td v-if="showNeededDate"> cells in the items table contain a date input.
+  // We count them in DOM order matching item index.
+  const dateInputs = Array.from(dialogEl.querySelectorAll('td input[type="date"]')) as HTMLInputElement[]
+  const highlighted: HTMLElement[] = []
+  missingIndexes.forEach(idx => {
+    const inp = dateInputs[idx]
+    if (inp) highlighted.push(inp.closest('td') as HTMLElement || inp)
+  })
+
+  if (!highlighted.length) {
+    highlightCommonDateField()
+    return
+  }
+
+  // Scroll to first highlighted element
+  highlighted[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+  // Apply pulse highlight animation
+  highlighted.forEach(el => {
+    el.classList.add('wish-date-missing-pulse')
+    setTimeout(() => el.classList.remove('wish-date-missing-pulse'), 3000)
+  })
+}
+
+function highlightCommonDateField() {
+  // Highlight the "Желаемая дата поставки" field in the dialog
+  const dialogEl = document.querySelector('.v-dialog--active .v-card, .v-overlay--active .v-card') as HTMLElement | null
+  if (!dialogEl) return
+  // The common date field has data-field-type or we find the desired_date input
+  const allDateInputs = Array.from(dialogEl.querySelectorAll('input[type="date"]')) as HTMLInputElement[]
+  // The common field is near the bottom of the form, skip per-item ones (in table td)
+  const commonInput = allDateInputs.find(inp => !inp.closest('td'))
+  if (commonInput) {
+    commonInput.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const wrap = commonInput.closest('.v-field') as HTMLElement | null
+    if (wrap) {
+      wrap.classList.add('wish-date-missing-pulse')
+      setTimeout(() => wrap.classList.remove('wish-date-missing-pulse'), 3000)
+    }
   }
 }
 
@@ -3248,5 +3410,19 @@ onMounted(async () => {
 <style scoped>
 .wish-dialog.v-theme--light :deep(.text-medium-emphasis) {
   color: rgba(0, 0, 0, 0.72) !important;
+}
+</style>
+
+<style>
+/* T3: pulse highlight for items/fields missing needed_date */
+@keyframes wish-date-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.6); outline: 2px solid rgba(211, 47, 47, 0.8); }
+  40%  { box-shadow: 0 0 0 8px rgba(211, 47, 47, 0); outline: 2px solid rgba(211, 47, 47, 0.4); }
+  60%  { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); outline: 2px solid rgba(211, 47, 47, 0.8); }
+  100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); outline: 2px solid transparent; }
+}
+.wish-date-missing-pulse {
+  animation: wish-date-pulse 1s ease-out 3;
+  border-radius: 4px;
 }
 </style>

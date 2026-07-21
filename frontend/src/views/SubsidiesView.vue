@@ -771,7 +771,13 @@
                                       <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                     </td>
                                     <td style="padding:4px 8px;color:#166534">
-                                      <div>{{ actual.item_name }}</div>
+                                      <div class="d-flex align-center" style="gap:6px">
+                                        <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                          @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
+                                          <v-img :src="actual.product_photo" cover />
+                                        </v-avatar>
+                                        <div>{{ actual.item_name }}</div>
+                                      </div>
                                       <a
                                         href="javascript:void(0)"
                                         class="feo-purchase-link"
@@ -850,7 +856,13 @@
                                 :key="`ps-${actual.purchase_item_id}`"
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
-                                  <div>{{ actual.item_name }}</div>
+                                  <div class="d-flex align-center" style="gap:6px">
+                                    <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                      @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
+                                      <v-img :src="actual.product_photo" cover />
+                                    </v-avatar>
+                                    <div>{{ actual.item_name }}</div>
+                                  </div>
                                   <a
                                     href="javascript:void(0)"
                                     class="feo-purchase-link"
@@ -892,7 +904,13 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px" class="text-orange-darken-2">
-                                  <div>{{ actual.item_name }}</div>
+                                  <div class="d-flex align-center" style="gap:6px">
+                                    <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                      @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
+                                      <v-img :src="actual.product_photo" cover />
+                                    </v-avatar>
+                                    <div>{{ actual.item_name }}</div>
+                                  </div>
                                   <a
                                     href="javascript:void(0)"
                                     class="feo-purchase-link"
@@ -954,7 +972,13 @@
                               <tr v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`"
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
-                                  <div>{{ it.item_name }}</div>
+                                  <div class="d-flex align-center" style="gap:6px">
+                                    <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                      @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
+                                      <v-img :src="it.product_photo" cover />
+                                    </v-avatar>
+                                    <div>{{ it.item_name }}</div>
+                                  </div>
                                   <div class="d-flex align-center flex-wrap" style="gap:8px">
                                     <a href="javascript:void(0)" class="feo-purchase-link"
                                       :title="`Перейти в закупку #${it.purchase_id}`"
@@ -1063,6 +1087,10 @@
                                 <template v-else>
                                   <span style="width:16px;display:inline-block" />
                                   <v-icon size="16" class="mr-1 flex-shrink-0" icon="mdi-file-document-outline" color="#22C55E" />
+                                  <v-avatar v-if="row.group.items.find(i => i.product_photo)" size="28" rounded class="mr-1 flex-shrink-0" style="cursor:pointer"
+                                    @click.stop="photoPreview = { src: row.group.items.find(i => i.product_photo)!.product_photo!, title: row.group.name }">
+                                    <v-img :src="row.group.items.find(i => i.product_photo)!.product_photo!" cover />
+                                  </v-avatar>
                                   <span class="feo-name feo-name--l3">{{ row.group.name }}</span>
                                   <span v-if="row.group.items.length > 1" class="feo-code ml-2"
                                     title="Слито из нескольких позиций заявок">{{ row.group.items.length }} поз. в заявках</span>
@@ -1142,7 +1170,13 @@
                                   <tbody>
                                     <tr v-for="it in row.group.items" :key="`src-${it.id}`" style="border-bottom:1px solid #E0F2FE">
                                       <td style="padding:4px 8px;color:#0c4a6e">
-                                        <div>{{ it.item_name }}</div>
+                                        <div class="d-flex align-center" style="gap:6px">
+                                          <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                            @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
+                                            <v-img :src="it.product_photo" cover />
+                                          </v-avatar>
+                                          <div>{{ it.item_name }}</div>
+                                        </div>
                                         <div class="d-flex align-center flex-wrap" style="gap:8px">
                                           <a href="javascript:void(0)" class="feo-purchase-link"
                                             :title="`Перейти в закупку #${it.purchase_id}`"
@@ -1253,6 +1287,10 @@
                                 <div class="feo-name-inner">
                                   <span style="width:16px;display:inline-block" />
                                   <v-icon size="15" class="mr-1 flex-shrink-0" icon="mdi-file-document-outline" color="#22C55E" />
+                                  <v-avatar v-if="it.product_photo" size="28" rounded class="mr-1 flex-shrink-0" style="cursor:pointer"
+                                    @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
+                                    <v-img :src="it.product_photo" cover />
+                                  </v-avatar>
                                   <span class="feo-name feo-name--l3">{{ it.item_name }}</span>
                                 </div>
                               </td>
@@ -3222,6 +3260,24 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Превью фото товара ── -->
+    <v-dialog
+      :model-value="!!photoPreview"
+      max-width="640"
+      @update:model-value="v => !v && (photoPreview = null)"
+    >
+      <v-card v-if="photoPreview">
+        <v-card-title class="d-flex align-center pa-3 text-subtitle-2">
+          {{ photoPreview.title }}
+          <v-spacer />
+          <v-btn icon="mdi-close" size="small" variant="text" @click="photoPreview = null" />
+        </v-card-title>
+        <v-card-text class="pa-2">
+          <v-img :src="photoPreview.src" contain style="max-height:70vh" />
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -3763,10 +3819,14 @@ interface FeoActualItem {
   purchase_status: string | null
   contract_number: string | null
   contractor_name: string | null
+  product_photo?: string | null
 }
 const expandedItemPanels = ref<Set<number>>(new Set())
 const comparisonData = ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>({})
 const loadingComparison = ref<Set<number>>(new Set())
+
+// Photo preview overlay
+const photoPreview = ref<{ src: string; title: string } | null>(null)
 
 // Map dialog
 const showMapDialog = ref(false)
@@ -3835,6 +3895,7 @@ interface FeoReqItem {
   wish_id: number | null
   category: string
   product_type: string
+  product_photo?: string | null
 }
 interface FeoReqRow {
   key: string

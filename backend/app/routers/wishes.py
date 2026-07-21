@@ -160,6 +160,50 @@ def _eff_date(wish, item):
     )
 
 
+async def _ensure_needed_dates(wish, db, items, context: str = "convert") -> None:
+    """W2-гейт: если субсидия требует плановые даты — проверяем все items.
+    Бросает HTTPException 409 с error_code='missing_needed_dates' если есть позиции без даты.
+    Авансовые отчёты пропускаются вызывающим — этот хелпер не проверяет source.
+    context='submit' — сообщение для отправки на согласование; 'convert' (default) — для переноса в план-график."""
+    if not wish.subsidy_id:
+        return
+    from app.models.subsidy import Subsidy
+    subsidy = await db.get(Subsidy, wish.subsidy_id)
+    if not (subsidy and subsidy.require_planned_dates):
+        return
+    items_without_date = [it for it in items if not _eff_date(wish, it)]
+    if not items_without_date:
+        return
+    names_list = ", ".join(f'«{it.item_name}»' for it in items_without_date[:5])
+    suffix = f" и ещё {len(items_without_date) - 5} поз." if len(items_without_date) > 5 else ""
+    if context == "submit":
+        intro = (
+            f"Невозможно отправить заявку на согласование: у следующих позиций не указана "
+            f"дата потребности (к какой дате планируется закупить): {names_list}{suffix}."
+        )
+    else:
+        intro = (
+            f"Невозможно перенести заявку в План-график: у следующих позиций не указана "
+            f"дата потребности (к какой дате планируется закупить): {names_list}{suffix}."
+        )
+    message = (
+        f"{intro} "
+        f"Без даты потребности ФЭО не может распределить расходы по месяцам. "
+        f"Укажите дату потребности для позиции, либо «Срок исполнения», либо «Желаемую дату поставки/исполнения» "
+        f"в заявке. Требование дат можно отключить в настройках субсидии "
+        f"(доступно Хозяину аккаунта)."
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": message,
+            "error_code": "missing_needed_dates",
+            "missing_item_ids": [it.id for it in items_without_date],
+            "missing_item_names": [it.item_name for it in items_without_date],
+        },
+    )
+
+
 # W1: статусы «дошли до договора» — блокируют редактирование привязанной заявки
 CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
 
@@ -284,6 +328,12 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         # Авансовый: статус не меняем — закупка живёт в своём статусе независимо
         if getattr(wish, 'source', None) == 'advance_report':
             return [p.id for p in existing]
+        # W2-гейт: проверяем даты ПЕРЕД продвижением скрытых закупок в целевой статус
+        wishes_purchases = [p for p in existing if p.status == "wishes"]
+        if wishes_purchases:
+            items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+            items_for_gate = items_res.scalars().all()
+            await _ensure_needed_dates(wish, db, items_for_gate)
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status
@@ -365,30 +415,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         raise HTTPException(status_code=400, detail="Нет позиций для распределения")
 
     # W2: Гейт обязательности дат потребности при переносе в План-график
-    if wish.subsidy_id:
-        from app.models.subsidy import Subsidy
-        subsidy = await db.get(Subsidy, wish.subsidy_id)
-        if subsidy and subsidy.require_planned_dates:
-            items_without_date = [
-                it for it in items_full
-                if not _eff_date(wish, it)
-            ]
-            if items_without_date:
-                names_list = ", ".join(
-                    f'«{it.item_name}»' for it in items_without_date[:5]
-                )
-                suffix = f" и ещё {len(items_without_date) - 5} поз." if len(items_without_date) > 5 else ""
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Невозможно перенести заявку в План-график: у следующих позиций не указана "
-                        f"дата потребности (к какой дате планируется закупить): {names_list}{suffix}. "
-                        f"Без даты потребности ФЭО не может распределить расходы по месяцам. "
-                        f"Укажите дату потребности для позиции, либо «Срок исполнения», либо «Желаемую дату поставки/исполнения» "
-                        f"в заявке. Требование дат можно отключить в настройках субсидии "
-                        f"(доступно Хозяину аккаунта)."
-                    ),
-                )
+    await _ensure_needed_dates(wish, db, items_full)
 
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
@@ -886,6 +913,9 @@ async def update_wish(
                 detail="Заявка уйдёт на повторное согласование, но согласующие не выбраны — "
                        "добавьте хотя бы одного согласующего в разделе «Согласующие».",
             )
+        # W2: проверяем плановые даты перед сбросом в submitted (авансовые пропускаем)
+        if getattr(wish, 'source', None) != 'advance_report':
+            await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
         wish.status = "submitted"
         await db.flush()
         await _reset_approvals(wish.id, db)
@@ -953,6 +983,10 @@ async def submit_wish(
             detail="Нельзя отправить на согласование: не выбраны согласующие. "
                    "Добавьте хотя бы одного согласующего в разделе «Согласующие».",
         )
+
+    # W2: проверяем плановые даты (авансовые пропускаем) — ДО смены статуса
+    if getattr(wish, 'source', None) != 'advance_report':
+        await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
 
     wish.status = "submitted"
     await db.flush()
@@ -1188,6 +1222,11 @@ async def convert_wish(
         select(Purchase).where(Purchase.wish_id == wish.id)
     )).scalars().all()
     if existing:
+        # W2-гейт: проверяем даты ПЕРЕД продвижением скрытых закупок
+        wishes_existing = [ep for ep in existing if ep.status == "wishes"]
+        if wishes_existing and getattr(wish, 'source', None) != 'advance_report':
+            items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+            await _ensure_needed_dates(wish, db, items_res.scalars().all())
         for ep in existing:
             if ep.status == "wishes":
                 ep.status = "plan_schedule"
@@ -1202,6 +1241,9 @@ async def convert_wish(
         select(WishItem).options(sil(WishItem.product)).where(WishItem.wish_id == wish.id)
     )
     items_full = res.scalars().all()
+
+    # W2-гейт в основном пути /convert
+    await _ensure_needed_dates(wish, db, items_full)
 
     # B10: Backfill product_id for legacy items lacking it
     missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]

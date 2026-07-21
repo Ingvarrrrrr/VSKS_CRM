@@ -1655,10 +1655,14 @@ async function loadAll() {
       contracted: s.total_confirmed,
       paid: s.total_paid,
       planned: s.total_planned,
-      plan_schedule: s.total_plan_schedule ?? 0,
+      // plan_schedule = единый источник «Запланировано» = план дерева ФЭО (ручные позиции + из заявок).
+      // Совпадает с KPI «Запланировано» на вкладке «Субсидии».
+      // Fallback: total_plan_schedule (SUM confirmed/wip) если planned_tree отсутствует (legacy).
+      plan_schedule: s.planned_tree ?? s.total_plan_schedule ?? 0,
       ordered: s.total_ordered ?? 0,
-      total_feo_planned: s.total_feo_planned ?? 0,  // 12-01
+      total_feo_planned: s.total_feo_planned ?? 0,  // 12-01: SUM FeoPlannedItem.amount (для колонки «ФЭО план»)
       // Phase 31-05: canonical budget fields (D-17) — from server, not recalculated on client
+      // remaining = «Свободно» = budget − planned_tree (совпадает с панелью ФЭО вкладки «Субсидии»)
       remaining: s.remaining ?? null,
       planned_amount: s.planned_amount ?? null,
       budget_discrepancy: s.budget_discrepancy ?? null,

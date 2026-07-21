@@ -1232,6 +1232,7 @@ class FeoActualItemOut(BaseModel):
     purchase_status: Optional[str] = None
     contract_number: Optional[str] = None
     contractor_name: Optional[str] = None
+    product_photo: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

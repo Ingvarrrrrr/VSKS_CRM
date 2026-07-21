@@ -19,18 +19,23 @@ from app.models.user_organization import UserOrganization
 _MAX_DEPTH = 30
 
 
-async def _author_department(db: AsyncSession, author_id: int, org_id: int) -> Department | None:
-    """Отдел автора в рамках org_id (первый с непустым dept_id)."""
-    dept_id = (await db.execute(
+async def _author_departments(db: AsyncSession, author_id: int, org_id: int) -> list[Department]:
+    """Все отделы автора в рамках org_id (dept_id IS NOT NULL, порядок: UserOrganization.id ASC)."""
+    dept_ids = (await db.execute(
         select(UserOrganization.dept_id).where(
             UserOrganization.user_id == author_id,
             UserOrganization.org_id == org_id,
             UserOrganization.dept_id.isnot(None),
-        ).limit(1)
-    )).scalar_one_or_none()
-    if not dept_id:
-        return None
-    return await db.get(Department, dept_id)
+        ).order_by(UserOrganization.id.asc())
+    )).scalars().all()
+    if not dept_ids:
+        return []
+    depts: list[Department] = []
+    for dept_id in dept_ids:
+        d = await db.get(Department, dept_id)
+        if d is not None:
+            depts.append(d)
+    return depts
 
 
 async def _walk_superiors(db: AsyncSession, start_id: int) -> list[tuple[int, str]]:
@@ -64,24 +69,48 @@ async def build_ascending_chain(
             seen.add(uid)
             ordered.append((uid, role))
 
-    # 1. Дерево отделов автора: свой отдел (зам→начальник), затем вверх по parent_id
-    dept = await _author_department(db, author_id, org_id)
-    author_has_dept = dept is not None
+    # 1. Дерево отделов автора: перебираем все отделы автора (id ASC),
+    #    берём первый, который реально даёт хотя бы одно звено.
+    depts = await _author_departments(db, author_id, org_id)
+    author_has_dept = len(depts) > 0
     author_user = await db.get(User, author_id)
     author_has_superior = bool(author_user and author_user.superior_user_id)
 
-    cur = dept
-    depth = 0
-    while cur is not None and depth < _MAX_DEPTH:
-        if depth == 0:
-            add(cur.deputy_head_user_id, "Зам.начальника отдела")
-            add(cur.head_user_id, "Начальник отдела")
+    dept_warning_names: list[str] = []
+    chosen_dept_found = False
+    for candidate_dept in depts:
+        candidate_ordered: list[tuple[int, str]] = []
+        candidate_seen: set[int] = {author_id}
+
+        def add_candidate(uid, role):
+            if uid and uid not in candidate_seen:
+                candidate_seen.add(uid)
+                candidate_ordered.append((uid, role))
+
+        cur = candidate_dept
+        depth = 0
+        while cur is not None and depth < _MAX_DEPTH:
+            if depth == 0:
+                add_candidate(cur.deputy_head_user_id, "Зам.начальника отдела")
+                add_candidate(cur.head_user_id, "Начальник отдела")
+            else:
+                add_candidate(cur.curator_user_id, "Куратор")
+                add_candidate(cur.deputy_head_user_id, "Зам.начальника подразделения")
+                add_candidate(cur.head_user_id, "Начальник подразделения")
+            cur = await db.get(Department, cur.parent_id) if cur.parent_id else None
+            depth += 1
+
+        if candidate_ordered:
+            # Нашли отдел с реальными звеньями — принимаем его
+            for uid, role in candidate_ordered:
+                add(uid, role)
+            chosen_dept_found = True
+            break
         else:
-            add(cur.curator_user_id, "Куратор")
-            add(cur.deputy_head_user_id, "Зам.начальника подразделения")
-            add(cur.head_user_id, "Начальник подразделения")
-        cur = await db.get(Department, cur.parent_id) if cur.parent_id else None
-        depth += 1
+            dept_warning_names.append(candidate_dept.name or str(candidate_dept.id))
+
+    # Если отделы были, но ни один не дал звеньев — соберём предупреждение позже
+    dept_gave_no_links = author_has_dept and not chosen_dept_found
 
     # 2. Руководитель организации
     org = await db.get(Organization, org_id)
@@ -125,7 +154,14 @@ async def build_ascending_chain(
     # 6. W4: предупреждение, если цепочка получилась из одного звена (только top_user_id)
     warning: str | None = None
     if len(chain) == 1:
-        if not author_has_dept and not author_has_superior:
+        if dept_gave_no_links:
+            names_str = ", ".join(f'"{n}"' for n in dept_warning_names)
+            warning = (
+                f"В отделе(ах) {names_str} не назначены начальник/зам — "
+                "цепочка построена без звеньев отдела. "
+                "Цепочка состоит только из выбранного верхнего согласующего."
+            )
+        elif not author_has_dept and not author_has_superior:
             warning = (
                 "У автора заявки не указан отдел и не задан вышестоящий руководитель в организации — "
                 "промежуточные согласующие не найдены. Цепочка состоит только из выбранного верхнего согласующего."

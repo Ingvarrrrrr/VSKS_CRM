@@ -11,6 +11,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.feo_category import FeoCategory
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase import Purchase
+from app.models.product import Product
 from app.schemas.schemas import FeoPlannedItemCreate, FeoPlannedItemOut, FeoComparisonOut, FeoActualItemOut
 
 
@@ -181,8 +182,16 @@ async def get_comparison(
 
     # Фактические: purchase_items через Purchase.feo_category_id
     stmt = (
-        select(PurchaseItem, Purchase)
+        select(
+            PurchaseItem,
+            Purchase,
+            PurchaseItem.product_id.label("_product_id"),
+            Product.photo_data.isnot(None).label("_product_has_photo"),
+            Product.photo_url.label("_photo_url"),
+            Product.photo_link.label("_photo_link"),
+        )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .outerjoin(Product, PurchaseItem.product_id == Product.id)
         .where(Purchase.feo_category_id == feo_category_id)
         # Желания — ещё не подтверждённые хотелки, в сравнение план/факт не входят
         .where(Purchase.status != "wishes")
@@ -194,7 +203,7 @@ async def get_comparison(
 
     # Resolve contractor names
     from app.models.contractor import Contractor
-    contractor_ids = {p.contractor_id for _, p in actual_rows if p.contractor_id}
+    contractor_ids = {row.Purchase.contractor_id for row in actual_rows if row.Purchase.contractor_id}
     contractors = {}
     if contractor_ids:
         c_rows = (await db.execute(
@@ -203,7 +212,19 @@ async def get_comparison(
         contractors = {c.id: c.name for c in c_rows}
 
     actual_out = []
-    for pi, p in actual_rows:
+    for row in actual_rows:
+        pi = row.PurchaseItem
+        p = row.Purchase
+        _product_id = row._product_id
+        _product_has_photo = row._product_has_photo
+        _photo_url = row._photo_url
+        _photo_link = row._photo_link
+        if _product_id is not None and _product_has_photo:
+            product_photo = f"/api/products/{_product_id}/photo"
+        elif _product_id is not None:
+            product_photo = _photo_url or _photo_link or None
+        else:
+            product_photo = None
         actual_out.append(FeoActualItemOut(
             purchase_item_id=pi.id,
             item_name=pi.item_name,
@@ -218,6 +239,7 @@ async def get_comparison(
             purchase_status=p.status,
             contract_number=p.contract_number,
             contractor_name=contractors.get(p.contractor_id) if p.contractor_id else p.item_name,
+            product_photo=product_photo,
         ))
 
     return FeoComparisonOut(

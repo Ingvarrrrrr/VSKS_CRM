@@ -104,12 +104,16 @@ async def get_planned_purchase_items(
             PurchaseItem.unit_price,
             PurchaseItem.total_price,
             PurchaseItem.purchase_id,
+            PurchaseItem.product_id,
             Purchase.purchase_number,
             Purchase.registry_number,
             Purchase.status.label("purchase_status"),
             Purchase.wish_id,
             Product.category.label("product_category"),
             Product.product_type.label("product_type"),
+            Product.photo_data.isnot(None).label("product_has_photo"),
+            Product.photo_url,
+            Product.photo_link,
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .outerjoin(Product, PurchaseItem.product_id == Product.id)
@@ -121,6 +125,12 @@ async def get_planned_purchase_items(
     rows = (await db.execute(stmt)).all()
     result: dict[int, list] = {}
     for r in rows:
+        if r.product_id is not None and r.product_has_photo:
+            product_photo = f"/api/products/{r.product_id}/photo"
+        elif r.product_id is not None:
+            product_photo = r.photo_url or r.photo_link or None
+        else:
+            product_photo = None
         result.setdefault(r.cat_id, []).append({
             "id": r.id,
             "item_name": r.item_name,
@@ -135,6 +145,7 @@ async def get_planned_purchase_items(
             "wish_id": r.wish_id,
             "category": r.product_category or "Без категории",
             "product_type": r.product_type or "Без вида",
+            "product_photo": product_photo,
         })
     return result
 

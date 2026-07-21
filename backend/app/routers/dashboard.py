@@ -13,7 +13,7 @@ from app.models.contractor import Contractor
 from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
-from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk, _calculate_planned_amounts_bulk
+from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk, _calculate_planned_amounts_bulk, _calculate_feo_planned_tree_bulk
 from app.config import settings
 from decimal import Decimal
 
@@ -291,6 +291,9 @@ async def dashboard_charts(
     # Phase 31-05: canonical spent + planned_amounts for D-17 (единый источник)
     spent_map = await _calculate_spent_bulk(db, sid_list)
     planned_amounts_map = await _calculate_planned_amounts_bulk(db, sid_list)
+    # Единый источник «Запланировано»: план дерева ФЭО = ручные позиции + позиции из заявок план-графика.
+    # Совпадает с KPI «Запланировано» на вкладке «Субсидии» (selectedPlannedTotal).
+    planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list)
     sub_objs = {}
     if subsidy_rows:
         sub_objs = {
@@ -313,8 +316,12 @@ async def dashboard_charts(
         effective_budget = calc if calc > 0 else float(row.budget or 0)
         spent = spent_map.get(row.id, 0.0)
         planned_amt = planned_amounts_map.get(row.id, 0.0)
-        remaining = effective_budget - spent
-        discrepancy = (effective_budget - planned_amt) if abs(effective_budget - planned_amt) > 0.01 else None
+        # planned_tree = правильное «Запланировано» = план дерева ФЭО (= «Свободно» = budget − planned_tree)
+        planned_tree = planned_tree_map.get(row.id, 0.0)
+        # «Свободно» = budget − planned_tree (совпадает с панелью ФЭО вкладки «Субсидии»)
+        remaining = effective_budget - planned_tree
+        # discrepancy-чип показывается только при превышении (planned_tree > budget)
+        discrepancy = (effective_budget - planned_tree) if planned_tree > effective_budget else None
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
         contractor_inn = None
@@ -332,16 +339,17 @@ async def dashboard_charts(
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
-            "total_plan_schedule": float(row.total_plan_schedule),
+            "total_plan_schedule": float(row.total_plan_schedule),  # legacy: SUM confirmed/wip (оставлено)
             "total_ordered": float(row.total_ordered),
-            "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01
+            "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
+            "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
             "feo_budget_total": effective_budget,
             "feo_filled": calc > 0,
             "contractor_id": sub_obj.contractor_id if sub_obj else None,
             "contractor_name": contractor_name,
             "contractor_inn": contractor_inn,
             # Phase 31-05: canonical budget fields (D-17)
-            "remaining": remaining,
+            "remaining": remaining,  # = «Свободно» = budget − planned_tree
             "planned_amount": planned_amt,
             "budget_discrepancy": discrepancy,
         })

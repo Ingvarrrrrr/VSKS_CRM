@@ -486,6 +486,8 @@ async def category_tree(
                     "level": c.level, "name": c.name, "code": c.code,
                     "appendix": c.appendix, "is_active": c.is_active,
                     "budget": float(c.budget) if c.budget is not None else None,
+                    "feo_quantity": float(c.feo_quantity) if c.feo_quantity is not None else None,
+                    "feo_unit": c.feo_unit,
                     "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
                     "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
                     "unit": c.unit,
@@ -623,8 +625,11 @@ async def create_category(
         appendix=category_data.appendix,
         is_active=category_data.is_active,
         budget=category_data.budget,
+        feo_quantity=category_data.feo_quantity,
+        feo_unit=category_data.feo_unit,
         planned_quantity=category_data.planned_quantity,
         planned_amount=category_data.planned_amount,
+        unit=category_data.unit,
     )
     db.add(new_category)
     await db.commit()
@@ -634,47 +639,73 @@ async def create_category(
 
 @router.get("/import/template")
 async def download_feo_template():
-    """Шаблон Excel для импорта категорий ФЭО (5 уровней: A-G иерархия+кол-во, H-K плановые позиции, L-O атрибуты)."""
+    """Шаблон Excel для импорта категорий ФЭО.
+
+    Колонки A–B: субсидия + Ур.2.
+    Для Ур.2–4: сначала «Кол-во по ФЭО» + «Ед. изм. по ФЭО» (из документа ФЭО),
+                затем «Плановое кол-во» + «Ед. изм. плана» (CRM-план) + «Плановая стоимость за ед.»
+    Ур.5: позиции CRM. Атрибуты: Код, Приложение, Финансирование, Активна.
+    """
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     wb = Workbook()
     ws = wb.active
     ws.title = "Категории ФЭО"
     headers = [
-        "Субсидия",                                      # A
-        "Уровень 2 (Направление расходов по ФЭО)",       # B
-        "Кол-во (Ур.2)",                                 # C
-        "Ед. изм. (Ур.2)",                               # D
-        "Плановая стоимость за ед. (Ур.2)",                       # E  ← NEW
-        "Уровень 3 (Тип расходов по ФЭО)",               # F
-        "Кол-во (Ур.3)",                                 # G
-        "Ед. изм. (Ур.3)",                               # H
-        "Плановая стоимость за ед. (Ур.3)",                       # I  ← NEW
-        "Уровень 4 (Конкретизированный)",                # J
-        "Кол-во (Ур.4)",                                 # K
-        "Ед. изм. (Ур.4)",                               # L
-        "Плановая стоимость за ед. (Ур.4)",                       # M  ← NEW
-        "Уровень 5 (Плановый товар/услуга)",             # N
-        "Количество (Ур.5)",                             # O
-        "Ед. измерения (Ур.5)",                          # P
-        "Плановая стоимость за ед. (Ур.5)",                       # Q
-        "Код",                                           # R
-        "Приложение",                                    # S
-        "Финансирование",                                # T
-        "Активна",                                       # U
+        "Субсидия",                                        # A  1
+        "Уровень 2 (Направление расходов по ФЭО)",         # B  2
+        "Кол-во по ФЭО (Ур.2)",                            # C  3  ← feo_quantity
+        "Ед. изм. по ФЭО (Ур.2)",                          # D  4  ← feo_unit
+        "Плановое кол-во (Ур.2)",                          # E  5  ← planned_quantity
+        "Ед. изм. плана (Ур.2)",                           # F  6  ← unit
+        "Плановая стоимость за ед. (Ур.2)",                # G  7
+        "Уровень 3 (Тип расходов по ФЭО)",                 # H  8
+        "Кол-во по ФЭО (Ур.3)",                            # I  9
+        "Ед. изм. по ФЭО (Ур.3)",                          # J  10
+        "Плановое кол-во (Ур.3)",                          # K  11
+        "Ед. изм. плана (Ур.3)",                           # L  12
+        "Плановая стоимость за ед. (Ур.3)",                # M  13
+        "Уровень 4 (Конкретизированный)",                  # N  14
+        "Кол-во по ФЭО (Ур.4)",                            # O  15
+        "Ед. изм. по ФЭО (Ур.4)",                         # P  16
+        "Плановое кол-во (Ур.4)",                          # Q  17
+        "Ед. изм. плана (Ур.4)",                           # R  18
+        "Плановая стоимость за ед. (Ур.4)",                # S  19
+        "Уровень 5 (Плановый товар/услуга)",               # T  20
+        "Количество (Ур.5)",                               # U  21
+        "Ед. измерения (Ур.5)",                            # V  22
+        "Плановая стоимость за ед. (Ур.5)",                # W  23
+        "Код",                                             # X  24
+        "Приложение",                                      # Y  25
+        "Финансирование",                                  # Z  26
+        "Активна",                                         # AA 27
     ]
     ws.append(headers)
 
     # Цветовое кодирование заголовков
-    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + их кол-во
+    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + ФЭО-кол-во
+    fill_plan = PatternFill(start_color="0891B2", end_color="0891B2", fill_type="solid")   # голубой — плановые кол-во/ед.изм./стоимость
     fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — позиции уровня 5
     fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")  # фиолетовый — атрибуты
     font_w = Font(color="FFFFFF", bold=True, size=10)
 
+    # col index (1-based):
+    # 1-2: субсидия+ур2 → синий
+    # 3-4: feo qty/unit ур2 → синий; 5-7: plan ур2 → голубой
+    # 8: ур3 → синий; 9-10: feo ур3 → синий; 11-13: plan ур3 → голубой
+    # 14: ур4 → синий; 15-16: feo ур4 → синий; 17-19: plan ур4 → голубой
+    # 20-23: ур5 → зелёный
+    # 24-27: атрибуты → фиолетовый
+    _blue_cols  = {1, 2, 3, 4, 8, 9, 10, 14, 15, 16}
+    _cyan_cols  = {5, 6, 7, 11, 12, 13, 17, 18, 19}
+    _green_cols = {20, 21, 22, 23}
+
     for i, cell in enumerate(ws[1], start=1):
-        if i <= 13:
+        if i in _blue_cols:
             cell.fill = fill_cat
-        elif i <= 17:
+        elif i in _cyan_cols:
+            cell.fill = fill_plan
+        elif i in _green_cols:
             cell.fill = fill_item
         else:
             cell.fill = fill_attr
@@ -682,43 +713,52 @@ async def download_feo_template():
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = 52
 
-    # Пример: Ур.2 с общим количеством 500 компл., Ур.4 с кол-вом 6 шт
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "Техническое оснащение штаба", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
-    # Пример: категория + плановые позиции уровня 5
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "Техническое оснащение штаба", "", "", "", "Закупка компьютеров", "6", "шт", "", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "Техническое оснащение штаба", "", "", "", "Закупка компьютеров", "6", "шт", "", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "Услуги по организации", "", "", "", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "Услуги по организации", "", "", "", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
+    # Примеры (строки 2–6):
+    # col: A        B                              C    D       E    F    G   H                              I    J       K    L    M   N                     O   P    Q       T                    U   V    W       X         Y        Z        AA
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
+    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "Услуги по организации", "", "", "", "", "", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "Услуги по организации", "", "", "", "", "", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
 
     # Комментарий в строке 7
     hints = [
-        "← Точное название как в системе",
-        "← Направление расходов (создаётся если нет)",
-        "← Кол-во для Ур.2 (необязательно)",
-        "← Ед. изм. Ур.2 (шт, компл...)",
-        "← Плановая стоимость за ед. для Ур.2 (руб.)",
-        "← Тип расходов (если пусто — атрибуты к Ур.2)",
-        "← Кол-во для Ур.3 (необязательно)",
-        "← Ед. изм. Ур.3 (шт, кг...)",
-        "← Плановая стоимость за ед. для Ур.3 (руб.)",
-        "← Конкретизированный (если пусто — к Ур.3)",
-        "← Кол-во для Ур.4 (необязательно)",
-        "← Ед. изм. Ур.4 (шт, услуга...)",
-        "← Плановая стоимость за ед. для Ур.4 (руб.)",
-        "← Плановый товар/услуга (необязательно)",
-        "← Кол-во Ур.5 (необязательно)",
-        "← Ед. изм. (шт, кг, услуга...)",
-        "← Плановая стоимость за ед. позиции",
-        "← Код категории",
-        "← Номер приложения",
-        "← Бюджет категории",
-        "← да/нет",
+        "← Точное название как в системе",                          # A 1
+        "← Направление расходов (создаётся если нет)",              # B 2
+        "← Кол-во ФЭО Ур.2 (из документа ФЭО)",                    # C 3
+        "← Ед. изм. ФЭО Ур.2 (шт, компл...)",                      # D 4
+        "← Плановое кол-во Ур.2 (CRM-план, необязательно)",        # E 5
+        "← Ед. изм. плана Ур.2",                                    # F 6
+        "← Плановая стоимость за ед. Ур.2 (руб.)",                  # G 7
+        "← Тип расходов (если пусто — атрибуты к Ур.2)",           # H 8
+        "← Кол-во ФЭО Ур.3 (из документа ФЭО)",                    # I 9
+        "← Ед. изм. ФЭО Ур.3",                                     # J 10
+        "← Плановое кол-во Ур.3 (CRM-план)",                       # K 11
+        "← Ед. изм. плана Ур.3",                                    # L 12
+        "← Плановая стоимость за ед. Ур.3 (руб.)",                  # M 13
+        "← Конкретизированный (если пусто — к Ур.3)",              # N 14
+        "← Кол-во ФЭО Ур.4 (из документа ФЭО)",                    # O 15
+        "← Ед. изм. ФЭО Ур.4",                                     # P 16
+        "← Плановое кол-во Ур.4 (CRM-план)",                       # Q 17
+        "← Ед. изм. плана Ур.4",                                    # R 18
+        "← Плановая стоимость за ед. Ур.4 (руб.)",                  # S 19
+        "← Плановый товар/услуга (необязательно)",                  # T 20
+        "← Кол-во Ур.5 (необязательно)",                            # U 21
+        "← Ед. изм. (шт, кг, услуга...)",                           # V 22
+        "← Плановая стоимость за ед. позиции",                      # W 23
+        "← Код категории",                                           # X 24
+        "← Номер приложения",                                        # Y 25
+        "← Бюджет категории",                                        # Z 26
+        "← да/нет",                                                  # AA 27
     ]
     for col, hint in enumerate(hints, start=1):
         ws.cell(7, col).value = hint
         ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    for i, w in enumerate([18, 42, 12, 14, 16, 42, 12, 14, 16, 45, 12, 14, 16, 45, 12, 14, 18, 10, 12, 18, 10], 1):
+    # Ширины колонок (27 штук):
+    # A(18) B(42) C(14) D(14) E(14) F(14) G(16) H(42) I(14) J(14) K(14) L(14) M(16) N(45) O(14) P(14) Q(14) R(14) S(16) T(45) U(12) V(14) W(18) X(10) Y(12) Z(18) AA(10)
+    col_widths = [18, 42, 14, 14, 14, 14, 16, 42, 14, 14, 14, 14, 16, 45, 14, 14, 14, 14, 16, 45, 12, 14, 18, 10, 12, 18, 10]
+    for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -879,6 +919,12 @@ async def _do_feo_import(
     c_amt_lvl2: int | None = None,
     c_amt_lvl3: int | None = None,
     c_amt_lvl4: int | None = None,
+    c_feo_qty_lvl2: int | None = None,
+    c_feo_qty_lvl3: int | None = None,
+    c_feo_qty_lvl4: int | None = None,
+    c_feo_unit_lvl2: int | None = None,
+    c_feo_unit_lvl3: int | None = None,
+    c_feo_unit_lvl4: int | None = None,
     default_subsidy_id: int | None = None,
 ) -> dict:
     """Core import logic shared by /import and /import-mapped endpoints."""
@@ -995,16 +1041,45 @@ async def _do_feo_import(
         amt_lvl2 = to_dec(get_cell(row, c_amt_lvl2)) if c_amt_lvl2 is not None else None
         amt_lvl3 = to_dec(get_cell(row, c_amt_lvl3)) if c_amt_lvl3 is not None else None
         amt_lvl4 = to_dec(get_cell(row, c_amt_lvl4)) if c_amt_lvl4 is not None else None
+        # ФЭО-количества из документа ФЭО
+        feo_qty_lvl2 = to_dec(get_cell(row, c_feo_qty_lvl2)) if c_feo_qty_lvl2 is not None else None
+        feo_qty_lvl3 = to_dec(get_cell(row, c_feo_qty_lvl3)) if c_feo_qty_lvl3 is not None else None
+        feo_qty_lvl4 = to_dec(get_cell(row, c_feo_qty_lvl4)) if c_feo_qty_lvl4 is not None else None
+        feo_unit_lvl2 = get_cell(row, c_feo_unit_lvl2) if c_feo_unit_lvl2 is not None else None
+        feo_unit_lvl3 = get_cell(row, c_feo_unit_lvl3) if c_feo_unit_lvl3 is not None else None
+        feo_unit_lvl4 = get_cell(row, c_feo_unit_lvl4) if c_feo_unit_lvl4 is not None else None
+        # Обратная совместимость: старый заголовок «Кол-во (Ур.N)» без нового «Кол-во по ФЭО» —
+        # при отсутствии явного c_feo_qty_lvlN считаем qty_lvlN за ФЭО-количество и дублируем в оба поля
+        if c_feo_qty_lvl2 is None and qty_lvl2 is not None:
+            feo_qty_lvl2 = qty_lvl2
+        if c_feo_qty_lvl3 is None and qty_lvl3 is not None:
+            feo_qty_lvl3 = qty_lvl3
+        if c_feo_qty_lvl4 is None and qty_lvl4 is not None:
+            feo_qty_lvl4 = qty_lvl4
+        if c_feo_unit_lvl2 is None and unit_lvl2 is not None:
+            feo_unit_lvl2 = unit_lvl2
+        if c_feo_unit_lvl3 is None and unit_lvl3 is not None:
+            feo_unit_lvl3 = unit_lvl3
+        if c_feo_unit_lvl4 is None and unit_lvl4 is not None:
+            feo_unit_lvl4 = unit_lvl4
 
         try:
             cat_l1, new_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
             if new_l1:
                 created += 1
                 created_details.append({"row": row_num, "name": lvl2_name, "reason": "направление (ур. 2)"})
-            if qty_lvl2 is not None and cat_l1.planned_quantity != qty_lvl2:
-                cat_l1.planned_quantity = qty_lvl2
-            if unit_lvl2 and cat_l1.unit != unit_lvl2:
-                cat_l1.unit = unit_lvl2
+            # feo_quantity — всегда из feo_qty_lvl2 (документ ФЭО)
+            if feo_qty_lvl2 is not None and cat_l1.feo_quantity != feo_qty_lvl2:
+                cat_l1.feo_quantity = feo_qty_lvl2
+            if feo_unit_lvl2 and cat_l1.feo_unit != feo_unit_lvl2:
+                cat_l1.feo_unit = feo_unit_lvl2
+            # planned_quantity — из qty_lvl2 (CRM-план); если не задан отдельно — из feo_qty (дублируем)
+            _pq2 = qty_lvl2 if qty_lvl2 is not None else feo_qty_lvl2
+            if _pq2 is not None and cat_l1.planned_quantity != _pq2:
+                cat_l1.planned_quantity = _pq2
+            _pu2 = unit_lvl2 if unit_lvl2 is not None else feo_unit_lvl2
+            if _pu2 and cat_l1.unit != _pu2:
+                cat_l1.unit = _pu2
             if amt_lvl2 is not None and cat_l1.planned_amount != amt_lvl2:
                 cat_l1.planned_amount = amt_lvl2
             leaf = cat_l1
@@ -1015,10 +1090,16 @@ async def _do_feo_import(
                 if new_l2:
                     created += 1
                     created_details.append({"row": row_num, "name": lvl3_name, "reason": "категория (ур. 3)"})
-                if qty_lvl3 is not None and cat_l2.planned_quantity != qty_lvl3:
-                    cat_l2.planned_quantity = qty_lvl3
-                if unit_lvl3 and cat_l2.unit != unit_lvl3:
-                    cat_l2.unit = unit_lvl3
+                if feo_qty_lvl3 is not None and cat_l2.feo_quantity != feo_qty_lvl3:
+                    cat_l2.feo_quantity = feo_qty_lvl3
+                if feo_unit_lvl3 and cat_l2.feo_unit != feo_unit_lvl3:
+                    cat_l2.feo_unit = feo_unit_lvl3
+                _pq3 = qty_lvl3 if qty_lvl3 is not None else feo_qty_lvl3
+                if _pq3 is not None and cat_l2.planned_quantity != _pq3:
+                    cat_l2.planned_quantity = _pq3
+                _pu3 = unit_lvl3 if unit_lvl3 is not None else feo_unit_lvl3
+                if _pu3 and cat_l2.unit != _pu3:
+                    cat_l2.unit = _pu3
                 if amt_lvl3 is not None and cat_l2.planned_amount != amt_lvl3:
                     cat_l2.planned_amount = amt_lvl3
                 leaf = cat_l2
@@ -1029,10 +1110,16 @@ async def _do_feo_import(
                     if new_l3:
                         created += 1
                         created_details.append({"row": row_num, "name": lvl4_name, "reason": "статья (ур. 4)"})
-                    if qty_lvl4 is not None and cat_l3.planned_quantity != qty_lvl4:
-                        cat_l3.planned_quantity = qty_lvl4
-                    if unit_lvl4 and cat_l3.unit != unit_lvl4:
-                        cat_l3.unit = unit_lvl4
+                    if feo_qty_lvl4 is not None and cat_l3.feo_quantity != feo_qty_lvl4:
+                        cat_l3.feo_quantity = feo_qty_lvl4
+                    if feo_unit_lvl4 and cat_l3.feo_unit != feo_unit_lvl4:
+                        cat_l3.feo_unit = feo_unit_lvl4
+                    _pq4 = qty_lvl4 if qty_lvl4 is not None else feo_qty_lvl4
+                    if _pq4 is not None and cat_l3.planned_quantity != _pq4:
+                        cat_l3.planned_quantity = _pq4
+                    _pu4 = unit_lvl4 if unit_lvl4 is not None else feo_unit_lvl4
+                    if _pu4 and cat_l3.unit != _pu4:
+                        cat_l3.unit = _pu4
                     if amt_lvl4 is not None and cat_l3.planned_amount != amt_lvl4:
                         cat_l3.planned_amount = amt_lvl4
                     leaf = cat_l3
@@ -1142,17 +1229,25 @@ async def import_feo_from_excel(
     c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
     c_lvl5     = find_col(["уровень 5", "плановый товар", "level 5"])
     c_qty      = find_col(["количество (ур.5)", "количество ур.5", "кол-во (ур.5)", "кол-во ур.5"])
-    c_qty_lvl2 = find_col(["кол-во (ур.2)", "кол-во ур.2", "количество (ур.2)"])
-    c_qty_lvl3 = find_col(["кол-во (ур.3)", "кол-во ур.3", "количество (ур.3)"])
-    c_qty_lvl4 = find_col(["кол-во (ур.4)", "кол-во ур.4", "количество (ур.4)"])
-    c_unit_lvl2 = find_col(["ед. изм. (ур.2)", "ед.изм. ур.2", "единица ур.2"])
-    c_unit_lvl3 = find_col(["ед. изм. (ур.3)", "ед.изм. ур.3", "единица ур.3"])
-    c_unit_lvl4 = find_col(["ед. изм. (ур.4)", "ед.изм. ур.4", "единица ур.4"])
+    # Новый шаблон: «кол-во по фэо» — feo_quantity; старый «кол-во (ур.N)» без «плановое/фэо» — тоже feo_quantity (обратная совместимость)
+    c_feo_qty_lvl2 = find_col(["кол-во по фэо (ур.2)", "кол-во по фэо ур.2"])
+    c_feo_qty_lvl3 = find_col(["кол-во по фэо (ур.3)", "кол-во по фэо ур.3"])
+    c_feo_qty_lvl4 = find_col(["кол-во по фэо (ур.4)", "кол-во по фэо ур.4"])
+    c_feo_unit_lvl2 = find_col(["ед. изм. по фэо (ур.2)", "ед. изм. по фэо ур.2"])
+    c_feo_unit_lvl3 = find_col(["ед. изм. по фэо (ур.3)", "ед. изм. по фэо ур.3"])
+    c_feo_unit_lvl4 = find_col(["ед. изм. по фэо (ур.4)", "ед. изм. по фэо ур.4"])
+    # Плановое кол-во (CRM-план) — новый шаблон «плановое кол-во»; старый «кол-во (ур.N)» без новых заголовков → уходит в feo_quantity выше, плановое=None
+    c_qty_lvl2 = find_col(["плановое кол-во (ур.2)", "плановое кол-во ур.2", "кол-во (ур.2)", "кол-во ур.2", "количество (ур.2)"])
+    c_qty_lvl3 = find_col(["плановое кол-во (ур.3)", "плановое кол-во ур.3", "кол-во (ур.3)", "кол-во ур.3", "количество (ур.3)"])
+    c_qty_lvl4 = find_col(["плановое кол-во (ур.4)", "плановое кол-во ур.4", "кол-во (ур.4)", "кол-во ур.4", "количество (ур.4)"])
+    c_unit_lvl2 = find_col(["ед. изм. плана (ур.2)", "ед. изм. плана ур.2", "ед. изм. (ур.2)", "ед.изм. ур.2", "единица ур.2"])
+    c_unit_lvl3 = find_col(["ед. изм. плана (ур.3)", "ед. изм. плана ур.3", "ед. изм. (ур.3)", "ед.изм. ур.3", "единица ур.3"])
+    c_unit_lvl4 = find_col(["ед. изм. плана (ур.4)", "ед. изм. плана ур.4", "ед. изм. (ур.4)", "ед.изм. ур.4", "единица ур.4"])
     c_amt_lvl2 = find_col(["плановая стоимость за ед. (ур.2)", "плановая стоимость (ур.2)", "стоимость за ед. (ур.2)", "стоимость ур.2", "плановая сумма (ур.2)", "сумма ур.2"])
     c_amt_lvl3 = find_col(["плановая стоимость за ед. (ур.3)", "плановая стоимость (ур.3)", "стоимость за ед. (ур.3)", "стоимость ур.3", "плановая сумма (ур.3)", "сумма ур.3"])
     c_amt_lvl4 = find_col(["плановая стоимость за ед. (ур.4)", "плановая стоимость (ур.4)", "стоимость за ед. (ур.4)", "стоимость ур.4", "плановая сумма (ур.4)", "сумма ур.4"])
     # Fallback: generic qty column if no specific level columns present
-    if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None:
+    if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None and c_feo_qty_lvl2 is None and c_feo_qty_lvl3 is None and c_feo_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])
     c_unit     = find_col(["ед. измерения (ур.5)", "ед. изм. (ур.5)", "единица ур.5", "ед. изм", "единица изм", "ед.изм"])
     c_item_amt = find_col(["плановая стоимость за ед. (ур.5)", "плановая стоимость (ур.5)", "стоимость за ед. (ур.5)", "стоимость ур.5", "сумма плановая", "сумма (ур.5)", "сумма ур"])
@@ -1169,6 +1264,8 @@ async def import_feo_from_excel(
         c_qty_lvl2=c_qty_lvl2, c_qty_lvl3=c_qty_lvl3, c_qty_lvl4=c_qty_lvl4,
         c_unit_lvl2=c_unit_lvl2, c_unit_lvl3=c_unit_lvl3, c_unit_lvl4=c_unit_lvl4,
         c_amt_lvl2=c_amt_lvl2, c_amt_lvl3=c_amt_lvl3, c_amt_lvl4=c_amt_lvl4,
+        c_feo_qty_lvl2=c_feo_qty_lvl2, c_feo_qty_lvl3=c_feo_qty_lvl3, c_feo_qty_lvl4=c_feo_qty_lvl4,
+        c_feo_unit_lvl2=c_feo_unit_lvl2, c_feo_unit_lvl3=c_feo_unit_lvl3, c_feo_unit_lvl4=c_feo_unit_lvl4,
         db=db,
     )
 
@@ -1199,6 +1296,12 @@ async def import_feo_mapped(
     col_amt_lvl2: int = Query(-1),
     col_amt_lvl3: int = Query(-1),
     col_amt_lvl4: int = Query(-1),
+    col_feo_qty_lvl2: int = Query(-1),
+    col_feo_qty_lvl3: int = Query(-1),
+    col_feo_qty_lvl4: int = Query(-1),
+    col_feo_unit_lvl2: int = Query(-1),
+    col_feo_unit_lvl3: int = Query(-1),
+    col_feo_unit_lvl4: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('feo_categories')),
@@ -1287,6 +1390,12 @@ async def import_feo_mapped(
         c_amt_lvl2=col_amt_lvl2 if col_amt_lvl2 >= 0 else None,
         c_amt_lvl3=col_amt_lvl3 if col_amt_lvl3 >= 0 else None,
         c_amt_lvl4=col_amt_lvl4 if col_amt_lvl4 >= 0 else None,
+        c_feo_qty_lvl2=col_feo_qty_lvl2 if col_feo_qty_lvl2 >= 0 else None,
+        c_feo_qty_lvl3=col_feo_qty_lvl3 if col_feo_qty_lvl3 >= 0 else None,
+        c_feo_qty_lvl4=col_feo_qty_lvl4 if col_feo_qty_lvl4 >= 0 else None,
+        c_feo_unit_lvl2=col_feo_unit_lvl2 if col_feo_unit_lvl2 >= 0 else None,
+        c_feo_unit_lvl3=col_feo_unit_lvl3 if col_feo_unit_lvl3 >= 0 else None,
+        c_feo_unit_lvl4=col_feo_unit_lvl4 if col_feo_unit_lvl4 >= 0 else None,
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db,
     )
@@ -1421,16 +1530,18 @@ async def update_category(
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
-    _old_plan = (cat.budget, cat.planned_quantity, cat.planned_amount)
+    _old_plan = (cat.budget, cat.feo_quantity, cat.planned_quantity, cat.planned_amount)
     cat.name = category_data.name
     cat.code = category_data.code
     cat.appendix = category_data.appendix
     cat.is_active = category_data.is_active
     cat.budget = category_data.budget
+    cat.feo_quantity = category_data.feo_quantity
+    cat.feo_unit = category_data.feo_unit
     cat.planned_quantity = category_data.planned_quantity
     cat.planned_amount = category_data.planned_amount
     cat.unit = category_data.unit
-    if (cat.budget, cat.planned_quantity, cat.planned_amount) != _old_plan and cat.subsidy_id:
+    if (cat.budget, cat.feo_quantity, cat.planned_quantity, cat.planned_amount) != _old_plan and cat.subsidy_id:
         from app.routers.purchases import _create_plan_graph_version
         await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
     await db.commit()

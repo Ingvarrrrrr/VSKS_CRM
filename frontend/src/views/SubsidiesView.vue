@@ -65,8 +65,8 @@
           <template #item.feo_budget_total="{ item }">
             {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
           </template>
-          <template #item.plan_schedule="{ item }">
-            <span style="color:#F59E0B">{{ formatCurrencyShort(item.plan_schedule) }}</span>
+          <template #item.planned="{ item }">
+            <span style="color:#F59E0B">{{ formatCurrencyShort(item.planned) }}</span>
           </template>
           <template #item.ordered="{ item }">
             <span style="color:#3B82F6">{{ formatCurrencyShort(item.ordered) }}</span>
@@ -143,7 +143,7 @@
             <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
 
             <div class="sc-mini-row">
-              <div class="sc-mini" title="Плановая стоимость всех закупок субсидии (то же, что «Запланировано» на шкале ниже)">
+              <div class="sc-mini" title="Запланировано (план ФЭО + заявки) — то же, что «Запланировано» на шкале ниже">
                 <div class="sc-mini-label">Запланировано</div>
                 <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.planned) }}</div>
               </div>
@@ -182,8 +182,8 @@
               class="mt-1 sc-delta-chip"
               prepend-icon="mdi-alert"
               :title="cardDelta(s) > 0
-                ? `Бюджет ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-                : `Запланировано закупками ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+                ? `Бюджет ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
+                : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
             >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
             <v-chip
               v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
@@ -191,7 +191,7 @@
               size="small"
               class="mt-1 sc-delta-chip"
               prepend-icon="mdi-check"
-              :title="`Бюджет ФЭО и запланировано закупками совпадают: ${Math.round(s.planned).toLocaleString('ru-RU')} ₽`"
+              :title="`Бюджет ФЭО и запланировано (план ФЭО + заявки) совпадают: ${Math.round(s.planned).toLocaleString('ru-RU')} ₽`"
             >ФЭО = план</v-chip>
             <div v-if="s.contractor_name" class="sc-contractor">
               <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
@@ -227,11 +227,6 @@
           <div class="summary-item summary-item--link" @click="router.push('/orders')">
             <span class="summary-label">Запланировано</span>
             <span class="summary-value" style="color:var(--color-planned)">{{ formatCurrency(totals.planned) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item">
-            <span class="summary-label">Запланировано</span>
-            <span class="summary-value" style="color:#F59E0B">{{ formatCurrency(totals.plan_schedule) }}</span>
           </div>
           <div class="summary-sep" />
           <div class="summary-item summary-item--link" @click="router.push('/orders?status=confirmed')">
@@ -514,10 +509,10 @@
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="node.planned_quantity != null" class="feo-plan-note text-medium-emphasis text-right"
-                          title="Плановое количество, заложенное в ФЭО"
+                        <div v-if="node.feo_quantity != null" class="feo-plan-note text-medium-emphasis text-right"
+                          title="Количество по документу ФЭО"
                         >
-                          {{ Number(node.planned_quantity) }}{{ node.unit ? ` ${node.unit}` : ' шт' }}
+                          {{ Number(node.feo_quantity) }}{{ node.feo_unit ? ` ${node.feo_unit}` : ' шт' }}
                         </div>
                         <div v-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                           <input
@@ -607,15 +602,15 @@
                           <template v-if="plannedQtyBase === 'all' && matchedReqFor(node).length">
                             <div v-if="mergedQtyDiff(node) > 0"
                               class="feo-plan-note" style="color:#F59E0B"
-                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.planned_quantity) || 0}`"
+                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.feo_quantity) || 0}`"
                             >
-                              на {{ mergedQtyDiff(node) }} превышает заложенный в ФЭО показатель ({{ Number(node.planned_quantity) || 0 }})
+                              на {{ mergedQtyDiff(node) }} превышает заложенный в ФЭО показатель ({{ Number(node.feo_quantity) || 0 }})
                             </div>
                             <div v-else-if="mergedQtyDiff(node) < 0"
                               class="feo-plan-note text-medium-emphasis"
-                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.planned_quantity) || 0}`"
+                              :title="`Всего запланировано ${feoQtyDisplayFor(node)}, в ФЭО заложено ${Number(node.feo_quantity) || 0}`"
                             >
-                              не хватает {{ -mergedQtyDiff(node) }} до заложенного в ФЭО ({{ Number(node.planned_quantity) || 0 }})
+                              не хватает {{ -mergedQtyDiff(node) }} до заложенного в ФЭО ({{ Number(node.feo_quantity) || 0 }})
                             </div>
                           </template>
                         </div>
@@ -1747,79 +1742,103 @@
             </v-col>
           </v-row>
           <v-divider class="my-3" />
-          <!-- Финансирование по ФЭО -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
-            <v-btn-toggle
-              v-model="feoForm.budgetAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
-            >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
+          <!-- Блок: По документу ФЭО -->
+          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
+            <div class="text-body-2 font-weight-medium mb-3">По документу ФЭО</div>
+            <!-- Финансирование по ФЭО -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Финансирование по ФЭО</span>
+              <v-btn-toggle
+                v-model="feoForm.budgetAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-text-field
+              v-if="!feoForm.budgetAuto"
+              v-model.number="feoForm.budget"
+              label="Сумма финансирования, ₽"
+              variant="outlined" density="compact" type="number" hide-details class="mb-3"
+            />
+            <!-- Кол-во и ед. изм. по ФЭО -->
+            <v-row dense>
+              <v-col cols="7">
+                <v-text-field
+                  v-model.number="feoForm.feo_quantity"
+                  label="Кол-во по ФЭО"
+                  variant="outlined" density="compact" type="number" hide-details
+                />
+              </v-col>
+              <v-col cols="5">
+                <v-combobox
+                  v-model="feoForm.feo_unit"
+                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                  label="Ед. изм. по ФЭО"
+                  variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+            </v-row>
           </div>
-          <v-text-field
-            v-if="!feoForm.budgetAuto"
-            v-model.number="feoForm.budget"
-            label="Сумма финансирования, ₽"
-            variant="outlined" density="compact" type="number" hide-details
-          />
-          <v-divider class="my-3" />
-          <!-- Плановое количество -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановое количество</span>
-            <v-btn-toggle
-              v-model="feoForm.qtyAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
-            >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
+          <!-- Блок: Плановые показатели (CRM) -->
+          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px">
+            <div class="text-body-2 font-weight-medium mb-3">Плановые показатели</div>
+            <!-- Плановое количество -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Плановое количество</span>
+              <v-btn-toggle
+                v-model="feoForm.qtyAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-row v-if="!feoForm.qtyAuto" dense class="mb-3">
+              <v-col cols="8">
+                <v-text-field
+                  v-model.number="feoForm.planned_quantity"
+                  label="Количество"
+                  variant="outlined" density="compact" type="number" hide-details
+                />
+              </v-col>
+              <v-col cols="4">
+                <v-combobox
+                  v-model="feoForm.unit"
+                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                  label="Ед. изм."
+                  variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+            </v-row>
+            <!-- Плановая стоимость за ед. -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Плановая стоимость за ед.</span>
+              <v-btn-toggle
+                v-model="feoForm.amtAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-text-field
+              v-if="!feoForm.amtAuto"
+              v-model.number="feoForm.planned_amount"
+              label="Плановая стоимость за ед., ₽"
+              variant="outlined" density="compact" type="number" hide-details
+            />
           </div>
-          <v-row v-if="!feoForm.qtyAuto" dense>
-            <v-col cols="8">
-              <v-text-field
-                v-model.number="feoForm.planned_quantity"
-                label="Количество"
-                variant="outlined" density="compact" type="number" hide-details
-              />
-            </v-col>
-            <v-col cols="4">
-              <v-combobox
-                v-model="feoForm.unit"
-                :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                label="Ед. изм."
-                variant="outlined" density="compact" hide-details
-              />
-            </v-col>
-          </v-row>
-          <v-divider class="my-3" />
-          <!-- Плановая стоимость за ед. -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
-            <v-btn-toggle
-              v-model="feoForm.amtAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
-            >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
-          </div>
-          <v-text-field
-            v-if="!feoForm.amtAuto"
-            v-model.number="feoForm.planned_amount"
-            label="Плановая стоимость за ед., ₽"
-            variant="outlined" density="compact" type="number" hide-details
-          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -1864,100 +1883,124 @@
             persistent-hint
           />
           <v-divider class="my-3" />
-          <!-- Финансирование по ФЭО -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Финансирование по ФЭО</span>
-            <v-btn-toggle
-              v-if="feoEditForm.hasChildren"
-              v-model="feoEditForm.budgetAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
+          <!-- Блок: По документу ФЭО -->
+          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
+            <div class="text-body-2 font-weight-medium mb-3">По документу ФЭО</div>
+            <!-- Финансирование по ФЭО -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Финансирование по ФЭО</span>
+              <v-btn-toggle
+                v-if="feoEditForm.hasChildren"
+                v-model="feoEditForm.budgetAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-text-field
+              v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
+              v-model.number="feoEditForm.budget"
+              label="Сумма финансирования, ₽"
+              variant="outlined" density="compact" type="number" hide-details class="mb-2"
+            />
+            <v-alert
+              v-if="feoEditForm.hasChildren && feoEditForm.budgetAuto"
+              type="info" variant="tonal" density="compact" class="mb-2 text-caption"
             >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
+              Сумма рассчитывается автоматически из дочерних направлений
+            </v-alert>
+            <!-- Кол-во и ед. изм. по ФЭО -->
+            <v-row dense>
+              <v-col cols="7">
+                <v-text-field
+                  v-model.number="feoEditForm.feo_quantity"
+                  label="Кол-во по ФЭО"
+                  variant="outlined" density="compact" type="number" hide-details
+                />
+              </v-col>
+              <v-col cols="5">
+                <v-combobox
+                  v-model="feoEditForm.feo_unit"
+                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                  label="Ед. изм. по ФЭО"
+                  variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+            </v-row>
           </div>
-          <v-text-field
-            v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
-            v-model.number="feoEditForm.budget"
-            label="Сумма финансирования, ₽"
-            variant="outlined" density="compact" type="number" hide-details
-          />
-          <v-alert
-            v-if="feoEditForm.hasChildren && feoEditForm.budgetAuto"
-            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
-          >
-            Сумма рассчитывается автоматически из дочерних направлений
-          </v-alert>
-          <v-divider class="my-3" />
-          <!-- Плановое количество -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановое количество</span>
-            <v-btn-toggle
-              v-if="feoEditForm.hasChildren"
-              v-model="feoEditForm.qtyAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
+          <!-- Блок: Плановые показатели (CRM) -->
+          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
+            <div class="text-body-2 font-weight-medium mb-3">Плановые показатели</div>
+            <!-- Плановое количество -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Плановое количество</span>
+              <v-btn-toggle
+                v-if="feoEditForm.hasChildren"
+                v-model="feoEditForm.qtyAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-row v-if="!feoEditForm.hasChildren || !feoEditForm.qtyAuto" dense class="mb-2">
+              <v-col cols="8">
+                <v-text-field
+                  v-model.number="feoEditForm.planned_quantity"
+                  label="Количество"
+                  variant="outlined" density="compact" type="number" hide-details
+                />
+              </v-col>
+              <v-col cols="4">
+                <v-combobox
+                  v-model="feoEditForm.unit"
+                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+                  label="Ед. изм."
+                  variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+            </v-row>
+            <v-alert
+              v-if="feoEditForm.hasChildren && feoEditForm.qtyAuto"
+              type="info" variant="tonal" density="compact" class="mb-2 text-caption"
             >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
-          </div>
-          <v-row v-if="!feoEditForm.hasChildren || !feoEditForm.qtyAuto" dense>
-            <v-col cols="8">
-              <v-text-field
-                v-model.number="feoEditForm.planned_quantity"
-                label="Количество"
-                variant="outlined" density="compact" type="number" hide-details
-              />
-            </v-col>
-            <v-col cols="4">
-              <v-combobox
-                v-model="feoEditForm.unit"
-                :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                label="Ед. изм."
-                variant="outlined" density="compact" hide-details
-              />
-            </v-col>
-          </v-row>
-          <v-alert
-            v-if="feoEditForm.hasChildren && feoEditForm.qtyAuto"
-            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
-          >
-            Количество рассчитывается автоматически из дочерних направлений
-          </v-alert>
-          <v-divider class="my-3" />
-          <!-- Плановая стоимость за ед. -->
-          <div class="d-flex align-center mb-2">
-            <span class="text-body-2 font-weight-medium">Плановая стоимость за ед.</span>
-            <v-btn-toggle
-              v-if="feoEditForm.hasChildren"
-              v-model="feoEditForm.amtAuto"
-              mandatory
-              density="compact"
-              class="ml-4"
-              color="primary"
+              Количество рассчитывается автоматически из дочерних направлений
+            </v-alert>
+            <!-- Плановая стоимость за ед. -->
+            <div class="d-flex align-center mb-2">
+              <span class="text-body-2">Плановая стоимость за ед.</span>
+              <v-btn-toggle
+                v-if="feoEditForm.hasChildren"
+                v-model="feoEditForm.amtAuto"
+                mandatory
+                density="compact"
+                class="ml-4"
+                color="primary"
+              >
+                <v-btn :value="false" size="x-small">Вручную</v-btn>
+                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
+              </v-btn-toggle>
+            </div>
+            <v-text-field
+              v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
+              v-model.number="feoEditForm.planned_amount"
+              label="Плановая стоимость за ед., ₽"
+              variant="outlined" density="compact" type="number" hide-details
+            />
+            <v-alert
+              v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
+              type="info" variant="tonal" density="compact" class="mt-2 text-caption"
             >
-              <v-btn :value="false" size="x-small">Вручную</v-btn>
-              <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-            </v-btn-toggle>
+              Сумма рассчитывается автоматически из дочерних направлений
+            </v-alert>
           </div>
-          <v-text-field
-            v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
-            v-model.number="feoEditForm.planned_amount"
-            label="Плановая стоимость за ед., ₽"
-            variant="outlined" density="compact" type="number" hide-details
-          />
-          <v-alert
-            v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
-            type="info" variant="tonal" density="compact" class="mt-2 text-caption"
-          >
-            Сумма рассчитывается автоматически из дочерних направлений
-          </v-alert>
           <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -3345,6 +3388,7 @@ interface FeoCategory {
   id: number; parent_id: number | null; subsidy_id: number
   level: number; name: string; code: string | null; appendix: string | null
   is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
+  feo_quantity: number | null; feo_unit: string | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -3672,6 +3716,12 @@ const FEO_TARGET_FIELDS = [
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
   { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
+  { value: 'feo_qty_lvl2',  title: 'Кол-во по ФЭО (Ур.2)',                   required: false },
+  { value: 'feo_unit_lvl2', title: 'Ед. изм. по ФЭО (Ур.2)',                required: false },
+  { value: 'feo_qty_lvl3',  title: 'Кол-во по ФЭО (Ур.3)',                   required: false },
+  { value: 'feo_unit_lvl3', title: 'Ед. изм. по ФЭО (Ур.3)',                required: false },
+  { value: 'feo_qty_lvl4',  title: 'Кол-во по ФЭО (Ур.4)',                   required: false },
+  { value: 'feo_unit_lvl4', title: 'Ед. изм. по ФЭО (Ур.4)',                required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
@@ -4557,8 +4607,8 @@ const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -4615,7 +4665,7 @@ const { mobile, viewMode, effectiveView, page: subPage, totalPages: subTotalPage
 const subsidyTableHeaders = [
   { title: 'Название', key: 'name', minWidth: '200px' },
   { title: 'Бюджет ФЭО', key: 'feo_budget_total', align: 'end' as const },
-  { title: 'Запланировано', key: 'plan_schedule', align: 'end' as const },
+  { title: 'Запланировано', key: 'planned', align: 'end' as const },
   { title: 'Заказано', key: 'ordered', align: 'end' as const },
   { title: 'Оплачено', key: 'paid', align: 'end' as const },
   { title: 'Контрагент', key: 'contractor_name' },
@@ -4655,7 +4705,6 @@ const selectedPlannedTotal = computed(() => {
 const totals = computed(() => ({
   budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
   planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
-  plan_schedule: filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule,  0),
   ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
   contracted:    filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
   paid:          filteredSubsidies.value.reduce((s, x) => s + x.paid,           0),
@@ -4947,11 +4996,11 @@ function feoQtyDisplayFor(node: FeoNode): number {
   return feoQtyFor(node) + feoQtyRequestsFor(node)
 }
 
-// Отклонение слитого кол-ва от заложенного в ФЭО показателя (планового кол-ва при заданном финансировании)
+// Отклонение слитого кол-ва от заложенного в ФЭО показателя (кол-во по документу ФЭО)
 function mergedQtyDiff(node: FeoNode): number {
-  if (!mergedManualPriority(node) || node.planned_quantity == null) return 0
+  if (!mergedManualPriority(node) || node.feo_quantity == null) return 0
   const total = feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node)
-  return Math.round((total - Number(node.planned_quantity)) * 10000) / 10000
+  return Math.round((total - Number(node.feo_quantity)) * 10000) / 10000
 }
 
 // ── Planned amount helpers ───────────────────────
@@ -5136,7 +5185,7 @@ async function loadAll() {
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
       calculated_budget: s.calculated_budget ?? 0,
-      planned: s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+      planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
       plan_schedule: s.total_plan_schedule ?? 0,
       ordered: s.total_ordered ?? 0,
       feo_budget_total: s.feo_budget_total ?? 0,
@@ -5803,11 +5852,13 @@ async function addFeoCategory() {
         planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity ?? null),
         planned_amount: feoForm.value.amtAuto ? null : (feoForm.value.planned_amount ?? null),
         unit: feoForm.value.unit || null,
+        feo_quantity: feoForm.value.feo_quantity ?? null,
+        feo_unit: feoForm.value.feo_unit || null,
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '' }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '' }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
@@ -5850,6 +5901,8 @@ function startFeoEdit(node: FeoNode) {
     is_active: node.is_active,
     hasChildren: node.hasChildren,
     parent_id: node.parent_id ?? null,
+    feo_quantity: node.feo_quantity ?? null,
+    feo_unit: node.feo_unit || '',
   }
   showEditFeoDialog.value = true
 }
@@ -5881,6 +5934,8 @@ async function updateFeoCategory() {
         planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity ?? null),
         planned_amount: feoEditForm.value.amtAuto ? null : (feoEditForm.value.planned_amount ?? null),
         unit: feoEditForm.value.unit || null,
+        feo_quantity: feoEditForm.value.feo_quantity ?? null,
+        feo_unit: feoEditForm.value.feo_unit || null,
       })
     })
     showEditFeoDialog.value = false

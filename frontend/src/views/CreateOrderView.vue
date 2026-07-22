@@ -3625,7 +3625,11 @@ const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isSuperadmin = computed(() => userRole === 'superadmin')
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
-const canPublish = ref(localStorage.getItem('can_publish') === 'true' || isAdminLevel.value)
+const canPublish = computed(() =>
+  isAdminLevel.value ||
+  authStore.hasAction('publication.create') ||
+  localStorage.getItem('can_publish') === 'true'
+)
 
 // ТЗ (Техническое задание) collapse state — persisted in localStorage
 const TZ_COLLAPSE_KEY = 'purchase_tz_collapsed'

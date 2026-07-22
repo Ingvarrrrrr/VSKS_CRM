@@ -496,18 +496,34 @@ async def remove_member(
             uo.dept_id = None
 
     await db.commit()
-    # Clear user.department — check if user still has other dept memberships
-    other = (await db.execute(
-        select(UserOrganization).where(
-            UserOrganization.user_id == user_id,
-            UserOrganization.dept_id.isnot(None),
-            UserOrganization.dept_id != dept_id,
-        ).limit(1)
-    )).scalar_one_or_none()
-    if not other:
-        user = await db.get(User, user_id)
-        if user:
-            user.department = None
+    # Синк карточки: если поле «Отдел» указывало на снимаемый отдел —
+    # перенаправить на оставшееся членство (приоритет — родная орга карточки), иначе очистить.
+    user = await db.get(User, user_id)
+    if user is not None:
+        removed_name = dept.name if dept is not None else None
+        if user.department == removed_name:
+            # Сначала ищем в «родной» орге карточки, затем в любой.
+            remaining = None
+            for org_filter in (
+                [UserOrganization.org_id == user.org_id] if user.org_id else [],
+                [],
+            ):
+                q = (
+                    select(UserOrganization, Department)
+                    .join(Department, Department.id == UserOrganization.dept_id)
+                    .where(
+                        UserOrganization.user_id == user_id,
+                        UserOrganization.dept_id.isnot(None),
+                        UserOrganization.dept_id != dept_id,
+                        *org_filter,
+                    )
+                    .order_by(UserOrganization.id.asc())
+                    .limit(1)
+                )
+                remaining = (await db.execute(q)).first()
+                if remaining:
+                    break
+            user.department = remaining[1].name if remaining else None
             await db.commit()
     return {"ok": True}
 

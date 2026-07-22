@@ -1675,6 +1675,7 @@ const editDialog = reactive({
   superior_user_id: null as number | null,
   org_id: null as number | null,
   extraOrgIds: [] as number[],
+  extraOrgsLoaded: false,
   extraOrgsLoading: false,
   orgPositions: {} as Record<number, string>,  // position per extra org
   orgSalary: {} as Record<number, number | null>,
@@ -2187,6 +2188,7 @@ async function openEditUser(item: UserItem) {
   editDialog.periodic_medical_expires_at = (item as any).periodic_medical_expires_at || null
   editDialog.psych_cert_expires_at = (item as any).psych_cert_expires_at || null
   editDialog.extraOrgIds = []
+  editDialog.extraOrgsLoaded = false
   // Resolve dept ID from deptTree by matching name
   const allDepts = flatDepts(deptTree.value)
   const foundDept = allDepts.find((d: any) => d.name === item.department)
@@ -2213,6 +2215,7 @@ async function openEditUser(item: UserItem) {
       ...(orgRes.primary?.id ? [orgRes.primary.id] : []),
       ...orgRes.extra.map((e: any) => e.id),
     ])]
+    editDialog.extraOrgsLoaded = true
     const pos: Record<number, string> = {}
     for (const e of orgRes.extra) {
       if (e.position) pos[e.id] = e.position
@@ -2428,30 +2431,41 @@ async function saveEditUser() {
     }
 
     // Sync org list membership (add/remove orgs) — position/salary handled above per-row
-    try {
-      const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
-      const currentOrgMap = new Map<number, any>()
-      if (res.primary?.id) currentOrgMap.set(res.primary.id, res.primary)
-      for (const e of res.extra) currentOrgMap.set(e.id, e)
+    // Guard: skip entirely if orgs were not loaded (prevents wiping memberships on load failure)
+    if (editDialog.extraOrgsLoaded) {
+      try {
+        const res = await apiFetch<{ primary: any; extra: any[] }>(`/users/${editDialog.userId}/organizations`)
+        const currentOrgMap = new Map<number, any>()
+        if (res.primary?.id) currentOrgMap.set(res.primary.id, res.primary)
+        for (const e of res.extra) currentOrgMap.set(e.id, e)
 
-      const desiredIds = new Set(editDialog.extraOrgIds)
+        const desiredIds = new Set(editDialog.extraOrgIds)
 
-      // Add org membership if not present yet
-      for (const oid of desiredIds) {
-        if (!currentOrgMap.has(oid)) {
-          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
-            method: 'POST', body: {},
-          })
+        // Add org membership if not present yet
+        for (const oid of desiredIds) {
+          if (!currentOrgMap.has(oid)) {
+            try {
+              await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, {
+                method: 'POST', body: {},
+              })
+            } catch (e: any) {
+              showSnack(`Не удалось добавить организацию: ${e?.message || ''}`, 'error')
+            }
+          }
         }
-      }
 
-      // Remove orgs no longer selected (including former primary)
-      for (const oid of currentOrgMap.keys()) {
-        if (!desiredIds.has(oid)) {
-          await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
+        // Remove orgs no longer selected (including former primary)
+        for (const oid of currentOrgMap.keys()) {
+          if (!desiredIds.has(oid)) {
+            try {
+              await apiFetch(`/users/${editDialog.userId}/organizations/${oid}`, { method: 'DELETE' })
+            } catch (e: any) {
+              showSnack(`Не удалось удалить организацию: ${e?.message || ''}`, 'error')
+            }
+          }
         }
-      }
-    } catch { /* non-critical */ }
+      } catch { /* non-critical */ }
+    }
 
     // Reload user from API to get fresh department text (updated by dept membership API)
     try {

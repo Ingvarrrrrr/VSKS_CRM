@@ -379,7 +379,7 @@
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'name')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('budget')">
-                      Финансирование по ФЭО
+                      <div>Количество и<br>финансирование по ФЭО</div>
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'budget')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('qty')">
@@ -514,6 +514,11 @@
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
+                        <div v-if="node.planned_quantity != null" class="feo-plan-note text-medium-emphasis text-right"
+                          title="Плановое количество, заложенное в ФЭО"
+                        >
+                          {{ Number(node.planned_quantity) }}{{ node.unit ? ` ${node.unit}` : ' шт' }}
+                        </div>
                         <div v-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                           <input
                             ref="inlineInputEl"
@@ -1725,7 +1730,7 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pt-4">
-          <v-select
+          <v-autocomplete
             v-model="feoForm.parentId"
             :items="feoCategories.filter(c => c.level < 3)"
             item-title="name" item-value="id"

@@ -2575,6 +2575,25 @@
                 <v-alert v-if="!currentSubsidyOrgInn" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
                   Не заполнен ИНН организации-заказчика. Перейдите в раздел <strong>Организации</strong> → нажмите карандаш → укажите ИНН.
                 </v-alert>
+
+                <!-- Тип процедуры -->
+                <v-select
+                  v-model="fabrikantProcedureType"
+                  :items="FABRIKANT_PROCEDURE_TYPES"
+                  item-title="title"
+                  item-value="value"
+                  label="Тип процедуры"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  class="mb-3"
+                />
+
+                <!-- Подсказка для Мониторинга цен -->
+                <v-alert v-if="fabrikantProcedureType === 'price_monitoring'" type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+                  Сбор ценовых предложений без объявления цены и позиций. НМЦД не требуется.
+                </v-alert>
+
                 <div style="position:relative">
                   <v-text-field
                     v-model="fabrikantOkpd2"
@@ -2591,8 +2610,8 @@
                   <div v-if="okpd2Pointer" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
                 </div>
 
-                <!-- НМЦД -->
-                <div class="mb-3">
+                <!-- НМЦД — скрыт для Мониторинга цен -->
+                <div v-if="fabrikantProcedureType !== 'price_monitoring'" class="mb-3">
                   <div v-if="publishNmck > 0" class="text-body-2 mb-1">
                     НМЦД: <strong>{{ formatMoney(publishNmck) }}</strong>
                   </div>
@@ -2626,7 +2645,8 @@
                       variant="outlined" density="compact"
                     />
                   </v-col>
-                  <v-col cols="12" sm="6">
+                  <!-- Определение победителя — только для ЗП -->
+                  <v-col v-if="fabrikantProcedureType === 'zp'" cols="12" sm="6">
                     <v-text-field
                       v-model="fabrikantDates.determination_date"
                       type="datetime-local"
@@ -2643,6 +2663,55 @@
                     />
                   </v-col>
                 </v-row>
+
+                <!-- Поля редукциона -->
+                <template v-if="fabrikantProcedureType === 'reduction'">
+                  <v-divider class="my-2" />
+                  <div class="text-caption text-medium-emphasis mb-2">Параметры редукциона</div>
+                  <v-row dense>
+                    <v-col cols="12">
+                      <div id="pub-target-auction-date" style="position:relative">
+                        <div v-if="auctionPointerTarget === 'auction-date'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+                        <div :class="auctionPointerTarget === 'auction-date' ? 'pub-glow' : ''">
+                          <v-text-field
+                            v-model="fabrikantAuctionDateStart"
+                            type="datetime-local"
+                            label="Дата и время начала редукциона *"
+                            variant="outlined" density="compact"
+                            :error="!fabrikantAuctionDateStart"
+                            @update:model-value="auctionPointerTarget = null"
+                          />
+                        </div>
+                      </div>
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <div id="pub-target-auction-bet" style="position:relative">
+                        <div v-if="auctionPointerTarget === 'auction-bet'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+                        <div :class="auctionPointerTarget === 'auction-bet' ? 'pub-glow' : ''">
+                          <v-text-field
+                            v-model.number="fabrikantAuctionBetFrom"
+                            type="number"
+                            label="Граница ставки от *"
+                            variant="outlined" density="compact"
+                            :error="fabrikantAuctionBetFrom === null"
+                            @update:model-value="auctionPointerTarget = null"
+                          />
+                        </div>
+                      </div>
+                    </v-col>
+                    <v-col cols="12" sm="6">
+                      <v-text-field
+                        v-model.number="fabrikantAuctionBetTo"
+                        type="number"
+                        label="Граница ставки до *"
+                        variant="outlined" density="compact"
+                        :error="fabrikantAuctionBetTo === null"
+                        @update:model-value="auctionPointerTarget = null"
+                      />
+                    </v-col>
+                  </v-row>
+                </template>
+
                 <v-checkbox
                   v-model="fabrikantAttachDocs"
                   label="Прикрепить пакет документов (5 файлов)"
@@ -2656,7 +2725,7 @@
                   <v-btn color="orange-darken-2"
                     :loading="publishingPlatform === 'fabrikant'"
                     :disabled="!fabrikantOkpd2 || !fabrikantDates.proposal_start || !fabrikantDates.proposal_end || !currentSubsidyOrgInn"
-                    @click="doPublish('fabrikant')"
+                    @click="() => { publishErrors = checkPublishReady(); if (!publishErrors.length) doPublish('fabrikant'); else revealField(publishErrors[0].target) }"
                   >Опубликовать на Фабрикант</v-btn>
                 </div>
               </div>
@@ -4943,20 +5012,44 @@ const publishDialog = ref(false)
 const publishingPlatform = ref<string | null>(null)
 const pendingPlatform = ref<string | null>(null)
 const roseltorgProcedureType = ref<string | null>(null)
-const publishErrors = ref<{text: string; target: 'subject' | 'items' | 'nmck'}[]>([])
+const publishErrors = ref<{text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[]>([])
 
 const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
 const fabrikantOkpd2 = ref('')
 const fabrikantAttachDocs = ref(true)
 const fabrikantNoNmcd = ref(false)
+const fabrikantProcedureType = ref<'zp' | 'reduction' | 'price_monitoring'>('zp')
+const fabrikantAuctionDateStart = ref('')
+const fabrikantAuctionBetFrom = ref<number | null>(null)
+const fabrikantAuctionBetTo = ref<number | null>(null)
+
+const FABRIKANT_PROCEDURE_TYPES = [
+  { value: 'zp',               title: 'Запрос предложений' },
+  { value: 'reduction',        title: 'Редукцион (аукцион на понижение)' },
+  { value: 'price_monitoring', title: 'Мониторинг цен' },
+]
 
 // pointer / glow state
 const pointerTarget = ref<string | null>(null)
 const okpd2Pointer = ref(false)
+const auctionPointerTarget = ref<string | null>(null)
 let _pointerTimer: ReturnType<typeof setTimeout> | null = null
 let _okpd2Timer: ReturnType<typeof setTimeout> | null = null
+let _auctionPointerTimer: ReturnType<typeof setTimeout> | null = null
+
+const AUCTION_TARGETS = new Set(['auction-date', 'auction-bet'])
 
 function revealField(target: string) {
+  if (AUCTION_TARGETS.has(target)) {
+    // Поля редукциона находятся внутри диалога — не закрывать, а прокрутить и показать стрелку
+    if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
+    nextTick(() => {
+      document.getElementById('pub-target-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      auctionPointerTarget.value = target
+      _auctionPointerTimer = setTimeout(() => { auctionPointerTarget.value = null }, 5000)
+    })
+    return
+  }
   publishDialog.value = false
   pendingPlatform.value = null
   if (_pointerTimer) clearTimeout(_pointerTimer)
@@ -4982,10 +5075,18 @@ function initFabrikantDates() {
   }
 }
 
-function checkPublishReady(): {text: string; target: 'subject' | 'items' | 'nmck'}[] {
-  const errors: {text: string; target: 'subject' | 'items' | 'nmck'}[] = []
+function checkPublishReady(): {text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[] {
+  const errors: {text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[] = []
   if (!form.subject?.trim()) errors.push({ text: 'Не заполнено наименование закупки', target: 'subject' })
-  if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
+  // Мониторинг цен не требует позиций
+  if (fabrikantProcedureType.value !== 'price_monitoring') {
+    if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
+  }
+  // Поля редукциона
+  if (fabrikantProcedureType.value === 'reduction') {
+    if (!fabrikantAuctionDateStart.value) errors.push({ text: 'Укажите дату и время начала редукциона', target: 'auction-date' })
+    if (fabrikantAuctionBetFrom.value === null || fabrikantAuctionBetTo.value === null) errors.push({ text: 'Укажите границы ставки редукциона (от / до)', target: 'auction-bet' })
+  }
   return errors
 }
 
@@ -5009,13 +5110,22 @@ async function doPublish(platform: string, procedureType?: string | null) {
     const body: Record<string, any> = { platform }
     if (procedureType) body.procedure_type = procedureType
     if (platform === 'fabrikant') {
+      body.procedure_type = fabrikantProcedureType.value
       body.okpd2_code = fabrikantOkpd2.value
       body.proposal_start = fabrikantDates.value.proposal_start
       body.proposal_end = fabrikantDates.value.proposal_end
-      body.determination_date = fabrikantDates.value.determination_date
       body.summing_up_date = fabrikantDates.value.summing_up_date
       body.attach_documents = fabrikantAttachDocs.value
-      body.no_nmcd = fabrikantNoNmcd.value
+      if (fabrikantProcedureType.value === 'zp') {
+        body.determination_date = fabrikantDates.value.determination_date
+        body.no_nmcd = fabrikantNoNmcd.value
+      } else if (fabrikantProcedureType.value === 'reduction') {
+        body.no_nmcd = fabrikantNoNmcd.value
+        body.auction_date_start = fabrikantAuctionDateStart.value
+        body.auction_bet_limit_from = fabrikantAuctionBetFrom.value
+        body.auction_bet_limit_to = fabrikantAuctionBetTo.value
+      }
+      // price_monitoring: no no_nmcd, no determination_date, no auction fields
     }
     const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
       method: 'POST',
@@ -5049,7 +5159,10 @@ function openFabrikantRetry(platform: string) {
   publishDialog.value = true
   pendingPlatform.value = 'fabrikant'
   initFabrikantDates()
-  fabrikantNoNmcd.value = !(publishNmck.value > 0)
+  // Сохраняем выбранный тип процедуры при повторе (fabrikantProcedureType не сбрасываем)
+  if (fabrikantProcedureType.value !== 'price_monitoring') {
+    fabrikantNoNmcd.value = !(publishNmck.value > 0)
+  }
   if (lastPub?.error_text && lastPub.error_text.includes('ОКПД')) {
     nextTick(() => {
       if (_okpd2Timer) clearTimeout(_okpd2Timer)

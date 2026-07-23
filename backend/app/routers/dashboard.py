@@ -248,6 +248,29 @@ async def dashboard_charts(
                     else_=None
                 )
             ), 0).label("total_ordered"),
+            # NOTE: total_ordered above intentionally excludes status='ordered' (known discrepancy, do not fix)
+            # Per-subsidy basket mirrors (для total_work / total_delivered / total_delivered_unpaid)
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status.in_(["contracted", "ordered"]),
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("w_ordered"),
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "delivered",
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("w_delivered"),
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "paid",
+                     func.coalesce(Purchase.payment_amount, Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("w_paid"),
         )
         .select_from(Subsidy)
         .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)
@@ -311,6 +334,70 @@ async def dashboard_charts(
             )).scalars().all()
         }
 
+    # Виджет «Заключено договоров»: active-договоры, сумма по типу
+    #   single / framework_with_amount → max_amount
+    #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
+    #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
+    contract_single_q = (
+        select(
+            Contract.subsidy_id,
+            func.coalesce(func.sum(Contract.max_amount), 0).label("amt"),
+            func.count(Contract.id).label("cnt"),
+        )
+        .where(Contract.status == "active")
+        .where(Contract.contract_type.in_(["single", "framework_with_amount"]))
+        .group_by(Contract.subsidy_id)
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    cs_rows = (await db.execute(contract_single_q)).all()
+
+    # framework_cumulative: aggr по закупкам привязанным к таким договорам
+    contract_fc_q = (
+        select(
+            Purchase.subsidy_id,
+            func.coalesce(func.sum(
+                func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
+            ), 0).label("amt"),
+            # count distinct contracts (not purchases)
+            func.count(func.distinct(Purchase.contract_id)).label("cnt"),
+        )
+        .join(Contract, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_cumulative")
+        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+        .group_by(Purchase.subsidy_id)
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    cfc_rows = (await db.execute(contract_fc_q)).all()
+
+    # Собрать contracts_map: subsidy_id → float (сумма по обеим частям)
+    contracts_map: dict[int, float] = {}
+    contracts_cnt_map: dict[int, int] = {}
+    for r in cs_rows:
+        sid = r.subsidy_id
+        contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
+        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
+    for r in cfc_rows:
+        sid = r.subsidy_id
+        contracts_map[sid] = contracts_map.get(sid, 0.0) + float(r.amt)
+        contracts_cnt_map[sid] = contracts_cnt_map.get(sid, 0) + int(r.cnt)
+
+    # Глобальные итоги — сумма по регруппированным строкам (бит-в-бит эквивалентно прежнему)
+    contracts_amt = sum(contracts_map.values())
+    contracts_cnt = sum(contracts_cnt_map.values())
+
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
@@ -353,6 +440,11 @@ async def dashboard_charts(
             "remaining": remaining,  # = «Свободно» = budget − planned_tree
             "planned_amount": planned_amt,
             "budget_discrepancy": discrepancy,
+            # Per-subsidy work/delivery baskets (зеркала глобальных widgets)
+            "total_work": float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
+            "total_contracts": contracts_map.get(row.id, 0.0),
+            "total_delivered": float(row.w_delivered) + float(row.w_paid),
+            "total_delivered_unpaid": float(row.w_delivered),
         })
 
     # ── Накопительные виджеты закупок ────────────────────────────────────────
@@ -436,53 +528,6 @@ async def dashboard_charts(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
     monthly_payments_total = float((await db.execute(mp_q)).scalar() or 0)
-
-    # Виджет «Заключено договоров»: active-договоры, сумма по типу
-    #   single / framework_with_amount → max_amount
-    #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
-    #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
-    contract_single_q = (
-        select(
-            func.coalesce(func.sum(Contract.max_amount), 0).label("amt"),
-            func.count(Contract.id).label("cnt"),
-        )
-        .where(Contract.status == "active")
-        .where(Contract.contract_type.in_(["single", "framework_with_amount"]))
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    cs_row = (await db.execute(contract_single_q)).one()
-
-    # framework_cumulative: aggr по закупкам привязанным к таким договорам
-    contract_fc_q = (
-        select(
-            func.coalesce(func.sum(
-                func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
-            ), 0).label("amt"),
-            # count distinct contracts (not purchases)
-            func.count(func.distinct(Purchase.contract_id)).label("cnt"),
-        )
-        .join(Contract, Purchase.contract_id == Contract.id)
-        .where(Contract.status == "active")
-        .where(Contract.contract_type == "framework_cumulative")
-        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    cfc_row = (await db.execute(contract_fc_q)).one()
-
-    contracts_amt = float(cs_row.amt) + float(cfc_row.amt)
-    contracts_cnt = int(cs_row.cnt) + int(cfc_row.cnt)
 
     # ── Собираем виджеты ─────────────────────────────────────────────────────
     widgets = {

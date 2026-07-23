@@ -994,7 +994,7 @@ class PlatformCredentialOut(BaseModel):
 # Platform publications
 class PublishRequest(BaseModel):
     platform: str  # fabrikant / roseltorg_rb
-    procedure_type: Optional[str] = None  # только для roseltorg_rb: request_quotations / request_proposals / competition / auction
+    procedure_type: Optional[str] = None  # roseltorg_rb: request_quotations/...; fabrikant: zp | reduction | price_monitoring
     proposal_start: Optional[str] = None       # ISO datetime, Фабрикант: начало приёма предложений
     proposal_end: Optional[str] = None         # ISO datetime, Фабрикант: конец приёма предложений
     determination_date: Optional[str] = None   # ISO datetime, Фабрикант: определение победителя
@@ -1002,6 +1002,10 @@ class PublishRequest(BaseModel):
     okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
     attach_documents: bool = False             # Фабрикант: прикрепить пакет из 5 документов после публикации
     no_nmcd: bool = False                      # Фабрикант: опубликовать без НМЦД (nmck=0)
+    # Фабрикант Редукцион — дополнительные поля
+    auction_date_start: Optional[str] = None   # ISO datetime, дата начала редукциона
+    auction_bet_limit_from: Optional[float] = None  # граница ставки от
+    auction_bet_limit_to: Optional[float] = None    # граница ставки до
 
 class PublicationStatusUpdate(BaseModel):
     status: str             # published / error

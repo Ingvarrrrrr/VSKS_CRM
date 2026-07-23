@@ -414,6 +414,19 @@ async def _call_roseltorg(pub_id: int, payload: dict):
 # ── Фабрикант SOAP ───────────────────────────────────────────────────────────
 
 def _build_soap_xml(payload: dict) -> str:
+    """Собирает SOAP-конверт для Фабрикант.
+
+    Тип процедуры задаётся payload["procedure_type"]:
+      "zp"              — Запрос предложений (purchaseNoticeZPCommercial)   [default]
+      "reduction"       — Редукцион (purchaseNoticeReductionCommercial)
+      "price_monitoring"— Мониторинг цен (purchaseNoticePriceMonitoringCommercial)
+
+    Элементы строятся строго по sequence из WSDL. Никаких вымышленных элементов.
+    """
+    procedure_type = payload.get("procedure_type") or "zp"
+    if procedure_type not in ("zp", "reduction", "price_monitoring"):
+        raise HTTPException(422, f"Неверный тип процедуры Фабрикант: {procedure_type!r}. Допустимо: zp, reduction, price_monitoring")
+
     def esc(s):
         return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -448,11 +461,6 @@ def _build_soap_xml(payload: dict) -> str:
                 pass
     end = fdt(end_dt)
 
-    if payload.get("determination_date"):
-        determ = fdt(_parse_dt(payload["determination_date"]) or (end_dt + timedelta(days=1)))
-    else:
-        determ = fdt(end_dt + timedelta(days=1))
-
     if payload.get("summing_up_date"):
         summing = fdt(_parse_dt(payload["summing_up_date"]) or (end_dt + timedelta(days=2)))
     else:
@@ -461,76 +469,247 @@ def _build_soap_xml(payload: dict) -> str:
     NS_PNC = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/purchaseNotice"
     NS_T   = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/types"
 
-    items_xml = ""
-    for idx, item in enumerate(payload.get("items", []), 1):
-        if not item.get("item_name"):
-            continue
-        qty = item.get("quantity", 1)
-        up = float(item.get("unit_price", 0))
-        tp = float(item.get("total_price", 0)) or (up * qty)
-        unit_name = esc(item.get("unit", "шт") or "шт")
-        # okpd2/okved2 codes from item or defaults (both required by Fabrikant schema)
-        okpd2_code = esc(item.get("okpd2_code") or payload.get("okpd2_code") or "")
-        okpd2_name = esc(item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
-        okved2_code = esc(item.get("okved2_code") or "G")
-        okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
-        # positionPrice (total) comes before positionPricePerUnit per schema
-        if up > 0:
-            price_xml = (
-                f"<pnc:positionPrice><pnc:price>{tp}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPrice>"
-                f"<pnc:positionPricePerUnit><pnc:price>{up}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPricePerUnit>"
+    # ── Вспомогательный билдер: initialSumInfo с необязательным pricingMethod перед ним ──
+    def _initial_sum_xml(nmck_val: float) -> str:
+        """XSD-схема Фабриканта (выяснено эмпирически 2026-07-23):
+        - Элемента <noNmcd> нет.
+        - lot-уровень: pricingMethod(0..1) → initialSumInfo(обязателен, minInclusive 0.01).
+        - Без НМЦД: берём сумму позиций или ставим pricingMethod=withoutNDSType + 1.00.
+        """
+        nmck_f = float(nmck_val or 0)
+        if nmck_f >= 0.01:
+            return (
+                f"<pnc:initialSumInfo><pnc:initialSum>{nmck_f:.2f}</pnc:initialSum>"
+                f"<pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
             )
-        else:
-            # Без НМЦД — цена не указана
-            price_xml = "<pnc:noNmcd>true</pnc:noNmcd>"
-        items_xml += (
-            f"<pnc:lotItem>"
-            f"<pnc:ordinalNumber>{idx}</pnc:ordinalNumber>"
-            f"<pnc:positionName>{esc(item['item_name'])}</pnc:positionName>"
-            f"<pnc:okpd2><t:code>{okpd2_code}</t:code><t:name>{okpd2_name}</t:name></pnc:okpd2>"
-            f"<pnc:okved2><t:code>{okved2_code}</t:code><t:name>{okved2_name}</t:name></pnc:okved2>"
-            f"<pnc:okei><t:code>796</t:code><t:name>{unit_name}</t:name></pnc:okei>"
-            f"<pnc:qty>{qty}</pnc:qty>"
-            f"{price_xml}"
-            f"</pnc:lotItem>"
+        items_total = sum(
+            float(i.get("total_price", 0)) or (float(i.get("unit_price", 0)) * float(i.get("quantity", 1)))
+            for i in payload.get("items", [])
+            if i.get("item_name")
+        )
+        effective_sum = round(items_total, 2) if items_total >= 0.01 else 1.00
+        return (
+            "<pnc:pricingMethod>withoutNDSType</pnc:pricingMethod>"
+            f"<pnc:initialSumInfo><pnc:initialSum>{effective_sum:.2f}</pnc:initialSum>"
+            f"<pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
         )
 
-    lot_items = f"<pnc:lotItems>{items_xml}</pnc:lotItems>" if items_xml else ""
-    initial_sum_xml = (
-        f"<pnc:initialSumInfo><pnc:initialSum>{nmck}</pnc:initialSum><pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
-        if float(nmck or 0) > 0
-        else "<pnc:noNmcd>true</pnc:noNmcd>"
-    )
+    # ── Билдер lotItems для ЗП (lotItemType) ──
+    def _build_lot_items_zp() -> str:
+        items_xml = ""
+        for idx, item in enumerate(payload.get("items", []), 1):
+            if not item.get("item_name"):
+                continue
+            qty = item.get("quantity", 1)
+            up = float(item.get("unit_price", 0))
+            tp = float(item.get("total_price", 0)) or (up * qty)
+            unit_name = esc(item.get("unit", "шт") or "шт")
+            okpd2_code = esc(item.get("okpd2_code") or payload.get("okpd2_code") or "")
+            okpd2_name = esc(item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
+            okved2_code = esc(item.get("okved2_code") or "G")
+            okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
+            # positionPrice(total) before positionPricePerUnit per lotItemType sequence
+            if up > 0:
+                price_xml = (
+                    f"<pnc:positionPrice><pnc:price>{tp}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPrice>"
+                    f"<pnc:positionPricePerUnit><pnc:price>{up}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPricePerUnit>"
+                )
+            else:
+                price_xml = ""
+            items_xml += (
+                f"<pnc:lotItem>"
+                f"<pnc:ordinalNumber>{idx}</pnc:ordinalNumber>"
+                f"<pnc:positionName>{esc(item['item_name'])}</pnc:positionName>"
+                f"<pnc:okpd2><t:code>{okpd2_code}</t:code><t:name>{okpd2_name}</t:name></pnc:okpd2>"
+                f"<pnc:okved2><t:code>{okved2_code}</t:code><t:name>{okved2_name}</t:name></pnc:okved2>"
+                f"<pnc:okei><t:code>796</t:code><t:name>{unit_name}</t:name></pnc:okei>"
+                f"<pnc:qty>{qty}</pnc:qty>"
+                f"{price_xml}"
+                f"</pnc:lotItem>"
+            )
+        return f"<pnc:lotItems>{items_xml}</pnc:lotItems>" if items_xml else ""
 
-    return (
+    # ── Билдер lotItems для Редукциона (lotItemReductionType) ──
+    def _build_lot_items_reduction() -> str:
+        items_xml = ""
+        for idx, item in enumerate(payload.get("items", []), 1):
+            if not item.get("item_name"):
+                continue
+            qty = item.get("quantity", 1)
+            unit_name = esc(item.get("unit", "шт") or "шт")
+            okpd2_code = esc(item.get("okpd2_code") or payload.get("okpd2_code") or "")
+            okpd2_name = esc(item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
+            okved2_code = esc(item.get("okved2_code") or "G")
+            okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
+            # lotItemReductionType sequence: ordinalNumber? okpd2? okved2? okei? qty? additionalInfo?
+            items_xml += (
+                f"<pnc:lotItem>"
+                f"<pnc:ordinalNumber>{idx}</pnc:ordinalNumber>"
+                f"<pnc:okpd2><t:code>{okpd2_code}</t:code><t:name>{okpd2_name}</t:name></pnc:okpd2>"
+                f"<pnc:okved2><t:code>{okved2_code}</t:code><t:name>{okved2_name}</t:name></pnc:okved2>"
+                f"<pnc:okei><t:code>796</t:code><t:name>{unit_name}</t:name></pnc:okei>"
+                f"<pnc:qty>{qty}</pnc:qty>"
+                f"</pnc:lotItem>"
+            )
+        return f"<pnc:lotItems>{items_xml}</pnc:lotItems>" if items_xml else ""
+
+    soap_header = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
         "<soap:Body>"
-        f'<pnc:purchaseNoticeZPCommercial xmlns:pnc="{NS_PNC}" xmlns:t="{NS_T}">'
-        "<pnc:body><pnc:item><pnc:purchaseNoticeZPCommercialData>"
+    )
+    soap_footer = "</soap:Body></soap:Envelope>"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ЗП — Запрос предложений (purchaseNoticeZPCommercial)
+    # BaseDataType: purchaseId → purchaseCategoryCustom → name → placer?(skip) → customer? → notDishonest?
+    # lotType sequence: lotId → subject → currency → pricingMethod? → initialSumInfo → deliveryPlace? →
+    #   [applicationSupplyNeeded+applicationSupplySumm]? → applicationSupplyExtra? → lotItems →
+    #   proposalStartDateTime → proposalEndDateTime → proposalDeterminationDateTime →
+    #   summingUpDateTime → lotFramework → lotAllowParticipantsExceedPricesByPositions? → criteria?
+    # ═══════════════════════════════════════════════════════════════════════════
+    if procedure_type == "zp":
+        if payload.get("determination_date"):
+            determ = fdt(_parse_dt(payload["determination_date"]) or (end_dt + timedelta(days=1)))
+        else:
+            determ = fdt(end_dt + timedelta(days=1))
+
+        lot_items = _build_lot_items_zp()
+        initial_sum_xml = _initial_sum_xml(nmck)
+        delivery = esc(payload.get("delivery_address") or "Москва")
+
+        body = (
+            f'<pnc:purchaseNoticeZPCommercial xmlns:pnc="{NS_PNC}" xmlns:t="{NS_T}">'
+            "<pnc:body><pnc:item><pnc:purchaseNoticeZPCommercialData>"
+            f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
+            "<pnc:purchaseCategoryCustom>Запрос предложений</pnc:purchaseCategoryCustom>"
+            f"<pnc:name>{subject}</pnc:name>"
+            f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
+            "<pnc:notDishonest>false</pnc:notDishonest>"
+            "<pnc:lots><pnc:lot>"
+            f"<pnc:lotId>{purchase_id}</pnc:lotId>"
+            f"<pnc:subject>{subject}</pnc:subject>"
+            "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
+            f"{initial_sum_xml}"
+            f"<pnc:deliveryPlace><pnc:adress>{delivery}</pnc:adress></pnc:deliveryPlace>"
+            "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
+            f"{lot_items}"
+            f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
+            f"<pnc:proposalEndDateTime>{end}</pnc:proposalEndDateTime>"
+            f"<pnc:proposalDeterminationDateTime>{determ}</pnc:proposalDeterminationDateTime>"
+            f"<pnc:summingUpDateTime>{summing}</pnc:summingUpDateTime>"
+            "<pnc:lotFramework>false</pnc:lotFramework>"
+            "</pnc:lot></pnc:lots>"
+            "</pnc:purchaseNoticeZPCommercialData></pnc:item></pnc:body>"
+            "</pnc:purchaseNoticeZPCommercial>"
+        )
+        return soap_header + body + soap_footer
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Редукцион (purchaseNoticeReductionCommercial)
+    # BaseDataType: purchaseId → name → placer?(skip) → customer? → notDishonest?
+    #   (БЕЗ purchaseCategoryCustom!)
+    # lotReductionType sequence: lotId → subject → currency → pricingMethod? → initialSumInfo →
+    #   deliveryPlace(ОБЯЗАТЕЛЕН!) → [applicationSupplyNeeded+...]? → applicationSupplyExtra? →
+    #   lotItems → proposalStartDateTime → proposalEndDateTime → auctionDateStart →
+    #   summingUpDateTime → auctionNewBetLimitFrom → auctionNewBetLimitTo →
+    #   contractExecutionTerms? → deliveryTerm? → lotPaymentConditions? →
+    #   refusalToPurchase? → preferenceInformation? → comment? → lotFramework
+    # ═══════════════════════════════════════════════════════════════════════════
+    if procedure_type == "reduction":
+        missing = []
+        if not payload.get("delivery_address"):
+            missing.append("место поставки")
+        if not payload.get("auction_date_start"):
+            missing.append("дата начала редукциона")
+        if payload.get("auction_bet_limit_from") is None:
+            missing.append("граница ставки от")
+        if payload.get("auction_bet_limit_to") is None:
+            missing.append("граница ставки до")
+        if missing:
+            raise HTTPException(422, f"Для редукциона обязательны: {', '.join(missing)}")
+
+        auction_start = fdt(_parse_dt(payload["auction_date_start"]) or (end_dt + timedelta(days=1)))
+        bet_from = float(payload["auction_bet_limit_from"])
+        bet_to = float(payload["auction_bet_limit_to"])
+        delivery = esc(payload["delivery_address"])
+        lot_items = _build_lot_items_reduction()
+        initial_sum_xml = _initial_sum_xml(nmck)
+
+        body = (
+            f'<pnc:purchaseNoticeReductionCommercial xmlns:pnc="{NS_PNC}" xmlns:t="{NS_T}">'
+            "<pnc:body><pnc:item><pnc:purchaseNoticeReductionCommercialData>"
+            f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
+            f"<pnc:name>{subject}</pnc:name>"
+            f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
+            "<pnc:notDishonest>false</pnc:notDishonest>"
+            "<pnc:lots><pnc:lot>"
+            f"<pnc:lotId>{purchase_id}</pnc:lotId>"
+            f"<pnc:subject>{subject}</pnc:subject>"
+            "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
+            f"{initial_sum_xml}"
+            f"<pnc:deliveryPlace><pnc:adress>{delivery}</pnc:adress></pnc:deliveryPlace>"
+            "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
+            f"{lot_items}"
+            f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
+            f"<pnc:proposalEndDateTime>{end}</pnc:proposalEndDateTime>"
+            f"<pnc:auctionDateStart>{auction_start}</pnc:auctionDateStart>"
+            f"<pnc:summingUpDateTime>{summing}</pnc:summingUpDateTime>"
+            f"<pnc:auctionNewBetLimitFrom>{bet_from:.2f}</pnc:auctionNewBetLimitFrom>"
+            f"<pnc:auctionNewBetLimitTo>{bet_to:.2f}</pnc:auctionNewBetLimitTo>"
+            "<pnc:lotFramework>false</pnc:lotFramework>"
+            "</pnc:lot></pnc:lots>"
+            "</pnc:purchaseNoticeReductionCommercialData></pnc:item></pnc:body>"
+            "</pnc:purchaseNoticeReductionCommercial>"
+        )
+        return soap_header + body + soap_footer
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Мониторинг цен (purchaseNoticePriceMonitoringCommercial)
+    # BaseDataType: purchaseId → name → placer?(skip) → customer?
+    #   (без notDishonest, без purchaseCategoryCustom)
+    # PriceMonitoringLotType sequence: lotId → subject → currency →
+    #   [okei+qty]?(0..1) → okpd2(1..N, ОБЯЗАТЕЛЕН) → deliveryPlace? →
+    #   proposalStartDateTime → proposalEndDateTime
+    #   (НЕТ initialSumInfo, НЕТ lotItems, НЕТ цен)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # procedure_type == "price_monitoring"
+    okpd2_code = (payload.get("okpd2_code") or "").strip()
+    if not okpd2_code:
+        raise HTTPException(422, "Для мониторинга цен обязателен ОКПД2")
+
+    # okei+qty — опционально, берём из первой позиции если есть
+    okei_qty_xml = ""
+    first_item = next((i for i in payload.get("items", []) if i.get("item_name")), None)
+    if first_item:
+        qty = first_item.get("quantity", 1)
+        unit_name = esc(first_item.get("unit", "шт") or "шт")
+        okei_qty_xml = (
+            f"<pnc:okei><t:code>796</t:code><t:name>{unit_name}</t:name></pnc:okei>"
+            f"<pnc:qty>{qty}</pnc:qty>"
+        )
+
+    okpd2_name = esc(payload.get("okpd2_name") or okpd2_code)
+
+    body = (
+        f'<pnc:purchaseNoticePriceMonitoringCommercial xmlns:pnc="{NS_PNC}" xmlns:t="{NS_T}">'
+        "<pnc:body><pnc:item><pnc:purchaseNoticePriceMonitoringCommercialData>"
         f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
-        "<pnc:purchaseCategoryCustom>Запрос предложений</pnc:purchaseCategoryCustom>"
         f"<pnc:name>{subject}</pnc:name>"
         f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
-        "<pnc:notDishonest>false</pnc:notDishonest>"
         "<pnc:lots><pnc:lot>"
         f"<pnc:lotId>{purchase_id}</pnc:lotId>"
         f"<pnc:subject>{subject}</pnc:subject>"
         "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
-        f"{initial_sum_xml}"
-        f"<pnc:deliveryPlace><pnc:adress>{esc(payload.get('delivery_address') or 'Москва')}</pnc:adress></pnc:deliveryPlace>"
-        "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
-        f"{lot_items}"
+        f"{okei_qty_xml}"
+        f"<pnc:okpd2><t:code>{esc(okpd2_code)}</t:code><t:name>{okpd2_name}</t:name></pnc:okpd2>"
         f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
         f"<pnc:proposalEndDateTime>{end}</pnc:proposalEndDateTime>"
-        f"<pnc:proposalDeterminationDateTime>{determ}</pnc:proposalDeterminationDateTime>"
-        f"<pnc:summingUpDateTime>{summing}</pnc:summingUpDateTime>"
-        "<pnc:lotFramework>false</pnc:lotFramework>"
         "</pnc:lot></pnc:lots>"
-        "</pnc:purchaseNoticeZPCommercialData></pnc:item></pnc:body>"
-        "</pnc:purchaseNoticeZPCommercial>"
-        "</soap:Body></soap:Envelope>"
+        "</pnc:purchaseNoticePriceMonitoringCommercialData></pnc:item></pnc:body>"
+        "</pnc:purchaseNoticePriceMonitoringCommercial>"
     )
+    return soap_header + body + soap_footer
 
 
 FABRIKANT_CHECK_URL = "https://api.fabrikant.ru/multi-integration/common/commercial_trade/checkRequest"
@@ -674,9 +853,11 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
         return
 
     nmck = float(payload.get("nmck") or 0)
+    proc_type = payload.get("procedure_type") or "zp"
 
     items = [i for i in payload.get("items", []) if i.get("item_name")]
-    if not items:
+    # Мониторинг цен не требует позиций (lotItems отсутствует в схеме)
+    if proc_type != "price_monitoring" and not items:
         await _set_pub_error(pub_id, "В закупке нет позиций. Добавьте хотя бы одну позицию перед публикацией.")
         return
 
@@ -688,15 +869,18 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
         )
         return
 
-    purchase_okpd = (payload.get("okpd2_code") or "").strip()
-    missing_okpd = [i.get("item_name", "?") for i in items if not (i.get("okpd2_code") or purchase_okpd)]
-    if missing_okpd:
-        await _set_pub_error(
-            pub_id,
-            f"Не заполнен код ОКПД2 у позиций: {', '.join(missing_okpd[:3])}. "
-            "Укажите код ОКПД2 в диалоге публикации."
-        )
-        return
+    # ОКПД2 на уровне позиций проверяем только для ЗП и Редукциона;
+    # для Мониторинга цен ОКПД2 задаётся на уровне лота (проверяется в _build_soap_xml)
+    if proc_type != "price_monitoring":
+        purchase_okpd = (payload.get("okpd2_code") or "").strip()
+        missing_okpd = [i.get("item_name", "?") for i in items if not (i.get("okpd2_code") or purchase_okpd)]
+        if missing_okpd:
+            await _set_pub_error(
+                pub_id,
+                f"Не заполнен код ОКПД2 у позиций: {', '.join(missing_okpd[:3])}. "
+                "Укажите код ОКПД2 в диалоге публикации."
+            )
+            return
 
     auth = base64.b64encode(f"{login}:{password}".encode()).decode()
     soap_xml = _build_soap_xml(payload)
@@ -806,6 +990,12 @@ async def publish_purchase(
         payload["summing_up_date"] = body.summing_up_date
     if body.okpd2_code:
         payload["okpd2_code"] = body.okpd2_code.strip()
+    if body.auction_date_start:
+        payload["auction_date_start"] = body.auction_date_start
+    if body.auction_bet_limit_from is not None:
+        payload["auction_bet_limit_from"] = body.auction_bet_limit_from
+    if body.auction_bet_limit_to is not None:
+        payload["auction_bet_limit_to"] = body.auction_bet_limit_to
 
     pub = PlatformPublication(
         purchase_id=purchase_id,

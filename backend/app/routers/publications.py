@@ -16,6 +16,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session
@@ -245,8 +246,14 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
 
     org_inn = None
     if subsidy and subsidy.org_id:
-        org = await db.get(Organization, subsidy.org_id)
-        org_inn = org.inn if org else None
+        org_res = await db.execute(
+            select(Organization)
+            .where(Organization.id == subsidy.org_id)
+            .options(selectinload(Organization.contractor))
+        )
+        org = org_res.scalar_one_or_none()
+        if org:
+            org_inn = org.inn or (org.contractor.inn if org.contractor else None)
 
     return {
         "purchase_id":       p.id,

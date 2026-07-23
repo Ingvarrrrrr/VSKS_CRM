@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      // Android: env(safe-area-inset-top)=0, а viewport-fit=cover рисует окно под статус-баром — отключаем cover
+      if (/Android/i.test(navigator.userAgent)) {
+        var vp = document.querySelector('meta[name="viewport"]');
+        if (vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0');
+      }
+    </script>
     <title>GALA — Управление закупками</title>
 
     <!-- PWA -->

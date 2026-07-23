@@ -1021,24 +1021,36 @@ const { setMode } = useDashboardMode()
 const { mobile } = useDisplay()
 
 // Mobile-only stacked layout (full-width, single column, tuned heights)
-const MOBILE_ITEMS: Array<{ i: string; h: number }> = [
-  { i: 'kpi',       h: 5  },
+// ROW_PX = 125 — высота одного ряда KPI-карточек на мобильном (card ~113px + v-col padding 12px)
+const MOBILE_KPI_ROW_PX = 125
+const MOBILE_KPI_PADDING = 32 // запас + 12 margin
+
+const MOBILE_ITEMS_BASE: Array<{ i: string; h: number; condition?: () => boolean }> = [
+  { i: 'kpi',       h: 0  }, // h вычисляется динамически
   { i: 'donut',     h: 11 },
   { i: 'radial',    h: 7  },
   { i: 'pipeline',  h: 11 },
-  { i: 'monthly',   h: 8  },
-  { i: 'breakdown', h: 9  },
+  { i: 'monthly',   h: 8,  condition: () => monthlyContractsRemaining.value.length > 0 },
+  { i: 'breakdown', h: 9,  condition: () => pipelineByType.value.some(s => s.total > 0) },
   { i: 'purchases', h: 11 },
   { i: 'table',     h: 14 },
   { i: 'finplan',   h: 14 },
 ]
 const mobileLayout = computed<LayoutItem[]>(() => {
+  // Фикс 2: динамическая высота KPI под реальное количество карточек (2 в ряд)
+  const rows = Math.ceil(kpiCards.value.length / 2)
+  const kpiH = Math.ceil((rows * MOBILE_KPI_ROW_PX + MOBILE_KPI_PADDING) / 42)
+
   let y = 0
-  return MOBILE_ITEMS.map(({ i, h }) => {
-    const item: LayoutItem = { i, x: 0, y, w: 12, h, minW: 12, minH: h }
+  const result: LayoutItem[] = []
+  for (const { i, h: staticH, condition } of MOBILE_ITEMS_BASE) {
+    // Фикс 3: пропускать скрытые виджеты (monthly/breakdown) — убирает пустые дырки
+    if (condition && !condition()) continue
+    const h = i === 'kpi' ? kpiH : staticH
+    result.push({ i, x: 0, y, w: 12, h, minW: 12, minH: h })
     y += h
-    return item
-  })
+  }
+  return result
 })
 
 const effectiveLayout = computed<LayoutItem[]>(() => mobile.value ? mobileLayout.value : layout.value)

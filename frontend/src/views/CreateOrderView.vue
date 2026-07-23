@@ -255,7 +255,9 @@
               />
             </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="4">
-              <div :class="entityChanges.isFieldUnseen('subject') ? 'field-changed' : ''"
+              <div id="pub-target-subject" style="position:relative">
+              <div v-if="pointerTarget === 'subject'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+              <div :class="[entityChanges.isFieldUnseen('subject') ? 'field-changed' : '', pointerTarget === 'subject' ? 'pub-glow' : '']"
                 @click="entityChanges.dismissField('subject')">
                 <v-text-field
                   v-model="form.subject"
@@ -301,6 +303,7 @@
                   @update:search="onVehicleSearch"
                 />
               </v-expand-transition>
+              </div><!-- /pub-target-subject -->
             </v-col>
             <!-- B-dedup: «Исполнитель (для документов)» удалён как дубль «Ответственного исполнителя».
                  В шаблоне СЗ {{responsible_person}} = ФИО → инициалы автоматически (форматирование на backend). -->
@@ -745,7 +748,8 @@
       </v-card>
 
       <!-- 2. Позиции закупки -->
-      <v-card variant="outlined" class="mb-4">
+      <v-card id="pub-target-items" variant="outlined" class="mb-4" style="position:relative">
+        <div v-if="pointerTarget === 'items'" class="pub-pointer" style="top:-42px;left:50%;"><span class="mdi mdi-arrow-down-bold" /></div>
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center justify-end">
           <div class="d-flex align-center ga-2">
             <v-btn
@@ -918,6 +922,9 @@
         <v-card-text>
           <v-row v-if="isSectionVisible('financial_indicators')">
             <v-col cols="12" md="3">
+              <div id="pub-target-nmck" style="position:relative">
+              <div v-if="pointerTarget === 'nmck'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+              <div :class="pointerTarget === 'nmck' ? 'pub-glow' : ''">
               <div class="text-caption text-medium-emphasis mb-1">НМЦД (итого)</div>
               <v-btn-toggle v-model="nmckMode" mandatory density="compact" color="primary" class="mb-2" style="width:100%">
                 <v-btn value="auto" size="small" style="flex:1;text-transform:none;letter-spacing:0">Авто</v-btn>
@@ -934,6 +941,8 @@
                 type="number" suffix="₽"
                 hint="Введено вручную. Цена за единицу в ТЗ скрыта." persistent-hint
                 @update:model-value="calcEconomy" />
+              </div><!-- /pub-glow -->
+              </div><!-- /pub-target-nmck -->
             </v-col>
             <v-col cols="12" md="3">
               <div class="text-caption text-medium-emphasis mb-1">Цена договора</div>
@@ -2249,7 +2258,7 @@
               Скачать пакет (ZIP)
             </v-btn>
             <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
-              @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null">
+              @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null; fabrikantNoNmcd = !(publishNmck > 0)">
               Опубликовать
             </v-btn>
           </div>
@@ -2291,7 +2300,7 @@
                 </td>
                 <td style="width:36px">
                   <v-btn v-if="pub.status === 'error'" icon="mdi-refresh" size="x-small" variant="text"
-                    color="deep-purple" @click="retryPublish(pub.platform)" />
+                    color="deep-purple" @click="pub.platform === 'fabrikant' ? openFabrikantRetry(pub.platform) : retryPublish(pub.platform)" />
                 </td>
               </tr>
             </tbody>
@@ -2523,11 +2532,13 @@
           <v-alert v-if="publishErrors.length" type="error" variant="tonal" density="compact" class="mb-4">
             <div class="text-subtitle-2 mb-1">Заполните обязательные поля:</div>
             <ul class="pl-4 mb-0">
-              <li v-for="e in publishErrors" :key="e" class="text-body-2">{{ e }}</li>
+              <li v-for="e in publishErrors" :key="e.target" class="text-body-2"
+                style="cursor:pointer" @click="revealField(e.target)">
+                <v-icon size="14" class="mr-1">mdi-arrow-right-circle</v-icon>{{ e.text }}
+              </li>
             </ul>
           </v-alert>
 
-          <template v-if="!publishErrors.length">
             <p class="text-body-2 text-medium-emphasis mb-4">
               Выберите площадку. Данные закупки будут отправлены автоматически.
             </p>
@@ -2548,7 +2559,7 @@
                     color="deep-purple" variant="tonal" size="small"
                     :loading="publishingPlatform === pl.value"
                     :disabled="isPlatformPublished(pl.value)"
-                    @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') initFabrikantDates()"
+                    @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') { initFabrikantDates(); fabrikantNoNmcd = !(publishNmck > 0) }"
                   >
                     {{ isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
                   </v-btn>
@@ -2564,16 +2575,40 @@
                 <v-alert v-if="!currentSubsidyOrgInn" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
                   Не заполнен ИНН организации-заказчика. Перейдите в раздел <strong>Организации</strong> → нажмите карандаш → укажите ИНН.
                 </v-alert>
-                <v-text-field
-                  v-model="fabrikantOkpd2"
-                  label="Код ОКПД2 (обязательно)"
-                  hint="Пример: 47.99.9 — Торговля розничная прочая"
-                  persistent-hint
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                  placeholder="47.99.9"
-                />
+                <div style="position:relative">
+                  <v-text-field
+                    v-model="fabrikantOkpd2"
+                    label="Код ОКПД2 (обязательно)"
+                    hint="Пример: 47.99.9 — Торговля розничная прочая"
+                    persistent-hint
+                    variant="outlined"
+                    density="compact"
+                    class="mb-3"
+                    placeholder="47.99.9"
+                    :error="okpd2Pointer && !fabrikantOkpd2"
+                    @update:model-value="okpd2Pointer = false"
+                  />
+                  <div v-if="okpd2Pointer" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+                </div>
+
+                <!-- НМЦД -->
+                <div class="mb-3">
+                  <div v-if="publishNmck > 0" class="text-body-2 mb-1">
+                    НМЦД: <strong>{{ formatMoney(publishNmck) }}</strong>
+                  </div>
+                  <v-checkbox
+                    v-model="fabrikantNoNmcd"
+                    label="Опубликовать без НМЦД"
+                    density="compact"
+                    hide-details
+                    color="orange-darken-2"
+                  />
+                  <div v-if="publishNmck === 0" class="text-caption text-medium-emphasis mt-1">
+                    НМЦД не найдена в закупке — будет опубликовано без НМЦД. Чтобы указать цену, заполните НМЦД в карточке.
+                    <v-btn variant="text" size="x-small" class="ml-1" @click="revealField('nmck')">Показать поле НМЦД</v-btn>
+                  </div>
+                </div>
+
                 <v-row dense>
                   <v-col cols="12" sm="6">
                     <v-text-field
@@ -2653,7 +2688,6 @@
                 </div>
               </div>
             </v-expand-transition>
-          </template>
         </v-card-text>
         <v-card-actions class="px-6 pb-4">
           <v-spacer />
@@ -4909,11 +4943,31 @@ const publishDialog = ref(false)
 const publishingPlatform = ref<string | null>(null)
 const pendingPlatform = ref<string | null>(null)
 const roseltorgProcedureType = ref<string | null>(null)
-const publishErrors = ref<string[]>([])
+const publishErrors = ref<{text: string; target: 'subject' | 'items' | 'nmck'}[]>([])
 
 const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
 const fabrikantOkpd2 = ref('')
 const fabrikantAttachDocs = ref(true)
+const fabrikantNoNmcd = ref(false)
+
+// pointer / glow state
+const pointerTarget = ref<string | null>(null)
+const okpd2Pointer = ref(false)
+let _pointerTimer: ReturnType<typeof setTimeout> | null = null
+let _okpd2Timer: ReturnType<typeof setTimeout> | null = null
+
+function revealField(target: string) {
+  publishDialog.value = false
+  pendingPlatform.value = null
+  if (_pointerTimer) clearTimeout(_pointerTimer)
+  nextTick(() => {
+    document.getElementById('pub-target-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    pointerTarget.value = target
+    _pointerTimer = setTimeout(() => { pointerTarget.value = null }, 5000)
+  })
+}
+
+const publishNmck = computed(() => displayNmck.value || savedNmck.value || 0)
 
 function initFabrikantDates() {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -4928,11 +4982,10 @@ function initFabrikantDates() {
   }
 }
 
-function checkPublishReady(): string[] {
-  const errors: string[] = []
-  if (!form.subject?.trim()) errors.push('Не заполнено наименование закупки')
-  if (!(displayNmck.value > 0)) errors.push('Не указана НМЦД (сумма закупки)')
-  if (!items.value.some(i => i.item_name?.trim())) errors.push('Нет позиций в закупке (добавьте хотя бы одну)')
+function checkPublishReady(): {text: string; target: 'subject' | 'items' | 'nmck'}[] {
+  const errors: {text: string; target: 'subject' | 'items' | 'nmck'}[] = []
+  if (!form.subject?.trim()) errors.push({ text: 'Не заполнено наименование закупки', target: 'subject' })
+  if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
   return errors
 }
 
@@ -4962,6 +5015,7 @@ async function doPublish(platform: string, procedureType?: string | null) {
       body.determination_date = fabrikantDates.value.determination_date
       body.summing_up_date = fabrikantDates.value.summing_up_date
       body.attach_documents = fabrikantAttachDocs.value
+      body.no_nmcd = fabrikantNoNmcd.value
     }
     const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
       method: 'POST',
@@ -4982,7 +5036,27 @@ async function doPublish(platform: string, procedureType?: string | null) {
 }
 
 async function retryPublish(platform: string) {
-  await doPublish(platform)
+  if (platform === 'fabrikant') {
+    openFabrikantRetry(platform)
+  } else {
+    await doPublish(platform)
+  }
+}
+
+function openFabrikantRetry(platform: string) {
+  const lastPub = publications.value.find(p => p.platform === platform && p.status === 'error')
+  publishErrors.value = checkPublishReady()
+  publishDialog.value = true
+  pendingPlatform.value = 'fabrikant'
+  initFabrikantDates()
+  fabrikantNoNmcd.value = !(publishNmck.value > 0)
+  if (lastPub?.error_text && lastPub.error_text.includes('ОКПД')) {
+    nextTick(() => {
+      if (_okpd2Timer) clearTimeout(_okpd2Timer)
+      okpd2Pointer.value = true
+      _okpd2Timer = setTimeout(() => { okpd2Pointer.value = false }, 5000)
+    })
+  }
 }
 
 function pollPublication(pubId: number, attempts = 0) {
@@ -8088,5 +8162,42 @@ async function downloadKpXlsx() {
 @keyframes missingFieldPulse {
   from { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
   to   { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+
+/* pub-pointer / pub-glow — указатель на целевые поля из диалога публикации */
+.pub-pointer {
+  position: absolute;
+  top: -42px;
+  left: 50%;
+  margin-left: -16px;
+  width: 32px;
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 30;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
+  animation: pub-pointer-wiggle 0.9s ease-in-out infinite;
+}
+.pub-pointer .mdi {
+  font-size: 30px;
+  color: #fb923c;
+  line-height: 1;
+}
+@keyframes pub-pointer-wiggle {
+  0%   { transform: translateY(0)    rotate(-10deg); }
+  25%  { transform: translateY(-6px) rotate(10deg); }
+  50%  { transform: translateY(0)    rotate(-8deg); }
+  75%  { transform: translateY(-4px) rotate(8deg); }
+  100% { transform: translateY(0)    rotate(-10deg); }
+}
+.pub-glow {
+  border-radius: 6px;
+  animation: pub-match-glow 1.2s ease-in-out infinite;
+}
+@keyframes pub-match-glow {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(251,146,60,0.20), 0 0 16px 2px rgba(251,146,60,0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(251,146,60,0.35), 0 0 30px 8px rgba(251,146,60,0.75); }
 }
 </style>

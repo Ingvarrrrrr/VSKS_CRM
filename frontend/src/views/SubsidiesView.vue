@@ -94,10 +94,10 @@
           <template #item.actions="{ item }">
             <div class="d-flex align-center justify-end" style="gap:2px">
               <v-btn
-                icon="mdi-file-document-outline"
+                icon="mdi-file-document-multiple-outline"
                 size="x-small" variant="text"
                 :color="contractTemplates[item.id] ? 'indigo' : 'grey-lighten-1'"
-                :title="contractTemplates[item.id] ? 'Шаблон договора (загружен)' : 'Шаблон договора (не загружен)'"
+                :title="contractTemplates[item.id] ? 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант) — есть свои' : 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант)'"
                 @click.stop="openTemplateDialog(item)"
               />
               <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(item)" />
@@ -126,10 +126,10 @@
               <div v-fit-text class="sc-name" :title="s.name">{{ s.name }}</div>
               <div class="sc-actions">
                 <v-btn
-                  icon="mdi-file-document-outline"
+                  icon="mdi-file-document-multiple-outline"
                   size="x-small" variant="text"
                   :color="contractTemplates[s.id] ? 'indigo' : 'grey-lighten-1'"
-                  :title="contractTemplates[s.id] ? 'Шаблон договора (загружен)' : 'Шаблон договора (не загружен)'"
+                  :title="contractTemplates[s.id] ? 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант) — есть свои' : 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант)'"
                   @click.stop="openTemplateDialog(s)"
                 />
                 <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
@@ -2386,7 +2386,7 @@
         <v-divider />
         <v-card-text class="pt-3">
           <div class="text-caption text-medium-emphasis mb-3">{{ templateSubsidy?.name }}</div>
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4" text="Загруженные шаблоны используются при генерации документов для этой субсидии вместо глобальных." />
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4" text="Скачайте текущий шаблон (в нём уже расставлены переменные), отредактируйте в Word и загрузите обратно — он будет использоваться для этой субсидии вместо глобального. Список переменных с примерами — ниже, полное руководство — кнопка внизу." />
 
           <v-list density="compact">
             <v-list-item v-for="t in subsidyTemplatesList" :key="t.doc_type" class="px-0 mb-2">

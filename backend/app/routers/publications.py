@@ -784,6 +784,9 @@ async def publish_purchase(
 
     payload = await _build_publish_payload(purchase_id, db)
 
+    if body.no_nmcd:
+        payload["nmck"] = 0
+
     if body.procedure_type:
         payload["procedure_type"] = body.procedure_type
     if body.proposal_start:

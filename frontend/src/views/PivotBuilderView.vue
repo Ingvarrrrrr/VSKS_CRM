@@ -334,7 +334,7 @@ const filterDateTo = ref('')
 const statusOptions = [
   { value: 'wishes', title: 'Желания' },
   { value: 'planned', title: 'Запланировано' },
-  { value: 'confirmed', title: 'Подтверждена' },
+  { value: 'work_in_progress', title: 'Ведётся работа' },
   { value: 'contracted', title: 'Договор' },
   { value: 'ordered', title: 'Заказано' },
   { value: 'delivered', title: 'Поставлено' },

@@ -107,7 +107,7 @@ async def _deadline_reminder_loop():
                             await notify_deadline_soon(task, user, days_left)
 
                 # ── 2. Purchase execution_term deadlines (0, 1, 3 дня) ──
-                active_statuses = ("confirmed", "work_in_progress", "contracted")
+                active_statuses = ("work_in_progress", "contracted")
                 purch_result = await db.execute(
                     select(Purchase).where(
                         Purchase.status.in_(active_statuses),

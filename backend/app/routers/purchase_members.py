@@ -26,7 +26,7 @@ from app.routers.purchases import _purchase_to_full, STATUS_ORDER
 router = APIRouter(prefix="/api/purchases", tags=["purchase-members"])
 
 # Mirror VALID_SUBSTATUSES from purchases.py (same constant, used locally)
-VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
+VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform", "contractor_negotiations", "contract_signing")
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +238,11 @@ async def kanban_status_change(
     current_user: User = Depends(get_current_user),
 ):
     """Quick status change from kanban board (same rules as transition)."""
-    # Map common aliases
-    STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule"}
+    # Map common aliases (confirmed → work_in_progress для обратной совместимости)
+    STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule", "confirmed": "work_in_progress"}
     target_status = STATUS_ALIASES.get(target_status, target_status)
     if target_status not in STATUS_ORDER:
-        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Подтверждено", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
+        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
         allowed = ", ".join(f"{k} ({v})" for k, v in STATUS_LABELS_RU.items())
         raise HTTPException(422, f"Недопустимый статус: «{target_status}». Допустимые: {allowed}")
     result = await db.execute(select(Purchase).where(Purchase.id == pid))
@@ -252,7 +252,7 @@ async def kanban_status_change(
 
     # 27.4-12: advance owner bypass — ограничен.
     # Сотрудник (даже владелец авансового) может двигать ТОЛЬКО forward
-    # и ТОЛЬКО когда покупка уже подтверждена руководством (confirmed+).
+    # и ТОЛЬКО когда закупка уже направлена в работу (work_in_progress+).
     is_advance_owner = (
         getattr(p, 'purchase_method', None) == 'advance'
         and getattr(p, 'reimbursement_user_id', None) == current_user.id
@@ -260,14 +260,14 @@ async def kanban_status_change(
     is_manager_plus = current_user.role in MANAGER_ROLES
     current_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else -1
     target_idx = STATUS_ORDER.index(target_status)
-    CONFIRMED_IDX = STATUS_ORDER.index("confirmed")
+    WORK_IN_PROGRESS_IDX = STATUS_ORDER.index("work_in_progress")
 
     if is_advance_owner and not is_manager_plus:
-        if current_idx < CONFIRMED_IDX:
+        if current_idx < WORK_IN_PROGRESS_IDX:
             raise HTTPException(
                 403,
-                "Покупка должна быть подтверждена руководством "
-                "(статус «Подтверждено» или позже) перед изменением сотрудником"
+                "Закупка должна быть направлена в работу "
+                "(статус «Направлено в закупку» или позже) перед изменением сотрудником"
             )
         if target_idx <= current_idx:
             raise HTTPException(

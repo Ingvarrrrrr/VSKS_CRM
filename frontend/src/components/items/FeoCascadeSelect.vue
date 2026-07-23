@@ -34,7 +34,16 @@
           :disabled="readonly"
           :error="error && levelIdx === visibleLevels.length - 1 && !isLeafSelected"
           @update:model-value="(v: number | null) => onSelect(levelIdx, v)"
-        />
+        >
+          <template #item="{ props: itemProps, item }">
+            <v-list-item
+              v-bind="itemProps"
+              :subtitle="(item.raw as any).description || undefined"
+              :title="(item.raw as any).name"
+              lines="two"
+            />
+          </template>
+        </v-autocomplete>
       </div>
       <!-- Budget indicator under the last selected leaf -->
       <div v-if="selectedLeaf" class="feo-cascade-note text-caption text-medium-emphasis mt-1 px-1">

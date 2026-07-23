@@ -189,7 +189,7 @@ const eventIcon = (type: string) => {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'Планирование', confirmed: 'Подтверждена', in_progress: 'В работе',
+  planned: 'Планирование', work_in_progress: 'Ведётся работа', in_progress: 'Ведётся работа',
   contracted: 'Законтрактована', delivered: 'Поставлена', paid: 'Оплачена',
 }
 

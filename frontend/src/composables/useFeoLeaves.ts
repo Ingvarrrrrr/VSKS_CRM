@@ -25,6 +25,8 @@ export interface FeoNode {
   is_leaf: boolean
   /** Собственная (ручная) сумма финансирования узла; null — не задана. */
   budget?: number | null
+  /** Пояснение: что входит в направление. */
+  description?: string | null
 }
 
 /**

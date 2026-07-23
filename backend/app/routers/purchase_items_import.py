@@ -2485,9 +2485,9 @@ async def import_feo_format(
         elif contract_number:
             status = "contracted"
         else:
-            status = "confirmed"
+            status = "work_in_progress"
 
-        # Confirmed flag
+        # Confirmed flag (legacy column — maps to boolean field Purchase.confirmed, not status)
         conf_raw = (_cell(row, "confirmed") or "").lower()
         confirmed = conf_raw in ("да", "yes", "1", "true", "+")
 

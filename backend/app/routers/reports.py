@@ -120,10 +120,10 @@ async def report_summary(
     completed_result = await db.execute(completed_q)
     completed = [_purchase_to_dict(p, contractors, subsidies, users) for p in completed_result.scalars().all()]
 
-    # Planned (status=planned or confirmed, created/updated in period — use id proxy)
+    # Planned (status=planned or work_in_progress, created/updated in period — use id proxy)
     planned_q = _extra_filters(_apply_vis_filter(
         select(Purchase)
-        .where(Purchase.status.in_(["planned", "confirmed"])),
+        .where(Purchase.status.in_(["planned", "work_in_progress"])),
         _vis
     ))
     planned_result = await db.execute(planned_q)

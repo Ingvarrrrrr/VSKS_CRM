@@ -10,6 +10,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
 from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
+from app.models.contract import Contract
 from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
@@ -226,7 +227,7 @@ async def dashboard_charts(
                 case((Purchase.status == "paid", Purchase.payment_amount), else_=None)
             ), 0).label("total_paid"),
             func.coalesce(func.sum(
-                case((Purchase.status.in_(["confirmed", "work_in_progress"]), Purchase.planned_total_price), else_=None)
+                case((Purchase.status == "work_in_progress", Purchase.planned_total_price), else_=None)
             ), 0).label("total_plan_schedule"),
             func.coalesce(func.sum(
                 case(
@@ -339,7 +340,7 @@ async def dashboard_charts(
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
-            "total_plan_schedule": float(row.total_plan_schedule),  # legacy: SUM confirmed/wip (оставлено)
+            "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
             "total_ordered": float(row.total_ordered),
             "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
@@ -354,9 +355,180 @@ async def dashboard_charts(
             "budget_discrepancy": discrepancy,
         })
 
+    # ── Накопительные виджеты закупок ────────────────────────────────────────
+    # Корзины: каждая закупка ровно в одной, по текущему статусу.
+    # Исключаем cancelled и wishes.
+    basket_q = (
+        select(
+            # stage_plan  : plan_schedule → planned_total_price
+            func.coalesce(func.sum(
+                case((Purchase.status == "plan_schedule", Purchase.planned_total_price), else_=None)
+            ), 0).label("sp_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "plan_schedule", Purchase.id), else_=None)
+            ), 0).label("sp_cnt"),
+            # stage_work  : work_in_progress → planned_total_price
+            func.coalesce(func.sum(
+                case((Purchase.status == "work_in_progress", Purchase.planned_total_price), else_=None)
+            ), 0).label("sw_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "work_in_progress", Purchase.id), else_=None)
+            ), 0).label("sw_cnt"),
+            # stage_ordered : contracted|ordered → COALESCE(contract_price, planned_total_price)
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status.in_(["contracted", "ordered"]),
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("so_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status.in_(["contracted", "ordered"]), Purchase.id), else_=None)
+            ), 0).label("so_cnt"),
+            # stage_delivered_unpaid : delivered → COALESCE(contract_price, planned_total_price)
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "delivered",
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("sd_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "delivered", Purchase.id), else_=None)
+            ), 0).label("sd_cnt"),
+            # stage_paid : paid → COALESCE(payment_amount, contract_price, planned_total_price)
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "paid",
+                     func.coalesce(Purchase.payment_amount, Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("spd_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "paid", Purchase.id), else_=None)
+            ), 0).label("spd_cnt"),
+        )
+        .where(Purchase.status.notin_(["cancelled", "wishes"]))
+    )
+    if use_sids:
+        basket_q = _apply_purchase_org_filter(basket_q, current_user, subsidy_ids=visible_subsidy_ids)
+    else:
+        basket_q = _apply_purchase_org_filter(basket_q, current_user, org_ids)
+    basket_row = (await db.execute(basket_q)).one()
+
+    sp_amt  = float(basket_row.sp_amt);  sp_cnt  = int(basket_row.sp_cnt)
+    sw_amt  = float(basket_row.sw_amt);  sw_cnt  = int(basket_row.sw_cnt)
+    so_amt  = float(basket_row.so_amt);  so_cnt  = int(basket_row.so_cnt)
+    sd_amt  = float(basket_row.sd_amt);  sd_cnt  = int(basket_row.sd_cnt)
+    spd_amt = float(basket_row.spd_amt); spd_cnt = int(basket_row.spd_cnt)
+
+    # Накопительный SUM(planned_monthly) по active-договорам для виджета «Заказано»
+    mp_q = (
+        select(func.coalesce(func.sum(Contract.planned_monthly), 0))
+        .where(Contract.status == "active")
+        .where(Contract.planned_monthly.isnot(None))
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            mp_q = mp_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        mp_q = mp_q.where(Contract.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    monthly_payments_total = float((await db.execute(mp_q)).scalar() or 0)
+
+    # Виджет «Заключено договоров»: active-договоры, сумма по типу
+    #   single / framework_with_amount → max_amount
+    #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
+    #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
+    contract_single_q = (
+        select(
+            func.coalesce(func.sum(Contract.max_amount), 0).label("amt"),
+            func.count(Contract.id).label("cnt"),
+        )
+        .where(Contract.status == "active")
+        .where(Contract.contract_type.in_(["single", "framework_with_amount"]))
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    cs_row = (await db.execute(contract_single_q)).one()
+
+    # framework_cumulative: aggr по закупкам привязанным к таким договорам
+    contract_fc_q = (
+        select(
+            func.coalesce(func.sum(
+                func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
+            ), 0).label("amt"),
+            # count distinct contracts (not purchases)
+            func.count(func.distinct(Purchase.contract_id)).label("cnt"),
+        )
+        .join(Contract, Purchase.contract_id == Contract.id)
+        .where(Contract.status == "active")
+        .where(Contract.contract_type == "framework_cumulative")
+        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    cfc_row = (await db.execute(contract_fc_q)).one()
+
+    contracts_amt = float(cs_row.amt) + float(cfc_row.amt)
+    contracts_cnt = int(cs_row.cnt) + int(cfc_row.cnt)
+
+    # ── Собираем виджеты ─────────────────────────────────────────────────────
+    widgets = {
+        # накопительно: stage_plan + stage_work + stage_ordered + stage_delivered_unpaid + stage_paid
+        "plan_schedule": {
+            "amount": sp_amt + sw_amt + so_amt + sd_amt + spd_amt,
+            "count":  sp_cnt + sw_cnt + so_cnt + sd_cnt + spd_cnt,
+        },
+        # накопительно: stage_work + stage_ordered + stage_delivered_unpaid + stage_paid
+        "work": {
+            "amount": sw_amt + so_amt + sd_amt + spd_amt,
+            "count":  sw_cnt + so_cnt + sd_cnt + spd_cnt,
+        },
+        # накопительно: stage_ordered + stage_delivered_unpaid + stage_paid
+        "ordered": {
+            "amount": so_amt + sd_amt + spd_amt,
+            "count":  so_cnt + sd_cnt + spd_cnt,
+            "monthly_payments_total": monthly_payments_total,
+        },
+        # накопительно: stage_delivered_unpaid + stage_paid
+        "delivered": {
+            "amount": sd_amt + spd_amt,
+            "count":  sd_cnt + spd_cnt,
+        },
+        # только stage_delivered_unpaid (поставлено, но не оплачено)
+        "delivered_unpaid": {
+            "amount": sd_amt,
+            "count":  sd_cnt,
+        },
+        # только stage_paid
+        "paid": {
+            "amount": spd_amt,
+            "count":  spd_cnt,
+        },
+        # договоры: single+framework_with_amount → max_amount;
+        # framework_cumulative → SUM(COALESCE(contract_price, planned_total_price)) по закупкам
+        "contracts": {
+            "amount": contracts_amt,
+            "count":  contracts_cnt,
+        },
+    }
+
     return {
         "status_counts": status_counts,
         "subsidy_stats": subsidy_stats,
+        "widgets": widgets,
     }
 
 
@@ -388,7 +560,7 @@ async def analytics(
         return q
 
     # 1. Purchase funnel
-    STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "delivered", "paid"]
+    STATUS_ORDER = ["wishes", "plan_schedule", "work_in_progress", "contracted", "delivered", "paid"]
     funnel_result = await db.execute(_pf(
         select(Purchase.status, func.count(Purchase.id).label("cnt"),
                func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total"))
@@ -539,7 +711,7 @@ async def get_financial_plan(
         q = q.where(Purchase.subsidy_id == subsidy_id)
     rows = (await db.execute(q)).scalars().all()
 
-    PLAN_STATUSES = {'planned', 'confirmed', 'wishes', 'plan_schedule'}
+    PLAN_STATUSES = {'planned', 'wishes', 'plan_schedule'}
     COMMITTED_STATUSES = {'contracted', 'ordered', 'delivered', 'work_in_progress'}
     # paid — учитывается через _expected_payment_date, в overdue не попадает
 
@@ -719,7 +891,7 @@ async def get_financial_plan_details(
     - overdue — просроченные (obligation_date в прошлом, не полностью оплачены)
     - no_deadline — без срока исполнения (obligation_date is None)
     """
-    PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
+    PLAN_STATUSES = {"planned", "wishes", "plan_schedule"}
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
 
     today = date.today()
@@ -907,7 +1079,7 @@ async def export_financial_plan_xlsx(
     if scope in ("dashboard", "plan"):
         dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
 
-    PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
+    PLAN_STATUSES = {"planned", "wishes", "plan_schedule"}
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
 
     q = select(Purchase).where(Purchase.status.in_(PLAN_STATUSES | COMMITTED_STATUSES))
@@ -919,10 +1091,10 @@ async def export_financial_plan_xlsx(
     rows = (await db.execute(q)).scalars().all()
 
     STATUS_LABELS = {
-        "planned": "Запланирован", "confirmed": "Подтверждён", "wishes": "Заявка",
+        "planned": "Запланирован", "wishes": "Заявка",
         "plan_schedule": "План-график",
         "contracted": "Заключён договор", "ordered": "Заказано", "delivered": "Поставлено",
-        "paid": "Оплачено", "work_in_progress": "В работе",
+        "paid": "Оплачено", "work_in_progress": "Ведётся работа",
     }
 
     grouped: dict = {}
@@ -1048,7 +1220,7 @@ async def export_financial_plan_details_xlsx(
     if scope in ("dashboard", "plan"):
         dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
 
-    PLAN_STATUSES = {"planned", "confirmed", "wishes", "plan_schedule"}
+    PLAN_STATUSES = {"planned", "wishes", "plan_schedule"}
     COMMITTED_STATUSES = {"contracted", "ordered", "delivered", "paid", "work_in_progress"}
     target_statuses = PLAN_STATUSES if category == "plan" else COMMITTED_STATUSES
 
@@ -1061,10 +1233,10 @@ async def export_financial_plan_details_xlsx(
     rows = (await db.execute(q)).scalars().all()
 
     STATUS_LABELS = {
-        "planned": "Запланирован", "confirmed": "Подтверждён", "wishes": "Заявка",
+        "planned": "Запланирован", "wishes": "Заявка",
         "plan_schedule": "План-график",
         "contracted": "Заключён договор", "ordered": "Заказано", "delivered": "Поставлено",
-        "paid": "Оплачено", "work_in_progress": "В работе",
+        "paid": "Оплачено", "work_in_progress": "Ведётся работа",
     }
 
     items = []

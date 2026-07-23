@@ -34,14 +34,13 @@ router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
 
 STATUS_LABELS: dict[str, str] = {
     "planned":        "Запланирован",
-    "confirmed":      "Подтверждён",
     "contracted":     "Заключён договор",
     "ordered":        "Заказано",
     "delivered":      "Поставлено",
     "paid":           "Оплачено",
     "wishes":         "Заявка",
     "plan_schedule":  "План-график",
-    "work_in_progress": "В работе",
+    "work_in_progress": "Ведётся работа",
     "cancelled":      "Отменён",
 }
 
@@ -73,7 +72,8 @@ async def transition_status(
 ):
     """
     Forward-only status transition.
-    wishes → plan_schedule → confirmed → work_in_progress → contracted → delivered → paid
+    wishes → plan_schedule → work_in_progress → contracted → delivered → paid
+    (рамочные договоры: work_in_progress → delivered, минуя contracted)
     """
     if target_status not in STATUS_ORDER:
         raise HTTPException(422, f"Недопустимый статус: {target_status}")
@@ -105,20 +105,20 @@ async def transition_status(
 
     # 27.4-12: advance owner bypass — ограничен.
     # Сотрудник (даже владелец авансового) может двигать ТОЛЬКО forward
-    # и ТОЛЬКО когда покупка уже подтверждена руководством (confirmed+).
+    # и ТОЛЬКО когда закупка уже направлена в работу (work_in_progress+).
     is_advance_owner = (
         getattr(p, 'purchase_method', None) == 'advance'
         and getattr(p, 'reimbursement_user_id', None) == current_user.id
     )
     is_manager_plus = current_user.role in MANAGER_ROLES
-    CONFIRMED_IDX = STATUS_ORDER.index("confirmed")
+    WORK_IN_PROGRESS_IDX = STATUS_ORDER.index("work_in_progress")
 
     if is_advance_owner and not is_manager_plus:
-        if current_idx < CONFIRMED_IDX:
+        if current_idx < WORK_IN_PROGRESS_IDX:
             raise HTTPException(
                 403,
-                "Покупка должна быть подтверждена руководством "
-                "(статус «Подтверждено» или позже) перед изменением сотрудником"
+                "Закупка должна быть направлена в работу "
+                "(статус «Направлено в закупку» или позже) перед изменением сотрудником"
             )
         if target_idx <= current_idx:
             raise HTTPException(
@@ -138,6 +138,16 @@ async def transition_status(
         if current_user.role not in ADMIN_ROLES:
             raise HTTPException(422, "Откат статуса разрешён только администратору")
 
+    # Framework skip: рамочные договоры пропускают стадию «Заключён договор».
+    # Данные берутся из головного рамочного договора — отдельный договор не заключается.
+    _is_framework = p.purchase_contract_type in FRAMEWORK_TYPES
+    if _is_framework and target_status == "contracted" and current_user.role not in OWNER_ROLES:
+        raise HTTPException(
+            422,
+            "Закупка по рамочному договору не проходит стадию «Заключён договор»: "
+            "используйте переход сразу в «Поставлено»."
+        )
+
     # Approval guard: block contracted transition if approval is pending/rejected
     if target_status == "contracted" and p.approval_status and p.approval_status not in ("approved",):
         raise HTTPException(
@@ -145,16 +155,6 @@ async def transition_status(
             f"Закупка должна быть согласована перед заключением договора. "
             f"Текущий статус согласования: {p.approval_status}"
         )
-
-    # Catalog guard: warn but don't block (except advance reports)
-    # Previously blocked status transition — now just logs a warning
-    if target_status == "confirmed" and getattr(p, 'purchase_method', None) != "advance":
-        unmatched = [i for i in (p.items or []) if not i.product_id]
-        if unmatched:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Purchase %s has %d items not linked to catalog", pid, len(unmatched)
-            )
 
     # Field guards for specific target statuses
     if target_status in TRANSITION_REQUIRED:

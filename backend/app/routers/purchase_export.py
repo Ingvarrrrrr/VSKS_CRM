@@ -113,7 +113,6 @@ _CONTRACT_TYPE_LABELS = {
 _STATUS_LABELS = {
     "wishes": "Желания сотрудников",
     "plan_schedule": "План-график",
-    "confirmed": "Подтверждено руководством",
     "work_in_progress": "Ведётся работа",
     "contracted": "Заключён договор",
     "delivered": "Поставлено",
@@ -564,7 +563,7 @@ _PAYMENTS_COLUMN_MAP: Dict[str, str] = {
 _STATUS_MAP = {
     "wishes": "wishes", "желания": "wishes", "planned": "wishes", "планируется": "wishes", "план": "wishes",
     "plan_schedule": "plan_schedule", "план-график": "plan_schedule",
-    "confirmed": "confirmed", "подтверждено": "confirmed",
+    "confirmed": "work_in_progress", "подтверждено": "work_in_progress",
     "work_in_progress": "work_in_progress", "в работе": "work_in_progress", "in_progress": "work_in_progress",
     "contracted": "contracted", "законтрактовано": "contracted",
     "delivered": "delivered", "исполнено": "delivered",
@@ -878,7 +877,7 @@ async def _parse_and_group(
             elif contract_num:
                 status = "contracted"
             else:
-                status = "confirmed"
+                status = "work_in_progress"
 
         # ---- Method ----
         method_raw = (cell(row, "purchase_method") or "").lower().strip()

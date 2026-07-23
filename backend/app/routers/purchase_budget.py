@@ -51,7 +51,7 @@ FRAMEWORK_TYPES: set = {"framework_cumulative", "framework_with_amount"}
 CONTRACTED_STATUSES: set = {"contracted", "ordered", "delivered", "paid"}
 """Statuses where a contract/order is already placed (used for uncontracted_remaining)."""
 
-PLANNED_STATUSES: set = {"plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"}
+PLANNED_STATUSES: set = {"plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid"}
 """Statuses that represent financially planned spend (used for spendable_remaining)."""
 
 

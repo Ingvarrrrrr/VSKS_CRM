@@ -1437,10 +1437,10 @@ function advancePersonLabel(item: Purchase): string {
   return item.responsible_person || `#${item.assigned_user_id}` || '—'
 }
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
-  confirmed: 'Подтверждено', work_in_progress: 'Ведётся работа',
+  work_in_progress: 'Ведётся работа',
   contracted: 'Договор', ordered: 'Заказано',
   delivered: 'Поставлено', paid: 'Оплачено',
 }
@@ -1451,14 +1451,16 @@ function statusLabelFor(item: Purchase, status?: string): string {
 }
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
-  confirmed: 'blue', work_in_progress: 'teal',
+  work_in_progress: 'teal',
   contracted: 'indigo', ordered: 'purple',
   delivered: 'deep-purple', paid: 'green',
 }
 const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формируется ТЗ',
+  tz_forming: 'Формирование ТЗ',
   kp_collecting: 'Сбор КП',
   on_platform: 'На площадке',
+  contractor_negotiations: 'Переговоры с подрядчиком',
+  contract_signing: 'Договор на подписании',
 }
 const APPROVAL_STATUS_COLOR: Record<string, string> = {
   in_progress: 'orange', approved: 'green', rejected: 'error',

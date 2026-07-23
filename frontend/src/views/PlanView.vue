@@ -404,13 +404,12 @@ const selectedYear    = ref<number | null>(null)
 const filterSubsidyId = ref<number | null>(null)
 const filterSearch    = ref('')
 const filterStatuses  = ref<string[]>([
-  'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
+  'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
 ])
 
 const statusOptions = [
   { value: 'plan_schedule',   label: 'План-график',     color: 'blue'   },
-  { value: 'confirmed',       label: 'Подтверждено',    color: 'cyan'   },
-  { value: 'work_in_progress',label: 'В работе',        color: 'orange' },
+  { value: 'work_in_progress',label: 'Ведётся работа',  color: 'teal'   },
   { value: 'contracted',      label: 'Договор',         color: 'indigo' },
   { value: 'ordered',         label: 'Заказано',        color: 'teal'   },
   { value: 'delivered',       label: 'Поставлено',      color: 'green'  },
@@ -487,7 +486,7 @@ const resetFilters = () => {
   filterSubsidyId.value = null
   filterSearch.value = ''
   filterStatuses.value = [
-    'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
+    'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
   ]
 }
 
@@ -750,8 +749,7 @@ const isPastPlanned = (d?: string | null) => {
 const STATUS_LABELS: Record<string, string> = {
   planned:          'Планируется',
   plan_schedule:    'План-график',
-  confirmed:        'Подтверждено',
-  work_in_progress: 'В работе',
+  work_in_progress: 'Ведётся работа',
   contracted:       'Договор',
   ordered:          'Заказано',
   delivered:        'Поставлено',
@@ -760,10 +758,9 @@ const STATUS_LABELS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   planned:          'grey',
   plan_schedule:    'blue',
-  confirmed:        'cyan',
-  work_in_progress: 'orange',
+  work_in_progress: 'teal',
   contracted:       'indigo',
-  ordered:          'teal',
+  ordered:          'orange',
   delivered:        'green',
   paid:             'success',
 }

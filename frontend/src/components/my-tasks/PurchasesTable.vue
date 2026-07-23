@@ -94,7 +94,6 @@ defineEmits<{
 const STATUS_LABELS: Record<string, string> = {
   wishes: 'Желания',
   plan_schedule: 'План-график',
-  confirmed: 'Подтверждено',
   work_in_progress: 'Ведётся работа',
   contracted: 'Договор',
   delivered: 'Поставлено',
@@ -109,9 +108,11 @@ function purchaseStatusLabel(task: Purchase): string {
 }
 
 const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формируется ТЗ',
+  tz_forming: 'Формирование ТЗ',
   kp_collecting: 'Сбор КП',
   on_platform: 'На площадке',
+  contractor_negotiations: 'Переговоры с подрядчиком',
+  contract_signing: 'Договор на подписании',
 }
 
 // ── Color helpers ────────────────────────────────────────────────────────────
@@ -119,7 +120,6 @@ function statusColor(s: string): string {
   const map: Record<string, string> = {
     wishes: 'amber',
     plan_schedule: 'orange',
-    confirmed: 'primary',
     work_in_progress: 'teal',
     contracted: 'indigo',
     delivered: 'deep-purple',

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Numeric, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -13,9 +13,11 @@ class FeoCategory(Base):
     code = Column(String(50))
     appendix = Column(String(100), nullable=True)  # Номер приложения (например, "Прил. 2")
     is_active = Column(Boolean, default=True)
+    description = Column(Text, nullable=True)  # Пояснение: что входит в направление расходов
     budget = Column(Numeric(15, 2), nullable=True)  # Финансирование по ФЭО (ручное или NULL = авто из детей)
     feo_quantity = Column(Numeric(15, 2), nullable=True)  # Количество по ФЭО — заложено в документе ФЭО
     feo_unit = Column(String(50), nullable=True)  # Ед. изм. по ФЭО — заложено в документе ФЭО
+    feo_amount = Column(Numeric(15, 2), nullable=True)  # Стоимость за ед. по документу ФЭО; NULL = авто из детей
     planned_quantity = Column(Numeric(15, 2), nullable=True)  # NULL = авто из детей; значение = ручной (CRM-план)
     planned_amount = Column(Numeric(15, 2), nullable=True)  # Плановая сумма (NULL = авто из детей)
     unit = Column(String(50), nullable=True)  # ед. измерения для planned_quantity (шт, кг, компл.) (CRM-план)

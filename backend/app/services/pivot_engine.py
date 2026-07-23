@@ -139,7 +139,7 @@ def _build_filters(filters: Dict[str, Any], feo_l1, feo_l2, feo_l3) -> List[Colu
 
     Поддерживает:
     - простые: {'subsidy_id': 7} → eq
-    - множественные: {'status': ['confirmed', 'paid']} → IN
+    - множественные: {'status': ['work_in_progress', 'paid']} → IN
     - диапазон даты: {'contract_date': {'from': '2026-01-01', 'to': '2026-06-30'}}
     - search: {'item_name': {'contains': 'Ростел'}}
     - boolean: {'confirmed': True}

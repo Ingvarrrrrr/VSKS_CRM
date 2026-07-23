@@ -319,7 +319,7 @@ async def _create_plan_graph_version(
     manual_plan_total = sum(_node_manual_plan(n) for n in feo_tree)
 
     # purchases_plan_total / purchases_calc_total — суммы закупок в статусах план-графика
-    _PLAN_STATUSES = ("plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid")
+    _PLAN_STATUSES = ("plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid")
     purch_rows = (await db.execute(
         select(_Purchase.id, _Purchase.status, _Purchase.planned_total_price, _Purchase.total_nmck, _Purchase.nmck, _Purchase.contract_price, _Purchase.payment_amount)
         .where(_Purchase.subsidy_id == subsidy_id, _Purchase.status.in_(_PLAN_STATUSES))
@@ -389,8 +389,8 @@ async def _create_plan_graph_version(
 
 
 # Status workflow
-STATUS_ORDER = ["wishes", "plan_schedule", "confirmed", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
-VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform")
+STATUS_ORDER = ["wishes", "plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid"]
+VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform", "contractor_negotiations", "contract_signing")
 
 
 def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
@@ -621,6 +621,9 @@ async def list_purchases(
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
     if status:
+        # Обратная совместимость: confirmed упразднён, маппируем в work_in_progress
+        if status == "confirmed":
+            status = "work_in_progress"
         q = q.where(Purchase.status == status)
     if purchase_method:
         q = q.where(Purchase.purchase_method == purchase_method)

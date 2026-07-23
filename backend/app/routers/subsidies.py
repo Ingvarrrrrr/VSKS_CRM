@@ -1960,7 +1960,7 @@ async def export_plan_graph_excel(
         used_map = {r.feo_planned_item_id: float(r.used) for r in used_rows}
 
     # Status breakdown: sum(PurchaseItem.total_price) per (feo_planned_item_id, Purchase.status)
-    # статусы: plan_schedule, confirmed, work_in_progress → «Запланировано»;
+    # статусы: plan_schedule, work_in_progress → «Запланировано»;
     #          contracted → «Договор»; ordered → «Заказано»;
     #          delivered → «Поставлено»; paid → «Оплачено»
     status_sums_map: dict[int, dict[str, float]] = {}
@@ -1999,7 +1999,7 @@ async def export_plan_graph_excel(
     # чтобы в выгрузке было видно ЧТО куплено и ПО КАКОЙ ЦЕНЕ, а не только сумма.
     _STATUS_HUMAN = {
         "wishes": "Запланировано", "plan_schedule": "Запланировано",
-        "confirmed": "Запланировано", "work_in_progress": "Запланировано",
+        "work_in_progress": "Запланировано",
         "contracted": "Договор", "ordered": "Заказано",
         "delivered": "Поставлено", "paid": "Оплачено",
     }
@@ -2416,7 +2416,7 @@ async def export_plan_graph_excel(
         st = subtree_map.get(cat_id, {})
         budget = st.get("budget", 0.0)
         monthly = st.get("monthly", 0.0)
-        plan = _sub(cat_id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
+        plan = _sub(cat_id, "plan_schedule", "work_in_progress", "wishes")
         contract = _sub(cat_id, "contracted")
         ordered = _sub(cat_id, "ordered")
         delivered = _sub(cat_id, "delivered")
@@ -2502,7 +2502,7 @@ async def export_plan_graph_excel(
             for item in items_by_cat.get(cat.id, []):
                 seq += 1
                 feo_budget = float(item.amount or 0)
-                plan_sum = _st(item.id, "plan_schedule", "confirmed", "work_in_progress", "wishes")
+                plan_sum = _st(item.id, "plan_schedule", "work_in_progress", "wishes")
                 contract_sum = _st(item.id, "contracted")
                 ordered_sum = _st(item.id, "ordered")
                 delivered_sum = _st(item.id, "delivered")
@@ -2601,8 +2601,7 @@ async def export_plan_graph_excel(
                 "planned": 0.0, "monthly": 0.0, "likely": 0.0, "total": 0.0}
 
     summary = {"услуга": _empty_buckets(), "товар": _empty_buckets()}
-    _planned_statuses = ("wishes", "plan_schedule", "confirmed",
-                         "work_in_progress", "contracted", "ordered")
+    _planned_statuses = ("wishes", "plan_schedule", "work_in_progress", "contracted", "ordered")
     sum_rows = (await db.execute(
         select(
             func.coalesce(_PI.item_type, _P.item_type).label("item_type"),

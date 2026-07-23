@@ -2242,10 +2242,17 @@
             <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
             Публикация на площадках
           </span>
-          <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
-            @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null">
-            Опубликовать
-          </v-btn>
+          <div class="d-flex gap-2">
+            <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-folder-zip"
+              :loading="docLoading === 'fabrikant_package'"
+              @click="downloadFabrikantPackage">
+              Скачать пакет (ZIP)
+            </v-btn>
+            <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
+              @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null">
+              Опубликовать
+            </v-btn>
+          </div>
         </v-card-title>
         <v-card-text class="px-4 pb-3">
           <div v-if="!publications.length" class="text-medium-emphasis text-caption">
@@ -2289,6 +2296,38 @@
               </tr>
             </tbody>
           </v-table>
+
+          <!-- Документы пакета Фабрикант -->
+          <v-divider class="my-3" />
+          <div class="text-caption font-weight-medium text-deep-purple mb-2">Документы пакета Фабрикант</div>
+          <input ref="fabrikantFileInputEl" type="file" accept=".docx,.pdf" style="display:none"
+            @change="uploadFabrikantOverride" />
+          <v-list density="compact" class="pa-0">
+            <v-list-item v-for="doc in FABRIKANT_PKG_DOCS" :key="doc.ft" class="px-0 py-1" min-height="36">
+              <template #prepend>
+                <span class="text-caption" style="min-width:160px">{{ doc.label }}</span>
+              </template>
+              <template #default>
+                <v-chip v-if="fabrikantOverride(doc.ft)" size="x-small" color="deep-purple" variant="tonal" class="mr-1">
+                  своя версия
+                </v-chip>
+                <v-chip v-else size="x-small" color="grey" variant="tonal" class="mr-1">авто</v-chip>
+                <span v-if="fabrikantOverride(doc.ft)" class="text-caption text-medium-emphasis mr-2">
+                  {{ fabrikantOverride(doc.ft)!.filename }}
+                </span>
+              </template>
+              <template #append>
+                <v-btn icon="mdi-upload" size="x-small" variant="text" density="compact"
+                  @click="triggerFabrikantUpload(doc.ft)" title="Загрузить свою версию" />
+                <template v-if="fabrikantOverride(doc.ft)">
+                  <v-btn icon="mdi-download" size="x-small" variant="text" density="compact"
+                    @click="downloadFile(fabrikantOverride(doc.ft)!.id, fabrikantOverride(doc.ft)!.filename)" />
+                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" density="compact" color="error"
+                    @click="deleteFabrikantOverride(fabrikantOverride(doc.ft)!.id)" />
+                </template>
+              </template>
+            </v-list-item>
+          </v-list>
         </v-card-text>
       </v-card>
 
@@ -2457,7 +2496,7 @@
         />
         <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
-          → {{ STATUS_LABEL[nextStatusTarget] }}
+          → {{ nextStatusTarget === 'work_in_progress' ? 'Направлено в закупку' : STATUS_LABEL[nextStatusTarget] }}
         </v-btn>
         <v-select v-if="isEdit && form.status === 'work_in_progress'" v-model="form.substatus"
           :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
@@ -3709,10 +3748,10 @@ const backRoute = computed(() => {
   return '/orders'
 })
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+const STATUS_ORDER = ['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const STATUS_LABEL_BASE: Record<string, string> = {
   wishes: 'Желания сотрудников', plan_schedule: 'План-график',
-  confirmed: 'Подтверждено руководством', work_in_progress: 'Ведётся работа',
+  work_in_progress: 'Ведётся работа',
   contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_LABEL = computed<Record<string, string>>(() => ({
@@ -3721,13 +3760,15 @@ const STATUS_LABEL = computed<Record<string, string>>(() => ({
 }))
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
-  confirmed: 'blue', work_in_progress: 'teal',
+  work_in_progress: 'teal',
   contracted: 'indigo', ordered: 'light-blue', delivered: 'deep-purple', paid: 'green',
 }
 const SUBSTATUS_OPTIONS = [
-  { value: 'tz_forming', title: 'Формируется ТЗ' },
-  { value: 'kp_collecting', title: 'Идёт сбор КП' },
-  { value: 'on_platform', title: 'Выставлено на площадку' },
+  { value: 'tz_forming', title: 'Формирование ТЗ' },
+  { value: 'kp_collecting', title: 'Сбор КП' },
+  { value: 'on_platform', title: 'На площадке' },
+  { value: 'contractor_negotiations', title: 'Переговоры с подрядчиком' },
+  { value: 'contract_signing', title: 'Договор на подписании' },
 ]
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number; budget?: number | null }
 interface Contractor { id: number; name: string; inn?: string }
@@ -3761,16 +3802,29 @@ interface OrderItem {
 interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; is_active?: boolean; uploaded_by_name?: string | null; created_at?: string | null }
 
 const FILE_TYPE_LABELS_BASE: Record<string, string> = {
-  kp:           'КП',
-  service_note: 'Служебная записка',
-  protocol:     'Протокол закупки',
-  invoice:      'Счёт',
-  order:        'Приказ',
-  upd:          'УПД',
-  contract:     'Договор',
-  act:          'Закрывающий документ',
-  other:        'Прочее',
+  kp:                         'КП',
+  service_note:               'Служебная записка',
+  protocol:                   'Протокол закупки',
+  invoice:                    'Счёт',
+  order:                      'Приказ',
+  upd:                        'УПД',
+  contract:                   'Договор',
+  act:                        'Закрывающий документ',
+  other:                      'Прочее',
+  fabrikant_instruction:      'Фабрикант: Инструкция',
+  fabrikant_application_form: 'Фабрикант: Форма заявки',
+  fabrikant_documentation:    'Фабрикант: Документация',
+  fabrikant_contract_project: 'Фабрикант: Проект договора',
+  fabrikant_tech_spec:        'Фабрикант: ТЗ',
 }
+
+const FABRIKANT_PKG_DOCS = [
+  { ft: 'fabrikant_instruction',      label: 'Инструкция' },
+  { ft: 'fabrikant_application_form', label: 'Форма заявки' },
+  { ft: 'fabrikant_documentation',    label: 'Документация' },
+  { ft: 'fabrikant_contract_project', label: 'Проект договора' },
+  { ft: 'fabrikant_tech_spec',        label: 'ТЗ' },
+] as const
 const FILE_TYPE_LABELS = computed<Record<string, string>>(() => ({
   ...FILE_TYPE_LABELS_BASE,
   contract: contractWord.value,
@@ -4722,7 +4776,7 @@ const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
 const showApprovalSection = computed(() => {
   if (!isEdit.value) return false
   const idx = STATUS_ORDER.indexOf(form.status)
-  return idx >= STATUS_ORDER.indexOf('confirmed')
+  return idx >= STATUS_ORDER.indexOf('work_in_progress')
 })
 
 const contractorInn = ref('')
@@ -5936,6 +5990,8 @@ const executionTermRules = computed(() => [
 
 const nextStatusTarget = computed(() => {
   if (!isEdit.value || !form.status) return null
+  // Рамочные закупки: из work_in_progress сразу в delivered (contracted недоступен)
+  if (form.status === 'work_in_progress' && isFramework.value) return 'delivered'
   const idx = STATUS_ORDER.indexOf(form.status)
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
 })
@@ -7551,6 +7607,66 @@ async function downloadFabrikantPackage() {
     showSnack('Ошибка скачивания пакета документов', 'error')
   } finally {
     docLoading.value = null
+  }
+}
+
+// ── Фабрикант: override-файлы пакета ────────────────────────────────────────
+const fabrikantFileInputEl = ref<HTMLInputElement | null>(null)
+const fabrikantPendingFt = ref<string>('')
+
+function fabrikantOverride(ft: string): UploadedFile | undefined {
+  return uploadedFiles.value.find(f => f.file_type === ft && f.is_active !== false)
+}
+
+function triggerFabrikantUpload(ft: string) {
+  fabrikantPendingFt.value = ft
+  fabrikantFileInputEl.value?.click()
+}
+
+const uploadFabrikantOverride = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length || !purchaseId.value) return
+  uploading.value = true
+  try {
+    const file = input.files[0]
+    const docFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('file_type', fabrikantPendingFt.value)
+    fd.append('doc_format', docFormat)
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    if (!res.ok) {
+      let detail = `Ошибка загрузки (${res.status})`
+      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
+      showSnack(detail, 'error')
+      return
+    }
+    const uploaded: UploadedFile = await res.json()
+    const ft = uploaded.file_type
+    uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
+    uploadedFiles.value.push(uploaded)
+    showSnack('Файл загружен — будет использован вместо шаблона')
+  } catch (e: any) {
+    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
+  } finally {
+    uploading.value = false
+    fabrikantPendingFt.value = ''
+    if (input) input.value = ''
+  }
+}
+
+const deleteFabrikantOverride = async (fid: number) => {
+  try {
+    await apiFetch(`/purchases/${purchaseId.value}/files/${fid}`, { method: 'DELETE' })
+    uploadedFiles.value = uploadedFiles.value.filter(f => f.id !== fid)
+    showSnack('Override удалён — будет использоваться шаблон')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка удаления', 'error')
   }
 }
 

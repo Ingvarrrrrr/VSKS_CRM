@@ -365,9 +365,11 @@ class FeoCategoryCreate(BaseModel):
     code: Optional[str] = None
     appendix: Optional[str] = None
     is_active: bool = True
+    description: Optional[str] = None
     budget: Optional[float] = None
     feo_quantity: Optional[float] = None
     feo_unit: Optional[str] = None
+    feo_amount: Optional[float] = None
     planned_quantity: Optional[float] = None
     planned_amount: Optional[float] = None
     unit: Optional[str] = None
@@ -381,9 +383,11 @@ class FeoCategoryOut(BaseModel):
     code: Optional[str] = None
     appendix: Optional[str] = None
     is_active: bool = True
+    description: Optional[str] = None
     budget: Optional[float] = None
     feo_quantity: Optional[float] = None
     feo_unit: Optional[str] = None
+    feo_amount: Optional[float] = None
     planned_quantity: Optional[float] = None
     planned_amount: Optional[float] = None
     unit: Optional[str] = None

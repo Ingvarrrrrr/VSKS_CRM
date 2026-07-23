@@ -329,7 +329,7 @@ const pluralize = (n: number) => {
 
 const statusColor = (s: string | null) => {
   const map: Record<string, string> = {
-    wishes: 'grey', planned: 'blue', confirmed: 'indigo',
+    wishes: 'grey', planned: 'blue', work_in_progress: 'teal',
     contracted: 'orange', delivered: 'teal', paid: 'green',
   }
   return map[s || ''] || 'grey'
@@ -337,7 +337,7 @@ const statusColor = (s: string | null) => {
 
 const statusLabel = (s: string | null) => {
   const map: Record<string, string> = {
-    wishes: 'Пожелание', planned: 'Запланировано', confirmed: 'Подтверждено',
+    wishes: 'Пожелание', planned: 'Запланировано', work_in_progress: 'Ведётся работа',
     contracted: 'Договор', delivered: 'Доставлено', paid: 'Оплачено',
   }
   return map[s || ''] || s || '—'

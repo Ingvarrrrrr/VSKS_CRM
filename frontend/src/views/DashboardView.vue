@@ -137,22 +137,29 @@
             <v-icon icon="mdi-drag" size="16" /> KPI
           </div>
           <v-row v-if="loading" class="kpi-row" style="margin:0">
-            <v-col cols="6" lg="3" v-for="n in 4" :key="'skel-'+n">
-              <v-skeleton-loader type="card" height="88" class="rounded-lg" />
+            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 7" :key="'skel-'+n">
+              <v-skeleton-loader type="card" height="100" class="rounded-lg" />
             </v-col>
           </v-row>
           <v-row v-else class="kpi-row" style="margin:0">
-            <v-col cols="6" lg="3" v-for="card in kpiCards" :key="card.key">
-              <div class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
-                <div class="kpi-icon-box">
-                  <v-icon :icon="card.icon" size="26" />
-                </div>
-                <div class="kpi-body">
-                  <div class="kpi-value">{{ mobile ? formatCurrencyShort(card.value) : formatCurrency(card.value) }}</div>
-                  <div class="kpi-label">{{ card.label }}</div>
-                </div>
-                <div class="kpi-badge" v-if="card.badge">{{ card.badge }}</div>
-              </div>
+            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="card in kpiCards" :key="card.key">
+              <v-tooltip :text="card.tooltip ?? undefined" location="bottom" :disabled="!card.tooltip">
+                <template #activator="{ props: tip }">
+                  <div v-bind="tip" class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
+                    <div class="kpi-icon-box">
+                      <v-icon :icon="card.icon" size="26" />
+                    </div>
+                    <div class="kpi-body">
+                      <div class="kpi-value">{{ mobile ? formatCurrencyShort(card.amount) : formatCurrency(card.amount) }}</div>
+                      <div class="kpi-label">{{ card.label }}</div>
+                      <div class="kpi-count" v-if="card.count > 0">{{ card.count }} {{ card.countLabel }}</div>
+                      <div class="kpi-monthly" v-if="card.monthly !== null">
+                        в т.ч. ежемесячные платежи: {{ formatCurrencyShort(card.monthly!) }} /мес
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </v-tooltip>
             </v-col>
           </v-row>
         </div>
@@ -1003,7 +1010,6 @@ import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
-import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardLayout'
 import { useDashboardMode } from '@/composables/useDashboardMode'
@@ -1068,10 +1074,27 @@ interface SubsidyRow {
   budget_discrepancy?: number | null
 }
 
+interface WidgetMetric {
+  amount: number
+  count: number
+  monthly_payments_total?: number
+}
+
+interface WidgetsData {
+  plan_schedule: WidgetMetric
+  work: WidgetMetric
+  ordered: WidgetMetric
+  delivered: WidgetMetric
+  delivered_unpaid: WidgetMetric
+  paid: WidgetMetric
+  contracts: WidgetMetric
+}
+
 const allSubsidies    = ref<SubsidyRow[]>([])
 const allPurchases    = ref<any[]>([])
 const statusCounts    = ref<Record<string, number>>({})
 const breakdownMetric = ref('budget')
+const widgetsData     = ref<WidgetsData | null>(null)
 
 // Dark mode aware colors for ApexCharts
 const isDark = computed(() => theme.global.name.value === 'dark')
@@ -1138,44 +1161,90 @@ const totalFeoPlanned   = computed(() => filteredSubsidies.value.reduce((s: numb
 const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
-// Animated KPI values
-const animBudget       = useAnimatedNumber(totalBudget)
-const animPlanSchedule = useAnimatedNumber(totalPlanSchedule)
-const animOrdered      = useAnimatedNumber(totalOrdered)
-const animPaid         = useAnimatedNumber(totalPaid)
+// (animated KPI values removed — KPI now uses widgetsData directly)
 
 const overrunSubsidies = computed(() =>
   filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
 )
 
-// ── KPI Cards ─────────────────────────────────────
-const kpiCards = computed(() => [
-  {
-    key: 'budget', label: 'Общий бюджет', value: animBudget.value,
-    icon: 'mdi-bank-outline',
-    badge: `${filteredSubsidies.value.length} субс.`
-  },
-  {
-    key: 'plan_schedule', label: 'Запланировано', value: animPlanSchedule.value,
-    icon: 'mdi-calendar-clock',
-    badge: `${pct(totalPlanSchedule.value, totalBudget.value)}%`
-  },
-  {
-    key: 'feo_planned', label: 'ФЭО план', value: totalFeoPlanned.value,
-    icon: 'mdi-clipboard-list-outline',
-    badge: `${pct(totalFeoPlanned.value, totalBudget.value)}%`
-  },
-  {
-    key: 'ordered', label: 'Заказано', value: animOrdered.value,
-    icon: 'mdi-cart-check',
-    badge: `${pct(totalOrdered.value, totalBudget.value)}%`
-  },
-  {
-    key: 'paid', label: 'Оплачено', value: animPaid.value,
-    icon: 'mdi-cash-check',
-    badge: `${pct(totalPaid.value, totalBudget.value)}%`
-  },
-])
+// ── KPI Cards (widgets — накопительная логика) ────
+const kpiCards = computed(() => {
+  const w = widgetsData.value
+  return [
+    {
+      key: 'plan_schedule',
+      label: 'План-График',
+      icon: 'mdi-calendar-clock',
+      amount: w?.plan_schedule.amount ?? totalPlanSchedule.value,
+      count: w?.plan_schedule.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: 'включает все последующие этапы',
+      monthly: null,
+    },
+    {
+      key: 'work',
+      label: 'Ведётся работа',
+      icon: 'mdi-progress-wrench',
+      amount: w?.work.amount ?? 0,
+      count: w?.work.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: 'включает заказанные, поставленные и оплаченные',
+      monthly: null,
+    },
+    {
+      key: 'ordered',
+      label: 'Заказано',
+      icon: 'mdi-cart-check',
+      amount: w?.ordered.amount ?? totalOrdered.value,
+      count: w?.ordered.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: 'включает поставленные и оплаченные',
+      monthly: (w?.ordered.monthly_payments_total ?? 0) > 0
+        ? w!.ordered.monthly_payments_total!
+        : null,
+    },
+    {
+      key: 'contracts',
+      label: 'Заключено договоров',
+      icon: 'mdi-file-sign',
+      amount: w?.contracts.amount ?? 0,
+      count: w?.contracts.count ?? 0,
+      countLabel: 'договоров',
+      tooltip: 'суммарная стоимость заключённых договоров',
+      monthly: null,
+    },
+    {
+      key: 'delivered',
+      label: 'Поставлено',
+      icon: 'mdi-truck-check',
+      amount: w?.delivered.amount ?? 0,
+      count: w?.delivered.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: 'включает оплаченные',
+      monthly: null,
+    },
+    {
+      key: 'delivered_unpaid',
+      label: 'Поставлено, не оплачено',
+      icon: 'mdi-truck-alert',
+      amount: w?.delivered_unpaid.amount ?? 0,
+      count: w?.delivered_unpaid.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: 'поставлено, но оплата ещё не прошла',
+      monthly: null,
+    },
+    {
+      key: 'paid',
+      label: 'Оплачено',
+      icon: 'mdi-cash-check',
+      amount: w?.paid.amount ?? totalPaid.value,
+      count: w?.paid.count ?? 0,
+      countLabel: 'закупок',
+      tooltip: null,
+      monthly: null,
+    },
+  ]
+})
 
 // ── Chart: Donut ──────────────────────────────────
 const donutReady = computed(() => totalBudget.value > 0)
@@ -1400,8 +1469,8 @@ const radialOptions = computed(() => ({
 // ── Chart: Status Pie ─────────────────────────────
 const STATUS_LABELS: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
-  planned: 'Планируется', confirmed: 'Подтверждено',
-  in_progress: 'Ведётся работа', work_in_progress: 'В работе',
+  planned: 'Планируется',
+  in_progress: 'Ведётся работа', work_in_progress: 'Ведётся работа',
   contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено'
 }
 
@@ -1418,7 +1487,7 @@ const filteredStatusCounts = computed(() => {
 
 const STATUS_COLORS: Record<string, string> = {
   wishes: '#6B7280', plan_schedule: '#F59E0B',
-  planned: '#94A3B8', confirmed: '#3B82F6',
+  planned: '#94A3B8',
   in_progress: '#14B8A6', work_in_progress: '#14B8A6',
   contracted: '#6366F1', ordered: '#0EA5E9', delivered: '#8B5CF6', paid: '#22C55E',
 }
@@ -1430,7 +1499,7 @@ const statusPieReady = computed(() =>
 
 // Sorted entries so chart is stable
 const statusPieEntries = computed(() => {
-  const ORDER = ['planned', 'confirmed', 'in_progress', 'contracted', 'delivered', 'paid']
+  const ORDER = ['planned', 'in_progress', 'work_in_progress', 'contracted', 'delivered', 'paid']
   return Object.entries(filteredStatusCounts.value)
     .filter(([, v]) => v > 0)
     .sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]))
@@ -1460,7 +1529,7 @@ function onPieSliceClick(status: string) {
 }
 
 // Pipeline stages (purchase lifecycle funnel)
-const PIPELINE_ORDER = ['plan_schedule', 'confirmed', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+const PIPELINE_ORDER = ['plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 const pipelineStages = computed(() => {
   const budget = totalBudget.value || 1
   const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
@@ -1670,6 +1739,11 @@ async function loadAll() {
 
     statusCounts.value = chartsData.status_counts
 
+    // Store widgets data from backend
+    if (chartsData.widgets) {
+      widgetsData.value = chartsData.widgets as WidgetsData
+    }
+
     // Store all purchases for filtering
     allPurchases.value = purchasesData
 
@@ -1692,9 +1766,13 @@ function openBreakdown(metric = 'budget') {
 }
 
 function handleKpiClick(key: string) {
-  if (key === 'plan_schedule') router.push('/orders?status=confirmed,work_in_progress')
-  else if (key === 'ordered')  router.push('/orders?status=contracted,delivered,paid')
-  else if (key === 'paid')     router.push('/orders?status=paid')
+  if (key === 'plan_schedule')    router.push('/orders?status=plan_schedule')
+  else if (key === 'work')         router.push('/orders?status=work_in_progress')
+  else if (key === 'ordered')      router.push('/orders?status=contracted')
+  else if (key === 'contracts')    router.push('/contracts')
+  else if (key === 'delivered')    router.push('/orders?status=delivered')
+  else if (key === 'delivered_unpaid') router.push('/orders?status=delivered')
+  else if (key === 'paid')         router.push('/orders?status=paid')
   else openBreakdown(key)
 }
 
@@ -1779,7 +1857,7 @@ function statusLabel(s: string): string {
 
 function statusColor(s: string): string {
   const map: Record<string, string> = {
-    planned: 'grey', confirmed: 'primary', in_progress: 'teal',
+    planned: 'grey', work_in_progress: 'teal', in_progress: 'teal',
     contracted: 'indigo', delivered: 'deep-purple', paid: 'success'
   }
   return map[s] || 'grey'
@@ -1787,7 +1865,7 @@ function statusColor(s: string): string {
 
 function statusColorHex(s: string): string {
   const map: Record<string, string> = {
-    planned: '#94A3B8', confirmed: '#3B82F6', in_progress: '#14B8A6',
+    planned: '#94A3B8', work_in_progress: '#14B8A6', in_progress: '#14B8A6',
     contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E'
   }
   return map[s] || '#94A3B8'
@@ -1812,19 +1890,17 @@ const analyticsLoading = ref(false)
 const A_STATUS_LABELS: Record<string, string> = {
   wishes:           'Пожелания',
   plan_schedule:    'План-график',
-  confirmed:        'Подтверждена',
-  work_in_progress: 'В работе',
+  work_in_progress: 'Ведётся работа',
   contracted:       'Законтрактована',
   ordered:          'Заказана',
   delivered:        'Поставлена',
   paid:             'Оплачена',
   planned:          'Планирование',
-  in_progress:      'В работе',
+  in_progress:      'Ведётся работа',
 }
 const A_STATUS_COLORS: Record<string, string> = {
   wishes:           'grey',
   plan_schedule:    'blue-grey',
-  confirmed:        'blue',
   work_in_progress: 'teal',
   contracted:       'indigo',
   ordered:          'light-blue',
@@ -2028,10 +2104,10 @@ function formatDate(iso: string) {
 }
 
 const STATUS_LABELS_FINPLAN: Record<string, string> = {
-  planned: 'Запланирован', confirmed: 'Подтверждён', wishes: 'Заявка',
-  plan_schedule: 'Запланировано',
+  planned: 'Запланирован', wishes: 'Заявка',
+  plan_schedule: 'План-График',
   contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено',
-  paid: 'Оплачено', work_in_progress: 'В работе',
+  paid: 'Оплачено', work_in_progress: 'Ведётся работа',
 }
 
 async function loadFinplan() {
@@ -2241,10 +2317,14 @@ onMounted(() => {
 .kpi-card:hover::before {
   opacity: 1;
 }
-.kpi-budget::before        { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
-.kpi-plan_schedule::before { box-shadow: 0 0 30px rgba(245,158,11,0.15); }
-.kpi-ordered::before       { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
-.kpi-paid::before          { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
+.kpi-budget::before            { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-plan_schedule::before     { box-shadow: 0 0 30px rgba(245,158,11,0.15); }
+.kpi-work::before              { box-shadow: 0 0 30px rgba(99,102,241,0.15); }
+.kpi-ordered::before           { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-contracts::before         { box-shadow: 0 0 30px rgba(2,132,199,0.15); }
+.kpi-delivered::before         { box-shadow: 0 0 30px rgba(20,184,166,0.15); }
+.kpi-delivered_unpaid::before  { box-shadow: 0 0 30px rgba(239,68,68,0.15); }
+.kpi-paid::before              { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 
 .kpi-icon-box {
   width: 48px;
@@ -2260,17 +2340,25 @@ onMounted(() => {
   transform: scale(1.12) rotate(-3deg);
 }
 
-.kpi-budget .kpi-icon-box        { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
-.kpi-plan_schedule .kpi-icon-box { background: rgba(245,158,11,0.12); color: #F59E0B; }
-.kpi-ordered .kpi-icon-box       { background: rgba(59,130,246,0.12); color: #3B82F6; }
-.kpi-contracted .kpi-icon-box    { background: var(--crm-kpi-bg-sky); color: #0284C7; }
-.kpi-paid .kpi-icon-box          { background: var(--crm-kpi-bg-green); color: #22C55E; }
+.kpi-budget .kpi-icon-box             { background: var(--crm-kpi-bg-blue); color: #3B82F6; }
+.kpi-plan_schedule .kpi-icon-box      { background: rgba(245,158,11,0.12); color: #F59E0B; }
+.kpi-work .kpi-icon-box               { background: rgba(99,102,241,0.12); color: #6366F1; }
+.kpi-ordered .kpi-icon-box            { background: rgba(59,130,246,0.12); color: #3B82F6; }
+.kpi-contracts .kpi-icon-box          { background: var(--crm-kpi-bg-sky); color: #0284C7; }
+.kpi-delivered .kpi-icon-box          { background: rgba(20,184,166,0.12); color: #14B8A6; }
+.kpi-delivered_unpaid .kpi-icon-box   { background: rgba(239,68,68,0.12); color: #EF4444; }
+.kpi-contracted .kpi-icon-box         { background: var(--crm-kpi-bg-sky); color: #0284C7; }
+.kpi-paid .kpi-icon-box               { background: var(--crm-kpi-bg-green); color: #22C55E; }
 
-.kpi-budget       { border-top: 3px solid #3B82F6; }
-.kpi-plan_schedule { border-top: 3px solid #F59E0B; }
-.kpi-ordered      { border-top: 3px solid #3B82F6; }
-.kpi-contracted   { border-top: 3px solid #0284C7; }
-.kpi-paid         { border-top: 3px solid #22C55E; }
+.kpi-budget           { border-top: 3px solid #3B82F6; }
+.kpi-plan_schedule    { border-top: 3px solid #F59E0B; }
+.kpi-work             { border-top: 3px solid #6366F1; }
+.kpi-ordered          { border-top: 3px solid #3B82F6; }
+.kpi-contracts        { border-top: 3px solid #0284C7; }
+.kpi-delivered        { border-top: 3px solid #14B8A6; }
+.kpi-delivered_unpaid { border-top: 3px solid #EF4444; }
+.kpi-contracted       { border-top: 3px solid #0284C7; }
+.kpi-paid             { border-top: 3px solid #22C55E; }
 
 .kpi-body { flex: 1; min-width: 0; }
 .kpi-value {
@@ -2285,6 +2373,18 @@ onMounted(() => {
   font-size: 12px;
   color: var(--crm-text-muted);
   margin-top: 2px;
+}
+.kpi-count {
+  font-size: 11px;
+  color: var(--crm-text-muted);
+  margin-top: 2px;
+}
+.kpi-monthly {
+  font-size: 10px;
+  color: var(--crm-text-muted);
+  margin-top: 3px;
+  line-height: 1.3;
+  opacity: 0.85;
 }
 .kpi-badge {
   font-size: 11px;
@@ -2331,6 +2431,12 @@ onMounted(() => {
     line-height: 1.2;
     white-space: normal;
     margin-top: 1px;
+  }
+  .kpi-count {
+    font-size: 9px;
+  }
+  .kpi-monthly {
+    font-size: 9px;
   }
   .kpi-badge {
     font-size: 9px;
@@ -2606,9 +2712,12 @@ onMounted(() => {
 }
 
 .kpi-row .v-col:nth-child(1) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both; }
-.kpi-row .v-col:nth-child(2) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both; }
-.kpi-row .v-col:nth-child(3) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.19s both; }
-.kpi-row .v-col:nth-child(4) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.26s both; }
+.kpi-row .v-col:nth-child(2) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.10s both; }
+.kpi-row .v-col:nth-child(3) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both; }
+.kpi-row .v-col:nth-child(4) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.20s both; }
+.kpi-row .v-col:nth-child(5) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both; }
+.kpi-row .v-col:nth-child(6) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.30s both; }
+.kpi-row .v-col:nth-child(7) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both; }
 
 /* Charts entrance */
 .chart-row .v-col:nth-child(1) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both; }

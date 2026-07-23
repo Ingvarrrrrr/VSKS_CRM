@@ -272,8 +272,8 @@ async def notify_task_comment(task, comment_user_name: str, comment_text: str, m
 
 async def notify_purchase_status_changed(purchase, changed_by_name: str, new_status: str, notify_users=None) -> None:
     status_labels = {
-        "planned": "Запланирована", "confirmed": "Подтверждена",
-        "work_in_progress": "В работе", "contracted": "Договор заключён",
+        "planned": "Запланирована",
+        "work_in_progress": "Ведётся работа", "contracted": "Договор заключён",
         "delivered": "Доставлено", "paid": "Оплачено",
     }
     label = status_labels.get(new_status, new_status)

@@ -277,7 +277,7 @@ const subsidyOptions = ref<{ id: number; name: string }[]>([])
 const departmentOptions = ref<string[]>([])
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'План', confirmed: 'Подтв.', in_progress: 'В работе',
+  planned: 'План', work_in_progress: 'Ведётся работа', in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставл.', paid: 'Оплачена',
 }
 
@@ -309,7 +309,7 @@ function openItem(id: number) {
 
 function statusColor(s: string): string {
   const map: Record<string, string> = {
-    planned: 'grey', confirmed: 'primary', in_progress: 'teal',
+    planned: 'grey', work_in_progress: 'teal', in_progress: 'teal',
     contracted: 'indigo', delivered: 'deep-purple', paid: 'success',
   }
   return map[s] || 'grey'

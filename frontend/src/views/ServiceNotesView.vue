@@ -315,12 +315,12 @@ const snack = reactive({ show: false, text: '', color: 'success' })
 
 const STATUS_LABEL: Record<string, string> = {
   wishes: 'Желания', plan_schedule: 'План-график',
-  confirmed: 'Подтверждено', work_in_progress: 'В работе',
+  work_in_progress: 'Ведётся работа',
   contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
 }
 const STATUS_COLOR: Record<string, string> = {
   wishes: 'amber', plan_schedule: 'orange',
-  confirmed: 'blue', work_in_progress: 'teal',
+  work_in_progress: 'teal',
   contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
 }
 const statusItems = Object.entries(STATUS_LABEL).map(([value, label]) => ({

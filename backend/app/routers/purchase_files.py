@@ -52,15 +52,28 @@ FORMAT_RULES = {
 }
 
 FILE_TYPES = {
-    "kp":           "КП",
-    "service_note": "Служебная записка",
-    "protocol":     "Протокол закупки",
-    "invoice":      "Счёт",
-    "order":        "Приказ",
-    "upd":          "УПД",
-    "contract":     "Договор",
-    "act":          "Акт",
-    "other":        "Прочее",
+    "kp":                        "КП",
+    "service_note":              "Служебная записка",
+    "protocol":                  "Протокол закупки",
+    "invoice":                   "Счёт",
+    "order":                     "Приказ",
+    "upd":                       "УПД",
+    "contract":                  "Договор",
+    "act":                       "Акт",
+    "other":                     "Прочее",
+    "fabrikant_instruction":     "Фабрикант: Инструкция",
+    "fabrikant_application_form":"Фабрикант: Форма заявки",
+    "fabrikant_documentation":   "Фабрикант: Документация",
+    "fabrikant_contract_project":"Фабрикант: Проект договора",
+    "fabrikant_tech_spec":       "Фабрикант: ТЗ",
+}
+
+FABRIKANT_OVERRIDE_TYPES = {
+    "fabrikant_instruction",
+    "fabrikant_application_form",
+    "fabrikant_documentation",
+    "fabrikant_contract_project",
+    "fabrikant_tech_spec",
 }
 
 DOC_FORMATS = {"scan", "editable"}
@@ -144,13 +157,14 @@ async def upload_file(
     if doc_format not in DOC_FORMATS:
         doc_format = "scan"
 
-    # Validate format rules
-    allowed_for_format = FORMAT_RULES.get(doc_format)
-    if allowed_for_format and file.content_type not in allowed_for_format:
-        if doc_format == "scan":
-            raise HTTPException(400, "Скан-копии: допускаются только JPEG, PNG, PDF. Редактируемые файлы (Word, Excel) нельзя загружать как скан.")
-        else:
-            raise HTTPException(400, "Редактируемые документы: допускаются только Word и Excel. JPEG и PDF нельзя загружать как редактируемый файл.")
+    # Validate format rules (fabrikant override types accept both pdf and word)
+    if file_type not in FABRIKANT_OVERRIDE_TYPES:
+        allowed_for_format = FORMAT_RULES.get(doc_format)
+        if allowed_for_format and file.content_type not in allowed_for_format:
+            if doc_format == "scan":
+                raise HTTPException(400, "Скан-копии: допускаются только JPEG, PNG, PDF. Редактируемые файлы (Word, Excel) нельзя загружать как скан.")
+            else:
+                raise HTTPException(400, "Редактируемые документы: допускаются только Word и Excel. JPEG и PDF нельзя загружать как редактируемый файл.")
 
     # Read file into memory for hashing and size check
     contents = await file.read()

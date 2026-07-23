@@ -87,7 +87,7 @@ FIELDS: dict[str, FieldDef] = {
     'payment_amount': FieldDef('payment_amount', 'Сумма оплачено', 'currency', 'purchase', 'purchases.payment_amount', 'Цены', format='rub', is_measure=True, agg_default='sum'),
 
     # === СТАТУСЫ ===
-    'status': FieldDef('status', 'Статус', 'enum', 'purchase', 'purchases.status', 'Статусы', enum_values=['wishes', 'planned', 'confirmed', 'contracted', 'ordered', 'delivered', 'paid', 'cancelled']),
+    'status': FieldDef('status', 'Статус', 'enum', 'purchase', 'purchases.status', 'Статусы', enum_values=['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid', 'cancelled']),
     'substatus': FieldDef('substatus', 'Подстатус', 'string', 'purchase', 'purchases.substatus', 'Статусы'),
     'confirmed': FieldDef('confirmed', 'Подтверждена', 'boolean', 'purchase', 'purchases.confirmed', 'Статусы'),
     'is_likely_needed': FieldDef('is_likely_needed', 'Скорее всего понадобится', 'boolean', 'purchase', 'purchases.is_likely_needed', 'Статусы'),

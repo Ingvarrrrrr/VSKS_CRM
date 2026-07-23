@@ -229,7 +229,7 @@
             <span class="summary-value" style="color:var(--color-planned)">{{ formatCurrency(totals.planned) }}</span>
           </div>
           <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=confirmed')">
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=work_in_progress')">
             <span class="summary-label">Заказано</span>
             <span class="summary-value" style="color:#3B82F6">{{ formatCurrency(totals.ordered) }}</span>
           </div>
@@ -505,15 +505,33 @@
                           <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
                           <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
                         </div>
+                        <v-tooltip v-if="node.description" location="bottom" open-delay="150" :max-width="420">
+                          <template #activator="{ props: tooltipProps }">
+                            <div v-bind="tooltipProps" class="feo-plan-note text-caption text-medium-emphasis text-truncate" style="max-width:100%">{{ node.description }}</div>
+                          </template>
+                          <span style="white-space:pre-line">{{ node.description }}</span>
+                        </v-tooltip>
                       </td>
 
                       <!-- Финансирование по ФЭО (inline edit) -->
                       <td class="feo-td feo-td-num">
-                        <div v-if="node.feo_quantity != null" class="feo-plan-note text-medium-emphasis text-right"
-                          title="Количество по документу ФЭО"
-                        >
-                          {{ Number(node.feo_quantity) }}{{ node.feo_unit ? ` ${node.feo_unit}` : ' шт' }}
-                        </div>
+                        <template v-if="feoRollup(node).qty != null || feoRollup(node).amount != null">
+                          <div class="feo-plan-note text-right"
+                            :class="feoRollup(node).qtyAuto || feoRollup(node).amountAuto ? 'text-medium-emphasis' : ''"
+                            :title="(feoRollup(node).qtyAuto || feoRollup(node).amountAuto) ? 'Сумма по вложенным' : 'Количество и стоимость по документу ФЭО'"
+                          >
+                            <template v-if="feoRollup(node).qty != null && feoRollup(node).amount != null">
+                              {{ feoRollup(node).qty }}{{ node.feo_unit ? ` ${node.feo_unit}` : '' }} × {{ feoRollup(node).amount?.toLocaleString('ru-RU') }} ₽
+                            </template>
+                            <template v-else-if="feoRollup(node).qty != null">
+                              {{ feoRollup(node).qty }}{{ node.feo_unit ? ` ${node.feo_unit}` : ' шт' }}
+                            </template>
+                            <template v-else>
+                              {{ feoRollup(node).amount?.toLocaleString('ru-RU') }} ₽
+                            </template>
+                            <v-chip v-if="feoRollup(node).qtyAuto || feoRollup(node).amountAuto" size="x-small" color="blue-grey" variant="tonal" class="ml-1">авто</v-chip>
+                          </div>
+                        </template>
                         <div v-if="inlineBudgetId === node.id" class="d-flex align-center justify-end">
                           <input
                             ref="inlineInputEl"
@@ -1741,6 +1759,11 @@
               <v-text-field v-model="feoForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
             </v-col>
           </v-row>
+          <v-textarea
+            v-model="feoForm.description"
+            label="Пояснение (что входит в направление)"
+            variant="outlined" density="compact" rows="2" auto-grow hide-details class="mt-3"
+          />
           <v-divider class="my-3" />
           <!-- Блок: По документу ФЭО -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
@@ -1765,21 +1788,29 @@
               label="Сумма финансирования, ₽"
               variant="outlined" density="compact" type="number" hide-details class="mb-3"
             />
-            <!-- Кол-во и ед. изм. по ФЭО -->
+            <!-- Кол-во, ед. изм. и стоимость за ед. по ФЭО -->
             <v-row dense>
-              <v-col cols="7">
+              <v-col cols="4">
                 <v-text-field
                   v-model.number="feoForm.feo_quantity"
                   label="Кол-во по ФЭО"
                   variant="outlined" density="compact" type="number" hide-details
                 />
               </v-col>
-              <v-col cols="5">
+              <v-col cols="4">
                 <v-combobox
                   v-model="feoForm.feo_unit"
                   :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
                   label="Ед. изм. по ФЭО"
                   variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field
+                  v-model="feoForm.feo_amount"
+                  label="Стоимость за ед. по ФЭО"
+                  variant="outlined" density="compact" type="number" hide-details
+                  suffix="₽"
                 />
               </v-col>
             </v-row>
@@ -1882,6 +1913,11 @@
             hint="Очистите для корневого уровня. Или перетащите в таблице."
             persistent-hint
           />
+          <v-textarea
+            v-model="feoEditForm.description"
+            label="Пояснение (что входит в направление)"
+            variant="outlined" density="compact" rows="2" auto-grow hide-details class="mt-3"
+          />
           <v-divider class="my-3" />
           <!-- Блок: По документу ФЭО -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
@@ -1913,21 +1949,29 @@
             >
               Сумма рассчитывается автоматически из дочерних направлений
             </v-alert>
-            <!-- Кол-во и ед. изм. по ФЭО -->
+            <!-- Кол-во, ед. изм. и стоимость за ед. по ФЭО -->
             <v-row dense>
-              <v-col cols="7">
+              <v-col cols="4">
                 <v-text-field
                   v-model.number="feoEditForm.feo_quantity"
                   label="Кол-во по ФЭО"
                   variant="outlined" density="compact" type="number" hide-details
                 />
               </v-col>
-              <v-col cols="5">
+              <v-col cols="4">
                 <v-combobox
                   v-model="feoEditForm.feo_unit"
                   :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
                   label="Ед. изм. по ФЭО"
                   variant="outlined" density="compact" hide-details
+                />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field
+                  v-model="feoEditForm.feo_amount"
+                  label="Стоимость за ед. по ФЭО"
+                  variant="outlined" density="compact" type="number" hide-details
+                  suffix="₽"
                 />
               </v-col>
             </v-row>
@@ -3389,6 +3433,7 @@ interface FeoCategory {
   level: number; name: string; code: string | null; appendix: string | null
   is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
   feo_quantity: number | null; feo_unit: string | null
+  description: string | null; feo_amount: number | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -3716,12 +3761,15 @@ const FEO_TARGET_FIELDS = [
   { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
   { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
-  { value: 'feo_qty_lvl2',  title: 'Кол-во по ФЭО (Ур.2)',                   required: false },
-  { value: 'feo_unit_lvl2', title: 'Ед. изм. по ФЭО (Ур.2)',                required: false },
-  { value: 'feo_qty_lvl3',  title: 'Кол-во по ФЭО (Ур.3)',                   required: false },
-  { value: 'feo_unit_lvl3', title: 'Ед. изм. по ФЭО (Ур.3)',                required: false },
-  { value: 'feo_qty_lvl4',  title: 'Кол-во по ФЭО (Ур.4)',                   required: false },
-  { value: 'feo_unit_lvl4', title: 'Ед. изм. по ФЭО (Ур.4)',                required: false },
+  { value: 'feo_qty_lvl2',    title: 'Кол-во по ФЭО (Ур.2)',                required: false },
+  { value: 'feo_unit_lvl2',  title: 'Ед. изм. по ФЭО (Ур.2)',              required: false },
+  { value: 'feo_amount_lvl2', title: 'Стоимость по ФЭО (Ур.2)',             required: false },
+  { value: 'feo_qty_lvl3',    title: 'Кол-во по ФЭО (Ур.3)',                required: false },
+  { value: 'feo_unit_lvl3',  title: 'Ед. изм. по ФЭО (Ур.3)',              required: false },
+  { value: 'feo_amount_lvl3', title: 'Стоимость по ФЭО (Ур.3)',             required: false },
+  { value: 'feo_qty_lvl4',    title: 'Кол-во по ФЭО (Ур.4)',                required: false },
+  { value: 'feo_unit_lvl4',  title: 'Ед. изм. по ФЭО (Ур.4)',              required: false },
+  { value: 'feo_amount_lvl4', title: 'Стоимость по ФЭО (Ур.4)',             required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
@@ -3815,12 +3863,15 @@ function feoAutoMap(headers: string[]) {
     qty_lvl4:     ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
     unit_lvl4:    ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
     amt_lvl4:     ['плановая стоимость за ед. (ур.4)', 'плановая стоимость (ур.4)', 'стоимость за ед. (ур.4)', 'стоимость ур.4', 'плановая сумма (ур.4)', 'сумма ур.4'],
-    feo_qty_lvl2: ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2', 'кол-во по фэо'],
-    feo_unit_lvl2:['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2', 'ед. изм. по фэо'],
-    feo_qty_lvl3: ['кол-во по фэо (ур.3)', 'кол-во по фэо ур.3'],
-    feo_unit_lvl3:['ед. изм. по фэо (ур.3)', 'ед. изм. по фэо ур.3'],
-    feo_qty_lvl4: ['кол-во по фэо (ур.4)', 'кол-во по фэо ур.4'],
-    feo_unit_lvl4:['ед. изм. по фэо (ур.4)', 'ед. изм. по фэо ур.4'],
+    feo_qty_lvl2:    ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2', 'кол-во по фэо'],
+    feo_unit_lvl2:   ['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2', 'ед. изм. по фэо'],
+    feo_amount_lvl2: ['стоимость по фэо (ур.2)', 'стоимость по фэо ур.2', 'стоимость по фэо'],
+    feo_qty_lvl3:    ['кол-во по фэо (ур.3)', 'кол-во по фэо ур.3'],
+    feo_unit_lvl3:   ['ед. изм. по фэо (ур.3)', 'ед. изм. по фэо ур.3'],
+    feo_amount_lvl3: ['стоимость по фэо (ур.3)', 'стоимость по фэо ур.3'],
+    feo_qty_lvl4:    ['кол-во по фэо (ур.4)', 'кол-во по фэо ур.4'],
+    feo_unit_lvl4:   ['ед. изм. по фэо (ур.4)', 'ед. изм. по фэо ур.4'],
+    feo_amount_lvl4: ['стоимость по фэо (ур.4)', 'стоимость по фэо ур.4'],
     lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
     code:     ['код'],
     appendix: ['приложение'],
@@ -4613,8 +4664,8 @@ const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string })
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -4808,6 +4859,31 @@ function isAutoNode(node: FeoNode): boolean {
   return node.budget == null
 }
 
+/** Rollup-хелпер: возвращает qty/amount для узла с признаком «авто» (из потомков). */
+function feoRollup(node: FeoNode): { qty: number | null; qtyAuto: boolean; amount: number | null; amountAuto: boolean } {
+  const ownQty = node.feo_quantity != null ? Number(node.feo_quantity) : null
+  const ownAmt = node.feo_amount != null ? Number(node.feo_amount) : null
+  if (ownQty != null || ownAmt != null) {
+    return { qty: ownQty, qtyAuto: false, amount: ownAmt, amountAuto: false }
+  }
+  if (!node.hasChildren) return { qty: null, qtyAuto: false, amount: null, amountAuto: false }
+  // Суммируем по прямым и косвенным детям рекурсивно
+  let sumQty = 0; let hasQty = false
+  let sumAmt = 0; let hasAmt = false
+  const walkChildren = (children: FeoNode[]) => {
+    for (const c of children) {
+      const r = feoRollup(c)
+      if (r.qty != null) { sumQty += r.qty; hasQty = true }
+      if (r.amount != null) { sumAmt += r.amount; hasAmt = true }
+    }
+  }
+  walkChildren(node.children)
+  return {
+    qty: hasQty ? sumQty : null, qtyAuto: hasQty,
+    amount: hasAmt ? sumAmt : null, amountAuto: hasAmt,
+  }
+}
+
 // Фактически запланированные расходы:
 // - листовая категория (нет детей) → берём закупки, привязанные напрямую к ней
 // - родительская категория → ТОЛЬКО сумма детей (закупки напрямую на уровне 1/2 не считаются)
@@ -4862,13 +4938,13 @@ function isFactActual(a: { purchase_status?: string | null }): boolean {
 
 // Позиция «из заявки» в плановой стадии (до договора): источник истины — заявка,
 // поэтому название/кол-во/цену тут править нельзя (бэкенд отдаёт 409). Прячем карандаш/удаление.
-const WISH_PLAN_LOCKED_STATUSES = ['wishes', 'plan_schedule', 'confirmed', 'work_in_progress']
+const WISH_PLAN_LOCKED_STATUSES = ['wishes', 'plan_schedule', 'work_in_progress']
 function isWishLocked(it: { wish_id?: number | null; purchase_status?: string | null }): boolean {
   return !!it.wish_id && WISH_PLAN_LOCKED_STATUSES.includes(it.purchase_status || '')
 }
 
 const PURCHASE_STATUS_LABELS: Record<string, string> = {
-  plan_schedule: 'План-график', confirmed: 'Подтверждено', work_in_progress: 'В работе',
+  plan_schedule: 'План-график', work_in_progress: 'Ведётся работа',
   contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }
 
@@ -5337,12 +5413,15 @@ async function doFeoMappedImport() {
       col_amt_lvl2:      String(m['amt_lvl2']      ?? -1),
       col_amt_lvl3:      String(m['amt_lvl3']      ?? -1),
       col_amt_lvl4:      String(m['amt_lvl4']      ?? -1),
-      col_feo_qty_lvl2:  String(m['feo_qty_lvl2']  ?? -1),
-      col_feo_unit_lvl2: String(m['feo_unit_lvl2'] ?? -1),
-      col_feo_qty_lvl3:  String(m['feo_qty_lvl3']  ?? -1),
-      col_feo_unit_lvl3: String(m['feo_unit_lvl3'] ?? -1),
-      col_feo_qty_lvl4:  String(m['feo_qty_lvl4']  ?? -1),
-      col_feo_unit_lvl4: String(m['feo_unit_lvl4'] ?? -1),
+      col_feo_qty_lvl2:    String(m['feo_qty_lvl2']    ?? -1),
+      col_feo_unit_lvl2:   String(m['feo_unit_lvl2']   ?? -1),
+      col_feo_amount_lvl2: String(m['feo_amount_lvl2'] ?? -1),
+      col_feo_qty_lvl3:    String(m['feo_qty_lvl3']    ?? -1),
+      col_feo_unit_lvl3:   String(m['feo_unit_lvl3']   ?? -1),
+      col_feo_amount_lvl3: String(m['feo_amount_lvl3'] ?? -1),
+      col_feo_qty_lvl4:    String(m['feo_qty_lvl4']    ?? -1),
+      col_feo_unit_lvl4:   String(m['feo_unit_lvl4']   ?? -1),
+      col_feo_amount_lvl4: String(m['feo_amount_lvl4'] ?? -1),
     })
     const fd = new FormData()
     fd.append('file', feoImport.file)
@@ -5866,11 +5945,13 @@ async function addFeoCategory() {
         unit: feoForm.value.unit || null,
         feo_quantity: feoForm.value.feo_quantity ?? null,
         feo_unit: feoForm.value.feo_unit || null,
+        description: feoForm.value.description?.trim() || null,
+        feo_amount: feoForm.value.feo_amount === '' || feoForm.value.feo_amount == null ? null : Number(feoForm.value.feo_amount),
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '' }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '' }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
@@ -5915,6 +5996,8 @@ function startFeoEdit(node: FeoNode) {
     parent_id: node.parent_id ?? null,
     feo_quantity: node.feo_quantity ?? null,
     feo_unit: node.feo_unit || '',
+    description: node.description || '',
+    feo_amount: node.feo_amount ?? '',
   }
   showEditFeoDialog.value = true
 }
@@ -5948,6 +6031,8 @@ async function updateFeoCategory() {
         unit: feoEditForm.value.unit || null,
         feo_quantity: feoEditForm.value.feo_quantity ?? null,
         feo_unit: feoEditForm.value.feo_unit || null,
+        description: feoEditForm.value.description?.trim() || null,
+        feo_amount: feoEditForm.value.feo_amount === '' || feoEditForm.value.feo_amount == null ? null : Number(feoEditForm.value.feo_amount),
       })
     })
     showEditFeoDialog.value = false

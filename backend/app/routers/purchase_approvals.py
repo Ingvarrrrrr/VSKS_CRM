@@ -65,10 +65,10 @@ async def start_approval(
     if not p.subsidy_id:
         raise HTTPException(422, "У закупки не указана субсидия")
 
-    # Check purchase status — at least confirmed
-    ALLOWED = ("confirmed", "work_in_progress")
+    # Check purchase status — at least work_in_progress
+    ALLOWED = ("work_in_progress",)
     if p.status not in ALLOWED:
-        raise HTTPException(422, f"Согласование можно запустить только в статусах: {', '.join(ALLOWED)}")
+        raise HTTPException(422, f"Согласование можно запустить только в статусе: {', '.join(ALLOWED)}")
 
     # Check no active chain already
     if p.approval_status == "in_progress":

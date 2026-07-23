@@ -2600,12 +2600,48 @@ async def render_fabrikant_package_files(
         ("tech_spec_request",          "ТЗ.docx"),
     ]
 
+    # ── Override file_type → doc_key mapping ─────────────────────────────────
+    _override_map = {
+        "fabrikant_instruction":      "fabrikant_instruction",
+        "fabrikant_application_form": "fabrikant_application_form",
+        "fabrikant_documentation":    "fabrikant_documentation",
+        "fabrikant_contract_project": "fabrikant_contract_project",
+        "tech_spec_request":          "fabrikant_tech_spec",
+    }
+    from app.models.purchase_file import PurchaseFile as _PF
+    _override_keys = list(_override_map.values())
+    _pf_res = await db.execute(
+        select(_PF)
+        .where(
+            _PF.purchase_id == purchase_id,
+            _PF.file_type.in_(_override_keys),
+            _PF.is_active == True,
+        )
+        .order_by(_PF.id.desc())
+    )
+    _overrides: dict[str, _PF] = {}
+    for _pf in _pf_res.scalars().all():
+        if _pf.file_type not in _overrides:
+            _overrides[_pf.file_type] = _pf
+
     # ── Render each doc ───────────────────────────────────────────────────────
     # rendered: (ascii_file_name, ru_title, bytes)
     rendered: list[tuple[str, str, bytes]] = []
     errors: list[str] = []
 
     for (doc_key, ascii_name, ru_title), (_doc_key2, legacy_arc) in zip(FABRIKANT_PKG_FILE_NAMES, _pkg_docs_legacy):
+        override_ft = _override_map.get(doc_key)
+        if override_ft and override_ft in _overrides:
+            _pf_ov = _overrides[override_ft]
+            orig_ext = os.path.splitext(_pf_ov.original_name or _pf_ov.filename or "")[1] or ".docx"
+            ov_ascii_name = os.path.splitext(ascii_name)[0] + orig_ext
+            if _pf_ov.filepath and os.path.exists(_pf_ov.filepath):
+                with open(_pf_ov.filepath, "rb") as _fh:
+                    rendered.append((ov_ascii_name, ru_title, _fh.read()))
+                continue
+            else:
+                errors.append(f"{ascii_name}: файл override не найден на диске ({_pf_ov.filepath})")
+
         if doc_key == "tech_spec_request":
             tpl_path = _tz_path
         else:
@@ -2662,12 +2698,15 @@ async def download_fabrikant_package(
             },
         )
 
-    # ZIP archive names use legacy Russian names for user-facing download
-    _ru_names = ["Инструкция.docx", "Форма_заявки.docx", "Документация.docx", "Проект_договора.docx", "ТЗ.docx"]
+    # ZIP archive names: Russian base + actual extension from ascii_name
+    _ru_bases = ["Инструкция", "Форма_заявки", "Документация", "Проект_договора", "ТЗ"]
     zip_buf = BytesIO()
     with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
-        for (ascii_name, ru_title, data), ru_zip_name in zip(rendered, _ru_names):
-            zf.writestr(ru_zip_name, data)
+        _ru_iter = iter(_ru_bases)
+        for ascii_name, ru_title, data in rendered:
+            _ru_base = next(_ru_iter, os.path.splitext(ascii_name)[0])
+            _ext = os.path.splitext(ascii_name)[1] or ".docx"
+            zf.writestr(_ru_base + _ext, data)
         if errors:
             zf.writestr("errors.txt", "\n\n".join(errors))
     zip_buf.seek(0)

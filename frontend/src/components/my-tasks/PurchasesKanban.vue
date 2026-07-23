@@ -148,7 +148,6 @@ const emit = defineEmits<{
 const COLUMNS: KanbanColumn[] = [
   { status: 'wishes', label: 'Желания сотрудников', color: '#F59E0B' },
   { status: 'plan_schedule', label: 'План-график', color: '#FB923C' },
-  { status: 'confirmed', label: 'Подтверждено', color: '#3B82F6' },
   { status: 'work_in_progress', label: 'Ведётся работа', color: '#14B8A6' },
   { status: 'contracted', label: 'Договор', color: '#6366F1' },
   { status: 'delivered', label: 'Поставлено', color: '#8B5CF6' },
@@ -161,9 +160,11 @@ const visibleColumns = computed<KanbanColumn[]>(() =>
 
 // ── Substatus labels ─────────────────────────────────────────────────────────
 const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формируется ТЗ',
+  tz_forming: 'Формирование ТЗ',
   kp_collecting: 'Сбор КП',
   on_platform: 'На площадке',
+  contractor_negotiations: 'Переговоры с подрядчиком',
+  contract_signing: 'Договор на подписании',
 }
 
 // ── Subsidy filter (local UI state) ─────────────────────────────────────────

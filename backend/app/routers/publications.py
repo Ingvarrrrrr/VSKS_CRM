@@ -252,7 +252,10 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "purchase_id":       p.id,
         "registry_number":   p.registry_number,
         "subject":           p.subject,
-        "nmck":              float(p.total_nmck or p.planned_total_price or 0),
+        "nmck":              float(p.total_nmck or p.nmck or p.planned_total_price or 0) or sum(
+            float(i.total_price or 0) or (float(i.unit_price or 0) * float(i.quantity or 0))
+            for i in items
+        ),
         "purchase_method":   p.purchase_method,
         "contract_type":     p.purchase_contract_type,
         "execution_term":    str(p.execution_term) if p.execution_term else None,
@@ -486,6 +489,11 @@ def _build_soap_xml(payload: dict) -> str:
         )
 
     lot_items = f"<pnc:lotItems>{items_xml}</pnc:lotItems>" if items_xml else ""
+    initial_sum_xml = (
+        f"<pnc:initialSumInfo><pnc:initialSum>{nmck}</pnc:initialSum><pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
+        if float(nmck or 0) > 0
+        else "<pnc:noNmcd>true</pnc:noNmcd>"
+    )
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -502,7 +510,7 @@ def _build_soap_xml(payload: dict) -> str:
         f"<pnc:lotId>{purchase_id}</pnc:lotId>"
         f"<pnc:subject>{subject}</pnc:subject>"
         "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
-        f"<pnc:initialSumInfo><pnc:initialSum>{nmck}</pnc:initialSum><pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
+        f"{initial_sum_xml}"
         f"<pnc:deliveryPlace><pnc:adress>{esc(payload.get('delivery_address') or 'Москва')}</pnc:adress></pnc:deliveryPlace>"
         "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
         f"{lot_items}"
@@ -659,9 +667,6 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
         return
 
     nmck = float(payload.get("nmck") or 0)
-    if nmck < 0.01:
-        await _set_pub_error(pub_id, "НМЦК закупки не указана или равна 0. Заполните сумму закупки перед публикацией.")
-        return
 
     items = [i for i in payload.get("items", []) if i.get("item_name")]
     if not items:

@@ -27,6 +27,7 @@ from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.organization import Organization
 from app.schemas.schemas import PublishRequest, PublicationOut, PublicationStatusUpdate
+from app.services.ru_regions import get_region_info
 from app.auth.jwt import get_current_user
 from app.auth.permissions import require_action
 
@@ -245,6 +246,7 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         subsidy = s_res.scalar_one_or_none()
 
     org_inn = None
+    org_address = None
     if subsidy and subsidy.org_id:
         org_res = await db.execute(
             select(Organization)
@@ -254,6 +256,21 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         org = org_res.scalar_one_or_none()
         if org:
             org_inn = org.inn or (org.contractor.inn if org.contractor else None)
+            # Адрес по merge-паттерну: org.address, при пустом — адрес привязанного контрагента
+            org_address = (org.address or "").strip() or (
+                (org.contractor.address or "").strip() if org.contractor else ""
+            ) or None
+
+    # Фолбэк адреса поставки: карточный delivery_address → delivery_location → адрес организации субсидии
+    delivery_address = (
+        (p.delivery_address or "").strip()
+        or (p.delivery_location or "").strip()
+        or org_address
+    )
+
+    # Субъект РФ → федеральный округ + ОКАТО (deliveryPlaceType Фабриканта).
+    # Если регион не заполнен / спец-значение — None, XML строится без этих элементов (не падаем).
+    region_info = get_region_info(p.region)
 
     return {
         "purchase_id":       p.id,
@@ -266,7 +283,12 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "purchase_method":   p.purchase_method,
         "contract_type":     p.purchase_contract_type,
         "execution_term":    str(p.execution_term) if p.execution_term else None,
-        "delivery_address":  p.delivery_address or None,
+        "delivery_address":  delivery_address or None,
+        "region":            p.region or None,
+        # deliveryPlaceType: state (фед. округ) / region (субъект) / regionOkato (11 цифр)
+        "delivery_state":    region_info["district"] if region_info else None,
+        "delivery_region":   p.region.strip() if (region_info and p.region) else None,
+        "delivery_okato":    region_info["okato"] if region_info else None,
         "org_inn":           org_inn,
         "contractor": {
             "name": contractor.name if contractor else None,
@@ -469,6 +491,23 @@ def _build_soap_xml(payload: dict) -> str:
     NS_PNC = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/purchaseNotice"
     NS_T   = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/types"
 
+    # ── Билдер deliveryPlace (deliveryPlaceType, WSDL): state? → region? → regionOkato? → adress ──
+    def _delivery_place_xml(default_addr: str = "") -> str:
+        """Порядок элементов строго по sequence WSDL. Каждый опциональный элемент —
+        только при наличии значения; adress обязателен (без адреса блок не строим)."""
+        addr = payload.get("delivery_address") or default_addr
+        if not addr:
+            return ""
+        xml = "<pnc:deliveryPlace>"
+        if payload.get("delivery_state"):
+            xml += f"<pnc:state>{esc(payload['delivery_state'])}</pnc:state>"
+        if payload.get("delivery_region"):
+            xml += f"<pnc:region>{esc(payload['delivery_region'])}</pnc:region>"
+        if payload.get("delivery_okato"):
+            xml += f"<pnc:regionOkato>{esc(payload['delivery_okato'])}</pnc:regionOkato>"
+        xml += f"<pnc:adress>{esc(addr)}</pnc:adress></pnc:deliveryPlace>"
+        return xml
+
     # ── Вспомогательный билдер: initialSumInfo с необязательным pricingMethod перед ним ──
     def _initial_sum_xml(nmck_val: float) -> str:
         """XSD-схема Фабриканта (выяснено эмпирически 2026-07-23):
@@ -576,7 +615,7 @@ def _build_soap_xml(payload: dict) -> str:
 
         lot_items = _build_lot_items_zp()
         initial_sum_xml = _initial_sum_xml(nmck)
-        delivery = esc(payload.get("delivery_address") or "Москва")
+        delivery_place = _delivery_place_xml(default_addr="Москва")
 
         body = (
             f'<pnc:purchaseNoticeZPCommercial xmlns:pnc="{NS_PNC}" xmlns:t="{NS_T}">'
@@ -591,7 +630,7 @@ def _build_soap_xml(payload: dict) -> str:
             f"<pnc:subject>{subject}</pnc:subject>"
             "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
             f"{initial_sum_xml}"
-            f"<pnc:deliveryPlace><pnc:adress>{delivery}</pnc:adress></pnc:deliveryPlace>"
+            f"{delivery_place}"
             "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
             f"{lot_items}"
             f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
@@ -632,7 +671,7 @@ def _build_soap_xml(payload: dict) -> str:
         auction_start = fdt(_parse_dt(payload["auction_date_start"]) or (end_dt + timedelta(days=1)))
         bet_from = float(payload["auction_bet_limit_from"])
         bet_to = float(payload["auction_bet_limit_to"])
-        delivery = esc(payload["delivery_address"])
+        delivery_place = _delivery_place_xml()  # delivery_address гарантирован проверкой выше
         lot_items = _build_lot_items_reduction()
         initial_sum_xml = _initial_sum_xml(nmck)
 
@@ -648,7 +687,7 @@ def _build_soap_xml(payload: dict) -> str:
             f"<pnc:subject>{subject}</pnc:subject>"
             "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
             f"{initial_sum_xml}"
-            f"<pnc:deliveryPlace><pnc:adress>{delivery}</pnc:adress></pnc:deliveryPlace>"
+            f"{delivery_place}"
             "<pnc:applicationSupplyNeeded>false</pnc:applicationSupplyNeeded>"
             f"{lot_items}"
             f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
@@ -703,6 +742,8 @@ def _build_soap_xml(payload: dict) -> str:
         "<pnc:currency><t:code>RUB</t:code></pnc:currency>"
         f"{okei_qty_xml}"
         f"<pnc:okpd2><t:code>{esc(okpd2_code)}</t:code><t:name>{okpd2_name}</t:name></pnc:okpd2>"
+        # deliveryPlace опционален (minOccurs=0) — добавляем только при наличии адреса
+        f"{_delivery_place_xml()}"
         f"<pnc:proposalStartDateTime>{start}</pnc:proposalStartDateTime>"
         f"<pnc:proposalEndDateTime>{end}</pnc:proposalEndDateTime>"
         "</pnc:lot></pnc:lots>"

@@ -85,6 +85,7 @@ ALL_EXPORT_COLUMNS = {
     "payment_doc_date":       {"label": "ПП: дата",              "group": "Оплата"},
     "payment_amount":         {"label": "ПП: сумма",             "group": "Оплата"},
     "payment_federal":        {"label": "В т.ч. фед. бюджет",   "group": "Оплата"},
+    "payment_purpose":        {"label": "Назначение платежа",    "group": "Оплата"},
     "delivery_payment_amount":{"label": "Оплата с доставкой",    "group": "Оплата"},
     "vat_applicable":         {"label": "НДС применяется",       "group": "НДС"},
     "vat_rate":               {"label": "Ставка НДС",            "group": "НДС"},
@@ -98,7 +99,7 @@ DEFAULT_EXPORT_COLUMNS = [
     "contract_number", "contract_date", "contractor", "contractor_inn",
     "execution_term", "country_origin",
     "acceptance_doc_name", "acceptance_doc_number", "acceptance_doc_date", "acceptance_doc_amount",
-    "payment_doc_number", "payment_doc_date", "payment_amount", "payment_federal",
+    "payment_doc_number", "payment_doc_date", "payment_amount", "payment_federal", "payment_purpose",
     "status",
 ]
 
@@ -254,6 +255,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "payment_doc_date":        return str(p.payment_doc_date) if p.payment_doc_date else ""
     if key == "payment_amount":          return float(p.payment_amount) if p.payment_amount else ""
     if key == "payment_federal":         return float(p.payment_federal) if p.payment_federal else ""
+    if key == "payment_purpose":         return ctx["payment_purposes"].get(p.id, "")
     if key == "delivery_payment_amount": return float(p.delivery_payment_amount) if p.delivery_payment_amount else ""
     if key == "vat_applicable":          return "Да" if p.vat_applicable else ""
     if key == "vat_rate":                return p.vat_rate if p.vat_rate is not None else ""
@@ -305,7 +307,30 @@ async def export_purchases_to_excel(
     contractor_inns = {c.id: (c.inn or "") for c in contractor_rows}
     subsidies_map = {s.id: s.name for s in (await db.execute(select(Subsidy))).scalars().all()}
     feo_map = {f.id: f.name for f in (await db.execute(select(FeoCategory))).scalars().all()}
-    ctx = {"contractors": contractors, "contractor_inns": contractor_inns, "subsidies": subsidies_map, "feo_categories": feo_map}
+
+    purchase_ids = [p.id for p in purchases]
+    payment_purposes: dict[int, str] = {}
+    if purchase_ids:
+        pay_rows = (
+            await db.execute(
+                select(Payment)
+                .where(Payment.purchase_id.in_(purchase_ids))
+                .order_by(Payment.payment_date.asc().nullsfirst(), Payment.id.asc())
+            )
+        ).scalars().all()
+        _pp_map: dict[int, list[str]] = defaultdict(list)
+        for pay in pay_rows:
+            if pay.payment_purpose and pay.payment_purpose.strip():
+                _pp_map[pay.purchase_id].append(pay.payment_purpose.strip())
+        payment_purposes = {pid: "; ".join(purposes) for pid, purposes in _pp_map.items()}
+
+    ctx = {
+        "contractors": contractors,
+        "contractor_inns": contractor_inns,
+        "subsidies": subsidies_map,
+        "feo_categories": feo_map,
+        "payment_purposes": payment_purposes,
+    }
 
     wb = Workbook()
     ws = wb.active

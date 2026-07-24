@@ -1554,36 +1554,46 @@
               />
             </v-col>
             <v-col cols="12">
-              <div class="mb-1">
-                <v-btn-toggle
-                  v-model="form.delivery_location_kind"
-                  density="compact" mandatory color="primary" variant="outlined"
-                >
-                  <v-btn value="delivery" size="small">Адрес доставки</v-btn>
-                  <v-btn value="service" size="small">Место оказания услуг</v-btn>
-                </v-btn-toggle>
+              <div id="pub-target-address" style="position:relative">
+                <div v-if="pointerTarget === 'address'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+                <div :class="pointerTarget === 'address' ? 'pub-glow' : ''">
+                  <div class="mb-1">
+                    <v-btn-toggle
+                      v-model="form.delivery_location_kind"
+                      density="compact" mandatory color="primary" variant="outlined"
+                    >
+                      <v-btn value="delivery" size="small">Адрес доставки</v-btn>
+                      <v-btn value="service" size="small">Место оказания услуг</v-btn>
+                    </v-btn-toggle>
+                  </div>
+                  <AddressAutocomplete
+                    v-model="form.delivery_location"
+                    :label="deliveryLabel"
+                    :customer-address="customerPreview?.address"
+                    hint="Подставится в шаблон документа"
+                    persistent-hint
+                  />
+                </div>
               </div>
-              <AddressAutocomplete
-                v-model="form.delivery_location"
-                :label="deliveryLabel"
-                :customer-address="customerPreview?.address"
-                hint="Подставится в шаблон документа"
-                persistent-hint
-              />
             </v-col>
           </v-row>
           <v-row>
             <v-col cols="12">
-              <v-autocomplete
-                v-model="form.region"
-                :items="RUSSIAN_REGIONS"
-                label="Регион проведения мероприятия"
-                density="compact"
-                variant="outlined"
-                clearable
-                hide-details
-                @update:model-value="markDirty"
-              />
+              <div id="pub-target-region" style="position:relative">
+                <div v-if="pointerTarget === 'region'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+                <div :class="pointerTarget === 'region' ? 'pub-glow' : ''">
+                  <v-autocomplete
+                    v-model="form.region"
+                    :items="RUSSIAN_REGIONS"
+                    label="Регион проведения мероприятия"
+                    density="compact"
+                    variant="outlined"
+                    clearable
+                    hide-details
+                    @update:model-value="pointerTarget = null"
+                  />
+                </div>
+              </div>
             </v-col>
           </v-row>
           <v-row>
@@ -3686,6 +3696,7 @@ function onMonthlyStagesCreated(res: any) {
 }
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
+import { RU_REGION_OKATO } from '@/constants/ru_region_okato'
 import { useDisplay } from 'vuetify'
 import { useEntityChanges } from '@/composables/useEntityChanges'
 import { useUndoRedo } from '@/composables/useUndoRedo'
@@ -5012,7 +5023,8 @@ const publishDialog = ref(false)
 const publishingPlatform = ref<string | null>(null)
 const pendingPlatform = ref<string | null>(null)
 const roseltorgProcedureType = ref<string | null>(null)
-const publishErrors = ref<{text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[]>([])
+type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'address'
+const publishErrors = ref<{text: string; target: PublishTarget}[]>([])
 
 const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
 const fabrikantOkpd2 = ref('')
@@ -5075,12 +5087,21 @@ function initFabrikantDates() {
   }
 }
 
-function checkPublishReady(): {text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[] {
-  const errors: {text: string; target: 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet'}[] = []
+function checkPublishReady(): {text: string; target: PublishTarget}[] {
+  const errors: {text: string; target: PublishTarget}[] = []
   if (!form.subject?.trim()) errors.push({ text: 'Не заполнено наименование закупки', target: 'subject' })
-  // Мониторинг цен не требует позиций
+  // Мониторинг цен не требует позиций (и deliveryPlace там опционален)
   if (fabrikantProcedureType.value !== 'price_monitoring') {
     if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
+    // Фабрикант требует lot_delivery_place.state/region/okato — нужен реальный субъект РФ
+    if (!form.region || !RU_REGION_OKATO[form.region]) {
+      errors.push({ text: 'Укажите субъект РФ (для места поставки)', target: 'region' })
+    }
+    // Адрес поставки: карточный адрес → место оказания услуг → адрес организации субсидии
+    const hasAddress = !!String(form.delivery_address || '').trim()
+      || !!String(form.delivery_location || '').trim()
+      || !!String(customerPreview.value?.address || '').trim()
+    if (!hasAddress) errors.push({ text: 'Укажите адрес доставки', target: 'address' })
   }
   // Поля редукциона
   if (fabrikantProcedureType.value === 'reduction') {
@@ -5153,6 +5174,21 @@ async function retryPublish(platform: string) {
   }
 }
 
+// Маппинг бизнес-ошибок Фабриканта → поле карточки (одна точка правды:
+// используется и в openFabrikantRetry, и в снэкбаре поллинга)
+function fabrikantErrorTarget(errorText?: string | null): 'okpd2' | 'region' | 'address' | null {
+  const t = (errorText || '').toLowerCase()
+  if (!t) return null
+  if (t.includes('окпд') || t.includes('okpd')) return 'okpd2'
+  const isDeliveryPlace = /delivery_place|deliveryplace|место поставки/.test(t)
+  // lot_delivery_place.okato / .state / .region → поле «Субъект РФ»
+  if (/okato|окато|\bregion\b|\bstate\b|субъект/.test(t)) return 'region'
+  // адрес внутри места поставки → поле адреса
+  if (isDeliveryPlace && /adress|address|адрес/.test(t)) return 'address'
+  if (isDeliveryPlace) return 'region'
+  return null
+}
+
 function openFabrikantRetry(platform: string) {
   const lastPub = publications.value.find(p => p.platform === platform && p.status === 'error')
   publishErrors.value = checkPublishReady()
@@ -5163,12 +5199,21 @@ function openFabrikantRetry(platform: string) {
   if (fabrikantProcedureType.value !== 'price_monitoring') {
     fabrikantNoNmcd.value = !(publishNmck.value > 0)
   }
-  if (lastPub?.error_text && lastPub.error_text.includes('ОКПД')) {
+  const errTarget = fabrikantErrorTarget(lastPub?.error_text)
+  if (errTarget === 'okpd2') {
     nextTick(() => {
       if (_okpd2Timer) clearTimeout(_okpd2Timer)
       okpd2Pointer.value = true
       _okpd2Timer = setTimeout(() => { okpd2Pointer.value = false }, 5000)
     })
+  } else if (errTarget === 'region' || errTarget === 'address') {
+    // Показать блокер в списке ошибок диалога; клик → закрыть диалог → стрелка к полю
+    if (!publishErrors.value.some(e => e.target === errTarget)) {
+      publishErrors.value.push({
+        text: errTarget === 'region' ? 'Укажите субъект РФ (для места поставки)' : 'Укажите адрес доставки',
+        target: errTarget,
+      })
+    }
   }
 }
 
@@ -5178,7 +5223,21 @@ function pollPublication(pubId: number, attempts = 0) {
     await loadPublications()
     const pub = publications.value.find(p => p.id === pubId)
     if (pub && pub.status === 'error') {
-      showSnack(pub.error_text || 'Ошибка публикации', 'error')
+      const errTarget = pub.platform === 'fabrikant' ? fabrikantErrorTarget(pub.error_text) : null
+      if (errTarget === 'region' || errTarget === 'address') {
+        showSnack(pub.error_text || 'Ошибка публикации', 'error', {
+          actionText: 'Показать поле',
+          onAction: () => revealField(errTarget),
+        })
+      } else if (errTarget === 'okpd2') {
+        // Поле ОКПД2 находится в диалоге публикации — открываем диалог со стрелкой
+        showSnack(pub.error_text || 'Ошибка публикации', 'error', {
+          actionText: 'Показать поле',
+          onAction: () => openFabrikantRetry('fabrikant'),
+        })
+      } else {
+        showSnack(pub.error_text || 'Ошибка публикации', 'error')
+      }
     } else if (pub && pub.status === 'published') {
       showSnack(`Закупка опубликована на ${PLATFORM_LABELS[pub.platform] || pub.platform}`, 'success')
     } else if (pub && pub.status === 'publishing') {
@@ -6106,9 +6165,11 @@ const onSubsidyChange = async () => {
     try {
       const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
       if (subsidy?.org_id) {
-        const orgs = await apiFetch<any[]>('/auth/my-orgs')
-        const org = orgs.find((o: any) => o.id === subsidy.org_id)
-        if (org?.address) form.delivery_address = org.address
+        // GET /organizations/{id} — merge-паттерн: address организации с фолбэком
+        // на адрес привязанного контрагента (доступен любому authenticated)
+        const org = await apiFetch<any>(`/organizations/${subsidy.org_id}`)
+        // не перетираем введённое, если пользователь успел заполнить пока грузили
+        if (!form.delivery_address && org?.address) form.delivery_address = org.address
       }
     } catch { /* silent */ }
   }
